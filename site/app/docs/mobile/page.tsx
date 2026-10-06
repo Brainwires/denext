@@ -413,6 +413,19 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         plain-browser path.
       </Callout>
 
+      <h2 id="platform-files">Platform-specific files</h2>
+      <p>
+        A component that differs a lot on a phone can have a file of its own:{" "}
+        <code>BigButton.ios.tsx</code>, <code>BigButton.android.tsx</code>, or{" "}
+        <code>BigButton.mobile.tsx</code> for both. <code>denext mobile build ios</code>{" "}
+        exports with the <code>ios</code> target before <code>cap sync</code>, so the shell's{" "}
+        <code>webDir</code> holds an export that resolves <code>./BigButton</code> to{" "}
+        <code>.ios</code>, then <code>.mobile</code>, then{" "}
+        <code>.web</code>, then the plain file, and leaves the other variants out;{" "}
+        <code>denext export --platform ios</code> builds the same export by hand. See{" "}
+        <a href="/docs/platform-files">platform-specific files</a>.
+      </p>
+
       <h2 id="native-capabilities">Native capabilities</h2>
       <p>
         <code>denext/mobile</code>{" "}

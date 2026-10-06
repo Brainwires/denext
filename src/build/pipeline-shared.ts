@@ -20,6 +20,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
+import { type Platform, platformResolution } from "./platform-extensions.ts";
 import { compileCssAsset } from "./css-url.ts";
 import { optimizePackageImportsList } from "./optimize-package-imports.ts";
 import { CLIENT_PREFIX } from "./prod-server/assets.ts";
@@ -95,6 +96,7 @@ export function compatBuildOptions(
   paths: ProjectPaths,
   cssImportMap?: Record<string, string>,
   clientDir: string = join(paths.outDir, "client"),
+  platform: Platform = "web",
 ) {
   return {
     projectDir,
@@ -112,6 +114,9 @@ export function compatBuildOptions(
     optimizePackageImports: optimizePackageImportsList(paths.config),
     useCache: resolveCacheComponents(paths.config),
     cssImportMap,
+    // The target's platform files (`BigButton.ios.tsx`), for the server AND client bundles,
+    // so the static render and the hydrating client pick the same variant.
+    appPlatform: platformResolution(paths.config, platform),
     // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's
     // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
     // would be wiped by that swap).

@@ -3,6 +3,7 @@
 // metadata). Kept here — reached through `denext/desktop` — so the three scripts stay short and a
 // fix reaches every project that regenerates them.
 
+import { desktopPlatform, PLATFORM_ENV } from "./platform-extensions.ts";
 import {
   desktopIncludeArgs,
   desktopNpmArgs,
@@ -337,11 +338,22 @@ export async function prepareDesktopPackage(
   const appName = await desktopAppName(entryUrl);
   const plan = await desktopInstallerPlan(entryUrl, os, args.formats, args.add);
   await Deno.mkdir("dist", { recursive: true });
-  if (args.export) await desktopRun(["deno", "task", "export"]);
+  if (args.export) await desktopRun(["deno", "task", "export"], desktopExportEnv(os));
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
   return { name: desktopSlug(appName), plan, meta };
+}
+
+/**
+ * The environment of a package run's `deno task export`: the TARGET OS's platform (`windows`
+ * when cross-packaging from a Mac), so the export resolves its `.windows` / `.desktop` files,
+ * not the host's.
+ *
+ * @param os The target OS.
+ */
+export function desktopExportEnv(os: DesktopOs): Record<string, string> {
+  return { [PLATFORM_ENV]: desktopPlatform(os) };
 }
 
 /** Options for {@linkcode desktopRun}. */

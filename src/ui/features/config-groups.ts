@@ -43,6 +43,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "asyncContext",
     // Client-runtime behaviour (iOS momentum scrolling), not a toolchain switch.
     "momentumSafeScroll",
+    // Which `.ios` / `.android` / `.desktop` / `.web` files each target's build resolves.
+    "platformExtensions",
     "images",
     "tailwind",
     "mdx",

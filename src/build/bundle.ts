@@ -1096,7 +1096,10 @@ export function absolutizeImports(
  * when import-map redirects are supplied — a merged config in `tmpDir` that
  * extends the base `imports` with them (deno bundle takes a single config).
  */
-async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
+export async function prepareConfig(
+  tmpDir: string,
+  opts: Pick<BundleOptions, "configPath" | "importMap">,
+): Promise<string> {
   // `configPath` may be a plain filesystem path OR a `file://` URL — the latter when the
   // app has no `deno.json` of its own and `resolveProject` falls back to
   // `frameworkFileUrl("deno.json")`. `Deno.readTextFile` (and `dirname`) need a path, so

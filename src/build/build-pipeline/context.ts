@@ -38,6 +38,11 @@ export interface BuildContext {
   readonly css: AppCss | null;
   /** The bundler import map: CSS shims + the client-transform redirects. */
   cssImportMap: Record<string, string>;
+  /**
+   * The web target's platform files (`.web.tsx`) as file-URL redirects (native path only;
+   * empty when the app has none). Merged last into {@link cssImportMap}.
+   */
+  readonly platformRedirects: Record<string, string>;
   /** Route bundles produced so far (the manifest's `generatedRoutes`). */
   readonly routes: BuildResult["routes"];
   /** Routes that ship no client JS. */

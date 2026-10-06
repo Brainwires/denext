@@ -8,7 +8,9 @@
 // swap, typed modules, size summary). This module runs them in order.
 
 import { buildCompat } from "./build-pipeline/compat.ts";
-import { type BuildResult, log, timed } from "./build-pipeline/context.ts";
+import { type BuildContext, type BuildResult, log, timed } from "./build-pipeline/context.ts";
+import { setModuleGraphRedirects } from "./module-graph.ts";
+import { composeRedirects } from "./platform-extensions.ts";
 import { finalizeBuild } from "./build-pipeline/finalize.ts";
 import { buildWithoutAppRouter, pluginBuildSteps, prepareBuild } from "./build-pipeline/prepare.ts";
 import {
@@ -29,12 +31,25 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const early = await buildWithoutAppRouter(paths);
   if (early) return early;
 
-  const ctx = await timed("prepareBuild", () => prepareBuild(projectDir, paths));
+  try {
+    return await buildAppRouter(await timed("prepareBuild", () => prepareBuild(projectDir, paths)));
+  } finally {
+    // The web target's graph redirects belong to this build only.
+    setModuleGraphRedirects(null);
+  }
+}
+
+/** Run every App Router build stage over a prepared context. */
+async function buildAppRouter(ctx: BuildContext): Promise<BuildResult> {
+  const { paths } = ctx;
   const css = await timed("buildCss", () => buildCss(ctx));
-  // The CSS shims plus the client-transform redirects form the bundler import map.
+  // The CSS shims plus the client-transform redirects form the bundler import map; the
+  // platform-file redirects go last, pointed at a variant's transformed copy when it has one.
+  const transforms = await timed("clientTransforms", () => clientTransforms(ctx));
   ctx.cssImportMap = {
     ...css?.importMap,
-    ...await timed("clientTransforms", () => clientTransforms(ctx)),
+    ...transforms,
+    ...composeRedirects(ctx.platformRedirects, transforms),
   };
   const built = { ...ctx, css };
 

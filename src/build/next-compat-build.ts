@@ -11,6 +11,7 @@
  * @module
  */
 
+import type { PlatformResolution } from "./platform-extensions.ts";
 import { join } from "@std/path";
 import { keyedBundleRef } from "./next-compat-loader.ts";
 import type * as esbuild from "esbuild";
@@ -137,6 +138,11 @@ export interface BuildNextCompatModulesOptions {
    * with the same URLs the client bundle mints.
    */
   assets?: AssetOptions;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -207,6 +213,7 @@ export async function buildNextCompatModules(
     optimizePackageImports: options.optimizePackageImports,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
+    appPlatform: options.appPlatform,
     assets: options.assets,
   });
 
@@ -306,6 +313,11 @@ export interface BuildNextCompatClientOptions {
   platformExtensions?: readonly string[];
   /** Parse `.js` as JSX. Forwarded to {@link BundleNextCompatModulesOptions.jsxInJs}. */
   jsxInJs?: boolean;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -344,6 +356,7 @@ export async function buildNextCompatClientEntries(
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
+    appPlatform: options.appPlatform,
     // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
     // real esbuild plugins, which is what callers pass.
     extraPlugins: options.extraPlugins as esbuild.Plugin[] | undefined,
@@ -419,6 +432,11 @@ export interface BuildNextCompatFlightOptions {
    * `installViewTransitionSupport()` and the marking runtime is dropped. Defaults to `false`.
    */
   usesViewTransition?: boolean;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -489,6 +507,7 @@ export async function buildNextCompatFlightEntry(
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
+    appPlatform: options.appPlatform,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],

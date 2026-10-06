@@ -865,6 +865,19 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** `platformExtensions` is a boolean or `{ native?: boolean }`. */
+function validatePlatformExtensions(value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("platformExtensions", "must be a boolean or `{ native?: boolean }`");
+    return;
+  }
+  for (const [key, v] of Object.entries(value)) {
+    if (key !== "native") fail(`platformExtensions.${key}`, "is not a known option (native)");
+    else if (typeof v !== "boolean") fail("platformExtensions.native", "must be a boolean");
+  }
+}
+
 /** The string fields of a `mobile.flavors` entry. */
 const FLAVOR_STRINGS = [
   "appId",
@@ -1090,6 +1103,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validatePlatformExtensions(config.platformExtensions, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);

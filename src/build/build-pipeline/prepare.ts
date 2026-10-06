@@ -4,7 +4,14 @@ import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { computeBoundaryRoutes, localModulesOutside } from "../module-graph.ts";
+import {
+  assertPlatformFilesResolve,
+  computeBoundaryRoutes,
+  localModulesOutside,
+  routeEntryFiles,
+  setModuleGraphRedirects,
+} from "../module-graph.ts";
+import { platformResolution, projectPlatformRedirects } from "../platform-extensions.ts";
 import {
   appUsesActivity,
   appUsesClassComponents,
@@ -81,6 +88,19 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // server-side and hydrates only the islands via the compat flight bundle.
   const compat = await detectNextCompat(paths);
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
+  // The web target's platform files (`.web.tsx`): file-URL redirects on the native path (the
+  // compat bundles probe them), which every crawl below resolves through too.
+  const platformRedirects = compat
+    ? {}
+    : await projectPlatformRedirects(projectDir, paths.config, "web");
+  setModuleGraphRedirects(paths.configPath, platformRedirects);
+  if (!compat) {
+    await assertPlatformFilesResolve(
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+      projectDir,
+      platformResolution(paths.config, "web"),
+    );
+  }
   // In compat mode the boundary includes `"use client"` files inside npm packages too.
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages, {
     npm: compat ? npmBoundaryByImporter : undefined,
@@ -121,6 +141,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     hasFlight: boundaryRoutes.length > 0,
     css: null,
     cssImportMap: {},
+    platformRedirects,
     routes: [],
     staticRoutes: [],
     clientRoutes: [],

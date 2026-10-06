@@ -36,6 +36,10 @@ Each item is described in full under Changed, Fixed or Security below.
   `denext mobile build --release` refuses a leftover dev `server.url` or `cleartext: true`.
 - **Linux `secureStore` rejects `backend_unavailable`** when `secret-tool`, a Secret Service or an
   unlocked keyring is missing, instead of reading as "not found".
+- **Platform-specific files apply to every app.** A `Name.web.tsx` beside `Name.tsx` now wins
+  on the web outside React Native mode too, and `.ios` / `.android` / `.mobile` / `.macos` /
+  `.windows` / `.linux` / `.desktop` files win in their targets' exports; set
+  `platformExtensions: false` to keep the plain files.
 - **`WindowCapabilities`' index signature is `boolean | string | null`** (it carries
   `sessionType` and `cookieEncryption` now): read an unknown key as `=== true`.
 - **`expo-secure-store`'s `isAvailableAsync()` is `false` without a real secret store** (the web),
@@ -53,6 +57,18 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Added
 
+- **Platform-specific files: `BigButton.ios.tsx`, `.android`, `.mobile`, `.macos` / `.windows` /
+  `.linux`, `.desktop` and `.web`.** React Native's platform extensions, for every denext app (App
+  Router native and next-compat, SPA mode, React Native mode). Each target probes its own files
+  first (ios: `.ios` → `.mobile` → `.web` → plain; macos: `.macos` → `.desktop` → `.web` → plain)
+  and drops the others from its bundle; the server render of an export resolves the same files
+  as its client. `denext export --platform <target>` (or `DENEXT_PLATFORM`) builds one target's
+  export; `denext mobile build ios|android` exports with its platform before `cap sync`, and
+  `denext desktop package` / `run` with the target OS. Everything else stays `web`. A module with
+  no file for the target fails the build naming its variants, and `denext doctor` lists those
+  gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`). Only the app's
+  own modules take a variant; packages keep their own resolution. See
+  [platform-specific files](https://denext.dev/docs/platform-files).
 - **`onAppCapabilitiesChanged(handler)` from `denext/desktop/app`.** The runtime's
   `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
   when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the

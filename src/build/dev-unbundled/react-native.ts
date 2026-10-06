@@ -30,7 +30,7 @@ import { ensureDir } from "@std/fs";
 import type * as esbuild from "esbuild";
 import { EXPO_RN_BRIDGE } from "../expo-shims.ts";
 import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
-import { bundleNextCompatModules, probeSourceFile, SOURCE_EXTS } from "../next-compat.ts";
+import { bundleNextCompatModules } from "../next-compat.ts";
 import { transformWorklets, WORKLETS_GATE } from "../reanimated.ts";
 import {
   applyEdits,
@@ -42,7 +42,7 @@ import {
   walkAst,
 } from "../swc-ast.ts";
 import type { ParsedModule } from "../swc-ast.ts";
-import { CODE_FILE, libraryDepUrl, runtimeDepUrl } from "./resolve.ts";
+import { CODE_FILE, firstPartyProbe, libraryDepUrl, runtimeDepUrl } from "./resolve.ts";
 import {
   addImporter,
   crawlModuleGraph,
@@ -323,14 +323,15 @@ function isAppModule(st: UnbundledState, abs: string): boolean {
  * context imports every route by absolute path — resolves to its `@fs` URL, external, so the
  * page holds ONE instance of it (the one the per-module loop hot-swaps).
  */
-function appModuleExternalPlugin(st: UnbundledState, exts: readonly string[]): esbuild.Plugin {
+function appModuleExternalPlugin(st: UnbundledState): esbuild.Plugin {
+  const probe = firstPartyProbe(st);
   return {
     name: "denext-dev-rn-app-modules",
     setup(build) {
       build.onResolve({ filter: /^(?:\.\.?(?:\/|$)|\/)/ }, (args) => {
         if (inNodeModules(args.importer)) return null;
         const base = args.path.startsWith("/") ? args.path : resolve(args.resolveDir, args.path);
-        const hit = probeSourceFile(base, exts);
+        const hit = probe(base);
         if (!hit) return null;
         const abs = norm(hit);
         if (!isAppModule(st, abs)) return null;
@@ -417,7 +418,6 @@ export async function buildReactNativeDeps(st: UnbundledState): Promise<void> {
     entryPoints[slug] = file;
     entries.set(file, { spec, names: st.npmNames.get(spec) ?? new Set() });
   }
-  const exts = [...rn.platformExtensions, ...SOURCE_EXTS];
   await bundleNextCompatModules({
     entryPoints,
     runtimeDir: st.runtimeDir,
@@ -435,7 +435,7 @@ export async function buildReactNativeDeps(st: UnbundledState): Promise<void> {
     denoLoader: false,
     extraPlugins: [
       dependencyEntriesPlugin(entries),
-      appModuleExternalPlugin(st, exts),
+      appModuleExternalPlugin(st),
       ...rn.plugins,
       runtimeExternalPlugin(),
     ],

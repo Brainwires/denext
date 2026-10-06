@@ -6,6 +6,7 @@ import type { ModuleLoader } from "../../server/types.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
+import { devPlatformRedirects } from "./platform.ts";
 
 /**
  * Dev module loader: cache-bust via the generation query so edits reload.
@@ -43,11 +44,15 @@ export function createDevLoader(
       await getManifest();
       return st.compatLoad!(filePath);
     }
-    if (!st.useCacheEnabled) return base(filePath);
+    // The web target's platform files (`.web.tsx`) ride the same per-generation copy loader.
+    const redirects = await devPlatformRedirects(st);
+    if (!st.useCacheEnabled && Object.keys(redirects).length === 0) return base(filePath);
     if (st.ucLoadGen !== st.generation) {
       st.ucLoad = createUseCacheLoader(base, {
         projectDir: st.paths.projectDir,
         cacheDir: join(st.paths.outDir, "server-cache", String(st.generation)),
+        redirects,
+        useCache: st.useCacheEnabled,
       });
       st.ucLoadGen = st.generation;
     }

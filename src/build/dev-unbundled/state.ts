@@ -4,6 +4,7 @@
 // `createUnbundledState` — the explicit form of what used to be the captured locals of
 // one large closure. See `../dev-unbundled.ts` for the module header + URL scheme.
 
+import type { PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
 import type * as esbuild from "esbuild";
 
@@ -176,6 +177,12 @@ export interface UnbundledDevOptions {
    * `./react-native.ts`).
    */
   reactNative?: ReactNativeDevOptions;
+  /**
+   * The target's platform files for the app's own modules (`BigButton.web.tsx`; see
+   * `../platform-extensions.ts`), probed ahead of the defaults. Null when the app turned them
+   * off (`platformExtensions: false`); React Native mode then still probes its `.web.*`.
+   */
+  appPlatform?: PlatformResolution | null;
   /**
    * Called when the dependency bundle is rebuilt under a live page (React Native mode: a new
    * package or name was imported; compat: a module discovered a package the first build lacked,

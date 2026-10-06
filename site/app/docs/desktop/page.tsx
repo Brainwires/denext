@@ -1359,6 +1359,19 @@ if (found.available) {
         <code>unsupported_layout</code>.
       </p>
 
+      <h2 id="desktop-platform-files">Platform-specific files</h2>
+      <p>
+        A component can have a desktop file of its own: <code>BigButton.desktop.tsx</code>{" "}
+        for every desktop OS, or <code>BigButton.macos.tsx</code> / <code>.windows.tsx</code> /{" "}
+        <code>.linux.tsx</code> for one. <code>denext desktop run</code>{" "}
+        exports for the OS it runs on, and <code>denext desktop package</code>{" "}
+        for the package's target OS (a Windows package built on a Mac gets the <code>.windows</code>
+        {" "}
+        files), probing the OS, then <code>.desktop</code>, then{" "}
+        <code>.web</code>, then the plain file. See{" "}
+        <a href="/docs/platform-files">platform-specific files</a>.
+      </p>
+
       <h2 id="desktop-capabilities">Native capabilities</h2>
       <p>
         A desktop app's native side is the Deno process <code>denext/desktop</code>{" "}

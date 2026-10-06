@@ -87,6 +87,7 @@ export const NAV: {
       { slug: "desktop-runtime", label: "Deno Desktop runtime" },
       { slug: "mobile", label: "Mobile (Capacitor)" },
       { slug: "mobile-build", label: "Mobile builds & submit" },
+      { slug: "platform-files", label: "Platform-specific files" },
       { slug: "troubleshooting", label: "Troubleshooting" },
     ],
   },

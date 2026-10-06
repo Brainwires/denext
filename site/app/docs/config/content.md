@@ -489,6 +489,11 @@ Build-time switches. All off by default except `nodeResolve`,
   sticky headers move with it until the fling settles. Set `false` to opt out
   (it holds in every build: App Router, Pages Router, SPA, dev and export). See
   [`denext/mobile`](/docs/mobile#the-denextmobile-runtime).
+- **`platformExtensions`** — `boolean | { native? }` (**default on**). Platform-specific files:
+  an import of `./BigButton` resolves to `BigButton.ios.tsx` in the iOS export,
+  `BigButton.desktop.tsx` in a desktop package and `BigButton.web.tsx` on the web, else to the
+  plain file. `{ native: true }` also probes `.native` after the OS on iOS and Android; `false`
+  turns platform files off. See [platform-specific files](/docs/platform-files).
 - **`reactNative`** — `boolean | { rootStyle?, expoShims?, lists?, aliases?,
   desktopPackage? }` (off; SPA mode only). Builds a React Native / Expo app's
   source for the web through `react-native-web`: `react-native` resolves to

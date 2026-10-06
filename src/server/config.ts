@@ -420,6 +420,17 @@ export interface TasksConfig {
 }
 
 /** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
+/** The object form of {@link DenextConfig.platformExtensions}. */
+export interface PlatformExtensionsConfig {
+  /**
+   * Probe React Native's `.native` suffix after the OS one on ios and android (`.ios` →
+   * `.native` → `.mobile` → `.web`).
+   *
+   * @default false
+   */
+  native?: boolean;
+}
+
 export interface ReactNativeConfig {
   /**
    * Inject Expo web's root style into the SPA shell's `<head>`:
@@ -1468,6 +1479,21 @@ export interface DenextConfig {
    * @default true
    */
   momentumSafeScroll?: boolean;
+  /**
+   * Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to
+   * `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package,
+   * `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The
+   * probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`;
+   * android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` →
+   * `.web`. Applies to the app's own modules (packages in `node_modules` keep their own
+   * resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and
+   * android (off by default: `.native` files are usually native code, which a WebView cannot
+   * run). `false` turns platform files off. See
+   * {@link https://denext.dev/docs/platform-files}.
+   *
+   * @default true
+   */
+  platformExtensions?: boolean | PlatformExtensionsConfig;
   /**
    * Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors
    * (per-flavor app id, name, server URL, icon and splash). See

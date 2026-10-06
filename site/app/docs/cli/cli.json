@@ -480,6 +480,12 @@
           "type": "string",
           "valueName": "hidden",
           "description": "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "valueName": "<target>",
+          "description": "The target whose platform files (Button.ios.tsx, .android, .mobile, .macos/.windows/.linux, .desktop, .web) the export resolves: web (default), ios, android, macos, windows, linux (also DENEXT_PLATFORM)"
         }
       ],
       "positionals": [

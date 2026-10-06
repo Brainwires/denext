@@ -402,7 +402,8 @@ function webCommands(
 ): BuildCommand[] {
   const exportCmd: BuildCommand = {
     cmd: opts.deno,
-    args: [...opts.cli, "export", opts.appDir],
+    // The platform's own export: `Button.ios.tsx` / `.android` / `.mobile` win in its webDir.
+    args: [...opts.cli, "export", opts.appDir, "--platform", opts.platform],
     cwd: opts.appDir,
     ...(flavor?.env ? { env: flavor.env } : {}),
   };

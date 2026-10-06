@@ -187,6 +187,13 @@ export interface DevState {
   refreshGen: number;
   compilerGen: number;
 
+  /**
+   * The web target's platform files (`.web.tsx`) as file-URL redirects for the native path,
+   * rescanned per generation (`platformGen`) so an added or removed variant takes effect.
+   */
+  platformRedirects: Record<string, string>;
+  platformGen: number;
+
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
   ucLoad: ModuleLoader | null;
@@ -288,6 +295,8 @@ export function createDevState(options: DevServerOptions): DevState {
     refreshMap: {},
     refreshGen: -1,
     compilerGen: -1,
+    platformRedirects: {},
+    platformGen: -1,
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoad: null,
     ucLoadGen: -1,

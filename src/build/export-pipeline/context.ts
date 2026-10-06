@@ -8,6 +8,7 @@ import type { AppCss } from "../css.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { join } from "@std/path";
 import { routeId } from "../paths.ts";
+import type { Platform } from "../platform-extensions.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 
 export interface StaticExportResult {
@@ -24,6 +25,12 @@ export interface StaticExportOptions {
   outDir?: string;
   /** i18n config; when set, each page is emitted once per locale. */
   i18n?: I18nConfig;
+  /**
+   * The target whose platform files (`BigButton.ios.tsx`) the export resolves, client and
+   * server render alike (default `web`). `denext export --platform`, `denext mobile build` and
+   * `denext desktop package` set it.
+   */
+  platform?: Platform;
 }
 
 /** Everything the export stages share for one `denext export`. */
@@ -51,6 +58,13 @@ export interface ExportContext {
   compat: boolean;
   /** next-compat: source module → compat bundle (to redirect the Flight boundary refs). */
   compatModuleMap: Map<string, string> | null;
+  /** The target the export resolves platform files for. */
+  readonly platform: Platform;
+  /**
+   * The target's platform files as file-URL redirects (the native path's `deno bundle` import
+   * map and server loader; empty when the app has none).
+   */
+  readonly platformRedirects: Record<string, string>;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
@@ -68,6 +82,11 @@ export interface ExportContext {
  */
 export function exportBuildDir(paths: ProjectPaths): string {
   return join(paths.outDir, "export");
+}
+
+/** The `deno bundle` import map for the native client bundles: CSS shims + platform files. */
+export function exportImportMap(ctx: ExportContext): Record<string, string> {
+  return { ...ctx.css?.importMap, ...ctx.platformRedirects };
 }
 
 /** The hydration script for a route, or none for a static route. */

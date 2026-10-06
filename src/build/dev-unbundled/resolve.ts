@@ -25,6 +25,7 @@ import {
   versionOf,
 } from "./state.ts";
 import { inNodeModules } from "../path-segments.ts";
+import { probePlatformSource } from "../platform-extensions.ts";
 
 /**
  * A merged deno config (framework deps + the app's import map, absolutized) so the
@@ -61,16 +62,23 @@ export async function resolveFirstParty(
   spec: string,
   importerAbs: string,
 ): Promise<string | null> {
-  return resolveWith(await ensureAliases(st), spec, importerAbs, probeExtensions(st));
+  return resolveWith(await ensureAliases(st), spec, importerAbs, firstPartyProbe(st));
 }
 
+/** Probe an absolute first-party base path for its file (see {@linkcode firstPartyProbe}). */
+type Probe = (base: string) => string | null;
+
 /**
- * The extensions an extensionless first-party import probes: React Native mode's `.web.*`
- * ahead of the defaults (so `./button` finds `button.web.tsx` first), else the defaults.
+ * How a first-party import probes: the target's platform files first (`./button` finds
+ * `button.web.tsx`, and an explicit `./button.tsx` takes it too), else React Native mode's
+ * `.web.*` ahead of the defaults, else the defaults.
  */
-function probeExtensions(st: UnbundledState): readonly string[] | undefined {
+export function firstPartyProbe(st: UnbundledState): Probe {
+  const platform = st.opts.appPlatform;
+  if (platform) return (base) => probePlatformSource(base, platform, probeSourceFile, SOURCE_EXTS);
   const web = st.opts.reactNative?.platformExtensions;
-  return web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
+  const exts = web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
+  return (base) => probeSourceFile(base, exts);
 }
 
 /**
@@ -87,8 +95,8 @@ export async function firstPartyResolver(
   importerAbs: string,
 ): Promise<(spec: string) => string | null> {
   const aliases = await ensureAliases(st);
-  const exts = probeExtensions(st);
-  return (spec) => resolveWith(aliases, spec, importerAbs, exts);
+  const probe = firstPartyProbe(st);
+  return (spec) => resolveWith(aliases, spec, importerAbs, probe);
 }
 
 /** {@link resolveFirstParty} against an already loaded alias table. */
@@ -96,17 +104,17 @@ function resolveWith(
   aliases: Array<[string, string]>,
   spec: string,
   importerAbs: string,
-  exts?: readonly string[],
+  probe: Probe,
 ): string | null {
   let hit: string | null = null;
   // A Vite asset query (`./click.mp3?url`) names the file before it.
   spec = spec.replace(/[?#].*$/, "");
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
-    hit = probeSourceFile(resolve(dirname(importerAbs), spec), exts);
+    hit = probe(resolve(dirname(importerAbs), spec));
   } else {
     for (const [key, absDir] of aliases) {
       if (spec === key.slice(0, -1) || spec.startsWith(key)) {
-        hit = probeSourceFile(resolve(absDir, spec.slice(key.length)), exts);
+        hit = probe(resolve(absDir, spec.slice(key.length)));
         break;
       }
     }

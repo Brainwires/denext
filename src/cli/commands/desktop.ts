@@ -21,6 +21,7 @@
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
 
+import { desktopPlatform } from "../../build/platform-extensions.ts";
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
@@ -70,10 +71,12 @@ function desktopDir(ctx: CommandContext): string {
  * run` then keeps its window open for as long as the user likes, and must not block builds.
  */
 async function exportSpa(dir: string): Promise<void> {
-  console.log(`\n  denext desktop — exporting SPA  ▸  ${dir}\n`);
+  // The window runs on this machine: resolve this OS's platform files (`.macos`, `.desktop`).
+  const platform = desktopPlatform(Deno.build.os);
+  console.log(`\n  denext desktop — exporting SPA [${platform}]  ▸  ${dir}\n`);
   const result = await withProjectLocks(
     { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
-    () => runBuildStep(() => staticExport(dir), "desktop export"),
+    () => runBuildStep(() => staticExport(dir, { platform }), "desktop export"),
   );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }

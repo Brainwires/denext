@@ -1,6 +1,7 @@
 // SPA mode dev server: the shared state — the per-generation bundle, the live-reload
 // subscribers, and the optional unbundled (per-module HMR) loop.
 
+import { platformResolution } from "../platform-extensions.ts";
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
 import {
@@ -195,6 +196,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
+      // The web target's platform files (`.web.tsx`) for the app's own modules.
+      appPlatform: platformResolution(paths.config, "web"),
       // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).
       spaInstall: supportInstall({
         classComponents: paths.config?.classComponents ?? true,

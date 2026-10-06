@@ -1,6 +1,8 @@
 // The route manifest and the Flight boundary, refreshed per generation, plus the
 // lazily-created unbundled dev loop.
 
+import { platformResolution } from "../platform-extensions.ts";
+import { devPlatformRedirects } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
 import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
@@ -36,6 +38,8 @@ export function getUnbundled(st: DevState): UnbundledDev {
     features: featureFlags(st.paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
+    // The web target's platform files (`.web.tsx`) for the app's own modules.
+    appPlatform: platformResolution(st.paths.config, "web"),
     // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
     onDepsRebuilt: () => broadcast(st, "reload"),
   });
@@ -121,6 +125,8 @@ async function compatNpmFinder(st: DevState): Promise<NpmBoundaryFinder | undefi
 /** Recompute the Flight boundary for this generation (routes, client refs, server refs). */
 async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   if (st.boundaryGen === st.generation) return;
+  // Install this generation's platform-file redirects for the crawls below.
+  await devPlatformRedirects(st);
   const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages, {
     npm: await compatNpmFinder(st),
   });

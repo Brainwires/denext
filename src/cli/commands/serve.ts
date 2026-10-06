@@ -3,6 +3,7 @@
 // `.env` + CSS/module re-exec gate before dispatching them). Logic lives in
 // `src/build/*` / `src/testing/*`; these specs only orchestrate.
 
+import { parsePlatform, type Platform, PLATFORM_ENV } from "../../build/platform-extensions.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { envGet } from "../../runtime/env-safe.ts";
 import { ensureAppDir, installShutdown, projectDir, runBuildStep } from "../shared.ts";
@@ -178,6 +179,20 @@ export const buildCommand: CommandSpec = {
   },
 };
 
+/**
+ * The export's target: `--platform`, else {@linkcode PLATFORM_ENV} (what `denext desktop
+ * package`'s script sets for its `deno task export` child), else `web`. Exits on a bad value.
+ */
+function exportPlatform(flag: unknown): Platform {
+  try {
+    if (typeof flag === "string") return parsePlatform(flag, "--platform");
+    return parsePlatform(Deno.env.get(PLATFORM_ENV), PLATFORM_ENV);
+  } catch (err) {
+    console.error(`denext export: ${(err as Error).message}`);
+    Deno.exit(1);
+  }
+}
+
 export const exportCommand: CommandSpec = {
   name: "export",
   envTier: "production",
@@ -191,6 +206,13 @@ export const exportCommand: CommandSpec = {
     valueName: "hidden",
     help: "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a " +
       "crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)",
+  }, {
+    name: "platform",
+    type: "string",
+    valueName: "<target>",
+    help: "The target whose platform files (Button.ios.tsx, .android, .mobile, .macos/.windows/" +
+      ".linux, .desktop, .web) the export resolves: web (default), ios, android, macos, windows, " +
+      "linux (also DENEXT_PLATFORM)",
   }],
   run: async (ctx) => {
     const sourcemaps = ctx.flags.sourcemaps;
@@ -201,9 +223,12 @@ export const exportCommand: CommandSpec = {
       Deno.exit(1);
     }
     if (sourcemaps === "hidden") Deno.env.set(SOURCEMAPS_ENV, "hidden");
+    const platform = exportPlatform(ctx.flags.platform);
     const { dir } = await appProject(ctx);
-    console.log(`\n  denext export (static)  ▸  ${dir}\n`);
-    const result = await runBuildStep(() => staticExport(dir), "export");
+    console.log(
+      `\n  denext export (static)${platform === "web" ? "" : ` [${platform}]`}  ▸  ${dir}\n`,
+    );
+    const result = await runBuildStep(() => staticExport(dir, { platform }), "export");
     console.log(
       `\n  Exported ${result.pages} page(s) to ${result.outDir}` +
         (result.skipped.length

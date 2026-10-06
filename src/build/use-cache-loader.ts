@@ -21,7 +21,7 @@
 import { djb2 } from "../runtime/djb2.ts";
 import { extname, fromFileUrl, join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
-import { swcParse } from "./swc-ast.ts";
+import { absolutizeSpecifiers, applyEdits, type Edit, parseModule, swcParse } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 
 /** Options for {@link createUseCacheLoader}. */
@@ -34,6 +34,17 @@ export interface UseCacheLoaderOptions {
    * fresh copies rather than a natively-cached stale module.
    */
   cacheDir: string;
+  /**
+   * Import redirects keyed by resolved file URL (the target's platform files, from
+   * `platformRedirects`): an import whose URL is a key loads its value instead, and every module
+   * on the way to one is copied with the import rewritten.
+   */
+  redirects?: Readonly<Record<string, string>>;
+  /**
+   * Compile `"use cache"` directives (default true). `false` copies modules only to apply
+   * {@link redirects} (Cache Components off), leaving every directive as written.
+   */
+  useCache?: boolean;
 }
 
 /** Deterministic short hash (djb2 → base36) for a module URL. */
@@ -73,6 +84,24 @@ async function localImports(source: string, moduleUrl: string): Promise<string[]
     out.push(new URL(spec, moduleUrl).href);
   }
   return out;
+}
+
+/**
+ * Only absolutize `source`'s relative specifiers (mapped through `resolve`), for a copy that
+ * compiles nothing else.
+ */
+async function rewriteLocalImports(
+  source: string,
+  moduleUrl: string,
+  resolve: (absUrl: string) => string,
+): Promise<{ code: string; changed: boolean }> {
+  const parsed = await parseModule(source);
+  if (!parsed) return { code: source, changed: false };
+  const edits: Edit[] = [];
+  if (!absolutizeSpecifiers(parsed.ctx, parsed.body, moduleUrl, edits, resolve)) {
+    return { code: source, changed: false };
+  }
+  return { code: applyEdits(parsed.ctx.bytes, edits), changed: true };
 }
 
 /**
@@ -121,23 +150,28 @@ class UseCacheCompiler {
       return moduleUrl; // unreadable → import the original
     }
 
-    // Resolve each local import to its effective URL (post-order recursion).
+    // Resolve each local import to its effective URL (post-order recursion), through the
+    // platform redirect first.
     const imports = await localImports(source, moduleUrl);
     const childMap = new Map<string, string>();
     let anyChildCopied = false;
     for (const imp of imports) {
-      const eff = await this.effectiveUrl(imp);
+      const eff = await this.effectiveUrl(this.opts.redirects?.[imp] ?? imp);
       childMap.set(imp, eff);
       if (eff !== imp) anyChildCopied = true;
     }
 
     // No directive here and no transformed child ⇒ this module is unchanged.
-    if (!source.includes("use cache") && !anyChildCopied) return moduleUrl;
+    const useCache = this.opts.useCache !== false && source.includes("use cache");
+    if (!useCache && !anyChildCopied) return moduleUrl;
 
-    const { code, changed } = await transformUseCache(source, moduleUrl, {
-      resolveSpecifier: (abs) => childMap.get(abs) ?? abs,
-      alwaysRewriteImports: true,
-    });
+    const resolveSpecifier = (abs: string) => childMap.get(abs) ?? abs;
+    const { code, changed } = this.opts.useCache === false
+      ? await rewriteLocalImports(source, moduleUrl, resolveSpecifier)
+      : await transformUseCache(source, moduleUrl, {
+        resolveSpecifier,
+        alwaysRewriteImports: true,
+      });
     if (!changed) return moduleUrl;
 
     await this.#ensureDir();

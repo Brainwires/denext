@@ -5,6 +5,7 @@ import { join } from "@std/path";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
+import type { Platform } from "../platform-extensions.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
@@ -31,8 +32,16 @@ async function bundleAndShell(
   entryPath: string,
   clientDir: string,
   shellDir: string,
+  platform: Platform = "web",
 ): Promise<void> {
-  const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, prodMinify());
+  const { hasStyles } = await bundleSpaInto(
+    paths,
+    entryPath,
+    clientDir,
+    prodMinify(),
+    false,
+    platform,
+  );
   // Precompress the client chunks (gzip `.gz` siblings) exactly like the App Router build's
   // finalize step, so the prod server serves them with zero per-request CPU — and so
   // `denext analyze` can report over-the-wire (gzip) sizes for a SPA bundle. `spa.precompress:
@@ -114,16 +123,20 @@ async function copyPublic(publicDir: string, outDir: string): Promise<void> {
  */
 export async function exportSpa(
   paths: ProjectPaths,
-  options: { outDir?: string } = {},
+  options: { outDir?: string; platform?: Platform } = {},
 ): Promise<{ outDir: string; pages: number; skipped: string[] }> {
+  const platform = options.platform ?? "web";
   const { spa, entryPath } = spaEntryPath(paths);
   await assertEntryExists(entryPath);
   const outDir = await resolveExportOutDir(paths, options.outDir);
   await writeViaStaging(outDir, async (staging) => {
     const clientOut = join(staging, "_denext", "client");
     await ensureDir(clientOut);
-    console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
-    await bundleAndShell(paths, entryPath, clientOut, staging);
+    console.log(
+      `  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}` +
+        (platform === "web" ? "" : ` (platform: ${platform})`),
+    );
+    await bundleAndShell(paths, entryPath, clientOut, staging, platform);
     await copyPublic(paths.publicDir, staging);
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
     // `desktop.preload`: one classic script the desktop runtime inlines first into every page.

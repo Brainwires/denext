@@ -34,6 +34,7 @@ import type { ModuleLoader } from "../../server/types.ts";
 import { createNextCompatServerLoader } from "../next-compat-loader.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { projectPlatformRedirects } from "../platform-extensions.ts";
 import type { AssetResolvers } from "./assets.ts";
 import type { BuildInfo, FlightBoundary } from "./manifest.ts";
 
@@ -54,10 +55,21 @@ async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleL
   }
   // A compat bundle already carries the `"use cache"` transform (applied at bundle time, so
   // the module stays inside the react→denext bundle); the runtime rewrite is for native apps.
-  if (resolveCacheComponents(paths.config) && !compat) {
+  // The same rewrite applies the web target's platform files (`.web.tsx`) to the server render,
+  // matching the client bundle the build made.
+  const useCache = resolveCacheComponents(paths.config) && !compat;
+  const redirects = compat
+    ? {}
+    : await projectPlatformRedirects(paths.projectDir, paths.config, "web");
+  if (useCache || Object.keys(redirects).length > 0) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-    load = createUseCacheLoader(load, { projectDir: paths.projectDir, cacheDir });
+    load = createUseCacheLoader(load, {
+      projectDir: paths.projectDir,
+      cacheDir,
+      redirects,
+      useCache,
+    });
   }
   return load;
 }

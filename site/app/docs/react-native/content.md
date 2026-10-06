@@ -44,6 +44,15 @@ aliased to denext, and `"nodeModulesDir": "manual"` so the app's npm packages ar
 above and a Capacitor shell config for you. `react-native` itself needs no entry: the resolve
 mode claims it.
 
+## Platform-specific files
+
+`.web.tsx` files win over the plain ones, as in Metro's web build. In the iOS and Android exports
+(`denext mobile build`) `Name.ios.tsx` / `Name.android.tsx` / `Name.mobile.tsx` win too, and in a
+desktop package `Name.macos.tsx` / `Name.desktop.tsx`. `.native.tsx` is skipped unless
+`platformExtensions: { native: true }`: in a React Native app it usually holds native code, which
+the WebView cannot run. Packages keep resolving to their web build. See
+[platform-specific files](/docs/platform-files).
+
 ## Migrating an Expo app
 
 ```sh

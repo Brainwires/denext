@@ -20,6 +20,12 @@
  * @module
  */
 
+import {
+  missingVariantMessage,
+  type PlatformResolution,
+  platformVariantsOf,
+  probePlatformSource,
+} from "./platform-extensions.ts";
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
@@ -420,6 +426,21 @@ export interface BundleNextCompatOptions {
 }
 
 /**
+ * An import that resolves to nothing but has other targets' platform files: fail with the
+ * message naming them (esbuild's own would say only "Could not resolve"), else leave it to the
+ * next resolver.
+ */
+function missingVariant(
+  spec: string,
+  base: string,
+  appPlatform: PlatformResolution,
+): esbuild.OnResolveResult | null {
+  const variants = platformVariantsOf(base);
+  if (variants.length === 0) return null;
+  return { errors: [{ text: missingVariantMessage(spec, variants, appPlatform) }] };
+}
+
+/**
  * Resolve an app's OWN source imports (path-alias `@/…` from the deno.json import
  * map, and relative `./`/`../`) by probing extensions — the extensionless imports
  * Next.js apps use everywhere. This is handled here rather than by the deno-loader
@@ -520,8 +541,15 @@ function appImportBase(
 export function appResolverPlugin(
   configPath: string,
   platformExtensions?: readonly string[],
+  appPlatform?: PlatformResolution | null,
 ): esbuild.Plugin {
   const exts = withPlatformExtensions(SOURCE_EXTS, platformExtensions);
+  // The app's own modules take the target's platform files (`platformExtensions` config);
+  // without one (turned off) they probe what packages do.
+  const probe = (base: string) =>
+    appPlatform
+      ? probePlatformSource(base, appPlatform, probeSourceFile, SOURCE_EXTS)
+      : probeSourceFile(base, exts);
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
   let prefixes: Array<[string, string]> | null = null;
@@ -538,8 +566,9 @@ export function appResolverPlugin(
         if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         const base = appImportBase(p, args.importer, await ensure());
         if (base) {
-          const found = probeSourceFile(base, exts);
-          return found ? await withPackageSideEffects(found) : null;
+          const found = probe(base);
+          if (found) return await withPackageSideEffects(found);
+          return appPlatform ? missingVariant(p, base, appPlatform) : null;
         }
         // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
         // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
@@ -549,7 +578,7 @@ export function appResolverPlugin(
         if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
-          const rootProbe = probeSourceFile(resolve(dirname(configPath), p), exts);
+          const rootProbe = probe(resolve(dirname(configPath), p));
           if (rootProbe) return await withPackageSideEffects(rootProbe);
         }
         return null; // npm/jsr/bare → deno-loader
@@ -1173,6 +1202,13 @@ export interface BundleNextCompatModulesOptions {
    * variant wins over its native one. Omit to probe exactly the defaults.
    */
   platformExtensions?: readonly string[];
+  /**
+   * The target's platform files for the app's OWN modules (`BigButton.ios.tsx`; see
+   * `platform-extensions.ts`), probed ahead of the defaults for relative/alias imports.
+   * Packages keep {@link platformExtensions}. Omit (or null, `platformExtensions: false`) to
+   * resolve app imports like package subpaths.
+   */
+  appPlatform?: PlatformResolution | null;
   /**
    * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
    * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
@@ -2150,7 +2186,7 @@ async function compatPlugins(
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
     ...(await sourcePlugins(options, workerBuild)),
-    appResolverPlugin(options.configPath, options.platformExtensions),
+    appResolverPlugin(options.configPath, options.platformExtensions, options.appPlatform),
     nodeModulesFileUrlPlugin(),
     ...(deno ? [nodeBuiltinResolvePlugin()] : []),
     ...nodeModulesPlugins(options),

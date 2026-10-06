@@ -16,7 +16,12 @@ import {
   selfHostExportFonts,
   setupCompat,
 } from "./export-pipeline/assets.ts";
-import type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
+import type {
+  ExportContext,
+  StaticExportOptions,
+  StaticExportResult,
+} from "./export-pipeline/context.ts";
+import { setModuleGraphRedirects } from "./module-graph.ts";
 import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pipeline/prepare.ts";
 import { copyPublic, renderAllPages } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
@@ -26,21 +31,9 @@ import { writeDesktopPreload } from "./desktop-preload.ts";
 
 export type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
 
-/** Pre-render a denext app to a static, host-anywhere directory. */
-export async function staticExport(
-  projectDir: string,
-  options: StaticExportOptions = {},
-): Promise<StaticExportResult> {
-  const paths = await resolveProject(projectDir);
-  // Static export ships no `/_denext/image` server, so `<Image>` must render plain `<img>`
-  // with the raw `src` (Next forces `unoptimized` for `output: export` the same way). A
-  // per-image custom `loader` still optimizes via its CDN. `deviceSizes`/`imageSizes` are
-  // irrelevant with no built-in optimizer.
-  setImageRuntimeConfig({ unoptimized: true });
-  const early = await exportWithoutAppRouter(paths, options);
-  if (early) return early;
-
-  const ctx = await prepareExport(projectDir, paths, options);
+/** Bundle, render and write everything of one App Router export. */
+async function renderExport(ctx: ExportContext): Promise<void> {
+  const { paths } = ctx;
   // 1. Client bundles (minified) + stylesheets + fonts.
   await classifyRoutes(ctx);
   await emitExportCss(ctx);
@@ -60,5 +53,28 @@ export async function staticExport(
   if (ctx.compat) await stopNextCompat();
   // 4. Everything rendered: swap the staging dir into `out/`.
   await finishExport(ctx);
-  return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
+}
+
+/** Pre-render a denext app to a static, host-anywhere directory. */
+export async function staticExport(
+  projectDir: string,
+  options: StaticExportOptions = {},
+): Promise<StaticExportResult> {
+  const paths = await resolveProject(projectDir);
+  // Static export ships no `/_denext/image` server, so `<Image>` must render plain `<img>`
+  // with the raw `src` (Next forces `unoptimized` for `output: export` the same way). A
+  // per-image custom `loader` still optimizes via its CDN. `deviceSizes`/`imageSizes` are
+  // irrelevant with no built-in optimizer.
+  setImageRuntimeConfig({ unoptimized: true });
+  const early = await exportWithoutAppRouter(paths, options);
+  if (early) return early;
+
+  try {
+    const ctx = await prepareExport(projectDir, paths, options);
+    await renderExport(ctx);
+    return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
+  } finally {
+    // The target's graph redirects belong to this export only.
+    setModuleGraphRedirects(null);
+  }
 }

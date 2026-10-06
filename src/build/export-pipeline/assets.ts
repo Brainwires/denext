@@ -23,7 +23,7 @@ import {
   compatModuleList,
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
-import { exportBuildDir, type ExportContext } from "./context.ts";
+import { exportBuildDir, type ExportContext, exportImportMap } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /**
@@ -88,7 +88,13 @@ function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
  */
 function exportCompatOptions(ctx: ExportContext) {
   return {
-    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+    ...compatBuildOptions(
+      ctx.projectDir,
+      ctx.paths,
+      ctx.css?.importMap,
+      ctx.clientOut,
+      ctx.platform,
+    ),
     outDir: exportBuildDir(ctx.paths),
   };
 }
@@ -124,7 +130,7 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: ctx.css?.importMap,
+      importMap: exportImportMap(ctx),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
@@ -159,7 +165,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: ctx.css?.importMap,
+      importMap: exportImportMap(ctx),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
