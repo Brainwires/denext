@@ -36,8 +36,10 @@ import {
   isOtaManifest,
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
+  OTA_PLATFORM_HEADER,
   type OtaManifest,
   otaManifestVersion,
+  otaPlatformMismatch,
   otaSignaturePayload,
   sha256Hex,
 } from "../mobile/ota-manifest.ts";
@@ -69,6 +71,9 @@ const DEFAULT_APP_ID = "denext-desktop";
  * - `signature`: the `signature` does not verify against the configured `publicKey`;
  * - `downgrade`: `manifest.sequence` is `<=` the highest accepted, or absent after a sequenced
  *   manifest was accepted;
+ * - `platform_mismatch`: the manifest names another target (`denext export --platform`) than this
+ *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), or its
+ *   `platform` disagrees with the export's signed stamp file;
  * - `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;
  * - `rejected`: the version was rolled back after failing to boot; refused until
  *   {@linkcode desktopUpdateReset}.
@@ -80,6 +85,7 @@ export type DesktopUpdateErrorCode =
   | "unsigned"
   | "signature"
   | "downgrade"
+  | "platform_mismatch"
   | "not_staged"
   | "rejected";
 
@@ -126,6 +132,13 @@ export interface DesktopUpdaterConfig {
   readonly appId?: string;
   /** The manifest / file request timeout in ms. Default 30 000. */
   readonly timeoutMs?: number;
+  /**
+   * This app's target, which a manifest naming another one is refused against (code
+   * `platform_mismatch`) and which is sent as the `x-denext-ota-platform` header (a
+   * `createOtaHandler({ platforms })` feed serves each target its own export). Default: the OS
+   * the app runs on (`macos`, `windows`, `linux`).
+   */
+  readonly platform?: "macos" | "windows" | "linux";
 }
 
 /** The atomic "current" pointer (`current.json`) naming the active overlay version. */
@@ -468,11 +481,29 @@ async function fetchWith<T>(
   }
 }
 
+/** This app's target: `config.platform`, else the OS it runs on. */
+function desktopTarget(config: DesktopUpdaterConfig): string {
+  if (config.platform) return config.platform;
+  return Deno.build.os === "darwin" ? "macos" : Deno.build.os === "windows" ? "windows" : "linux";
+}
+
+/** The headers of every feed request: the app's target, for a per-target feed. */
+function feedHeaders(config: DesktopUpdaterConfig): Record<string, string> {
+  return { [OTA_PLATFORM_HEADER]: desktopTarget(config) };
+}
+
+/** Refuse a manifest built for another target (`platform_mismatch`). */
+async function assertPlatform(manifest: OtaManifest, config: DesktopUpdaterConfig): Promise<void> {
+  const mismatch = await otaPlatformMismatch(manifest, desktopTarget(config));
+  if (mismatch !== null) throw new DesktopUpdateError("platform_mismatch", mismatch);
+}
+
 /** Fetch and validate `${feedUrl}/_denext/ota.json`. */
 async function fetchManifest(config: DesktopUpdaterConfig): Promise<OtaManifest> {
   const base = config.feedUrl.replace(/\/+$/, "");
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const body = await fetchWith(`${base}/${OTA_MANIFEST_PATH}`, {}, timeoutMs, async (r) => {
+  const url = `${base}/${OTA_MANIFEST_PATH}`;
+  const body = await fetchWith(url, feedHeaders(config), timeoutMs, async (r) => {
     try {
       return await r.json() as unknown;
     } catch {
@@ -492,7 +523,12 @@ function fetchFile(
   const segments = safeSegments(relPath) ?? [relPath];
   const url = `${base}/${segments.map(encodeURIComponent).join("/")}`;
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return fetchWith(url, {}, timeoutMs, async (r) => new Uint8Array(await r.arrayBuffer()));
+  return fetchWith(
+    url,
+    feedHeaders(config),
+    timeoutMs,
+    async (r) => new Uint8Array(await r.arrayBuffer()),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -532,6 +568,7 @@ export async function checkForDesktopUpdate(
   const dir = dataDirOf(config);
   const manifest = await fetchManifest(config);
   await assertVerified(manifest, config.publicKey); // integrity + signature, verify-before-trust
+  await assertPlatform(manifest, config); // the target, which the signed stamp file covers
 
   const pointer = await readPointer(dir);
   if (pointer && pointer.version === manifest.version) return { available: false };
@@ -575,6 +612,7 @@ export async function prepareDesktopUpdate(
   const dir = dataDirOf(config);
   const manifest = await fetchManifest(config);
   await assertVerified(manifest, config.publicKey); // re-verify: integrity + signature
+  await assertPlatform(manifest, config);
   assertNotDowngrade(manifest, await readState(dir));
 
   const staging = stagingDir(dir, manifest.version);

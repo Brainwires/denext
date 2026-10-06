@@ -55,6 +55,10 @@ export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 // `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
 // the doc-lint entry set. `MdxBuildOptions` rides along — the `mdxOptions` fields are public.
 export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.ts";
+// `Platform` is re-exported for the JSR docs only: `PlatformResolution` (an option type here)
+// names it, and a public type may not reference a private one.
+// fallow-ignore-next-line unused-type
+export type { Platform, PlatformResolution } from "./platform-extensions.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {

@@ -1415,6 +1415,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OtaHandlerOptions` — Options for createOtaHandler.
 - `interface OtaRollout` — A staged rollout of a candidate release to a share of a channel's devices.
 - `otaRolloutBucket(channel: string, candidateVersion: string, installId: string): Promise<number>` — The stable rollout bucket of one install for one candidate release: the first four bytes of SHA-256(denext-ota-rollout\n<channel>\n<candidateVersion>\n<installId>) as a big-endian uint32, modulo 10 000. A device is in a rollout of percent when the bucket is below percent * 100. Salting with the candidate's manifest version draws a fresh cohort for each release, while raising the percentage for the same candidate only ever adds devices.
+- `type OtaTarget = web | ios | android | macos | windows | linux` — A target a per-platform OTA server keeps an export for.
 - `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently (replicas of one build share its build id).
 - `interface PageContext` — The composed page tree plus its resolved metadata/config, before rendering.
 - `interface PageMatch` — A page route matched against a pathname, with its extracted params.
@@ -1427,6 +1428,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
 - `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
+- `interface PlatformExtensionsConfig` — The object form of DenextConfig.platformExtensions.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
 - `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir.
 - `interface PluginContext` — The seams a plugin's DenextPlugin.setup may extend.
@@ -1450,7 +1452,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
 - `interface RateLimitWindow` — One key's open failure window.
-- `interface ReactNativeConfig`
+- `interface ReactNativeConfig` — React Native / Expo web build options (DenextConfig.reactNative).
 - `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
 - `readonlyHeaders(source: Headers): Headers` — A live, read-only view of source whose mutators throw (Next.js ReadonlyHeaders).
 - `redirect(url: Href | parenthesized, typeOrStatus?: RedirectType | number): never` — Throw to redirect to url from a component or action.
@@ -2034,7 +2036,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopBooted(config: DesktopUpdaterConfig): Promise<void>` — Confirm that the active overlay booted. Call it once the app has served and rendered (the desktop runtime calls it behind a short delay after Deno.serve is up). It flips a PENDING pointer to confirmed and clears the watchdog marker, so a crash BEFORE this call leaves the version pending and the next resolveDesktopUiDir rolls it back. Best effort: it never throws.
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
 - `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
-- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | not_staged | rejected` — The code on a DesktopUpdateError:
+- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | not_staged | rejected` — The code on a DesktopUpdateError:
 - `interface DesktopUpdatePrepared` — The result of prepareDesktopUpdate.
 - `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
 - `desktopUpdateReset(config: DesktopUpdaterConfig): Promise<void>` — Return to the bundled export: delete every overlay version, every staging dir, and all state (pointer, sequence, rejected, marker). A no-op when nothing is installed.
@@ -2274,7 +2276,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch` — The code of a native DenextOta refusal, carried on an error result:
 - `otaInstallId(): string` — This install's stable OTA id: a random base64url string made on first use and kept in localStorage (denext:ota-install-id), so a channels server (createOtaHandler({ channels })) puts the device in the same staged-rollout bucket on every check. It identifies nothing but the install; clearing the app's data makes a new one. Where storage is unavailable it lasts for the page's lifetime.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.

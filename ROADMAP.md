@@ -68,6 +68,10 @@
   `Linking.sendIntent()`, `ActionSheetIOS.dismissActionSheet()`, and the lists'
   `renderScrollComponent`, `automaticallyAdjustKeyboardInsets` and LegendList `snapToIndices`
   (`lists.known-gaps.json`).
+- **A build-time `platform` constant** (`import { platform } from "denext/platform"`, folded to
+  the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
+  export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
+  runtime branch; the constant needs a fold pass on every build path.
 - **Importer-sensitive aliases in config,** so uniwind works without the `denext patch` recipe.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.

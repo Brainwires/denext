@@ -3,7 +3,7 @@
 // the target's variant (`label.ios.ts`) in a platform export, drop the others, and fail with a
 // message naming the variants when the target has no file.
 
-import { assert, assertRejects, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
@@ -81,7 +81,12 @@ for (const compat of [false, true]) {
     Deno.test(`SPA ${path} export --platform ${platform} bundles ${want} only`, async () => {
       const dir = await project(spa(compat));
       try {
-        const { js } = await exported((await staticExport(dir, { platform })).outDir);
+        const out = (await staticExport(dir, { platform })).outDir;
+        const { js } = await exported(out);
+        const stamp = await Deno.readTextFile(join(out, "_denext", "platform.txt")).catch(() =>
+          null
+        );
+        assertEquals(stamp, platform === "web" ? null : platform, "the SPA export's stamp");
         assertStringIncludes(js, want);
         for (const other of LABELS.filter((l) => l !== want)) {
           assert(!js.includes(other), `${other} bundled for ${platform}`);

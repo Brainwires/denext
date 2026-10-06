@@ -34,7 +34,8 @@
 // native sources and edits the Xcode project, storyboard, Info.plist, AndroidManifest and
 // MainActivity as text.
 
-import { resolve } from "@std/path";
+import { parsePlatform, scanPlatformGroups } from "../../build/platform-extensions.ts";
+import { relative, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { writeOtaManifest } from "../../build/ota-manifest.ts";
 import type { OtaManifest } from "../../mobile/ota-manifest.ts";
@@ -102,6 +103,7 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
         sequence: m.sequence ?? null,
         minNative: m.minNative ?? null,
         nativeFingerprint: m.nativeFingerprint ?? null,
+        platform: m.platform ?? null,
         signed: m.signature !== undefined,
       }),
     );
@@ -111,6 +113,7 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
     (m.sequence !== undefined ? `, sequence ${m.sequence}` : "") +
     (m.minNative !== undefined ? `, min native ${m.minNative}` : "") +
     (m.nativeFingerprint !== undefined ? `, native ${m.nativeFingerprint.slice(0, 12)}` : "") +
+    (m.platform !== undefined ? `, platform ${m.platform}` : "") +
     (m.signature ? ", signed" : "");
   console.log(
     `  wrote ${dirArg}/_denext/ota.json — version ${m.version} (${m.files.length} files${extra})`,
@@ -148,6 +151,36 @@ async function nativeFingerprintFlag(ctx: CommandContext): Promise<string | unde
   }
 }
 
+/** `--platform <target>` as manifest metadata; exits on an unknown target. */
+function platformFlag(ctx: CommandContext): { platform?: string } {
+  const value = ctx.flags.platform;
+  if (value === undefined) return {};
+  try {
+    return { platform: parsePlatform(typeof value === "string" ? value : "", "--platform") };
+  } catch (err) {
+    fail(`denext ota manifest: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Warn when a manifest names no target (a `web` export, which every shell accepts) for an app
+ * whose platform files differ between targets: each shell then runs the web files instead of
+ * its own. The project is `--dir`, else the current directory.
+ */
+async function warnUnstampedExport(ctx: CommandContext): Promise<void> {
+  const cwd = ctx.global.cwd ?? ".";
+  const project = resolve(cwd, typeof ctx.flags.dir === "string" ? ctx.flags.dir : ".");
+  const groups = await scanPlatformGroups(project).catch(() => []);
+  const specific = groups.filter((g) => g.variants.some((v) => v.suffix !== "web"));
+  if (specific.length === 0) return;
+  console.error(
+    `  warning: this export names no target, so every shell accepts it, but ${specific.length} ` +
+      `module(s) have platform files (${relative(project, specific[0].stem)}, …): a shell ` +
+      "would run the web files. Serve each shell its own export (`denext export --platform " +
+      "ios`, then `denext ota manifest`), e.g. with `createOtaHandler({ platforms })`.",
+  );
+}
+
 /** `denext ota manifest <dir>`. */
 async function otaManifest(ctx: CommandContext): Promise<void> {
   const dirArg = ctx.positionals[1];
@@ -163,6 +196,7 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
     ...(typeof ctx.flags.notes === "string" ? { notes: ctx.flags.notes } : {}),
     ...(typeof ctx.flags.sequence === "number" ? { sequence: ctx.flags.sequence } : {}),
     ...(typeof ctx.flags["min-native"] === "number" ? { minNative: ctx.flags["min-native"] } : {}),
+    ...platformFlag(ctx),
   };
   const nativeFingerprint = await nativeFingerprintFlag(ctx);
   const sign = ctx.flags.sign;
@@ -171,16 +205,13 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
     const signingKey = await loadOtaSigningKey(
       typeof sign === "string" ? resolve(cwd, sign) : undefined,
     );
-    printManifest(
-      ctx,
+    const manifest = await writeOtaManifest(
       dir,
-      dirArg,
-      await writeOtaManifest(
-        dir,
-        nativeFingerprint === undefined ? meta : { ...meta, nativeFingerprint },
-        signingKey,
-      ),
+      nativeFingerprint === undefined ? meta : { ...meta, nativeFingerprint },
+      signingKey,
     );
+    printManifest(ctx, dir, dirArg, manifest);
+    if (manifest.platform === undefined) await warnUnstampedExport(ctx);
   } catch (err) {
     fail(`denext ota manifest: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -274,6 +305,10 @@ export const otaCommand: CommandSpec = {
     "                              Also stamp the native fingerprint of the Capacitor project at\n" +
     "                              --dir; a binary embedding another one (`denext mobile\n" +
     "                              fingerprint --write`) refuses it (code native_mismatch)\n" +
+    "  denext ota manifest out --platform ios\n" +
+    "                              Name the target the export was built for (`denext export\n" +
+    "                              --platform ios` stamps it already); a shell of another target\n" +
+    "                              refuses it (code platform_mismatch)\n" +
     "  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n" +
     OTA_CHANNEL_USAGE +
     "\n" +
@@ -333,6 +368,13 @@ export const otaCommand: CommandSpec = {
       valueName: "<fp|auto>",
       help:
         "Stamp the native fingerprint this UI was built for (auto: compute it for --dir); binaries embedding another refuse it",
+    },
+    {
+      name: "platform",
+      type: "string",
+      valueName: "<target>",
+      help:
+        "manifest: the target the export was built for (ios, android, macos, windows, linux, web); shells of another target refuse it",
     },
     {
       name: "dir",

@@ -21,8 +21,14 @@
  * @module
  */
 
-import { shellPlugin } from "./bridge.ts";
-import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manifest.ts";
+import { runtimePlatform, shellPlugin } from "./bridge.ts";
+import {
+  isOtaManifest,
+  OTA_MANIFEST_PATH,
+  OTA_PLATFORM_HEADER,
+  type OtaManifest,
+  otaPlatformMismatch,
+} from "./ota-manifest.ts";
 
 /**
  * The `code` of a native `DenextOta` refusal, carried on an `error` result:
@@ -43,6 +49,10 @@ import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manife
  * - `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary
  *   embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.
  *   Checked only when both carry one.
+ * - `platform_mismatch`: the manifest names another target than this shell's (`ios` /
+ *   `android`): it is that platform's export (`denext export --platform`), with that platform's
+ *   files. A manifest that names none fits every shell. Checked here, before the native side
+ *   sees it; the target is covered by the signature through the export's stamp file.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
  * `native_mismatch`, and
@@ -60,7 +70,8 @@ export type OtaErrorCode =
   | "insecure"
   | "downgrade"
   | "native_too_old"
-  | "native_mismatch";
+  | "native_mismatch"
+  | "platform_mismatch";
 
 // An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
 // which would pin this module into every bundle that imports `denext/mobile`.
@@ -76,6 +87,7 @@ const OTA_ERROR_CODES: readonly string[] = [
   "downgrade",
   "native_too_old",
   "native_mismatch",
+  "platform_mismatch",
 ] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
@@ -155,6 +167,13 @@ export interface OtaCheckOptions {
    * server ignores it). Omitted without `channel`: no header.
    */
   installId?: string;
+  /**
+   * This shell's target, which a manifest naming another one is refused against (code
+   * `platform_mismatch`) and which is sent as the `x-denext-ota-platform` header (a
+   * `createOtaHandler({ platforms })` server serves each target its own export). Default:
+   * `runtimePlatform()` in the iOS / Android shell.
+   */
+  platform?: "ios" | "android";
   /**
    * Called when the server's UI needs a newer app binary: a check or prepare that ends in an
    * `error` result with code `native_too_old` (the manifest's `minNative` is above this build) or
@@ -338,11 +357,20 @@ export function otaInstallId(): string {
 function otaRequestHeaders(options: OtaCheckOptions): Record<string, string> {
   const headers: Record<string, string> = { ...options.headers };
   if (options.channel !== undefined) headers["x-denext-ota-channel"] = options.channel;
+  const platform = shellTarget(options);
+  if (platform !== undefined) headers[OTA_PLATFORM_HEADER] = platform;
   const installId = options.installId ?? (options.channel !== undefined ? "auto" : undefined);
   if (installId !== undefined) {
     headers["x-denext-ota-install-id"] = installId === "auto" ? otaInstallId() : installId;
   }
   return headers;
+}
+
+/** The shell's target: `options.platform`, else the shell's own (undefined off iOS / Android). */
+function shellTarget(options: OtaCheckOptions): "ios" | "android" | undefined {
+  if (options.platform !== undefined) return options.platform;
+  const runtime = runtimePlatform();
+  return runtime === "ios" || runtime === "android" ? runtime : undefined;
 }
 
 /** Fire `onNativeUpdateRequired` for a `native_too_old` / `native_mismatch` result; return it. */
@@ -412,12 +440,15 @@ async function newerManifest(
   options: OtaCheckOptions,
 ): Promise<
   | { readonly kind: "current" }
-  | { readonly kind: "error"; readonly reason: string }
+  | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode }
   | { readonly kind: "newer"; readonly manifest: OtaManifest; readonly baseUrl: string }
 > {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const manifest = await fetchManifest(baseUrl, options);
   if (typeof manifest === "string") return { kind: "error", reason: manifest };
+  const target = shellTarget(options);
+  const mismatch = target === undefined ? null : await otaPlatformMismatch(manifest, target);
+  if (mismatch !== null) return { kind: "error", reason: mismatch, code: "platform_mismatch" };
   let status: Partial<OtaStatus>;
   try {
     status = await plugin.status();

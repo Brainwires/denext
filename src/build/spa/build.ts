@@ -10,7 +10,7 @@ import { reactNativeRootStyle } from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
-import { writeOtaManifest } from "../ota-manifest.ts";
+import { writeOtaManifest, writePlatformStamp } from "../ota-manifest.ts";
 import { loadOtaSigningKey } from "../ota-signing.ts";
 import { stashSourceMapsIfHidden } from "../hidden-sourcemaps.ts";
 import {
@@ -141,6 +141,8 @@ export async function exportSpa(
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
     // `desktop.preload`: one classic script the desktop runtime inlines first into every page.
     await writeDesktopPreload(paths, staging);
+    // A platform export names its target, before the OTA manifest hashes the tree.
+    if (platform !== "web") await writePlatformStamp(staging, platform);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
     await stashSourceMapsIfHidden(staging, paths.outDir);
     // Last, once every file of the export is in place: the OTA manifest hashes the final

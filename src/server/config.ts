@@ -419,7 +419,6 @@ export interface TasksConfig {
   historyMaxRuns?: number;
 }
 
-/** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
 /** The object form of {@link DenextConfig.platformExtensions}. */
 export interface PlatformExtensionsConfig {
   /**
@@ -431,6 +430,7 @@ export interface PlatformExtensionsConfig {
   native?: boolean;
 }
 
+/** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
 export interface ReactNativeConfig {
   /**
    * Inject Expo web's root style into the SPA shell's `<head>`:

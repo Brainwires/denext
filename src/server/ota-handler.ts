@@ -9,6 +9,7 @@ import {
   isOtaManifest,
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
+  OTA_PLATFORM_HEADER,
   type OtaManifest,
 } from "../mobile/ota-manifest.ts";
 import {
@@ -23,10 +24,19 @@ import {
 /** Options for {@linkcode createOtaHandler}. */
 export interface OtaHandlerOptions {
   /**
-   * The export directory holding `_denext/ota.json` (e.g. `"out"`). Give exactly one of `dir`
-   * and `channels`.
+   * The export directory holding `_denext/ota.json` (e.g. `"out"`). Give exactly one of `dir`,
+   * `channels` and `platforms`.
    */
   dir?: string;
+  /**
+   * Serve one export per target instead of one `dir` (an app with platform files,
+   * https://denext.dev/docs/platform-files): the export directory of each target, e.g.
+   * `{ ios: "out-ios", android: "out-android" }` (each from `denext export --platform <target>`).
+   * A request is served the export its `x-denext-ota-platform` header names — `checkForUiUpdate`
+   * and the desktop updater send their target on the manifest request and every download — and
+   * one without the header the `web` export, if given. A target with no export is not served.
+   */
+  platforms?: Readonly<Partial<Record<OtaTarget, string>>>;
   /**
    * Serve per-channel releases with staged rollouts instead of one `dir`: the path of a channels
    * file (`ota-channels.json`, re-read when its mtime changes, release paths relative to it;
@@ -63,6 +73,9 @@ export interface OtaHandlerOptions {
   cors?: true | string | readonly string[];
 }
 
+/** A target a per-platform OTA server keeps an export for. */
+export type OtaTarget = "web" | "ios" | "android" | "macos" | "windows" | "linux";
+
 /** The webview origins `cors: true` allows. */
 const CAPACITOR_ORIGINS: readonly string[] = [
   "capacitor://localhost",
@@ -96,6 +109,21 @@ interface Cached {
 interface Release {
   readonly dir: string;
   load(): Promise<Cached | null>;
+}
+
+/** Per-target mode: the release of the export the request's target header names. */
+function platformResolver(
+  platforms: Readonly<Partial<Record<OtaTarget, string>>>,
+): (request: Request) => Promise<Served | null> {
+  const releases = new Map<string, Release>();
+  for (const [target, dir] of Object.entries(platforms)) {
+    if (typeof dir === "string") releases.set(target, releaseAt(dir));
+  }
+  return async (request) => {
+    const release = releases.get(request.headers.get(OTA_PLATFORM_HEADER) ?? "web");
+    const current = await release?.load();
+    return release && current ? { release, current } : null;
+  };
 }
 
 /** A release loader for `dir`: the manifest is re-read when its mtime changes. */
@@ -138,9 +166,11 @@ interface Served {
 function releaseResolver(options: OtaHandlerOptions): (request: Request) => Promise<Served | null> {
   const hasDir = typeof options.dir === "string";
   const hasChannels = options.channels !== undefined;
-  if (hasDir === hasChannels) {
-    throw new TypeError("createOtaHandler: pass exactly one of `dir` and `channels`");
+  const modes = [hasDir, hasChannels, options.platforms !== undefined].filter(Boolean).length;
+  if (modes !== 1) {
+    throw new TypeError("createOtaHandler: pass exactly one of `dir`, `channels` and `platforms`");
   }
+  if (options.platforms) return platformResolver(options.platforms);
   if (hasDir) {
     const release = releaseAt(options.dir!);
     return async () => {
@@ -226,10 +256,9 @@ function corsHeaders(request: Request, origins: ReadonlySet<string>): Record<str
   return { "access-control-allow-origin": origin, vary: "Origin" };
 }
 
-/** `headers` with the channel headers added to its `vary` (channel mode only). */
-function withChannelVary(headers: Record<string, string>): Record<string, string> {
-  const channelVary = `${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}`;
-  return { ...headers, vary: headers.vary ? `${headers.vary}, ${channelVary}` : channelVary };
+/** `headers` with `names` added to its `vary` (the request headers that pick the release). */
+function withVary(headers: Record<string, string>, names: string): Record<string, string> {
+  return { ...headers, vary: headers.vary ? `${headers.vary}, ${names}` : names };
 }
 
 /** The `204` answer to an allowed preflight. */
@@ -240,7 +269,7 @@ function preflight(cors: Record<string, string>): Response {
       ...cors,
       "access-control-allow-methods": "GET, HEAD, OPTIONS",
       "access-control-allow-headers":
-        `authorization, ${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}`,
+        `authorization, ${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}, ${OTA_PLATFORM_HEADER}`,
       "access-control-max-age": "600",
     },
   });
@@ -289,7 +318,12 @@ export function createOtaHandler(
 ): (request: Request) => Promise<Response | null> {
   const base = (options.basePath ?? "").replace(/\/+$/, "");
   const resolveRelease = releaseResolver(options);
-  const channelMode = options.channels !== undefined;
+  // The request headers that pick the release (channel or target mode), for `vary`.
+  const vary = options.channels !== undefined
+    ? `${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}`
+    : options.platforms !== undefined
+    ? OTA_PLATFORM_HEADER
+    : null;
 
   const origins = allowedOrigins(options.cors);
 
@@ -335,7 +369,7 @@ export function createOtaHandler(
       return "access-control-allow-origin" in allowed ? preflight(allowed) : null;
     }
     if (request.method !== "GET" && request.method !== "HEAD") return null;
-    const cors = channelMode ? withChannelVary(allowed) : allowed;
+    const cors = vary ? withVary(allowed, vary) : allowed;
     const served = await resolveRelease(request);
     if (!served) return null;
     const head = request.method === "HEAD";

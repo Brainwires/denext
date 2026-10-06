@@ -3,7 +3,7 @@
 // Deno's loader for the server render), next-compat (esbuild client + SSR bundles) and SPA mode
 // (both bundlers) — and leaves the other targets' variants out of the export.
 
-import { assert, assertRejects, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 import { build } from "../src/build/build.ts";
@@ -64,6 +64,10 @@ async function exportFor(platform: Platform, files: Record<string, string>) {
     dir,
     html: await Deno.readTextFile(join(result.outDir, "index.html")),
     js: await clientJs(result.outDir),
+    // A platform export names its target for OTA (`_denext/platform.txt`); web carries none.
+    stamp: await Deno.readTextFile(join(result.outDir, "_denext", "platform.txt")).catch(() =>
+      null
+    ),
   };
 }
 
@@ -94,6 +98,7 @@ for (
     const got = await exportFor(platform, FLIGHT_APP);
     try {
       assertOnly(got, want, LABELS);
+      assertEquals(got.stamp, platform === "web" ? null : platform);
     } finally {
       await Deno.remove(got.dir, { recursive: true });
     }

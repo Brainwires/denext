@@ -87,6 +87,29 @@ target's transforms are cached apart. A next-compat app's server render, a bundl
 and the bundled dev path (`DENEXT_DEV_UNBUNDLED=0`) stay `web` in dev, as does the Flight
 boundary: give a module's variants the same `"use client"` directive as its plain file.
 
+## Over-the-air updates
+
+A platform export carries `_denext/platform.txt` (its target's name), so its OTA manifest names
+the target (`"platform": "ios"`). The manifest's version, and so its signature, covers that file.
+`checkForUiUpdate` and the desktop updater refuse a manifest built for another target (code
+`platform_mismatch`), and send their own target (`x-denext-ota-platform`) with the manifest
+request and every download, so one server can keep an export per target:
+
+```ts
+import { createOtaHandler } from "denext/server";
+
+const ota = createOtaHandler({
+  platforms: { ios: "releases/ios", android: "releases/android", web: "releases/web" },
+  basePath: "/mobile-ui",
+});
+```
+
+A request without the header gets the `web` export. A manifest that names no target (a `web`
+export) is taken by every shell, which is right for an app with no platform files; for one with
+them, `denext ota manifest` warns and each shell should get its own export
+(`denext export --platform ios`, then `denext ota manifest out`; `--platform` names the target of
+an export that does not carry the file yet).
+
 ## When a target has no file
 
 A module that exists only as some targets' variants fails the build of a target with no match:

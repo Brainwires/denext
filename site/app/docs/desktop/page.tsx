@@ -1181,6 +1181,13 @@ try {
         default Unix time does that).
       </p>
       <p>
+        <strong>The export is for this OS.</strong> A manifest that names another target (
+        <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>) is refused
+        (<code>platform_mismatch</code>); the updater sends its OS (or the config's{" "}
+        <code>platform</code>) as <code>x-denext-ota-platform</code>, so a{" "}
+        <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
+      </p>
+      <p>
         <strong>Rollback.</strong> An applied version starts{" "}
         <em>pending</em>. The next launch serves it once and arms a boot marker; the script{" "}
         <code>runDesktop</code>{" "}

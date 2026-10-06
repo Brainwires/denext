@@ -52,7 +52,7 @@ export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
-export { createOtaHandler, type OtaHandlerOptions } from "./ota-handler.ts";
+export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
   type OtaChannel,
@@ -277,6 +277,7 @@ export {
   type MdxConfig,
   type MobileConfig,
   type MobileFlavorConfig,
+  type PlatformExtensionsConfig,
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,

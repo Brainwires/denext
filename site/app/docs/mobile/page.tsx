@@ -2774,6 +2774,11 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <code>native_mismatch</code>: the manifest's <code>nativeFingerprint</code>{" "}
           differs from the one the app binary embeds: the UI was built for another native layer.
         </li>
+        <li>
+          <code>platform_mismatch</code>: the manifest names another platform's export (
+          <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
+          by <code>checkForUiUpdate</code> before the native side sees it.
+        </li>
       </ul>
       <p>
         <strong>Rollback rules.</strong>
@@ -2830,6 +2835,15 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <code>denext/desktop/updater</code>: see{" "}
         <a href="/docs/desktop#desktop-updates">Desktop UI self-updates</a>; it also replaces the
         whole signed app with <a href="/docs/desktop#desktop-app-updates">full-app self-updates</a>.
+      </p>
+
+      <p>
+        An app with <a href="/docs/platform-files">platform-specific files</a>{" "}
+        ships one export per platform: <code>denext export --platform ios</code>{" "}
+        stamps the target into the export, the manifest names it, a shell of the other platform
+        refuses it (code <code>platform_mismatch</code>), and{" "}
+        <code>{"createOtaHandler({ platforms: { ios, android } })"}</code>{" "}
+        serves each shell its own.
       </p>
 
       <h3 id="ota-channels">Channels and staged rollouts</h3>

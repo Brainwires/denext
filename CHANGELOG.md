@@ -74,6 +74,13 @@ Each item is described in full under Changed, Fixed or Security below.
   `server.url`) is pinned to that target by a cookie, and the desktop dev window names its OS on
   every proxied request: the page's modules and the native App Router's server render resolve
   that target's files, cached apart per target. A browser with no hint stays `web`.
+- **OTA manifests name their target.** A platform export carries `_denext/platform.txt`, so its
+  manifest records `platform` (the signed version covers the file); `denext ota manifest
+  --platform <target>` names one by hand. `checkForUiUpdate` and the desktop updater refuse
+  another target's UI (code `platform_mismatch`) and send `x-denext-ota-platform`, and
+  `createOtaHandler({ platforms })` serves each target its own export. `denext ota manifest`
+  warns when an app with platform files publishes an export that names no target. `denext/server`
+  exports the `OtaTarget` and `PlatformExtensionsConfig` types.
 - **`onAppCapabilitiesChanged(handler)` from `denext/desktop/app`.** The runtime's
   `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
   when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the

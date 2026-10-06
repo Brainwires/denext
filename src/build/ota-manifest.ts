@@ -11,6 +11,7 @@ import {
   isOtaManifestPath,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
+  OTA_PLATFORM_PATH,
   type OtaManifest,
   type OtaManifestFile,
   type OtaManifestMeta,
@@ -46,6 +47,10 @@ export async function collectOtaManifest(
   dir: string,
   meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
+  // A platform export's stamp names its target (`denext export --platform`): the manifest says
+  // so too, unless the caller named one (which must then agree — `makeOtaManifest` checks).
+  const stamped = await readPlatformStamp(dir);
+  if (stamped !== null && meta.platform === undefined) meta = { ...meta, platform: stamped };
   const paths = (await listFiles(dir, "")).filter((p) => !isExcludedFromOtaManifest(p));
   const bad = paths.find((p) => !isOtaManifestPath(p));
   if (bad !== undefined) {
@@ -59,6 +64,38 @@ export async function collectOtaManifest(
     files.push({ path, sha256: await sha256Hex(bytes), size: bytes.byteLength });
   }
   return await makeOtaManifest(files, meta);
+}
+
+/** The export's {@linkcode OTA_PLATFORM_PATH} stamp (its target), or null without one. */
+async function readPlatformStamp(dir: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(join(dir, ...OTA_PLATFORM_PATH.split("/")));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write `dir`'s {@linkcode OTA_PLATFORM_PATH} stamp: the target a platform export was built for.
+ * `denext export --platform` writes it; the OTA manifest then names that target, and the signed
+ * version covers the stamp.
+ *
+ * @param dir The export (web root).
+ * @param platform The target.
+ * @throws When the export already carries another target's stamp.
+ */
+export async function writePlatformStamp(dir: string, platform: string): Promise<void> {
+  const current = await readPlatformStamp(dir);
+  if (current === platform) return;
+  if (current !== null) {
+    throw new Error(
+      `${dir} is the ${current} export (${OTA_PLATFORM_PATH}); export again with ` +
+        `\`denext export --platform ${platform}\` instead of relabelling it`,
+    );
+  }
+  const target = join(dir, ...OTA_PLATFORM_PATH.split("/"));
+  await Deno.mkdir(dirname(target), { recursive: true });
+  await Deno.writeTextFile(target, platform);
 }
 
 /** The default signed `sequence`: the current Unix time in whole seconds. */
@@ -98,6 +135,9 @@ export async function writeOtaManifest(
   const stamped = signingKey && meta.sequence === undefined
     ? { ...meta, sequence: defaultOtaSequence() }
     : meta;
+  // `denext ota manifest --platform` on an export without a stamp: stamp it first, so the
+  // version covers the target.
+  if (meta.platform !== undefined) await writePlatformStamp(dir, meta.platform);
   const collected = await collectOtaManifest(dir, stamped);
   const manifest = signingKey ? await signOtaManifest(collected, signingKey) : collected;
   const target = join(dir, ...OTA_MANIFEST_PATH.split("/"));

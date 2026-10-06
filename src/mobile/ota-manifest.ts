@@ -28,6 +28,13 @@
  * format), so neither the files nor the metadata can be swapped without the private key. The native plugin recomputes the version from the file
  * list and verifies the signature; the web side only forwards it.
  *
+ * The optional `platform` names the target the export was built for (`denext export --platform
+ * ios`, see https://denext.dev/docs/platform-files): `checkForUiUpdate` and the desktop updater
+ * refuse a manifest built for another target (code `platform_mismatch`). A platform export
+ * carries the stamp file {@linkcode OTA_PLATFORM_PATH} (its content is the target's name), which
+ * the file list — and so the version and the signature — covers; the field must agree with it.
+ * A manifest without one (a `web` export) is accepted by every shell.
+ *
  * File paths may not contain control characters (U+0000–U+001F, U+007F): a path holding a tab or
  * a newline could otherwise forge the `"<path>\t<sha256>\n"` lines the version hashes.
  *
@@ -39,6 +46,27 @@
 
 /** Where the manifest lives, relative to the web root it describes. */
 export const OTA_MANIFEST_PATH = "_denext/ota.json";
+
+/**
+ * The stamp a platform export carries (`denext export --platform <target>`), relative to the web
+ * root: a file holding the target's name (`ios`). Listed like any file, so the signed version
+ * covers it.
+ */
+export const OTA_PLATFORM_PATH = "_denext/platform.txt";
+
+/**
+ * The header a shell sends with its manifest request and file downloads to name its target, so a
+ * server with one export per target (`createOtaHandler({ platforms })`) serves its own.
+ */
+export const OTA_PLATFORM_HEADER = "x-denext-ota-platform";
+
+/** The targets a manifest's `platform` may name (`denext export --platform`). */
+const OTA_PLATFORMS: readonly string[] = ["web", "ios", "android", "macos", "windows", "linux"];
+
+/** Whether `value` names an export target (`web`, `ios`, `android`, `macos`, `windows`, `linux`). */
+function isOtaPlatform(value: unknown): value is string {
+  return typeof value === "string" && OTA_PLATFORMS.includes(value);
+}
 
 /** One file of an OTA UI. */
 export interface OtaManifestFile {
@@ -88,6 +116,13 @@ export interface OtaManifest {
    */
   readonly nativeFingerprint?: string;
   /**
+   * The target the export was built for (`ios`, `android`, `macos`, `windows`, `linux`, or `web`
+   * when stamped): a shell of another target refuses it (code `platform_mismatch`). Must match
+   * the export's {@linkcode OTA_PLATFORM_PATH} stamp, which the version covers. Absent: an
+   * unstamped (`web`) export every shell accepts.
+   */
+  readonly platform?: string;
+  /**
    * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
    * {@linkcode otaSignaturePayload} (`denext ota manifest --sign <keyfile>`). An app whose binary
    * embeds a public key refuses a manifest without a valid one.
@@ -109,6 +144,11 @@ export interface OtaManifestMeta {
   readonly minNative?: number;
   /** See {@linkcode OtaManifest.nativeFingerprint}. Omitted from the manifest unless a string. */
   readonly nativeFingerprint?: string;
+  /**
+   * See {@linkcode OtaManifest.platform}. The files must include the {@linkcode OTA_PLATFORM_PATH}
+   * stamp holding the same name.
+   */
+  readonly platform?: string;
 }
 
 /** The longest `notes` a manifest may carry, in UTF-16 code units. */
@@ -244,6 +284,22 @@ export async function makeOtaManifest(
   files: ReadonlyArray<OtaManifestFile>,
   meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
+  assertOtaMeta(meta);
+  if (meta.platform !== undefined) await assertPlatformStamp(files, meta.platform);
+  const bad = files.find((f) => !isOtaManifestPath(f.path));
+  if (bad) {
+    throw new RangeError(
+      `${
+        JSON.stringify(bad.path)
+      } cannot be listed in an OTA manifest (empty, or a control character)`,
+    );
+  }
+  const sorted = [...files].sort(byPath);
+  return { version: await otaManifestVersion(sorted), ...metaFields(meta), files: sorted };
+}
+
+/** Throw when `meta`'s notes are too long, or a number or the fingerprint is malformed. */
+function assertOtaMeta(meta: OtaManifestMeta): void {
   if (typeof meta.notes === "string" && meta.notes.length > OTA_NOTES_MAX_LENGTH) {
     throw new RangeError(
       `the release notes are ${meta.notes.length} characters; the limit is ${OTA_NOTES_MAX_LENGTH}`,
@@ -262,26 +318,69 @@ export async function makeOtaManifest(
       }`,
     );
   }
-  const bad = files.find((f) => !isOtaManifestPath(f.path));
-  if (bad) {
+}
+
+/** The keys of `meta` a manifest carries: each one given with its type, in manifest order. */
+function metaFields(meta: OtaManifestMeta): OtaManifestMeta {
+  const isBoolean = (v: unknown) => typeof v === "boolean";
+  const isString = (v: unknown) => typeof v === "string";
+  const isNumber = (v: unknown) => typeof v === "number";
+  const kinds: ReadonlyArray<[keyof OtaManifestMeta, (v: unknown) => boolean]> = [
+    ["required", isBoolean],
+    ["notes", isString],
+    ["sequence", isNumber],
+    ["minNative", isNumber],
+    ["nativeFingerprint", isString],
+    ["platform", isString],
+  ];
+  const out: Record<string, unknown> = {};
+  for (const [key, is] of kinds) if (is(meta[key])) out[key] = meta[key];
+  return out as OtaManifestMeta;
+}
+
+/** The SHA-256 the {@linkcode OTA_PLATFORM_PATH} stamp of `platform` has. */
+function platformStampHash(platform: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(platform));
+}
+
+/** Throw unless `platform` is a target and `files` carry its stamp. */
+async function assertPlatformStamp(
+  files: ReadonlyArray<Pick<OtaManifestFile, "path" | "sha256">>,
+  platform: string,
+): Promise<void> {
+  if (!isOtaPlatform(platform)) {
+    throw new RangeError(`platform must be one of ${OTA_PLATFORMS.join(", ")}, not ${platform}`);
+  }
+  const stamp = files.find((f) => f.path === OTA_PLATFORM_PATH);
+  if (stamp?.sha256 !== await platformStampHash(platform)) {
     throw new RangeError(
-      `${
-        JSON.stringify(bad.path)
-      } cannot be listed in an OTA manifest (empty, or a control character)`,
+      `a ${platform} manifest needs the export's ${OTA_PLATFORM_PATH} stamp holding "${platform}"`,
     );
   }
-  const sorted = [...files].sort(byPath);
-  return {
-    version: await otaManifestVersion(sorted),
-    ...(typeof meta.required === "boolean" ? { required: meta.required } : {}),
-    ...(typeof meta.notes === "string" ? { notes: meta.notes } : {}),
-    ...(typeof meta.sequence === "number" ? { sequence: meta.sequence } : {}),
-    ...(typeof meta.minNative === "number" ? { minNative: meta.minNative } : {}),
-    ...(typeof meta.nativeFingerprint === "string"
-      ? { nativeFingerprint: meta.nativeFingerprint }
-      : {}),
-    files: sorted,
-  };
+}
+
+/**
+ * Why a shell of target `expected` must refuse `manifest`, or null when it may install it: the
+ * manifest names another target, or its `platform` disagrees with the signed
+ * {@linkcode OTA_PLATFORM_PATH} stamp in its file list. A manifest without a `platform` (an
+ * unstamped `web` export) fits every shell. The refusal's code is `platform_mismatch`.
+ *
+ * @param manifest A manifest that passed {@linkcode isOtaManifest}.
+ * @param expected The shell's target (`ios`, `android`, `macos`, `windows`, `linux`).
+ */
+export async function otaPlatformMismatch(
+  manifest: Pick<OtaManifest, "platform" | "files">,
+  expected: string,
+): Promise<string | null> {
+  const { platform } = manifest;
+  if (platform === undefined) return null;
+  const stamp = manifest.files.find((f) => f.path === OTA_PLATFORM_PATH);
+  if (stamp?.sha256 !== await platformStampHash(platform)) {
+    return `the manifest says ${platform}, but its files carry no matching ${OTA_PLATFORM_PATH}`;
+  }
+  return platform === expected
+    ? null
+    : `the UI was built for ${platform}; this app runs on ${expected}`;
 }
 
 /**
@@ -305,14 +404,22 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
   if (typeof value !== "object" || value === null) return false;
-  const { version, files, required, notes, signature, sequence, minNative, nativeFingerprint } =
-    value as Record<string, unknown>;
+  const record = value as Record<string, unknown>;
+  const { version, files } = record;
   return isSha256Hex(version) && Array.isArray(files) && files.length > 0 &&
     files.every(isManifestFile) &&
-    (required === undefined || typeof required === "boolean") &&
-    (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH)) &&
-    (sequence === undefined || isReleaseInteger(sequence)) &&
-    (minNative === undefined || isReleaseInteger(minNative)) &&
-    (nativeFingerprint === undefined || isSha256Hex(nativeFingerprint)) &&
-    (signature === undefined || typeof signature === "string");
+    Object.entries(OPTIONAL_FIELDS).every(([key, valid]) =>
+      record[key] === undefined || valid(record[key])
+    );
 }
+
+/** The manifest's optional fields, each with the check its value must pass when present. */
+const OPTIONAL_FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
+  required: (v) => typeof v === "boolean",
+  notes: (v) => typeof v === "string" && v.length <= OTA_NOTES_MAX_LENGTH,
+  sequence: isReleaseInteger,
+  minNative: isReleaseInteger,
+  nativeFingerprint: isSha256Hex,
+  platform: isOtaPlatform,
+  signature: (v) => typeof v === "string",
+};
