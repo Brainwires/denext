@@ -23,7 +23,7 @@ import {
   compatModuleList,
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
-import type { ExportContext } from "./context.ts";
+import { exportBuildDir, type ExportContext } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /**
@@ -80,6 +80,20 @@ function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
 }
 
 /**
+ * The next-compat bundling options for the export. Its intermediates (the server bundle under
+ * `server/`, the prebuilt client runtime) go to the export's own build dir
+ * ({@linkcode exportBuildDir}), never the `.denext/server/` a `denext build` left for `denext
+ * start`: the export bundles another module list (no middleware), so rebuilding that bundle in
+ * place renumbered its module exports under the build's manifest.
+ */
+function exportCompatOptions(ctx: ExportContext) {
+  return {
+    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+    outDir: exportBuildDir(ctx.paths),
+  };
+}
+
+/**
  * next-compat: render the STATIC export through react→denext-rewritten SSR bundles, the
  * same way `dev`/`serve` do — so the static render resolves what the native loader can't:
  * `.mdx`/`.md` (compiled by the compat build's MDX loader) and `server-only`/`client-only`
@@ -93,7 +107,7 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   if (!ctx.compat) return;
   const boundary = ctx.flightRoutes.size > 0 ? await boundaryManifest(ctx) : null;
   const moduleMap = await buildNextCompatModules({
-    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+    ...exportCompatOptions(ctx),
     modules: compatModuleList(ctx.manifest.pages, boundary, ctx.manifest.api),
   });
   // Route the render loader through the compat bundles, and point boundary refs at their
@@ -134,7 +148,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
     // native one (`deno bundle` of the source islands) would bundle an npm library's own React
     // (and, for an npm island, Next's real `next/*` modules).
     await buildNextCompatFlightEntry({
-      ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+      ...exportCompatOptions(ctx),
       clientDir: ctx.clientOut,
       boundary,
       flightFile: FLIGHT_BUNDLE_FILE,

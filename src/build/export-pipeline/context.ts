@@ -6,6 +6,7 @@ import type { I18nConfig } from "../../server/i18n.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { AppCss } from "../css.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { join } from "@std/path";
 import { routeId } from "../paths.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 
@@ -54,6 +55,19 @@ export interface ExportContext {
   pages: number;
   /** Route paths / pathnames skipped. */
   readonly skipped: string[];
+}
+
+/**
+ * Where the export keeps its own build intermediates (the next-compat server bundle and client
+ * runtime): `.denext/export/`, apart from the `denext build` output in `.denext/` that `denext
+ * start` serves, so an export (run by the desktop and mobile package scripts) leaves that build
+ * intact.
+ *
+ * @param paths The project paths.
+ * @returns The directory.
+ */
+export function exportBuildDir(paths: ProjectPaths): string {
+  return join(paths.outDir, "export");
 }
 
 /** The hydration script for a route, or none for a static route. */

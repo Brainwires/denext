@@ -5,9 +5,11 @@
 // `next/*` modules — the export of examples/clerk failed exactly there.
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
+import { build } from "../../src/build/build.ts";
 import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
+import { compatModuleMapFromManifest, loadBundleRef } from "../../src/build/next-compat-loader.ts";
 
 /** A compat app: a Server Component page rendering a `"use client"` island that imports react. */
 async function writeFixture(dir: string): Promise<void> {
@@ -73,6 +75,41 @@ Deno.test({
       const text = await Deno.readTextFile(join(client, e.name));
       assert(!text.includes("EXPORT_SERVER_TEXT"), `${e.name} carries server-component code`);
     }
+  } finally {
+    await stopNextCompat();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test({
+  name: "export (next-compat): a previous `denext build`'s server bundle still loads afterwards",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The desktop and mobile package scripts run `deno task export` in a project that may hold a
+  // `denext build`. The export used to rebuild the compat server bundle into `.denext/server/`
+  // with its own module list (no middleware): `denext start` then failed with `compat server
+  // bundle .denext/server/app.js has no module export "m<i>"` until the next build.
+  const dir = await Deno.makeTempDir({ prefix: "denext_nc_export_build_" });
+  try {
+    await writeFixture(dir);
+    await Deno.writeTextFile(
+      join(dir, "middleware.ts"),
+      "export function middleware(_req: Request) {\n  return undefined;\n}\n",
+    );
+    await build(dir);
+    const outDir = join(dir, ".denext");
+    const bundle = join(outDir, "server", "app.js");
+    const built = await Deno.readTextFile(bundle);
+    await staticExport(dir);
+    const manifest = JSON.parse(await Deno.readTextFile(join(outDir, "manifest.json")));
+    const refs = compatModuleMapFromManifest(dir, outDir, manifest.compatServerModules);
+    assert(refs.size > 0, "the build mapped its server modules");
+    assert([...refs.keys()].some((src) => src.endsWith("middleware.ts")), "middleware is bundled");
+    // A fresh module instance, as `denext start` loads it (the build already imported the bundle).
+    const fresh = (path: string) => import(`${toFileUrl(path).href}?after-export`);
+    for (const ref of refs.values()) await loadBundleRef(fresh, ref);
+    assert(await Deno.readTextFile(bundle) === built, "the export rewrote the build's bundle");
   } finally {
     await stopNextCompat();
     await Deno.remove(dir, { recursive: true }).catch(() => {});
