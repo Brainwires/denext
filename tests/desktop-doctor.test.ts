@@ -591,7 +591,14 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
     assertEquals(report.runtime.status.mode, "pinned");
     assertEquals(report.runtime.status.backend, null);
     assertStringIncludes(report.runtime.status.detail, 'desktop.backend is "gtk4"');
-    assertEquals(report.findings.map((f) => `${f.level}:${f.check}`), ["error:runtime"]);
+    // The unpinned backend is an error; a `deno` other than the pin's exact version (CI's unit job
+    // runs a newer one) adds its own runtime error, so this test reads the deno it ran under.
+    const denoMatches = report.runtime.status.deno.found === report.runtime.status.deno.required;
+    assertEquals(
+      report.findings.map((f) => `${f.level}:${f.check}`),
+      denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],
+    );
+    assert(report.findings.some((f) => f.message.includes("no pinned runtime build")));
     // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): a warning, exit 0.
     Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
     const stock = await runCli({}, false, dir, { os: "darwin" });
