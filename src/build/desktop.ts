@@ -16,6 +16,7 @@ import { serveStatic } from "../server/static.ts";
 import { isLoopbackHost } from "./dev-server/lan.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { wantsShell } from "./spa/shared.ts";
+import { resolveExportPath } from "./export-paths.ts";
 import {
   authSessionUnavailable,
   defaultOpenBrowser,
@@ -472,27 +473,14 @@ export interface DesktopRuntime {
 }
 
 /**
- * The export files a navigation to `pathname` may name, in order: a `.html` path itself;
- * `/route` (or `/route/`) as `route/index.html` then `route.html`, the pages a multi-page App
- * Router export writes; `/` as the root `index.html`. Empty for any other extension (an asset).
- * The same mapping as the Capacitor shell's export router (bridge-export-router-native-template.ts).
- */
-function exportPageCandidates(pathname: string): string[] {
-  const last = pathname.slice(pathname.lastIndexOf("/") + 1);
-  if (last.endsWith(".html")) return [pathname];
-  if (last.includes(".")) return [];
-  const trimmed = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-  return trimmed === "" ? ["/index.html"] : [`${trimmed}/index.html`, `${trimmed}.html`];
-}
-
-/**
- * The HTML of the exported page a GET/HEAD navigation to `pathname` names
- * ({@link exportPageCandidates}), or `null` when the export has none (the caller then serves the
- * root `index.html` shell, so a single-page app's client routes keep working). Read through
- * {@link serveStatic}, so its path-traversal and symlink checks apply.
+ * The HTML of the exported page a GET/HEAD navigation to `pathname` names (the shared
+ * {@linkcode resolveExportPath} candidates, the mapping the Capacitor shells' routers mirror), or
+ * `null` when the export has none (the caller then serves the root `index.html` shell, so a
+ * single-page app's client routes keep working). Read through {@link serveStatic}, so its
+ * path-traversal and symlink checks apply.
  */
 async function readExportPage(outDir: string, pathname: string): Promise<string | null> {
-  for (const candidate of exportPageCandidates(pathname)) {
+  for (const candidate of resolveExportPath(pathname).pages) {
     const res = await serveStatic(outDir, candidate);
     if (res?.status === 200) return await res.text();
     await res?.body?.cancel();

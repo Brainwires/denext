@@ -227,7 +227,9 @@ Each item is described in full under Changed, Fixed or Security below.
   or `route.html` when the export has that page (the Capacitor shell's mapping), a `.html` path
   loads that file, and each page gets the same injected desktop global and `desktop.preload` the
   root shell gets. Any other path is still the root `index.html`, so a single-page app's client
-  routes keep working. Repackage the app.
+  routes keep working. Repackage the app. The desktop window, the SPA servers and the Capacitor
+  shells now share one path-to-file mapping, checked against one set of test vectors on every
+  surface (the native routers included), so the shells cannot drift apart again.
 - **The Linux `.deb` and `.rpm` show the app's icon in the launcher and refresh the desktop
   databases.** The `.desktop` entry's `Icon=` named the package (`Icon=<package>`) while the icon
   (when the bundle had one) was installed under that name only at an exact hicolor size, so an app

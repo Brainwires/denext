@@ -21,6 +21,10 @@
 // Android's counterpart is part of the composed MainActivity (`DenextExportRoutes` in
 // mobile-native-install.ts). Edit this as source: it is compiled only in an app (verified on a
 // device against Capacitor 8). Every `\`` below is an escaped template-literal character.
+//
+// The candidate order mirrors `EXPORT_PAGE_SUFFIXES` (export-paths.ts), the mapping every TS
+// surface uses; tests/export-routes-conformance.test.ts holds both routers to the shared vectors
+// (tests/fixtures/export-routes.json), compiling this one with swiftc where it exists.
 
 /** The `router()` override, first thing in the bridge view controller's class body. */
 export const EXPORT_ROUTER_OVERRIDE =
