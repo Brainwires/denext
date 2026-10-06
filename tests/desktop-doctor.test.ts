@@ -13,6 +13,8 @@ import {
 import type { DesktopRuntimePin, DesktopRuntimeStatus } from "../src/build/desktop-runtime.ts";
 import { desktopDoctor } from "../src/cli/commands/desktop-doctor.ts";
 import type { CommandContext } from "../src/cli/command.ts";
+import { join } from "@std/path";
+import { capture, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A runner answering from `answers` (`"cmd arg…"` → stdout, or a code), recording each call. */
 function fakeRun(answers: Record<string, string | number | null>, calls: string[] = []) {
@@ -429,4 +431,176 @@ Deno.test("desktop doctor: the default runner captures stdout and reads a missin
   assertEquals(out?.code, 0);
   assertStringIncludes(out!.stdout, "hi");
   assertEquals(await defaultDoctorRunner("denext-no-such-tool-xyz", []), null);
+});
+
+// ── The CLI (`denext desktop doctor`): flags, output, exit codes ───────────────────────────────
+
+/** Drive `desktopDoctor` with Deno.exit stubbed; the exit code (0 when it returned) and output. */
+async function runCli(
+  flags: Record<string, unknown>,
+  json: boolean,
+  dir: string,
+  seams: Parameters<typeof desktopDoctor>[2],
+): Promise<{ code: number; out: string; err: string; report?: DesktopDoctorReport }> {
+  const cap = capture();
+  const exit = stubExit();
+  const ctx = {
+    flags,
+    positionals: ["doctor"],
+    global: { json },
+    rest: [],
+  } as unknown as CommandContext;
+  let code = 0;
+  let report: DesktopDoctorReport | undefined;
+  try {
+    report = await desktopDoctor(ctx, dir, seams);
+  } catch (e) {
+    if (!String(e).includes("__exit__")) throw e;
+    code = exit.calls[0];
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  return { code, out: cap.logs.join("\n"), err: cap.errs.join("\n"), report };
+}
+
+Deno.test("desktop doctor CLI: --linux off Linux exits 1 before reading anything", async () => {
+  const calls: string[] = [];
+  let statusRead = false;
+  const r = await runCli({ linux: true }, false, "/app", {
+    os: "darwin",
+    runtimeStatus: () => {
+      statusRead = true;
+      return Promise.resolve(status());
+    },
+    run: fakeRun(FULL, calls),
+    pin: pin(45),
+  });
+  assertEquals(r.code, 1);
+  assertStringIncludes(r.err, "--linux reads the session it runs in; run it on the Linux desktop");
+  assertEquals([statusRead, calls, r.out], [false, [], ""]);
+});
+
+Deno.test("desktop doctor CLI: an error finding exits 1 after printing it with its fix", async () => {
+  const seams = {
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "tty" }),
+    runtimeStatus: () => Promise.resolve(status()),
+    run: fakeRun({ [BUSCTL_LIST]: 1, gdbus: null, "secret-tool": null }),
+    pin: pin(45),
+  };
+  const text = await runCli({ linux: true }, false, "/srv/app", seams);
+  assertEquals(text.code, 1);
+  assertStringIncludes(text.out, "denext desktop doctor  ▸  /srv/app");
+  assertStringIncludes(text.out, "✖ session-bus");
+  assertStringIncludes(text.out, "ERROR   [session-bus] no D-Bus session bus answered");
+  assertStringIncludes(text.out, "fix: run inside a desktop session, or start one with");
+  assertStringIncludes(text.out, "WARNING [session] no graphical session in this terminal");
+  assertStringIncludes(text.out, "1 error(s), 1 warning(s).");
+  // --json: one JSON document (no header), and the same exit code.
+  const json = await runCli({ linux: true }, true, "/srv/app", seams);
+  assertEquals(json.code, 1);
+  assertEquals(json.out.includes("▸"), false);
+  const parsed = JSON.parse(json.out) as DesktopDoctorReport;
+  assertEquals(parsed.findings.map((f) => `${f.level}:${f.check}`), [
+    "warning:session",
+    "error:session-bus",
+  ]);
+  assertEquals(parsed.linux?.secretService, "no-session-bus");
+});
+
+Deno.test("desktop doctor CLI: warnings alone exit 0, each Linux gap printed with its fix", async () => {
+  const r = await runCli({}, false, "/app", {
+    os: "linux",
+    env: env({ WAYLAND_DISPLAY: "wayland-0", XDG_CURRENT_DESKTOP: "GNOME" }),
+    runtimeStatus: () => Promise.resolve(status()),
+    run: fakeRun({
+      [BUSCTL_LIST]: "org.freedesktop.portal.Desktop 903 xdg-desktop-por nightness :1.12 - 2 -",
+      [portalProp("Notification")]: "u 2",
+      "secret-tool": null,
+    }),
+    pin: pin(45),
+  });
+  assertEquals(r.code, 0, r.err);
+  assertEquals(r.report?.findings.map((f) => f.check), [
+    "tray-host",
+    "secret-service",
+    "secret-tool",
+    "notifications",
+    "portal",
+    "portal",
+    "scheduled-notifications",
+    "badge",
+  ]);
+  for (const f of r.report!.findings) {
+    assertEquals(f.level, "warning", f.check);
+    assertStringIncludes(r.out, `WARNING [${f.check}] ${f.message}`);
+    assertStringIncludes(r.out, `fix: ${f.fix}`);
+  }
+  assertStringIncludes(r.out, "gnome-extensions enable");
+  assertStringIncludes(r.out, "libsecret-tools");
+  assertStringIncludes(r.out, "mako or dunst");
+  assertStringIncludes(r.out, "0 error(s), 8 warning(s).");
+});
+
+Deno.test("desktop doctor CLI: the Linux checks (and the pre-probe pin warning) default to the host", async () => {
+  // No --linux on a Linux host: the session is probed, and a pin without
+  // Deno.desktop.platformFeatures() is a warning (the facts read "unknown" there).
+  const calls: string[] = [];
+  const linux = await runCli({}, true, "/app", {
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "wayland" }),
+    runtimeStatus: () => Promise.resolve(status()),
+    run: fakeRun(FULL, calls),
+    pin: pin(44),
+  });
+  assertEquals(linux.code, 0, linux.err);
+  assert(calls.includes(BUSCTL_LIST), "the session bus was read");
+  const report = JSON.parse(linux.out) as DesktopDoctorReport;
+  assertEquals(report.checks.slice(0, 3), ["runtime", "session", "session-bus"]);
+  assertEquals(report.findings.map((f) => `${f.level}:${f.check}`), ["warning:runtime"]);
+  assertStringIncludes(report.findings[0].message, "predates Deno.desktop.platformFeatures()");
+  // Off Linux: no probe at all, and the same pin is not a finding.
+  const offCalls: string[] = [];
+  const mac = await runCli({}, true, "/app", {
+    os: "darwin",
+    runtimeStatus: () => Promise.resolve(status()),
+    run: fakeRun(FULL, offCalls),
+    pin: pin(44),
+  });
+  assertEquals(mac.code, 0, mac.err);
+  assertEquals(offCalls, []);
+  assertEquals(JSON.parse(mac.out).linux, null);
+  assertEquals(JSON.parse(mac.out).findings, []);
+});
+
+Deno.test("desktop doctor CLI: without a seam the runtime status is read from the project dir", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_doctor_cli_" });
+  const keys = ["DENEXT_DESKTOP_RUNTIME", "DENEXT_DESKTOP_RUNTIME_DIR"];
+  const prev = keys.map((k) => Deno.env.get(k));
+  try {
+    for (const k of keys) Deno.env.delete(k);
+    // A backend the pinned runtime does not ship: the project's deno.json was read.
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { backend: "gtk4" } }),
+    );
+    const bad = await runCli({}, true, dir, { os: "darwin" });
+    assertEquals(bad.code, 1, "an unpinned runtime is an error");
+    const report = JSON.parse(bad.out) as DesktopDoctorReport;
+    assertEquals(report.runtime.status.mode, "pinned");
+    assertEquals(report.runtime.status.backend, null);
+    assertStringIncludes(report.runtime.status.detail, 'desktop.backend is "gtk4"');
+    assertEquals(report.findings.map((f) => `${f.level}:${f.check}`), ["error:runtime"]);
+    // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): a warning, exit 0.
+    Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
+    const stock = await runCli({}, false, dir, { os: "darwin" });
+    assertEquals(stock.code, 0, stock.err);
+    assertEquals(stock.report?.runtime.status.mode, "stock");
+    assertStringIncludes(stock.out, "WARNING [runtime]");
+    assertStringIncludes(stock.out, "DENEXT_DESKTOP_RUNTIME=stock");
+  } finally {
+    keys.forEach((k, i) => prev[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, prev[i]!));
+    await Deno.remove(dir, { recursive: true });
+  }
 });
