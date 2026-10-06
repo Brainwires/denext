@@ -6652,6 +6652,18 @@
           "denextOnly": true
         },
         {
+          "name": "FlightBoundaryState",
+          "slug": "FlightBoundaryState",
+          "kind": "interface",
+          "signature": "interface FlightBoundaryState",
+          "doc": "A Flight boundary: the routes that render through Flight and the modules they tag.",
+          "docFull": "A Flight boundary: the routes that render through Flight and the modules they tag.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightChannelRef",
           "slug": "FlightChannelRef",
           "kind": "interface",

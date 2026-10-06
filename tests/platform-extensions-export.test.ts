@@ -11,7 +11,11 @@ import { startProdServer } from "../src/build/prod-server.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + files. */
-async function scaffoldApp(dir: string, files: Record<string, string>) {
+async function scaffoldApp(
+  dir: string,
+  files: Record<string, string>,
+  imports: Record<string, string> = {},
+) {
   const root = new URL("../", import.meta.url).href;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
@@ -22,6 +26,7 @@ async function scaffoldApp(dir: string, files: Record<string, string>) {
         "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
         "denext/server": `${root}src/server/mod.ts`,
         "denext/client": `${root}src/client/mod.ts`,
+        ...imports,
       },
     }),
   );
@@ -56,9 +61,13 @@ const FLIGHT_APP = {
 
 const LABELS = ["PLAIN_BADGE", "IOS_BADGE", "DESKTOP_BADGE"];
 
-async function exportFor(platform: Platform, files: Record<string, string>) {
+async function exportFor(
+  platform: Platform,
+  files: Record<string, string>,
+  imports: Record<string, string> = {},
+) {
   const dir = await Deno.makeTempDir({ prefix: `denext_platform_${platform}_` });
-  await scaffoldApp(dir, files);
+  await scaffoldApp(dir, files, imports);
   const result = await staticExport(dir, { platform });
   return {
     dir,
@@ -106,6 +115,91 @@ for (
 }
 
 /**
+ * The Flight app, importing its platform modules through the app's `deno.json` import map: the
+ * Next-style `@/` prefix and an exact alias. The alias resolves first, then the target's variant
+ * applies to the file it names, in the server render and the client bundle alike.
+ */
+const ALIAS_IMPORTS = { "@/": "./", "#pill": "./components/Pill.tsx" };
+const pill = (label: string) => `"use client"\nexport function Pill(){ return <i>${label}</i>; }\n`;
+const ALIAS_APP = {
+  ...FLIGHT_APP,
+  "app/page.tsx": `import { Badge } from "@/components/Badge.tsx";\n` +
+    `import { Pill } from "#pill";\n` +
+    `export default function Page(){ return <main><Badge/><Pill/></main>; }\n`,
+  "components/Pill.tsx": pill("PLAIN_PILL"),
+  "components/Pill.ios.tsx": pill("IOS_PILL"),
+  "components/Pill.desktop.tsx": pill("DESKTOP_PILL"),
+};
+const PILLS = ["PLAIN_PILL", "IOS_PILL", "DESKTOP_PILL"];
+
+// In this process (whose import map is denext's own) an alias resolves only through the copies
+// the server loader writes, which is the path under test; `web` (no copies) runs through the
+// CLI below.
+for (
+  const [platform, badgeWant, pillWant] of [
+    ["ios", "IOS_BADGE", "IOS_PILL"],
+    ["macos", "DESKTOP_BADGE", "DESKTOP_PILL"],
+  ] as const
+) {
+  Deno.test(`staticExport --platform ${platform}: an import-map alias renders and bundles ${badgeWant} + ${pillWant}`, async () => {
+    const got = await exportFor(platform, ALIAS_APP, ALIAS_IMPORTS);
+    try {
+      assertOnly(got, badgeWant, LABELS);
+      assertOnly(got, pillWant, PILLS);
+    } finally {
+      await Deno.remove(got.dir, { recursive: true });
+    }
+  });
+}
+
+/**
+ * `denext export --platform <target>` as a user runs it: a CLI process with the app's import map
+ * (from a source checkout the CLI re-execs with the app's config merged in, which a manual
+ * `node_modules` asks for; a JSR install gets it from `deno task`).
+ */
+async function cliExport(platform: Platform, files: Record<string, string>) {
+  const dir = await Deno.makeTempDir({ prefix: `denext_platform_cli_${platform}_` });
+  await scaffoldApp(dir, files, ALIAS_IMPORTS);
+  const config = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ ...config, nodeModulesDir: "manual" }),
+  );
+  const cli = new URL("../cli.ts", import.meta.url).href;
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", cli, "export", "--platform", platform, dir],
+    cwd: dir,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  assert(out.success, log);
+  const outDir = join(dir, "out");
+  return {
+    dir,
+    html: await Deno.readTextFile(join(outDir, "index.html")),
+    js: await clientJs(outDir),
+  };
+}
+
+for (
+  const [platform, badgeWant, pillWant] of [
+    ["web", "PLAIN_BADGE", "PLAIN_PILL"],
+    ["ios", "IOS_BADGE", "IOS_PILL"],
+  ] as const
+) {
+  Deno.test(`denext export --platform ${platform} (CLI): an import-map alias renders and bundles ${badgeWant} + ${pillWant}`, async () => {
+    const got = await cliExport(platform, ALIAS_APP);
+    try {
+      assertOnly(got, badgeWant, LABELS);
+      assertOnly(got, pillWant, PILLS);
+    } finally {
+      await Deno.remove(got.dir, { recursive: true });
+    }
+  });
+}
+
+/**
  * A hydrated (non-Flight) native route: a `"use client"` page imports `./Label` EXTENSIONLESS
  * (sloppy) and `./Tag.tsx` explicitly; `Label` has only variants (web + mobile), `Tag` a plain
  * file plus an android variant.
@@ -130,6 +224,39 @@ for (
 ) {
   Deno.test(`staticExport --platform ${platform}: a hydrated route resolves ${label} + ${tag}`, async () => {
     const got = await exportFor(platform, HYDRATED_APP);
+    try {
+      assertOnly(got, label, ["WEB_LABEL", "MOBILE_LABEL"]);
+      assertOnly(got, tag, ["PLAIN_TAG", "ANDROID_TAG"]);
+    } finally {
+      await Deno.remove(got.dir, { recursive: true });
+    }
+  });
+}
+
+/**
+ * The hydrated route through the import map: the `"use client"` page imports `Tag` by an alias,
+ * and `Label` through a plain module (`@/app/labels.ts`) that imports it by an alias in turn, so
+ * the client bundle (where Deno resolves an alias itself) needs both importers rewritten.
+ */
+const HYDRATED_ALIAS_APP = {
+  ...HYDRATED_APP,
+  "app/page.tsx": `"use client"\nimport { useState } from "denext";\n` +
+    `import { label } from "@/app/labels.ts";\nimport { tag } from "#tag";\n` +
+    `export default function Page(){ const [n] = useState(0); return <p>{label}{tag}{n}</p>; }\n`,
+  "app/labels.ts": `export { label } from "@/app/Label";\n`,
+};
+
+for (
+  const [platform, label, tag] of [
+    ["ios", "MOBILE_LABEL", "PLAIN_TAG"],
+    ["android", "MOBILE_LABEL", "ANDROID_TAG"],
+  ] as const
+) {
+  Deno.test(`staticExport --platform ${platform}: a hydrated route's aliases resolve ${label} + ${tag}`, async () => {
+    const got = await exportFor(platform, HYDRATED_ALIAS_APP, {
+      "@/": "./",
+      "#tag": "./app/Tag.tsx",
+    });
     try {
       assertOnly(got, label, ["WEB_LABEL", "MOBILE_LABEL"]);
       assertOnly(got, tag, ["PLAIN_TAG", "ANDROID_TAG"]);

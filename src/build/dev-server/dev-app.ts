@@ -27,7 +27,7 @@ import {
 import { bootScheduledTasks } from "../../server/task-loader.ts";
 import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
 import { devOriginAllowed } from "./dev-endpoints.ts";
-import { getManifest } from "./manifest.ts";
+import { devBoundaryFor, getManifest } from "./manifest.ts";
 import { broadcastError } from "./reload.ts";
 import { DEV_RELOAD_JS_PATH, type DevState, GLOBAL_ERROR_BUNDLE_PATH } from "./state.ts";
 
@@ -152,6 +152,11 @@ export function createDevApp(st: DevState): RequestHandler {
     // Each target's island instances (its platform files) are tagged on its first render.
     tagScope: renderPlatform,
     flightRoutes: st.flightRoutes,
+    // A platform session's own boundary (its platform files may reach other islands).
+    flightBoundary: async () => {
+      const platform = renderPlatform();
+      return platform === "web" ? null : await devBoundaryFor(st, platform);
+    },
     flightClients: st.flightClients,
     flightServers: st.flightServers,
     cacheComponents: resolveCacheComponents(paths.config),

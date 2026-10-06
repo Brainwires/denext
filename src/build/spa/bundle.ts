@@ -31,6 +31,7 @@ import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
 import { spaFeatureFold } from "./features.ts";
+import { platformImportMap } from "../platform-imports.ts";
 import { spaNativeRefresh } from "../refresh-modules.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
@@ -278,10 +279,15 @@ async function bundleNativeSpa(
         ...css?.importMap,
         ...fold.importMap,
         ...refresh?.importMap,
-        // `deno bundle` cannot probe: the target's platform files are file-URL redirects,
-        // pointed at the feature-folded / refresh copy of the variant when there is one.
+        // `deno bundle` cannot probe: the target's platform files are file-URL redirects (and
+        // rewritten copies of the modules that reach one through an import-map alias), pointed
+        // at the feature-folded / refresh copy of the variant when there is one.
         ...composeRedirects(
-          await projectPlatformRedirects(paths.projectDir, paths.config, platform),
+          (await platformImportMap(
+            paths.projectDir,
+            await projectPlatformRedirects(paths.projectDir, paths.config, platform),
+            join(paths.outDir, "platform-imports", `spa-${platform}`),
+          )).importMap,
           { ...fold.importMap, ...refresh?.importMap },
         ),
       },

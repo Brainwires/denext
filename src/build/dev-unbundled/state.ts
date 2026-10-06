@@ -4,7 +4,7 @@
 // `createUnbundledState` — the explicit form of what used to be the captured locals of
 // one large closure. See `../dev-unbundled.ts` for the module header + URL scheme.
 
-import type { Platform, PlatformResolution } from "../platform-extensions.ts";
+import type { ImportAliases, Platform, PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
 import type * as esbuild from "esbuild";
 
@@ -254,7 +254,8 @@ export interface UnbundledState {
   depsBuilt: Promise<void> | null;
   runtimeBuilt: Promise<void> | null;
   mergedConfigPath: string | null;
-  aliasPrefixes: Array<[string, string]> | null;
+  /** The app's import-map aliases (`readImportAliases`), loaded once. */
+  aliasPrefixes: ImportAliases | null;
   /**
    * React Native: the names the app's modules import from each package specifier, so the
    * dependency bundle's entry for it can re-export them (CommonJS packages included).

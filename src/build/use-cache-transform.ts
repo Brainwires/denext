@@ -224,6 +224,8 @@ function wrapItem(st: CacheState, item: Node): void {
  * @param opts.resolveSpecifier Maps a resolved (absolute) import URL to the URL the
  *   rewritten module should import — used to point at *transformed* siblings for
  *   transitive `use cache`. Defaults to identity (import the original absolute URL).
+ * @param opts.resolveBare Maps a bare (import-map alias) specifier to the URL the rewritten
+ *   module should import instead, or null to leave it as written.
  * @param opts.alwaysRewriteImports Rewrite local import specifiers even when the
  *   module wraps no function of its own — so a directive-free module can still be
  *   redirected to import transformed (cached) siblings. When false (default), a
@@ -232,7 +234,11 @@ function wrapItem(st: CacheState, item: Node): void {
 export async function transformUseCache(
   source: string,
   moduleUrl: string,
-  opts: { resolveSpecifier?: (absUrl: string) => string; alwaysRewriteImports?: boolean } = {},
+  opts: {
+    resolveSpecifier?: (absUrl: string) => string;
+    resolveBare?: (spec: string) => string | null;
+    alwaysRewriteImports?: boolean;
+  } = {},
 ): Promise<{ code: string; changed: boolean }> {
   const identity = { code: source, changed: false };
   // Cheap pre-filter: with no directive text and no request to rewrite imports,
@@ -256,7 +262,14 @@ export async function transformUseCache(
   // Relative specifiers → absolute, mapped through `resolveSpecifier` (to a transformed
   // sibling for transitive caching). A bare-import-rewrite request that found no local
   // imports and wrapped nothing leaves the module byte-identical — report unchanged.
-  const rewroteImport = absolutizeSpecifiers(ctx, body, moduleUrl, st.edits, opts.resolveSpecifier);
+  const rewroteImport = absolutizeSpecifiers(
+    ctx,
+    body,
+    moduleUrl,
+    st.edits,
+    opts.resolveSpecifier,
+    opts.resolveBare,
+  );
   if (!st.wrappedAny && !rewroteImport) return identity;
   if (st.wrappedAny) {
     // The runtime import goes after any leading directive prologue; order:-1 so it

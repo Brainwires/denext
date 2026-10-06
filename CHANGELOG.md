@@ -67,13 +67,19 @@ Each item is described in full under Changed, Fixed or Security below.
   `denext desktop package` / `run` with the target OS. Everything else stays `web`. A module with
   no file for the target fails the build naming its variants, and `denext doctor` lists those
   gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`). Only the app's
-  own modules take a variant; packages keep their own resolution. See
+  own modules take a variant; packages keep their own resolution. An import through the app's
+  import map (`@/components/BigButton`, an exact `#button` key) resolves the alias first and then
+  the target's file, in the server render and the client bundle alike. See
   [platform-specific files](https://denext.dev/docs/platform-files).
 - **`denext dev` serves each shell its own platform files.** A page opened with
   `?__denext_platform=<target>` (which `denext mobile dev` writes into each native config's
   `server.url`) is pinned to that target by a cookie, and the desktop dev window names its OS on
-  every proxied request: the page's modules and the native App Router's server render resolve
-  that target's files, cached apart per target. A browser with no hint stays `web`.
+  every proxied request: the page's modules, the native App Router's server render, its bundled
+  routes (MDX, `DENEXT_DEV_UNBUNDLED=0`) and its Flight boundary resolve that target's files,
+  cached apart per target. A browser with no hint stays `web`, and so does every shell of a
+  next-compat app in dev (its server render is one esbuild bundle per edit, built for `web`).
+  `AppConfig.flightBoundary` (and the `FlightBoundaryState` type from `denext/server`) gives a
+  request its own Flight boundary.
 - **OTA manifests name their target.** A platform export carries `_denext/platform.txt`, so its
   manifest records `platform` (the signed version covers the file); `denext ota manifest
   --platform <target>` names one by hand. `checkForUiUpdate` and the desktop updater refuse
@@ -255,6 +261,14 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **A `"use cache"` function imported through an import-map alias is cached.** The server loader
+  followed only relative imports, so `import { getPosts } from "@/lib/data.ts"` loaded the
+  module untransformed and ran it on every request.
+- **An exact import-map alias (`"#button": "./components/Button.tsx"`) resolves in `denext dev`'s
+  per-module loop.** Only folder aliases (`"@/": "./"`) were followed, and a `#` key was served
+  as written, an unresolvable browser import.
+- **`denext dev` no longer answers a request with a 500 when a file event lands mid-render.** The
+  request read the route manifest back after the watcher had cleared it for the next request.
 - **A locked Linux keyring no longer stops Clerk from loading in a Deno Desktop window.** With
   `denext/desktop/clerk`, every Frontend API request reads Clerk's client JWT from the
   `secure-store` capability first. When the Secret Service's `login` collection is locked (an

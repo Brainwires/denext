@@ -82,10 +82,12 @@ The dev server serves `web` by default. A shell that names its target gets that 
   server pins the target in a cookie, so the page's later requests (its modules, navigations,
   hot updates) keep it. A browser with no hint gets `web`.
 
-The page's modules and, on the native App Router, its server render follow the target; each
-target's transforms are cached apart. A next-compat app's server render, a bundled route (MDX)
-and the bundled dev path (`DENEXT_DEV_UNBUNDLED=0`) stay `web` in dev, as does the Flight
-boundary: give a module's variants the same `"use client"` directive as its plain file.
+The page's server render, its modules, its bundled routes (an MDX route, or every route under
+`DENEXT_DEV_UNBUNDLED=0`) and its Flight boundary follow the target, so a variant may be an
+island where the plain file is a Server Component; each target's transforms and bundles are
+cached apart. A next-compat app is the exception: its dev server render is one esbuild bundle
+per edit, built for `web`, so in `denext dev` every shell gets the `web` files, islands
+included. Its platform exports take each target's files.
 
 ## Over-the-air updates
 
@@ -162,6 +164,7 @@ in a component the route imports. A variant importing its own plain module
 (`BigButton.ios.tsx` importing `./BigButton.tsx`) resolves to itself, as in React Native; share
 code through a third module instead.
 
-On the native App Router path the server render follows relative imports (`./`, `../`) to a
-variant; an import-map alias (`@/components/BigButton`) reaches it in the client bundle but
-renders the plain file on the server, so prefer relative imports to platform modules there.
+An import through the app's import map takes a variant like a relative one: the alias resolves
+first (`@/components/BigButton`, or an exact key like `#button`, from `deno.json` or the import
+map file it names), then the target's file for the module it names. The server render and the
+client bundle apply the same rule.

@@ -59,6 +59,42 @@ Deno.test("B3: a directive-free module reaches its cached helper through the loa
   }
 });
 
+Deno.test("B3: a cached helper imported through an import-map alias is still cached", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, "lib"));
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: { "@/": "./" } }));
+    await Deno.writeTextFile(
+      join(dir, "lib", "data.ts"),
+      `let calls = 0;\n` +
+        `export async function getPosts() { "use cache"; calls++; return calls; }\n` +
+        `export function count() { return calls; }\n`,
+    );
+    await Deno.writeTextFile(
+      join(dir, "page.ts"),
+      `import { count, getPosts } from "@/lib/data.ts";\n` +
+        `export async function render() { return await getPosts(); }\n` +
+        `export { count };\n`,
+    );
+    const load = createUseCacheLoader(base, { projectDir: dir, cacheDir: join(dir, ".cache") });
+    const mod = await load(join(dir, "page.ts")) as {
+      render: () => Promise<number>;
+      count: () => number;
+    };
+    for (const n of [1, 2]) {
+      const got = await runWithContext(
+        createRequestContext(new Request(`http://x/${n}`)),
+        () => mod.render(),
+      );
+      assertEquals(got, 1, `request ${n}`);
+    }
+    assertEquals(mod.count(), 1, "the cached body ran once");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("B4: a `use cache` component's rendered output is cached across requests", async () => {
   setCacheStore(inMemoryCacheStore());
   const dir = await Deno.makeTempDir();

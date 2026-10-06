@@ -380,10 +380,10 @@ https://denext.dev/docs/app-backend
 
 **Platform-specific files:** `BigButton.ios.tsx`, `.android`, `.mobile` (any phone), `.macos` /
 `.windows` / `.linux`, `.desktop` (any desktop OS) and `.web` beside a plain `BigButton.tsx`, as in
-React Native. Import the plain module (`./BigButton` or `./BigButton.tsx`); each target's export
-picks its file (ios: `.ios` → `.mobile` → `.web` → plain) and drops the rest. `build` / `start` /
-`dev` are the `web` target; `denext export --platform <t>`, `denext mobile build` and `denext
-desktop package` build the others. `.native` is opt-in (`platformExtensions: { native: true }`);
+React Native. Import the plain module (`./BigButton`, `./BigButton.tsx`, or an alias such as
+`@/components/BigButton`); each target's export picks its file (ios: `.ios` → `.mobile` → `.web`
+→ plain) and drops the rest. `build` / `start` / `dev` are the `web` target; `denext export
+--platform <t>`, `denext mobile build` and `denext desktop package` build the others. `.native` is opt-in (`platformExtensions: { native: true }`);
 only the app's own modules take a variant; keep a plain file so type checking resolves.
 Docs: https://denext.dev/docs/platform-files
 

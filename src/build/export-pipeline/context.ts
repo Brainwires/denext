@@ -65,6 +65,11 @@ export interface ExportContext {
    * map and server loader; empty when the app has none).
    */
   readonly platformRedirects: Record<string, string>;
+  /**
+   * The client bundles' import map for the target: {@link platformRedirects} plus rewritten
+   * copies of the app modules that reach a variant through an import-map alias.
+   */
+  readonly platformImports: Record<string, string>;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
@@ -86,7 +91,7 @@ export function exportBuildDir(paths: ProjectPaths): string {
 
 /** The `deno bundle` import map for the native client bundles: CSS shims + platform files. */
 export function exportImportMap(ctx: ExportContext): Record<string, string> {
-  return { ...ctx.css?.importMap, ...ctx.platformRedirects };
+  return { ...ctx.css?.importMap, ...ctx.platformImports };
 }
 
 /** The hydration script for a route, or none for a static route. */

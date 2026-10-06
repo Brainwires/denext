@@ -8,6 +8,7 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { join, toFileUrl } from "@std/path";
 import * as esbuild from "esbuild";
 import {
+  aliasRedirects,
   chooseVariant,
   composeRedirects,
   desktopPlatform,
@@ -24,6 +25,10 @@ import {
   platformSuffixes,
   platformVariantsOf,
   probePlatformSource,
+  projectPlatformRedirects,
+  readImportAliases,
+  resolveImportAlias,
+  resolvePlatformImport,
   scanPlatformGroups,
   splitPlatformName,
   withDevPlatform,
@@ -34,6 +39,7 @@ import { appResolverPlugin, probeSourceFile, SOURCE_EXTS } from "../src/build/ne
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { createUseCacheLoader } from "../src/build/use-cache-loader.ts";
+import { platformImportMap } from "../src/build/platform-imports.ts";
 import { firstPartyProbe } from "../src/build/dev-unbundled/resolve.ts";
 import type { UnbundledState } from "../src/build/dev-unbundled/state.ts";
 import { planMobileBuild } from "../src/build/mobile-build.ts";
@@ -301,6 +307,136 @@ Deno.test("server loader: redirects load the variant through a rewritten importe
     // A module with nothing to redirect loads as itself.
     await load(join(dir, "keep.ts"));
     assertEquals(loads[1], toFileUrl(join(dir, "keep.ts")).href);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("import aliases: the alias resolves first, then the variant; the client keys agree", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({
+      imports: {
+        "@/": "./",
+        "@/lib/": "./lib/",
+        "#v": "./lib/v.ts",
+        "pkg": "npm:left-pad@1",
+        "denext": "jsr:@denext/denext",
+      },
+    }),
+    "lib/v.ts": `export const v = "PLAIN";\n`,
+    "lib/v.ios.ts": `export const v = "IOS";\n`,
+    "lib/w.ts": `export const w = "PLAIN";\n`,
+  });
+  try {
+    const aliases = await readImportAliases(dir);
+    // Local entries only, longest key first (an import map's prefix rule).
+    assertEquals(aliases.map(([k]) => k), ["@/lib/", "@/", "#v"]);
+    const url = (rel: string) => toFileUrl(join(dir, rel)).href;
+    assertEquals(resolveImportAlias("@/lib/v.ts", aliases), url("lib/v.ts"));
+    assertEquals(resolveImportAlias("#v", aliases), url("lib/v.ts"));
+    assertEquals(resolveImportAlias("pkg", aliases), null);
+
+    const redirects = await projectPlatformRedirects(dir, {}, "ios");
+    const importer = url("app/page.tsx");
+    for (const spec of ["@/lib/v.ts", "@/lib/v", "#v", "../lib/v.ts"]) {
+      assertEquals(
+        resolvePlatformImport(spec, importer, aliases, redirects)?.target,
+        url("lib/v.ios.ts"),
+        `${spec} reaches the iOS file`,
+      );
+    }
+    assertEquals(
+      resolvePlatformImport("@/lib/w.ts", importer, aliases, redirects)?.target,
+      url("lib/w.ts"),
+    );
+    assertEquals(resolvePlatformImport("pkg", importer, aliases, redirects), null);
+    assertEquals(resolvePlatformImport("denext", importer, aliases, redirects), null);
+
+    // The client bundle's import-map keys: each alias spelling of a redirected file, and each
+    // resolves by the server's rule to the same target.
+    const keys = aliasRedirects(aliases, redirects);
+    for (const spec of ["@/lib/v.ts", "@/lib/v", "#v"]) {
+      assertEquals(keys[spec], url("lib/v.ios.ts"));
+    }
+    for (const [spec, target] of Object.entries(keys)) {
+      assertEquals(resolvePlatformImport(spec, importer, aliases, redirects)?.target, target, spec);
+    }
+    assertEquals(redirects["#v"], url("lib/v.ios.ts"), "projectPlatformRedirects carries them");
+    // A target with nothing to redirect gets no keys.
+    assertEquals(await projectPlatformRedirects(dir, {}, "web"), {});
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("import aliases: an `importMap` file is read the same way", async () => {
+  const dir = await tree({
+    "deno.jsonc": `// a comment\n{ "importMap": "./maps/import_map.json" }\n`,
+    "maps/import_map.json": JSON.stringify({ imports: { "~/": "../src/" } }),
+  });
+  try {
+    const aliases = await readImportAliases(dir);
+    assertEquals(aliases, [["~/", toFileUrl(join(dir, "src")).href + "/"]]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platformImportMap: the modules that reach a variant through an alias get rewritten copies", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({ imports: { "@/": "./", "#v": "./v.ts" } }),
+    "page.ts": `import { m } from "@/mid";\nimport { v } from "#v";\nexport const got = m + v;\n`,
+    "mid.ts": `import { v } from "@/v.ts";\nimport { w } from "./w.ts";\nexport const m = v + w;\n`,
+    "w.ts": `export const w = "W";\n`,
+    "other.ts": `import { w } from "@/w.ts";\nexport const o = w;\n`,
+    "v.ts": `export const v = "PLAIN";\n`,
+    "v.ios.ts": `export const v = "IOS";\n`,
+  });
+  try {
+    const url = (rel: string) => toFileUrl(join(dir, rel)).href;
+    const copyDir = join(dir, ".denext", "platform-imports", "ios");
+    const redirects = await projectPlatformRedirects(dir, {}, "ios");
+    const { importMap, originals } = await platformImportMap(dir, redirects, copyDir);
+    // `mid` reaches the variant by an alias, and `page` reaches `mid` by one: both are copied;
+    // `other` reaches no variant and keeps loading as itself.
+    const copies = Object.entries(originals).filter(([c]) => c.startsWith(toFileUrl(copyDir).href));
+    assertEquals(copies.map(([, o]) => o).sort(), [url("mid.ts"), url("page.ts")].sort());
+    assert(importMap[url("page.ts")]?.includes("/.denext/platform-imports/ios/"));
+    assertEquals(importMap[url("mid")], importMap[url("mid.ts")], "the extensionless spelling too");
+    assertEquals(importMap[url("other.ts")], undefined);
+    assertEquals(importMap[url("v.ts")], url("v.ios.ts"));
+    const page = await Deno.readTextFile(new URL(importMap[url("page.ts")]));
+    assertStringIncludes(page, JSON.stringify(importMap[url("mid.ts")]));
+    assertStringIncludes(page, JSON.stringify(url("v.ios.ts")));
+    const mid = await Deno.readTextFile(new URL(importMap[url("mid.ts")]));
+    assertStringIncludes(mid, JSON.stringify(url("v.ios.ts")));
+    assertStringIncludes(mid, JSON.stringify(url("w.ts")), "a relative import is made absolute");
+    // A target with no variant to reach, or an app with no aliases, copies nothing.
+    const web = await platformImportMap(dir, {}, join(dir, ".denext", "platform-imports", "web"));
+    assertEquals(web, { importMap: {}, originals: {} });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("server loader: an import-map alias reaches the variant, directly and through a plain module", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({ imports: { "@/": "./", "#v": "./v.ts" } }),
+    "page.ts": `import { v } from "@/v.ts";\nimport { m } from "@/mid.ts";\n` +
+      `import { v as x } from "#v";\nexport const got = [v, m, x].join();\n`,
+    "mid.ts": `import { v } from "./v.ts";\nexport const m = "MID:" + v;\n`,
+    "v.ts": `export const v = "PLAIN";\n`,
+    "v.ios.ts": `export const v = "IOS";\n`,
+  });
+  try {
+    const load = createUseCacheLoader((p) => import(p), {
+      projectDir: dir,
+      cacheDir: join(dir, ".denext", "server-cache"),
+      redirects: await projectPlatformRedirects(dir, {}, "ios"),
+      useCache: false,
+    });
+    const page = await load(join(dir, "page.ts")) as { got: string };
+    assertEquals(page.got, "IOS,MID:IOS,IOS");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

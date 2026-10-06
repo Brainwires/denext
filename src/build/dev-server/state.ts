@@ -5,10 +5,12 @@
 // handler) is a separately readable unit.
 
 import type { Platform } from "../platform-extensions.ts";
+import type { PlatformImportMap } from "../platform-imports.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import type { ModuleLoader } from "../../server/types.ts";
+import type { FlightBoundaryState } from "../../server/app-config.ts";
 import type { UnbundledDev } from "../dev-unbundled.ts";
 import type { BoundaryManifest } from "../module-graph.ts";
 import type { AppCss } from "../css.ts";
@@ -16,6 +18,12 @@ import type { MiddlewareRunner } from "../../server/middleware.ts";
 import type { Instrumentation } from "../../server/instrumentation.ts";
 import { DevEventLog } from "../dev-events.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
+
+/** A target's Flight boundary in dev: the routes, the tagged modules and the crawl they came from. */
+export interface DevBoundary extends FlightBoundaryState {
+  /** The boundary manifest the Flight entry is generated from. */
+  readonly manifest: BoundaryManifest;
+}
 
 /** Live-reload / Fast Refresh SSE stream. */
 export const RELOAD_PATH = "/_denext/reload";
@@ -146,6 +154,15 @@ export interface DevState {
   readonly flightServers: Map<string, { url: string }>;
   boundaryGen: number;
   flightBundle: string | null;
+  /**
+   * Each other target's Flight boundary this generation, crawled through its platform files
+   * (`devBoundaryFor`): its variants may reach other `"use client"` modules than web's files.
+   * `value` is set once the crawl settles, for the synchronous `clientEntryFor`.
+   */
+  readonly platformBoundaries: Map<
+    Platform,
+    { gen: number; boundary: Promise<DevBoundary>; value?: DevBoundary }
+  >;
 
   /**
    * next-compat (drop-in) mode: rewrite react→denext so npm React libraries render on
@@ -193,6 +210,8 @@ export interface DevState {
    * target a shell named), rescanned per generation so an added or removed variant takes effect.
    */
   readonly platformRedirects: Map<Platform, { gen: number; redirects: Record<string, string> }>;
+  /** Each target's client import map (`devPlatformImports`), per generation. */
+  readonly platformImports: Map<Platform, { gen: number; imports: PlatformImportMap }>;
 
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
@@ -280,6 +299,7 @@ export function createDevState(options: DevServerOptions): DevState {
     flightServers: new Map(),
     boundaryGen: -1,
     flightBundle: null,
+    platformBoundaries: new Map(),
     compatP: undefined,
     compatLoad: null,
     compatBuiltGen: -1,
@@ -296,6 +316,7 @@ export function createDevState(options: DevServerOptions): DevState {
     refreshGen: -1,
     compilerGen: -1,
     platformRedirects: new Map(),
+    platformImports: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoads: new Map(),
     bundleCache: new Map(),

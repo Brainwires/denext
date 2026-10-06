@@ -22,6 +22,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
 import {
   freshStagingDir,
@@ -153,9 +154,16 @@ export async function prepareExport(
   const platformRedirects = native
     ? await projectPlatformRedirects(paths.projectDir, paths.config, platform)
     : {};
+  // The client bundles and crawls resolve aliases with Deno's own resolver, so the modules that
+  // reach a variant through one are rewritten for them (the server loader follows aliases).
+  const platformImports = await platformImportMap(
+    paths.projectDir,
+    platformRedirects,
+    join(paths.outDir, "platform-imports", platform),
+  );
   // The boundary / hydration crawls see the modules this target loads, and a module that only
   // other targets have fails here with a message naming its variants.
-  setModuleGraphRedirects(paths.configPath, platformRedirects);
+  setModuleGraphRedirects(paths.configPath, platformImports);
   if (native) {
     await assertPlatformFilesResolve(
       [...new Set(manifest.pages.flatMap(routeEntryFiles))],
@@ -181,6 +189,7 @@ export async function prepareExport(
     load: await exportLoader(paths, platform, platformRedirects),
     platform,
     platformRedirects,
+    platformImports: platformImports.importMap,
     flightRoutes: new Set(),
     staticRoutes: new Set(),
     cssRoutes: new Set(),

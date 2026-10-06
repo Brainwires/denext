@@ -19,10 +19,15 @@
 // so edits are picked up on reload) and memoized per loader instance.
 
 import { djb2 } from "../runtime/djb2.ts";
-import { extname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
 import { absolutizeSpecifiers, applyEdits, type Edit, parseModule, swcParse } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import {
+  type ImportAliases,
+  readImportAliases,
+  resolvePlatformImport,
+} from "./platform-extensions.ts";
 
 /** Options for {@link createUseCacheLoader}. */
 export interface UseCacheLoaderOptions {
@@ -62,13 +67,26 @@ function underRoot(fileUrl: string, rootDir: string): boolean {
   return fileUrl.startsWith(rootUrl);
 }
 
+/** One local import of a module: as written, the file it names, and the module to load. */
+interface LocalImport {
+  readonly spec: string;
+  readonly url: string;
+  readonly target: string;
+}
+
 /**
- * Parse `source` and return the resolved absolute URLs of its **relative** import/
- * export specifiers (the only ones that can point at other local project files).
- * Bare specifiers (`npm:`, `jsr:`, `@std/…`) are skipped. Returns `[]` on a parse
- * error (the module is then treated as a leaf).
+ * Parse `source` and return its import/export specifiers that name local files: relative ones,
+ * and bare ones the project's import map aliases to a file (`@/components/Button.tsx`), each
+ * resolved by {@linkcode resolvePlatformImport} (the platform variant applied). Packages
+ * (`npm:`, `jsr:`, `@std/…`) are skipped. Returns `[]` on a parse error (the module is then
+ * treated as a leaf).
  */
-async function localImports(source: string, moduleUrl: string): Promise<string[]> {
+async function localImports(
+  source: string,
+  moduleUrl: string,
+  aliases: ImportAliases,
+  redirects: Readonly<Record<string, string>>,
+): Promise<LocalImport[]> {
   let ast;
   try {
     const parse = await swcParse();
@@ -76,29 +94,40 @@ async function localImports(source: string, moduleUrl: string): Promise<string[]
   } catch {
     return [];
   }
-  const out: string[] = [];
+  const out: LocalImport[] = [];
   for (const item of ast.body ?? []) {
     const spec = item?.source?.value;
     if (typeof spec !== "string") continue;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-    out.push(new URL(spec, moduleUrl).href);
+    const hit = resolvePlatformImport(spec, moduleUrl, aliases, redirects);
+    if (hit) out.push({ spec, ...hit });
   }
   return out;
 }
 
 /**
- * Only absolutize `source`'s relative specifiers (mapped through `resolve`), for a copy that
- * compiles nothing else.
+ * Whether a copy rewrites `imp`'s alias specifier: it names its file outright (the copy no longer
+ * relies on the import map), but an extensionless alias is left to the import map unless it must
+ * reach another file. A relative specifier is the absolutizing pass's.
+ */
+function rewritesBare(imp: LocalImport, changed: boolean): boolean {
+  if (imp.spec.startsWith("./") || imp.spec.startsWith("../")) return false;
+  return changed || extname(new URL(imp.url).pathname) !== "";
+}
+
+/**
+ * Only absolutize `source`'s relative specifiers (mapped through `resolve`) and replace the
+ * bare ones `bare` names, for a copy that compiles nothing else.
  */
 async function rewriteLocalImports(
   source: string,
   moduleUrl: string,
   resolve: (absUrl: string) => string,
+  bare: (spec: string) => string | null,
 ): Promise<{ code: string; changed: boolean }> {
   const parsed = await parseModule(source);
   if (!parsed) return { code: source, changed: false };
   const edits: Edit[] = [];
-  if (!absolutizeSpecifiers(parsed.ctx, parsed.body, moduleUrl, edits, resolve)) {
+  if (!absolutizeSpecifiers(parsed.ctx, parsed.body, moduleUrl, edits, resolve, bare)) {
     return { code: source, changed: false };
   }
   return { code: applyEdits(parsed.ctx.bytes, edits), changed: true };
@@ -114,6 +143,7 @@ class UseCacheCompiler {
   #memo = new Map<string, string>();
   #inProgress = new Set<string>();
   #ensured = false;
+  #aliases: Promise<ImportAliases> | null = null;
 
   constructor(private opts: UseCacheLoaderOptions) {}
 
@@ -142,6 +172,31 @@ class UseCacheCompiler {
     }
   }
 
+  /**
+   * Resolve each local import of `source` (relative, or an import-map alias) to its effective
+   * URL (post-order recursion), through the platform redirect first: `childMap` by the file the
+   * import names, `bareMap` by an alias specifier the copy must rewrite.
+   */
+  async #children(source: string, moduleUrl: string): Promise<{
+    childMap: Map<string, string>;
+    bareMap: Map<string, string>;
+    anyChildCopied: boolean;
+  }> {
+    const aliases = await (this.#aliases ??= readImportAliases(this.opts.projectDir));
+    const imports = await localImports(source, moduleUrl, aliases, this.opts.redirects ?? {});
+    const childMap = new Map<string, string>();
+    const bareMap = new Map<string, string>();
+    let anyChildCopied = false;
+    for (const imp of imports) {
+      const eff = await this.effectiveUrl(imp.target);
+      childMap.set(imp.url, eff);
+      const changed = eff !== imp.url;
+      anyChildCopied ||= changed;
+      if (rewritesBare(imp, changed)) bareMap.set(imp.spec, eff);
+    }
+    return { childMap, bareMap, anyChildCopied };
+  }
+
   async #compute(moduleUrl: string): Promise<string> {
     let source: string;
     try {
@@ -150,26 +205,19 @@ class UseCacheCompiler {
       return moduleUrl; // unreadable → import the original
     }
 
-    // Resolve each local import to its effective URL (post-order recursion), through the
-    // platform redirect first.
-    const imports = await localImports(source, moduleUrl);
-    const childMap = new Map<string, string>();
-    let anyChildCopied = false;
-    for (const imp of imports) {
-      const eff = await this.effectiveUrl(this.opts.redirects?.[imp] ?? imp);
-      childMap.set(imp, eff);
-      if (eff !== imp) anyChildCopied = true;
-    }
+    const { childMap, bareMap, anyChildCopied } = await this.#children(source, moduleUrl);
 
     // No directive here and no transformed child ⇒ this module is unchanged.
     const useCache = this.opts.useCache !== false && source.includes("use cache");
     if (!useCache && !anyChildCopied) return moduleUrl;
 
     const resolveSpecifier = (abs: string) => childMap.get(abs) ?? abs;
+    const resolveBare = (spec: string) => bareMap.get(spec) ?? null;
     const { code, changed } = this.opts.useCache === false
-      ? await rewriteLocalImports(source, moduleUrl, resolveSpecifier)
+      ? await rewriteLocalImports(source, moduleUrl, resolveSpecifier, resolveBare)
       : await transformUseCache(source, moduleUrl, {
         resolveSpecifier,
+        resolveBare,
         alwaysRewriteImports: true,
       });
     if (!changed) return moduleUrl;
@@ -197,8 +245,17 @@ export function createUseCacheLoader(
   opts: UseCacheLoaderOptions,
 ): ModuleLoader {
   const compiler = new UseCacheCompiler(opts);
+  // A crawl names modules by their real path (a boundary ref under macOS's `/private/var` for a
+  // project in `/var`): spell those through the project root, as its redirects and copies are.
+  const root = toFileUrl(resolve(opts.projectDir)).href + "/";
+  let real: string | null = null;
+  try {
+    real = toFileUrl(Deno.realPathSync(opts.projectDir)).href + "/";
+  } catch { /* no project dir on disk: nothing to respell */ }
+  const canonical = (url: string) =>
+    real && real !== root && url.startsWith(real) ? root + url.slice(real.length) : url;
   return async (filePath: string): Promise<unknown> => {
-    const url = toUrl(filePath);
+    const url = canonical(toUrl(filePath));
     let eff: string;
     try {
       // A module loaded by its plain path (a boundary ref being tagged) loads its variant too.

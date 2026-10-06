@@ -72,6 +72,9 @@
   the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
   export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
   runtime branch; the constant needs a fold pass on every build path.
+- **A next-compat app's platform files in `denext dev`.** Its dev server render is one esbuild
+  bundle per edit, built for `web`, so every shell gets the `web` files in dev (its platform
+  exports take each target's); a shell's own target needs those server bundles built per target.
 - **Importer-sensitive aliases in config,** so uniwind works without the `denext patch` recipe.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.

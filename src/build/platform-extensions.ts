@@ -27,9 +27,16 @@
 // ({@linkcode scanPlatformGroups}) becomes import-map redirects keyed by file URL
 // ({@linkcode platformRedirects}): the plain path, with and without its extension, maps to the
 // target's variant.
+//
+// An import-map alias (`@/components/BigButton.tsx`, or an exact `"#button"` key) resolves
+// through the project's import map FIRST, and the variant then applies to the file it names
+// ({@linkcode resolvePlatformImport}, the one rule). The client side gets it as more import-map
+// keys ({@linkcode aliasRedirects}: an import map applies once, so the alias itself must name
+// the variant); the server render's copy loader follows aliases with the same rule.
 
 import { walk } from "@std/fs";
 import { getCookies } from "@std/http/cookie";
+import { parse as parseJsonc } from "@std/jsonc";
 import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 
@@ -290,26 +297,36 @@ function scanSkip(root: string): RegExp[] {
 }
 
 /**
- * Every module under `rootDir` with platform files (the native App Router path's redirect
- * source, and `doctor`'s gap report).
+ * The app's own source modules under `rootDir` (absolute paths): every file a platform file
+ * scan considers, outside dependencies, denext's output and the native shells.
  *
  * @param rootDir The project root.
  */
-export async function scanPlatformGroups(rootDir: string): Promise<PlatformGroup[]> {
+export async function* projectSourceFiles(rootDir: string): AsyncGenerator<string> {
   const root = resolve(rootDir);
-  const byStem = new Map<string, PlatformVariant[]>();
   for await (
     const entry of walk(root, {
       includeDirs: false,
       exts: PLATFORM_SOURCE_EXTS.map((e) => e.slice(1)),
       skip: scanSkip(root),
     })
-  ) {
-    const split = splitPlatformName(entry.name);
+  ) yield entry.path;
+}
+
+/**
+ * Every module under `rootDir` with platform files (the native App Router path's redirect
+ * source, and `doctor`'s gap report).
+ *
+ * @param rootDir The project root.
+ */
+export async function scanPlatformGroups(rootDir: string): Promise<PlatformGroup[]> {
+  const byStem = new Map<string, PlatformVariant[]>();
+  for await (const path of projectSourceFiles(rootDir)) {
+    const split = splitPlatformName(basename(path));
     if (!split) continue;
-    const stem = join(dirname(entry.path), split.stem);
+    const stem = join(dirname(path), split.stem);
     const list = byStem.get(stem) ?? [];
-    list.push({ suffix: split.suffix, file: entry.path });
+    list.push({ suffix: split.suffix, file: path });
     byStem.set(stem, list);
   }
   return [...byStem].sort(([a], [b]) => a.localeCompare(b)).map(([stem, variants]) => ({
@@ -359,8 +376,142 @@ export function platformRedirects(
 }
 
 /**
+ * A project's local import-map aliases, longest key first: each key (exact, or a prefix ending
+ * in `/`) with the file URL it maps to. Only entries that name a local path count (`./`, `../`,
+ * `/`, `file:`); package and remote entries never reach an app module.
+ */
+export type ImportAliases = ReadonlyArray<readonly [key: string, url: string]>;
+
+/** `value`'s string entries, when it is a JSON object. */
+function stringEntries(value: unknown): Array<[string, string]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value).filter((e): e is [string, string] => typeof e[1] === "string");
+}
+
+/** The local aliases among an import map's `imports`, resolved against `base`. */
+function localAliases(imports: unknown, base: URL): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [key, value] of stringEntries(imports)) {
+    const local = value.startsWith("./") || value.startsWith("../") || value.startsWith("/") ||
+      value.startsWith("file:");
+    if (!local || key.endsWith("/") !== value.endsWith("/")) continue;
+    out.push([key, new URL(value, base).href]);
+  }
+  return out;
+}
+
+/**
+ * The project's local import-map aliases ({@linkcode ImportAliases}): `deno.json(c)`'s `imports`,
+ * or the local import map file its `importMap` names. Empty when there is none.
+ *
+ * @param projectDir The project root.
+ */
+export async function readImportAliases(projectDir: string): Promise<ImportAliases> {
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const path = join(resolve(projectDir), name);
+    let config: unknown;
+    try {
+      config = parseJsonc(await Deno.readTextFile(path));
+    } catch {
+      continue;
+    }
+    const configUrl = toFileUrl(path);
+    const named = (config as { importMap?: unknown } | null)?.importMap;
+    let aliases: Array<[string, string]>;
+    if (typeof named === "string") {
+      const mapUrl = new URL(named, configUrl);
+      if (mapUrl.protocol !== "file:") return [];
+      try {
+        const map = parseJsonc(await Deno.readTextFile(mapUrl)) as { imports?: unknown } | null;
+        aliases = localAliases(map?.imports, mapUrl);
+      } catch {
+        return [];
+      }
+    } else {
+      aliases = localAliases((config as { imports?: unknown } | null)?.imports, configUrl);
+    }
+    return aliases.sort(([a], [b]) => b.length - a.length || a.localeCompare(b));
+  }
+  return [];
+}
+
+/**
+ * The file URL a bare specifier names through the project's aliases (an exact key, else the
+ * longest prefix key, as an import map applies them), or null when no local alias covers it.
+ *
+ * @param spec The specifier as written.
+ * @param aliases {@linkcode readImportAliases}.
+ */
+export function resolveImportAlias(spec: string, aliases: ImportAliases): string | null {
+  for (const [key, url] of aliases) {
+    if (key === spec) return url;
+    if (key.endsWith("/") && spec.startsWith(key)) {
+      try {
+        return new URL(spec.slice(key.length), url).href;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The one rule both sides of a native App Router build resolve an app import by: a relative
+ * specifier against its importer, a bare one through the project's aliases, and then the
+ * target's platform redirect for the file it names. Null for a specifier that names no app
+ * file (a package, `node:`, a remote URL).
+ *
+ * @param spec The specifier as written.
+ * @param importerUrl The importing module's URL.
+ * @param aliases {@linkcode readImportAliases}.
+ * @param redirects {@linkcode platformRedirects} for the target.
+ * @returns `url`, the file the specifier names, and `target`, the module the target loads.
+ */
+export function resolvePlatformImport(
+  spec: string,
+  importerUrl: string,
+  aliases: ImportAliases,
+  redirects: Readonly<Record<string, string>>,
+): { url: string; target: string } | null {
+  const relativeSpec = spec.startsWith("./") || spec.startsWith("../");
+  const url = relativeSpec ? new URL(spec, importerUrl).href : resolveImportAlias(spec, aliases);
+  if (url === null || !url.startsWith("file:")) return null;
+  return { url, target: redirects[url] ?? url };
+}
+
+/**
+ * The import-map keys that make each alias spelling of a redirected file name its variant, for
+ * the client bundle and the module-graph crawls (an import map applies once, so the file-URL
+ * redirect alone never sees `@/components/BigButton.tsx`). Each key resolves, by
+ * {@linkcode resolvePlatformImport}'s rule, to the redirect's target.
+ *
+ * @param aliases {@linkcode readImportAliases}.
+ * @param redirects {@linkcode platformRedirects} for the target.
+ */
+export function aliasRedirects(
+  aliases: ImportAliases,
+  redirects: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [from, to] of Object.entries(redirects)) {
+    for (const [key, url] of aliases) {
+      if (!key.endsWith("/")) {
+        if (url === from) out[key] = to;
+      } else if (from.startsWith(url)) {
+        const spelled = key + decodeURIComponent(from.slice(url.length));
+        // Only where the import map would resolve the spelling through THIS key.
+        if (resolveImportAlias(spelled, aliases) === from) out[spelled] = to;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * {@linkcode platformRedirects} for a project and target: scans `projectDir`, empty when the
- * app has no platform files or turned them off.
+ * app has no platform files or turned them off. The project's import-map aliases that reach a
+ * redirected file get keys of their own ({@linkcode aliasRedirects}).
  *
  * @param projectDir The project root.
  * @param config The app config.
@@ -373,7 +524,9 @@ export async function projectPlatformRedirects(
 ): Promise<Record<string, string>> {
   const resolution = platformResolution(config, platform);
   if (!resolution) return {};
-  return platformRedirects(await scanPlatformGroups(projectDir), resolution);
+  const redirects = platformRedirects(await scanPlatformGroups(projectDir), resolution);
+  if (Object.keys(redirects).length === 0) return redirects;
+  return { ...redirects, ...aliasRedirects(await readImportAliases(projectDir), redirects) };
 }
 
 /**

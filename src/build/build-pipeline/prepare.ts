@@ -12,6 +12,7 @@ import {
   setModuleGraphRedirects,
 } from "../module-graph.ts";
 import { platformResolution, projectPlatformRedirects } from "../platform-extensions.ts";
+import { platformImportMap } from "../platform-imports.ts";
 import {
   appUsesActivity,
   appUsesClassComponents,
@@ -90,10 +91,13 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
   // The web target's platform files (`.web.tsx`): file-URL redirects on the native path (the
   // compat bundles probe them), which every crawl below resolves through too.
-  const platformRedirects = compat
-    ? {}
-    : await projectPlatformRedirects(projectDir, paths.config, "web");
-  setModuleGraphRedirects(paths.configPath, platformRedirects);
+  const platformImports = compat ? { importMap: {}, originals: {} } : await platformImportMap(
+    projectDir,
+    await projectPlatformRedirects(projectDir, paths.config, "web"),
+    join(paths.outDir, "platform-imports", "web"),
+  );
+  const platformRedirects = platformImports.importMap;
+  setModuleGraphRedirects(paths.configPath, platformImports);
   if (!compat) {
     await assertPlatformFilesResolve(
       [...new Set(manifest.pages.flatMap(routeEntryFiles))],

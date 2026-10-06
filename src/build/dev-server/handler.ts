@@ -116,22 +116,22 @@ async function flightBundleResponse(st: DevState, request: Request): Promise<Res
 }
 
 /** On-demand `global-error.tsx` hydration bundle. */
-async function globalErrorBundleResponse(st: DevState): Promise<Response> {
+async function globalErrorBundleResponse(st: DevState, request: Request): Promise<Response> {
   try {
-    return jsResponse(await getGlobalErrorBundle(st));
+    return jsResponse(await getGlobalErrorBundle(st, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "global-error bundle error", err);
   }
 }
 
 /** On-demand client route bundle (`?p=<routePath>`). */
-async function routeBundleResponse(st: DevState, url: URL): Promise<Response> {
+async function routeBundleResponse(st: DevState, request: Request, url: URL): Promise<Response> {
   const routePath = url.searchParams.get("p");
   const m = await getManifest(st);
   const route = m.pages.find((p) => p.routePath === routePath);
   if (!route) return new Response("// route not found", { status: 404 });
   try {
-    return jsResponse(await getRouteBundle(st, route));
+    return jsResponse(await getRouteBundle(st, route, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "Bundle error", err);
   }
@@ -272,7 +272,7 @@ function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHan
     const unbundled = await unbundledResponse(st, request, url);
     if (unbundled) return unbundled;
     if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st, request);
-    if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st);
+    if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st, request);
     // Liveness/readiness probe endpoint (for load balancers / k8s).
     if (url.pathname === "/_denext/health") {
       return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
@@ -288,7 +288,7 @@ function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHan
     if (chunk) return chunk;
     const asset = await compatAssetResponse(st, request, url);
     if (asset) return asset;
-    if (url.pathname === ROUTE_BUNDLE_PATH) return routeBundleResponse(st, url);
+    if (url.pathname === ROUTE_BUNDLE_PATH) return routeBundleResponse(st, request, url);
     return appResponse(st, appHandler, request, url);
   };
 }

@@ -11,7 +11,10 @@ import type { Platform } from "../src/build/platform-extensions.ts";
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
 /** A throwaway project: a deno.json aliasing `denext` to this checkout, plus `files`. */
-async function project(files: Record<string, string>): Promise<string> {
+async function project(
+  files: Record<string, string>,
+  imports: Record<string, string> = {},
+): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_platform_esbuild_" });
   await Deno.writeTextFile(
     join(dir, "deno.json"),
@@ -23,6 +26,7 @@ async function project(files: Record<string, string>): Promise<string> {
         "denext/jsx-dev-runtime": abs("src/jsx/jsx-runtime.ts"),
         "denext/server": abs("src/server/mod.ts"),
         "denext/client": abs("src/client/mod.ts"),
+        ...imports,
       },
     }),
   );
@@ -137,4 +141,43 @@ for (const [platform, want] of CASES) {
       await Deno.remove(dir, { recursive: true });
     }
   });
+}
+
+/** COMPAT_APP and the SPA, importing the label through the app's import map (`@/`, `#label`). */
+const ALIAS_IMPORTS = { "@/": "./", "#label": "./src/label.ts" };
+
+for (const [platform, want] of CASES) {
+  Deno.test(`next-compat App Router export --platform ${platform}: an import-map alias takes ${want}`, async () => {
+    const dir = await project({
+      ...COMPAT_APP,
+      "app/island.tsx": COMPAT_APP["app/island.tsx"].replace(`"./label"`, `"@/app/label"`),
+    }, ALIAS_IMPORTS);
+    try {
+      const got = await exported((await staticExport(dir, { platform })).outDir);
+      assertStringIncludes(got.html, want, "the SSR bundle picked the variant");
+      assertStringIncludes(got.js, want, "the client bundle picked the variant");
+      for (const other of LABELS.filter((l) => l !== want)) {
+        assert(!got.html.includes(other) && !got.js.includes(other), `${other} for ${platform}`);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  for (const compat of [false, true]) {
+    const path = compat ? "compat (esbuild)" : "native (deno bundle)";
+    Deno.test(`SPA ${path} export --platform ${platform}: an import-map alias takes ${want}`, async () => {
+      const dir = await project({
+        ...spa(compat),
+        "src/main.ts": `import { label } from "#label";\nconsole.log(label);\n`,
+      }, ALIAS_IMPORTS);
+      try {
+        const { js } = await exported((await staticExport(dir, { platform })).outDir);
+        assertStringIncludes(js, want);
+        for (const other of LABELS.filter((l) => l !== want)) assert(!js.includes(other), other);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+  }
 }

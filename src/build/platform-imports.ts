@@ -1,0 +1,197 @@
+// The client side of platform files through import-map aliases (`deno bundle`, `deno info`).
+//
+// Deno resolves a bare specifier in an app module with the app's own `deno.json`, whatever
+// config the bundler was handed, and maps the result no further: `@/components/BigButton.tsx`
+// lands on the plain file even when the merged config redirects that file's URL to its
+// variant (a relative import does reach the redirect, since its specifier is a URL). So every
+// app module that imports a redirected module through an alias, directly or through another
+// such module, gets a copy with those imports rewritten to the module the target loads
+// (by {@linkcode resolvePlatformImport}, the rule the server render's loader applies), and the
+// copy stands in for it by file URL. A crawl over the copies reports the originals
+// ({@linkcode PlatformImportMap.originals}), so the boundary and hydration scans name the
+// app's own files.
+
+import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { djb2 } from "../runtime/djb2.ts";
+import {
+  type ImportAliases,
+  projectSourceFiles,
+  readImportAliases,
+  resolveImportAlias,
+  resolvePlatformImport,
+} from "./platform-extensions.ts";
+import { absolutizeSpecifiers, applyEdits, type Edit, parseModule } from "./swc-ast.ts";
+
+/** A target's import map for `deno bundle` and `deno info`. */
+export interface PlatformImportMap {
+  /**
+   * The platform redirects, plus each rewritten app module's file URL (with and without its
+   * extension) → its copy; a redirect whose variant was copied points at the copy.
+   */
+  readonly importMap: Record<string, string>;
+  /** Each copy's file URL → the app module it stands in for. */
+  readonly originals: Readonly<Record<string, string>>;
+}
+
+/** An app module's import-map alias imports: each specifier and the file URL it names. */
+interface AliasImports {
+  readonly url: string;
+  readonly path: string;
+  readonly imports: ReadonlyArray<{ readonly spec: string; readonly url: string }>;
+}
+
+/** `url` without its source extension (an extensionless import's spelling), or null. */
+function stemOf(url: string): string | null {
+  const ext = extname(new URL(url).pathname);
+  return ext ? url.slice(0, -ext.length) : null;
+}
+
+/** `source`'s alias imports (specifier and the file URL each names), or none. */
+async function aliasImportsOf(
+  source: string,
+  aliases: ImportAliases,
+): Promise<Array<{ spec: string; url: string }>> {
+  const parsed = await parseModule(source);
+  const out: Array<{ spec: string; url: string }> = [];
+  for (const item of parsed?.body ?? []) {
+    const spec = item.source?.value;
+    if (typeof spec !== "string" || spec.startsWith(".")) continue;
+    const url = resolveImportAlias(spec, aliases);
+    if (url?.startsWith("file:")) out.push({ spec, url });
+  }
+  return out;
+}
+
+/** The app modules that import anything through an alias, with those imports. */
+async function aliasImporters(
+  projectDir: string,
+  aliases: ImportAliases,
+): Promise<AliasImports[]> {
+  const keys = aliases.map(([key]) => key);
+  const out: AliasImports[] = [];
+  for await (const path of projectSourceFiles(projectDir)) {
+    const source = await Deno.readTextFile(path).catch(() => "");
+    // Cheap pre-filter: most modules spell no alias at all.
+    if (!keys.some((k) => source.includes(k))) continue;
+    const imports = await aliasImportsOf(source, aliases);
+    if (imports.length > 0) out.push({ url: toFileUrl(path).href, path, imports });
+  }
+  return out;
+}
+
+/** `url` and, for a file with a source extension, its extensionless spelling. */
+function spellings(url: string): string[] {
+  const stem = stemOf(url);
+  return stem ? [url, stem] : [url];
+}
+
+/**
+ * The app modules that must be copied, and every URL an alias import must be rewritten to reach:
+ * the redirected modules, then each module that reaches one through an alias (and so is copied
+ * itself), until no more do.
+ */
+function copiedImporters(
+  importers: readonly AliasImports[],
+  redirects: Readonly<Record<string, string>>,
+): { copied: AliasImports[]; reached: Set<string> } {
+  const reached = new Set(Object.keys(redirects).filter((k) => k.startsWith("file:")));
+  const copied: AliasImports[] = [];
+  let pending = [...importers];
+  for (let grew = true; grew;) {
+    const next = pending.filter((m) => m.imports.some((i) => reached.has(i.url)));
+    grew = next.length > 0;
+    for (const m of next) {
+      copied.push(m);
+      for (const url of spellings(m.url)) reached.add(url);
+    }
+    pending = pending.filter((m) => !next.includes(m));
+  }
+  return { copied, reached };
+}
+
+/**
+ * The import map `deno bundle` and `deno info` resolve a target's app modules through: the
+ * platform redirects, and copies of the app modules whose alias imports reach a redirected
+ * module (see the module comment). Without aliases, or without redirects, the redirects alone.
+ *
+ * @param projectDir The project root.
+ * @param redirects {@linkcode projectPlatformRedirects} for the target.
+ * @param copyDir Where the copies are written (emptied first).
+ */
+export async function platformImportMap(
+  projectDir: string,
+  redirects: Readonly<Record<string, string>>,
+  copyDir: string,
+): Promise<PlatformImportMap> {
+  const none = { importMap: { ...redirects }, originals: {} };
+  if (!Object.keys(redirects).some((k) => k.startsWith("file:"))) return none;
+  const aliases = await readImportAliases(projectDir);
+  if (aliases.length === 0) return none;
+  const { copied, reached } = copiedImporters(await aliasImporters(projectDir, aliases), redirects);
+  if (copied.length === 0) return none;
+
+  await Deno.remove(copyDir, { recursive: true }).catch(() => {});
+  await Deno.mkdir(copyDir, { recursive: true });
+  const copyOf = new Map<string, string>();
+  for (const m of copied) {
+    const copy = toFileUrl(join(copyDir, `p_${djb2(m.url)}${extname(m.path)}`)).href;
+    for (const url of spellings(m.url)) copyOf.set(url, copy);
+  }
+  // Where an import of `url` must go: the target's variant (or the variant's copy), else the
+  // module's own copy.
+  const loadOf = (url: string): string => {
+    const target = redirects[url] ?? url;
+    return copyOf.get(target) ?? target;
+  };
+  const rewrite = (m: AliasImports) => (spec: string) => {
+    const hit = resolvePlatformImport(spec, m.url, aliases, redirects);
+    return hit && reached.has(hit.url) ? loadOf(hit.url) : null;
+  };
+  const originals: Record<string, string> = {};
+  for (const m of copied) {
+    Object.assign(originals, await writeCopy(m, copyOf.get(m.url)!, rewrite(m)));
+  }
+  const importMap: Record<string, string> = {};
+  for (const [from, to] of Object.entries(redirects)) importMap[from] = copyOf.get(to) ?? to;
+  for (const [from, copy] of copyOf) importMap[from] ??= copy;
+  return { importMap: await withRealPathKeys(projectDir, importMap), originals };
+}
+
+/**
+ * Write `m`'s copy to `copy` with its relative imports made absolute and the alias imports
+ * `rewrite` names replaced. Returns the original for each spelling of the copy `deno info` may
+ * report (it names modules by their real path).
+ */
+async function writeCopy(
+  m: AliasImports,
+  copy: string,
+  rewrite: (spec: string) => string | null,
+): Promise<Record<string, string>> {
+  const parsed = await parseModule(await Deno.readTextFile(m.path));
+  if (!parsed) return {};
+  const edits: Edit[] = [];
+  absolutizeSpecifiers(parsed.ctx, parsed.body, m.url, edits, (u) => u, rewrite);
+  const path = fromFileUrl(copy);
+  await Deno.writeTextFile(path, applyEdits(parsed.ctx.bytes, edits));
+  const original = toFileUrl(await Deno.realPath(m.path)).href;
+  return { [copy]: original, [toFileUrl(await Deno.realPath(path)).href]: original };
+}
+
+/**
+ * `map` with each project file-URL key also spelled through the project's real path: a crawl
+ * reports modules by their real path (a temp dir under macOS's `/var` is `/private/var`), and
+ * the Flight entry imports the islands it found by those URLs.
+ */
+async function withRealPathKeys(
+  projectDir: string,
+  map: Record<string, string>,
+): Promise<Record<string, string>> {
+  const root = toFileUrl(resolve(projectDir)).href + "/";
+  const real = toFileUrl(await Deno.realPath(projectDir)).href + "/";
+  if (root === real) return map;
+  const out = { ...map };
+  for (const [from, to] of Object.entries(map)) {
+    if (from.startsWith(root)) out[real + from.slice(root.length)] ??= to;
+  }
+  return out;
+}

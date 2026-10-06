@@ -283,7 +283,9 @@ export function isRelativeSpecifier(spec: string): boolean {
 /**
  * Rewrite the module's relative import/export specifiers to absolute URLs (mapped through
  * `resolve`), as edits — a transformed module lives in a temp dir, so relative paths would
- * otherwise break. Returns whether any specifier was rewritten.
+ * otherwise break. A bare specifier (an import-map alias) keeps resolving from the copy, so it
+ * is rewritten only when `bare` returns a replacement for it. Returns whether any specifier was
+ * rewritten.
  */
 export function absolutizeSpecifiers(
   ctx: Ctx,
@@ -291,17 +293,18 @@ export function absolutizeSpecifiers(
   moduleUrl: string,
   edits: Edit[],
   resolve: (absUrl: string) => string = (u) => u,
+  bare?: (spec: string) => string | null,
 ): boolean {
   let any = false;
   for (const item of body) {
     const src = item.source;
-    if (src?.type !== "StringLiteral" || !isRelativeSpecifier(src.value as string)) continue;
-    const abs = new URL(src.value as string, moduleUrl).href;
-    edits.push({
-      start: startOf(ctx, src),
-      end: endOf(ctx, src),
-      text: JSON.stringify(resolve(abs)),
-    });
+    if (src?.type !== "StringLiteral") continue;
+    const spec = src.value as string;
+    const text = isRelativeSpecifier(spec)
+      ? resolve(new URL(spec, moduleUrl).href)
+      : bare?.(spec) ?? null;
+    if (text === null) continue;
+    edits.push({ start: startOf(ctx, src), end: endOf(ctx, src), text: JSON.stringify(text) });
     any = true;
   }
   return any;
