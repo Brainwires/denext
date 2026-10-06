@@ -471,6 +471,35 @@ export interface DesktopRuntime {
   emit(cap: string, event: string, data: unknown): void;
 }
 
+/**
+ * The export files a navigation to `pathname` may name, in order: a `.html` path itself;
+ * `/route` (or `/route/`) as `route/index.html` then `route.html`, the pages a multi-page App
+ * Router export writes; `/` as the root `index.html`. Empty for any other extension (an asset).
+ * The same mapping as the Capacitor shell's export router (bridge-export-router-native-template.ts).
+ */
+function exportPageCandidates(pathname: string): string[] {
+  const last = pathname.slice(pathname.lastIndexOf("/") + 1);
+  if (last.endsWith(".html")) return [pathname];
+  if (last.includes(".")) return [];
+  const trimmed = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return trimmed === "" ? ["/index.html"] : [`${trimmed}/index.html`, `${trimmed}.html`];
+}
+
+/**
+ * The HTML of the exported page a GET/HEAD navigation to `pathname` names
+ * ({@link exportPageCandidates}), or `null` when the export has none (the caller then serves the
+ * root `index.html` shell, so a single-page app's client routes keep working). Read through
+ * {@link serveStatic}, so its path-traversal and symlink checks apply.
+ */
+async function readExportPage(outDir: string, pathname: string): Promise<string | null> {
+  for (const candidate of exportPageCandidates(pathname)) {
+    const res = await serveStatic(outDir, candidate);
+    if (res?.status === 200) return await res.text();
+    await res?.body?.cancel();
+  }
+  return null;
+}
+
 // The SPA entry is stably named (`/_denext/client/index.js`), so the WebView would
 // otherwise serve a cached copy after a repackage — force revalidation every load.
 function noStore(res: Response): Response {
@@ -851,12 +880,16 @@ export function createDesktopHandler(
       : {}),
   };
 
-  /** Serve the export's `index.html` shell with the desktop global (and, with the updater on, the
-   * boot-confirm beacon) injected. `injectToken` gates the per-launch TOKEN: a subframe or a
-   * DNS-rebinding `Host` still learns it is desktop (runtimePlatform()) but gets NO token, so it
-   * cannot reach the bridge. */
-  const serveShell = async (isHead: boolean, injectToken: boolean): Promise<Response | null> => {
-    const html = await Deno.readTextFile(indexHtmlPath).catch(() => null);
+  /** Serve an exported page (`html`, else the export's `index.html` shell) with the desktop
+   * global (and, with the updater on, the boot-confirm beacon) injected. `injectToken` gates the
+   * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
+   * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
+  const serveShell = async (
+    isHead: boolean,
+    injectToken: boolean,
+    pageHtml?: string,
+  ): Promise<Response | null> => {
+    const html = pageHtml ?? await Deno.readTextFile(indexHtmlPath).catch(() => null);
     if (html === null) return null;
     const injected = await injectDesktopGlobal(
       html,
@@ -883,11 +916,16 @@ export function createDesktopHandler(
     if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
       return await proxy.proxyToBackend(request, url, proxyCfg);
     }
-    // The served-asset index.html path: inject the desktop global (re-read from disk so the
-    // injection is not fighting content-encoding on the static response).
-    if (url.pathname === "/index.html") {
-      const shell = await serveShell(request.method === "HEAD", injectToken);
-      if (shell) return shell;
+    // An exported page (`/route` → `route/index.html` or `route.html`, `/x.html`, `/`): served
+    // with the desktop global injected (read uncompressed, so the injection is not fighting
+    // content-encoding on the static response). Without this every path got the ROOT shell, so
+    // a multi-page export's `<a href="/protected">` reloaded the home page.
+    if (request.method === "GET" || request.method === "HEAD") {
+      const pageHtml = await readExportPage(outDir, url.pathname);
+      if (pageHtml !== null) {
+        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
+        if (page) return page;
+      }
     }
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
     const asset = await serveStatic(outDir, url.pathname, accEnc, request);

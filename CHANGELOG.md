@@ -202,6 +202,15 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **An exported multi-page app's links work in a Deno Desktop window.** `runDesktop` answered
+  every extensionless path with the root `index.html` (a single-page-app assumption), so in a
+  static App Router export such as `examples/clerk`, `<a href="/protected">` loaded the home page
+  again: the URL changed and the page did not. This happened for a hard navigation and for the
+  client router's soft-navigation fetch alike, on every OS. `/route` now loads `route/index.html`
+  or `route.html` when the export has that page (the Capacitor shell's mapping), a `.html` path
+  loads that file, and each page gets the same injected desktop global and `desktop.preload` the
+  root shell gets. Any other path is still the root `index.html`, so a single-page app's client
+  routes keep working. Repackage the app.
 - **The Linux `.deb` and `.rpm` show the app's icon in the launcher and refresh the desktop
   databases.** The `.desktop` entry's `Icon=` named the package (`Icon=<package>`) while the icon
   (when the bundle had one) was installed under that name only at an exact hicolor size, so an app
