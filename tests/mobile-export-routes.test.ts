@@ -317,6 +317,38 @@ for (const { name, run } of INSTALLERS) {
   });
 }
 
+/** `text` with the router as 3.1.0 wrote it: no `staysInside` path guard, under that release's marker. */
+async function withoutPathGuard(text: string): Promise<string> {
+  const { family, generation } = marker(text);
+  const body = text.slice(text.indexOf("\n") + 1);
+  const stripped = body
+    .replace(/ {8}guard staysInside\(path\) else \{\n[^\n]*\n {8}\}\n/, "")
+    .replace(/\n {4}\/\/\/ Whether `path` names a file under[\s\S]*?\n {4}\}\n(?=\}\n)/, "");
+  assert(!stripped.includes("staysInside"));
+  return await renderMarkedTemplate(family, generation - 1, stripped);
+}
+
+Deno.test("export routes: the doctor flags a bridge whose router predates the path guard", async () => {
+  await inProject(["index.html"], async (dir) => {
+    await addOtaToProject({ dir });
+    const bridge = await read(dir, BRIDGE);
+    await Deno.writeTextFile(join(dir, BRIDGE), await withoutPathGuard(bridge));
+    // Single-page export: only the guard finding applies.
+    const flagged = await runMobileDoctor({ root: dir, profile: "release" });
+    const hit = flagged.findings.filter((f) => f.check === "export-routes");
+    assertEquals(hit.length, 1);
+    assertEquals(hit[0].level, "error");
+    assertStringIncludes(hit[0].message, "predates the path guard");
+    assertStringIncludes(hit[0].fix, "denext mobile add export-routes");
+    // Re-running the installer upgrades it to the current text; the finding is gone.
+    const again = await addOtaToProject({ dir });
+    assert(again.upgraded.includes(BRIDGE), again.upgraded.join());
+    assertEquals(await read(dir, BRIDGE), bridge);
+    const after = await runMobileDoctor({ root: dir, profile: "release" });
+    assertEquals(after.findings.filter((f) => f.check === "export-routes"), []);
+  });
+});
+
 Deno.test("export routes: an edited bridge without the router is kept with a manual step", async () => {
   await inProject(["index.html"], async (dir) => {
     await addExportRoutesToProject({ dir });

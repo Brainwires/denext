@@ -371,7 +371,9 @@ Each item is described in full under Changed, Fixed or Security below.
   file in place; an edited one is kept and reported (re-run with `--force`, or copy the router's
   `staysInside` check by hand). The bridge templates' generations are bumped (auth-session 4,
   app-extension 4; the unreleased OTA generation 7 carries it) so an older denext never rewrites
-  the check away.
+  the check away. `denext mobile doctor` (`store` and `release`) now flags a bridge whose router
+  lacks the `staysInside` guard (`export-routes`, an error), so an app still on the 3.1.0 router
+  is caught before it ships.
 - **Deno Desktop: the native JS bridge serves only the app origin.** The packaged app's
   `laufey-launch.json` now writes `"bridgeOrigins"`: the app origin (`desktop.app.origin`, else
   `app://localhost`) and nothing broader. Without it, the bridge was pinned to every origin of the

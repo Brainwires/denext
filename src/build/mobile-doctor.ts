@@ -308,7 +308,25 @@ async function mainActivities(root: string): Promise<string[]> {
 
 /** What marks a shell that routes an exported page to its own HTML, per platform. */
 const IOS_EXPORT_ROUTER = "DenextExportRouter";
+/** What marks an iOS export router that refuses a path leaving the web directory. */
+const IOS_EXPORT_ROUTER_GUARD = "staysInside";
 const ANDROID_EXPORT_ROUTES = "DenextExportRoutes";
+
+/** Whether the iOS bridge has the export router but not its path-traversal guard. */
+async function iosRouterLacksGuard(root: string): Promise<boolean> {
+  const bridge = await readText(join(root, BRIDGE_VIEW_CONTROLLER));
+  return bridge !== null && bridge.includes(IOS_EXPORT_ROUTER) &&
+    !bridge.includes(IOS_EXPORT_ROUTER_GUARD);
+}
+
+const UNGUARDED_ROUTER: MobileDoctorFinding = {
+  check: "export-routes",
+  level: "error",
+  message: "the iOS shell's export router predates the path guard: a request can read files " +
+    "outside the web directory",
+  fix: "run `denext mobile add export-routes` (an unedited bridge is upgraded; an edited one " +
+    "needs `--force` or the `staysInside` guard copied by hand); then ship a new binary",
+};
 
 const exportRoutes: Check = {
   id: "export-routes",
@@ -316,7 +334,8 @@ const exportRoutes: Check = {
   applies: (p) => Promise.resolve(p.webDir !== null && (p.hasIos || p.hasAndroid)),
   run: async (p) => {
     const page = p.webDir === null ? null : await nestedPage(p.webDir);
-    if (page === null) return [];
+    const unguarded = p.hasIos && await iosRouterLacksGuard(p.root);
+    if (page === null) return unguarded ? [UNGUARDED_ROUTER] : [];
     const missing: string[] = [];
     if (p.hasIos) {
       const bridge = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
@@ -326,8 +345,9 @@ const exportRoutes: Check = {
       const activities = await mainActivities(p.root);
       if (!activities.some((t) => t.includes(ANDROID_EXPORT_ROUTES))) missing.push("Android");
     }
-    if (missing.length === 0) return [];
-    return [{
+    const guard = unguarded ? [UNGUARDED_ROUTER] : [];
+    if (missing.length === 0) return guard;
+    return [...guard, {
       check: "export-routes",
       level: "error",
       message: `${p.webDirName}/ is a multi-page export (${p.webDirName}/${page}), but the ` +
