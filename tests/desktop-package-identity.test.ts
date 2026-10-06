@@ -3,14 +3,22 @@
 // mirrored into deno.json (what `deno desktop` reads), and `--icon` from `desktop.app.icons.<os>`
 // on every OS — the macOS script passed none before.
 
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   desktopAppName,
   desktopBundleCommand,
   desktopIconArgs,
+  prepareDesktopPackage,
 } from "../src/build/desktop-package-script.ts";
 import { syncDesktopAppConfigAt } from "../src/build/desktop-app-config.ts";
+import { injectAppConfigRedirects } from "../src/build/css.ts";
 import { packageMetaFrom } from "../src/build/desktop-installers.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -92,6 +100,53 @@ Deno.test("sync: desktop.app name + identifier from the config are mirrored into
     const after = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).desktop.app;
     assertEquals(after.identifier, "com.new.app");
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name:
+    "prepareDesktopPackage: the config's identity survives the export restoring a backed-up deno.json",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // `denext desktop package` runs the script under the CLI's CSS re-exec, which injects css→shim
+  // redirects into deno.json and keeps a backup of the original while the script runs; the
+  // export's own CLI restores that backup when it starts. A sync done before the export was
+  // undone, so `deno desktop` packaged deno.json's stale identifier instead of the config's.
+  const cssUrl = toFileUrl(join(Deno.cwd(), "src", "build", "css.ts")).href;
+  const { dir, entry } = await project(
+    {
+      // The export's first step: restore the backed-up deno.json.
+      tasks: { export: `deno run -A --config ${join(Deno.cwd(), "deno.json")} restore.ts` },
+      desktop: { app: { name: "Old", identifier: "com.old.app" } },
+    },
+    { desktop: { app: { name: "New App", identifier: "com.new.app" } } },
+    {
+      "restore.ts": `import { restoreAppConfig } from ${JSON.stringify(cssUrl)};\n` +
+        `await restoreAppConfig("deno.json", ".denext");\n`,
+    },
+  );
+  const cwd = Deno.cwd();
+  const prev = Deno.env.get("DENEXT_APP_NAME");
+  Deno.env.delete("DENEXT_APP_NAME");
+  try {
+    // What the CSS re-exec parent does before it spawns the package script.
+    await injectAppConfigRedirects(join(dir, "deno.json"), join(dir, ".denext"), {
+      "./app.css": "./.denext/css-shims/app.css.js",
+    });
+    Deno.chdir(dir);
+    const { meta } = await prepareDesktopPackage(entry, "linux", {
+      formats: [],
+      add: [],
+      export: true,
+    });
+    const app = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).desktop.app;
+    assertEquals([app.name, app.identifier], ["New App", "com.new.app"]);
+    assertEquals(meta.identifier, "com.new.app");
+  } finally {
+    Deno.chdir(cwd);
+    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -185,6 +240,12 @@ Deno.test("scaffold: the macOS script passes --icon and names the app from the c
       .content;
   assertStringIncludes(mac, 'cmd.push(...await desktopIconArgs(import.meta.url, "darwin"));');
   assertStringIncludes(mac, "await appName(import.meta.url)");
+  // The identity reaches deno.json after the export (which can restore a backed-up deno.json),
+  // right before deno desktop reads it.
+  const exported = mac.indexOf('await run(["deno", "task", "export"])');
+  const synced = mac.indexOf("await syncDesktopAppConfig(import.meta.url)");
+  const built = mac.indexOf("await buildArtifacts(opts, name)");
+  assert(exported > 0 && exported < synced && synced < built, "export, then sync, then build");
 });
 
 Deno.test("config validation: desktop.app.name and desktop.app.icons", () => {

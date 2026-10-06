@@ -283,6 +283,25 @@ Deno.test("desktopMacosSigning: a profile yields merged entitlements with the Ap
   }
 });
 
+Deno.test("desktopMacosSigning: the profile is checked against the config's identifier, which it returns", async () => {
+  // deno.json still names another app (the kitchen sink's identifier in both files, the config's
+  // changed): the config wins, as the package scripts mirror it into deno.json for deno desktop.
+  const { dir, entry } = await project(passkeyConfig(), {
+    desktop: { app: { identifier: "com.example.stale" } },
+  });
+  try {
+    const out = await desktopMacosSigning(entry, {
+      identity: IDENTITY,
+      decodeProfile: decode(),
+      now: NOW,
+    });
+    assertEquals(out.identifier, "com.example.app");
+    await Deno.remove(out.entitlements!);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktopMacosSigning: DENEXT_PROVISIONING_PROFILE overrides the config path", async () => {
   const { dir, entry } = await project(passkeyConfig({ provisioningProfile: "missing.profile" }));
   try {
@@ -391,5 +410,19 @@ Deno.test("scaffold: the macOS script embeds the checked profile and signs with 
   assertStringIncludes(mac, "await desktopMacosSigning(import.meta.url, {");
   assertStringIncludes(mac, 'Deno.env.get("DENEXT_PROVISIONING_PROFILE")');
   assertStringIncludes(mac, "`${app}/Contents/embedded.provisionprofile`");
-  assertStringIncludes(mac, "await sign(app, s.identity, s.entitlements, s.provisioningProfile);");
+  assertStringIncludes(
+    mac,
+    "await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);",
+  );
+});
+
+Deno.test("scaffold: the macOS script embeds the profile only in a bundle with the checked identifier", () => {
+  const mac =
+    scaffoldFiles({ dir: ".", desktop: true }).find((f) => f.path === "scripts/package-macos.ts")!
+      .content;
+  assertStringIncludes(mac, "profileIdentifier: mac.identifier,");
+  const check = mac.indexOf('await infoPlistString(app, "CFBundleIdentifier")');
+  const embed = mac.indexOf("`${app}/Contents/embedded.provisionprofile`");
+  assert(check > 0 && check < embed, "the bundle id is checked before the profile is embedded");
+  assertStringIncludes(mac, "if (bundleId !== profileIdentifier) {");
 });

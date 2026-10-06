@@ -943,29 +943,26 @@ async function mergeUniversal(
   }
 }
 
-/** The bundle's main executable path (from Info.plist CFBundleExecutable). */
-async function mainExecutable(app: string): Promise<string> {
+/** A string value of the bundle's Info.plist; throws when it is missing or empty. */
+async function infoPlistString(app: string, key: string): Promise<string> {
   const p = await new Deno.Command("plutil", {
-    args: [
-      "-extract",
-      "CFBundleExecutable",
-      "raw",
-      "-o",
-      "-",
-      \`\${app}/Contents/Info.plist\`,
-    ],
+    args: ["-extract", key, "raw", "-o", "-", \`\${app}/Contents/Info.plist\`],
     stdout: "piped",
     stderr: "null",
   }).output();
-  const name = new TextDecoder().decode(p.stdout).trim();
+  const value = new TextDecoder().decode(p.stdout).trim();
+  if (!p.success || !value) {
+    throw new Error(\`could not read \${key} from \${app}/Contents/Info.plist\`);
+  }
+  return value;
+}
+
+/** The bundle's main executable path (from Info.plist CFBundleExecutable). */
+async function mainExecutable(app: string): Promise<string> {
   // Fail loudly rather than returning an empty basename: an empty name would never
   // match in the sign loop's \`file === mainExe\` guard, so the main executable would be
   // signed twice (the second time without entitlements) — a silent invariant break.
-  if (!p.success || !name) {
-    throw new Error(
-      \`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`,
-    );
-  }
+  const name = await infoPlistString(app, "CFBundleExecutable");
   return \`\${app}/Contents/MacOS/\${name}\`;
 }
 
@@ -976,12 +973,22 @@ async function sign(
   identity: string | undefined,
   entitlements?: string,
   provisioningProfile?: string,
+  profileIdentifier?: string,
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
   const mainExe = await mainExecutable(app);
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
   if (identity && provisioningProfile) {
+    // The profile was checked against this identifier: a bundle built with another one would
+    // carry a profile (and App ID entitlement) for a different app, which AMFI refuses at launch.
+    const bundleId = await infoPlistString(app, "CFBundleIdentifier");
+    if (bundleId !== profileIdentifier) {
+      throw new Error(
+        \`\${app} has the bundle identifier \${bundleId}, but the provisioning profile was \` +
+          \`checked against \${profileIdentifier} (desktop.app.identifier)\`,
+      );
+    }
     await Deno.copyFile(provisioningProfile, \`\${app}/Contents/embedded.provisionprofile\`);
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
@@ -1092,6 +1099,8 @@ interface Signing {
   entitlements: string | undefined;
   /** desktop.macos.provisioningProfile (or DENEXT_PROVISIONING_PROFILE), checked. */
   provisioningProfile: string | undefined;
+  /** The bundle identifier the profile was checked against (the built .app must carry it). */
+  profileIdentifier: string | undefined;
   notaryProfile: string | undefined;
   /** "Developer ID Installer: …" for the .pkg. */
   installerIdentity: string | undefined;
@@ -1123,6 +1132,7 @@ async function signingFromEnv(): Promise<Signing> {
     identity,
     entitlements: mac.entitlements,
     provisioningProfile: mac.provisioningProfile,
+    profileIdentifier: mac.identifier,
     notaryProfile,
     installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
@@ -1177,7 +1187,7 @@ async function finishArtifacts(
   const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
-      await sign(app, s.identity, s.entitlements, s.provisioningProfile);
+      await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (formats.includes("dmg")) installers.push(await makeDmg(app));
@@ -1217,9 +1227,12 @@ async function main(): Promise<void> {
     opts.formats,
     opts.add,
   );
-  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
-  await syncDesktopAppConfig(import.meta.url);
   if (opts.export) await run(["deno", "task", "export"]);
+  // .deno-desktop/app.json (the app origin + identifier), its deno.json compile.include, and the
+  // config's desktop.app name / identifier mirrored into deno.json, where deno desktop reads them.
+  // After the export: \`denext desktop package\` keeps a backup of deno.json while this script runs,
+  // and the export's CLI restores it when it starts, which would undo a sync done before it.
+  await syncDesktopAppConfig(import.meta.url);
   await Deno.mkdir("dist", { recursive: true });
   const artifacts = await buildArtifacts(opts, name);
   const installers = await finishArtifacts(

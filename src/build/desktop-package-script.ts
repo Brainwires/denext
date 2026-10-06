@@ -314,10 +314,15 @@ export interface PreparedDesktopPackage {
 
 /**
  * A package run's setup: the app name, the installer plan (`--format`, else
- * `desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`
- * sync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up
- * version or identifier is warned about), `dist/`,
- * and — unless `--no-export` — the static export (`deno task export`).
+ * `desktop.installers.<os>`, else the defaults), `dist/`, unless `--no-export` the static export
+ * (`deno task export`), then the `.deno-desktop/app.json` + `compile.include` + deno.json
+ * `desktop.app` sync and the package metadata (read after that sync wrote the deep links into
+ * deno.json; a made-up version or identifier is warned about).
+ *
+ * The sync runs AFTER the export, right before `deno desktop` reads deno.json: under
+ * `denext desktop package` the CLI's CSS re-exec keeps a backup of the project's deno.json while the
+ * script runs, and the export's own CLI restores that backup when it starts, which undid a sync
+ * done before it (the bundle then took deno.json's identifier, not `denext.config.ts`'s).
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
@@ -331,11 +336,11 @@ export async function prepareDesktopPackage(
 ): Promise<PreparedDesktopPackage> {
   const appName = await desktopAppName(entryUrl);
   const plan = await desktopInstallerPlan(entryUrl, os, args.formats, args.add);
+  await Deno.mkdir("dist", { recursive: true });
+  if (args.export) await desktopRun(["deno", "task", "export"]);
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
-  await Deno.mkdir("dist", { recursive: true });
-  if (args.export) await desktopRun(["deno", "task", "export"]);
   return { name: desktopSlug(appName), plan, meta };
 }
 
