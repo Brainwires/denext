@@ -38,6 +38,7 @@ on:
       - "src/build/project-locks.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/mobile/**"
+      - "src/build/platform-*.ts"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"

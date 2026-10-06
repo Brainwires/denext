@@ -6,9 +6,10 @@
 // client router turns into a soft navigation; a link back to `/`; `/second` again and
 // `history.back()`. Then a full-page load of `/second` (`location.assign`), and in that new document:
 // `/second`'s own page, and the desktop global, the preload and a capability call on it (the runtime
-// must inject them into every page, not just the root shell). The checks so far survive the full load
-// in the runner's scratch folder (`kitchen.mark` / `kitchen.markerRead`); the second document reports
-// all of them and quits.
+// must inject them into every page, not just the root shell), and that the export rendered and
+// hydrated the desktop variant of `PlatformBadge` (platform-specific files, through the `@/`
+// alias). The checks so far survive the full load in the runner's scratch folder (`kitchen.mark` /
+// `kitchen.markerRead`); the second document reports all of them and quits.
 //
 // Rendered by the root layout, so it is on every page and starts again in every new document; a
 // soft navigation keeps the document, so the flow that clicked keeps running across it.
@@ -28,6 +29,8 @@ export const NAVIGATION_CHECKS = {
   historyBack: "navigation: history.back() from the second page returns to Home",
   hard: "navigation: a full-page load of /second renders the second page",
   bridge: "navigation: the desktop global, the preload and a capability on the full-loaded page",
+  platform:
+    "platform files: the export rendered and hydrated PlatformBadge.desktop.tsx (imported via @/)",
 } as const;
 
 const SOFT_CHECKS = [
@@ -159,6 +162,22 @@ async function hardStage(results: CheckResult[]): Promise<void> {
     const facts = await device.info({}) as { os?: string } | null;
     if (!facts?.os) throw new Error(`device.info() answered ${JSON.stringify(facts)}`);
     return `token + preload; device.info().os ${facts.os}`;
+  });
+  await check(results, NAVIGATION_CHECKS.platform, async () => {
+    // The server render: the exported HTML of this page, as the window was served it.
+    const html = await (await fetch(location.pathname)).text();
+    const served = [...html.matchAll(/data-kitchen-platform="([a-z]+)"/g)].map((m) => m[1]);
+    if (served.join() !== "desktop") {
+      throw new Error(`the exported HTML rendered ${served.join("+") || "no"} PlatformBadge`);
+    }
+    // The client bundle: the island that hydrated it names its own file.
+    const el = await waitFor(
+      () => document.querySelector("[data-kitchen-hydrated]"),
+      "the hydrated PlatformBadge",
+    );
+    const hydrated = el.getAttribute("data-kitchen-hydrated");
+    if (hydrated !== "desktop") throw new Error(`the client bundle hydrated the ${hydrated} file`);
+    return "server HTML and client bundle: PlatformBadge.desktop.tsx";
   });
 }
 

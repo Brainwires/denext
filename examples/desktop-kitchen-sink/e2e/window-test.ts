@@ -5,7 +5,8 @@
 // page to report every check through the `kitchen` extension. A second launch clicks plain links
 // between the export's pages (denext's client router: soft navigations, a link back, history.back())
 // and loads `/second` in full, asserting each page renders its own content and keeps the desktop
-// bridge. Then the full-app update itself: a
+// bridge, and that the desktop export took `PlatformBadge.desktop.tsx` (imported through an alias)
+// in its server render and its client bundle. Then the full-app update itself: a
 // copy of the app downloads, verifies and installs a second build (99.0.0, same throwaway key), the
 // new version's trial launch deliberately does not confirm, and the next launch must roll it back.
 //
@@ -79,7 +80,7 @@ const TIMEOUT_MS = Number(Deno.env.get("KITCHEN_SINK_TIMEOUT_MS") ?? 240_000);
 /** The page's main-phase check count (app/checks.ts); fewer means it shipped without some. */
 const MIN_CHECKS = 55;
 /** The checks the navigation phase reports (app/navigation.tsx `NAVIGATION_CHECKS`). */
-const NAVIGATION_CHECKS = 5;
+const NAVIGATION_CHECKS = 6;
 /** The checks each full-app update phase reports (app/checks.ts `PHASE_CHECKS`). */
 const UPDATE_PHASES = { "update-install": 2, "update-trial": 1, "update-rollback": 2 } as const;
 /** The version the update build is packaged as (app/checks.ts `UPDATE_VERSION`). */
@@ -896,7 +897,8 @@ async function mainPhase(exe: string, bin: string, updateBase: string) {
 
 /**
  * The navigation phase: the page clicks plain links between `/` and `/second` (soft navigations),
- * goes back, then loads `/second` in full; that second document reports every check and quits.
+ * goes back, then loads `/second` in full; that second document checks the export rendered and
+ * hydrated the desktop variant of a platform-specific file, reports every check and quits.
  */
 async function navigationPhase(exe: string, bin: string, updateBase: string) {
   await writeRunnerState("navigation", updateBase);
