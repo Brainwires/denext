@@ -312,6 +312,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
             sessionType: facts.sessionType,
             cookieEncryption: facts.cookieEncryption,
             badge: typeof dock?.setBadge === "function",
+            badgeShows: facts.badge,
+            badgeReason: facts.badgeReason,
             bounce: typeof dock?.bounce === "function",
             dockMenu: dockMenuWorks(),
           };

@@ -156,6 +156,15 @@ export interface AppCapabilities {
   readonly cookieEncryption: "os" | "basic" | PlatformUnknown | null;
   /** {@linkcode setBadge} works. */
   readonly badge: boolean;
+  /**
+   * Where the badge shows: `"dock"` (the macOS Dock tile), `"launcher-entry"` (Linux: a count on
+   * the app's launcher, where a dock reads it: Ubuntu's dock, Dash to Dock, Plasma's task manager)
+   * or `"title"` (a `"(N) "` prefix on the window titles: Windows, Linux without such a dock, and a
+   * badge that isn't a number), as the runtime probed it (runtime 2.9.7-denext.11 and later).
+   */
+  readonly badgeShows: "dock" | "launcher-entry" | "title" | PlatformUnknown;
+  /** Linux, when `badgeShows` is `"title"`: why no launcher shows the count (the runtime's). */
+  readonly badgeReason: string | null;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
@@ -223,6 +232,10 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     sessionType: oneOf(raw, "sessionType", ["wayland", "x11", "tty", null] as const),
     cookieEncryption: oneOf(raw, "cookieEncryption", ["os", "basic", null] as const),
     badge: flag("badge"),
+    badgeShows: oneOf(raw, "badgeShows", ["dock", "launcher-entry", "title"] as const),
+    badgeReason: typeof raw?.badgeReason === "string" && raw.badgeReason !== ""
+      ? raw.badgeReason
+      : null,
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
   };
@@ -253,8 +266,10 @@ export function onAppMenuItem(handler: (id: string) => void): () => void {
 }
 
 /**
- * Show a badge on the app icon: the Dock icon on macOS, the taskbar button on Windows, a prefix of
- * the window title on Linux. `null`, `""` or `0` removes it.
+ * Show a badge on the app icon: the Dock icon on macOS, the taskbar button on Windows. On Linux a
+ * count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11:
+ * Ubuntu's dock, Dash to Dock, Plasma's task manager), else as a prefix of the window titles;
+ * `appCapabilities().badgeShows` says which. `null`, `""` or `0` removes it.
  *
  * @param badge The text or count.
  * @returns A promise that settles once it is shown.

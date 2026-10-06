@@ -7,7 +7,10 @@
 //   - On Linux (or with `--linux`), the session facts the runtime's probe reports, read the same
 //     way from the CLI: the session type, the D-Bus session bus, a tray host
 //     (`org.kde.StatusNotifierWatcher`), the Secret Service and its lock state, `secret-tool`, a
-//     notification server and the xdg-desktop-portal interfaces with their versions.
+//     notification server and the xdg-desktop-portal interfaces with their versions; whether the
+//     portal can register a host app's id (a notification click that starts a quit app), a systemd
+//     user manager (a scheduled notification posted while the app is closed) and a dock that
+//     reads launcher badges (runtime 2.9.7-denext.11).
 //
 // The probe needs no window: it asks the session bus through `busctl --user` (systemd) or
 // `gdbus` (GLib), argv only, never a shell, each call bounded by a timeout. The runtime's own
@@ -63,6 +66,19 @@ export interface LinuxSessionFacts {
   readonly portal: boolean;
   /** The portal interfaces offered, by version (an absent one is not listed). */
   readonly portalVersions: Readonly<Record<string, number>>;
+  /**
+   * The portal registers a host app's id (`org.freedesktop.host.portal.Registry`,
+   * xdg-desktop-portal 1.19+): the runtime then posts notifications through the portal, and a
+   * click starts the app when it isn't running.
+   */
+  readonly portalRegistry: boolean;
+  /** A systemd user manager answers (`org.freedesktop.systemd1`): scheduled-notification timers. */
+  readonly systemdUser: boolean;
+  /**
+   * A dock reads launcher badges (`com.canonical.Unity` owned: Ubuntu's dock, Dash to Dock; or
+   * `org.kde.plasmashell`: Plasma's task manager).
+   */
+  readonly launcherBadges: boolean;
 }
 
 /** The pinned runtime as the doctor reports it. */
@@ -73,6 +89,11 @@ export interface DoctorRuntime {
   readonly laufeyApiVersion: number;
   /** The pinned runtime has `Deno.desktop.platformFeatures()` (laufey API 45). */
   readonly platformFeatures: boolean;
+  /**
+   * The pinned runtime posts Linux notifications through the portal (a click starts a quit app),
+   * schedules them with systemd user timers and badges the launcher (runtime 2.9.7-denext.11).
+   */
+  readonly linuxNotifications: boolean;
 }
 
 /** What `denext desktop doctor` found. */
@@ -112,6 +133,18 @@ export interface DesktopDoctorOptions {
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
 const PLATFORM_FEATURES_API = 45;
 
+/**
+ * The runtime release (`2.9.7-denext.N`) that brought Linux notification cold starts, scheduled
+ * notifications posted while the app is closed and launcher badges.
+ */
+const LINUX_NOTIFICATIONS_RELEASE = 11;
+
+/** `N` of a `…-denext.N` runtime version, or `null`. */
+function runtimeRelease(version: unknown): number | null {
+  const m = typeof version === "string" ? /-denext\.(\d+)$/.exec(version) : null;
+  return m ? Number(m[1]) : null;
+}
+
 /** One D-Bus call's bound. */
 const CALL_TIMEOUT_S = 5;
 
@@ -122,6 +155,11 @@ const TRAY_WATCHER = "org.kde.StatusNotifierWatcher";
 const SECRETS = "org.freedesktop.secrets";
 const NOTIFICATIONS = "org.freedesktop.Notifications";
 const PORTAL = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH = "/org/freedesktop/portal/desktop";
+const REGISTRY = "org.freedesktop.host.portal.Registry";
+const SYSTEMD = "org.freedesktop.systemd1";
+/** The names a dock that reads `com.canonical.Unity.LauncherEntry` owns. */
+const LAUNCHER_BADGE_READERS = ["com.canonical.Unity", "org.kde.plasmashell"];
 
 /** The default runner: `Deno.Command`, stdout captured, stderr dropped, killed after 8 s. */
 export const defaultDoctorRunner: DoctorRunner = async (cmd, args) => {
@@ -265,6 +303,29 @@ async function portalVersions(run: DoctorRunner, names: BusNames): Promise<Recor
   return versions;
 }
 
+/** Whether the portal offers the host app registry (introspected; never called). */
+async function hasPortalRegistry(run: DoctorRunner, tool: BusNames["tool"]): Promise<boolean> {
+  const out = tool === "busctl"
+    ? await run("busctl", [
+      "--user",
+      `--timeout=${CALL_TIMEOUT_S}`,
+      "introspect",
+      PORTAL,
+      PORTAL_PATH,
+      REGISTRY,
+    ])
+    : await run("gdbus", [
+      "introspect",
+      "--session",
+      "--dest",
+      PORTAL,
+      "--object-path",
+      PORTAL_PATH,
+    ]);
+  return out !== null && out.code === 0 &&
+    (tool === "busctl" ? out.stdout.includes(".Register") : out.stdout.includes(REGISTRY));
+}
+
 /** The session type, as the runtime derives it. */
 function sessionTypeOf(env: (k: string) => string | undefined): LinuxSessionFacts["sessionType"] {
   const declared = (env("XDG_SESSION_TYPE") ?? "").trim().toLowerCase();
@@ -310,6 +371,9 @@ export async function probeLinuxSession(
       notifications: false,
       portal: false,
       portalVersions: {},
+      portalRegistry: false,
+      systemdUser: false,
+      launcherBadges: false,
     };
   }
   const has = (name: string) => names.owned.has(name) || names.activatable.has(name);
@@ -322,6 +386,9 @@ export async function probeLinuxSession(
     notifications: has(NOTIFICATIONS),
     portal,
     portalVersions: portal ? await portalVersions(run, names) : {},
+    portalRegistry: portal ? await hasPortalRegistry(run, names.tool) : false,
+    systemdUser: names.owned.has(SYSTEMD),
+    launcherBadges: LAUNCHER_BADGE_READERS.some((n) => names.owned.has(n)),
   };
 }
 
@@ -371,6 +438,16 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
         "Deno.desktop.platformFeatures(): appCapabilities() / windowCapabilities() report the " +
         'session facts as "unknown", and a tray with no tray host is not detected',
       "upgrade denext to a release that pins runtime 2.9.7-denext.10 or later",
+    );
+  }
+  if (linuxChecks && !runtime.linuxNotifications) {
+    add(
+      "warning",
+      `the pinned runtime ${s.version} predates Linux notification cold starts, scheduled ` +
+        "notifications posted while the app is closed, and launcher badges: a click on a " +
+        "notification can't start the app, a schedule waits for the app to run, and setBadge() " +
+        'is a "(N) " title prefix',
+      "upgrade denext to a release that pins runtime 2.9.7-denext.11 or later",
     );
   }
   return out;
@@ -450,8 +527,46 @@ function portalFindings(f: LinuxSessionFacts): DesktopDoctorFinding[] {
   return out;
 }
 
+/**
+ * The findings about notification clicks, scheduled notifications and the launcher badge (what
+ * runtime 2.9.7-denext.11 uses; an older runtime gets one runtime finding instead).
+ */
+function notificationFindings(f: LinuxSessionFacts): DesktopDoctorFinding[] {
+  const out: DesktopDoctorFinding[] = [];
+  if (f.notifications && f.portal && !f.portalRegistry) {
+    out.push({
+      check: "notification-clicks",
+      level: "warning",
+      message: "xdg-desktop-portal can't register an app's id (older than 1.19): notifications " +
+        "go to org.freedesktop.Notifications, so a click after the app quit can't start it",
+      fix: "upgrade xdg-desktop-portal to 1.19 or later; installing the app from its .deb / .rpm " +
+        "(its desktop entry and D-Bus service file) is the other half",
+    });
+  }
+  if (!f.systemdUser) {
+    out.push({
+      check: "scheduled-notifications",
+      level: "warning",
+      message: "no systemd user manager on the session bus: a notification scheduled for while " +
+        "the app is closed is posted at its next launch",
+      fix: "log in through a systemd distribution's display manager (its user manager runs " +
+        "with every login); there is no other scheduler",
+    });
+  }
+  if (!f.launcherBadges) {
+    out.push({
+      check: "badge",
+      level: "warning",
+      message: "no dock reads launcher badges (com.canonical.Unity.LauncherEntry): setBadge() " +
+        'shows a "(N) " prefix on the window titles',
+      fix: "GNOME: enable Ubuntu Dock or Dash to Dock; Plasma's task manager reads them",
+    });
+  }
+  return out;
+}
+
 /** The findings about the Linux session. */
-function linuxFindings(f: LinuxSessionFacts): DesktopDoctorFinding[] {
+function linuxFindings(f: LinuxSessionFacts, runtime: DoctorRuntime): DesktopDoctorFinding[] {
   const out: DesktopDoctorFinding[] = [];
   if (f.sessionType === "tty" || f.sessionType === "unknown") {
     out.push({
@@ -500,6 +615,7 @@ function linuxFindings(f: LinuxSessionFacts): DesktopDoctorFinding[] {
     });
   }
   out.push(...portalFindings(f));
+  if (runtime.linuxNotifications) out.push(...notificationFindings(f));
   return out;
 }
 
@@ -516,10 +632,12 @@ export async function runDesktopDoctor(
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const linuxChecks = options.linux ?? os === "linux";
   const laufeyApiVersion = (pin as { laufeyApiVersion?: number }).laufeyApiVersion ?? 0;
+  const release = runtimeRelease((pin as { version?: unknown }).version);
   const runtime: DoctorRuntime = {
     status: await options.runtimeStatus(),
     laufeyApiVersion,
     platformFeatures: laufeyApiVersion >= PLATFORM_FEATURES_API,
+    linuxNotifications: release !== null && release >= LINUX_NOTIFICATIONS_RELEASE,
   };
   const linux = linuxChecks
     ? await probeLinuxSession(
@@ -538,13 +656,19 @@ export async function runDesktopDoctor(
       "notifications",
       "portal",
     );
+    if (runtime.linuxNotifications) {
+      checks.push("notification-clicks", "scheduled-notifications", "badge");
+    }
   }
   return {
     os,
     runtime,
     linux,
     checks,
-    findings: [...runtimeFindings(runtime, linuxChecks), ...(linux ? linuxFindings(linux) : [])],
+    findings: [
+      ...runtimeFindings(runtime, linuxChecks),
+      ...(linux ? linuxFindings(linux, runtime) : []),
+    ],
   };
 }
 
@@ -567,8 +691,11 @@ function factLines(report: DesktopDoctorReport): string[] {
     }`,
     `  tray      ${f.trayHost ? "a tray host runs" : "no tray host"}`,
     `  secrets   ${f.secretService}; secret-tool ${f.secretTool ? "installed" : "missing"}`,
-    `  notify    ${f.notifications ? "a notification server" : "none"}`,
+    `  notify    ${f.notifications ? "a notification server" : "none"}; app id registry ${
+      f.portalRegistry ? "yes" : "no"
+    }; systemd user manager ${f.systemdUser ? "yes" : "no"}`,
     `  portal    ${portal}`,
+    `  badge     ${f.launcherBadges ? "a dock reads launcher badges" : '"(N) " title prefix'}`,
   );
   return lines;
 }

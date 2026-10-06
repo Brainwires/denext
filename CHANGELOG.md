@@ -53,6 +53,16 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Added
 
+- **Linux notification and badge facts (runtime 2.9.7-denext.11).** `appCapabilities()` reports
+  where the badge shows (`badgeShows`: `"dock"`, `"launcher-entry"` for a count on the app's
+  launcher where a dock reads launcher badges, or `"title"`, with `badgeReason`), and the
+  `notifications` capability passes on the runtime's transport (`"portal"` / `"freedesktop"`) and
+  why a click can't start a quit app (`coldStartReason`) or a schedule waits for the app to run
+  (`schedulePersistsReason`). An older runtime reads `"unknown"` with no reasons.
+  `denext desktop doctor --linux` checks the portal's host app registry (xdg-desktop-portal
+  1.19+), a systemd user manager and a dock that reads launcher badges, each with a fix, and says
+  when the pinned runtime predates them. The kitchen sink's window test checks the cold start and
+  posting while closed (or skips with the runtime's reason) and reports where the badge showed.
 - **`desktopOs()` from `denext/desktop/client`.** It returns the OS a Deno Desktop window runs on
   (`"darwin"`, `"windows"`, `"linux"`, …, Deno's `Deno.build.os`), or `undefined` off desktop, so
   apps stop reading the private `__denext.os` global. It needs no capability.

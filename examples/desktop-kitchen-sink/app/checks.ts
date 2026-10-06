@@ -1419,7 +1419,12 @@ const appChecks: Check[] = [
       });
       eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
       await setQuickActions([]);
-      return `badge + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
+      // Where the badge showed (runtime 2.9.7-denext.11): the Dock, a Linux launcher count, or
+      // the window-title prefix, with the runtime's reason.
+      const shows = caps.badgeShows === "title" && caps.badgeReason
+        ? `title (${caps.badgeReason})`
+        : caps.badgeShows;
+      return `badge on ${shows} + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
     },
   ],
   ["notifications: permission status from the OS", async () => {
@@ -1435,6 +1440,32 @@ const appChecks: Check[] = [
     return `${state}; schedule ${caps.schedule}, persists ${caps.schedulePersists}, ` +
       `actions ${caps.actions}, cold start ${caps.coldStart}`;
   }],
+  [
+    "notifications: a click starts a quit app, a schedule posts while closed (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await raw("notifications").capabilities({});
+      // macOS and Windows: the OS does both (macOS from a signed bundle), as reported above.
+      if (setup.os !== "linux") {
+        return `cold start ${caps.coldStart}, persists ${caps.schedulePersists}`;
+      }
+      // Linux (runtime 2.9.7-denext.11): the portal and the app's D-Bus service file (a .deb /
+      // .rpm install) for the click, a systemd user manager for the schedule; else the runtime
+      // says why. An older runtime has neither and gives no reason.
+      const missing: string[] = [];
+      if (caps.coldStart !== true) {
+        missing.push(
+          `a click can't start the app: ${caps.coldStartReason ?? "not in this runtime"}`,
+        );
+      }
+      if (caps.schedulePersists !== true) {
+        missing.push(
+          `a schedule waits for the app: ${caps.schedulePersistsReason ?? "not in this runtime"}`,
+        );
+      }
+      if (missing.length > 0) throw new Skip(missing.join("; "));
+      return `cold start and posting while closed (transport ${caps.transport})`;
+    },
+  ],
   ["notifications: schedule / pending / cancel through the OS", async ({ setup }) => {
     await needScheduling();
     await setNotificationCategories([{ id: "kitchen", actions: [{ id: "open", title: "Open" }] }]);

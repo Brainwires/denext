@@ -1,6 +1,8 @@
 /**
  * The runtime's probe of the session (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10
- * and later), read for the `app` and `window` capabilities. The runtime (laufey) does the probing:
+ * and later), read for the `app`, `window` and `notifications` capabilities. Runtime
+ * 2.9.7-denext.11 adds how the badge shows and, on Linux, how notifications are sent, whether a
+ * click starts a quit app and whether a scheduled one is posted while it is closed. The runtime (laufey) does the probing:
  * D-Bus names, the Secret Service's lock state, the portal versions, the cookie store. denext only
  * validates what it answered and passes it on, so the page learns WHY a feature is missing.
  *
@@ -26,6 +28,12 @@ export type SecretServiceState =
   | "no-session-bus"
   | "os";
 
+/** How the badge shows: the Dock tile, a Linux launcher count, or a window-title prefix. */
+export type BadgeShows = "dock" | "launcher-entry" | "title";
+
+/** How Linux notifications are sent: the xdg-desktop-portal, or `org.freedesktop.Notifications`. */
+export type NotificationTransport = "portal" | "freedesktop";
+
 /** The probe facts the capabilities surface. */
 export interface PlatformFacts {
   /** Linux: `wayland` / `x11` / `tty` / `unknown`; `null` on macOS and Windows. */
@@ -38,6 +46,20 @@ export interface PlatformFacts {
   readonly secretService: SecretServiceState | Unknown;
   /** CEF's cookie store: `"os"` (encrypted with an OS-held key) or `"basic"` (unencrypted). */
   readonly cookieEncryption: "os" | "basic" | null | Unknown;
+  /** How the badge shows (runtime 2.9.7-denext.11 and later). */
+  readonly badge: BadgeShows | Unknown;
+  /** Linux, when `badge` is `"title"`: why no launcher shows the count. */
+  readonly badgeReason: string | null;
+  /** Linux: how notifications are sent; `null` with no notification server (and elsewhere). */
+  readonly notificationTransport: NotificationTransport | null | Unknown;
+  /** Linux: a click on a notification starts the app when it isn't running. */
+  readonly notificationColdStart: boolean | null | Unknown;
+  /** Why not, when `notificationColdStart` is `false`. */
+  readonly notificationColdStartReason: string | null;
+  /** Linux: a scheduled notification is posted while the app is closed (a systemd user timer). */
+  readonly notificationScheduleWhileClosed: boolean | null | Unknown;
+  /** Why not, when `notificationScheduleWhileClosed` is `false`. */
+  readonly notificationScheduleReason: string | null;
 }
 
 /** The longest runtime reason passed on. */
@@ -60,7 +82,22 @@ const UNKNOWN_FACTS: PlatformFacts = Object.freeze({
   trayReason: null,
   secretService: "unknown",
   cookieEncryption: "unknown",
+  badge: "unknown",
+  badgeReason: null,
+  notificationTransport: "unknown",
+  notificationColdStart: "unknown",
+  notificationColdStartReason: null,
+  notificationScheduleWhileClosed: "unknown",
+  notificationScheduleReason: null,
 });
+
+const BADGE_SHOWS = new Set(["dock", "launcher-entry", "title"]);
+const TRANSPORTS = new Set(["portal", "freedesktop"]);
+
+/** A `boolean | null` fact a runtime reports (`"unknown"` when it doesn't: an older runtime). */
+function booleanOrNull(value: unknown): boolean | null | Unknown {
+  return value === null || typeof value === "boolean" ? value : "unknown";
+}
 
 /** A short reason string, or `null`. */
 export function reasonText(value: unknown): string | null {
@@ -103,5 +140,36 @@ export function platformFacts(api: DesktopAppApi | undefined): PlatformFacts {
       ? raw.secretService as SecretServiceState
       : "unknown",
     cookieEncryption: cookie === null || cookie === "os" || cookie === "basic" ? cookie : "unknown",
+    ...notificationAndBadgeFacts(raw),
+  };
+}
+
+/** The notification and badge facts (runtime 2.9.7-denext.11): `"unknown"` before it. */
+function notificationAndBadgeFacts(
+  raw: Record<string, unknown>,
+): Omit<
+  PlatformFacts,
+  "sessionType" | "trayHost" | "trayReason" | "secretService" | "cookieEncryption"
+> {
+  const badge: BadgeShows | Unknown = BADGE_SHOWS.has(raw.badge as string)
+    ? raw.badge as BadgeShows
+    : "unknown";
+  const transport = raw.notificationTransport;
+  const coldStart = booleanOrNull(raw.notificationColdStart);
+  const whileClosed = booleanOrNull(raw.notificationScheduleWhileClosed);
+  return {
+    badge,
+    badgeReason: badge === "title" ? reasonText(raw.badgeReason) : null,
+    notificationTransport: transport === null || TRANSPORTS.has(transport as string)
+      ? transport as NotificationTransport | null
+      : "unknown",
+    notificationColdStart: coldStart,
+    notificationColdStartReason: coldStart === false
+      ? reasonText(raw.notificationColdStartReason)
+      : null,
+    notificationScheduleWhileClosed: whileClosed,
+    notificationScheduleReason: whileClosed === false
+      ? reasonText(raw.notificationScheduleReason)
+      : null,
   };
 }

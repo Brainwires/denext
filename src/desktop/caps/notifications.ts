@@ -7,7 +7,10 @@
  *
  * Mechanisms (the runtime's): macOS `UNUserNotificationCenter`, Windows toasts
  * (`ScheduledToastNotification`), Linux `org.freedesktop.Notifications` with the runtime's own timer
- * (it delivers while the app runs and re-arms at the next launch).
+ * (it delivers while the app runs and re-arms at the next launch). From runtime 2.9.7-denext.11 a
+ * Linux app installed from its `.deb` / `.rpm` posts through the xdg-desktop-portal, so a click
+ * starts it when it isn't running, and a systemd user timer posts a scheduled one while it is
+ * closed; `capabilities` passes on the runtime's reasons where it can't.
  *
  * A notification's runtime tag is `denext-<id>`; each occurrence of a repeating one is
  * `denext-<id>-<time>`. The OS has no repeating trigger the runtime exposes, so this capability
@@ -51,6 +54,7 @@ import {
   secondsOf,
   triggerComponents,
 } from "../../mobile/notification-trigger.ts";
+import { platformFacts } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
 
 /** How many occurrences of a repeating notification are scheduled ahead. */
@@ -142,6 +146,21 @@ type NotificationCtor = new (
   title: string,
   options?: { body?: string; tag?: string; data?: unknown; actions?: DesktopNotificationAction[] },
 ) => EventTarget;
+
+/**
+ * What the runtime's session probe says about notifications here (runtime 2.9.7-denext.11, Linux):
+ * the transport, and why a click can't start the app when it isn't running (`coldStart` false) or
+ * why a scheduled notification waits for the app to run (`schedulePersists` false). `"unknown"` /
+ * `null` from an older runtime and on macOS and Windows, where the OS does both.
+ */
+function notificationFacts(api: DesktopAppApi | undefined) {
+  const facts = platformFacts(api);
+  return {
+    transport: facts.notificationTransport,
+    coldStartReason: facts.notificationColdStartReason,
+    schedulePersistsReason: facts.notificationScheduleReason,
+  };
+}
 
 /** The runtime's notifications API, or `unavailable` (the page then uses the WebView's). */
 function nativeApi(api: DesktopAppApi | undefined): DesktopNotificationsApi {
@@ -621,7 +640,11 @@ export function notificationsCapability(
     name: "notifications",
     methods: {
       capabilities: {
-        handler: () => ({ ...nativeApi(api()).capabilities(), categories: true }),
+        handler: () => ({
+          ...nativeApi(api()).capabilities(),
+          categories: true,
+          ...notificationFacts(api()),
+        }),
       },
       // Posting an OS notification needs an UNSCOPED `--allow-sys` under the pinned runtime.
       schedule: {

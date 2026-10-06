@@ -569,7 +569,10 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         <code>--linux</code>) the session type, the D-Bus session bus, a tray host, the Secret
         Service and its lock state,{" "}
         <code>secret-tool</code>, a notification server and the portal interfaces with their
-        versions. It reads the session bus with <code>busctl</code> or <code>gdbus</code>{" "}
+        versions; with runtime 2.9.7-denext.11, also whether the portal can register the app's id
+        (so a click on a notification starts the app when it isn't running), a systemd user manager
+        (a scheduled notification is posted while the app is closed) and a dock that reads launcher
+        badges. It reads the session bus with <code>busctl</code> or <code>gdbus</code>{" "}
         (never starting or unlocking the keyring), prints a fix for each missing piece (the
         AppIndicator extension,{" "}
         <code>libsecret-tools</code>, unlocking the keyring, a portal backend), and exits 1 on an
@@ -2027,7 +2030,13 @@ await bounce({ critical: true }); // until the app is focused`}
         <li>
           <code>setBadge</code>{" "}
           badges the Dock icon (macOS) or the taskbar button (Windows), and prefixes the window
-          title on Linux. <code>bounce</code>{" "}
+          title on Linux; with runtime 2.9.7-denext.11, a count shows on the app&apos;s launcher
+          where a dock reads launcher badges (Ubuntu&apos;s dock, Dash to Dock, Plasma&apos;s task
+          manager), and <code>appCapabilities().badgeShows</code> says which (<code>"dock"</code>,
+          {" "}
+          <code>"launcher-entry"</code> or <code>"title"</code>, with <code>badgeReason</code>).
+          {" "}
+          <code>bounce</code>{" "}
           bounces the Dock icon, flashes the taskbar button or marks the window urgent.
         </li>
         <li>

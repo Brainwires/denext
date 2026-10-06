@@ -716,7 +716,55 @@ Deno.test("notifications: malformed arguments are validation errors and schedule
     actions: true,
     clicks: true,
     categories: true,
+    // No session probe in this runtime: unknown, no reasons.
+    transport: "unknown",
+    coldStartReason: null,
+    schedulePersistsReason: null,
   });
+});
+
+Deno.test("notifications: capabilities pass on the runtime's Linux reasons (runtime 2.9.7-denext.11)", async () => {
+  const f = fakeNotifications();
+  const caps = (features: Record<string, unknown>) =>
+    call(
+      notificationsCapability({
+        api: { ...f.api, platformFeatures: () => features },
+        autoTopUp: false,
+      }),
+      "capabilities",
+    ) as Promise<Record<string, unknown>>;
+  // An AppImage on GNOME without a systemd user manager: the freedesktop transport.
+  const appImage = await caps({
+    os: "linux",
+    notificationTransport: "freedesktop",
+    notificationColdStart: false,
+    notificationColdStartReason: "no dev.acme.app.desktop is installed",
+    notificationScheduleWhileClosed: false,
+    notificationScheduleReason: "no systemd user manager on the session bus",
+  });
+  assertEquals(
+    [appImage.transport, appImage.coldStartReason, appImage.schedulePersistsReason],
+    [
+      "freedesktop",
+      "no dev.acme.app.desktop is installed",
+      "no systemd user manager on the session bus",
+    ],
+  );
+  // The .deb on GNOME: the portal, nothing missing (a stray reason is not passed on).
+  const deb = await caps({
+    os: "linux",
+    notificationTransport: "portal",
+    notificationColdStart: true,
+    notificationColdStartReason: "stray",
+    notificationScheduleWhileClosed: true,
+  });
+  assertEquals(
+    [deb.transport, deb.coldStartReason, deb.schedulePersistsReason],
+    ["portal", null, null],
+  );
+  // No notification server: no transport. macOS: null facts.
+  assertEquals((await caps({ notificationTransport: null })).transport, null);
+  assertEquals((await caps({ notificationTransport: "dbus" })).transport, "unknown");
 });
 
 Deno.test("notifications: one-shot interval / calendar triggers are one OS notification; a finite series stops", async () => {
@@ -1181,6 +1229,8 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     sessionType: "unknown",
     cookieEncryption: "unknown",
     badge: false,
+    badgeShows: "unknown",
+    badgeReason: null,
     bounce: false,
     dockMenu: false,
   });
@@ -1460,6 +1510,35 @@ Deno.test("app: without the probe (denext.9), a throwing or odd probe, every fac
     [true, null, true, "os", null],
   );
   assertEquals(caps.cookieEncryption, null);
+});
+
+Deno.test("app: where the badge shows follows the probe (runtime 2.9.7-denext.11)", async () => {
+  const capsWith = async (features: Record<string, unknown> | undefined) => {
+    const cap = createAppController({
+      window: undefined,
+      api: features ? { platformFeatures: () => features } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    return [caps.badgeShows, caps.badgeReason];
+  };
+  // A dock reads launcher badges (Ubuntu's dock, Plasma's task manager).
+  assertEquals(
+    await capsWith({ ...NO_TRAY_HOST, badge: "launcher-entry", badgeReason: null }),
+    ["launcher-entry", null],
+  );
+  // None does: the title prefix, with the runtime's reason.
+  assertEquals(
+    await capsWith({ ...NO_TRAY_HOST, badge: "title", badgeReason: " no dock reads them " }),
+    ["title", "no dock reads them"],
+  );
+  // A reason only travels with "title"; an odd value, or denext.10 (no key), reads unknown.
+  assertEquals(await capsWith({ badge: "dock", badgeReason: "x" }), ["dock", null]);
+  assertEquals(await capsWith({ badge: "tile" }), ["unknown", null]);
+  assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null]);
+  assertEquals(await capsWith(undefined), ["unknown", null]);
 });
 
 Deno.test("app: no Deno.Tray, Deno.dock or app menu — unsupported carries a reason", async () => {
