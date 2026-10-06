@@ -283,10 +283,10 @@ export function onAppMenuItem(handler: (id: string) => void): () => void {
 }
 
 /**
- * Show a badge on the app icon: the Dock icon on macOS, the taskbar button on Windows. On Linux a
- * count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11:
- * Ubuntu's dock, Dash to Dock, Plasma's task manager), else as a prefix of the window titles;
- * `appCapabilities().badgeShows` says which. `null`, `""` or `0` removes it.
+ * Show a badge: on the Dock icon on macOS, and as a `"(N) "` prefix of the window titles on
+ * Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges
+ * (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same
+ * title prefix; `appCapabilities().badgeShows` says which. `null`, `""` or `0` removes it.
  *
  * @param badge The text or count.
  * @returns A promise that settles once it is shown.

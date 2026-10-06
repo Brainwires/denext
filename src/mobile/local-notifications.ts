@@ -636,6 +636,11 @@ export function onLocalNotificationReceived(
  * listener, so subscribe early. In a Deno Desktop window it needs the `notifications`
  * capability. Elsewhere it does nothing.
  *
+ * Treat a tap's `data` (and its action) as untrusted input: on Linux a click arrives as a D-Bus
+ * call on the app's name, which any process of the same user can make with any `data` (as a
+ * Windows toast activation can be forged by the user's own processes). Validate it before acting
+ * on it; the default navigation already applies the deep-link acceptance rules.
+ *
  * @param callback Called with each tap.
  * @param options Which links to accept, and how to navigate.
  * @returns A function that unsubscribes.

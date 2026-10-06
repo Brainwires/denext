@@ -853,26 +853,144 @@ const LINUX_REFRESH = [
 ];
 
 /**
+ * Whether `id` can be a D-Bus well-known name and GApplication id (what the runtime needs to own
+ * it and to post notifications through the portal): at most 255 bytes, two or more `.`-separated
+ * elements of `[A-Za-z0-9_-]`, none empty or starting with a digit.
+ *
+ * @param id The app id.
+ * @returns Whether it is one.
+ */
+export function isDbusAppId(id: string): boolean {
+  const parts = id.split(".");
+  return id.length <= 255 && parts.length >= 2 &&
+    parts.every((p) => /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(p));
+}
+
+/**
+ * The D-Bus service file a package installs as `/usr/share/dbus-1/services/<app id>.service`, so
+ * D-Bus starts the app for a click on one of its notifications while it isn't running (the
+ * runtime posts them through the xdg-desktop-portal and owns the app id's name while it runs,
+ * runtime 2.9.7-denext.11). `Exec` runs the launcher with the environment the `.desktop` entry
+ * sets, plus `--laufey-dbus-activated` (the click that follows is the launch). `undefined` when
+ * the app id can't be a D-Bus name.
+ *
+ * @param meta The package metadata.
+ * @returns The service file text, or `undefined`.
+ */
+export function linuxDbusService(meta: DesktopPackageMeta): string | undefined {
+  const id = linuxAppId(meta);
+  if (!isDbusAppId(id)) return undefined;
+  const env = `LAUFEY_APP_ID=${id}${meta.singleInstance ? " LAUFEY_SINGLE_INSTANCE=1" : ""}`;
+  const pkg = debianPackageName(meta.name);
+  return [
+    "[D-BUS Service]",
+    `Name=${id}`,
+    `Exec=/usr/bin/env ${env} /usr/bin/${pkg} --laufey-dbus-activated`,
+    "",
+  ].join("\n");
+}
+
+/** The longest app id part the runtime's notification timer unit names keep. */
+const TIMER_APP_ID_MAX = 200;
+
+/** The 16 lowercase hex digits of the FNV-1a 64 hash of `text`'s UTF-8 bytes (the runtime's tag ids). */
+function fnv1a64Hex(text: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (const b of new TextEncoder().encode(text)) {
+    h ^= BigInt(b);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+/**
+ * The app id as the runtime's scheduled-notification timer unit names carry it
+ * (`laufey-<this>-<tag id>.timer`): a byte a unit name can't hold becomes `_`, and an id longer
+ * than 200 bytes keeps its first 191 plus `_` and the first 8 hex digits of its own FNV-1a 64
+ * hash, so the unit name stays within systemd's 255 characters.
+ *
+ * @param id The app id.
+ * @returns The part of the unit name.
+ */
+export function linuxTimerAppPart(id: string): string {
+  let out = "";
+  for (const b of new TextEncoder().encode(id)) {
+    const c = String.fromCharCode(b);
+    out += /^[A-Za-z0-9_.:-]$/.test(c) ? c : "_";
+  }
+  return out.length > TIMER_APP_ID_MAX
+    ? `${out.slice(0, TIMER_APP_ID_MAX - 9)}_${fnv1a64Hex(id).slice(0, 8)}`
+    : out;
+}
+
+/**
+ * The systemd glob for every one of the app's scheduled-notification timers and no other app's:
+ * `laufey-<app part>-`, exactly 16 `[0-9a-f]`, then `.timer`, so an app whose id extends this
+ * one's (`<id>-extra`) keeps its timers.
+ *
+ * @param id The app id.
+ * @returns The glob.
+ */
+export function linuxTimerGlob(id: string): string {
+  return `laufey-${linuxTimerAppPart(id)}-${"[0-9a-f]".repeat(16)}.timer`;
+}
+
+/**
+ * Shell lines a package's removal runs to stop the scheduled-notification timers the runtime made
+ * for `id` in each user's systemd manager (`laufey-<app id>-<tag id>.timer`, transient; each would
+ * otherwise run the removed executable at its time), matched by {@linkcode linuxTimerGlob}: every
+ * user logind knows (logged in or lingering). `--no-block` and, where it exists, `timeout 10` keep
+ * a manager that doesn't answer from stalling the package manager; `|| :` keeps a user without a
+ * running manager, or a system without systemd, from failing the removal.
+ *
+ * @param id The app id.
+ * @returns The lines.
+ */
+export function linuxTimerCleanup(id: string): string[] {
+  return [
+    "if command -v loginctl >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then",
+    "  laufey_timeout=",
+    '  if command -v timeout >/dev/null 2>&1; then laufey_timeout="timeout 10"; fi',
+    "  for user in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do",
+    `    $laufey_timeout systemctl --user --machine="$user"@ --no-block stop '${
+      linuxTimerGlob(id)
+    }' >/dev/null 2>&1 || :`,
+    "  done",
+    "fi",
+  ];
+}
+
+/**
  * The `.deb` maintainer script `name` (`postinst` / `postrm`): {@linkcode LINUX_REFRESH} (dpkg's
- * own triggers do the same on Debian / Ubuntu; this covers a system without them).
+ * own triggers do the same on Debian / Ubuntu; this covers a system without them); `postrm` also
+ * stops the app's scheduled-notification timers ({@linkcode linuxTimerCleanup}) when the package
+ * has a D-Bus app id.
  *
  * @param name The script.
+ * @param appId The package's D-Bus app id, if it has one.
  * @returns The script text.
  */
-export function debMaintainerScript(name: "postinst" | "postrm"): string {
+export function debMaintainerScript(name: "postinst" | "postrm", appId?: string): string {
   // postrm: after a remove or a purge; an upgrade's old-version postrm leaves it to the postinst.
   const when = name === "postinst" ? "configure" : "remove|purge";
+  const cleanup = name === "postrm" && appId ? linuxTimerCleanup(appId) : [];
   return [
     "#!/bin/sh",
     "set -e",
     'case "$1" in',
     `  ${when})`,
-    ...LINUX_REFRESH.map((l) => `    ${l}`),
+    ...[...LINUX_REFRESH, ...cleanup].map((l) => `    ${l}`),
     "    ;;",
     "esac",
     "exit 0",
     "",
   ].join("\n");
+}
+
+/** The package's D-Bus app id, when its app id can be one. */
+function dbusAppIdOf(meta: DesktopPackageMeta): string | undefined {
+  const id = linuxAppId(meta);
+  return isDbusAppId(id) ? id : undefined;
 }
 
 /** Copy `src` into `dest` recursively, keeping executable bits and symlinks. */
@@ -1008,6 +1126,13 @@ export async function stageLinuxRoot(
   const apps = join(root, "usr", "share", "applications");
   await Deno.mkdir(apps, { recursive: true });
   await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta, icons.length > 0));
+  const service = linuxDbusService(meta);
+  if (service) {
+    const services = join(root, "usr", "share", "dbus-1", "services");
+    await Deno.mkdir(services, { recursive: true });
+    await Deno.writeTextFile(join(services, `${id}.service`), service);
+    owned.push(`/usr/share/dbus-1/services/${id}.service`);
+  }
   return owned;
 }
 
@@ -1182,7 +1307,7 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
     await Deno.writeTextFile(join(controlDir, "control"), debControl(o.meta, o.arch, kib));
     for (const script of ["postinst", "postrm"] as const) {
       const file = join(controlDir, script);
-      await Deno.writeTextFile(file, debMaintainerScript(script));
+      await Deno.writeTextFile(file, debMaintainerScript(script, dbusAppIdOf(o.meta)));
       if (Deno.build.os !== "windows") await Deno.chmod(file, 0o755);
     }
     const control = await gzipBytes(
@@ -1281,6 +1406,14 @@ export function rpmSpec(
     "",
     "%postun",
     ...LINUX_REFRESH,
+    // An erase ($1 is 0), not an upgrade: stop the app's scheduled-notification timers.
+    ...(dbusAppIdOf(meta)
+      ? [
+        'if [ "$1" = 0 ]; then',
+        ...linuxTimerCleanup(dbusAppIdOf(meta)!).map((l) => `  ${l}`),
+        "fi",
+      ]
+      : []),
     "",
     "%files",
     "%defattr(-,root,root,-)",

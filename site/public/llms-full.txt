@@ -454,7 +454,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext needs runtime 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.11 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1995,7 +1995,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PickMode = read | readwrite | folder | readFolder` — How much access a picked handle grants.
 - `planDesktopInstallers(os: DesktopOs, config: unknown, requested?: typeOperator, add?: typeOperator): DesktopInstallerPlan` — Which installers to build for os: requested (--format) when it names any, else desktop.installers.<os> from the config, else DEFAULT_DESKTOP_INSTALLERS. add (a script's legacy --dmg / --appimage) is appended to whichever list applies.
 - `interface PreparedDesktopPackage` — What prepareDesktopPackage resolved.
-- `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), the .deno-desktop/app.json + compile.include sync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about), dist/, and — unless --no-export — the static export (deno task export).
+- `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), dist/, unless --no-export the static export (deno task export), then the .deno-desktop/app.json + compile.include + deno.json desktop.app sync and the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about).
 - `type ProxyModule = ./dev-proxy.ts` — The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.
 - `interface ResolvedDesktop` — What resolveDesktopCapabilities returns — spread straight into runDesktop.
 - `resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.

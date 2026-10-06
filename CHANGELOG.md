@@ -94,6 +94,23 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Changed
 
+- **denext pins Deno Desktop runtime 2.9.7-denext.11** (laufey `00f2128`, API 45): Chromium's
+  sandbox for CEF on Windows (the bootstrap layout below: `<App>.exe` is CEF's bootstrap,
+  `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime); Linux notifications through the
+  xdg-desktop-portal, with D-Bus activation so a click starts an app that quit, systemd transient
+  user timers that post a scheduled notification while the app is closed, and launcher badges
+  (`com.canonical.Unity.LauncherEntry`); the runtime no longer rewrites the process's argv in
+  place, so a D-Bus-activated app no longer crashes, and `Deno.args` leaves out the runtime's own
+  switches; FFI libraries load from paths relative to the app; large Linux clipboard transfers
+  (XCB INCR); and the webview `.deb`'s dependencies, the AppImage icon and a tray created after
+  the window.
+- **The CEF backend makes no network requests of its own** (runtime 2.9.7-denext.11). Chromium
+  contacted Google from a CEF window even with background networking off: the network time
+  tracker, an AI Mode eligibility check, preconnects to the search engine, an account list at
+  profile start, the component updater a minute after launch and, on Linux, Hunspell dictionary
+  downloads. The runtime turns each of them off (a feature or switch the app's own command line
+  sets still wins), so the only requests a CEF window makes are the ones the app makes. On Linux
+  that leaves spellcheck off unless the app ships its dictionaries (Known limitations).
 - **denext pins Deno Desktop runtime 2.9.7-denext.10** (laufey `611abcd`, API 45): Linux's session
   probe (`Deno.desktop.platformFeatures()`) with a live tray host, a CEF cookie store that neither
   hangs on a keyring no one can unlock nor deletes cookies encrypted with the OS key, Chromium's
@@ -105,6 +122,14 @@ Each item is described in full under Changed, Fixed or Security below.
   content runs in Chromium's sandbox where unprivileged user namespaces are restricted (Ubuntu
   23.10+). The `.rpm` lists the app's directory entry by entry so the helper alone carries
   `%attr(4755,root,root)`; every other file keeps `0755` / `0644`.
+- **Linux `.deb` / `.rpm` install a D-Bus service file and clean up notification timers.** With
+  runtime 2.9.7-denext.11 the package's `/usr/share/dbus-1/services/<app id>.service` lets a click
+  on a notification start the app when it isn't running (the runtime posts through the
+  xdg-desktop-portal), and the removal (`postrm`, an erase's `%postun`) stops the
+  scheduled-notification timers the runtime made in each user's systemd manager (exactly this
+  app's, `laufey-<app id>-<16 hex digits>.timer`, so an app whose id extends it keeps its own;
+  `--no-block` under a 10 s timeout, so a stuck manager can't stall the package manager). An app
+  id D-Bus can't take as a name (an element starting with a digit) gets neither.
 
 - **Windows CEF bundles take the layout of CEF's bootstrap**, for a runtime whose CEF backend runs
   web content in Chromium's sandbox on Windows (its laufey ships CEF's `bootstrap.exe` as the

@@ -22,8 +22,13 @@ import {
   DEFAULT_DESKTOP_INSTALLERS,
   desktopInstallerPlan,
   desktopPackageMeta,
+  isDbusAppId,
+  linuxDbusService,
   linuxDesktopEntry,
   linuxPackageVersion,
+  linuxTimerAppPart,
+  linuxTimerCleanup,
+  linuxTimerGlob,
   msiProductVersion,
   msiUpgradeCode,
   packageMetaFrom,
@@ -310,6 +315,93 @@ Deno.test("linux: the .rpm scriptlets and .deb maintainer scripts refresh the da
   assert(postinst.endsWith("esac\nexit 0\n"));
 });
 
+Deno.test("linux: the D-Bus service file and the removal's timer cleanup (runtime denext.11)", () => {
+  assertEquals(
+    linuxDbusService({ ...META, singleInstance: false }),
+    "[D-BUS Service]\nName=com.acme.myapp\n" +
+      "Exec=/usr/bin/env LAUFEY_APP_ID=com.acme.myapp /usr/bin/my-app --laufey-dbus-activated\n",
+  );
+  // The same environment as the .desktop entry's Exec line.
+  assertStringIncludes(
+    linuxDbusService({ ...META, singleInstance: true })!,
+    "LAUFEY_APP_ID=com.acme.myapp LAUFEY_SINGLE_INSTANCE=1 /usr/bin/my-app",
+  );
+  // An app id D-Bus can't take as a name: no service file, no timers to clean.
+  const digits = { ...META, identifier: "com.acme.3d-viewer" };
+  assertEquals(linuxDbusService(digits), undefined);
+  assert(!rpmSpec(digits, "/tmp/s", []).includes("systemctl"));
+  for (
+    const [id, ok] of [
+      ["dev.denext.kitchen-sink", true],
+      ["org.example.App_2", true],
+      ["app", false],
+      ["dev..app", false],
+      ["dev.2app", false],
+      ["dev.a b", false],
+    ] as const
+  ) {
+    assertEquals(isDbusAppId(id), ok, id);
+  }
+  // .deb: the postrm stops the timers (remove / purge), the postinst doesn't.
+  const glob = linuxTimerGlob("com.acme.myapp");
+  assertEquals(glob, `laufey-com.acme.myapp-${"[0-9a-f]".repeat(16)}.timer`);
+  const postrm = debMaintainerScript("postrm", "com.acme.myapp");
+  assertStringIncludes(
+    postrm,
+    `      $laufey_timeout systemctl --user --machine="$user"@ --no-block stop '${glob}'` +
+      " >/dev/null 2>&1 || :\n",
+  );
+  assertStringIncludes(
+    postrm,
+    '    if command -v timeout >/dev/null 2>&1; then laufey_timeout="timeout 10"; fi\n',
+  );
+  assertStringIncludes(postrm, "loginctl list-users --no-legend");
+  assert(!debMaintainerScript("postinst", "com.acme.myapp").includes("systemctl"));
+  assert(!debMaintainerScript("postrm").includes("systemctl"));
+  // .rpm: an erase only ($1 = 0), not an upgrade's %postun.
+  const postun = rpmSpec(META, "/tmp/s", []).split("\n%postun\n")[1].split("\n\n")[0];
+  assertStringIncludes(postun, 'if [ "$1" = 0 ]; then\n');
+  assertStringIncludes(postun, `'${glob}'`);
+  assert(!rpmSpec(META, "/tmp/s", []).split("\n%post\n")[1].split("\n\n")[0].includes("systemctl"));
+});
+
+Deno.test("linux: the removal's timer glob matches the app's timers only", async () => {
+  // The runtime's unit names: laufey-<app part>-<16 hex digits of the tag's FNV-1a 64>.
+  const unit = (id: string, hex = "0123456789abcdef") =>
+    `laufey-${linuxTimerAppPart(id)}-${hex}.timer`;
+  const glob = linuxTimerGlob("com.acme.app");
+  // systemd matches unit names with fnmatch(3): ask the shell's `case`, the same matcher.
+  const matches = async (name: string) => {
+    if (Deno.build.os === "windows") return globToRegExp(glob).test(name);
+    const out = await new Deno.Command("/bin/sh", {
+      args: ["-c", `case "$1" in ${glob}) echo yes;; *) echo no;; esac`, "sh", name],
+    }).output();
+    return new TextDecoder().decode(out.stdout).trim() === "yes";
+  };
+  assert(await matches(unit("com.acme.app")));
+  assert(!(await matches(unit("com.acme.app-extra"))), "an app id this one prefixes");
+  assert(!(await matches(unit("com.acme.app.extra"))));
+  assert(!(await matches(unit("com.acme.app-0123456789abcdef"))));
+  assert(!(await matches(unit("com.acme.app", "0123456789ABCDEF"))));
+  assert(!(await matches(unit("com.acme.app").replace(".timer", ".service"))));
+  // A long app id is cut as the runtime cuts it: 191 bytes, "_", 8 hex digits of its hash.
+  const longId = `dev.${"x".repeat(240)}`;
+  const part = linuxTimerAppPart(longId);
+  assertEquals(part.length, 200);
+  // 7154d850: FNV-1a 64 of the id, as the runtime's NotificationTagId hashes it.
+  assertEquals(part, `dev.${"x".repeat(187)}_7154d850`);
+  assertEquals(part, linuxTimerAppPart(longId));
+  assert(part !== linuxTimerAppPart(`${longId}y`));
+  assertEquals(linuxTimerAppPart(`dev.${"x".repeat(196)}`), `dev.${"x".repeat(196)}`);
+  assertStringIncludes(linuxTimerCleanup(longId).join("\n"), `'laufey-${part}-[0-9a-f]`);
+});
+
+/** Bracket classes and literals, the only glob syntax the timer glob uses. */
+function globToRegExp(glob: string): RegExp {
+  const body = glob.replace(/\[[^\]]*\]|[.*+?^${}()|\\]/g, (m) => m.startsWith("[") ? m : `\\${m}`);
+  return new RegExp(`^${body}$`);
+}
+
 Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / libsecret)", () => {
   assertEquals(META.secureStore, false);
   assert(!debControl(META, "x86_64", 1).includes("libsecret"), "off: no dependency");
@@ -408,9 +500,18 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
     const control = await readTarGz(members.get("control.tar.gz")!);
     assertStringIncludes(control.get("./control")![2], "Architecture: amd64\n");
     for (const script of ["postinst", "postrm"] as const) {
-      assertEquals(control.get(`./${script}`), ["0", 0o755, debMaintainerScript(script)]);
+      assertEquals(control.get(`./${script}`), [
+        "0",
+        0o755,
+        debMaintainerScript(script, "com.acme.myapp"),
+      ]);
     }
     const data = await readTarGz(members.get("data.tar.gz")!);
+    // The D-Bus service file: a click on a notification starts the app (runtime denext.11).
+    assertEquals(
+      data.get("./usr/share/dbus-1/services/com.acme.myapp.service")?.[2],
+      linuxDbusService(META),
+    );
     assertEquals(data.get("./usr/bin/my-app"), ["2", 0o777, "../lib/my-app/My-App-x64"]);
     assertEquals(data.get("./usr/lib/my-app/My-App-x64")?.slice(0, 2), ["0", 0o755]);
     assertEquals(data.get("./usr/lib/my-app/laufey-launch.json")?.[2], '{"inspectable":false}\n');
@@ -503,6 +604,7 @@ Deno.test("stage: owned paths; a non-theme-size icon goes to the theme size belo
       "/usr/share/applications/com.acme.myapp.desktop",
       "/usr/share/pixmaps/com.acme.myapp.png",
       "/usr/share/icons/hicolor/512x512/apps/com.acme.myapp.png",
+      "/usr/share/dbus-1/services/com.acme.myapp.service",
     ]);
     const paths = (await walkBundle(join(dir, "root"))).map((e) => e.path);
     assert(paths.includes("usr/lib/my-app/sub/data.txt"));
@@ -527,6 +629,7 @@ Deno.test("stage: an SVG icon is scalable; a non-square PNG is pixmaps only", {
     assertEquals(owned.slice(3), [
       "/usr/share/pixmaps/com.acme.myapp.png",
       "/usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg",
+      "/usr/share/dbus-1/services/com.acme.myapp.service",
     ]);
     assertEquals(
       await Deno.readTextFile(
@@ -549,7 +652,7 @@ Deno.test("stage: a bundle with no icon installs none, and the entry names none"
     await Deno.remove(join(bundle, "AppIcon.png"));
     const root = join(dir, "root");
     const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
-    assertEquals(owned.length, 3);
+    assertEquals(owned.length, 4, "the bundle, the link, the entry, the D-Bus service file");
     const entry = await Deno.readTextFile(
       join(root, "usr/share/applications/com.acme.myapp.desktop"),
     );

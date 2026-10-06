@@ -8,8 +8,9 @@
  * Runtime APIs: `BrowserWindow.setApplicationMenu`, `Deno.Tray`, `Deno.dock`. They exist under the
  * stock runtime too; denext's pinned runtime adds keyboard accelerators on every OS
  * (`Deno.desktop.menuCapabilities()`), menu icons and tooltips. The dock menu is macOS-only (the
- * OS has no other). A badge is the Dock icon's on macOS, the taskbar button's overlay on Windows,
- * and a prefix of the window title on Linux.
+ * OS has no other). A badge is the Dock icon's on macOS, a prefix of the window titles on Windows,
+ * and on Linux a count on the app's launcher where a dock reads launcher badges (runtime
+ * 2.9.7-denext.11), else the same title prefix.
  *
  * Tray icons follow the runtime's probe of the session (`Deno.desktop.platformFeatures()`, runtime
  * 2.9.7-denext.10 and later): where no tray host runs (stock GNOME without the AppIndicator

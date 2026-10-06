@@ -1916,7 +1916,8 @@ exportRow.addEventListener("dragstart", (e) => {
         gives a notification its action buttons; and a click, on the notification or a button,
         reaches <code>onLocalNotificationTapped</code> with the same <code>data.path</code> /{" "}
         <code>data.url</code>{" "}
-        routing as on a phone, including the click that launched the app (macOS, Windows).{" "}
+        routing as on a phone, including the click that launched the app (macOS, Windows, and Linux
+        from a <code>.deb</code> / <code>.rpm</code>).{" "}
         <code>requestPermission("notifications")</code> and <code>requestPushPermission()</code>
         {" "}
         report the OS setting (a refusal reads{" "}
@@ -1948,9 +1949,28 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           for longer than those 16 occurrences stops showing it until it runs again.
         </li>
         <li>
-          Linux has no notification scheduler: the app delivers a scheduled notification while it
-          runs, and one whose time passed while it was closed shows at the next launch. A click on a
-          Linux notification after the app quit does not start it.
+          On Linux, an app installed from its <code>.deb</code> / <code>.rpm</code>{" "}
+          posts through the xdg-desktop-portal: a click on a notification after the app quit starts
+          it (and reaches <code>onLocalNotificationTapped</code>{" "}
+          as the launch), and a systemd user timer posts a scheduled notification while the app is
+          closed. An AppImage or a tarball, or a session without xdg-desktop-portal 1.19+ or a
+          systemd user manager, keeps the old behaviour: the app delivers a scheduled notification
+          while it runs, one whose time passed while it was closed shows at the next launch, and a
+          click after quit does not start it. The <code>notifications</code> capability reports{" "}
+          <code>coldStart</code> / <code>schedulePersists</code>{" "}
+          with the runtime&apos;s reasons, and <code>denext desktop doctor</code>{" "}
+          checks the session. The systemd timers end with the user&apos;s systemd manager (a reboot,
+          a logout without lingering) until the app runs again, which re-creates them. On the portal
+          path the portal reports no dismissals, so a web <code>Notification</code>&apos;s{" "}
+          <code>onclose</code> never fires there.
+        </li>
+        <li>
+          Treat a click&apos;s <code>data</code>{" "}
+          (and its action) as untrusted: on Linux the click reaches the app as a D-Bus call on its
+          name, which any process of the same user can make with any{" "}
+          <code>data</code>, as a Windows toast activation can be. Validate it before acting on it
+          (the default <code>data.path</code> / <code>data.url</code>{" "}
+          navigation already applies the deep-link acceptance rules).
         </li>
         <li>
           macOS asks the user once (from an app bundle; an unbundled process has no notifications),
@@ -2079,15 +2099,14 @@ await bounce({ critical: true }); // until the app is focused`}
           instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
         <li>
-          <code>setBadge</code>{" "}
-          badges the Dock icon (macOS) or the taskbar button (Windows), and prefixes the window
-          title on Linux; with runtime 2.9.7-denext.11, a count shows on the app&apos;s launcher
-          where a dock reads launcher badges (Ubuntu&apos;s dock, Dash to Dock, Plasma&apos;s task
-          manager), and <code>appCapabilities().badgeShows</code> says which (<code>"dock"</code>,
+          <code>setBadge</code> badges the Dock icon (macOS), and prefixes the window titles with
           {" "}
-          <code>"launcher-entry"</code> or <code>"title"</code>, with <code>badgeReason</code>).
-          {" "}
-          <code>bounce</code>{" "}
+          <code>"(N) "</code>{" "}
+          on Windows and Linux; with runtime 2.9.7-denext.11, a count shows on the app&apos;s
+          launcher where a dock reads launcher badges (Ubuntu&apos;s dock, Dash to Dock,
+          Plasma&apos;s task manager), and <code>appCapabilities().badgeShows</code>{" "}
+          says which (<code>"dock"</code>, <code>"launcher-entry"</code> or{" "}
+          <code>"title"</code>, with <code>badgeReason</code>). <code>bounce</code>{" "}
           bounces the Dock icon, flashes the taskbar button or marks the window urgent.
         </li>
         <li>

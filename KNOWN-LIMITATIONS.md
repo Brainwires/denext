@@ -205,9 +205,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
-- **Notifications:** Linux has no scheduler (delivered while the app runs, late after a quit) and
-  a click after quit can't start the app; macOS shows them only from a signed bundle; a repeat is
-  scheduled 16 ahead; buttons carry a title only; `data` is capped at 4 KiB.
+- **Notifications:** on Linux a click starts a quit app, and a scheduled notification is posted
+  while the app is closed, only for an app installed from its `.deb` / `.rpm` (its desktop entry
+  and D-Bus service file) on a session with xdg-desktop-portal 1.19+ and a systemd user manager
+  (GNOME, Plasma). An AppImage or a tarball keeps the old behaviour (no click after quit; a
+  schedule fires while the app runs, or at its next launch), and the scheduling timers end with
+  the user's systemd manager (a reboot) until the app runs again. The portal reports no
+  dismissals, and a notification server without actions shows no buttons and reports no clicks;
+  the `notifications` capability gives the reasons. On the portal path a web `Notification`'s
+  `onclose` never fires. A click's `data` is untrusted: on Linux any process of the same user can
+  send the app a click (a D-Bus call on its name) with any `data`, as on Windows. macOS shows them
+  only from a signed bundle; a repeat is scheduled 16 ahead; buttons carry a title only; `data` is
+  capped at 4 KiB.
 - **Linux sessions differ in what they provide.** With no tray host (stock GNOME without the
   AppIndicator extension, a bare X server) `createTray` rejects `unsupported` with the reason and
   a tray-only app shows its window instead. With the login keyring locked and no one to answer the
@@ -242,11 +251,20 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   Windows doesn't trust refuses to start, so a self-signed development certificate must be trusted
   (Trusted Root and Trusted Publishers) before a build signed with it runs. And an app packaged on
   runtime 2.9.7-denext.9 can't update itself to the new layout: reinstall it.
+- **A CEF window on Windows can wait for slow proxy auto-detection.** On a network where WPAD / PAC
+  discovery is slow, Chromium waits for the proxy configuration before it applies its loopback
+  bypass, so the page's Live WebSocket (through the runtime's loopback relay) can take 10 s or more
+  to connect at startup. The webview backend and macOS / Linux are unaffected.
+- **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
+  2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
+  Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
+  turn spellcheck on for those languages. Windows and macOS use the OS spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
-  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a Linux badge is a
-  title prefix). Ask `windowCapabilities()` and `appCapabilities()`.
+  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a badge is a
+  window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
+  `windowCapabilities()` and `appCapabilities()`.
 - **macOS can hand your deep-link scheme to another app;** denext requires PKCE S256 and an exact
   `redirect_uri` + `state` match, and refuses a scheme another app owns. On macOS 13+
   `setLaunchAtLogin` may need approval in Login Items.
