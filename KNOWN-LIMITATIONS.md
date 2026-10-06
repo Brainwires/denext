@@ -218,6 +218,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   fixes.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
+- **Windows CEF apps run behind CEF's bootstrap** (Chromium's sandbox, runtime 2.9.7-denext.11),
+  which brings three limits. Started from a shell or a shortcut, the app starts in its install
+  folder, not the directory it was started from (the bootstrap moves it there; `denext desktop
+  run` / `dev` and the runtime's own launches, its forked workers and the updater, keep theirs):
+  build paths from `Deno.execPath()` or take absolute ones. A bootstrap signed with a certificate
+  Windows doesn't trust refuses to start, so a self-signed development certificate must be trusted
+  (Trusted Root and Trusted Publishers) before a build signed with it runs. And an app packaged on
+  runtime 2.9.7-denext.9 can't update itself to the new layout: reinstall it.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are

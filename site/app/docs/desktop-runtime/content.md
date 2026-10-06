@@ -424,6 +424,23 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   in [denoland/deno#36718](https://github.com/denoland/deno/pull/36718) (Leo Kettmeir), which the
   fork includes.
 
+### Chromium's sandbox on Windows (CEF)
+
+- **What:** on the `cef` backend, Windows apps run their web content in Chromium's sandbox:
+  renderers at Untrusted integrity, the GPU process at Low. CEF's Windows sandbox exists only
+  inside its `bootstrap.exe`, so that is the app's executable and laufey's CEF host is a library it
+  loads (see [the Windows CEF layout](#the-windows-cef-layout)).
+- **Why:** the Windows CEF backend ran every child process unsandboxed, so a compromised renderer
+  had the user's full rights. macOS and Linux already ran sandboxed.
+- **Limits:** the bootstrap starts the app in its install folder, so an app started from a shell
+  or a shortcut does not keep the directory it was started from (denext's launchers, the forked
+  workers and the updater pass theirs in `LAUFEY_CWD`, which the host changes back to); a
+  bootstrap signed with a certificate Windows doesn't trust refuses to start (trust a self-signed
+  development certificate first); and an app packaged on runtime 2.9.7-denext.9 can't update
+  itself to the new layout: reinstall it.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
 ### Signed full-app self-updates
 
 - **What:** `Deno.desktop.updater` replaces the whole signed app (a macOS `.app`, a Windows or
@@ -611,6 +628,26 @@ them pass.
 
 The packaged app's `--allow-*` flags don't change: the download happens in the packaging step, not
 in the app.
+
+### The Windows CEF layout
+
+A runtime whose CEF backend runs Chromium's sandbox on Windows (2.9.7-denext.11) lays a Windows
+CEF app out as:
+
+```
+<App>/
+  <App>.exe          CEF's bootstrap, with the app's icon and version resources
+  <App>.dll          laufey's CEF host (laufey.dll, renamed): the bootstrap loads it by its name
+  <App>.runtime.dll  the runtime: the host loads it by the executable's name
+  libcef.dll, ...
+```
+
+The stock 2.9.7 CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
+package script and `denext desktop run` / `dev` move the two and stamp the executable's resources
+(TypeScript, so it works from any host) whenever `laufey.dll` is in the bundle; a bundle that
+already has `<App>.runtime.dll` is used as it is. The signing step signs every PE file, both
+libraries included: a signed bootstrap loads only a client library signed with the same, trusted,
+certificate. The webview backend keeps `<App>.exe` (its host) and `<App>.dll` (the runtime).
 
 ## Opting out
 

@@ -48,6 +48,8 @@ Each item is described in full under Changed, Fixed or Security below.
   Windows signs every PE file of the bundle.
 - **The desktop `fs` capability's cache folder moved** to a `denext` sub-folder on macOS and Linux;
   files a page stored with `directory: "cache"` before are not found there.
+- **Windows CEF apps packaged on runtime 2.9.7-denext.9 can't update themselves** to the layout of
+  CEF's bootstrap (runtime 2.9.7-denext.11): reinstall them.
 
 ### Added
 
@@ -85,8 +87,11 @@ Each item is described in full under Changed, Fixed or Security below.
   place of CEF's (written in TypeScript, so a Windows app still packages from any host); the
   signing step then signs both. `publish-update`'s version check reads `<App>.runtime.dll` too, and
   `desktop run` / `dev` hand the window the project directory in `LAUFEY_CWD` (the bootstrap starts
-  the process in the executable's directory). A bundle from a runtime without it (denext.9, the
-  webview backend) is left as it is.
+  the process in the executable's directory), also when a `deno desktop` that writes the layout
+  itself built the bundle (`<App>.runtime.dll`, no `laufey.dll`). A bundle from a runtime without
+  it (denext.9, the webview backend) is left as it is. Such an app started from a shell or a
+  shortcut starts in its install folder, and a bootstrap signed with a certificate Windows doesn't
+  trust refuses to start (Known limitations).
 - **A tray icon follows the session instead of assuming one can be shown.** `appCapabilities().tray`
   is `false` where the runtime's probe finds no tray host (stock GNOME without the AppIndicator
   extension), with the runtime's `trayReason`; `createTray` then rejects `unsupported` with the

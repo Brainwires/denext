@@ -607,6 +607,24 @@ export async function desktopWindowsCefLayout(
   return true;
 }
 
+/**
+ * Whether a built Windows bundle runs behind CEF's bootstrap, laying it out first when the stock
+ * `deno desktop` built it ({@linkcode desktopWindowsCefLayout}). A `deno desktop` that knows the
+ * layout writes it itself: no `laufey.dll` is left, and the runtime is already
+ * `<App>.runtime.dll`.
+ *
+ * @param bundleDir The bundle directory `deno desktop` wrote (`<App>/`).
+ * @param meta The app's name, publisher and version, for the executable's version resource.
+ * @returns Whether the bundle has the bootstrap layout.
+ */
+export async function desktopWindowsBootstrapBundle(
+  bundleDir: string,
+  meta: Pick<DesktopPackageMeta, "name" | "publisher" | "version">,
+): Promise<boolean> {
+  if (await desktopWindowsCefLayout(bundleDir, meta)) return true;
+  return await isFileAt(bundleDir, `${basename(bundleDir)}.runtime.dll`);
+}
+
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
 const SIGN_BATCH = 32;
 /** The RFC-3161 timestamp server used when `DENEXT_SIGN_TIMESTAMP_URL` is unset. */

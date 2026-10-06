@@ -127,11 +127,18 @@ function align(n: number, to: number): number {
   return Math.ceil(n / to) * to;
 }
 
-/** The file offset of `rva`, through the section that maps it. */
+/**
+ * The file offset of `rva`, through the section that maps it. An RVA in a section's virtual-only
+ * tail (past its raw data, zeros once loaded) has no bytes in the file: refused, rather than read
+ * from whatever follows the section's raw data (the next section).
+ */
 function rvaToOffset(h: Headers, rva: number): number {
   for (const s of h.sections) {
     const size = Math.max(s.virtualSize, s.sizeOfRawData);
     if (rva >= s.virtualAddress && rva < s.virtualAddress + size) {
+      if (rva - s.virtualAddress >= s.sizeOfRawData) {
+        return fail(`RVA ${rva} is in the uninitialized tail of section ${s.name}`);
+      }
       return s.pointerToRawData + (rva - s.virtualAddress);
     }
   }

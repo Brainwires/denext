@@ -451,6 +451,40 @@ desktop: {
         <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, only whether it is set.
       </p>
 
+      <h3 id="desktop-windows-cef">Windows apps on the CEF backend</h3>
+      <p>
+        On Windows the <code>cef</code>{" "}
+        backend runs web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.11), which CEF
+        provides only inside its bootstrap: <code>&lt;App&gt;.exe</code>{" "}
+        is CEF&apos;s bootstrap with your app&apos;s icon and version resources,{" "}
+        <code>&lt;App&gt;.dll</code> is laufey&apos;s CEF host and{" "}
+        <code>&lt;App&gt;.runtime.dll</code>{" "}
+        the runtime. The package script lays the bundle out and signs every PE file in it
+        (<a href="/docs/desktop-runtime#the-windows-cef-layout">
+          the layout
+        </a>). Three limits come with it:
+      </p>
+      <ul>
+        <li>
+          <strong>The app starts in its install folder</strong>{" "}
+          when it is started from a shell or a shortcut: the bootstrap moves it there, so it does
+          not keep the directory it was started from. <code>denext desktop run</code> /{" "}
+          <code>dev</code>, the runtime&apos;s forked workers and the updater keep theirs. Build
+          paths from <code>Deno.execPath()</code> or take absolute ones.
+        </li>
+        <li>
+          <strong>An untrusted signature stops the app.</strong>{" "}
+          A bootstrap signed with a certificate Windows doesn&apos;t trust refuses to start, so a
+          self-signed development certificate must be trusted (Trusted Root and Trusted Publishers)
+          before a build signed with it runs.
+        </li>
+        <li>
+          <strong>No update from runtime 2.9.7-denext.9.</strong>{" "}
+          A Windows CEF app packaged on denext.9 can&apos;t update itself to this layout: reinstall
+          it.
+        </li>
+      </ul>
+
       <h2 id="notarization">Notarization</h2>
       <p>
         Notarization is a separate step: Apple scans the signed bundle and issues a ticket that you

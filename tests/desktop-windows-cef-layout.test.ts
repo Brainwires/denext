@@ -6,7 +6,10 @@
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { desktopWindowsCefLayout } from "../src/build/desktop-package-script.ts";
+import {
+  desktopWindowsBootstrapBundle,
+  desktopWindowsCefLayout,
+} from "../src/build/desktop-package-script.ts";
 import {
   type PeResourceName,
   peVersionWords,
@@ -241,6 +244,31 @@ Deno.test("stampPeResources: an image with no resources gets them; bad input is 
   );
 });
 
+Deno.test("readPeResources: an RVA in a section's virtual-only tail is refused, not read from the next section", () => {
+  // `.text` has 0x200 bytes in the file but 0x800 in memory, and `.data` follows it in the file.
+  const b = new Uint8Array(0x600);
+  b.set(minimalPe());
+  const v = new DataView(b.buffer);
+  const coff = 0x44, opt = coff + 20, text = opt + 240, data = text + 40;
+  v.setUint16(coff + 2, 2, true);
+  v.setUint32(opt + 56, 0x3000, true);
+  v.setUint32(text + 8, 0x800, true);
+  b.set(enc.encode(".data"), data);
+  v.setUint32(data + 8, 0x200, true);
+  v.setUint32(data + 12, 0x2000, true);
+  v.setUint32(data + 16, 0x200, true);
+  v.setUint32(data + 20, 0x400, true);
+  v.setUint32(data + 36, 0xc0000040, true);
+  // The resource directory at `.text` + 0x300: zeros once loaded. Mapped like raw data, it would
+  // land on `.data`'s bytes (file offset 0x500) and read as an empty directory.
+  v.setUint32(opt + 112 + 2 * 8, 0x1300, true);
+  v.setUint32(opt + 112 + 2 * 8 + 4, 0x10, true);
+  assertThrows(() => readPeResources(b), Error, "uninitialized tail of section .text");
+  // The same directory inside `.text`'s raw data reads (as empty).
+  v.setUint32(opt + 112 + 2 * 8, 0x1100, true);
+  assertEquals(readPeResources(b).size, 0);
+});
+
 Deno.test("peVersionWords: numeric fields padded to four, clamped, 1.0.0.0 otherwise", () => {
   assertEquals(peVersionWords(undefined), [1, 0, 0, 0]);
   assertEquals(peVersionWords("2.5.1"), [2, 5, 1, 0]);
@@ -307,6 +335,29 @@ Deno.test("desktopWindowsCefLayout: a bundle without laufey.dll (webview, a runt
       new TextDecoder().decode(await Deno.readFile(join(dir, "MyApp-x64.dll"))),
       "THE RUNTIME",
     );
+  } finally {
+    await Deno.remove(join(dir, ".."), { recursive: true });
+  }
+});
+
+Deno.test("desktopWindowsBootstrapBundle: the stock CLI's bundle is laid out; a forked CLI's is already; webview isn't", async () => {
+  const dir = await stockCefBundle();
+  try {
+    // The stock `deno desktop`: laufey.dll is moved into place.
+    assertEquals(await desktopWindowsBootstrapBundle(dir, META), true);
+    await assertRejects(() => Deno.stat(join(dir, "laufey.dll")), Deno.errors.NotFound);
+    // A `deno desktop` that writes the layout itself: no laufey.dll, `<App>.runtime.dll`. Left
+    // as it is, and still the bootstrap layout (the launch passes LAUFEY_CWD).
+    const exe = await Deno.readFile(join(dir, "MyApp-x64.exe"));
+    assertEquals(await desktopWindowsBootstrapBundle(dir, META), true);
+    assertEquals(await Deno.readFile(join(dir, "MyApp-x64.exe")), exe);
+    assertEquals(
+      new TextDecoder().decode(await Deno.readFile(join(dir, "MyApp-x64.runtime.dll"))),
+      "THE RUNTIME",
+    );
+    // Neither file: the webview backend, or a CEF runtime without the sandbox.
+    await Deno.remove(join(dir, "MyApp-x64.runtime.dll"));
+    assertEquals(await desktopWindowsBootstrapBundle(dir, META), false);
   } finally {
     await Deno.remove(join(dir, ".."), { recursive: true });
   }

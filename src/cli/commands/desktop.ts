@@ -51,7 +51,10 @@ import {
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
-import { desktopAppName, desktopWindowsCefLayout } from "../../build/desktop-package-script.ts";
+import {
+  desktopAppName,
+  desktopWindowsBootstrapBundle,
+} from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 
@@ -286,7 +289,7 @@ interface BuiltDesktopWindow {
   readonly exe: string;
   readonly scratch: string;
   /**
-   * The Windows CEF layout behind CEF's bootstrap (`desktopWindowsCefLayout`): the bootstrap
+   * The Windows CEF layout behind CEF's bootstrap (`desktopWindowsBootstrapBundle`): the bootstrap
    * moves the process to the executable's directory, so the launch names the project directory
    * in `LAUFEY_CWD` for the host to change back to.
    */
@@ -328,10 +331,11 @@ async function buildDesktopWindow(
       stderr: "inherit",
     }).output();
     if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
-    // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does.
+    // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does
+    // (or as a `deno desktop` that knows it already wrote it).
     const scriptUrl = toFileUrl(join(dir, "scripts", "run.ts")).href;
     const bootstrap = os === "windows" &&
-      await desktopWindowsCefLayout(
+      await desktopWindowsBootstrapBundle(
         plan.bundle,
         await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl)),
       );
