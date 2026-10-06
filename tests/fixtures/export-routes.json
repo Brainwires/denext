@@ -156,15 +156,14 @@
       "pages": ["/%2e%2e%2fsecret/index.html", "/%2e%2e%2fsecret.html"],
       "navigation": true,
       "serves": "shell",
-      "note": "with an encoded slash the decoded path climbs out of the export: serveStatic refuses it",
-      "nativeSkip": "the native routers see the decoded path (/../secret); a WebView sends no such request for a page link"
+      "note": "with an encoded slash the decoded path climbs out of the export: serveStatic refuses it, and the native routers, which see the decoded path (/../secret), refuse it too"
     },
     {
       "url": "/%2e%2e%2fsecret.html",
       "pages": ["/%2e%2e%2fsecret.html"],
       "navigation": false,
       "serves": null,
-      "nativeSkip": "a path with an extension is Capacitor's own handler's, not the export router's"
+      "note": "the native routers see /../secret.html: Android leaves it to Capacitor, iOS refuses it"
     },
     {
       "url": "/a%2Fb",

@@ -36,7 +36,8 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * bridge-export-router-native-template.ts); the bump keeps an older denext from rewriting it away.
  * Generation 7: the store pins the origins a UI may come from (`DenextOtaOrigins` /
  * `dev.denext.ota.ORIGINS`), and without a public key accepts only a pinned https origin or
- * loopback; the bump keeps an older denext from rewriting that check away.
+ * loopback; the bump keeps an older denext from rewriting that check away. The same unreleased
+ * generation's router refuses a path that leaves the UI directory (a decoded `/../secret`).
  */
 export const OTA_TEMPLATE_VERSION = 7;
 

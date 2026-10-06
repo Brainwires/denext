@@ -187,6 +187,9 @@ const nativeVectors = () =>
     path: decodeURIComponent(pathnameOf(v)),
   }));
 
+/** Whether a decoded path has a `..` segment (`/../secret`), which no native router follows. */
+const climbs = (path: string): boolean => path.split("/").includes("..");
+
 /** The page a navigation vector names (`/about/index.html`), or null for the shell / non-page. */
 const pageOf = (v: Vector): string | null =>
   v.navigation && v.serves !== null && v.serves !== "shell" && pathnameOf(v) !== "/"
@@ -245,8 +248,9 @@ Deno.test({
       cases.forEach(({ v, path }, i) => {
         const page = pageOf(v);
         // A page → that page; any other navigation → the root shell; a path with an extension
-        // passes through to Capacitor's handler.
-        const want = page ?? (v.navigation ? EXPORT_SHELL_PAGE : path);
+        // passes through to Capacitor's handler, unless it climbs out of the UI directory: then
+        // it is refused with the directory itself, which the handler cannot read.
+        const want = page ?? (v.navigation ? EXPORT_SHELL_PAGE : climbs(path) ? "/" : path);
         assertEquals(normalize(routed[i]), normalize(out + want), `ios ${v.url}`);
       });
     } finally {

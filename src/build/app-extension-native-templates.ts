@@ -40,10 +40,12 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * Generation 3: the bridge serves an exported multi-page app's routes (`DenextExportRouter`, see
  * bridge-export-router-native-template.ts), which an older denext would rewrite away; the bridge
  * with no registrations at all is what `denext mobile add export-routes` writes.
+ * Generation 4: the router refuses a path that leaves the UI directory (a decoded `/../secret`),
+ * which an older denext would rewrite away.
  * Bump again only when a released generation would drop a registration, the frame guard or the
- * router.
+ * router (or one of its checks).
  */
-export const APP_EXTENSION_TEMPLATE_VERSION = 3;
+export const APP_EXTENSION_TEMPLATE_VERSION = 4;
 
 /** The marker family of the app extension templates. */
 const FAMILY = "app-extension";

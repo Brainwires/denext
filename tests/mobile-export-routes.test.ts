@@ -90,7 +90,11 @@ Deno.test("export router: the Swift routes /route to its page, else the root ind
   assertStringIncludes(swift, "if fm.fileExists(atPath: basePath + candidate)");
   // A trailing slash names the same page; the root and unknown paths stay a single-page app.
   assertStringIncludes(swift, 'path.hasSuffix("/") ? String(path.dropLast()) : path');
-  assert(swift.trimEnd().endsWith('return basePath + "/index.html"\n    }\n}'));
+  assertStringIncludes(swift, '        return basePath + "/index.html"\n    }\n');
+  // A decoded path that leaves basePath (`/../secret`) is refused before any file check.
+  assertStringIncludes(swift, "guard staysInside(path) else {");
+  assertStringIncludes(swift, 'if path.split(separator: "/").contains("..") { return false }');
+  assertStringIncludes(swift, ".standardizedFileURL.path");
   // basePath is Capacitor's to set (setAssetPath: the bundled public/ or an OTA directory).
   assertStringIncludes(swift, 'var basePath: String = ""');
   assertStringIncludes(EXPORT_ROUTER_OVERRIDE, "DenextExportRouter()");

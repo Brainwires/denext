@@ -342,6 +342,20 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Security
 
+- **The iOS shell's export router no longer serves files outside the web directory.**
+  `DenextExportRouter` (every generated `DenextBridgeViewController`) checked `basePath + path`
+  with the decoded request path, so `/%2e%2e%2fsecret` reached it as `/../secret` and could
+  return a file outside the app's `public/` (or over-the-air UI) directory, still inside the app
+  bundle. A path with a `..` segment, or one that once standardized is not under `basePath`, is
+  now refused, as Android's `DenextExportRoutes` already did: a navigation gets the root
+  `index.html` and any other request fails. The shared route vectors now hold the compiled iOS
+  router to both traversal cases. **Existing apps must re-run a command to get the fix:** the
+  router is written into `ios/App/App/DenextBridgeViewController.swift`, so run
+  `denext mobile add export-routes` (or any `denext mobile add …` they use) to upgrade an unedited
+  file in place; an edited one is kept and reported (re-run with `--force`, or copy the router's
+  `staysInside` check by hand). The bridge templates' generations are bumped (auth-session 4,
+  app-extension 4; the unreleased OTA generation 7 carries it) so an older denext never rewrites
+  the check away.
 - **Deno Desktop: the native JS bridge serves only the app origin.** The packaged app's
   `laufey-launch.json` now writes `"bridgeOrigins"`: the app origin (`desktop.app.origin`, else
   `app://localhost`) and nothing broader. Without it, the bridge was pinned to every origin of the
