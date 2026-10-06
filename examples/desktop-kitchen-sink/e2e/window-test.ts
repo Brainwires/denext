@@ -2,7 +2,10 @@
 // (written from the current scaffold template; denext's pinned Deno Desktop runtime, least-privilege
 // flags), launch the packaged app with a deep link and a file on its command line, start the second
 // instances the page asks for, serve signed full-app update manifests on loopback, and wait for the
-// page to report every check through the `kitchen` extension. Then the full-app update itself: a
+// page to report every check through the `kitchen` extension. A second launch clicks plain links
+// between the export's pages (denext's client router: soft navigations, a link back, history.back())
+// and loads `/second` in full, asserting each page renders its own content and keeps the desktop
+// bridge. Then the full-app update itself: a
 // copy of the app downloads, verifies and installs a second build (99.0.0, same throwaway key), the
 // new version's trial launch deliberately does not confirm, and the next launch must roll it back.
 //
@@ -75,6 +78,8 @@ const ARCH_LABEL = Deno.build.arch === "aarch64" ? "arm64" : "x64";
 const TIMEOUT_MS = Number(Deno.env.get("KITCHEN_SINK_TIMEOUT_MS") ?? 240_000);
 /** The page's main-phase check count (app/checks.ts); fewer means it shipped without some. */
 const MIN_CHECKS = 55;
+/** The checks the navigation phase reports (app/navigation.tsx `NAVIGATION_CHECKS`). */
+const NAVIGATION_CHECKS = 5;
 /** The checks each full-app update phase reports (app/checks.ts `PHASE_CHECKS`). */
 const UPDATE_PHASES = { "update-install": 2, "update-trial": 1, "update-rollback": 2 } as const;
 /** The version the update build is packaged as (app/checks.ts `UPDATE_VERSION`). */
@@ -701,7 +706,7 @@ function linuxSessionType(): "wayland" | "x11" | "tty" | null {
 
 /** What the app reads at launch to know the runner started it (see `desktop/kitchen.ts`). */
 async function writeRunnerState(
-  phase: "main" | "update" | "trusted",
+  phase: "main" | "navigation" | "update" | "trusted",
   updateBase: string,
 ): Promise<void> {
   const dir = desktopAppDirs(APP_ID).data;
@@ -886,6 +891,40 @@ async function mainPhase(exe: string, bin: string, updateBase: string) {
   if (report.expected.length < MIN_CHECKS) {
     problems.push(`only ${report.expected.length} checks are defined (expected ${MIN_CHECKS})`);
   }
+  return { report, problems };
+}
+
+/**
+ * The navigation phase: the page clicks plain links between `/` and `/second` (soft navigations),
+ * goes back, then loads `/second` in full; that second document reports every check and quits.
+ */
+async function navigationPhase(exe: string, bin: string, updateBase: string) {
+  await writeRunnerState("navigation", updateBase);
+  await Deno.remove(join(SCRATCH, "progress.marker")).catch(() => {});
+  const env = appEnv(bin);
+  const logFile = join(SCRATCH, "navigation.log");
+  const app = launch(exe, [], env, logFile);
+  log(`navigation: launched pid ${app.child.pid}`);
+  const report = await waitForReport("navigation", exe, env, Date.now() + TIMEOUT_MS);
+  if (!report) {
+    kill(app);
+    const at = await Deno.readTextFile(join(SCRATCH, "progress.marker")).catch(() => "");
+    return {
+      report: null,
+      problems: [
+        `navigation: no report within ${TIMEOUT_MS} ms` +
+        (at ? `; the page was at ${at}` : "; the page started no check") + ` (app log: ${logFile})`,
+      ],
+    };
+  }
+  const problems: string[] = [];
+  if (!(await waitGone(app))) {
+    kill(app);
+    problems.push("navigation: the app did not quit within 20 s of reporting");
+  } else if (app.exit!.code !== 0) {
+    problems.push(`navigation: the app exited with ${app.exit!.code}`);
+  }
+  await Promise.race([app.done, sleep(2000)]);
   return { report, problems };
 }
 
@@ -1169,7 +1208,9 @@ function judge(reports: Report[], extra: string[]): { results: RunResult[]; prob
     for (const name of report.expected) {
       if (!reported.has(name)) problems.push(`missing check: ${name}`);
     }
-    const want = UPDATE_PHASES[report.phase as keyof typeof UPDATE_PHASES];
+    const want = report.phase === "navigation"
+      ? NAVIGATION_CHECKS
+      : UPDATE_PHASES[report.phase as keyof typeof UPDATE_PHASES];
     if (want !== undefined && report.expected.length !== want) {
       problems.push(`${report.phase}: ${report.expected.length} checks (expected ${want})`);
     }
@@ -1279,6 +1320,9 @@ async function main(): Promise<void> {
       const main = await mainPhase(exe, bin, updates.base);
       reports.push(main.report);
       extra.push(...main.problems);
+      const nav = await navigationPhase(exe, bin, updates.base);
+      if (nav.report) reports.push(nav.report);
+      extra.push(...nav.problems);
       if (update) {
         const up = await updatePhases(exe, bin, updates.base);
         reports.push(...up.reports);

@@ -3,7 +3,8 @@
 // (the runner leaves `kitchen-sink-runner.json` in the app's data folder), it runs them at once,
 // hands the results to the `kitchen` extension (which writes the runner's report) and quits; opened
 // by hand, it waits for the button and shows the manual release checks (`manual-checks.tsx`). On the window test's full-app update launches it runs only that
-// phase's checks, and the install phase hands over to the updater instead of quitting.
+// phase's checks, and the install phase hands over to the updater instead of quitting. On the
+// navigation launch it runs nothing: `navigation.tsx` drives that phase from the layout.
 
 import { useEffect, useRef, useState } from "denext";
 import { type DeepLinkEvent, onDeepLink, onOpenFile, type OpenedFile } from "denext/mobile";
@@ -17,6 +18,7 @@ import {
   runChecks,
 } from "./checks.ts";
 import { ManualChecks } from "./manual-checks.tsx";
+import { NAVIGATION_PHASE } from "./navigation.tsx";
 
 export function KitchenSink() {
   const [results, setResults] = useState<CheckResult[]>([]);
@@ -61,7 +63,8 @@ export function KitchenSink() {
     kitchen.setup({}).then((setup: KitchenSetup) => {
       ctx.current = { setup, links, files };
       setState("idle");
-      if (setup.autorun) void run();
+      // The navigation phase is the layout's (`navigation.tsx`): it clicks away from this page.
+      if (setup.autorun && setup.phase !== NAVIGATION_PHASE) void run();
     }, (err: unknown) => {
       setError(err instanceof Error ? err.message : String(err));
       setState("error");

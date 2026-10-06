@@ -6,7 +6,8 @@
 //   runner writes `kitchen-sink-runner.json` into the app's data folder before each launch, so a
 //   process the updater relaunches finds it too);
 // - `mark` / `report` hand progress markers and the results back to the runner as files, and
-//   `markerExists` reads a marker back (a probe that must NOT have reached the extension);
+//   `markerExists` reads a marker back (a probe that must NOT have reached the extension), and
+//   `markerRead` its content (the navigation phase's progress across a full-page load);
 // - `secondInstance` asks the runner to start a second instance with some arguments and waits for
 //   its exit code;
 // - `diskRead` reads a file in the app's data folder straight from disk, so the page can prove a
@@ -237,6 +238,14 @@ export default defineDesktopExtension({
         const dir = await outDir(ctx.appSupportDir) ?? ctx.appSupportDir;
         const file = join(dir, `${safeName(stringField(args, "name"))}.marker`);
         return { exists: await Deno.stat(file).then(() => true, () => false) };
+      },
+    },
+    markerRead: {
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
+        if (!dir) return { data: null };
+        const file = join(dir, `${safeName(stringField(args, "name"))}.marker`);
+        return { data: await Deno.readTextFile(file).catch(() => null) };
       },
     },
     report: {

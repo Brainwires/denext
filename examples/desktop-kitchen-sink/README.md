@@ -6,8 +6,9 @@ keychain, files, SQLite, device facts, keep-awake, the clipboard (text, HTML, PN
 native dialogs, the window API, drag and drop, the OS's notifications and context menu, the
 application menu, a tray icon, the Dock / taskbar badge, global shortcuts, launch at login, the
 DevTools switch, deep links and opened files, a second instance, the preload, the stable app origin,
-a Node-API addon, the bridge's gate, custom-scheme auth sessions, passkeys, the Clerk bridge and the
-full-app updater (a real update installed, left unconfirmed and rolled back).
+a Node-API addon, the bridge's gate, custom-scheme auth sessions, passkeys, the Clerk bridge, links
+between the export's pages (soft navigations, back, and a full-page load that keeps the bridge) and
+the full-app updater (a real update installed, left unconfirmed and rolled back).
 
 CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
 (`.github/workflows/desktop-window.yml`): nightly, and on pushes that touch the desktop code.
