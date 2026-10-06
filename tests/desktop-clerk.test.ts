@@ -184,7 +184,21 @@ Deno.test("clerk bridge: open() only takes a Clerk OAuth URL (redirect_uri = the
     await pinned.open(
       "https://idp.example/a?redirect_uri=https%3A%2F%2Fhappy-cat-1.clerk.accounts.dev%2Fv1%2Foauth_callback",
     );
-    assertEquals(starts.length, 3);
+    // Google / GitHub with a development instance's shared credentials: what its Frontend API
+    // returns as `external_verification_redirect_url`.
+    await pinned.open(
+      "https://accounts.google.com/o/oauth2/auth?client_id=x&redirect_uri=https%3A%2F%2Fclerk.shared.lcl.dev%2Fv1%2Foauth_callback&state=s",
+    );
+    // Only that host, not the rest of lcl.dev.
+    await assertRejects(
+      () =>
+        pinned.open(
+          "https://idp.example/a?redirect_uri=https%3A%2F%2Fevil.lcl.dev%2Fv1%2Foauth_callback",
+        ),
+      TypeError,
+      "not a Clerk OAuth URL",
+    );
+    assertEquals(starts.length, 4);
   });
 });
 

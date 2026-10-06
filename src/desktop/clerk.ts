@@ -278,8 +278,17 @@ function isClerkOAuthUrl(target: URL, fapiHost: string | undefined): boolean {
     (fapiHost === undefined || redirect.host === fapiHost || isClerkOperatedHost(redirect.host));
 }
 
-/** Clerk's own domains (a development instance's shared OAuth credentials call back there). */
-const CLERK_DOMAINS = ["clerk.accounts.dev", "accounts.dev", "clerk.dev", "clerk.com"];
+/**
+ * Clerk's own domains. A development instance's shared OAuth credentials (Google, GitHub) call
+ * back on `clerk.shared.lcl.dev`, not on the instance's `*.clerk.accounts.dev` host.
+ */
+const CLERK_DOMAINS = [
+  "clerk.accounts.dev",
+  "accounts.dev",
+  "clerk.dev",
+  "clerk.com",
+  "clerk.shared.lcl.dev",
+];
 
 /** Whether `host` is one of {@linkcode CLERK_DOMAINS} or under one. */
 function isClerkOperatedHost(host: string): boolean {
