@@ -9,8 +9,9 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { profileApp } from "../../src/profile/core.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/islands", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/islands", import.meta.url));
 
 Deno.test({
   name: "e2e: profileApp builds unminified, captures CPU self-time + heap, and gates a budget",

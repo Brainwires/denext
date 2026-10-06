@@ -14,6 +14,7 @@ import {
 } from "../src/build/expo-shims.ts";
 import { runtimeEntryPoints } from "../src/build/next-compat.ts";
 import { isSqliteWasmBridgeImport } from "../src/build/sqlite-wasm.ts";
+import { fromFileUrl } from "@std/path";
 
 const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 
@@ -135,7 +136,7 @@ Deno.test("sqlite bridge: only denext/mobile's import of sqlite-wasm.ts is exter
 
 /** T3 Code's apps/mobile package.json: `$T3_MOBILE_PACKAGE_JSON`, else the sibling checkout. */
 const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
-  new URL("../../t3code/apps/mobile/package.json", import.meta.url).pathname;
+  fromFileUrl(new URL("../../t3code/apps/mobile/package.json", import.meta.url));
 
 /** The expo-* dependencies of T3's app that deliberately have no shim. */
 const NOT_SHIMMED: string[] = [];

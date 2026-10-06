@@ -4,8 +4,9 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { createTestApp, createTestClient } from "denext/testing";
+import { fileURLToPath } from "node:url";
 
-const client = createTestClient(await createTestApp(new URL(".", import.meta.url).pathname));
+const client = createTestClient(await createTestApp(fileURLToPath(new URL(".", import.meta.url))));
 const count = (html: string, needle: string) => html.split(needle).length - 1;
 const get = async (path: string) => {
   const res = await client.get(path);

@@ -80,8 +80,9 @@ import {
   stats,
   summarizeIntervals,
 } from "./parse.ts";
+import { fileURLToPath } from "node:url";
 
-const HERE = new URL(".", import.meta.url).pathname;
+const HERE = fileURLToPath(new URL(".", import.meta.url));
 const { positional, flags } = parseArgs(Deno.args);
 const str = (
   k: string,

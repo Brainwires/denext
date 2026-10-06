@@ -16,12 +16,12 @@
 //
 // Without keys it prints why and exits 0. It never prints a key.
 
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { desktopAppDirs } from "../../../src/desktop/app-dirs.ts";
 import { clerkTestKeys } from "../../../tests/e2e/clerk-keys.ts";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const CLI = new URL("../../../cli.ts", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
+const CLI = fromFileUrl(new URL("../../../cli.ts", import.meta.url));
 const APP_ID = "dev.denext.clerk-example";
 const BAPI = "https://api.clerk.com/v1";
 const PHASE_TIMEOUT_MS = Number(Deno.env.get("CLERK_DESKTOP_TIMEOUT_MS") ?? 300_000);

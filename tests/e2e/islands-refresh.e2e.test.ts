@@ -11,8 +11,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildAndServe, collectConsoleLogs, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const FIXTURE = new URL("./fixtures/islands-refresh", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/islands-refresh", import.meta.url));
 
 const q = (id: string) => `document.querySelector('[data-testid=${id}]')`;
 const text = (id: string) => `((${q(id)} || {}).textContent || '')`;

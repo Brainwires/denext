@@ -19,7 +19,7 @@
 // Opt-in: run with `deno task test:e2e`.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import type { Page } from "@astral/astral";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
@@ -31,7 +31,7 @@ import {
   type RunningServer,
 } from "./harness.ts";
 
-const FIXTURE = new URL("./fixtures/iso-css", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/iso-css", import.meta.url));
 
 /**
  * Build, then write the two per-route stylesheet artifacts the CSS pipeline would

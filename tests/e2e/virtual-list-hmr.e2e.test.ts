@@ -26,8 +26,8 @@ import {
   startSpaDevOnDir,
 } from "./harness.ts";
 
-const SPA_FIXTURE = new URL("./fixtures/spa", import.meta.url).pathname;
-const FRAMEWORK_ROOT = new URL("../../", import.meta.url).pathname;
+const SPA_FIXTURE = fromFileUrl(new URL("./fixtures/spa", import.meta.url));
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../../", import.meta.url));
 
 /** The list component: 1000 rows of varied heights, each carrying a mount-time nonce (state). */
 function listSource(name: string, exportLine: string): string {

@@ -10,8 +10,9 @@
 
 import { assert } from "@std/assert";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/streaming", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/streaming", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/streaming — shell flushes before the boundary, which swaps in place",

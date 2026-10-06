@@ -7,8 +7,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
 
 Deno.test({
   name: "e2e: middleware redirects a legacy path (308) and tags a response header",

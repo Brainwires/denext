@@ -6,8 +6,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/image", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/image", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/image loads an optimized WebP via /_denext/image",

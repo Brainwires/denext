@@ -15,8 +15,9 @@ import {
   launchBrowser,
   type RunningServer,
 } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const FIXTURE = new URL("./fixtures/spa", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/spa", import.meta.url));
 
 async function stepShell(server: RunningServer): Promise<void> {
   const res = await fetch(server.origin + "/");

@@ -26,8 +26,9 @@ import {
   REACT_NATIVE_SPECIFIER,
   rnBaselinePath,
 } from "./spec.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fromFileUrl(new URL("../../../", import.meta.url)).replace(/[\\/]$/, "");
 const LEDGER = knownGapsPath(ROOT);
 
 interface Gap {

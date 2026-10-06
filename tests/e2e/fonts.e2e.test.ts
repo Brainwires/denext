@@ -15,10 +15,10 @@
 // (empty font manifest) and the test skips its self-host assertions.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { buildAndServe } from "./harness.ts";
 
-const EXAMPLE = new URL("../../examples/fonts", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/fonts", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/fonts self-hosts next/font/google at build",

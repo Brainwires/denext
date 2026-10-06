@@ -7,8 +7,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/typed-api", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/typed-api pushes a typed create to a second tab",

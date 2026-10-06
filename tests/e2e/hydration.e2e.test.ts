@@ -18,8 +18,9 @@ import {
   launchBrowser,
   type RunningServer,
 } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
 
 async function stepServerHtml(server: RunningServer): Promise<void> {
   const html = await (await fetch(server.origin + "/")).text();

@@ -11,7 +11,7 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   collectConsoleErrors,
   editAndAssertHotSwap,
@@ -21,8 +21,8 @@ import {
   startDevOnDir,
 } from "./harness.ts";
 
-const FIXTURE = new URL("./fixtures/hmr", import.meta.url).pathname;
-const FRAMEWORK_ROOT = new URL("../../", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/hmr", import.meta.url));
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../../", import.meta.url));
 
 /** Rewrite the copied app's deno.json `denext*` imports to absolute framework URLs. */
 async function patchImports(dir: string): Promise<void> {
