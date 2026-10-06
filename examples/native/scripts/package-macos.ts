@@ -60,6 +60,7 @@
 import {
   desktopAppName as appName,
   desktopDenoFlagArgs,
+  desktopExportEnv,
   desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
@@ -450,7 +451,8 @@ async function main(): Promise<void> {
     opts.formats,
     opts.add,
   );
-  if (opts.export) await run(["deno", "task", "export"]);
+  // The export resolves the macOS target's platform files (`.macos`, `.desktop`).
+  if (opts.export) await run(["deno", "task", "export"], desktopExportEnv("darwin"));
   // .deno-desktop/app.json (the app origin + identifier), its deno.json compile.include, and the
   // config's desktop.app name / identifier mirrored into deno.json, where deno desktop reads them.
   // After the export: `denext desktop package` keeps a backup of deno.json while this script runs,

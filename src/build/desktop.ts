@@ -163,6 +163,7 @@ export {
   buildDesktopBundle,
   desktopAppName,
   type DesktopBundleOptions,
+  desktopExportEnv,
   desktopHasTool,
   desktopIconArgs,
   type DesktopMsiProbe,

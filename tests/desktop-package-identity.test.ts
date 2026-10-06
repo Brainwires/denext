@@ -221,7 +221,7 @@ Deno.test("scaffold: the macOS script passes --icon and names the app from the c
   assertStringIncludes(mac, "await appName(import.meta.url)");
   // The identity reaches deno.json after the export (which can restore a backed-up deno.json),
   // right before deno desktop reads it.
-  const exported = mac.indexOf('await run(["deno", "task", "export"])');
+  const exported = mac.indexOf('await run(["deno", "task", "export"], desktopExportEnv("darwin"))');
   const synced = mac.indexOf("await syncDesktopAppConfig(import.meta.url)");
   const built = mac.indexOf("await buildArtifacts(opts, name)");
   assert(exported > 0 && exported < synced && synced < built, "export, then sync, then build");

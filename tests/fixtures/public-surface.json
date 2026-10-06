@@ -1247,6 +1247,7 @@
     "desktopBuildFlags:function",
     "desktopDenoFlagArgs:function",
     "desktopDevProxyDecision:function",
+    "desktopExportEnv:function",
     "desktopHasTool:function",
     "desktopIconArgs:function",
     "desktopIncludeArgs:function",

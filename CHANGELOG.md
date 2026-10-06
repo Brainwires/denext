@@ -69,7 +69,9 @@ Each item is described in full under Changed, Fixed or Security below.
   gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`). Only the app's
   own modules take a variant; packages keep their own resolution. An import through the app's
   import map (`@/components/BigButton`, an exact `#button` key) resolves the alias first and then
-  the target's file, in the server render and the client bundle alike. See
+  the target's file, in the server render and the client bundle alike. The scaffolded package
+  scripts export for their target OS (the macOS one through `desktopExportEnv("darwin")` from
+  `denext/desktop`; regenerate it with `denext desktop package --regenerate-scripts`). See
   [platform-specific files](https://denext.dev/docs/platform-files).
 - **`denext dev` serves each shell its own platform files.** A page opened with
   `?__denext_platform=<target>` (which `denext mobile dev` writes into each native config's

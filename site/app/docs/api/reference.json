@@ -15861,6 +15861,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopExportEnv",
+          "slug": "desktopExportEnv",
+          "kind": "function",
+          "signature": "desktopExportEnv(os: DesktopOs): Record<string, string>",
+          "doc": "The environment of a package run's deno task export: the TARGET OS's platform (windows when cross-packaging from a Mac), so the export resolves its .windows / .desktop files, not the host's.",
+          "docFull": "The environment of a package run's `deno task export`: the TARGET OS's platform (`windows`\nwhen cross-packaging from a Mac), so the export resolves its `.windows` / `.desktop` files,\nnot the host's.",
+          "params": [
+            {
+              "name": "os",
+              "doc": "The target OS."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopHasTool",
           "slug": "desktopHasTool",
           "kind": "function",
