@@ -202,6 +202,16 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **A locked Linux keyring no longer stops Clerk from loading in a Deno Desktop window.** With
+  `denext/desktop/clerk`, every Frontend API request reads Clerk's client JWT from the
+  `secure-store` capability first. When the Secret Service's `login` collection is locked (an
+  autologin session) and nobody answers the unlock prompt, the capability gives up after 20 s with
+  `backend_unavailable`, and the token cache passed that error to clerk-js, so every request
+  failed, each after another 20 s, and clerk-js never loaded. The token cache now treats
+  `backend_unavailable` and the bridge's `timeout` the way it already treated a missing
+  capability: it warns once and keeps the token in memory for the rest of the launch. Clerk loads
+  and the user can sign in; the session lasts until the app quits. The prompt can still appear.
+  Other keychain errors still reach Clerk.
 - **A compat-mode app inside a denext checkout builds on Windows.** The SSR bundle kept any
   `file://` URL under the framework root external. On Windows every absolute path is re-resolved
   as its `file://` URL, so for an app that lives in the checkout (`examples/*`) the build's own

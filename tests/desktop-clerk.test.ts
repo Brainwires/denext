@@ -14,6 +14,7 @@ import {
   isDesktopBridgeError,
   resetDesktopBridgeForTesting,
 } from "../src/desktop/bridge-client.ts";
+import { secureStoreCapability } from "../src/desktop/caps/secure-store.ts";
 import { createFakeDesktopRuntime, type FakeMethod } from "./helpers/desktop-fake-runtime.ts";
 
 type G = {
@@ -778,7 +779,78 @@ Deno.test("startClerkBrowserSignIn: the redemption must succeed, load a client a
   assertEquals(loaded, 2, "the client is loaded only once the redemption returned one");
 });
 
-Deno.test("clerk bridge: a keychain failure other than `unavailable` reaches Clerk; the memory fallback warns once", async () => {
+// A locked Secret Service whose unlock prompt nobody answers (autologin Plasma/GNOME: gcr shows
+// the prompt, secret-tool blocks): the cap gives up after its answer timeout with
+// `backend_unavailable`. That used to reach clerk-js from its before-request hook, so every
+// Frontend API request failed (each after another full timeout) and clerk-js never loaded.
+Deno.test("clerk bridge: a keychain that never answers falls back to memory for the launch, so Clerk loads", async () => {
+  let spawned = 0;
+  const cap = secureStoreCapability({
+    service: "dev.denext.clerk-example",
+    os: "linux",
+    answerTimeoutMs: 20,
+    // secret-tool waiting on an unanswered prompt: never settles, not even when killed.
+    run: () => {
+      spawned++;
+      return new Promise(() => {});
+    },
+  });
+  const ctx = {
+    emit: () => {},
+    appSupportDir: "",
+    runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    os: "linux" as const,
+    signal: new AbortController().signal,
+  };
+  const via = (m: string) => (args: unknown) => cap.methods[m].handler(args, ctx);
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    await inDesktop(
+      { secureStore: { get: via("get"), set: via("set"), delete: via("delete") } },
+      async () => {
+        const { tokenCache } = installClerkDesktopBridge({ nativeClerk: true })!.bridge;
+        // What clerk-js's first Frontend API request does: read the client JWT. No token.
+        assertEquals(await tokenCache.getToken("__client"), null);
+        // The sign-in's JWT is kept (in memory) and read back by the next request.
+        await tokenCache.saveToken("__client", "jwt-1");
+        assertEquals(await tokenCache.getToken("__client"), "jwt-1");
+        await tokenCache.clearToken("__client");
+        assertEquals(await tokenCache.getToken("__client"), null);
+      },
+    );
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(spawned, 1, "after the first deadline the launch stays in memory");
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "did not answer");
+  assertStringIncludes(warnings[0], "only until the app quits");
+});
+
+Deno.test("clerk bridge: a keychain past the bridge deadline (`timeout`) also falls back to memory", async () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await inDesktop({
+      secureStore: {
+        get: () => {
+          throw { code: "timeout", message: "no answer in 30000 ms" };
+        },
+      },
+    }, async () => {
+      const { tokenCache } = installClerkDesktopBridge()!.bridge;
+      assertEquals(await tokenCache.getToken("k"), null);
+      await tokenCache.saveToken("k", "v");
+      assertEquals(await tokenCache.getToken("k"), "v");
+    });
+  } finally {
+    console.warn = warn;
+  }
+});
+
+Deno.test("clerk bridge: a keychain error (not a missing or unanswering store) reaches Clerk; the memory fallback warns once", async () => {
   await inDesktop({
     secureStore: {
       get: () => 42, // not a string: read as no token

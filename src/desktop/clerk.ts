@@ -183,22 +183,39 @@ function explainSchemeOwner(err: unknown, scheme: string): unknown {
   return err;
 }
 
-/** The token cache over the keychain (`secure-store`), in memory when that is not enabled. */
+/**
+ * Keychain failures the token cache answers from memory for the rest of the launch: the
+ * capability is not enabled (`unavailable`), the OS store cannot answer (`backend_unavailable`:
+ * no Secret Service, or a locked keyring whose unlock prompt nobody answered within the cap's
+ * deadline), or the call outlived the bridge's own deadline (`timeout`). Every Frontend API
+ * request reads the token first, so throwing any of these at clerk-js would fail its load, and
+ * it would wait out the deadline again on every request.
+ */
+const MEMORY_FALLBACK_CODES = new Set(["unavailable", "backend_unavailable", "timeout"]);
+
+/** The token cache over the keychain (`secure-store`), in memory when that cannot answer. */
 function tokenCache(prefix: string): ClerkTokenCache {
   const memory = new Map<string, string>();
-  let warned = false;
+  // Once the keychain has failed over, stay in memory for this launch: a get and a later save
+  // must see the same store, and a locked keyring must not cost each request another deadline.
+  let inMemory = false;
   const fallback = (err: unknown): boolean => {
-    if ((err as { code?: unknown })?.code !== "unavailable") return false;
-    if (!warned) {
-      warned = true;
+    const e = err as { code?: unknown; message?: unknown } | null;
+    if (typeof e?.code !== "string" || !MEMORY_FALLBACK_CODES.has(e.code)) return false;
+    if (!inMemory) {
+      inMemory = true;
       console.warn(
-        "denext/desktop/clerk: the secure-store capability is not enabled (`denext desktop add " +
-          "secure-store`); Clerk's session lasts only until the app quits.",
+        e.code === "unavailable"
+          ? "denext/desktop/clerk: the secure-store capability is not enabled (`denext desktop " +
+            "add secure-store`); Clerk's session lasts only until the app quits."
+          : `denext/desktop/clerk: the OS keychain did not answer (${String(e.message)}); ` +
+            "Clerk's session lasts only until the app quits.",
       );
     }
     return true;
   };
   const rpc = async <T>(method: string, args: unknown, memo: () => T): Promise<T> => {
+    if (inMemory) return memo();
     try {
       return await desktopRpc<T>("secureStore", method, args);
     } catch (err) {
