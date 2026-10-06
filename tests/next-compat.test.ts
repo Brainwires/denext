@@ -408,6 +408,41 @@ Deno.test({
   }
 });
 
+// An app INSIDE a denext checkout (examples/clerk) has its `.denext/` output and node_modules
+// under the framework root. On Windows the loader shim re-resolves every absolute path as its
+// file:// URL, so a whole-root external rule marked the build's own entry point and injected
+// shim external and esbuild refused them ("cannot be marked as external"). Only the framework's
+// own modules are external.
+Deno.test("isFrameworkModuleUrl: framework sources only, never an in-checkout app's files", async () => {
+  const { isFrameworkModuleUrl } = await import("../src/build/next-compat.ts");
+  const { frameworkFileUrl, frameworkRootUrl } = await import("../src/build/bundle.ts");
+  for (const root of ["file:///C:/Users/ci/denext/", "https://jsr.io/@denext/denext/3.1.0/"]) {
+    assert(isFrameworkModuleUrl(`${root}src/server/cache.ts`, root));
+    assert(isFrameworkModuleUrl(`${root}src/runtime/compiler-runtime.ts`, root));
+    assert(isFrameworkModuleUrl(`${root}mod.ts`, root));
+  }
+  const win = "file:///C:/Users/ci/denext/";
+  for (
+    const appFile of [
+      "examples/clerk/.denext/server/.entries/app.tsx",
+      "examples/clerk/.denext/server/.node-globals.js",
+      "examples/clerk/node_modules/@clerk/nextjs/dist/esm/index.js",
+      "examples/clerk/app/page.tsx",
+      "examples/src/page.tsx",
+    ]
+  ) assertEquals(isFrameworkModuleUrl(win + appFile, win), false, appFile);
+  assertEquals(isFrameworkModuleUrl("file:///C:/Users/ci/my-app/app/page.tsx", win), false);
+  // Every framework export a server bundle may externalize (all but the CLI) passes the rule.
+  const root = frameworkRootUrl();
+  const exportsMap = JSON.parse(
+    await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
+  ).exports as Record<string, string>;
+  for (const [key, rel] of Object.entries(exportsMap)) {
+    if (key === "./cli") continue;
+    assert(isFrameworkModuleUrl(frameworkFileUrl(rel), root), `${key} → ${rel}`);
+  }
+});
+
 Deno.test({
   name:
     "compat assets: image + css?url imports emit content-hashed files with ONE URL for server and client",

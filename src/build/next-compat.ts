@@ -2040,10 +2040,27 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
 }
 
 /**
- * esbuild plugin (SSR bundle): an absolute URL INTO the framework — what a build-time
- * transform emits for its runtime import (the `"use cache"` wrapper's `src/server/cache.ts`)
- * — is the same shared denext instance the SSR loader runs on: external, never bundled (its
- * `@std/*` deps aren't resolvable through the app's config anyway).
+ * Whether `url` is one of the framework's own modules, which the SSR bundle keeps external:
+ * anything under `<root>/src/` (every runtime URL a build-time transform emits — the
+ * `"use cache"` wrapper's `src/server/cache.ts`, the compiler / qrl / async-context runtimes
+ * — and every `exports` entry but two) plus the root `mod.ts` (the `"."` export).
+ *
+ * Deliberately NOT the whole framework root: an app that lives INSIDE a denext checkout
+ * (`examples/*`, `apps/*`, test fixtures) has its `.denext/` output and its own
+ * `node_modules/` under the root too. On Windows every absolute path is re-resolved as its
+ * `file://` URL (`windowsPathSpecifiers` in `deno-loader-plugins.ts`), so a whole-root rule
+ * marked the build's own entry points and injected shim external, and esbuild refused them.
+ * Exported for testing.
+ */
+export function isFrameworkModuleUrl(url: string, fwRoot: string): boolean {
+  return url.startsWith(new URL("src/", fwRoot).href) || url === new URL("mod.ts", fwRoot).href;
+}
+
+/**
+ * esbuild plugin (SSR bundle): an absolute URL INTO the framework's own modules (see
+ * {@link isFrameworkModuleUrl}) is the same shared denext instance the SSR loader runs on:
+ * external, never bundled (its `@std/*` deps aren't resolvable through the app's config
+ * anyway).
  */
 function frameworkUrlExternalPlugin(): esbuild.Plugin {
   const fwRoot = frameworkRootUrl();
@@ -2051,7 +2068,7 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
     name: "denext-framework-url-external",
     setup(build) {
       build.onResolve({ filter: /^(?:file|https?):\/\// }, (args) => {
-        return args.path.startsWith(fwRoot) ? { path: args.path, external: true } : null;
+        return isFrameworkModuleUrl(args.path, fwRoot) ? { path: args.path, external: true } : null;
       });
     },
   };

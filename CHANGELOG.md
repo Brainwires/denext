@@ -202,6 +202,13 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **A compat-mode app inside a denext checkout builds on Windows.** The SSR bundle kept any
+  `file://` URL under the framework root external. On Windows every absolute path is re-resolved
+  as its `file://` URL, so for an app that lives in the checkout (`examples/*`) the build's own
+  entry points and its injected `.node-globals.js` were marked external, and esbuild refused them
+  (`cannot be marked as external`). Only the framework's own modules (`src/` and the root
+  `mod.ts`) are kept external now. Apps outside the checkout, including those that import denext
+  from JSR, were not affected.
 - **An exported multi-page app's links work in a Deno Desktop window.** `runDesktop` answered
   every extensionless path with the root `index.html` (a single-page-app assumption), so in a
   static App Router export such as `examples/clerk`, `<a href="/protected">` loaded the home page
