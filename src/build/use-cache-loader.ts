@@ -201,7 +201,8 @@ export function createUseCacheLoader(
     const url = toUrl(filePath);
     let eff: string;
     try {
-      eff = await compiler.effectiveUrl(url);
+      // A module loaded by its plain path (a boundary ref being tagged) loads its variant too.
+      eff = await compiler.effectiveUrl(opts.redirects?.[url] ?? url);
     } catch {
       eff = url; // any transform failure → load the original (never break loading)
     }

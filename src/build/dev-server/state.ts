@@ -4,6 +4,7 @@
 // compat build, manifest, bundles, reload channel, dev endpoints, watcher, request
 // handler) is a separately readable unit.
 
+import type { Platform } from "../platform-extensions.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
@@ -188,16 +189,15 @@ export interface DevState {
   compilerGen: number;
 
   /**
-   * The web target's platform files (`.web.tsx`) as file-URL redirects for the native path,
-   * rescanned per generation (`platformGen`) so an added or removed variant takes effect.
+   * Each target's platform files as file-URL redirects for the native path (`web`, or the
+   * target a shell named), rescanned per generation so an added or removed variant takes effect.
    */
-  platformRedirects: Record<string, string>;
-  platformGen: number;
+  readonly platformRedirects: Map<Platform, { gen: number; redirects: Record<string, string> }>;
 
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
-  ucLoad: ModuleLoader | null;
-  ucLoadGen: number;
+  /** Per target (its platform files ride the same copy loader), rebuilt per generation. */
+  readonly ucLoads: Map<Platform, { gen: number; load: ModuleLoader }>;
 
   /**
    * Client bundle cache keyed by route path (cleared on change). Entry code only; split
@@ -295,11 +295,9 @@ export function createDevState(options: DevServerOptions): DevState {
     refreshMap: {},
     refreshGen: -1,
     compilerGen: -1,
-    platformRedirects: {},
-    platformGen: -1,
+    platformRedirects: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
-    ucLoad: null,
-    ucLoadGen: -1,
+    ucLoads: new Map(),
     bundleCache: new Map(),
     chunkCache: new Map(),
     routeInFlight: new Map(),

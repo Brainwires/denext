@@ -85,6 +85,7 @@ function fakes(attached: boolean, windowFinished: Promise<void> = new Promise(()
     },
     waitForStop: () => Promise.resolve(), // Ctrl-C immediately
     log: (l) => lines.push(l),
+    os: "darwin",
   };
   return {
     deps,
@@ -98,7 +99,12 @@ function fakes(attached: boolean, windowFinished: Promise<void> = new Promise(()
 Deno.test("desktop dev opens the window against the dev server and stops both on Ctrl-C", async () => {
   const f = fakes(false);
   await runDesktopDev(f.deps);
-  assertEquals(f.spawnedUrl(), "http://localhost:3000", "the window proxies to the dev server");
+  // The window names its OS, so the dev server serves it the `.macos` / `.desktop` files.
+  assertEquals(
+    f.spawnedUrl(),
+    "http://localhost:3000/?__denext_platform=macos",
+    "the window proxies to the dev server",
+  );
   assertEquals(f.windowStopped(), 1);
   assertEquals(f.serverStopped(), 1, "a dev server this verb started is stopped");
   assertStringIncludes(f.lines.join("\n"), "the window loads http://localhost:3000");

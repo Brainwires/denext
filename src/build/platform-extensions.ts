@@ -29,6 +29,7 @@
 // target's variant.
 
 import { walk } from "@std/fs";
+import { getCookies } from "@std/http/cookie";
 import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 
@@ -36,7 +37,7 @@ import type { DenextConfig } from "../server/config.ts";
 export type Platform = "web" | "ios" | "android" | "macos" | "windows" | "linux";
 
 /** Every build target, in the order the docs and `doctor` list them. */
-const PLATFORMS: readonly Platform[] = [
+export const PLATFORMS: readonly Platform[] = [
   "web",
   "ios",
   "android",
@@ -474,4 +475,70 @@ export async function platformFilesReport(
         : `; ${variantsOnly} without a plain file — type checking resolves the plain path, so ` +
           `add one (or a \`.d.ts\` for extensionless imports)`),
   };
+}
+
+/**
+ * The query parameter a shell adds to the dev server URL to name its target
+ * (`?__denext_platform=ios`); the dev server pins it in a cookie of the same name.
+ */
+export const DEV_PLATFORM_PARAM = "__denext_platform";
+
+/** The request header the desktop dev window's proxy sends on every request (its OS). */
+export const DEV_PLATFORM_HEADER = "x-denext-platform";
+
+/**
+ * The target a `denext dev` request resolves platform files for: the desktop proxy's
+ * {@linkcode DEV_PLATFORM_HEADER}, else a {@linkcode DEV_PLATFORM_PARAM} query, else the cookie
+ * {@linkcode pinDevPlatform} set, else `web` (a browser with no hint). An unknown value is
+ * ignored.
+ *
+ * @param request The request.
+ */
+export function devPlatformOf(request: Request): Platform {
+  const candidates = [
+    request.headers.get(DEV_PLATFORM_HEADER),
+    new URL(request.url).searchParams.get(DEV_PLATFORM_PARAM),
+    getCookies(request.headers)[DEV_PLATFORM_PARAM],
+  ];
+  return candidates.find(isPlatform) ?? "web";
+}
+
+/**
+ * Pin a {@linkcode DEV_PLATFORM_PARAM} query in a cookie on the response, so the page's later
+ * requests (its modules, client navigations, the HMR re-imports) resolve the same target. A
+ * request without the query is returned as is.
+ *
+ * @param request The request.
+ * @param response Its response.
+ */
+export function pinDevPlatform(request: Request, response: Response): Response {
+  const value = new URL(request.url).searchParams.get(DEV_PLATFORM_PARAM);
+  if (!isPlatform(value)) return response;
+  const cookie = `${DEV_PLATFORM_PARAM}=${value}; Path=/; SameSite=Lax`;
+  try {
+    response.headers.append("set-cookie", cookie);
+    return response;
+  } catch {
+    // An immutable response (a fetch() passthrough): copy it.
+    const headers = new Headers(response.headers);
+    headers.append("set-cookie", cookie);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+}
+
+/**
+ * `url` with {@linkcode DEV_PLATFORM_PARAM} set to `platform` (what `denext mobile dev` writes
+ * into each native config's `server.url`, and `denext desktop dev` into the window's dev URL).
+ *
+ * @param url The dev server URL.
+ * @param platform The shell's target.
+ */
+export function withDevPlatform(url: string, platform: Platform): string {
+  const u = new URL(url);
+  u.searchParams.set(DEV_PLATFORM_PARAM, platform);
+  return u.href;
 }

@@ -1,5 +1,6 @@
 // Unbundled dev: the generated client entries — per-route, app-wide Flight, and SPA.
 
+import type { Platform } from "../platform-extensions.ts";
 import { fromFileUrl, toFileUrl } from "@std/path";
 import { inNodeModules } from "../path-segments.ts";
 import type { PageRoute } from "../../router/manifest.ts";
@@ -38,7 +39,11 @@ export function supportsRoute(route: PageRoute): boolean {
  * transformed through {@linkcode transformGeneratedEntry}. Its imported modules become
  * `@fs` dev URLs served unbundled with per-module footers.
  */
-export async function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
+export async function serveEntry(
+  st: UnbundledState,
+  route: PageRoute,
+  platform: Platform = "web",
+): Promise<string> {
   await assertNoDevServerOnlyLeaks(st, route);
   prewarmNpmBundle(st, routeSourceFiles(route));
   return await transformGeneratedEntry(
@@ -52,6 +57,7 @@ export async function serveEntry(st: UnbundledState, route: PageRoute): Promise<
       usesViewTransition: true,
     }),
     `entry:${route.routePath}`,
+    platform,
   );
 }
 
@@ -113,6 +119,7 @@ export async function assertNoDevServerOnlyLeaks(
 export async function serveFlightEntry(
   st: UnbundledState,
   boundary: BoundaryManifest,
+  platform: Platform = "web",
 ): Promise<string> {
   await ensureClientDeps(st);
   noteNpmServerRefs(st, boundary);
@@ -134,6 +141,7 @@ export async function serveFlightEntry(
       true,
     ),
     "entry:flight",
+    platform,
   );
 }
 
@@ -161,7 +169,10 @@ function noteNpmServerRefs(st: UnbundledState, boundary: BoundaryManifest): void
  * edit hot-swaps that one module in place. Its `denext`/`react`/npm imports resolve
  * through the specifier rewrite like any route.
  */
-export async function serveSpaEntry(st: UnbundledState): Promise<string> {
+export async function serveSpaEntry(
+  st: UnbundledState,
+  platform: Platform = "web",
+): Promise<string> {
   await ensureClientDeps(st);
   // React Native mode: start the dependency bundle now, while the page fetches the app modules.
   if (st.opts.reactNative) void ensureNpmBundle(st).catch(() => {});
@@ -178,5 +189,5 @@ export async function serveSpaEntry(st: UnbundledState): Promise<string> {
     `import { installDevtools } from "denext/devtools";\n` +
     `enablePerModuleRefresh();\ninstallDevtools();\n` +
     `await import(${JSON.stringify(toFileUrl(abs).href)});\n`;
-  return transformGeneratedEntry(st, src, "entry:spa");
+  return transformGeneratedEntry(st, src, "entry:spa", platform);
 }

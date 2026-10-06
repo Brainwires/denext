@@ -24,6 +24,7 @@
 // the restore never relies on it: it scrubs the native copies itself, putting back the `server`
 // block each had at session start (recorded in the backup), then tries `cap copy` anyway.
 
+import { withDevPlatform } from "./platform-extensions.ts";
 import { join, resolve } from "@std/path";
 import { commit, objectDeleteEdits } from "./config-edit.ts";
 import { parseModule } from "./swc-ast.ts";
@@ -117,6 +118,20 @@ const NATIVE_PLATFORM: Readonly<Record<string, "ios" | "android">> = {
   "android/app/src/main/assets/capacitor.config.json": "android",
 };
 
+/** Each native config copy `cap copy` wrote that parses: its path, shell, text and object. */
+async function* nativeCopies(root: string): AsyncGenerator<{
+  rel: string;
+  platform: "ios" | "android";
+  text: string;
+  config: Record<string, unknown>;
+}> {
+  for (const [rel, platform] of Object.entries(NATIVE_PLATFORM)) {
+    const text = await Deno.readTextFile(join(root, rel)).catch(() => null);
+    const config = text === null ? null : jsonObject(text);
+    if (text !== null && config !== null) yield { rel, platform, text, config };
+  }
+}
+
 /**
  * Turn WebView debugging on in each native config copy `cap copy` wrote (the platform's own
  * `webContentsDebuggingEnabled`). Written only when it changes; an unreadable copy is skipped.
@@ -126,15 +141,41 @@ const NATIVE_PLATFORM: Readonly<Record<string, "ios" | "android">> = {
  */
 export async function enableSessionWebDebugging(root: string): Promise<string[]> {
   const changed: string[] = [];
-  for (const [rel, platform] of Object.entries(NATIVE_PLATFORM)) {
-    const text = await Deno.readTextFile(join(root, rel)).catch(() => null);
-    const config = text === null ? null : jsonObject(text);
-    if (text === null || config === null) continue;
+  for await (const { rel, platform, text, config } of nativeCopies(root)) {
     const block = typeof config[platform] === "object" && config[platform] !== null
       ? config[platform] as Record<string, unknown>
       : {};
     if (block[DEBUG_KEY] === true) continue;
     config[platform] = { ...block, [DEBUG_KEY]: true };
+    await Deno.writeTextFile(join(root, rel), sameLayoutJson(text, config));
+    changed.push(rel);
+  }
+  return changed;
+}
+
+/**
+ * Name each shell's target in the `server.url` of its native config copy
+ * (`?__denext_platform=ios` / `android`), so the dev server serves each phone its own platform
+ * files (`.ios.tsx`, `.mobile.tsx`) and pins the target in a cookie for the page's later
+ * requests. Only the copies change (`capacitor.config.*` holds one URL for both shells); the
+ * restore puts each copy's `server` block back.
+ *
+ * @param root The Capacitor project.
+ * @returns The copies changed (project-relative).
+ */
+export async function pinSessionPlatforms(root: string): Promise<string[]> {
+  const changed: string[] = [];
+  for await (const { rel, platform, text, config } of nativeCopies(root)) {
+    const server = config.server as Record<string, unknown> | undefined;
+    if (typeof server?.url !== "string") continue;
+    let url: string;
+    try {
+      url = withDevPlatform(server.url, platform);
+    } catch {
+      continue; // not a URL: leave it for Capacitor to report
+    }
+    if (url === server.url) continue;
+    config.server = { ...server, url };
     await Deno.writeTextFile(join(root, rel), sameLayoutJson(text, config));
     changed.push(rel);
   }
@@ -675,6 +716,7 @@ export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDep
     const plistChanged = await applyDevSession(root, file, server.url, deps.log);
     await capCopy(deps, root);
     await enableSessionWebDebugging(root);
+    await pinSessionPlatforms(root);
     deps.log(nextSteps(server, { project: await xcodeProject(root), plistChanged }));
     const android = await androidCleartextWarning(root, server.url);
     if (android) deps.log(android);

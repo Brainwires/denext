@@ -103,7 +103,8 @@ export async function resolveFlightLoader(
   // module instance is the same one a page transitively imports at render; else `load`.
   const tagVia = config.tagLoad ?? config.load;
   const load = (url: string) => tagVia(url.startsWith("file:") ? fromFileUrl(url) : url);
-  await timed("tagClientModules", () => tagClientModules(config.flightClients!, load));
+  const scope = config.tagScope?.() ?? "";
+  await timed("tagClientModules", () => tagClientModules(config.flightClients!, load, scope));
   if (config.flightServers) await tagServerModules(config.flightServers, load);
   return { useFlight, pageLoad: config.load };
 }

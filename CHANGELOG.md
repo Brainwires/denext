@@ -69,6 +69,11 @@ Each item is described in full under Changed, Fixed or Security below.
   gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`). Only the app's
   own modules take a variant; packages keep their own resolution. See
   [platform-specific files](https://denext.dev/docs/platform-files).
+- **`denext dev` serves each shell its own platform files.** A page opened with
+  `?__denext_platform=<target>` (which `denext mobile dev` writes into each native config's
+  `server.url`) is pinned to that target by a cookie, and the desktop dev window names its OS on
+  every proxied request: the page's modules and the native App Router's server render resolve
+  that target's files, cached apart per target. A browser with no hint stays `web`.
 - **`onAppCapabilitiesChanged(handler)` from `denext/desktop/app`.** The runtime's
   `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
   when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the

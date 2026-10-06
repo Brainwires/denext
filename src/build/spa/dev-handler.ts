@@ -1,6 +1,7 @@
 // SPA mode dev server: the request handler — live-reload SSE, the dev-reload module, the
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
+import { pinDevPlatform } from "../platform-extensions.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
 import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
@@ -114,6 +115,14 @@ async function serveUnbundled(
 
 /** The SPA dev request handler. */
 export function createSpaDevHandler(st: SpaDevState): (request: Request) => Promise<Response> {
+  const handle = spaRequestHandler(st);
+  // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module requests
+  // resolve that target's platform files too.
+  return async (request) => pinDevPlatform(request, await handle(request));
+}
+
+/** {@linkcode createSpaDevHandler}'s routing, before the platform cookie. */
+function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Response> {
   const allowed = st.options.allowedDevOrigins ?? [];
   return async (request) => {
     const url = new URL(request.url);

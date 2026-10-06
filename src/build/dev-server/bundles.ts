@@ -1,6 +1,7 @@
 // On-demand client bundles (per route, and the app-wide Flight entry), the client entry /
 // stylesheet URLs a rendered page links, and the per-generation middleware runner.
 
+import type { Platform } from "../platform-extensions.ts";
 import type { PageRoute } from "../../router/manifest.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { momentumSafeScrollEnabled } from "../../server/config.ts";
@@ -83,21 +84,25 @@ export async function getRouteBundle(st: DevState, route: PageRoute): Promise<st
  * bundle). Native unbundled: each island on its own @fs URL, so editing an island
  * hot-swaps that single module in place — the same per-module HMR as native routes.
  */
-export async function getFlightBundle(st: DevState): Promise<string> {
+export async function getFlightBundle(st: DevState, platform: Platform = "web"): Promise<string> {
   const m = await getManifest(st);
   if (await isCompat(st)) {
     if (st.unbundledActive && st.compatBoundary) {
-      return await getUnbundled(st).serveFlightEntry(st.compatBoundary);
+      return await getUnbundled(st).serveFlightEntry(st.compatBoundary, platform);
     }
     return st.flightBundle ?? "";
   }
-  if (st.flightBundle) return st.flightBundle;
+  // The cache holds the web target's entry; another target's unbundled entry is generated per
+  // request (a cheap transform: its islands are served, and cached, per target).
+  const cacheable = platform === "web";
+  if (cacheable && st.flightBundle) return st.flightBundle;
   const boundary = await buildBoundaryManifest(st.paths.appDir, [
     ...new Set(m.pages.flatMap(routeEntryFiles)),
   ], { exportsOf: importFunctionExports });
   if (st.unbundledActive) {
-    st.flightBundle = await getUnbundled(st).serveFlightEntry(boundary);
-    return st.flightBundle;
+    const entry = await getUnbundled(st).serveFlightEntry(boundary, platform);
+    if (cacheable) st.flightBundle = entry;
+    return entry;
   }
   const bundle = await bundleFlightEntry(boundary, {
     configPath: st.paths.configPath,

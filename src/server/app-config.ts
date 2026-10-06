@@ -45,6 +45,12 @@ export interface AppConfig {
    * {@link load}; prod/export leave it unset.
    */
   tagLoad?: ModuleLoader;
+  /**
+   * The scope client-reference tagging is done once per (default: once per process). Dev
+   * returns the rendered request's target (`web`, `ios`, …): each target's loader yields its
+   * own island instances (its platform files), and each must be tagged.
+   */
+  tagScope?: () => string;
   /** Directory of static assets served at the URL root. */
   publicDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */

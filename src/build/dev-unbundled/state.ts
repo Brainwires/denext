@@ -4,7 +4,7 @@
 // `createUnbundledState` — the explicit form of what used to be the captured locals of
 // one large closure. See `../dev-unbundled.ts` for the module header + URL scheme.
 
-import type { PlatformResolution } from "../platform-extensions.ts";
+import type { Platform, PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
 import type * as esbuild from "esbuild";
 
@@ -178,11 +178,12 @@ export interface UnbundledDevOptions {
    */
   reactNative?: ReactNativeDevOptions;
   /**
-   * The target's platform files for the app's own modules (`BigButton.web.tsx`; see
-   * `../platform-extensions.ts`), probed ahead of the defaults. Null when the app turned them
-   * off (`platformExtensions: false`); React Native mode then still probes its `.web.*`.
+   * How a target resolves the app's own platform files (`BigButton.ios.tsx`; see
+   * `../platform-extensions.ts`): each request is served for the target its page named
+   * (`devPlatformOf`), `web` by default. Absent, or null for a target (`platformExtensions:
+   * false`), the plain files resolve; React Native mode then still probes its `.web.*`.
    */
-  appPlatform?: PlatformResolution | null;
+  resolvePlatform?: (platform: Platform) => PlatformResolution | null;
   /**
    * Called when the dependency bundle is rebuilt under a live page (React Native mode: a new
    * package or name was imported; compat: a module discovered a package the first build lacked,
@@ -219,7 +220,10 @@ export interface UnbundledState {
    * URLs (`?v=`) so only a changed dep re-fetches while unchanged deps stay cached.
    */
   readonly version: Map<string, number>;
-  /** Transform cache (abs path → last emitted transform). */
+  /**
+   * Transform cache (abs path, per target — {@linkcode transformKey} → last emitted transform):
+   * a module's rewritten imports name the target's platform files, so targets never share one.
+   */
   readonly cache: Map<string, TransformEntry>;
   /** Reverse import graph (dep → its importers) for HMR boundary propagation. */
   readonly importers: Map<string, Set<string>>;
@@ -267,6 +271,11 @@ export interface UnbundledState {
 }
 
 /** Create the shared state for one project (dirs under `<outDir>/dev-unbundled/`). */
+/** The transform-cache key of `abs` served for `platform` (the bare path for `web`). */
+export function transformKey(abs: string, platform: Platform): string {
+  return platform === "web" ? abs : `${platform}:${abs}`;
+}
+
 export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState {
   const base = join(opts.outDir, "dev-unbundled");
   return {

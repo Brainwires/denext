@@ -2,6 +2,7 @@
 // cache store booted once, then `createApp` wired to the per-generation dev state, and the
 // Live Server Components hub on top.
 
+import { renderPlatform } from "./platform.ts";
 import { join } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
 import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "../../plugin/mod.ts";
@@ -148,6 +149,8 @@ export function createDevApp(st: DevState): RequestHandler {
     flight: true,
     appDir: paths.appDir,
     tagLoad: st.tagLoad,
+    // Each target's island instances (its platform files) are tagged on its first render.
+    tagScope: renderPlatform,
     flightRoutes: st.flightRoutes,
     flightClients: st.flightClients,
     flightServers: st.flightServers,

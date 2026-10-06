@@ -14,6 +14,7 @@
 // query parameter. The peer is the socket's address, never the `Host` header. A loopback bind
 // has no token and nothing changes.
 
+import { DEV_PLATFORM_HEADER, DEV_PLATFORM_PARAM } from "../platform-extensions.ts";
 import { isLoopbackHost } from "../../utils/loopback.ts";
 import { remoteAddrOf } from "../../server/remote-addr.ts";
 
@@ -178,15 +179,22 @@ export function withDevTokenGate(
 
 /**
  * The headers the desktop dev proxy adds upstream: the dev server's session token when the dev
- * URL carries one (`?__denext_dev=…`, a LAN dev server under `denext desktop dev --lan`).
+ * URL carries one (`?__denext_dev=…`, a LAN dev server under `denext desktop dev --lan`), and
+ * the window's target when it names one (`?__denext_platform=macos`, which `denext desktop dev`
+ * adds), so every proxied request resolves that OS's platform files.
  *
  * @param devUrl The dev server URL (`DENEXT_DESKTOP_DEV_URL`).
- * @returns `{ "x-denext-dev-token": token }`, or `{}`.
+ * @returns `{ "x-denext-dev-token": token, "x-denext-platform": target }`, each when present.
  */
 export function devProxyTokenHeaders(devUrl: string): Record<string, string> {
   try {
-    const token = new URL(devUrl).searchParams.get(DEV_TOKEN_PARAM);
-    return token ? { [DEV_TOKEN_HEADER]: token } : {};
+    const params = new URL(devUrl).searchParams;
+    const token = params.get(DEV_TOKEN_PARAM);
+    const platform = params.get(DEV_PLATFORM_PARAM);
+    return {
+      ...(token ? { [DEV_TOKEN_HEADER]: token } : {}),
+      ...(platform ? { [DEV_PLATFORM_HEADER]: platform } : {}),
+    };
   } catch {
     return {};
   }

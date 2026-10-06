@@ -1,5 +1,6 @@
 // Unbundled dev: HTTP handling — one function per URL class under `/_denext/`.
 
+import type { Platform } from "../platform-extensions.ts";
 import { basename, extname, join, relative } from "@std/path";
 import { contentType } from "@std/media-types";
 import { withinDir } from "../dev-server/dev-endpoints.ts";
@@ -134,7 +135,7 @@ export function fsPathAllowed(st: UnbundledState, abs: string): boolean {
 }
 
 /** `/_denext/@fs<abs>`: one first-party module, transformed on demand. */
-function serveFs(st: UnbundledState, path: string): Promise<Response> {
+function serveFs(st: UnbundledState, path: string, platform: Platform): Promise<Response> {
   let abs: string;
   try {
     abs = norm(fsPathOfUrl(path.slice(FS_PREFIX.length)));
@@ -144,7 +145,7 @@ function serveFs(st: UnbundledState, path: string): Promise<Response> {
   if (!fsPathAllowed(st, abs)) {
     return Promise.resolve(js("// forbidden: not a project module", 403));
   }
-  return serveJs(abs, async () => (await transform(st, abs)).code);
+  return serveJs(abs, async () => (await transform(st, abs, platform)).code);
 }
 
 /** `/_denext/@entry[?p=<route>]`: the generated client entry (route, or the SPA entry). */
@@ -152,30 +153,37 @@ function serveEntryRequest(
   st: UnbundledState,
   url: URL,
   manifest: RouteManifest,
+  platform: Platform,
 ): Promise<Response> {
   const routePath = url.searchParams.get("p");
   // SPA: no `?p=` — serve the single app entry unbundled.
-  if (routePath === null && st.opts.spaEntry) return serveJs("spa entry", () => serveSpaEntry(st));
+  if (routePath === null && st.opts.spaEntry) {
+    return serveJs("spa entry", () => serveSpaEntry(st, platform));
+  }
   const route = manifest.pages.find((p) => p.routePath === routePath);
   if (!route) return Promise.resolve(js("// route not found", 404));
   return serveJs("entry", async () => {
     // The deps must be built before the entry runs (it imports denext/client).
     await ensureClientDeps(st);
-    return serveEntry(st, route);
+    return serveEntry(st, route, platform);
   });
 }
 
-/** Handle an unbundled dev request, or return null if the URL isn't ours. */
+/**
+ * Handle an unbundled dev request, or return null if the URL isn't ours. First-party modules
+ * and entries are served for `platform` (the target the requesting page named).
+ */
 export function handle(
   st: UnbundledState,
   url: URL,
   manifest: RouteManifest,
+  platform: Platform = "web",
 ): Promise<Response | null> {
   const path = url.pathname;
   if (path === EMPTY_MODULE) return Promise.resolve(js("export default {};\n"));
   if (path.startsWith(DEP_PREFIX)) return serveDep(st, path);
   if (path.startsWith(NPM_PREFIX)) return serveNpm(st, path);
-  if (path.startsWith(FS_PREFIX)) return serveFs(st, path);
-  if (path === ENTRY_PATH) return serveEntryRequest(st, url, manifest);
+  if (path.startsWith(FS_PREFIX)) return serveFs(st, path, platform);
+  if (path === ENTRY_PATH) return serveEntryRequest(st, url, manifest, platform);
   return Promise.resolve(null);
 }

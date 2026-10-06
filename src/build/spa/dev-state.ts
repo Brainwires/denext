@@ -196,8 +196,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
-      // The web target's platform files (`.web.tsx`) for the app's own modules.
-      appPlatform: platformResolution(paths.config, "web"),
+      // Each target's platform files for the app's own modules (`web` unless the page names one).
+      resolvePlatform: (platform) => platformResolution(paths.config, platform),
       // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).
       spaInstall: supportInstall({
         classComponents: paths.config?.classComponents ?? true,

@@ -38,8 +38,8 @@ export function getUnbundled(st: DevState): UnbundledDev {
     features: featureFlags(st.paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
-    // The web target's platform files (`.web.tsx`) for the app's own modules.
-    appPlatform: platformResolution(st.paths.config, "web"),
+    // Each target's platform files for the app's own modules (`web` unless the page names one).
+    resolvePlatform: (platform) => platformResolution(st.paths.config, platform),
     // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
     onDepsRebuilt: () => broadcast(st, "reload"),
   });

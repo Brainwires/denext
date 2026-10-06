@@ -2,6 +2,7 @@
 // black box, runtime script, unbundled modules, bundles, chunks, route CSS, health,
 // images), then the app itself with request timing recorded in the black box.
 
+import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
@@ -106,9 +107,9 @@ function gatedDevEndpoint(
 }
 
 /** App-wide Flight bundle (client islands + registry). */
-async function flightBundleResponse(st: DevState): Promise<Response> {
+async function flightBundleResponse(st: DevState, request: Request): Promise<Response> {
   try {
-    return jsResponse(await getFlightBundle(st));
+    return jsResponse(await getFlightBundle(st, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "Flight bundle error", err);
   }
@@ -252,6 +253,14 @@ async function appResponse(
 
 /** The dev server's request handler over `appHandler` (the createApp handler). */
 export function createDevHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
+  const handle = devRequestHandler(st, appHandler);
+  // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module, Flight and
+  // navigation requests resolve that target's platform files too.
+  return async (request) => pinDevPlatform(request, await handle(request));
+}
+
+/** {@linkcode createDevHandler}'s routing, before the platform cookie. */
+function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
   return async (request) => {
     const url = new URL(request.url);
     // Live Server Components WebSocket upgrade (before appHandler so the long-lived
@@ -262,7 +271,7 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
     if (url.pathname === DEV_RELOAD_JS_PATH) return jsResponse(DEV_RELOAD_SCRIPT);
     const unbundled = await unbundledResponse(st, request, url);
     if (unbundled) return unbundled;
-    if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st);
+    if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st, request);
     if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st);
     // Liveness/readiness probe endpoint (for load balancers / k8s).
     if (url.pathname === "/_denext/health") {

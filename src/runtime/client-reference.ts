@@ -82,9 +82,9 @@ export function clientRefOf(value: unknown): ClientRefInfo | null {
   return info ?? null;
 }
 
-// Client ids already imported + tagged this process, so repeat renders don't
-// re-import. ES modules are singletons, so tagging the imported instance also
-// tags the very functions a server page imports transitively.
+// Client ids already imported + tagged this process (per tagging scope), so repeat renders
+// don't re-import. ES modules are singletons, so tagging the imported instance also tags the
+// very functions a server page imports transitively.
 const taggedClients = new Set<string>();
 
 /**
@@ -93,12 +93,17 @@ const taggedClients = new Set<string>();
  * to call repeatedly; each module is imported at most once per process.
  *
  * @param clients Map of client id → `{ url }` (the boundary manifest's clients).
+ * @param load The loader to import each module through (default: a bare `import()`).
+ * @param scope What the once-per-process dedupe is per: dev passes the rendered target, whose
+ *   loader yields other module instances (its platform files) that need tagging too.
  */
 export async function tagClientModules(
   clients: Iterable<[string, { url: string }]>,
   load?: (url: string) => Promise<unknown>,
+  scope = "",
 ): Promise<void> {
-  const pending = [...clients].filter(([clientId]) => !taggedClients.has(clientId));
+  const key = (clientId: string) => scope ? `${scope}\0${clientId}` : clientId;
+  const pending = [...clients].filter(([clientId]) => !taggedClients.has(key(clientId)));
   if (pending.length === 0) return;
   // With an app loader (compat: the keyed single server bundle) every ref costs one lookup;
   // bare `import()`s go through one barrel module instead (see importViaBarrel).
@@ -109,7 +114,7 @@ export async function tagClientModules(
     pending.map(async ([clientId, ref], i) => {
       const mod = barrel ? barrel[i] : load ? await load(ref.url) : await import(ref.url);
       tagClientExports(mod as Record<string, unknown>, clientId);
-      taggedClients.add(clientId);
+      taggedClients.add(key(clientId));
     }),
   );
 }

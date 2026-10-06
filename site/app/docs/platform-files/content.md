@@ -70,6 +70,23 @@ expects. `denext start` and the production server build stay `web`.
 
 An app with no platform files builds exactly as before, and one export serves every shell.
 
+## In `denext dev`
+
+The dev server serves `web` by default. A shell that names its target gets that target's files:
+
+- `denext mobile dev --lan` writes each native config's `server.url` with
+  `?__denext_platform=ios` (or `android`), so the phone renders and hot-reloads its own files.
+- `denext desktop dev` opens the window with its OS (`macos`, `windows` or `linux`), and the
+  window's proxy names it on every request.
+- Any other client can do the same: open `http://localhost:3000/?__denext_platform=ios`. The dev
+  server pins the target in a cookie, so the page's later requests (its modules, navigations,
+  hot updates) keep it. A browser with no hint gets `web`.
+
+The page's modules and, on the native App Router, its server render follow the target; each
+target's transforms are cached apart. A next-compat app's server render, a bundled route (MDX)
+and the bundled dev path (`DENEXT_DEV_UNBUNDLED=0`) stay `web` in dev, as does the Flight
+boundary: give a module's variants the same `"use client"` directive as its plain file.
+
 ## When a target has no file
 
 A module that exists only as some targets' variants fails the build of a target with no match:

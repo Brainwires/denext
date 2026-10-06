@@ -6,7 +6,7 @@ import type { ModuleLoader } from "../../server/types.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
-import { devPlatformRedirects } from "./platform.ts";
+import { devPlatformRedirects, renderPlatform } from "./platform.ts";
 
 /**
  * Dev module loader: cache-bust via the generation query so edits reload.
@@ -44,18 +44,25 @@ export function createDevLoader(
       await getManifest();
       return st.compatLoad!(filePath);
     }
-    // The web target's platform files (`.web.tsx`) ride the same per-generation copy loader.
-    const redirects = await devPlatformRedirects(st);
+    // The rendered request's target: its platform files ride the same per-generation copy
+    // loader, one per target (each writes its own copies).
+    const platform = renderPlatform();
+    const redirects = await devPlatformRedirects(st, platform);
     if (!st.useCacheEnabled && Object.keys(redirects).length === 0) return base(filePath);
-    if (st.ucLoadGen !== st.generation) {
-      st.ucLoad = createUseCacheLoader(base, {
-        projectDir: st.paths.projectDir,
-        cacheDir: join(st.paths.outDir, "server-cache", String(st.generation)),
-        redirects,
-        useCache: st.useCacheEnabled,
-      });
-      st.ucLoadGen = st.generation;
+    let current = st.ucLoads.get(platform);
+    if (current?.gen !== st.generation) {
+      const dir = platform === "web" ? String(st.generation) : `${st.generation}-${platform}`;
+      current = {
+        gen: st.generation,
+        load: createUseCacheLoader(base, {
+          projectDir: st.paths.projectDir,
+          cacheDir: join(st.paths.outDir, "server-cache", dir),
+          redirects,
+          useCache: st.useCacheEnabled,
+        }),
+      };
+      st.ucLoads.set(platform, current);
     }
-    return st.ucLoad!(filePath);
+    return current.load(filePath);
   };
 }

@@ -11,9 +11,11 @@ import {
   chooseVariant,
   composeRedirects,
   desktopPlatform,
+  devPlatformOf,
   explicitVariant,
   missingVariantMessage,
   parsePlatform,
+  pinDevPlatform,
   type Platform,
   platformFilesReport,
   platformGaps,
@@ -24,7 +26,10 @@ import {
   probePlatformSource,
   scanPlatformGroups,
   splitPlatformName,
+  withDevPlatform,
 } from "../src/build/platform-extensions.ts";
+import { devProxyTokenHeaders } from "../src/build/dev-server/dev-token.ts";
+import { pinSessionPlatforms } from "../src/build/mobile-dev.ts";
 import { appResolverPlugin, probeSourceFile, SOURCE_EXTS } from "../src/build/next-compat.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -306,13 +311,16 @@ Deno.test("unbundled dev: the first-party probe takes the target's file", async 
   try {
     const state = (opts: Partial<UnbundledState["opts"]>) =>
       ({ opts: { projectDir: dir, ...opts } }) as unknown as UnbundledState;
-    const web = firstPartyProbe(state({ appPlatform: platformResolution({}, "web") }));
+    const on = state({ resolvePlatform: (p) => platformResolution({}, p) });
+    const web = firstPartyProbe(on);
     assertEquals(web(join(dir, "B")), join(dir, "B.web.tsx"));
     assertEquals(web(join(dir, "B.tsx")), join(dir, "B.web.tsx"));
+    assertEquals(firstPartyProbe(on, "ios")(join(dir, "C")), join(dir, "C.web.js"));
     // Off: plain files, unless React Native mode still asks for `.web`.
-    assertEquals(firstPartyProbe(state({ appPlatform: null }))(join(dir, "B")), join(dir, "B.tsx"));
+    const off = state({ resolvePlatform: () => null });
+    assertEquals(firstPartyProbe(off)(join(dir, "B")), join(dir, "B.tsx"));
     const rn = firstPartyProbe(state({
-      appPlatform: null,
+      resolvePlatform: () => null,
       reactNative: { plugins: [], platformExtensions: [".web.js"], define: {} },
     }));
     assertEquals(rn(join(dir, "C")), join(dir, "C.web.js"));
@@ -375,4 +383,69 @@ Deno.test("wiring: mobile build exports with its platform, desktop package with 
   }
   assertEquals(desktopExportEnv("windows"), { DENEXT_PLATFORM: "windows" });
   assertEquals(desktopExportEnv("darwin"), { DENEXT_PLATFORM: "macos" });
+});
+
+Deno.test("dev hints: header, then query, then cookie, else web; the query is pinned", () => {
+  const req = (url: string, headers: Record<string, string> = {}) =>
+    new Request(`http://dev${url}`, { headers });
+  assertEquals(devPlatformOf(req("/")), "web");
+  assertEquals(devPlatformOf(req("/?__denext_platform=android")), "android");
+  assertEquals(devPlatformOf(req("/", { cookie: "a=1; __denext_platform=ios" })), "ios");
+  assertEquals(
+    devPlatformOf(req("/", { "x-denext-platform": "macos", cookie: "__denext_platform=ios" })),
+    "macos",
+  );
+  assertEquals(
+    devPlatformOf(req("/?__denext_platform=phone")),
+    "web",
+    "an unknown value is ignored",
+  );
+
+  const pinned = pinDevPlatform(req("/?__denext_platform=ios"), new Response("ok"));
+  assertEquals(pinned.headers.get("set-cookie"), "__denext_platform=ios; Path=/; SameSite=Lax");
+  assertEquals(pinDevPlatform(req("/"), new Response("ok")).headers.get("set-cookie"), null);
+  const immutable = Response.redirect("http://dev/x", 302);
+  assertStringIncludes(
+    pinDevPlatform(req("/?__denext_platform=ios"), immutable).headers.get("set-cookie")!,
+    "__denext_platform=ios",
+  );
+
+  assertEquals(
+    withDevPlatform("http://192.168.1.5:3000/?__denext_dev=t", "android"),
+    "http://192.168.1.5:3000/?__denext_dev=t&__denext_platform=android",
+  );
+  assertEquals(
+    devProxyTokenHeaders("http://localhost:3000/?__denext_platform=windows"),
+    { "x-denext-platform": "windows" },
+  );
+});
+
+Deno.test("mobile dev: each native config copy's server.url names its shell", async () => {
+  const dir = await tree({
+    "ios/App/App/capacitor.config.json": JSON.stringify(
+      {
+        appId: "x",
+        server: { url: "http://192.168.1.5:3000/?__denext_dev=t", cleartext: true },
+      },
+      null,
+      2,
+    ),
+    "android/app/src/main/assets/capacitor.config.json": JSON.stringify({
+      appId: "x",
+      server: { url: "http://192.168.1.5:3000" },
+    }),
+  });
+  try {
+    const changed = await pinSessionPlatforms(dir);
+    assertEquals(changed.length, 2);
+    const read = async (rel: string) => JSON.parse(await Deno.readTextFile(join(dir, rel)));
+    const ios = await read("ios/App/App/capacitor.config.json");
+    assertEquals(ios.server.url, "http://192.168.1.5:3000/?__denext_dev=t&__denext_platform=ios");
+    assertEquals(ios.server.cleartext, true);
+    const android = await read("android/app/src/main/assets/capacitor.config.json");
+    assertEquals(android.server.url, "http://192.168.1.5:3000/?__denext_platform=android");
+    assertEquals(await pinSessionPlatforms(dir), [], "a second pass changes nothing");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

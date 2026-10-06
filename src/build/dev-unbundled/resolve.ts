@@ -25,7 +25,7 @@ import {
   versionOf,
 } from "./state.ts";
 import { inNodeModules } from "../path-segments.ts";
-import { probePlatformSource } from "../platform-extensions.ts";
+import { type Platform, probePlatformSource } from "../platform-extensions.ts";
 
 /**
  * A merged deno config (framework deps + the app's import map, absolutized) so the
@@ -61,8 +61,9 @@ export async function resolveFirstParty(
   st: UnbundledState,
   spec: string,
   importerAbs: string,
+  platform: Platform = "web",
 ): Promise<string | null> {
-  return resolveWith(await ensureAliases(st), spec, importerAbs, firstPartyProbe(st));
+  return resolveWith(await ensureAliases(st), spec, importerAbs, firstPartyProbe(st, platform));
 }
 
 /** Probe an absolute first-party base path for its file (see {@linkcode firstPartyProbe}). */
@@ -73,9 +74,11 @@ type Probe = (base: string) => string | null;
  * `button.web.tsx`, and an explicit `./button.tsx` takes it too), else React Native mode's
  * `.web.*` ahead of the defaults, else the defaults.
  */
-export function firstPartyProbe(st: UnbundledState): Probe {
-  const platform = st.opts.appPlatform;
-  if (platform) return (base) => probePlatformSource(base, platform, probeSourceFile, SOURCE_EXTS);
+export function firstPartyProbe(st: UnbundledState, platform: Platform = "web"): Probe {
+  const resolution = st.opts.resolvePlatform?.(platform);
+  if (resolution) {
+    return (base) => probePlatformSource(base, resolution, probeSourceFile, SOURCE_EXTS);
+  }
   const web = st.opts.reactNative?.platformExtensions;
   const exts = web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
   return (base) => probeSourceFile(base, exts);
@@ -93,9 +96,10 @@ export function firstPartyProbe(st: UnbundledState): Probe {
 export async function firstPartyResolver(
   st: UnbundledState,
   importerAbs: string,
+  platform: Platform = "web",
 ): Promise<(spec: string) => string | null> {
   const aliases = await ensureAliases(st);
-  const probe = firstPartyProbe(st);
+  const probe = firstPartyProbe(st, platform);
   return (spec) => resolveWith(aliases, spec, importerAbs, probe);
 }
 
