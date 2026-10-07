@@ -242,7 +242,9 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **What:** `Deno.desktop.getSchemeOwner` and `registerScheme({ force })`, plus a first-launch
   registration that runs only when the scheme is unowned or already the app's: Windows `HKCU` with
   an owner marker (the user's `UserChoice` is read, never written), macOS LaunchServices, Linux a
-  hidden XDG `.desktop` entry with `xdg-mime`. The Windows `.msi` writes the same keys at install.
+  hidden XDG `.desktop` entry with `xdg-mime` (then, from runtime 2.9.7-denext.12, KDE's
+  `kbuildsycoca6` / `kbuildsycoca5` where installed, so the first link on Plasma reaches the app
+  without a re-login). The Windows `.msi` writes the same keys at install.
 - **Why:** a deep link only reaches an app the OS knows about, and on Windows a link clicked
   before the app's first launch failed until the installer registered it. Registration must never
   take a scheme another app owns.
