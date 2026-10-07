@@ -27,6 +27,9 @@
 - [API reference](https://denext.dev/docs/api): every public symbol with signatures.
 - [Examples](https://denext.dev/docs/examples): every runnable example app, one page each
   (`/docs/examples/<name>`) with its README and the commands that run it.
+- [Fixed in denext](https://denext.dev/docs/fixed): problems on Next.js, React, Vite and React Native
+  stacks that denext handles, each with the test that proves it (source:
+  `catalog/fixed-in-denext.json`).
 - [Guide (source)](https://github.com/Brainwires/denext/blob/main/AGENTS.md): AGENTS.md in the repo.
 - [GitHub](https://github.com/Brainwires/denext): source, examples, and issues.
 
@@ -39,3 +42,5 @@
   running dev server's errors + console, render a route/component server-side, and search or
   read every docs page and API symbol offline (`denext_search_docs` / `denext_read_docs`).
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: `denext migrate`.
+  `denext migrate --check [--json]` reports what it would change and what won't migrate,
+  writing nothing.

@@ -22,6 +22,8 @@ emit correct denext instead of Next.js.
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
+   `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
+   writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server

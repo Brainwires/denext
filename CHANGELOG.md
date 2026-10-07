@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext migrate --check [--json]` previews a migration and writes nothing.** It runs the
+  same planners as `denext migrate` against an in-memory overlay and reports the files it would
+  create, modify, move or delete, what won't migrate (unsupported native dependencies,
+  next.config keys, a hand-authored `deno.json`, Expo native-only packages, …) with the reason,
+  what to review, and a verdict (`ready`, `review` or `blocked`). It needs read access only
+  (plus jsr.io when run from JSR), works for every source `migrate` supports, and exits 1 when
+  the migration would fail. A real `migrate --json` result gains a `nextConfig` field (what the
+  next.config translation carried and dropped).
+- **"Fixed in denext" ([/docs/fixed](https://denext.dev/docs/fixed)).** Problems people hit on
+  Next.js, React, Vite and React Native stacks that denext handles, each with the error text,
+  why it happens, what denext does, whether it is a fix, a difference, a trade-off or a
+  capability, and the test that proves it. Security advisories say to upgrade Next.js first.
+  The page is generated from `catalog/fixed-in-denext.json` (`deno task docs:fixed`), and a test
+  fails when an evidence test is missing or renamed.
+
 ## [3.2.0] - 2026-10-07
 
 ### Breaking
