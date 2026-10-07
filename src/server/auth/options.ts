@@ -34,6 +34,8 @@ const DEFAULT_SESSION_COOKIE = "denext_auth";
 const DEFAULT_TX_COOKIE = "denext_auth_tx";
 /** Default session lifetime: 7 days. */
 const DEFAULT_MAX_AGE = 60 * 60 * 24 * 7;
+/** Default absolute ceiling from sign-in: 30 days (or `maxAge`, when that is longer). */
+const DEFAULT_MAX_LIFETIME = 60 * 60 * 24 * 30;
 
 /** Email-token lifetimes (seconds) when `email.*MaxAge` is not set. */
 const DEFAULT_EMAIL_MAX_AGES = { verify: 86_400, reset: 3_600, magic: 600, otp: 300 };
@@ -93,6 +95,8 @@ export interface ResolvedAuthOptions {
   maxAge: number;
   /** Sliding-refresh threshold in seconds; `0` means never refresh. */
   updateAge: number;
+  /** The absolute ceiling from sign-in (`authTime`), in seconds; never less than `maxAge`. */
+  maxLifetime: number;
   /** How user-supplied secrets are hashed and checked. */
   hasher: Hasher;
   /** Where the framework logs (no-ops unless the app supplied a logger). */
@@ -152,6 +156,7 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
   if (cached) return cached;
   const logger = resolveLogger(config.logger);
   const basePath = normalizeBasePath(config.basePath);
+  const maxAge = config.session?.maxAge ?? config.maxAge ?? DEFAULT_MAX_AGE;
   const options: ResolvedAuthOptions = {
     basePath,
     prefix: `${basePath}/`,
@@ -159,8 +164,9 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
       session: resolveCookie(config.cookies?.session, DEFAULT_SESSION_COOKIE),
       transaction: resolveCookie(config.cookies?.transaction, DEFAULT_TX_COOKIE),
     },
-    maxAge: config.session?.maxAge ?? config.maxAge ?? DEFAULT_MAX_AGE,
+    maxAge,
     updateAge: config.session?.updateAge ?? 0,
+    maxLifetime: resolveMaxLifetime(config.session?.maxLifetime, maxAge),
     hasher: config.hasher ?? scryptHasher(),
     logger,
     events: config.events ?? {},
@@ -194,6 +200,29 @@ function normalizeBasePath(configured: string | undefined): string {
     );
   }
   return trimmed;
+}
+
+/**
+ * The absolute session ceiling: the configured one, validated, else 30 days stretched to
+ * `maxAge` when that is longer. A ceiling shorter than `maxAge` is refused rather than
+ * silently shortening every session: the two would disagree about how long one lives.
+ */
+function resolveMaxLifetime(configured: number | undefined, maxAge: number): number {
+  if (configured === undefined) return Math.max(DEFAULT_MAX_LIFETIME, maxAge);
+  if (typeof configured !== "number" || !Number.isInteger(configured) || configured < 1) {
+    throw new Error(
+      `denextAuth: \`session.maxLifetime\` must be a positive whole number of seconds ` +
+        `(got ${JSON.stringify(configured)}).`,
+    );
+  }
+  if (configured < maxAge) {
+    throw new Error(
+      `denextAuth: \`session.maxLifetime\` (${configured}s) is shorter than the session ` +
+        `\`maxAge\` (${maxAge}s) — the absolute ceiling must be at least one full lifetime. ` +
+        "Lower `session.maxAge`, or raise `session.maxLifetime`.",
+    );
+  }
+  return configured;
 }
 
 /** A positive, finite lifetime in whole seconds, else `fallback`. */

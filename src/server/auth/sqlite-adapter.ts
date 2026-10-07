@@ -26,8 +26,9 @@
  *
  * Single-node, like the session store: a local file suits one instance. Every replica must
  * see the same database, so for multi-replica either mount one shared volume or implement
- * {@link ./adapter.ts | AuthAdapter} over your shared database. TOTP secrets are stored in
- * plaintext by construction (a TOTP verifier needs the secret) — protect the file itself.
+ * {@link ./adapter.ts | AuthAdapter} over your shared database. TOTP secrets arrive sealed
+ * by the MFA layer (AES-256-GCM under a key derived from the auth `secret`), so the file alone
+ * holds no usable factor; a pre-sealing plaintext row is re-sealed on its next read.
  *
  * @module
  */
@@ -807,7 +808,10 @@ async function firstMatch(
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: SqliteState,
-): Pick<AuthAdapter, "getMfa" | "setMfa" | "deleteMfa" | "consumeBackupCode" | "claimTotpStep"> {
+): Pick<
+  AuthAdapter,
+  "getMfa" | "setMfa" | "deleteMfa" | "replaceMfaSecret" | "consumeBackupCode" | "claimTotpStep"
+> {
   const read = (userId: string): MfaRecord | undefined => {
     const row = one(state.db(), "SELECT * FROM auth_mfa WHERE user_id = ?", [userId]);
     return row && fromRow(MFA_MAP, row);
@@ -819,6 +823,15 @@ function mfaMethods(
     },
     deleteMfa(userId) {
       state.db().exec("DELETE FROM auth_mfa WHERE user_id = ?", [userId]);
+    },
+    replaceMfaSecret(userId, expected, next) {
+      // One conditional UPDATE of the one column: it lands only while the stored secret is
+      // still the one that was read, and leaves `last_step` / `backup_code_hashes` alone.
+      const swapped = state.db().query(
+        "UPDATE auth_mfa SET secret = ? WHERE user_id = ? AND secret = ? RETURNING user_id",
+        [next, userId, expected],
+      );
+      return swapped.length === 1;
     },
     async consumeBackupCode(userId, matches) {
       // The comparison is the caller's (scrypt), so the read-match-write cannot be one
@@ -1101,7 +1114,7 @@ function createState(
  * Ids are `crypto.randomUUID()` unless the caller supplies one; emails are matched
  * case-insensitively and whitespace-trimmed, and a unique index refuses a second user on
  * one address. The schema is created on first use and evolved additively on every open
- * (see the module doc). Single-node, and TOTP secrets are at rest in plaintext.
+ * (see the module doc). Single-node; TOTP secrets are stored as the MFA layer seals them.
  *
  * @param options Database path (or an `openDb` hook), clock override, sweep interval.
  * @returns The adapter, ready to pass as `denextAuth({ adapter })`.

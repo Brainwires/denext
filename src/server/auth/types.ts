@@ -505,6 +505,16 @@ export interface AuthSessionConfig {
    * `requireSession` and `updateAuthSession()` — never inside a bare `auth()`.
    */
   updateAge?: number;
+  /**
+   * The absolute session lifetime in seconds: a hard ceiling counted from the sign-in
+   * (`authTime`) that sliding refresh never extends. A session is refused once it is this
+   * old, whatever its `expiresAt` says, on both strategies; a step-up to a second factor is a
+   * new authentication and starts a new ceiling. Default: 30 days, or `maxAge` when that is
+   * longer, so a session that never slides is unaffected. Must be a whole number of seconds
+   * no shorter than `maxAge` (`denextAuth()` throws otherwise). Native app sessions have their
+   * own cap, `native.refreshTokenMaxAge`.
+   */
+  maxLifetime?: number;
 }
 
 /** What {@link AuthConfig.sendVerificationRequest} is handed for each outbound token. */

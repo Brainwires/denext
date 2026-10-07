@@ -392,7 +392,10 @@ function apiTokenMethods(
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: MemoryState,
-): Pick<AuthAdapter, "getMfa" | "setMfa" | "deleteMfa" | "consumeBackupCode" | "claimTotpStep"> {
+): Pick<
+  AuthAdapter,
+  "getMfa" | "setMfa" | "deleteMfa" | "replaceMfaSecret" | "consumeBackupCode" | "claimTotpStep"
+> {
   return {
     deleteMfa(userId) {
       state.mfa.delete(userId);
@@ -403,6 +406,13 @@ function mfaMethods(
     },
     setMfa(record) {
       state.mfa.set(record.userId, { ...record, backupCodeHashes: [...record.backupCodeHashes] });
+    },
+    replaceMfaSecret(userId, expected, next) {
+      // Synchronous, so the compare and the swap can't interleave with another caller.
+      const record = state.mfa.get(userId);
+      if (!record || record.secret !== expected) return false;
+      record.secret = next;
+      return true;
     },
     consumeBackupCode: (userId, matches) =>
       state.lock(`mfa:${userId}`, async () => {

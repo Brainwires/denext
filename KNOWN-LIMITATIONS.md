@@ -68,8 +68,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **No mailer:** emailed tokens go through your `sendVerificationRequest`, handed over after the
   response, so delivery is best-effort where the platform freezes the isolate.
-- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops); TOTP secrets are
-  stored in plaintext because verification needs them. Protect the file.
+- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
 - **Magic links redeem on GET by default**, so a link-scanning mail gateway can spend one, and a
   link the attacker requested can sign a victim into the attacker's account (as in Auth.js).
   `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
@@ -78,7 +77,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   eviction or account deletion; run a `sessionStore` (or `session.strategy: "database"`).
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
-  never slides, and there is no absolute session ceiling.
+  never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
   one-time codes; rate limiters count per node without a shared `rateLimit.store`.
 - **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO

@@ -115,7 +115,12 @@ export interface ApiTokenRecord {
 export interface MfaRecord {
   /** The owning {@linkcode AdapterUser.id}. */
   userId: string;
-  /** The base32 TOTP secret. Stored in plaintext — see the auth KNOWN-LIMITATIONS entry. */
+  /**
+   * The TOTP secret **sealed** by the MFA layer: `totp.v1.<nonce>.<ciphertext>` (AES-256-GCM
+   * under a key derived from the auth `secret`). Store it as an opaque string. A row written
+   * before sealing existed holds the plaintext base32 secret; it is still read, and re-sealed
+   * through {@linkcode AuthAdapter.replaceMfaSecret}. `""` marks a disabled factor.
+   */
   secret: string;
   /** When enrollment was confirmed (epoch seconds); `undefined` while pending. */
   confirmedAt?: number;
@@ -430,6 +435,20 @@ export interface AuthAdapter {
    * @param userId The owner.
    */
   deleteMfa?(userId: string): MaybePromise<void>;
+
+  /**
+   * **Atomically** replace a user's stored TOTP secret, only while it still equals
+   * `expected` (optional) — how a legacy plaintext secret, or one sealed under a rotated-out
+   * auth `secret`, is re-sealed when it is read. A compare-and-swap of that one field, never a
+   * whole-record write: a concurrent `claimTotpStep` or `consumeBackupCode` must not be undone.
+   * Without it, such a secret stays in its old (still readable) form.
+   *
+   * @param userId The owner.
+   * @param expected The stored secret as it was read.
+   * @param next The re-sealed secret to store.
+   * @returns `true` when the secret was replaced; `false` when it had changed meanwhile.
+   */
+  replaceMfaSecret?(userId: string, expected: string, next: string): MaybePromise<boolean>;
 
   /**
    * **Atomically** spend one backup code. Backup codes are stored salted-and-hashed, so

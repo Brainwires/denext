@@ -384,6 +384,33 @@ const MFA_CASES: Record<string, Case> = {
     assertEquals((await get.call(adapter, user.id))?.secret, "NEWSECRET");
     assertEquals((await get.call(adapter, user.id))?.confirmedAt, confirmedAt);
   },
+  "replaceMfaSecret swaps only the secret, only while it is the expected one": async (adapter) => {
+    const set = adapter.setMfa;
+    const get = adapter.getMfa;
+    const replace = adapter.replaceMfaSecret;
+    const claim = adapter.claimTotpStep;
+    assert(set && get && replace && claim, "both first-party adapters implement the swap");
+    const user = await adapter.createUser({ email: "ada@x.test" });
+    const confirmedAt = at(0);
+    await set.call(adapter, {
+      userId: user.id,
+      secret: "OLD",
+      backupCodeHashes: ["h1"],
+      confirmedAt,
+    });
+    assertEquals(await claim.call(adapter, user.id, 7), true);
+    assertEquals(await replace.call(adapter, user.id, "STALE", "NEW"), false, "a lost swap");
+    assertEquals((await get.call(adapter, user.id))?.secret, "OLD");
+    assertEquals(await replace.call(adapter, user.id, "OLD", "NEW"), true);
+    assertEquals(await get.call(adapter, user.id), {
+      userId: user.id,
+      secret: "NEW",
+      backupCodeHashes: ["h1"],
+      confirmedAt,
+      lastStep: 7,
+    }, "the replay guard and the backup codes are left alone");
+    assertEquals(await replace.call(adapter, "no-such-user", "OLD", "NEW"), false);
+  },
   "consumeBackupCode spends exactly one matching code": async (adapter) => {
     const set = adapter.setMfa;
     const get = adapter.getMfa;

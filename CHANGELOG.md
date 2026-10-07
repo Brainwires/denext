@@ -19,8 +19,30 @@ and this project adheres to
   `backend_unavailable`. The `secure-store` capability no longer bakes `--allow-run=secret-tool`,
   and the `.deb` / `.rpm` depend on `libsecret-1-0` / `libsecret` (the library the runtime loads)
   instead of `libsecret-tools`.
+- **Auth sessions have an absolute lifetime, `session.maxLifetime`** — a hard ceiling counted
+  from the sign-in (`authTime`) that sliding refresh never extends, on the cookie and the
+  database strategy alike. Its default is 30 days (or `maxAge`, when that is longer), so a
+  session that slides with `session.updateAge` now ends 30 days after its sign-in where it used
+  to live as long as it was used; a session that never slides is unaffected. A session past
+  the ceiling reads as signed out whatever its `expiresAt` says, a `callbacks.session` can't lift
+  an expiry past it, and a session issued before 2.5.0-rc.3 (no `authTime`) is no longer slid.
+  A `maxLifetime` that isn't a positive whole number of seconds, or is shorter than `maxAge`,
+  makes `denextAuth()` throw. The default is on rather than opt-in because an unbounded session
+  is what a stolen, regularly used cookie needs; set a larger `maxLifetime` to keep sessions
+  longer.
 
 ### Added
+
+- **TOTP secrets are encrypted at rest.** The MFA layer seals each secret before any adapter
+  stores it — AES-256-GCM under a key HKDF-SHA-256-derived from the auth `secret` (a dedicated
+  label; a random 96-bit nonce per seal; the user id bound in as additional data) — as
+  `totp.v1.<nonce>.<ciphertext>`, and opens it only to check a code. A plaintext row stored by
+  an earlier denext keeps verifying and is re-sealed on that read; with `secret: [current,
+  previous]` a factor sealed under `previous` opens and is re-sealed under `current`. A value no
+  configured secret opens, or a tampered one, fails closed (no TOTP code verifies, the user stays
+  enrolled, backup codes still work). The re-seal goes through the new optional adapter method
+  `replaceMfaSecret(userId, expected, next)`, a compare-and-swap of that one field, which both
+  shipped adapters implement.
 
 - **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /

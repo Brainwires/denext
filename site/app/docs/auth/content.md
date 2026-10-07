@@ -62,7 +62,8 @@ export default {
 
 `secret` must be at least 32 characters (shorter warns in development and **throws in
 production**) and accepts an array to rotate — every secret verifies, the first one
-signs. `canonicalOrigin` warns in development and throws in production: without it the
+signs. The same list seals TOTP secrets at rest ([Secrets at rest](#secrets-at-rest)), so
+keep a retired secret in it until the factors sealed under it have been re-sealed. `canonicalOrigin` warns in development and throws in production: without it the
 OAuth `redirect_uri` and the same-origin checks derive from the attacker-controllable
 `Host` header. An OAuth provider whose `clientId` / `clientSecret` is empty — or the
 literal string `"undefined"`, which a missing `Deno.env.get("…")!` produces — is refused
@@ -311,6 +312,7 @@ denextAuth({
     strategy: "cookie", // or "database"
     maxAge: 60 * 60 * 24 * 7, // 7 days (the default)
     updateAge: 60 * 60, // slide the expiry once a session is an hour old; 0 = never
+    maxLifetime: 60 * 60 * 24 * 30, // never past 30 days from sign-in (the default)
   },
 });
 ```
@@ -333,9 +335,21 @@ idle one still expires on time. A store-backed session keeps the **same** id (fi
 already prevented by minting a fresh id at login), and a half-authenticated session is
 never extended.
 
-There is **no absolute ceiling**: a session that keeps being used keeps being extended, by
-design. End one with revocation (or a shorter `maxAge`), not by waiting for a cap that
-does not exist.
+### Absolute lifetime
+
+Sliding stops at `session.maxLifetime`, a hard ceiling counted from the sign-in (`authTime`)
+that no refresh can extend. A slide near it extends the session only up to it, and a session
+past it reads as signed out — `auth()` answers `null` — whatever its `expiresAt` says, on the
+cookie and the database strategy alike. Every expiry denext mints is capped there too, and a
+`callbacks.session` that lifts `expiresAt` is capped back down. A second-factor step-up is a
+new authentication, so it starts a new ceiling.
+
+The default is **30 days, or `maxAge` when that is longer**, so a session that never slides
+is unaffected and an app with a 90-day `maxAge` keeps it. `maxLifetime` must be a whole
+number of seconds no shorter than `maxAge`; anything else makes `denextAuth()` throw. A
+session issued before 2.5.0-rc.3 carries no `authTime`, so it has no ceiling to measure: it
+still reads, is never slid again, and ends at its current expiry. Native app sessions have
+their own cap, `native.refreshTokenMaxAge` (below).
 
 A store-backed refresh goes through `SessionStore.update` — **write only if the record is
 still there** — never `create`, which is an upsert: a session revoked between this
@@ -439,7 +453,7 @@ else is optional and gates the feature that needs it.
 | Verification tokens | `createVerificationToken`, `useVerificationToken`                                                                                | Email verification, reset, magic links, email codes |
 | Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                                                                    | `credentials()` without `authorize`, password reset |
 | API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens`                                        | Bearer tokens and `/auth/tokens`                    |
-| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`                                                   | TOTP two-factor and backup codes                    |
+| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`, `replaceMfaSecret`                               | TOTP two-factor and backup codes                    |
 | Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge` | WebAuthn sign-in and step-up                        |
 | Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                            | `session.strategy: "database"`, drain               |
 
@@ -499,8 +513,8 @@ that same file with no migration and **no logout**. It still takes
 > `sqliteAuthAdapter` is single-node, like the session store: a local file suits one
 > instance. Every replica must see the same database, so for multi-replica either mount
 > one shared volume or implement `AuthAdapter` over your shared database. TOTP secrets
-> are stored in plaintext by construction (a TOTP verifier needs the secret) — protect
-> the file itself.
+> are sealed before they reach any adapter (see
+> [Secrets at rest](#secrets-at-rest)), so the file alone holds no usable second factor.
 
 ## Account linking rules
 
@@ -967,6 +981,32 @@ checks a code (claiming or spending it) and answers `{ ok: true, method: "totp" 
 `verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
 stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
 `backupCodeMatcher(hasher, code)`.
+
+### Secrets at rest
+
+A TOTP verifier needs the shared secret itself, so it can't be hashed like a backup code.
+Instead denext seals it before it reaches the adapter — any adapter, your own included — and
+opens it only to check a code:
+
+- **AES-256-GCM** (NIST SP 800-38D) under a key derived from the auth `secret` with
+  **HKDF-SHA-256** (RFC 5869) and a dedicated label, so it is independent of the key that
+  signs session cookies. Each seal draws a fresh random 96-bit nonce, and the user id is bound
+  in as additional data, so a sealed secret copied onto another user's row does not open.
+- The stored value carries its version, nonce and ciphertext together:
+  `totp.v1.<nonce>.<ciphertext>`. Store it as an opaque string.
+- **Rotation.** With `secret: [current, previous]`, a factor sealed under `previous` still
+  opens, and is re-sealed under `current` the next time it is checked. Keep a retired secret
+  in the list until every enrolled user has signed in once; a factor that no configured secret
+  opens **fails closed** — no TOTP code verifies, the user still owes a second factor, a
+  backup code still works, and the logger warns with the user id (never the secret).
+- **Existing rows.** A secret stored in plaintext by an earlier denext keeps verifying and is
+  re-sealed on that read. A tampered row, an unknown version or anything that is neither
+  sealed nor base32 is refused, never used as a plaintext secret.
+
+The re-seal on read goes through the adapter's optional `replaceMfaSecret(userId, expected,
+next)`: a compare-and-swap of that one column, so it can't undo a concurrent `claimTotpStep`
+or `consumeBackupCode`. Both shipped adapters implement it; a custom adapter without it keeps
+reading old rows as they are, and seals every new enrollment.
 
 ## Passkeys (WebAuthn)
 
@@ -1683,9 +1723,7 @@ What the first-party auth layer still does not do — the full ledger is
   refused, as are ES384, ES512 and Ed448 keys. Browsers send `none` unless asked otherwise.
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
-- **TOTP secrets are stored in plaintext in the adapter** — a verifier needs the secret, so
-  protect the database; backup codes are hashed. `verifyTotp` is SHA-1 only, the algorithm
-  every authenticator app supports.
+- **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.
 - **Apple's name arrives once.** Apple posts the user's name on their first authorization
   only; without an adapter to store it, later sessions carry no name.
 - **Deleting an account can't end stateless cookie sessions on other devices** — they

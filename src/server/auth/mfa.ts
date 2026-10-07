@@ -11,6 +11,11 @@
  * hash); and the attempt budget is spent by the HTTP layer
  * ({@link ./routes-mfa.ts | the MFA routes}).
  *
+ * **At rest.** The TOTP secret reaches the adapter sealed (AES-256-GCM under a key derived
+ * from the auth `secret`, see {@link ./totp-seal.ts | totp-seal}) and is opened only to verify
+ * a code. A row stored before sealing existed — or sealed under a rotated-out `secret` still in
+ * the list — is read as before and re-sealed under the current `secret` on that read.
+ *
  * **Disabling.** The adapter's MFA group has no delete: `disableTotp` writes an empty,
  * unconfirmed record (no secret, no backup codes) in the user's place, which reads as
  * "not enrolled" everywhere — {@linkcode mfaPendingFor}, {@linkcode mfaStatus}, and every
@@ -28,6 +33,7 @@ import { currentContext } from "../request-context.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
 import { issueAuthSession } from "./session.ts";
 import { generateTotpSecret, totpAuthUri, verifyTotp } from "./totp.ts";
+import { authSecrets, type OpenedTotpSecret, openTotpSecret, sealTotpSecret } from "./totp-seal.ts";
 import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
 
 /** The adapter methods the MFA flows need, all present. */
@@ -194,23 +200,70 @@ export async function enrollTotp(
   const user = session.user;
   if (isConfirmed(await adapter.getMfa(user.id))) return { ok: false, error: "already_enrolled" };
   const secret = generateTotpSecret();
-  await adapter.setMfa({ userId: user.id, secret, backupCodeHashes: [] });
+  const sealed = await sealTotpSecret(authSecrets(config.secret), user.id, secret);
+  await adapter.setMfa({ userId: user.id, secret: sealed, backupCodeHashes: [] });
   const account = user.email ?? user.id;
   return { ok: true, secret, uri: totpAuthUri({ secret, account, issuer: options.mfa.issuer }) };
 }
 
 /**
- * Verify a TOTP code against `record`'s secret (±`mfa.window` steps) and claim its step,
+ * Verify a TOTP code against the opened secret (±`mfa.window` steps) and claim its step,
  * so the same code can never be accepted twice.
  */
 async function claimTotp(
   options: ResolvedAuthOptions,
   adapter: MfaAdapter,
-  record: MfaRecord,
+  userId: string,
+  secret: string,
   code: string,
 ): Promise<boolean> {
-  const result = await verifyTotp(record.secret, code, { window: options.mfa.window });
-  return result.ok && await adapter.claimTotpStep(record.userId, result.step);
+  const result = await verifyTotp(secret, code, { window: options.mfa.window });
+  return result.ok && await adapter.claimTotpStep(userId, result.step);
+}
+
+/**
+ * Open `record`'s stored secret. One that no configured `secret` opens (a `secret` dropped from
+ * the rotation list, a tampered row) fails closed: no TOTP code verifies against it, and the
+ * logger hears about it — the user id only, never the value.
+ */
+async function openRecordSecret(
+  config: AuthConfig,
+  options: ResolvedAuthOptions,
+  record: MfaRecord,
+): Promise<OpenedTotpSecret> {
+  const opened = await openTotpSecret(authSecrets(config.secret), record.userId, record.secret);
+  if (!opened.ok) {
+    options.logger.warn(
+      "denextAuth: a stored TOTP secret could not be opened with any configured `secret` " +
+        "(dropped from the rotation list, or the row was altered) — no TOTP code verifies for " +
+        "this user until they enroll again; backup codes still work.",
+      { userId: record.userId },
+    );
+  }
+  return opened;
+}
+
+/**
+ * Re-seal a stale stored secret (plaintext, or sealed under an older `secret`) under the
+ * current one, through the adapter's compare-and-swap `replaceMfaSecret` — a plain `setMfa`
+ * would race the replay guard's `lastStep` and the backup-code list. Best-effort: an adapter
+ * without the method keeps the old form (still readable), and a lost swap or a failing write
+ * changes nothing.
+ */
+async function resealStale(
+  config: AuthConfig,
+  options: ResolvedAuthOptions,
+  record: MfaRecord,
+  plaintext: string,
+): Promise<void> {
+  const replace = options.adapter?.replaceMfaSecret;
+  if (!replace) return;
+  try {
+    const sealed = await sealTotpSecret(authSecrets(config.secret), record.userId, plaintext);
+    await replace.call(options.adapter, record.userId, record.secret, sealed);
+  } catch (error) {
+    options.logger.error("denextAuth: re-sealing a stored TOTP secret failed", error);
+  }
 }
 
 /**
@@ -235,14 +288,21 @@ export async function confirmTotp(
   if (!record?.secret || record.confirmedAt !== undefined) {
     return { ok: false, error: "not_pending" };
   }
-  if (!await claimTotp(options, adapter, record, code)) return { ok: false, error: "invalid_code" };
+  const opened = await openRecordSecret(config, options, record);
+  if (!opened.ok || !await claimTotp(options, adapter, user.id, opened.secret, code)) {
+    return { ok: false, error: "invalid_code" };
+  }
   const { codes, hashes } = await generateBackupCodes(options.hasher, options.mfa.backupCodes);
   // Re-read: the claim just advanced `lastStep`, which the write below must keep — and an
   // enrollment replaced meanwhile must not be confirmed with the old secret's code.
   const current = await adapter.getMfa(user.id);
   if (current?.secret !== record.secret) return { ok: false, error: "not_pending" };
   const confirmedAt = Math.floor(Date.now() / 1000);
-  await adapter.setMfa({ ...current, confirmedAt, backupCodeHashes: hashes });
+  // This write replaces the record anyway, so a stale secret is re-sealed in it.
+  const secret = opened.stale
+    ? await sealTotpSecret(authSecrets(config.secret), user.id, opened.secret)
+    : current.secret;
+  await adapter.setMfa({ ...current, secret, confirmedAt, backupCodeHashes: hashes });
   return { ok: true, backupCodes: codes };
 }
 
@@ -264,7 +324,11 @@ export async function verifySecondFactor(
   const adapter = mfaAdapter(options);
   const record = await adapter?.getMfa(userId);
   if (!adapter || !isConfirmed(record)) return { ok: false, error: "not_enrolled" };
-  if (await claimTotp(options, adapter, record, code)) return { ok: true, method: "totp" };
+  const opened = await openRecordSecret(config, options, record);
+  if (opened.ok && opened.stale) await resealStale(config, options, record, opened.secret);
+  if (opened.ok && await claimTotp(options, adapter, userId, opened.secret, code)) {
+    return { ok: true, method: "totp" };
+  }
   // A code that can't be a backup code (a mistyped 6-digit TOTP) skips the walk: it would run
   // the hasher once per stored code and could never match.
   if (!isBackupCodeShaped(code)) return { ok: false, error: "invalid_code" };
