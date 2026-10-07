@@ -92,17 +92,17 @@ jobs:
             ~/AppData/Local/deno/denext-desktop-runtime
           key: desktop-runtime-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
-      # (gnome-keyring + secret-tool), a notification server (dunst), xprop (x11-utils: the session
-      # script polls for the window manager), the XDG scheme tools, and the WebKitGTK runtime the
-      # webview backend loads.
+      # (gnome-keyring, and libsecret, which the runtime loads for secureStore), a notification
+      # server (dunst), xprop (x11-utils: the session script polls for the window manager), the XDG
+      # scheme tools, and the WebKitGTK runtime the webview backend loads.
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
-            xdg-utils desktop-file-utils zenity \
+            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-1-0 dunst \
+            xdg-utils desktop-file-utils \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
         if: runner.os == 'Linux'

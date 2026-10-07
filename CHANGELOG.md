@@ -8,8 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+- **Linux `secureStore` is the pinned runtime's alone.** The `secret-tool` fallback is gone: under
+  the stock runtime (or any runtime without `Deno.desktop.secureStore`) every Linux call rejects
+  `backend_unavailable`. The `secure-store` capability no longer bakes `--allow-run=secret-tool`,
+  and the `.deb` / `.rpm` depend on `libsecret-1-0` / `libsecret` (the library the runtime loads)
+  instead of `libsecret-tools`.
+
 ### Added
 
+- **`appCapabilities()` reports the Linux CEF sandbox and the Linux file chooser** (runtime
+  2.9.7-denext.12): `sandbox` (`"namespace"`, `"setuid"`, `"chromium"` or `"off"`) with the
+  runtime's `sandboxReason`, and `fileChooser` (`"portal"` or `"gtk"`) with `fileChooserReason`.
+  An older runtime reads `"unknown"`.
+- **`desktop.linux.requireSandbox`.** `true` makes a Linux CEF app refuse to start where its web
+  content would run without Chromium's sandbox (a tarball or AppImage on Ubuntu 23.10+, or root):
+  the package script writes `"requireSandbox": true` into the bundle's `laufey-launch.json`, and
+  the app exits with status 78 and one line saying why. `LAUFEY_REQUIRE_SANDBOX=1` does the same
+  from a launcher; `=0` can't undo a shipped `true`.
+- **`denext desktop doctor --linux` reports the CEF sandbox** a machine allows (unprivileged user
+  namespaces, else only the `.deb` / `.rpm`'s setuid `chrome-sandbox`, else none as root), with
+  `requireSandbox` as the fix for an app that would rather not start unsandboxed.
 - **`denext migrate --check [--json]` previews a migration and writes nothing.** It runs the
   same planners as `denext migrate` against an in-memory overlay and reports the files it would
   create, modify, move or delete, what won't migrate (unsupported native dependencies,
@@ -39,8 +59,37 @@ and this project adheres to
   `View.forceTouchAvailable`), now waived with that reason. A parity waiver can name the
   `members` it covers, so a member that goes missing later still fails the gate.
 
+### Changed
+
+- **denext pins Deno Desktop runtime 2.9.7-denext.12** (deno `cd310b28`, laufey `4f6f00f`, API
+  47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
+  xdg-desktop-portal's FileChooser and the runtime's own Linux secure store are now what every
+  denext desktop app gets. `Deno.exit()` ends the app through the backend on every OS, so the web
+  engine flushes its storage first; `SIGTERM`, `SIGINT` and `SIGHUP` quit a Linux CEF app cleanly
+  (the WebView backend has no such handler yet); `platformFeatures().sessionType` follows the
+  display that is there (a session labelled Wayland with only an X display is X11, and CEF opens
+  its window there); KDE's service cache (`kbuildsycoca6` / `kbuildsycoca5`) is rebuilt after a
+  scheme registration, so the first deep link on Plasma reaches the app; WebKitGTK renders with
+  shared-memory frames on X11; and CEF's cookie store uses the KWallet daemon Chromium's own rule
+  picks. Notification clicks carry a MAC from a per-install key (`<app data dir>/
+  laufey-notification-key`), and the runtime drops clicks it never posted or whose tag (256 bytes),
+  data (4 KiB) or action id (1 KiB) is over the limits; the tag, action and data stay untrusted.
+- **macOS CEF cookies report `cookieEncryption: "basic"`.** CEF runs with Chromium's mock keychain,
+  whose key is a constant, so its cookies on disk are obfuscated, not protected by the OS; the docs
+  no longer say otherwise.
+- **`denext desktop doctor --linux` reads the session as the runtime does:** the session type from
+  the display that is there (`XDG_SESSION_TYPE` unset is `unknown`; a declared `wayland` with only
+  `$DISPLAY` is `x11`), libsecret in place of `secret-tool`, a portal that is installed but
+  doesn't start told apart from one older than 1.19, an activatable notification server that
+  fails to start reported with D-Bus's reason (the doctor starts it as the runtime would), and
+  the XEmbed tray an X11 window manager may run named where no StatusNotifierWatcher is.
+
 ### Fixed
 
+- **The `notifications` capability measures its limits in UTF-8 bytes,** as the runtime does: a
+  notification's data over 4 KiB (non-ASCII text counted by bytes, not UTF-16 units) and an action
+  id over 1 KiB are refused with `validation` instead of being posted with a click the runtime
+  would drop.
 - **`denext dev` re-renders a nested Server Component after an edit.** The App Router dev loader
   cache-busted only the module it was asked for (`page.tsx?g=N`); Deno resolves that module's
   relative imports without the query, so an edited component the page imports (`app/ui/Label.tsx`,

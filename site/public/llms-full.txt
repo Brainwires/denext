@@ -417,9 +417,9 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing Secret Service provider
-or a locked keyring rejects `backend_unavailable` with the reason — runtime 2.9.7-denext.12 uses
-libsecret itself, older runtimes `secret-tool`) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
+on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
+or a locked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
@@ -433,9 +433,11 @@ is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
 `setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
-reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` from the runtime's probe
-(`"unknown"` before runtime denext.10), and `denext desktop doctor [--linux]` lists what the session lacks,
-with fixes. `registerShortcut(accel, fn)`
+reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
+not OS-protected — always on macOS CEF, Chromium's mock keychain) / `sandbox` / `fileChooser` from the
+runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
+lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
+exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+). `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -471,7 +473,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.11 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.12 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1242,6 +1244,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopExtraPermissions` — Extra --allow-* for the desktop packaging scripts (see DesktopConfig.extraPermissions). Each field is a list of Deno permission values, unioned into the derived flags.
 - `interface DesktopFsConfig` — The fs desktop capability's scoped roots (path tokens $APPDATA / $CACHE / $DOCUMENTS, plus the per-session $PICKED set the user grows through native dialogs).
 - `interface DesktopInstallersConfig` — DesktopConfig.installers: the installer formats per OS, and what they say about the app.
+- `interface DesktopLinuxConfig` — DesktopConfig.linux: Linux launch settings of the packaged app.
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
@@ -2029,7 +2032,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
-- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
+- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable and (on Linux) desktop.linux.requireSandbox in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
 
 ### `denext/desktop/updater`
 

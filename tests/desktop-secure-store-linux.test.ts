@@ -1,16 +1,13 @@
-// The Linux `secureStore` backend (`secret-tool`) told apart from its failures, with a stubbed CLI
-// that answers exactly as secret-tool 0.21 + gnome-keyring did on a real Ubuntu desktop
-// (2026-10-05): a miss is a SILENT exit 1; no session bus, no Secret Service provider and a write
-// to a locked collection print `secret-tool: …` and exit 1; a lookup or clear in a LOCKED
-// collection is silent too, but `secret-tool search` still lists the item. Every failure is
-// `backend_unavailable` with a reason that names the fix — never `null`, never "not found", never
-// a generic `store_failed`. A missing `secret-tool` names the package to install.
+// The Linux `secureStore` backend: the runtime's own store (`Deno.desktop.secureStore` in denext's
+// pinned runtime: the Secret Service through libsecret). Every refusal is `backend_unavailable`
+// with the runtime's reason — never `null`, never "not found", never a generic `store_failed` — and
+// a runtime without the store (the stock runtime) has no Linux backend at all: there is no
+// `secret-tool` fallback, so no subprocess ever runs on Linux.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   missingBackendError,
   runSecureCli,
-  secretToolError,
   type SecureRunner,
   secureStoreCapability,
 } from "../src/desktop/caps/secure-store.ts";
@@ -24,54 +21,6 @@ const ctx = {
   signal: new AbortController().signal,
 };
 
-type Mode = "ok" | "no-bus" | "no-provider" | "locked";
-
-/** The stderr secret-tool printed for each failure on the real box. */
-const STDERR = {
-  "no-bus": "secret-tool: Could not connect: No such file or directory\n",
-  "no-provider":
-    "secret-tool: The name org.freedesktop.secrets was not provided by any .service files\n",
-  "no-display": "secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY\n",
-  "locked-store": "secret-tool: Cannot create an item in a locked collection\n",
-};
-
-type Out = { code: number; stdout: string; stderr: string };
-const out = (code: number, stdout = "", stderr = ""): Out => ({ code, stdout, stderr });
-/** A silent exit 1: a miss, or a lookup / clear in a locked collection. */
-const SILENT = out(1);
-
-/** One secret-tool verb against the in-memory keyring, `locked` or not. */
-type Verb = (items: Map<string, string>, key: string, locked: boolean, stdin?: string) => Out;
-const VERBS: Record<string, Verb> = {
-  lookup: (items, key, locked) => locked || !items.has(key) ? SILENT : out(0, items.get(key)!),
-  // Lists a locked item without its secret; the attributes go to stderr.
-  search: (items, key, locked) =>
-    !items.has(key)
-      ? out(0)
-      : locked
-      ? out(0, "[/6]\nlabel = \n", "secret-tool: Cannot get secret of a locked object\n")
-      : out(0, `[/6]\nsecret = ${items.get(key)}\n`, `attribute.account = ${key}\n`),
-  store: (items, key, locked, stdin) =>
-    locked ? out(1, "", STDERR["locked-store"]) : (items.set(key, stdin ?? ""), out(0)),
-  clear: (items, key, locked) => locked || !items.delete(key) ? SILENT : out(0),
-};
-
-/** A fake secret-tool over an in-memory keyring in `mode`, logging each call's verb. */
-function fakeSecretTool(mode: () => Mode, items = new Map<string, string>()) {
-  const calls: string[] = [];
-  const run: SecureRunner = (cmd, args, stdin) => {
-    assertEquals(cmd, "secret-tool");
-    // store: [store, --label, svc, service, svc, account, KEY]; else [op, service, svc, account, KEY]
-    const op = args[0];
-    calls.push(op);
-    const m = mode();
-    if (m === "no-bus" || m === "no-provider") return Promise.resolve(out(1, "", STDERR[m]));
-    const key = op === "store" ? args[6] : args[4];
-    return Promise.resolve(VERBS[op](items, key, m === "locked", stdin));
-  };
-  return { run, calls, items };
-}
-
 // deno-lint-ignore no-explicit-any
 function call(cap: { methods: Record<string, any> }, method: string, args: unknown) {
   return Promise.resolve().then(() => cap.methods[method].handler(args, ctx));
@@ -84,141 +33,37 @@ async function unavailable(p: Promise<unknown>, ...reason: string[]): Promise<De
   return err;
 }
 
-Deno.test("secureStore (Linux): a round-trip, and a genuine miss reads null / deletes idempotently", async () => {
-  const tool = fakeSecretTool(() => "ok");
-  const cap = secureStoreCapability({ service: "com.example.app", os: "linux", run: tool.run });
-  assertEquals(await call(cap, "get", { key: "absent" }), null);
-  assertEquals(tool.calls, ["lookup", "search"], "a silent miss is double-checked");
-  assertEquals(await call(cap, "set", { key: "tok", value: "héllo\n" }), { ok: true });
-  assertEquals(await call(cap, "get", { key: "tok" }), "héllo\n");
-  assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true });
-  assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true }, "idempotent");
-  assertEquals(await call(cap, "get", { key: "tok" }), null);
-});
+/** A runner that fails the test if the cap ever spawns a CLI (Linux has none). */
+function noCli(): { run: SecureRunner; calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    run: (cmd) => {
+      calls.push(cmd);
+      return Promise.reject(new Error(`no CLI may run on Linux: ${cmd}`));
+    },
+  };
+}
 
-Deno.test("secureStore (Linux): no Secret Service provider is backend_unavailable on every method", async () => {
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "linux",
-    run: fakeSecretTool(() => "no-provider").run,
-  });
-  const why = "no Secret Service provider (gnome-keyring or KWallet)";
-  await unavailable(call(cap, "get", { key: "k" }), why);
-  await unavailable(call(cap, "set", { key: "k", value: "v" }), why);
-  await unavailable(call(cap, "delete", { key: "k" }), why);
-});
+const METHODS = [["get", { key: "k" }], ["set", { key: "k", value: "v" }], [
+  "delete",
+  { key: "k" },
+]] as const;
 
-Deno.test("secureStore (Linux): no session bus is backend_unavailable, naming the provider", async () => {
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "linux",
-    run: fakeSecretTool(() => "no-bus").run,
-  });
-  await unavailable(call(cap, "get", { key: "k" }), "no D-Bus session bus", "gnome-keyring");
-  await unavailable(call(cap, "set", { key: "k", value: "v" }), "no D-Bus session bus");
-  await unavailable(call(cap, "delete", { key: "k" }), "no D-Bus session bus");
-});
-
-Deno.test("secureStore (Linux): a locked keyring is backend_unavailable, never a miss", async () => {
-  let mode: Mode = "ok";
-  const tool = fakeSecretTool(() => mode);
-  const cap = secureStoreCapability({ service: "svc", os: "linux", run: tool.run });
-  await call(cap, "set", { key: "tok", value: "v" });
-  mode = "locked";
-  // The lookup is silent (exit 1, no stderr) exactly like a miss; `search` still lists the item.
-  await unavailable(call(cap, "get", { key: "tok" }), "locked");
-  await unavailable(call(cap, "set", { key: "tok", value: "w" }), "locked");
-  await unavailable(call(cap, "delete", { key: "tok" }), "locked");
-  assert(tool.items.has("tok"), "nothing was lost");
-  // A key that is not there at all is still a miss while locked (nothing to unlock for).
-  assertEquals(await call(cap, "get", { key: "other" }), null);
-  mode = "ok";
-  assertEquals(await call(cap, "get", { key: "tok" }), "v");
-});
-
-Deno.test("secureStore (Linux): a missing secret-tool names the package to install", async () => {
-  // The real runner, with a binary that does not exist.
+Deno.test("secureStore (Linux): a missing CLI keeps the generic backend_unavailable wording", async () => {
+  // The real runner (macOS / Windows), with a binary that does not exist.
   const err = await assertRejects(
-    () => runSecureCli("denext-no-such-secret-tool", ["lookup"]),
+    () => runSecureCli("denext-no-such-credential-cli", ["lookup"]),
     DesktopCapError,
   );
   assertEquals(err.code, "backend_unavailable");
-  const missing = missingBackendError("secret-tool", new Deno.errors.NotFound("no such file"));
-  assertEquals(missing.code, "backend_unavailable");
-  assertStringIncludes(missing.message, "libsecret-tools (Debian/Ubuntu)");
-  assertStringIncludes(missing.message, "libsecret (Fedora)");
-  // Through the capability: every method surfaces it (never null / not found).
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "linux",
-    run: () => Promise.reject(missing),
-  });
-  for (
-    const [m, a] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], ["delete", {
-      key: "k",
-    }]] as const
-  ) {
-    await unavailable(call(cap, m, a), "libsecret-tools");
-  }
-  // Another command (or another spawn failure) keeps the generic wording.
   assertStringIncludes(
     missingBackendError("security", new Deno.errors.NotFound("x")).message,
     `"security" is not available`,
   );
-  assertStringIncludes(
-    missingBackendError("secret-tool", new Deno.errors.NotCapable("x")).message,
-    `"secret-tool" is not available`,
-  );
 });
 
-Deno.test("secretToolError: each real stderr maps to its reason; paths never reach the page", () => {
-  assertStringIncludes(
-    secretToolError(STDERR["no-provider"]).message,
-    "no Secret Service provider",
-  );
-  assertStringIncludes(secretToolError(STDERR["no-bus"]).message, "no D-Bus session bus");
-  assertStringIncludes(secretToolError(STDERR["no-display"]).message, "no D-Bus session bus");
-  assertStringIncludes(secretToolError(STDERR["locked-store"]).message, "keyring is locked");
-  const other = secretToolError("secret-tool: Failed at /run/user/1000/bus: odd\nmore");
-  assertEquals(other.code, "backend_unavailable");
-  assertStringIncludes(other.message, "the Secret Service failed (Failed at … odd)");
-  assert(!other.message.includes("/run/"), other.message);
-});
-
-Deno.test("secureStore (Linux): a silent write failure stays store_failed (not a backend outage)", async () => {
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "linux",
-    run: () => Promise.resolve({ code: 1, stdout: "", stderr: "" }),
-  });
-  const err = await assertRejects(
-    () => call(cap, "set", { key: "k", value: "v" }),
-    DesktopCapError,
-  );
-  assertEquals(err.code, "store_failed");
-});
-
-Deno.test("secureStore (Linux): an unlock prompt nobody answers is backend_unavailable, and the CLI is killed", async () => {
-  const signals: AbortSignal[] = [];
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "linux",
-    answerTimeoutMs: 20,
-    // A store that blocks on the keyring's unlock prompt (what secret-tool does on a locked GUI
-    // session): it only ends when its signal aborts.
-    run: (_cmd, _args, _stdin, signal) => {
-      signals.push(signal!);
-      return new Promise((_, reject) =>
-        signal!.addEventListener("abort", () => reject(signal!.reason))
-      );
-    },
-  });
-  await unavailable(call(cap, "set", { key: "k", value: "v" }), "did not answer", "locked");
-  await unavailable(call(cap, "get", { key: "k" }), "did not answer");
-  assert(signals.every((s) => s.aborted), "the hung secret-tool was aborted (killed)");
-});
-
-// --- runtime 2.9.7-denext.12: the runtime's own store (`Deno.desktop.secureStore`) -------------
+// --- the runtime's own store (`Deno.desktop.secureStore`) ---------------------------------------
 
 type StoreMode = "ok" | "unavailable" | "invalid";
 
@@ -259,9 +104,9 @@ function fakeRuntimeStore(mode: () => StoreMode, supported = true) {
   return { api: { secureStore: store }, calls, items };
 }
 
-Deno.test("secureStore (Linux, runtime store): used when supported; secret-tool never runs", async () => {
+Deno.test("secureStore (Linux, runtime store): a round-trip through the runtime; no CLI runs", async () => {
   const runtime = fakeRuntimeStore(() => "ok");
-  const tool = fakeSecretTool(() => "ok");
+  const tool = noCli();
   const cap = secureStoreCapability({
     service: "com.example.app",
     os: "linux",
@@ -272,14 +117,14 @@ Deno.test("secureStore (Linux, runtime store): used when supported; secret-tool 
   assertEquals(await call(cap, "get", { key: "absent" }), null);
   assertEquals(await call(cap, "set", { key: "tok", value: "héllo\n" }), { ok: true });
   assertEquals(await call(cap, "get", { key: "tok" }), "héllo\n");
-  // Stored as secret-tool did (base64 of UTF-8), so items of either path read the same.
+  // Stored base64 of UTF-8 (as secret-tool wrote them), so earlier items stay readable.
   assertEquals(
     runtime.items.get("tok"),
     btoa(String.fromCharCode(...new TextEncoder().encode("héllo\n"))),
   );
   assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true });
   assertEquals(await call(cap, "get", { key: "tok" }), null);
-  assertEquals(tool.calls, [], "no secret-tool");
+  assertEquals(tool.calls, [], "no CLI");
   // The app's service, the page's key, the label, and the answer timeout.
   assertEquals(runtime.calls[1], {
     op: "set",
@@ -288,19 +133,14 @@ Deno.test("secureStore (Linux, runtime store): used when supported; secret-tool 
     options: { label: "com.example.app", timeout: 7000 },
   });
   assertEquals(runtime.calls[0].options, { timeout: 7000 });
-  // The method permissions cover the runtime store (unscoped --allow-sys) and the older path.
-  assertEquals(cap.methods.get.permissions, { run: ["secret-tool"], sys: ["*"] });
+  // The runtime store needs an unscoped --allow-sys, and nothing to run.
+  assertEquals(cap.methods.get.permissions, { sys: ["*"] });
 });
 
 Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailable with the reason, never null", async () => {
   const runtime = fakeRuntimeStore(() => "unavailable");
   const cap = secureStoreCapability({ service: "com.example.app", os: "linux", api: runtime.api });
-  for (
-    const [method, args] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], [
-      "delete",
-      { key: "k" },
-    ]] as const
-  ) {
+  for (const [method, args] of METHODS) {
     await unavailable(call(cap, method, args), "the secure store is unavailable", "locked");
   }
   // Bad arguments the runtime refuses are validation errors.
@@ -310,18 +150,38 @@ Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailabl
   assertEquals(err.code, "validation");
 });
 
-Deno.test("secureStore (Linux, runtime store): a runtime without one keeps secret-tool; never on macOS / Windows", async () => {
-  const none = fakeRuntimeStore(() => "ok", false);
-  const tool = fakeSecretTool(() => "ok");
+Deno.test("secureStore (Linux): a runtime without its own store is backend_unavailable; never on macOS / Windows", async () => {
+  // A runtime whose store is not supported (or absent: the stock runtime) — no fallback, no CLI.
+  for (const api of [fakeRuntimeStore(() => "ok", false).api, null, {}]) {
+    const tool = noCli();
+    const cap = secureStoreCapability({
+      service: "com.example.app",
+      os: "linux",
+      run: tool.run,
+      api: api as Parameters<typeof secureStoreCapability>[0]["api"],
+    });
+    for (const [method, args] of METHODS) {
+      await unavailable(call(cap, method, args), "denext's pinned runtime", "libsecret");
+    }
+    assertEquals(tool.calls, []);
+  }
+  // A store whose `supported` getter throws reads as none.
+  const throwing = {
+    secureStore: {
+      get supported(): boolean {
+        throw new Error("boom");
+      },
+    },
+  };
   const cap = secureStoreCapability({
-    service: "com.example.app",
+    service: "s",
     os: "linux",
-    run: tool.run,
-    api: none.api,
+    api: throwing as unknown as Parameters<typeof secureStoreCapability>[0]["api"],
   });
-  assertEquals(await call(cap, "set", { key: "tok", value: "v" }), { ok: true });
-  assertEquals(tool.calls, ["store"]);
-  assertEquals(none.calls, []);
+  await unavailable(call(cap, "get", { key: "k" }), "denext's pinned runtime");
+  // Validation still comes first (a bad key never reaches a backend).
+  const bad = await assertRejects(() => call(cap, "get", { key: "-x" }), DesktopCapError);
+  assertEquals(bad.code, "validation");
   // macOS: the Keychain CLI, even with a runtime store present.
   const runtime = fakeRuntimeStore(() => "ok");
   const ran: string[] = [];

@@ -207,12 +207,29 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
-  user manager; macOS shows them only from a signed bundle. A click's `data` is untrusted (any
-  process of the same user can send one). [Details](https://denext.dev/docs/desktop#desktop-notifications).
+  user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
+  untrusted: the runtime drops clicks it never posted (each carries a MAC from a per-install key,
+  `<app data dir>/laufey-notification-key`), but any process of the same user can read that key.
+  A notification's tag is at most 256 bytes, its data 4 KiB and an action id 1 KiB (UTF-8): a
+  larger click is dropped, so denext refuses to post one. [Details](https://denext.dev/docs/desktop#desktop-notifications).
 - **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **CEF cookies on macOS are only obfuscated, not protected by the OS.** CEF runs with
+  Chromium's mock keychain, whose key is a constant, so the cookie store on disk is encrypted with
+  a key every copy of Chromium knows (`cookieEncryption: "basic"`, always): any process that can
+  read the app's data directory can read its cookies. The macOS WebView backend (WKWebView) keeps
+  cookies in WebKit's own store; Windows CEF uses DPAPI (`"os"`).
+- **A Linux CEF app run from a tarball or AppImage on Ubuntu 23.10+ has no Chromium sandbox**
+  (AppArmor restricts user namespaces, and only the `.deb` / `.rpm` install the setuid
+  `chrome-sandbox`): `appCapabilities().sandbox` reads `"off"`. Set
+  `desktop.linux.requireSandbox: true` to refuse to start there instead (exit status 78);
+  `denext desktop doctor --linux` says which sandbox a machine allows.
+- **Linux signals:** the CEF backend quits cleanly on `SIGTERM`, `SIGINT` and `SIGHUP`, but a
+  `SIGTERM` while its uncaught-error dialog is open takes about 80 seconds to end the app. The
+  WebView backend on Linux has no clean-quit signal handler yet: a signal ends it the default way,
+  without the backend's storage flush (`Deno.exit()` and closing the window do flush).
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
@@ -250,9 +267,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **`secureStore` per OS:** on macOS other programs of the same user can read its items (they are
   written by `/usr/bin/security`, which the item trusts); on Linux it needs a Secret Service
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
-  unlocked — runtime 2.9.7-denext.12 reaches it through libsecret, older runtimes through
-  `secret-tool` (`libsecret-tools` / `libsecret`) — else every call rejects `backend_unavailable`
-  with the reason (never a plaintext fallback).
+  unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
+  Linux secure store, and there is no `secret-tool` path) — else every call rejects
+  `backend_unavailable` with the reason (never a plaintext fallback).
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF

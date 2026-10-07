@@ -150,8 +150,10 @@ export interface AppCapabilities {
   /** Linux: `"wayland"`, `"x11"`, `"tty"` (no graphical session) or `"unknown"`; `null` elsewhere. */
   readonly sessionType: "wayland" | "x11" | "tty" | PlatformUnknown | null;
   /**
-   * CEF's cookie store: `"os"` (encrypted with a key the OS keeps) or `"basic"` (unencrypted: the
-   * Linux login keyring was locked with no one to unlock it); `null` on the WebView backends.
+   * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
+   * keyring) or `"basic"` (obfuscated with a fixed key, not protected by the OS): always on macOS,
+   * where CEF runs with Chromium's mock keychain and its constant key, and on Linux when the login
+   * keyring was locked with no one to unlock it. `null` on the WebView backends.
    */
   readonly cookieEncryption: "os" | "basic" | PlatformUnknown | null;
   /** {@linkcode setBadge} works. */
@@ -165,6 +167,25 @@ export interface AppCapabilities {
   readonly badgeShows: "dock" | "launcher-entry" | "title" | PlatformUnknown;
   /** Linux, when `badgeShows` is `"title"`: why no launcher shows the count (the runtime's). */
   readonly badgeReason: string | null;
+  /**
+   * CEF on Linux: the Chromium sandbox the window's web content runs in: `"namespace"`
+   * (unprivileged user namespaces), `"setuid"` (the `chrome-sandbox` helper the `.deb` / `.rpm`
+   * installs), `"chromium"` (on; the runtime's probe could not run, so Chromium picked the layer) or
+   * `"off"` (neither: a tarball or AppImage on Ubuntu 23.10 and later, or root; see
+   * `desktop.linux.requireSandbox`). `null` on other platforms and backends; `"unknown"` before
+   * runtime 2.9.7-denext.12.
+   */
+  readonly sandbox: "namespace" | "setuid" | "chromium" | "off" | PlatformUnknown | null;
+  /** Why the runtime chose that sandbox mode (its `laufey: sandbox:` line), or `null`. */
+  readonly sandboxReason: string | null;
+  /**
+   * Linux: the chooser a file dialog uses: `"portal"` (xdg-desktop-portal's FileChooser, the
+   * desktop's own dialog) or `"gtk"` (GTK's chooser: the portal offers none). `null` elsewhere;
+   * `"unknown"` before runtime 2.9.7-denext.12.
+   */
+  readonly fileChooser: "portal" | "gtk" | PlatformUnknown | null;
+  /** Why GTK's, when `fileChooser` is `"gtk"` (the runtime's reason), or `null`. */
+  readonly fileChooserReason: string | null;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
@@ -195,6 +216,12 @@ function oneOf<T>(raw: Record<string, unknown> | null, key: string, allowed: rea
   return allowed.includes(value) ? value : "unknown";
 }
 
+/** `raw[key]` when it is a non-empty string, else `null`. */
+function text(raw: Record<string, unknown> | null, key: string): string | null {
+  const value = raw?.[key];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 const SECRET_STATES = [
   "available",
   "locked",
@@ -207,7 +234,8 @@ const SECRET_STATES = [
 /**
  * What the application menu, tray and Dock can do on this OS and runtime, plus the session facts
  * the runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the
- * tray host, the Secret Service, the session type and the cookie store. A fact an older runtime
+ * tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);
+ * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime
  * cannot report reads `"unknown"`.
  *
  * @returns The capabilities.
@@ -233,9 +261,11 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     cookieEncryption: oneOf(raw, "cookieEncryption", ["os", "basic", null] as const),
     badge: flag("badge"),
     badgeShows: oneOf(raw, "badgeShows", ["dock", "launcher-entry", "title"] as const),
-    badgeReason: typeof raw?.badgeReason === "string" && raw.badgeReason !== ""
-      ? raw.badgeReason
-      : null,
+    badgeReason: text(raw, "badgeReason"),
+    sandbox: oneOf(raw, "sandbox", ["namespace", "setuid", "chromium", "off", null] as const),
+    sandboxReason: text(raw, "sandboxReason"),
+    fileChooser: oneOf(raw, "fileChooser", ["portal", "gtk", null] as const),
+    fileChooserReason: text(raw, "fileChooserReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
   };

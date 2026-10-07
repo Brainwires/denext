@@ -266,6 +266,21 @@ Deno.test("notifications: categories become action buttons; bad input is a valid
     await codeOf(call(cap, "setCategories", { categories: [{ id: "c", actions: [{ id: 1 }] }] })),
     "validation",
   );
+  // The runtime's limits are UTF-8 bytes (runtime 2.9.7-denext.12 drops a larger click): 1500
+  // three-byte characters fit 4096 UTF-16 units but not 4 KiB.
+  assertEquals(
+    await codeOf(
+      call(cap, "schedule", { id: 1, title: "t", body: "b", data: { big: "€".repeat(1500) } }),
+    ),
+    "validation",
+  );
+  await call(cap, "schedule", { id: 2, title: "t", body: "b", data: { ok: "€".repeat(1000) } });
+  // An action id is at most 1 KiB.
+  const longId = { categories: [{ id: "c", actions: [{ id: "é".repeat(513), title: "T" }] }] };
+  assertEquals(await codeOf(call(cap, "setCategories", longId)), "validation");
+  await call(cap, "setCategories", {
+    categories: [{ id: "c", actions: [{ id: "a".repeat(1024), title: "T" }] }],
+  });
 });
 
 Deno.test("notifications: clicks are pulled once — the launch click first, foreign ones ignored", async () => {
@@ -1233,6 +1248,10 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     badge: false,
     badgeShows: "unknown",
     badgeReason: null,
+    sandbox: "unknown",
+    sandboxReason: null,
+    fileChooser: "unknown",
+    fileChooserReason: null,
     bounce: false,
     dockMenu: false,
   });
@@ -1552,6 +1571,61 @@ Deno.test("app: where the badge shows follows the probe (runtime 2.9.7-denext.11
   assertEquals(await capsWith({ badge: "tile" }), ["unknown", null]);
   assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null]);
   assertEquals(await capsWith(undefined), ["unknown", null]);
+});
+
+Deno.test("app: the Linux CEF sandbox and the file chooser follow the probe (runtime 2.9.7-denext.12)", async () => {
+  const capsWith = async (features: Record<string, unknown> | undefined) => {
+    const cap = createAppController({
+      window: undefined,
+      api: features ? { platformFeatures: () => Promise.resolve(features) } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    return [caps.sandbox, caps.sandboxReason, caps.fileChooser, caps.fileChooserReason];
+  };
+  // Ubuntu 23.10+ from a tarball: no sandbox, with the runtime's `laufey: sandbox:` reason; no
+  // FileChooser in the portal, so GTK's chooser.
+  const off = "unprivileged user namespaces are restricted by AppArmor, and there is no " +
+    "chrome-sandbox helper next to the executable";
+  assertEquals(
+    await capsWith({
+      ...NO_TRAY_HOST,
+      sandbox: "off",
+      sandboxReason: ` ${off} `,
+      fileChooser: "gtk",
+      fileChooserReason: "xdg-desktop-portal offers no FileChooser here",
+    }),
+    ["off", off, "gtk", "xdg-desktop-portal offers no FileChooser here"],
+  );
+  // The .deb's setuid helper; the portal's chooser (its reason only travels with "gtk").
+  assertEquals(
+    await capsWith({
+      sandbox: "setuid",
+      sandboxReason: "the chrome-sandbox helper is setuid root",
+      fileChooser: "portal",
+      fileChooserReason: "ignored",
+    }),
+    ["setuid", "the chrome-sandbox helper is setuid root", "portal", null],
+  );
+  for (const mode of ["namespace", "chromium"]) {
+    assertEquals((await capsWith({ sandbox: mode, sandboxReason: "r" }))[0], mode);
+  }
+  // The WebView backend / macOS / Windows: null, no reason.
+  assertEquals(
+    await capsWith({ sandbox: null, sandboxReason: null, fileChooser: null }),
+    [null, null, null, null],
+  );
+  // An odd value, or a runtime before denext.12 (no key), reads unknown.
+  assertEquals(await capsWith({ sandbox: "seccomp", fileChooser: "kdialog" }), [
+    "unknown",
+    null,
+    "unknown",
+    null,
+  ]);
+  assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null, "unknown", null]);
+  assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
 });
 
 Deno.test("app: no Deno.Tray, Deno.dock or app menu — unsupported carries a reason", async () => {

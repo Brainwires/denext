@@ -1,8 +1,10 @@
 /**
  * CI-only: exercise the REAL `secureStore` backend against the running OS credential store — WinRT
- * `PasswordVault` on Windows (`powershell.exe`), libsecret `secret-tool` on Linux, the Keychain on
- * macOS. The unit tests use a fake runner; this proves the actual round-trip on a Windows / Linux
- * runner (the platforms the maintainer's Mac can't verify). set → get → delete → get(absent).
+ * `PasswordVault` on Windows (`powershell.exe`), the Keychain on macOS. The unit tests use a fake
+ * runner; this proves the actual round-trip on a Windows runner (the platform the maintainer's Mac
+ * can't verify). set → get → delete → get(absent). Linux's store lives inside denext's pinned
+ * runtime (`Deno.desktop.secureStore`), so a plain `deno run` has none there: the desktop window
+ * test checks it under the real runtime.
  *
  * Run: `deno run -A scripts/ci/desktop-secure-store-roundtrip.ts` — exits non-zero on any mismatch.
  * Driven by `.github/workflows/desktop-ci.yml`. NOT part of the unit suite (it touches the OS store).

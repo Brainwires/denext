@@ -11,8 +11,10 @@
 #
 # Two things only a real Windows / Linux runner can prove (the caps runtime is unit-tested on macOS):
 #   1. `secureStore` round-trips against the ACTUAL OS credential store (WinRT PasswordVault on
-#      Windows via powershell.exe, libsecret `secret-tool` on Linux) — the unit tests use a fake
-#      runner. This is the verification for the Windows PasswordVault backend.
+#      Windows via powershell.exe, the Keychain on macOS) — the unit tests use a fake runner. This
+#      is the verification for the Windows PasswordVault backend. Linux's store is the pinned
+#      runtime's own (libsecret inside the runtime), so its round-trip runs in the desktop window
+#      test (desktop-window.yml), under the real runtime.
 #   2. `deno desktop` packaging lands the binary at the path the packaging scripts expect on Windows
 #      and Linux. The macOS `.app.app` bug is fixed + verified locally; the Win/Linux `--output`
 #      naming is build-only (no WebView deps needed), so it is cheap to pin here.
@@ -141,37 +143,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # Linux has no CLI backend: its store is the pinned runtime's (the window test covers it).
+        os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7" # `deno desktop` and the desktop runtime target 2.9.7+
-      # Linux: the round-trip drives libsecret's `secret-tool`, which needs a Secret Service
-      # (gnome-keyring) with an unlocked collection. Run under a private D-Bus session with the
-      # keyring unlocked to an empty password. (This setup is the most CI-specific part — if the run
-      # fails here, tune the keyring bootstrap; the darwin/windows legs need no setup.)
-      - name: Linux — libsecret + an unlocked keyring
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
       - name: secureStore round-trip
-        if: matrix.os != 'ubuntu-latest'
         run: deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
-      - name: secureStore round-trip (Linux, keyring session)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # An empty-password `--unlock` on a fresh daemon leaves no default collection, so
-          # secret-tool's store to the default alias tries to PROMPT (gcr-prompter → "cannot open
-          # display" on a headless runner). Name the default collection "login" and create+unlock it
-          # with a known password so the store is non-interactive.
-          dbus-run-session -- bash -c '
-            mkdir -p ~/.local/share/keyrings
-            echo -n "login" > ~/.local/share/keyrings/default
-            echo -n "ci" | gnome-keyring-daemon --unlock --components=secrets &
-            sleep 2
-            deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
-          '
 
   packaging-output-path:
     name: packaging output path (${{ matrix.os }})
@@ -484,10 +465,13 @@ jobs:
           deno-version: "2.9.7"
       - name: rpmbuild
         run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
-      - name: A deep link
+      # A deep link, and secure-store (the packages then depend on libsecret, which the runtime
+      # loads: libsecret-1-0 / libsecret, not the secret-tool CLI).
+      - name: A deep link and secure-store
         run: |
-          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }, capabilities: { secureStore: true }/' denext.config.ts
           grep -q denextnative denext.config.ts
+          grep -q 'capabilities: { secureStore: true }' denext.config.ts
           deno install
       - name: Package (.tar.gz + .deb + .rpm)
         run: deno run -A scripts/package-linux.ts --format tar.gz,deb,rpm && ls -la dist
@@ -498,7 +482,10 @@ jobs:
           set -eux
           id=com.example.denext-native
           dpkg-deb --info dist/denext-native-x64.deb
+          dpkg-deb -f dist/denext-native-x64.deb Depends | grep -q 'libsecret-1-0'
+          test -z "$(dpkg-deb -f dist/denext-native-x64.deb Depends | grep libsecret-tools || true)"
           sudo apt-get install -y ./dist/denext-native-x64.deb
+          dpkg -s libsecret-1-0 | grep -q 'Status: install ok installed'
           test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
           desktop-file-validate /usr/share/applications/$id.desktop
           grep -q 'MimeType=x-scheme-handler/denextnative;' /usr/share/applications/$id.desktop
@@ -526,8 +513,9 @@ jobs:
         run: |
           docker run --rm -v "$PWD/dist:/dist" fedora:latest bash -euxc '
             id=com.example.denext-native
-            rpm -qpR /dist/denext-native-x64.rpm
+            rpm -qpR /dist/denext-native-x64.rpm | grep -Eq "^libsecret[[:space:]]*$"
             dnf install -y /dist/denext-native-x64.rpm
+            rpm -q libsecret
             test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
             grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/$id.desktop
             grep -qx "Icon=$id" /usr/share/applications/$id.desktop
@@ -537,16 +525,21 @@ jobs:
             rpm -e denext-native
             test ! -e /usr/lib/denext-native
             test ! -e /usr/share/dbus-1/services/$id.service'
-      # The CEF backend's .deb: its setuid sandbox helper installs root-owned with mode 4755.
-      - name: CEF backend .deb — chrome-sandbox is setuid root
+      # The CEF backend's .deb: its setuid sandbox helper installs root-owned with mode 4755, and
+      # desktop.linux.requireSandbox reaches the launch file (the runtime then refuses to start
+      # unsandboxed, exit 78).
+      - name: CEF backend .deb — chrome-sandbox is setuid root; requireSandbox
         run: |
           set -eux
           deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.desktop.backend = "cef"; Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
           grep -q '"backend": "cef"' deno.json
+          sed -i 's/capabilities: { secureStore: true }/capabilities: { secureStore: true }, linux: { requireSandbox: true }/' denext.config.ts
+          grep -q 'requireSandbox: true' denext.config.ts
           deno run -A scripts/package-linux.ts --no-export --format deb
           sudo apt-get install -y ./dist/denext-native-x64.deb
           test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
           test "$(stat -c '%a %U %G' /usr/lib/denext-native/chrome-sandbox)" = "4755 root root"
+          grep -q '"requireSandbox": true' /usr/lib/denext-native/laufey-launch.json
           sudo apt-get remove -y denext-native
           test ! -e /usr/lib/denext-native
 

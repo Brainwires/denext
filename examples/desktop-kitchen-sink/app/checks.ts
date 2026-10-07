@@ -1442,6 +1442,44 @@ const appChecks: Check[] = [
       return `badge on ${shows} + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
     },
   ],
+  [
+    "app: the session probe reports the CEF sandbox, the file chooser and the cookie store",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (!setup.pinnedRuntime || caps.sandbox === "unknown") {
+        throw new Skip(
+          "this runtime predates the sandbox and file chooser facts (2.9.7-denext.12)",
+        );
+      }
+      // The runner's backend, else CEF's cookie store (only CEF reports one).
+      const cef = setup.backend === "cef" || (setup.backend === null &&
+        (caps.cookieEncryption === "os" || caps.cookieEncryption === "basic"));
+      if (setup.os === "linux" && cef) {
+        assert(
+          ["namespace", "setuid", "chromium", "off"].includes(String(caps.sandbox)),
+          `appCapabilities().sandbox = ${caps.sandbox}`,
+        );
+        assert(caps.sandboxReason, "the runtime says why (sandboxReason)");
+      } else {
+        eq(caps.sandbox, null, "appCapabilities().sandbox off Linux CEF");
+      }
+      if (setup.os === "linux") {
+        assert(
+          caps.fileChooser === "portal" || caps.fileChooser === "gtk",
+          `appCapabilities().fileChooser = ${caps.fileChooser}`,
+        );
+        if (caps.fileChooser === "gtk") assert(caps.fileChooserReason, "why GTK's chooser");
+      } else {
+        eq(caps.fileChooser, null, "appCapabilities().fileChooser off Linux");
+      }
+      // macOS CEF: Chromium's mock keychain, a constant key — obfuscated, never "os".
+      if (setup.os === "darwin" && cef) eq(caps.cookieEncryption, "basic", "macOS CEF cookies");
+      const sandbox = caps.sandbox === null ? "n/a" : `${caps.sandbox} (${caps.sandboxReason})`;
+      return `sandbox ${sandbox}; file chooser ${caps.fileChooser ?? "n/a"}${
+        caps.fileChooserReason ? ` (${caps.fileChooserReason})` : ""
+      }; cookies ${caps.cookieEncryption}`;
+    },
+  ],
   ["notifications: permission status from the OS", async () => {
     const caps = await raw("notifications").capabilities({});
     const state = await checkPermission("notifications");

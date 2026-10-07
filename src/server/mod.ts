@@ -259,6 +259,7 @@ export {
   type DesktopExtraPermissions,
   type DesktopFsConfig,
   type DesktopInstallersConfig,
+  type DesktopLinuxConfig,
   type DesktopMacosConfig,
   type DesktopPasskeysConfig,
   type DesktopShellConfig,

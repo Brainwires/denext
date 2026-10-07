@@ -59,8 +59,8 @@ person at the screen. Nothing in the panel runs until you click.
 
 - **macOS**: a logged-in session. The clipboard checks put your clipboard text back afterwards.
 - **Linux**: a window manager (maximize is a window-manager request on X11), an unlocked Secret
-  Service for `secureStore` (the runtime reaches it through libsecret; runtimes before
-  2.9.7-denext.12 run `secret-tool`, from libsecret-tools) and a notification server.
+  Service for `secureStore` (the pinned runtime reaches it through libsecret, `libsecret-1-0` on
+  Debian / Ubuntu; there is no `secret-tool` path) and a notification server.
   `e2e/linux-session.sh deno task test:window` runs it headless (Xvfb, xfwm4, a private D-Bus
   session, gnome-keyring, dunst), with `XDG_DATA_HOME` / `XDG_CONFIG_HOME` pointed at a scratch
   folder so a fresh login keyring is created there and yours is never touched.

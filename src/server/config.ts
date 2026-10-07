@@ -919,6 +919,8 @@ export interface DesktopConfig {
    * bundle is signed with a real identity (`DENEXT_CODESIGN_IDENTITY`).
    */
   macos?: DesktopMacosConfig;
+  /** Linux launch settings the package scripts write to the app's `laufey-launch.json`. */
+  linux?: DesktopLinuxConfig;
   /**
    * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
    * package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json
@@ -931,6 +933,22 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/** {@link DesktopConfig.linux}: Linux launch settings of the packaged app. */
+export interface DesktopLinuxConfig {
+  /**
+   * Refuse to start where the CEF backend would run web content without Chromium's sandbox: no
+   * unprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an
+   * AppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The
+   * app then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox),
+   * …`) and exits with status 78 before the runtime loads. Default `false`: the app starts
+   * unsandboxed there and `appCapabilities().sandbox` reads `"off"`. The package scripts write it
+   * to the Linux bundle's `laufey-launch.json` (`"requireSandbox": true`), where
+   * `LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's
+   * pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.
+   */
+  requireSandbox?: boolean;
 }
 
 /** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */

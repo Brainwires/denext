@@ -381,5 +381,23 @@ Deno.test("appCapabilities: the session facts pass a whitelist; anything else re
       [true, null, "unknown", "unknown", null],
     );
     assertEquals(caps.cookieEncryption, null);
+    // The Linux CEF sandbox and the file chooser (runtime 2.9.7-denext.12), each with its reason.
+    wire = {
+      sandbox: "off",
+      sandboxReason: "no chrome-sandbox helper",
+      fileChooser: "gtk",
+      fileChooserReason: "no FileChooser in the portal",
+    };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.sandbox, caps.sandboxReason, caps.fileChooser, caps.fileChooserReason],
+      ["off", "no chrome-sandbox helper", "gtk", "no FileChooser in the portal"],
+    );
+    wire = { sandbox: "jail", sandboxReason: "", fileChooser: null, fileChooserReason: 3 };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.sandbox, caps.sandboxReason, caps.fileChooser, caps.fileChooserReason],
+      ["unknown", null, null, null],
+    );
   });
 });

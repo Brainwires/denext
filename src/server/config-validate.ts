@@ -431,6 +431,16 @@ function validateDesktopMacos(macos: unknown, fail: Fail): void {
   }
 }
 
+/** `desktop.linux`: `{ requireSandbox?: boolean }`. */
+function validateDesktopLinux(linux: unknown, fail: Fail): void {
+  if (linux === undefined) return;
+  if (!isPlainObject(linux)) fail("desktop.linux", "must be { requireSandbox? }");
+  const require = (linux as Record<string, unknown>).requireSandbox;
+  if (require !== undefined && typeof require !== "boolean") {
+    fail("desktop.linux.requireSandbox", "must be a boolean");
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
@@ -442,6 +452,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
   validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
+  validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;

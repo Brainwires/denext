@@ -184,8 +184,8 @@ export interface DesktopPackageMeta {
   /** The `deno desktop` backend (`"webview"` unless deno.json `desktop.backend` says otherwise). */
   readonly backend: string;
   /**
-   * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on the
-   * package with `secret-tool` (absent means off).
+   * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on libsecret,
+   * which the runtime loads at run time (absent means off).
    */
   readonly secureStore?: boolean;
 }
@@ -761,11 +761,11 @@ function linuxDeps(backend: string): ReadonlyArray<readonly [string, string]> {
 }
 
 /**
- * The packages an enabled capability runs, as (Debian package, RPM package): the secure store's
- * `secret-tool` (a stock Ubuntu desktop ships libsecret without it).
+ * The packages an enabled capability needs, as (Debian package, RPM package): the secure store's
+ * libsecret, which the runtime `dlopen`s (`libsecret-1.so.0`) to reach the Secret Service.
  */
 function linuxCapabilityDeps(meta: DesktopPackageMeta): ReadonlyArray<readonly [string, string]> {
-  return meta.secureStore === true ? [["libsecret-tools", "libsecret"]] : [];
+  return meta.secureStore === true ? [["libsecret-1-0", "libsecret"]] : [];
 }
 
 /** Strip control characters (a `.desktop` / control value is one line). */
@@ -1358,9 +1358,9 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
 /**
  * The `rpmbuild` spec for a staged Linux root: the files are copied as staged (no strip, no
  * debuginfo, no automatic dependency scan), `Requires` names the backend's shared libraries by
- * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (its
- * `secret-tool`) when the secure store is on; `%post` / `%postun` refresh the desktop and icon
- * databases.
+ * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (the
+ * library the runtime loads) when the secure store is on; `%post` / `%postun` refresh the desktop
+ * and icon databases.
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).

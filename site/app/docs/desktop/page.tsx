@@ -560,8 +560,10 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         session itself instead of guessing from the desktop&apos;s name (
         <code>Deno.desktop.platformFeatures()</code>, runtime 2.9.7-denext.10 and later), and denext
         passes the facts on: <code>appCapabilities()</code> reports <code>trayHost</code>,{" "}
-        <code>trayReason</code>, <code>secretService</code>, <code>sessionType</code> and{" "}
-        <code>cookieEncryption</code>, and <code>windowCapabilities()</code> reports{" "}
+        <code>trayReason</code>, <code>secretService</code>, <code>sessionType</code>,{" "}
+        <code>cookieEncryption</code>, the CEF sandbox (<code>sandbox</code>,{" "}
+        <code>sandboxReason</code>) and the file chooser (<code>fileChooser</code>,{" "}
+        <code>fileChooserReason</code>), and <code>windowCapabilities()</code> reports{" "}
         <code>sessionType</code> and{" "}
         <code>cookieEncryption</code>. Under an older runtime each fact reads{" "}
         <code>"unknown"</code>. A missing feature rejects <code>unsupported</code>{" "}
@@ -578,6 +580,15 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         A profile that already holds such cookies is never switched, since Chromium would delete
         them: the app starts, and requests that carry a cookie wait until someone unlocks the
         keyring or opens the wallet.
+      </p>
+      <p>
+        <strong>CEF cookies on macOS are only obfuscated.</strong>{" "}
+        CEF runs with Chromium&apos;s mock keychain, whose key is a constant, so a CEF app&apos;s
+        cookie store on macOS is encrypted with a key every copy of Chromium knows:{" "}
+        <code>cookieEncryption</code> always reads <code>"basic"</code>{" "}
+        there, and any process that can read the app&apos;s data directory can read its cookies.
+        Nothing in the macOS Keychain protects them. The WebView backend (WKWebView) keeps cookies
+        in WebKit&apos;s own store; on Windows CEF uses DPAPI (<code>"os"</code>).
       </p>
       <p>
         Linux&apos;s <code>clipboard</code>{" "}
@@ -618,17 +629,43 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         checks a machine before you ship to it: the pinned runtime and whether <code>deno</code>
         {" "}
         matches it, and on Linux (or with{" "}
-        <code>--linux</code>) the session type, the D-Bus session bus, a tray host, the Secret
-        Service and its lock state,{" "}
-        <code>secret-tool</code>, a notification server and the portal interfaces with their
-        versions; with runtime 2.9.7-denext.11, also whether the portal can register the app's id
-        (so a click on a notification starts the app when it isn't running), a systemd user manager
-        (a scheduled notification is posted while the app is closed) and a dock that reads launcher
-        badges. It reads the session bus with <code>busctl</code> or <code>gdbus</code>{" "}
+        <code>--linux</code>) the session type (as the runtime reads it: the display that is there,
+        so a session labelled Wayland with only an X display is X11), the D-Bus session bus, a tray
+        host (on X11 a window manager&apos;s XEmbed tray works too, which only the app&apos;s{" "}
+        <code>appCapabilities().trayHost</code>{" "}
+        can see), the Secret Service and its lock state, libsecret, a notification server (one D-Bus
+        starts on demand is started as the runtime would, and a failure shows D-Bus&apos;s reason)
+        and the portal interfaces with their versions; whether the portal can register the
+        app&apos;s id (so a click on a notification starts the app when it isn&apos;t running),
+        telling a portal that is too old (before 1.19) from one that is installed but doesn&apos;t
+        start; a systemd user manager (a scheduled notification is posted while the app is closed);
+        a dock that reads launcher badges; and, for a CEF app, the Chromium sandbox the machine
+        allows (unprivileged user namespaces, else only the <code>.deb</code> /{" "}
+        <code>.rpm</code>&apos;s setuid <code>chrome-sandbox</code>, else none as root), with{" "}
+        <code>desktop.linux.requireSandbox</code>{" "}
+        for an app that would rather not start unsandboxed. It reads the session bus with{" "}
+        <code>busctl</code> or <code>gdbus</code>{" "}
         (never starting or unlocking the keyring), prints a fix for each missing piece (the
         AppIndicator extension,{" "}
-        <code>libsecret-tools</code>, unlocking the keyring, a portal backend), and exits 1 on an
+        <code>libsecret-1-0</code>, unlocking the keyring, a portal backend), and exits 1 on an
         error. <code>--json</code> prints the report as data.
+      </p>
+      <p>
+        <strong>The Chromium sandbox on Linux (CEF).</strong>{" "}
+        A CEF window runs its web content in Chromium&apos;s sandbox through unprivileged user
+        namespaces, or, where those are restricted (Ubuntu 23.10 and later), through the setuid{" "}
+        <code>chrome-sandbox</code> helper the <code>.deb</code> and <code>.rpm</code> install. A
+        {" "}
+        <code>.tar.gz</code> or AppImage there runs unsandboxed, and{" "}
+        <code>appCapabilities().sandbox</code> reads <code>"off"</code>{" "}
+        with the runtime&apos;s reason in <code>sandboxReason</code>. Set{" "}
+        <code>desktop.linux.requireSandbox: true</code>{" "}
+        to refuse that instead: the package script writes <code>"requireSandbox": true</code>{" "}
+        into the bundle&apos;s{" "}
+        <code>laufey-launch.json</code>, and the app then exits with status 78 and one line saying
+        why (<code>LAUFEY_REQUIRE_SANDBOX=1</code> does the same from a launcher; <code>=0</code>
+        {" "}
+        can&apos;t undo a shipped <code>true</code>).
       </p>
       <Code lang="bash">
         {`denext desktop doctor          # the runtime; on Linux the session too
@@ -1484,7 +1521,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>secureStore</code> (Keychain · PasswordVault · libsecret)
             </td>
             <td>
-              <code>--allow-run</code>: security · powershell.exe · secret-tool
+              <code>--allow-run</code>: security · powershell.exe; Linux an unscoped{" "}
+              <code>--allow-sys</code> (the runtime&apos;s libsecret)
             </td>
             <td>full</td>
           </tr>
@@ -1696,7 +1734,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <strong>Native vs the WebView on Deno Desktop.</strong>{" "}
         Most capabilities run in the Deno process: <code>fs</code>, <code>sqlite</code> and{" "}
         <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
-        uses the <code>security</code> / <code>secret-tool</code> tools and, on Windows, WinRT{" "}
+        uses the <code>security</code>{" "}
+        tool on macOS, the runtime&apos;s libsecret on Linux and, on Windows, WinRT{" "}
         <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
         — the Windows backend is verified by the Windows CI round-trip); <code>shell</code>,{" "}
         <code>dialogs</code> and <code>keep-awake</code>{" "}
@@ -1723,27 +1762,27 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         answer <code>unavailable</code>{" "}
         and the page keeps the WebView Notification API (immediate only) and its in-page menu.{" "}
         <code>dialogs</code> answers <code>unavailable</code>{" "}
-        under the stock runtime on Linux (zenity and kdialog are separate installs that differ in
-        what they offer, so denext doesn&apos;t shell out to them), so the page&apos;s{" "}
+        under the stock runtime on Linux, so the page&apos;s{" "}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
       </Callout>
       <Callout kind="note">
-        <strong>The secure store on Linux.</strong> Under runtime 2.9.7-denext.12{" "}
-        <code>secure-store</code>{" "}
-        is the runtime&apos;s own: the Secret Service through libsecret, which every desktop ships.
-        It needs a Secret Service provider: GNOME Keyring, or KWallet with its Secret Service
-        enabled. When there is none, or its keyring is locked, every call rejects with{" "}
-        <code>backend_unavailable</code>{" "}
+        <strong>The secure store on Linux.</strong> <code>secure-store</code>{" "}
+        is the pinned runtime&apos;s own: the Secret Service through libsecret, which every desktop
+        ships (the <code>.deb</code> / <code>.rpm</code> depend on <code>libsecret-1-0</code> /{" "}
+        <code>libsecret</code>; the stock runtime has no Linux secure store). It needs a Secret
+        Service provider: GNOME Keyring, or KWallet with its Secret Service enabled. When there is
+        none, or its keyring is locked, every call rejects with <code>backend_unavailable</code>
+        {" "}
         and a reason naming the fix: &quot;install gnome-keyring&quot;, &quot;enable KWallet&apos;s
         Secret Service&quot; (KWallet runs but doesn&apos;t serve it), no D-Bus session bus, or a
         locked keyring — refused at once where no one can answer the unlock prompt, else after the
-        prompt goes unanswered for 20 seconds. Older runtimes run <code>secret-tool</code>{" "}
-        instead (<code>libsecret-tools</code> on Debian / Ubuntu, <code>libsecret</code>{" "}
-        on Fedora; the <code>.deb</code> / <code>.rpm</code>{" "}
-        installers depend on it), with the same errors. It never reads as a missing value:{" "}
-        <code>get</code> returns <code>null</code>{" "}
-        only for a key that is really not there, and there is never a plaintext fallback. Items are
-        the ones <code>secret-tool</code> writes, so values stored by either path stay readable.
+        prompt goes unanswered for 20 seconds. It never reads as a missing value: <code>get</code>
+        {" "}
+        returns <code>null</code>{" "}
+        only for a key that is really not there, and there is never a plaintext fallback. Items
+        carry the <code>service</code> / <code>account</code> attributes <code>secret-tool</code>
+        {" "}
+        wrote, so values an older denext stored stay readable.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
@@ -1887,8 +1926,8 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
           restore, minimize, or nothing). Buttons, links and inputs inside it keep working.
         </li>
         <li>
-          <strong>Title bar preferences</strong> (runtime 2.9.7-denext.12):{" "}
-          <code>getTitleBarPreferences()</code> and <code>onTitleBarPreferencesChange</code>{" "}
+          <strong>Title bar preferences</strong>: <code>getTitleBarPreferences()</code> and{" "}
+          <code>onTitleBarPreferencesChange</code>{" "}
           report how the user set up title bars, for a page that hides the title bar and draws its
           own: the window buttons on each side and their order (<code>side</code>: macOS{" "}
           <code>"left"</code>, Windows{" "}
@@ -2023,10 +2062,19 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         <li>
           Treat a click&apos;s <code>data</code>{" "}
           (and its action) as untrusted: on Linux the click reaches the app as a D-Bus call on its
-          name, which any process of the same user can make with any{" "}
-          <code>data</code>, as a Windows toast activation can be. Validate it before acting on it
-          (the default <code>data.path</code> / <code>data.url</code>{" "}
-          navigation already applies the deep-link acceptance rules).
+          name, and on Windows as a toast activation. The runtime signs what it posts with a
+          per-install key (<code>&lt;app data dir&gt;/laufey-notification-key</code>) and drops a
+          click that doesn&apos;t carry its MAC, so a click it never posted is ignored, but any
+          process of the same user can read that key and send one with any{" "}
+          <code>data</code>. Validate it before acting on it (the default <code>data.path</code> /
+          {" "}
+          <code>data.url</code> navigation already applies the deep-link acceptance rules).
+        </li>
+        <li>
+          Sizes are capped in UTF-8 bytes: a notification&apos;s <code>data</code>{" "}
+          (with denext&apos;s own fields) at 4 KiB, an action id at 1 KiB and its tag at 256 bytes.
+          The runtime drops a click over those limits, so <code>scheduleNotification</code> and{" "}
+          <code>setNotificationCategories</code> reject larger ones with <code>validation</code>.
         </li>
         <li>
           macOS asks the user once (from an app bundle; an unbundled process has no notifications),
