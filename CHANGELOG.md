@@ -39,6 +39,22 @@ and this project adheres to
   `View.forceTouchAvailable`), now waived with that reason. A parity waiver can name the
   `members` it covers, so a member that goes missing later still fails the gate.
 
+### Fixed
+
+- **`denext dev` re-renders a nested Server Component after an edit.** The App Router dev loader
+  cache-busted only the module it was asked for (`page.tsx?g=N`); Deno resolves that module's
+  relative imports without the query, so an edited component the page imports (`app/ui/Label.tsx`,
+  or `components/X.tsx` outside `app/`) kept rendering its first version until the server
+  restarted. An edited module, and every module on the way to it, now renders as a copy named by
+  its content: the edit reaches the render, an unchanged module keeps its instance across edits,
+  and each module keeps at most two copies on disk.
+- **`denext dev` runs an edited Server Action's new code, and each target's own action.** Each
+  `"use server"` module was registered once per process, so an edited action kept running its old
+  implementation, and when one session served several targets (web and an iOS shell) the first
+  target to register owned the action id. An edit now re-registers the module (before the next
+  render or action call), and each target's session registers and dispatches its own instance
+  (its platform files). Production keeps one registry.
+
 ## [3.2.0] - 2026-10-07
 
 ### Breaking

@@ -21,6 +21,7 @@ import type { AppCss } from "../css.ts";
 import type { MiddlewareRunner } from "../../server/middleware.ts";
 import type { Instrumentation } from "../../server/instrumentation.ts";
 import { DevEventLog } from "../dev-events.ts";
+import { DevCopies } from "../use-cache-loader.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
 
 /** A target's Flight boundary in dev: the routes, the tagged modules and the crawl they came from. */
@@ -226,6 +227,12 @@ export interface DevState {
    * set of copies.
    */
   readonly ucLoads: Map<Platform, { gen: number; load: ModuleLoader; tag: ModuleLoader }>;
+  /**
+   * The session's edited modules and their server copies, kept across generations: an edited
+   * module and every module that imports it render as copies named by their content, so the
+   * edit reaches the render while an unchanged module keeps its instance.
+   */
+  readonly devCopies: DevCopies;
 
   /**
    * Client bundle cache keyed by route path (cleared on change). Entry code only; split
@@ -328,6 +335,7 @@ export function createDevState(options: DevServerOptions): DevState {
     platformImports: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoads: new Map(),
+    devCopies: new DevCopies(paths.projectDir),
     bundleCache: new Map(),
     chunkCache: new Map(),
     routeInFlight: new Map(),

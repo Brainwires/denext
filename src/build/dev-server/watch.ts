@@ -4,6 +4,8 @@
 
 import { cachedGraphHas, resetModuleGraphCache } from "../module-graph.ts";
 import { clearLiveCacheResults } from "../../server/cache.ts";
+import { forgetTaggedClients } from "../../runtime/client-reference.ts";
+import { forgetTaggedServers } from "../../runtime/server-action.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
 import type { PluginBuildContext } from "../../plugin/mod.ts";
@@ -61,6 +63,10 @@ function bumpGeneration(st: DevState): void {
   st.manifest = null;
   resetModuleGraphCache(); // the import graph may have changed shape
   clearLiveCacheResults(); // in-process "use cache" trees are keyed by module URL, not content
+  // Re-tag the boundary on the next render or action: an edited island or `"use server"` module
+  // is a new instance (its copy), and must be tagged and registered again.
+  forgetTaggedClients();
+  forgetTaggedServers();
   st.bundleCache.clear();
   st.chunkCache.clear();
 }
@@ -83,6 +89,9 @@ function applyPlatformFilesChange(st: DevState): void {
  * full reload.
  */
 function applyChanges(st: DevState, changedPaths: string[]): void {
+  // Before the new generation's loaders exist: each edited module (and its importers) renders
+  // as a fresh copy from now on.
+  st.devCopies.markEdited(changedPaths);
   bumpGeneration(st);
   typeCheck(st, changedPaths);
   if (cssOnly(changedPaths)) broadcast(st, "css");

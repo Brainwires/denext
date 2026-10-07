@@ -7,6 +7,7 @@ import {
   clientActionStub,
   decodeActionArgs,
   encodeActionArgs,
+  forgetTaggedServers,
   getServerAction,
   isServerAction,
   serverAction,
@@ -515,4 +516,59 @@ Deno.test("client dispatch: a codec-flagged result is decoded before it reaches 
       assert(value.at instanceof Date && value.at.getTime() === 0);
     },
   );
+});
+
+Deno.test("tagServerModules: a scope registers its own instance of an action id", async () => {
+  const web = { go: () => "web" };
+  const ios = { go: () => "ios" };
+  const servers: [string, { url: string }][] = [["scoped-mod", { url: "x" }]];
+  await tagServerModules(servers, () => Promise.resolve(web));
+  await tagServerModules(servers, () => Promise.resolve(ios), "ios");
+  const id = actionIdFor("scoped-mod", "go");
+  assertEquals(getServerAction(id)?.(), "web", "the global registry keeps web's");
+  assertEquals(getServerAction(id, "ios")?.(), "ios", "the scope's own");
+  assertEquals(getServerAction(id, "android")?.(), "web", "an unregistered scope falls back");
+});
+
+Deno.test("tagServerModules: after forgetTaggedServers an edited module registers anew", async () => {
+  const servers: [string, { url: string }][] = [["edited-mod", { url: "x" }]];
+  const v1 = { go: () => "v1" };
+  await tagServerModules(servers, () => Promise.resolve(v1));
+  const id = actionIdFor("edited-mod", "go");
+  // Without forgetting, the module is not loaded again.
+  await tagServerModules(servers, () => Promise.resolve({ go: () => "stale" }));
+  assertEquals(getServerAction(id)?.(), "v1");
+  forgetTaggedServers();
+  await tagServerModules(servers, () => Promise.resolve({ go: () => "v2" }));
+  assertEquals(getServerAction(id)?.(), "v2");
+  // The same instance tagged first in one scope still registers in another.
+  forgetTaggedServers();
+  const shared = { go: () => "shared" };
+  await tagServerModules(servers, () => Promise.resolve(shared), "ios");
+  await tagServerModules(servers, () => Promise.resolve(shared));
+  assertEquals(getServerAction(id)?.(), "shared");
+});
+
+Deno.test("tagServerExports: an explicit serverAction ref keeps its own id", () => {
+  const ref = serverAction("explicit-keep-id", () => "x");
+  tagServerExports({ ref }, "explicit-mod");
+  assertEquals(ref.denextActionId, "explicit-keep-id");
+  assertEquals(getServerAction(actionIdFor("explicit-mod", "ref")), undefined);
+});
+
+Deno.test("handleAction: the scope option picks the target's registration", async () => {
+  const servers: [string, { url: string }][] = [["dispatch-mod", { url: "x" }]];
+  await tagServerModules(servers, () => Promise.resolve({ pick: () => "web" }));
+  await tagServerModules(servers, () => Promise.resolve({ pick: () => "ios" }), "ios");
+  const id = actionIdFor("dispatch-mod", "pick");
+  const call = (opts?: Parameters<typeof handleAction>[1]) =>
+    dispatch(
+      actionRequest(id, {
+        headers: { origin: "http://localhost", "x-denext-action": "1" },
+        json: { args: [] },
+      }),
+      opts,
+    ).then((r) => r.json());
+  assertEquals((await call({ scope: () => Promise.resolve("ios") })).result, "ios");
+  assertEquals((await call()).result, "web", "no scope: the global registry");
 });

@@ -15,8 +15,11 @@
 // effective URL is the original), so the pass only materializes copies where
 // caching actually occurs.
 //
-// Copies are written under a caller-provided cache dir (generation-scoped in dev,
-// so edits are picked up on reload) and memoized per loader instance.
+// Copies are written under a caller-provided cache dir and memoized per loader instance. In dev
+// (`dev`, a {@linkcode DevCopies}) a module edited since the server started is copied too, with
+// every module that imports it, and each copy is named by its subtree's content: Deno never evicts
+// a module, so an edit must reach the render under a new URL, while an unchanged module keeps its
+// URL — and its instance — from one generation to the next.
 
 import { djb2 } from "../runtime/djb2.ts";
 import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
@@ -41,9 +44,8 @@ export interface UseCacheLoaderOptions {
   /** Absolute project root; only files beneath it are transformed. */
   projectDir: string;
   /**
-   * Directory the transformed copies are written to. The caller scopes this by
-   * build generation in dev (e.g. `.../server-cache/<gen>`) so a reload picks up
-   * fresh copies rather than a natively-cached stale module.
+   * Directory the transformed copies are written to. In dev ({@link dev}) one directory per
+   * target serves every generation: a copy's name carries its content.
    */
   cacheDir: string;
   /**
@@ -57,10 +59,92 @@ export interface UseCacheLoaderOptions {
    * {@link redirects} (Cache Components off), leaving every directive as written.
    */
   useCache?: boolean;
+  /**
+   * Dev: the session's edited modules and written copies. An edited module (and every module
+   * that imports one) loads as a copy named by its subtree's content, written once per process.
+   */
+  dev?: DevCopies;
+}
+
+/** A module file the compiler can copy (a stylesheet or JSON import is not one). */
+const SCRIPT_EXT = /\.(?:[cm]?[jt]sx?)$/;
+
+/**
+ * One dev session's edits and server copies, shared by every generation's compiler and target.
+ *
+ * Deno caches a module by URL for the life of the process, and a page's relative imports resolve
+ * without the cache-busting query its route entry is loaded with, so an edited module the page
+ * imports would keep rendering its first version. Every file the watcher reports is recorded here;
+ * the compiler then loads it, and each module on the way to it, as a copy whose name hashes the
+ * content beneath it. A copy is written once, and each module keeps its two newest (the previous
+ * one may still be loading in a request that started before the edit).
+ */
+export class DevCopies {
+  #edited = new Set<string>();
+  #written = new Map<string, Promise<void>>();
+  #byModule = new Map<string, string[]>();
+  #spell: (url: string) => string;
+
+  /** @param projectDir The project root, as the loaders spell module URLs. */
+  constructor(projectDir: string) {
+    this.#spell = projectSpelling(projectDir);
+  }
+
+  /** Record edited files (absolute paths, as the watcher reports them). */
+  markEdited(paths: Iterable<string>): void {
+    for (const p of paths) {
+      const url = this.#spell(toUrl(p));
+      if (SCRIPT_EXT.test(new URL(url).pathname)) this.#edited.add(url);
+    }
+  }
+
+  /** Whether any module was edited this session. */
+  get anyEdited(): boolean {
+    return this.#edited.size > 0;
+  }
+
+  /** Whether `url`'s file was edited this session. */
+  isEdited(url: string): boolean {
+    return this.#edited.has(url);
+  }
+
+  /**
+   * Write `copy` (the copy of `moduleUrl` in `dir`) once per process through `write`, and drop
+   * the module's copies older than its previous one.
+   */
+  write(dir: string, moduleUrl: string, copy: string, write: () => Promise<void>): Promise<void> {
+    let done = this.#written.get(copy);
+    if (done) return done;
+    done = write();
+    this.#written.set(copy, done);
+    done.catch(() => this.#written.delete(copy));
+    const key = `${dir}\0${moduleUrl}`;
+    const kept = this.#byModule.get(key) ?? [];
+    kept.push(copy);
+    this.#byModule.set(key, kept);
+    while (kept.length > 2) {
+      const old = kept.shift()!;
+      this.#written.delete(old);
+      Deno.remove(old).catch(() => {});
+    }
+    return done;
+  }
+
+  /** How many copies the session holds (a test seam for the bound). */
+  get size(): number {
+    return this.#written.size;
+  }
 }
 
 /** Deterministic short hash (djb2 → base36) for a module URL. */
 const hash = djb2;
+
+/** A 64-bit content hash: djb2 over the text forwards, then backwards. */
+function contentHash(text: string): string {
+  let h = 5381;
+  for (let i = text.length - 1; i >= 0; i--) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  return djb2(text) + "_" + h.toString(36);
+}
 
 /** Normalize a file path or `file:` URL to a `file:` URL string. */
 function toUrl(filePath: string): string {
@@ -157,6 +241,10 @@ interface ModuleNode {
  */
 class UseCacheCompiler {
   #nodes = new Map<string, Promise<ModuleNode>>();
+  /** The parsed nodes, once read (dev naming walks them synchronously). */
+  #settled = new Map<string, ModuleNode>();
+  /** Dev: each copied module's content stamp. */
+  #stamps = new Map<string, string>();
   #needs = new Map<string, boolean>();
   #written = new Map<string, Promise<void>>();
   /** Per decided module: settles once every copy its graph needs is written. */
@@ -171,10 +259,36 @@ class UseCacheCompiler {
     return underRoot(url, this.opts.projectDir);
   }
 
-  /** The copy's file URL for `moduleUrl` (named by its URL, so known before it is written). */
+  /**
+   * The copy's file URL for `moduleUrl` (named by its URL, so known before it is written; in dev
+   * also by its subtree's content, decided by then).
+   */
   #copyUrl(moduleUrl: string): string {
     const ext = extname(fromFileUrl(moduleUrl)) || ".ts";
-    return toFileUrl(join(this.opts.cacheDir, `uc_${hash(moduleUrl)}${ext}`)).href;
+    const stamp = this.opts.dev ? `_${this.#stamp(moduleUrl)}` : "";
+    return toFileUrl(join(this.opts.cacheDir, `uc_${hash(moduleUrl)}${stamp}${ext}`)).href;
+  }
+
+  /**
+   * A copied module's content stamp: a hash over every copied module it reaches (itself
+   * included), each by its URL, source and resolved imports. The modules it reaches without a
+   * copy load as themselves and are unedited. A cycle's members reach the same set, so each
+   * names the others' copies consistently.
+   */
+  #stamp(moduleUrl: string): string {
+    let stamp = this.#stamps.get(moduleUrl);
+    if (stamp !== undefined) return stamp;
+    const parts: string[] = [];
+    const seen = new Set([moduleUrl]);
+    for (const url of seen) {
+      const node = this.#settled.get(url);
+      if (!node || !this.#needs.get(url)) continue;
+      parts.push(`${url}\0${contentHash(node.source ?? "")}\0${node.imports.map((i) => i.target)}`);
+      for (const imp of node.imports) seen.add(imp.target);
+    }
+    stamp = contentHash(parts.sort().join("\n"));
+    this.#stamps.set(moduleUrl, stamp);
+    return stamp;
   }
 
   /** `moduleUrl`'s source and local imports, read and parsed once. */
@@ -208,7 +322,10 @@ class UseCacheCompiler {
       const batch = [...new Set(frontier)].filter((u) => !graph.has(u));
       const nodes = await Promise.all(batch.map((u) => this.#node(u)));
       frontier = [];
-      batch.forEach((u, i) => graph.set(u, nodes[i]));
+      batch.forEach((u, i) => {
+        graph.set(u, nodes[i]);
+        this.#settled.set(u, nodes[i]);
+      });
       for (const node of nodes) {
         for (const imp of node.imports) {
           if (this.#own(imp.target) && !graph.has(imp.target)) frontier.push(imp.target);
@@ -226,7 +343,8 @@ class UseCacheCompiler {
   #decide(graph: Map<string, ModuleNode>): void {
     const open = [...graph].filter(([u]) => !this.#needs.has(u));
     for (const [u, n] of open) {
-      const direct = n.useCache || n.imports.some((i) => i.target !== i.url);
+      const direct = n.useCache || n.imports.some((i) => i.target !== i.url) ||
+        !!this.opts.dev?.isEdited(u);
       this.#needs.set(u, n.source !== null && direct);
     }
     for (let grew = true; grew;) {
@@ -281,7 +399,15 @@ class UseCacheCompiler {
     // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,
     // and a non-literal `import()` resolves a relative specifier against that module too.
     const copy = fromFileUrl(this.#copyUrl(moduleUrl));
-    await Deno.writeTextFile(copy, await pinImportMeta(code, moduleUrl, { dynamicImports: true }));
+    const text = await pinImportMeta(code, moduleUrl, { dynamicImports: true });
+    const dev = this.opts.dev;
+    if (!dev) return await Deno.writeTextFile(copy, text);
+    // Another generation may be loading the same copy: write it whole, then move it in place.
+    await dev.write(this.opts.cacheDir, moduleUrl, copy, async () => {
+      const tmp = `${copy}.${crypto.randomUUID()}.tmp`;
+      await Deno.writeTextFile(tmp, text);
+      await Deno.rename(tmp, copy);
+    });
   }
 
   /** The effective import URL for `moduleUrl` (original, or a transformed copy). */

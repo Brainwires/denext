@@ -203,7 +203,11 @@ async function scanPlatformBoundary(
     const manifest = await buildBoundaryManifest(st.paths.appDir, [
       ...new Set(m.pages.flatMap(routeEntryFiles)),
     ], { exportsOf: importFunctionExports });
-    await tagServerModules(manifest.server, boundaryRefLoader(tagLoaderFor(st, platform)));
+    await tagServerModules(
+      manifest.server,
+      boundaryRefLoader(tagLoaderFor(st, platform)),
+      platform,
+    );
     return { routes, clients: manifest.client, servers: manifest.server, manifest };
   });
 }
@@ -245,4 +249,21 @@ export function flightRoutesFor(st: DevState, platform: Platform): Set<string> {
   if (platform === "web") return st.flightRoutes;
   const cached = st.platformBoundaries.get(platform);
   return cached?.gen === st.generation && cached.value ? cached.value.routes : st.flightRoutes;
+}
+
+/**
+ * Before a Server Action dispatches: bring the requesting target's registrations up to this
+ * generation (an edited `"use server"` module registers its new implementation even when no page
+ * rendered since the edit), and name the registry its actions run from. Each target registers
+ * the instances its own loader yields (its platform files), under its own scope.
+ *
+ * @param st The dev state.
+ * @param platform The action request's target.
+ * @returns The registry scope for `getServerAction`.
+ */
+export async function devActionScope(st: DevState, platform: Platform): Promise<string> {
+  const boundary = await devBoundaryFor(st, platform);
+  const load = st.compatLoad ?? tagLoaderFor(st, platform);
+  await tagServerModules(boundary.servers, boundaryRefLoader(load), platform);
+  return platform;
 }

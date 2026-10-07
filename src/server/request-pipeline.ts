@@ -250,6 +250,7 @@ async function dispatchAction(state: RequestState): Promise<Response> {
     trustForwardedHeaders: config.trustForwardedHeaders,
     desktopAppOrigin: config.desktopAppOrigin,
     maxBodyBytes: config.actionMaxBodyBytes,
+    scope: config.actionScope,
     onError: (err) => reportRequestError(config, err, request, pathname, { routeType: "action" }),
   });
   return finalize(state, res);

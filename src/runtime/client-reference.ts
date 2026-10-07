@@ -119,6 +119,14 @@ export async function tagClientModules(
   );
 }
 
+/**
+ * Dev: forget which modules were tagged, so the next {@linkcode tagClientModules} tags an edited
+ * island's new instance (an unchanged one loads the same instance; tagging it again is a no-op).
+ */
+export function forgetTaggedClients(): void {
+  taggedClients.clear();
+}
+
 /** Above this many islands, {@link tagClientModules} imports through one barrel module. */
 const BARREL_MIN = 8;
 

@@ -59,6 +59,11 @@ export interface ActionHandlerOptions {
    */
   desktopAppOrigin?: string;
   /**
+   * Dev: the registry scope the request's action runs from (its platform target), resolved
+   * once the request passed the origin and size checks. Unset: the global registry.
+   */
+  scope?: (request: Request) => Promise<string>;
+  /**
    * Max request body size in bytes (default {@linkcode DEFAULT_MAX_ACTION_BODY}).
    * An over-limit body is rejected before the handler runs.
    */
@@ -101,7 +106,7 @@ export async function handleAction(
   }
 
   // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
-  const handler = resolveAction(request);
+  const handler = resolveAction(request, await options.scope?.(request));
   if (!handler) return jsonResponse({ error: "unknown action" }, 404);
   const isXhr = request.headers.get("x-denext-action") === "1";
 
@@ -156,10 +161,10 @@ function controlSignalResponse(err: unknown, isXhr: boolean): Response | null {
  * The registered handler named by the request path, or null. A malformed percent-escape
  * (e.g. `%ZZ`, a bare `%`) can't name any action — a miss (404), not an unhandled URIError.
  */
-function resolveAction(request: Request): ReturnType<typeof getServerAction> {
+function resolveAction(request: Request, scope?: string): ReturnType<typeof getServerAction> {
   const pathname = new URL(request.url).pathname;
   try {
-    return getServerAction(decodeURIComponent(pathname.slice(ACTION_PREFIX.length)));
+    return getServerAction(decodeURIComponent(pathname.slice(ACTION_PREFIX.length)), scope);
   } catch {
     return undefined;
   }
