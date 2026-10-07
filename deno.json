@@ -274,6 +274,8 @@
       ".denext/",
       "examples/*/.denext/",
       "examples/**/*.gen.ts",
+      "examples/*/android/",
+      "examples/*/ios/",
       "site/.denext/",
       "site/out/",
       "dist/",

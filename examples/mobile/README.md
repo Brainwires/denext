@@ -80,6 +80,24 @@ confirm an over-the-air UI.
 half is not in the repository, so to test OTA, generate your own pair and re-run
 `mobile add-ota --public-key` with it.
 
+### Regenerating the native files
+
+Every file denext writes into `ios/` and `android/` starts with a
+`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
+fails when a committed one is behind the template denext writes today (or was edited
+by hand). After a template change, re-run the installers: they upgrade an unedited
+file in place and leave the rest of the project alone.
+
+```sh
+DENEXT="deno run -A --node-modules-dir=none ../../cli.ts"
+$DENEXT mobile add-ota     # first: the bridge view controller is OTA's while OTA is installed
+$DENEXT mobile add auth-session share-extension system-bars permissions context-menu \
+  system-icons --scheme denextmobile --app-group group.com.brainwires.denext.mobile
+$DENEXT mobile add widget --name Status --configurable "mode:enum=compact|detailed" \
+  --app-group group.com.brainwires.denext.mobile
+$DENEXT mobile add live-activity --name Build --app-group group.com.brainwires.denext.mobile
+```
+
 ## The code
 
 - `denext.config.ts`: SPA mode, `SAFE_AREA_CSS` as an inline `<style>` in the head, and

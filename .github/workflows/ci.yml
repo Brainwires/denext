@@ -3,8 +3,8 @@ name: CI
 # All work lands on `development` (see AGENTS.md → Releasing); `main` only ever receives the
 # development → main merge PR at a release. Triggering on `main` alone meant an rc could be
 # tagged from sixty commits none of which had been through CI. So every push to `development`
-# runs the fast `check` job (and the macOS `ios-export-router` job); the three heavy jobs
-# (integration builds, real-npm next-compat, the coverage re-run of the whole suite) run on pull
+# runs the fast `check` job (and the `bundle-budget` and macOS `ios-export-router` jobs); the
+# three heavy jobs (integration builds, real-npm next-compat, the coverage re-run) run on pull
 # requests, `main` and a manual dispatch, not on a plain push — a dozen pushes a day to the
 # working branch would otherwise queue an hour of runners each.
 #
@@ -78,6 +78,33 @@ jobs:
         # a hardcoded duplicate here drifts (e.g. missing class-component.ts /
         # next/cookies.ts) and reports false private-type-ref errors.
         run: deno task doc-lint
+
+  # The client bundle budget on every event, pushes to `development` included: the shared-chunk
+  # total of examples/hello's production build (`assertBundleBudgets`, 65,500 B raw) and the
+  # tripwires next to it (no Fast Refresh runtime, no Node built-ins, the import gates). It is the
+  # one test of tests/integration/build-smoke.test.ts that needs no Node or browser, and the
+  # `integration` job that runs the whole file is skipped on a push, so a bundle regression would
+  # otherwise show up only locally. One build: a minute or two.
+  bundle-budget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Shared-chunk budget (production build of examples/hello)
+        run: deno test -A --unstable-kv --filter "build smoke: examples/hello" tests/integration/build-smoke.test.ts
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).

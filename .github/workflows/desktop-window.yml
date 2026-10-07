@@ -41,6 +41,17 @@ on:
       - "src/cli/commands/serve.ts"
       - "src/cli/commands/patch.ts"
       - "src/mobile/**"
+      # The CLI and manifest modules those import directly (tests/workflow-path-filters.test.ts
+      # fails when a direct import of the window test, the desktop verbs or src/build is missing).
+      - "src/cli/command.ts"
+      - "src/cli/dev-attach.ts"
+      - "src/cli/self-exec.ts"
+      - "src/cli/shared.ts"
+      - "src/expo/manifest.ts"
+      - "src/mcp/inspect.ts"
+      - "src/plugin/mod.ts"
+      - "src/react-native-compat/manifest.ts"
+      - "src/react-native/lists/manifest.ts"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"

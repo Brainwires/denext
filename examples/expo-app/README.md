@@ -70,6 +70,21 @@ The `mobile add` line is the one `migrate` printed (from the app's `expo-*`
 packages, its `scheme` and AsyncStorage), plus `keyboard`, `dialog` and `share`
 for the Lab tab.
 
+### Regenerating the native files
+
+Every file denext writes into `ios/` and `android/` starts with a
+`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
+fails when a committed one is behind the template denext writes today (or was edited
+by hand). After a template change, re-run the installers: they upgrade an unedited
+file in place and leave the rest of the project alone.
+
+```sh
+deno run -A --node-modules-dir=none ../../cli.ts mobile add storage
+```
+
+`storage` is the example's one denext native plugin; the run also rewrites
+`DenextBridgeViewController.swift`, which registers it.
+
 ## Device checklist (iPhone)
 
 After `deno task cap:sync` and `deno task ios`:

@@ -84,6 +84,23 @@ on:
       - "src/client/live-client.ts"
       - "src/mobile/**"
       - "src/react-native/desktop*.ts"
+      # The CLI, build and testing modules the desktop tests import directly (the tests drive the
+      # desktop verbs through the CLI's registry and render with denext/testing).
+      # tests/workflow-path-filters.test.ts fails when a direct import of the tests, the scripts or
+      # the desktop code above is missing from this list.
+      - "src/build/css.ts"
+      - "src/build/dev-server.ts"
+      - "src/build/react-native.ts"
+      - "src/cli/command.ts"
+      - "src/cli/commands/mobile-build.ts"
+      - "src/cli/commands/toolchain.ts"
+      - "src/cli/dev-attach.ts"
+      - "src/cli/register.ts"
+      - "src/cli/shared.ts"
+      - "src/react-native/mod.ts"
+      - "src/testing/dom.ts"
+      - "src/testing/mod.ts"
+      - "tests/_*.ts"
       - "scripts/desktop-pin-runtime.ts"
       - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-*.ts"
@@ -104,6 +121,8 @@ on:
       - "scripts/install.ps1"
       - "scripts/ci/msi-roundtrip.ps1"
       - "examples/native/**"
+      # tests/desktop-kitchen-sink.test.ts imports the kitchen sink's app and e2e modules.
+      - "examples/desktop-kitchen-sink/**"
       - "examples/rn-desktop/scripts/**"
       - ".github/workflows/desktop-ci.yml"
 

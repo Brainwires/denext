@@ -6,11 +6,22 @@ name: Parity drift
 # offline in the `check` job (via `deno task test`, `tests/react-parity.test.ts`) against
 # the committed baseline + known-gaps ledger. When this job reports drift, run
 # `deno task parity:refresh` locally, review, and re-run `deno task parity:gaps`.
+#
+# A push to `development` that changes the drift tooling or the committed baseline runs it too, so
+# a broken extractor or a baseline refreshed by hand shows up on the push instead of the next Monday.
+# The filter lists what `parity:drift` runs and imports (tests/workflow-path-filters.test.ts fails
+# when the scripts import a file it misses); it imports nothing from src/.
 
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
+  push:
+    branches: [development]
+    paths:
+      - "scripts/parity/*.ts"
+      - "tests/fixtures/react-surface.baseline.json"
+      - ".github/workflows/parity-drift.yml"
 
 permissions:
   contents: read
