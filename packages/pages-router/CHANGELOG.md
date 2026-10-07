@@ -3,12 +3,12 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
-## Unreleased
+## 0.11.0 — denext 3.2.0 compatibility
 
+- Requires denext ≥ 3.2.0.
 - Client bundles take the app's [platform-specific files](https://denext.dev/docs/platform-files)
   for the `web` target (`Button.web.tsx`), through `platformClientRedirects` from
-  `@denext/denext/plugin-kit`, matching the server render. Requires the denext release that
-  exports it.
+  `@denext/denext/plugin-kit`, matching the server render.
 
 ## 0.10.0 — denext 2.0.0 compatibility
 
