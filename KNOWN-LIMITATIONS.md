@@ -70,9 +70,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   response, so delivery is best-effort where the platform freezes the isolate.
 - **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops); TOTP secrets are
   stored in plaintext because verification needs them. Protect the file.
-- **Magic links redeem on GET**, so a link-scanning mail gateway can spend one, and a link the
-  attacker requested can sign a victim into the attacker's account (as in Auth.js). Prefer
-  `emailOtp()` where that matters.
+- **Magic links redeem on GET by default**, so a link-scanning mail gateway can spend one, and a
+  link the attacker requested can sign a victim into the attacker's account (as in Auth.js).
+  `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
+  redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
   eviction or account deletion; run a `sessionStore` (or `session.strategy: "database"`).
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,

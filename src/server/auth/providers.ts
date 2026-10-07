@@ -36,7 +36,12 @@ export {
   type OktaOptions,
   slack,
 } from "./providers-presets.ts";
-export { emailOtp, type EmailProviderOptions, magicLink } from "./providers-email.ts";
+export {
+  emailOtp,
+  type EmailProviderOptions,
+  magicLink,
+  type MagicLinkOptions,
+} from "./providers-email.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.

@@ -47,6 +47,13 @@ and this project adheres to
   `response_mode` in `authorizationParams` is a config error. Profile mappers see the posted
   extras as `callbackParams`. `getSession()` now always sets `Secure` on a `SameSite=None`
   cookie.
+- **`magicLink({ confirm: true })`: a confirmation page in front of the magic-link redeem.** The
+  link's GET renders a page naming the account, whose button POSTs the token to the same URL;
+  only that POST (same-origin gated, under the failure budget) spends it, so a mail gateway's
+  pre-fetch can't burn a link and nobody is signed in without a click. The page runs no script
+  (`default-src 'none'`, its style allowed by hash), can't be framed, is `no-store`, escapes
+  every value from the link, and sends `Referrer-Policy: same-origin` so the token-bearing URL
+  never leaks cross-origin while the POST keeps its `Origin`. Off by default.
 - **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
   `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
   credentials), is validated at import, and scopes the policy to the method it guards: the

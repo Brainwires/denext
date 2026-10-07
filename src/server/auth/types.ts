@@ -229,6 +229,12 @@ export interface EmailProvider {
    * an unknown address is sent nothing — and answered exactly as if it had been.
    */
   allowSignUp: boolean;
+  /**
+   * `magicLink({ confirm: true })`: the link's GET renders a confirmation page whose form POSTs
+   * the token, instead of spending it — so a mail gateway that pre-fetches links can't burn
+   * one, and nobody is signed in without pressing the button. Absent for `emailOtp()`.
+   */
+  confirm?: boolean;
 }
 
 /** Any configured provider. */

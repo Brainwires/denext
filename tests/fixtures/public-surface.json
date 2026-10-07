@@ -613,6 +613,7 @@
     "LiveSubscriptionRequest:interface",
     "LoadEnvOptions:interface",
     "LocalPattern:interface",
+    "MagicLinkOptions:interface",
     "MatchContext:interface",
     "MatchOptions:interface",
     "MatcherCondition:interface",

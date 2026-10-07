@@ -700,17 +700,18 @@ denextAuth({
 `magicLink()` mails a single-use sign-in link; `emailOtp()` mails a numeric code the user
 types. Both are `type: "email"` providers on `{basePath}/callback/:provider` — ids
 `"email"` and `"email-otp"` by default, with a display `name` (`"Email"`, `"Email code"`)
-that `GET {basePath}/providers` echoes — and both take `{ id?, name?, allowSignUp? }`.
+that `GET {basePath}/providers` echoes — and both take `{ id?, name?, allowSignUp? }`
+(`magicLink` also `confirm`, below).
 Configuring one without `sendVerificationRequest`, or with an adapter missing
 `createVerificationToken`, `useVerificationToken`, `getUserByEmail`, `createUser` or
 `updateUser`, makes `denextAuth()` throw.
 
-| Request                                        | What it does                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)        |
-| `GET /callback/email?token=…&email=…`          | The click: consumes the token, signs the user in, redirects                      |
-| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it |
-| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in              |
+| Request                                        | What it does                                                                                                    |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)                                       |
+| `GET /callback/email?token=…&email=…`          | The click: consumes the token, signs the user in, redirects — or, with `confirm`, renders the confirmation page |
+| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it                                |
+| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in                                             |
 
 A body carrying a `token` (a magic-link provider — how a JS client redeems) or a `code` (an
 email-code provider) redeems; anything else sends. A `callbackUrl` sent along rides in the
@@ -763,10 +764,24 @@ address stays unverified and the redeem gets the generic failure. An account tha
 already verified keeps all of it. A stateless cookie session can't be revoked and lives
 until it expires — another reason to run a `sessionStore` in production.
 
-> [!WARNING]
-> Opening a magic link spends it (Auth.js does the same), so a mail gateway that pre-fetches
-> links to scan them can burn one before the user clicks. Where link scanners are common,
-> prefer `emailOtp()`.
+**The confirmation page.** By default opening a magic link spends it (Auth.js does the same),
+so a mail gateway that pre-fetches links to scan them can burn one before the user clicks,
+and a link someone else requested signs the clicker straight into that account.
+`magicLink({ confirm: true })` closes both: the link's GET renders a small page — "Continue as
+**ada@example.com**?" — whose button POSTs the token back to the same URL, and only that POST
+spends it. A scanner's GET (any number of them) changes nothing, and nobody is signed in
+without pressing a button that names the account.
+
+```ts
+providers: [magicLink({ confirm: true })],
+```
+
+The page is denext's own: no script, `default-src 'none'` with its one style allowed by hash,
+`frame-ancestors 'none'` and `X-Frame-Options: DENY` (its button can't be clickjacked),
+`form-action 'self'`, `no-store`, and `Referrer-Policy: same-origin` — the URL carries the
+token, so it never leaks cross-origin, while the form's POST still carries this origin in
+`Origin`, which the same-origin gate on the redeem requires. Every value from the link is
+HTML-escaped. A link without a valid address or token goes to the error page instead.
 
 ## Two-factor authentication (TOTP)
 
@@ -1578,8 +1593,8 @@ What the first-party auth layer still does not do — the full ledger is
   only; without an adapter to store it, later sessions carry no name.
 - **Deleting an account can't end stateless cookie sessions on other devices** — they
   reference a user that no longer exists until they expire. Run a `sessionStore`.
-- **A GET spends a magic link**, so a mail gateway that pre-fetches links can burn one —
-  prefer `emailOtp()` where link scanners are common.
+- **By default a GET spends a magic link**, so a mail gateway that pre-fetches links can burn
+  one — use `magicLink({ confirm: true })`, or `emailOtp()`.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
   current (first) secret, and live for minutes.
 - **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking

@@ -8034,16 +8034,28 @@
           "name": "magicLink",
           "slug": "magicLink",
           "kind": "function",
-          "signature": "magicLink(options?: EmailProviderOptions): EmailProvider",
-          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common.",
-          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. The link is consumed by its GET, so a mail gateway that pre-fetches links\ncan spend it — prefer {@linkcode emailOtp} where link scanners are common.",
+          "signature": "magicLink(options?: MagicLinkOptions): EmailProvider",
+          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — pass confirm: true to open a confirmation page whose button POSTs the token instead, or prefer emailOtp.",
+          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches\nlinks can spend it — pass `confirm: true` to open a confirmation page whose button POSTs\nthe token instead, or prefer {@linkcode emailOtp}.",
           "params": [
             {
               "name": "options",
-              "doc": "The provider id, display name and sign-up policy."
+              "doc": "The provider id, display name, sign-up policy and confirmation page."
             }
           ],
           "returns": "The configured provider (id: \"email\", mode: \"magic\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MagicLinkOptions",
+          "slug": "MagicLinkOptions",
+          "kind": "interface",
+          "signature": "interface MagicLinkOptions",
+          "doc": "Options for magicLink.",
+          "docFull": "Options for {@linkcode magicLink}.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },

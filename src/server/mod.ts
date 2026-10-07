@@ -488,6 +488,7 @@ export type {
   EmailProviderOptions,
   GitLabOptions,
   KeycloakOptions,
+  MagicLinkOptions,
   MicrosoftEntraOptions,
   OAuthClientOptions,
   OidcOptions,
