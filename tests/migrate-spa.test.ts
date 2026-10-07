@@ -4,7 +4,7 @@
 // thin desktop.ts + `spa.proxy` (prefixes parsed from the Vite proxy).
 
 import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { findSpaTailwindInput, migrateProject } from "../src/build/migrate.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 
@@ -139,8 +139,9 @@ async function assertSpaConfig(dir: string): Promise<void> {
     'tailwind: { input: "./src/index.css", output: "./src/index.gen.css" }',
     'entry: "./src/main.tsx"',
     'title: "My App"',
-    'VITE_FOO: ""',
-    'VITE_BAR: ""',
+    // Each key reads the build environment (the shell or a .env file), as Vite exposes VITE_*.
+    'VITE_FOO: buildEnv("VITE_FOO")',
+    'VITE_BAR: buildEnv("VITE_BAR")',
     "APP_VERSION: pkg.version",
     'import pkg from "./package.json"',
     'prefixes: ["/api", "/ws"]',
@@ -212,6 +213,28 @@ Deno.test("migrate SPA (--desktop --backend): a computed Vite proxy is reported,
     });
     assertEquals(again.spa?.proxy?.prefixes, ["/api", "/ws"]);
     assertEquals(again.spa?.proxyUnresolved, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate SPA: spa.env reads the build environment, as Vite exposes VITE_*", async () => {
+  // Vite inlines any VITE_* variable set at build time; a migrated app that baked "" ignored
+  // `VITE_HOSTED_APP_CHANNEL=… deno task export` (and every .env file) without a word.
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_env_" });
+  try {
+    await writeViteApp(dir, { pnpm: true });
+    await migrateProject(dir);
+    Deno.env.set("VITE_FOO", "from-the-shell");
+    try {
+      const url = toFileUrl(join(dir, "denext.config.ts")).href;
+      const config = (await import(url)).default;
+      assertEquals(config.spa.env.VITE_FOO, "from-the-shell");
+      assertEquals(config.spa.env.VITE_BAR, ""); // unset → "" (as before)
+      assertEquals(config.spa.env.APP_VERSION, "1.2.3");
+    } finally {
+      Deno.env.delete("VITE_FOO");
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

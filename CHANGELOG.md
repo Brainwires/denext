@@ -336,6 +336,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A migrated SPA's `spa.env` reads the build environment.** `migrate` wrote every `VITE_*`
+  (and `REACT_APP_*`) key as a literal `""`, so a value set at build time —
+  `VITE_HOSTED_APP_CHANNEL=… deno task export`, or a `.env` file — never reached
+  `import.meta.env`, where `vite build` inlines it. The generated config now reads each key with
+  a `buildEnv("KEY")` helper (`""` when unset or unreadable).
 - **`denext migrate --desktop --backend` no longer drops a Vite proxy built in code without a
   word.** A `vite.config` whose `server.proxy` is computed (T3 Code's
   `Object.fromEntries(PREFIXES.map(…))`) has no literal prefixes to read, so `spa.proxy` fell back

@@ -1821,6 +1821,21 @@ async function parseViteProxyPrefixes(
   return {};
 }
 
+/**
+ * The generated config's `buildEnv` helper: a build-time environment variable (the shell or a
+ * `.env` file), "" when unset or when the process may not read it (a desktop runtime with a
+ * scoped `--allow-env` imports this config too).
+ */
+const BUILD_ENV_HELPER =
+  `/** A build-time variable (the shell or a .env file), as Vite exposes VITE_*; "" if unset. */\n` +
+  `const buildEnv = (key: string): string => {\n` +
+  `  try {\n` +
+  `    return Deno.env.get(key) ?? "";\n` +
+  `  } catch {\n` +
+  `    return ""; // no permission to read it\n` +
+  `  }\n` +
+  `};\n\n`;
+
 /** Source text for the generated `denext.config.ts`. */
 function spaConfigSource(o: {
   entry: string;
@@ -1846,10 +1861,15 @@ function spaConfigSource(o: {
   noPrecompress?: boolean;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
+  // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
+  // way Vite inlines any `VITE_*` set at build time; a literal "" would ignore both.
+  const needsBuildEnv = o.envKeys.some((k) => k !== "APP_VERSION");
   const envLines = o.envKeys
-    .map((
-      k,
-    ) => (k === "APP_VERSION" ? `      APP_VERSION: pkg.version,` : `      ${k}: "",`))
+    .map((k) =>
+      k === "APP_VERSION"
+        ? `      APP_VERSION: pkg.version,`
+        : `      ${k}: buildEnv(${JSON.stringify(k)}),`
+    )
     .join("\n");
   const tailwindBlock = o.tailwind
     ? `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${
@@ -1865,6 +1885,7 @@ function spaConfigSource(o: {
     `import type { DenextConfig } from "denext/server";\n` +
     (needsPkg ? `import pkg from "./package.json" with { type: "json" };\n` : "") +
     `\n` +
+    (needsBuildEnv ? BUILD_ENV_HELPER : "") +
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +

@@ -191,8 +191,10 @@ React and no `next.config.*`). It detects the shape and writes a
 `tailwind` block when it finds a stylesheet with the Tailwind directive
 (`@import "tailwindcss"`), the mount element id your entry renders into
 (`spa.rootId`), and `spa.env` seeded from your Vite `define` block and
-`import.meta.env.VITE_*` usage. Add `--desktop` to also emit a `deno desktop`
-entry, and `--backend http://127.0.0.1:3773 --proxy /api,/ws` to wire a
+`import.meta.env.VITE_*` usage. Each key reads the build environment
+(`buildEnv("VITE_API_URL")`: the shell, or a `.env` file), so
+`VITE_API_URL=https://… deno task export` works as `vite build` did. Add
+`--desktop` to also emit a `deno desktop` entry, and `--backend http://127.0.0.1:3773 --proxy /api,/ws` to wire a
 [backend proxy](/docs/spa):
 
 ```sh
