@@ -14,7 +14,10 @@
 //   deno task test:desktop        # from examples/clerk (needs the keys, a logged-in macOS session
 //                                 # or a display; Linux: xvfb-run -a deno task test:desktop)
 //
-// Without keys it prints why and exits 0. It never prints a key.
+// Without keys, or on an instance that doesn't allow the window's origin, it prints why and skips:
+// exit 0 locally, but exit 1 under CI (`CI=true`) unless the skip is allowed explicitly
+// (`CLERK_E2E_ALLOW_SKIP=1`), so a CI job never passes a run that tested nothing. It never prints
+// a key.
 
 import { fromFileUrl, join } from "@std/path";
 import { desktopAppDirs } from "../../../src/desktop/app-dirs.ts";
@@ -26,13 +29,30 @@ const APP_ID = "dev.denext.clerk-example";
 const BAPI = "https://api.clerk.com/v1";
 const PHASE_TIMEOUT_MS = Number(Deno.env.get("CLERK_DESKTOP_TIMEOUT_MS") ?? 300_000);
 
+/**
+ * Skip the run with `reason`: exit 0, except under CI (`CI=true`), where a skip fails the job
+ * unless `CLERK_E2E_ALLOW_SKIP=1` allows it.
+ */
+function skip(reason: string): never {
+  const ci = Deno.env.get("CI") === "true";
+  const allowed = Deno.env.get("CLERK_E2E_ALLOW_SKIP") === "1";
+  if (ci && !allowed) {
+    console.error(
+      `desktop e2e SKIPPED under CI, which fails the run: ${reason}\n` +
+        "(set CLERK_E2E_ALLOW_SKIP=1 to allow the skip)",
+    );
+    Deno.exit(1);
+  }
+  console.log(`desktop e2e SKIPPED: ${reason}`);
+  Deno.exit(0);
+}
+
 const keys = await clerkTestKeys(ROOT);
 if (!keys) {
-  console.log(
-    "desktop e2e SKIPPED: set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY + CLERK_SECRET_KEY (or " +
-      "CLERK_TEST_*), or put them in examples/clerk/.env.local.",
+  skip(
+    "set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY + CLERK_SECRET_KEY (or CLERK_TEST_*), or put them " +
+      "in examples/clerk/.env.local.",
   );
-  Deno.exit(0);
 }
 
 /** A free loopback port. */
@@ -123,11 +143,12 @@ async function packagedExecutable(): Promise<string> {
   const arch = Deno.build.arch === "aarch64" ? "arm64" : "x64";
   const dir = join(dist, `${APP_NAME}-${arch}`);
   if (Deno.build.os === "windows") return join(dir, `${APP_NAME}-${arch}.exe`);
-  for await (const e of Deno.readDir(dir)) {
-    if (!e.isFile || /\.so(\.|$)/.test(e.name)) continue;
-    if (((await Deno.stat(join(dir, e.name))).mode ?? 0) & 0o111) return join(dir, e.name);
-  }
-  throw new Error(`no executable in ${dir}`);
+  // Linux: the launcher is named after its bundle directory. Named explicitly, never picked by
+  // directory order: a CEF bundle also holds `chrome-sandbox`, which is executable too.
+  const exe = join(dir, `${APP_NAME}-${arch}`);
+  const mode = (await Deno.stat(exe).catch(() => undefined))?.mode ?? 0;
+  if ((mode & 0o111) === 0) throw new Error(`no executable launcher at ${exe}`);
+  return exe;
 }
 
 /** Launch the window for one phase and wait for the page's report. */
@@ -205,11 +226,10 @@ function check(cond: unknown, what: string, detail?: unknown): void {
 const ORIGIN = "denextclerk://app";
 const instance = await bapi<{ allowed_origins?: string[] | null }>("GET", "/instance");
 if (!(instance.allowed_origins ?? []).includes(ORIGIN)) {
-  console.log(
-    `desktop e2e SKIPPED: the Clerk instance does not allow the origin ${ORIGIN} yet ` +
+  skip(
+    `the Clerk instance does not allow the origin ${ORIGIN} yet ` +
       "(README → Clerk dashboard, step 3: PATCH /v1/instance allowed_origins).",
   );
-  Deno.exit(0);
 }
 
 let userId: string | undefined;
