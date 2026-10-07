@@ -24,6 +24,10 @@ import { createAppController, type DockLike, type TrayLike } from "../src/deskto
 import { nativeMenu } from "../src/desktop/caps/menu.ts";
 import { createPullQueue } from "../src/desktop/caps/queue.ts";
 import { withDenoProps, withProps } from "./helpers/deno-stub.ts";
+import { until } from "./helpers/desktop-fake-runtime.ts";
+
+/** How long a test waits for an async effect (polled; generous for a loaded machine). */
+const WAIT_MS = 10_000;
 
 /** A handler context recording what the capability emits. */
 function ctxOf(window?: unknown): DesktopCapCtx & { emitted: Array<[string, unknown]> } {
@@ -212,8 +216,7 @@ Deno.test("notifications: a running app tops a series up when half of it fired",
   clock += (REPEAT_HORIZON / 2 + 1) * 3600_000;
   f.scheduled.splice(0, REPEAT_HORIZON / 2);
   half.run();
-  await new Promise((r) => setTimeout(r, 10));
-  assertEquals(f.scheduled.length, REPEAT_HORIZON);
+  await until(() => f.scheduled.length === REPEAT_HORIZON, WAIT_MS);
   const ats = f.scheduled.map((e) => e.at as number);
   assertEquals(new Set(ats).size, ats.length);
   assertEquals(ats.at(-1), NOW + 3600_000 * (REPEAT_HORIZON + REPEAT_HORIZON / 2));
@@ -231,8 +234,7 @@ Deno.test("notifications: a launch tops up the series an earlier run left", asyn
     actions: [{ action: "snooze", title: "Snooze" }],
   });
   notificationsCapability({ api: f.api, now: () => NOW, timer: () => () => {} });
-  await new Promise((r) => setTimeout(r, 20));
-  assertEquals(f.scheduled.length, REPEAT_HORIZON);
+  await until(() => f.scheduled.length === REPEAT_HORIZON, WAIT_MS);
   assert(f.scheduled.every((e) => e.title === "Left" && e.actions?.[0]?.action === "snooze"));
 });
 
@@ -907,9 +909,9 @@ Deno.test("notifications: a launch tops up only the series that are short, soone
       return () => {};
     },
   });
-  await new Promise((r) => setTimeout(r, 20));
   const ofSeries = (id: number) => f.scheduled.filter((e) => e.tag.startsWith(`denext-${id}-`));
-  assertEquals(ofSeries(1).length, REPEAT_HORIZON);
+  // The launch's top-up is done once the short series is full and its check is armed.
+  await until(() => ofSeries(1).length === REPEAT_HORIZON && armed.length > 0, WAIT_MS);
   const added = ofSeries(1).filter((e) => e.at !== NOW + DAY);
   assert(added.every((e) => e.title === "" && e.body === "" && e.actions?.length === 0));
   assertEquals(ofSeries(2).length, REPEAT_HORIZON, "a full series gets nothing more");

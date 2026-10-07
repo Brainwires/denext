@@ -20,6 +20,10 @@ import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import { installWindowCloseHandler } from "../src/build/desktop.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppApi } from "../src/desktop/launch-events.ts";
+import { until } from "./helpers/desktop-fake-runtime.ts";
+
+/** How long a test waits for an async effect (polled; generous for a loaded machine). */
+const WAIT_MS = 10_000;
 
 /** A fake pinned-runtime window recording every call. */
 class FakeWindow extends EventTarget {
@@ -450,7 +454,7 @@ Deno.test("window close guard: off → the window closes; on → held, asked, an
   const id2 = (emitted[1][2] as { id: string }).id;
   assertEquals(await call("closeRespond", { id: id2, close: true }), { closing: true });
   assert(win.closed);
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
 });
 
@@ -492,7 +496,7 @@ Deno.test("window.quit: Deno.desktop.quit decides (a guarded close holds it); st
     exit: (c) => void exits.push(c),
   });
   assertEquals(await stock.capability.methods.quit.handler({}, ctx()), { quitting: true });
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
 });
 
@@ -512,7 +516,7 @@ Deno.test("window drops: files become read-only handles, folders readFolder; tak
         detail: { paths: [file, folder, join(dir, "gone.txt"), 42], count: 4, x: 30, y: 40 },
       }),
     );
-    await new Promise((r) => setTimeout(r, 20));
+    await until(() => emitted.length > 0, WAIT_MS);
     assertEquals(emitted, [["window", "drop", null]]);
     const drops = await call("takeDrops") as Array<
       { x: number; y: number; files: Array<Record<string, unknown>> }
@@ -727,7 +731,7 @@ Deno.test("window close guard: turning it off drops the pending request; close()
   await call("setCloseGuard", { enabled: true });
   assertEquals(await call("close"), null);
   assert(win.closed);
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
   // ...and the guard is gone with it.
   assertEquals(ctl.interceptClose(new Event("close", { cancelable: true })), false);

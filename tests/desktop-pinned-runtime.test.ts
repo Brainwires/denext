@@ -1202,3 +1202,51 @@ Deno.test("the checked-in pin is the deno version denext's runtime targets", asy
   assertEquals(DESKTOP_RUNTIME_PIN.deno, "2.9.7");
   assert(DESKTOP_RUNTIME_PIN.version.startsWith("2.9.7-denext."));
 });
+
+Deno.test("the checked-in pin passes pinFromRelease's own checks, for every target and backend", async () => {
+  const { DESKTOP_RUNTIME_PIN: pin } = await import("../src/build/desktop-runtime.ts");
+  // Every OS + arch a runtime is built for (no Windows arm64), each with both backends.
+  const targets = [
+    ["darwin", "aarch64"],
+    ["darwin", "x86_64"],
+    ["linux", "aarch64"],
+    ["linux", "x86_64"],
+    ["windows", "x86_64"],
+  ].map(([os, arch]) => desktopRuntimeTarget(os, arch));
+  assertEquals(Object.keys(pin.targets).sort(), targets.sort());
+  const libs: Record<string, string> = {
+    "apple-darwin": "libdenort.dylib",
+    "unknown-linux-gnu": "libdenort.so",
+    "pc-windows-msvc": "denort.dll",
+  };
+  const pinned = pin.targets as unknown as PinFile["targets"];
+  for (const target of targets) {
+    const entry = pinned[target];
+    const vendor = Object.keys(libs).find((v) => target.endsWith(v))!;
+    assertEquals(entry.runtimeLib, libs[vendor], target);
+    for (const backend of ["webview", "cef"] as const) {
+      const a = entry[backend];
+      assert(a, `${target} has no ${backend} archive`);
+      assert(/^[0-9a-f]{64}$/.test(a.sha256), `${target}/${backend}: sha256`);
+      assert(Number.isSafeInteger(a.size) && a.size > 0, `${target}/${backend}: size`);
+    }
+  }
+  assert(/^[0-9a-f]{40}$/.test(pin.denoSha), "denoSha");
+  assert(/^[0-9a-f]{40}$/.test(pin.laufeySha), "laufeySha");
+  // The release the pin came from, rebuilt from the pin: manifest.json + SHA256SUMS. Run back
+  // through pinFromRelease (file name, format, this tag's download URL, sha256 against SHA256SUMS,
+  // size, runtime lib), it must give back the pin unchanged.
+  const manifest = {
+    schema: 1,
+    name: "deno-desktop-runtime",
+    tag: pin.tag,
+    version: pin.version,
+    deno: { version: pin.deno, sha: pin.denoSha },
+    laufey: { sha: pin.laufeySha, apiVersion: pin.laufeyApiVersion },
+    targets: pin.targets,
+  };
+  const sums = Object.values(pinned).flatMap((t) =>
+    (["webview", "cef"] as const).flatMap((b) => t[b] ? [`${t[b]!.sha256}  ${t[b]!.file}`] : [])
+  ).join("\n");
+  assertEquals(pinFromRelease(pin.tag, manifest, sums), pin as unknown as PinFile);
+});
