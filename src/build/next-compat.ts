@@ -546,10 +546,14 @@ export function appResolverPlugin(
 ): esbuild.Plugin {
   const exts = withPlatformExtensions(SOURCE_EXTS, platformExtensions);
   // The app's own modules take the target's platform files (`platformExtensions` config);
-  // without one (turned off) they probe what packages do.
-  const probe = (base: string) =>
-    appPlatform
-      ? probePlatformSource(base, appPlatform, probeSourceFile, SOURCE_EXTS)
+  // without one (turned off) they probe what packages do. A package's modules (the importer or
+  // the file named is in node_modules) keep their own resolution: a React Native library's
+  // `.ios.js` calls native modules, and the shells run its web build.
+  const own = (base: string, importer: string) =>
+    !!appPlatform && !inNodeModules(base) && !inNodeModules(importer);
+  const probe = (base: string, importer: string) =>
+    own(base, importer)
+      ? probePlatformSource(base, appPlatform!, probeSourceFile, SOURCE_EXTS)
       : probeSourceFile(base, exts);
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
@@ -567,9 +571,9 @@ export function appResolverPlugin(
         if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         const base = appImportBase(p, args.importer, await ensure());
         if (base) {
-          const found = probe(base);
+          const found = probe(base, args.importer);
           if (found) return await withPackageSideEffects(found);
-          return appPlatform ? missingVariant(p, base, appPlatform) : null;
+          return own(base, args.importer) ? missingVariant(p, base, appPlatform!) : null;
         }
         // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
         // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
@@ -579,7 +583,7 @@ export function appResolverPlugin(
         if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
-          const rootProbe = probe(resolve(dirname(configPath), p));
+          const rootProbe = probe(resolve(dirname(configPath), p), args.importer);
           if (rootProbe) return await withPackageSideEffects(rootProbe);
         }
         return null; // npm/jsr/bare → deno-loader

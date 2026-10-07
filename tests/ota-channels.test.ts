@@ -504,8 +504,6 @@ Deno.test("checkForUiUpdate: channel sends both headers on the fetch and to the 
       authorization: "Bearer t",
       "x-denext-ota-channel": "beta",
       "x-denext-ota-install-id": id,
-      // The shell's own target rides along (a per-target server serves its export).
-      "x-denext-ota-platform": "ios",
     };
     assertEquals(f.calls[0].init.headers, expected);
     assertEquals(s.applied[0].headers, expected);
@@ -517,12 +515,11 @@ Deno.test("checkForUiUpdate: channel sends both headers on the fetch and to the 
       installId: "my-own-id-123",
       fetch: g.fetch,
     });
-    const own = { "x-denext-ota-install-id": "my-own-id-123", "x-denext-ota-platform": "ios" };
-    assertEquals(g.calls[0].init.headers, own);
-    assertEquals(s.downloaded[0].headers, own);
+    assertEquals(g.calls[0].init.headers, { "x-denext-ota-install-id": "my-own-id-123" });
+    assertEquals(s.downloaded[0].headers, { "x-denext-ota-install-id": "my-own-id-123" });
     const h = recordingFetch();
     await checkForUiUpdate({ baseUrl: "https://ui.example.com", fetch: h.fetch });
-    assertEquals(h.calls[0].init.headers, { "x-denext-ota-platform": "ios" });
+    assertEquals(h.calls[0].init.headers, {});
   });
 });
 

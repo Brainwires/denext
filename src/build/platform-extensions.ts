@@ -13,7 +13,8 @@
 //   macos    .macos → .desktop → .web          (windows, linux: the same, with their OS)
 //
 // `.native` is opt-in (`platformExtensions: { native: true }`): in React Native it means native
-// code, which a WebView cannot run.
+// code, which a WebView cannot run. In React Native mode the app's own `.ios` / `.android` files
+// are native code too, so there they are opt-in as well (`{ osFiles: true }`).
 //
 // Only the app's OWN modules take a platform variant. A package in node_modules keeps its own
 // resolution (React Native mode still probes `.web` there): React Native libraries ship
@@ -119,16 +120,19 @@ function familyOf(platform: Platform): string | null {
  * A target's suffixes, most specific first. Every list ends with `.web`.
  *
  * @param platform The target.
- * @param options `native`: probe `.native` after the OS on ios / android.
+ * @param options `native`: probe `.native` after the OS on ios / android. `osFiles: false`
+ *   leaves out the phone OS suffix (`.ios` / `.android`), as React Native mode does by default.
  */
 export function platformSuffixes(
   platform: Platform,
-  options: { native?: boolean } = {},
+  options: { native?: boolean; osFiles?: boolean } = {},
 ): string[] {
   const family = familyOf(platform);
   if (!family) return [".web"];
-  const native = options.native && family === ".mobile" ? [".native"] : [];
-  return [`.${platform}`, ...native, family, ".web"];
+  const phone = family === ".mobile";
+  const native = options.native && phone ? [".native"] : [];
+  const os = phone && options.osFiles === false ? [] : [`.${platform}`];
+  return [...os, ...native, family, ".web"];
 }
 
 /**
@@ -145,7 +149,9 @@ export function platformResolution(
   const option = config?.platformExtensions;
   if (option === false) return null;
   const native = typeof option === "object" && option?.native === true;
-  const suffixes = platformSuffixes(platform, { native });
+  // In React Native mode the app's `.ios` / `.android` files are native code: opt-in.
+  const osFiles = !config?.reactNative || (typeof option === "object" && option?.osFiles === true);
+  const suffixes = platformSuffixes(platform, { native, osFiles });
   const extensions = suffixes.flatMap((s) => PLATFORM_SOURCE_EXTS.map((e) => s + e));
   return { platform, suffixes, extensions };
 }
@@ -667,6 +673,8 @@ export function devPlatformOf(request: Request): Platform {
 export function pinDevPlatform(request: Request, response: Response): Response {
   const value = new URL(request.url).searchParams.get(DEV_PLATFORM_PARAM);
   if (!isPlatform(value)) return response;
+  // A session cookie (no expiry): it ends with the browser session, and `?__denext_platform=web`
+  // pins `web` back before that.
   const cookie = `${DEV_PLATFORM_PARAM}=${value}; Path=/; SameSite=Lax`;
   try {
     response.headers.append("set-cookie", cookie);

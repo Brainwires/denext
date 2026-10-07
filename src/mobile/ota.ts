@@ -26,6 +26,7 @@ import {
   isOtaManifest,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
+  OTA_PLATFORM_PATH,
   type OtaManifest,
   otaPlatformMismatch,
 } from "./ota-manifest.ts";
@@ -355,17 +356,51 @@ export function otaInstallId(): string {
   return memoryInstallId = id;
 }
 
-/** The headers of the manifest request and every native download: the app's, plus the channel's. */
-function otaRequestHeaders(options: OtaCheckOptions): Record<string, string> {
+/**
+ * The headers of the manifest request and every native download: the app's, plus the channel's.
+ * The target header goes only where a per-target feed needs it: `options.platform` was passed, or
+ * the running UI is a platform export (it carries the stamp). Any custom header makes a
+ * cross-origin request preflighted (`OPTIONS`), so an app with one export per feed keeps sending
+ * simple GETs, as before platform exports.
+ */
+async function otaRequestHeaders(options: OtaCheckOptions): Promise<Record<string, string>> {
   const headers: Record<string, string> = { ...options.headers };
   if (options.channel !== undefined) headers["x-denext-ota-channel"] = options.channel;
   const platform = shellTarget(options);
-  if (platform !== undefined) headers[OTA_PLATFORM_HEADER] = platform;
+  if (platform !== undefined && (options.platform !== undefined || await runningUiStamped())) {
+    headers[OTA_PLATFORM_HEADER] = platform;
+  }
   const installId = options.installId ?? (options.channel !== undefined ? "auto" : undefined);
   if (installId !== undefined) {
     headers["x-denext-ota-install-id"] = installId === "auto" ? otaInstallId() : installId;
   }
   return headers;
+}
+
+let stamped: Promise<boolean> | null = null;
+
+/**
+ * Whether the running UI is a platform export: its origin serves the stamp
+ * (`_denext/platform.txt`) naming a target. Same-origin, read once per page.
+ */
+function runningUiStamped(): Promise<boolean> {
+  return stamped ??= (async () => {
+    try {
+      const href = (globalThis as { location?: { href?: string } }).location?.href;
+      if (!href) return false;
+      const response = await fetch(new URL(`/${OTA_PLATFORM_PATH}`, href), { cache: "no-store" });
+      const text = response.ok ? (await response.text()).trim() : "";
+      if (!response.ok) await response.body?.cancel();
+      return /^(?:ios|android|macos|windows|linux)$/.test(text);
+    } catch {
+      return false;
+    }
+  })();
+}
+
+/** Forget {@linkcode runningUiStamped}'s answer (tests swap the page under it). @internal */
+export function resetOtaStampForTesting(): void {
+  stamped = null;
 }
 
 /** The shell's target: `options.platform`, else the shell's own (undefined off iOS / Android). */
@@ -400,6 +435,7 @@ function notifyNativeRequired<R extends { readonly kind: string }>(
 async function fetchManifest(
   baseUrl: string,
   options: OtaCheckOptions,
+  headers: Record<string, string>,
 ): Promise<OtaManifest | string> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
@@ -407,7 +443,7 @@ async function fetchManifest(
   try {
     const doFetch = options.fetch ?? globalThis.fetch;
     const response = await doFetch(`${baseUrl}/${OTA_MANIFEST_PATH}`, {
-      headers: otaRequestHeaders(options),
+      headers,
       cache: "no-store",
       signal: controller.signal,
     });
@@ -440,13 +476,14 @@ async function fetchManifest(
 async function newerManifest(
   plugin: DenextOtaPlugin,
   options: OtaCheckOptions,
+  headers: Record<string, string>,
 ): Promise<
   | { readonly kind: "current" }
   | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode }
   | { readonly kind: "newer"; readonly manifest: OtaManifest; readonly baseUrl: string }
 > {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
-  const manifest = await fetchManifest(baseUrl, options);
+  const manifest = await fetchManifest(baseUrl, options, headers);
   if (typeof manifest === "string") return { kind: "error", reason: manifest };
   const target = shellTarget(options);
   const mismatch = target === undefined ? null : await otaPlatformMismatch(manifest, target);
@@ -504,12 +541,13 @@ async function install<P extends DenextOtaPlugin>(
   call: (plugin: P, request: Parameters<DenextOtaPlugin["apply"]>[0]) => Promise<unknown>,
 ): Promise<{ readonly stop: InstallStop } | { readonly manifest: OtaManifest }> {
   if (!plugin) return { stop: { kind: "unsupported" } };
-  const found = await newerManifest(plugin, options);
+  const headers = await otaRequestHeaders(options);
+  const found = await newerManifest(plugin, options, headers);
   if (found.kind !== "newer") return { stop: found };
   const { manifest, baseUrl } = found;
   let result: unknown;
   try {
-    result = await call(plugin, { baseUrl, headers: otaRequestHeaders(options), manifest });
+    result = await call(plugin, { baseUrl, headers, manifest });
   } catch (err) {
     return { stop: refusal(err) };
   }

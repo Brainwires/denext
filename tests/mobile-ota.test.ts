@@ -108,10 +108,9 @@ Deno.test("checkForUiUpdate: a different version → apply with baseUrl, headers
   const { plugin: p, calls } = plugin({ current: null, bundled: BUNDLED, pending: null });
   await withShell({ DenextOta: p }, async () => {
     const f = okManifest();
-    const given = { authorization: "Bearer secret" };
-    // The shell's target rides every request (a per-target server serves its own export).
-    const headers = { ...given, "x-denext-ota-platform": "ios" };
-    const r = await checkForUiUpdate({ baseUrl: BASE, headers: given, fetch: f.fetch });
+    // An unstamped UI and no `platform` option: no target header (a simple GET, no preflight).
+    const headers = { authorization: "Bearer secret" };
+    const r = await checkForUiUpdate({ baseUrl: BASE, headers, fetch: f.fetch });
     assertEquals(r, { kind: "applied", version: SERVER });
     assertEquals(f.calls.length, 1);
     assertEquals(f.calls[0].url, "https://ui.example.com/mobile/_denext/ota.json");
@@ -290,9 +289,8 @@ Deno.test("prepareUiUpdate: a different version → download (not apply), ready 
   const { plugin: p, calls } = plugin({ current: null, bundled: BUNDLED, pending: null });
   await withShell({ DenextOta: p }, async () => {
     const f = okManifest();
-    const given = { authorization: "Bearer secret" };
-    const headers = { ...given, "x-denext-ota-platform": "ios" };
-    const r = await prepareUiUpdate({ baseUrl: BASE, headers: given, fetch: f.fetch });
+    const headers = { authorization: "Bearer secret" };
+    const r = await prepareUiUpdate({ baseUrl: BASE, headers, fetch: f.fetch });
     assertEquals(r, { kind: "ready", version: SERVER, required: false, notes: null });
     assertEquals(f.calls[0].url, "https://ui.example.com/mobile/_denext/ota.json");
     assertEquals(f.calls[0].init.cache, "no-store");

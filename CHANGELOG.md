@@ -39,7 +39,9 @@ Each item is described in full under Changed, Fixed or Security below.
 - **Platform-specific files apply to every app.** A `Name.web.tsx` beside `Name.tsx` now wins
   on the web outside React Native mode too, and `.ios` / `.android` / `.mobile` / `.macos` /
   `.windows` / `.linux` / `.desktop` files win in their targets' exports; set
-  `platformExtensions: false` to keep the plain files.
+  `platformExtensions: false` to keep the plain files. React Native mode is the exception for
+  the app's `.ios` / `.android` files, which stay unprobed unless `platformExtensions: { osFiles:
+  true }`.
 - **`WindowCapabilities`' index signature is `boolean | string | null`** (it carries
   `sessionType` and `cookieEncryption` now): read an unknown key as `=== true`.
 - **`expo-secure-store`'s `isAvailableAsync()` is `false` without a real secret store** (the web),
@@ -49,7 +51,10 @@ Each item is described in full under Changed, Fixed or Security below.
 - **Expo SDK 58 shims:** `File.write` is async, `expo-sqlite`'s `libSQLOptions` is gone, and shim
   errors are `CodedError`s.
 - **Regenerate the desktop package scripts** (`denext desktop package --regenerate-scripts`) so
-  Windows signs every PE file of the bundle.
+  Windows signs every PE file of the bundle, and so the macOS script exports for the `macos`
+  target (an older one packages the `web` platform files) and mirrors `desktop.app.identifier`
+  into `deno.json` after the export (an older one syncs before it, and the bundle can carry a
+  stale `CFBundleIdentifier` that no longer matches its provisioning profile).
 - **The desktop `fs` capability's cache folder moved** to a `denext` sub-folder on macOS and Linux;
   files a page stored with `directory: "cache"` before are not found there.
 - **Windows CEF apps packaged on runtime 2.9.7-denext.9 can't update themselves** to the layout of
@@ -85,8 +90,10 @@ Each item is described in full under Changed, Fixed or Security below.
   export; `denext mobile build ios|android` exports with its platform before `cap sync`, and
   `denext desktop package` / `run` with the target OS. Everything else stays `web`. A module with
   no file for the target fails the build naming its variants, and `denext doctor` lists those
-  gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`). Only the app's
-  own modules take a variant; packages keep their own resolution. An import through the app's
+  gaps per target. `.native` is opt-in (`platformExtensions: { native: true }`), and so, in React
+  Native mode, are the app's own `.ios` / `.android` files (`{ osFiles: true }`), which are native
+  code in a React Native app. Only the app's own modules take a variant; packages keep their own
+  resolution (React Native mode's `.web` for them is unchanged). An import through the app's
   import map (`@/components/BigButton`, an exact `#button` key) resolves the alias first and then
   the target's file, in the server render and the client bundle alike. The scaffolded package
   scripts export for their target OS (the macOS one through `desktopExportEnv("darwin")` from
@@ -104,7 +111,9 @@ Each item is described in full under Changed, Fixed or Security below.
 - **OTA manifests name their target.** A platform export carries `_denext/platform.txt`, so its
   manifest records `platform` (the signed version covers the file); `denext ota manifest
   --platform <target>` names one by hand. `checkForUiUpdate` and the desktop updater refuse
-  another target's UI (code `platform_mismatch`) and send `x-denext-ota-platform`, and
+  another target's UI (code `platform_mismatch`) and send `x-denext-ota-platform` (the mobile
+  shell only when its running UI is a platform export or `platform` is passed, so an app with one
+  feed keeps sending simple GETs, with no CORS preflight), and
   `createOtaHandler({ platforms })` serves each target its own export. The `platform` field is
   not signed, so the shells check the stamp itself against their own target: a stamped export
   stripped of the field is still refused by every other target. `web` names no target, so
@@ -300,7 +309,13 @@ Each item is described in full under Changed, Fixed or Security below.
 - **The macOS `.dmg` step sizes its image explicitly.** `hdiutil create -srcfolder` underestimated
   the image on newer macOS runner images ("No space left on device"); the package script now passes
   `-size` (the bundle plus 25% and 64 MiB). The final UDZO image is still compressed.
-
+- **Concurrent server loads of a `"use cache"` module all get the compiled copy.** The server
+  loader took a module another load was still compiling for an import cycle and loaded its
+  original, for the life of the server: `denext start` warms every route at once, so a module two
+  routes share could run uncached. A real cycle is now copied whole.
+- **`import.meta.url`, `.filename`, `.dirname` and `.resolve()` in a `"use cache"` module name the
+  module itself.** The compiled copy lives in `.denext/server-cache/`, so
+  `new URL("./data.json", import.meta.url)` looked for the file there.
 - **A `"use cache"` function imported through an import-map alias is cached.** The server loader
   followed only relative imports, so `import { getPosts } from "@/lib/data.ts"` loaded the
   module untransformed and ran it on every request.

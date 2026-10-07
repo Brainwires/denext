@@ -47,10 +47,12 @@ mode claims it.
 ## Platform-specific files
 
 `.web.tsx` files win over the plain ones, as in Metro's web build. In the iOS and Android exports
-(`denext mobile build`) `Name.ios.tsx` / `Name.android.tsx` / `Name.mobile.tsx` win too, and in a
-desktop package `Name.macos.tsx` / `Name.desktop.tsx`. `.native.tsx` is skipped unless
-`platformExtensions: { native: true }`: in a React Native app it usually holds native code, which
-the WebView cannot run. Packages keep resolving to their web build. See
+(`denext mobile build`) `Name.mobile.tsx` wins too, and in a desktop package `Name.macos.tsx` /
+`Name.desktop.tsx`. The app's own `Name.ios.tsx` / `Name.android.tsx` and `.native.tsx` files are
+skipped: in a React Native app they usually hold native code, which the WebView cannot run, so the
+iOS export takes `Name.web.tsx` (or the plain file) instead. Opt in where yours are web-safe:
+`platformExtensions: { osFiles: true }` probes `.ios` / `.android`, and `{ native: true }` probes
+`.native`. Packages keep resolving to their web build. See
 [platform-specific files](/docs/platform-files).
 
 ## Migrating an Expo app

@@ -103,6 +103,29 @@ Deno.test("platformResolution: on by default, `{ native }` read, `false` turns i
   assertEquals(platformResolution({ platformExtensions: false }, "ios"), null);
 });
 
+Deno.test("platformResolution: React Native mode leaves out .ios / .android unless `osFiles`", () => {
+  const rn = (platformExtensions?: DenextConfig["platformExtensions"]) => (platform: Platform) =>
+    platformResolution({ reactNative: true, platformExtensions }, platform)!.suffixes;
+  assertEquals(rn()("ios"), [".mobile", ".web"]);
+  assertEquals(rn()("android"), [".mobile", ".web"]);
+  assertEquals(rn({ native: true })("ios"), [".native", ".mobile", ".web"]);
+  // The desktop OS suffixes and `.web` still apply.
+  assertEquals(rn()("macos"), [".macos", ".desktop", ".web"]);
+  assertEquals(rn()("web"), [".web"]);
+  assertEquals(rn({ osFiles: true })("ios"), [".ios", ".mobile", ".web"]);
+  assertEquals(rn({ osFiles: true, native: true })("android"), [
+    ".android",
+    ".native",
+    ".mobile",
+    ".web",
+  ]);
+  // Outside React Native mode the OS files are always probed.
+  assertEquals(
+    platformResolution({ platformExtensions: { osFiles: false } }, "ios")!.suffixes,
+    [".ios", ".mobile", ".web"],
+  );
+});
+
 Deno.test("parsePlatform / desktopPlatform: the target names", () => {
   assertEquals(parsePlatform(undefined), "web");
   assertEquals(parsePlatform(""), "web");
@@ -229,9 +252,9 @@ Deno.test("composeRedirects: a variant with a transformed copy redirects to the 
   assertEquals(composeRedirects(same, undefined), same);
 });
 
-Deno.test("config: platformExtensions is a boolean or `{ native?: boolean }`", () => {
+Deno.test("config: platformExtensions is a boolean or `{ native?, osFiles? }`", () => {
   validateDenextConfig({ platformExtensions: false });
-  validateDenextConfig({ platformExtensions: { native: true } });
+  validateDenextConfig({ platformExtensions: { native: true, osFiles: true } });
   assertThrows(
     () => validateDenextConfig({ platformExtensions: "ios" } as unknown as DenextConfig),
     Error,
@@ -247,6 +270,11 @@ Deno.test("config: platformExtensions is a boolean or `{ native?: boolean }`", (
       validateDenextConfig({ platformExtensions: { native: "yes" } } as unknown as DenextConfig),
     Error,
     "`platformExtensions.native` must be a boolean",
+  );
+  assertThrows(
+    () => validateDenextConfig({ platformExtensions: { osFiles: 1 } } as unknown as DenextConfig),
+    Error,
+    "`platformExtensions.osFiles` must be a boolean",
   );
 });
 
@@ -551,6 +579,13 @@ Deno.test("dev hints: header, then query, then cookie, else web; the query is pi
   const pinned = pinDevPlatform(req("/?__denext_platform=ios"), new Response("ok"));
   assertEquals(pinned.headers.get("set-cookie"), "__denext_platform=ios; Path=/; SameSite=Lax");
   assertEquals(pinDevPlatform(req("/"), new Response("ok")).headers.get("set-cookie"), null);
+  // `?__denext_platform=web` is the reset: it wins over a pinned cookie and pins `web`.
+  const reset = req("/?__denext_platform=web", { cookie: "__denext_platform=ios" });
+  assertEquals(devPlatformOf(reset), "web");
+  assertEquals(
+    pinDevPlatform(reset, new Response("ok")).headers.get("set-cookie"),
+    "__denext_platform=web; Path=/; SameSite=Lax",
+  );
   const immutable = Response.redirect("http://dev/x", 302);
   assertStringIncludes(
     pinDevPlatform(req("/?__denext_platform=ios"), immutable).headers.get("set-cookie")!,

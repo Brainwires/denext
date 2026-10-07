@@ -16,7 +16,7 @@ import {
 import { writeOtaManifest, writePlatformStamp } from "../src/build/ota-manifest.ts";
 import { generateOtaKeyPair, importOtaSigningKey } from "../src/build/ota-signing.ts";
 import { createOtaHandler } from "../src/server/ota-handler.ts";
-import { checkForUiUpdate } from "../src/mobile/ota.ts";
+import { checkForUiUpdate, resetOtaStampForTesting } from "../src/mobile/ota.ts";
 import {
   checkForDesktopUpdate,
   DesktopUpdateError,
@@ -95,8 +95,29 @@ Deno.test("writeOtaManifest: the stamp names the target; --platform stamps; a co
 });
 
 /** Run `fn` inside a stubbed native shell of `platform` whose DenextOta plugin records applies. */
-async function inShell(platform: string, fn: (applies: Any[]) => Promise<void>): Promise<void> {
+/**
+ * Run `fn` in a fake `platform` shell whose page origin serves `stamp` as the running UI's
+ * `_denext/platform.txt` (none when undefined).
+ */
+async function inShell(
+  platform: string,
+  fn: (applies: Any[]) => Promise<void>,
+  stamp?: string,
+): Promise<void> {
   const saved = Object.getOwnPropertyDescriptor(g, "Capacitor");
+  const savedLocation = Object.getOwnPropertyDescriptor(g, "location");
+  const savedFetch = g.fetch;
+  Object.defineProperty(g, "location", {
+    value: { href: "capacitor://localhost/index.html" },
+    configurable: true,
+  });
+  g.fetch = (url: URL | string) =>
+    Promise.resolve(
+      String(url) === `capacitor://localhost/${OTA_PLATFORM_PATH}` && stamp !== undefined
+        ? new Response(stamp)
+        : new Response("not found", { status: 404 }),
+    );
+  resetOtaStampForTesting();
   const applies: Any[] = [];
   g.Capacitor = {
     isNativePlatform: () => true,
@@ -115,6 +136,10 @@ async function inShell(platform: string, fn: (applies: Any[]) => Promise<void>):
   } finally {
     if (saved) Object.defineProperty(g, "Capacitor", saved);
     else delete g.Capacitor;
+    if (savedLocation) Object.defineProperty(g, "location", savedLocation);
+    else delete g.location;
+    g.fetch = savedFetch;
+    resetOtaStampForTesting();
   }
 }
 
@@ -134,13 +159,36 @@ Deno.test("checkForUiUpdate: another target's UI is refused (platform_mismatch);
     assertEquals(r.kind, "error");
     assertEquals((r as { code?: string }).code, "platform_mismatch");
     assertEquals(applies.length, 0, "nothing reaches the native side");
-    assertEquals((calls[0].headers as Record<string, string>)["x-denext-ota-platform"], "ios");
-  });
+  }, "ios");
   await inShell("android", async (applies) => {
     const r = await checkForUiUpdate({ baseUrl: "https://ui.test", fetch: serve(android) as Any });
     assertEquals(r, { kind: "applied", version: android.version });
     assertEquals(applies[0].headers["x-denext-ota-platform"], "android");
-  });
+  }, "android");
+});
+
+Deno.test("checkForUiUpdate: the target header only for a stamped UI or an explicit platform", async () => {
+  const ios = await makeOtaManifest([INDEX, await stampEntry("ios")], { platform: "ios" });
+  const sent = async (stamp: string | undefined, platform?: "ios") => {
+    const calls: RequestInit[] = [];
+    const fetch = (_: unknown, init: RequestInit = {}) => (
+      calls.push(init), Promise.resolve(Response.json(ios))
+    );
+    let applied: Any;
+    await inShell("ios", async (applies) => {
+      await checkForUiUpdate({ baseUrl: "https://ui.test", fetch: fetch as Any, platform });
+      applied = applies[0];
+    }, stamp);
+    const header = (calls[0].headers as Record<string, string>)["x-denext-ota-platform"];
+    assertEquals(applied?.headers["x-denext-ota-platform"], header, "downloads match the check");
+    return header;
+  };
+  // An unstamped (web) UI: a simple GET, which needs no CORS preflight.
+  assertEquals(await sent(undefined), undefined);
+  // The running UI is the iOS export: its feed may be per target.
+  assertEquals(await sent("ios"), "ios");
+  // Asked for explicitly.
+  assertEquals(await sent(undefined, "ios"), "ios");
 });
 
 Deno.test("createOtaHandler({ platforms }): each target gets its export; web without the header", async () => {

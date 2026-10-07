@@ -1070,7 +1070,7 @@
       "default": true
     },
     "platformExtensions": {
-      "description": "Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package, `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`; android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` → `.web`. Applies to the app's own modules (packages in `node_modules` keep their own resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and android (off by default: `.native` files are usually native code, which a WebView cannot run). `false` turns platform files off. See https://denext.dev/docs/platform-files.",
+      "description": "Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package, `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`; android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` → `.web`. Applies to the app's own modules (packages in `node_modules` keep their own resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and android (off by default: `.native` files are usually native code, which a WebView cannot run). In React Native mode the app's `.ios` / `.android` files are native code too, so they are not probed unless `{ osFiles: true }`. `false` turns platform files off. See https://denext.dev/docs/platform-files.",
       "anyOf": [
         {
           "type": "boolean"
@@ -1080,6 +1080,11 @@
           "properties": {
             "native": {
               "description": "Probe React Native's `.native` suffix after the OS one on ios and android (`.ios` → `.native` → `.mobile` → `.web`).",
+              "type": "boolean",
+              "default": false
+            },
+            "osFiles": {
+              "description": "In React Native mode (DenextConfig.reactNative), also probe the app's own `.ios` / `.android` files for the ios and android targets. Off by default there: in a React Native app those files are native code, which a WebView cannot run (`.mobile`, `.desktop`, the desktop OS suffixes and `.web` still apply). Outside React Native mode they are always probed.",
               "type": "boolean",
               "default": false
             }

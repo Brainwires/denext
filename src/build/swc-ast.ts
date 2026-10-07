@@ -9,7 +9,7 @@
 // walk the AST, and apply non-overlapping byte-offset edits.
 
 import { ensureDir } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
 
 // deno-lint-ignore no-explicit-any -- swc's AST is an untyped node graph.
 export type Node = any;
@@ -354,4 +354,58 @@ export async function writeTransformedModules(
     map[url] = toFileUrl(out).href;
   }
   return map;
+}
+
+/** The `import.meta` members a copy pins to its original module. */
+const PINNED_META = new Set(["url", "filename", "dirname", "resolve"]);
+
+/**
+ * `source` (a copy of the module at `originalUrl`, written elsewhere) with its `import.meta.url`,
+ * `.filename` and `.dirname` replaced by the original module's, and `import.meta.resolve` of a
+ * relative specifier resolved against it: `new URL("./data.txt", import.meta.url)` in a copy keeps
+ * reaching the file beside the original. A bare `import.meta` (destructured, passed on) becomes
+ * an object with those members pinned. The source is returned as is when it names no
+ * `import.meta` or does not parse.
+ *
+ * @param source The copy's code.
+ * @param originalUrl The `file:` URL of the module the copy stands in for.
+ */
+export async function pinImportMeta(source: string, originalUrl: string): Promise<string> {
+  if (!source.includes("import.meta")) return source;
+  const parsed = await parseModule(source);
+  if (!parsed) return source;
+  const path = fromFileUrl(originalUrl);
+  const url = JSON.stringify(originalUrl);
+  const resolve =
+    `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : import.meta.resolve(s))`;
+  const literal: Record<string, string> = {
+    url,
+    filename: JSON.stringify(path),
+    dirname: JSON.stringify(dirname(path)),
+    resolve,
+  };
+  const edits: Edit[] = [];
+  const members = new Set<Node>();
+  const visit = (n: Node) => {
+    if (n.type === "MemberExpression" && n.object?.type === "MetaProperty") {
+      members.add(n.object); // `import.meta.main` and the like stay as written
+      const name = n.property?.type === "Identifier" ? n.property.value : null;
+      if (name && PINNED_META.has(name)) {
+        edits.push({
+          start: startOf(parsed.ctx, n),
+          end: endOf(parsed.ctx, n),
+          text: literal[name],
+        });
+      }
+    } else if (n.type === "MetaProperty" && n.kind === "import.meta" && !members.has(n)) {
+      const fields = [...PINNED_META].map((k) => `${k}: ${literal[k]}`).join(", ");
+      edits.push({
+        start: startOf(parsed.ctx, n),
+        end: endOf(parsed.ctx, n),
+        text: `({ ...import.meta, ${fields} })`,
+      });
+    }
+  };
+  for (const item of parsed.body) walkAst(item, visit);
+  return edits.length === 0 ? source : applyEdits(parsed.ctx.bytes, edits);
 }

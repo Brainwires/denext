@@ -428,6 +428,15 @@ export interface PlatformExtensionsConfig {
    * @default false
    */
   native?: boolean;
+  /**
+   * In React Native mode ({@link DenextConfig.reactNative}), also probe the app's own `.ios` /
+   * `.android` files for the ios and android targets. Off by default there: in a React Native app
+   * those files are native code, which a WebView cannot run (`.mobile`, `.desktop`, the desktop
+   * OS suffixes and `.web` still apply). Outside React Native mode they are always probed.
+   *
+   * @default false
+   */
+  osFiles?: boolean;
 }
 
 /** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
@@ -1488,7 +1497,8 @@ export interface DenextConfig {
    * `.web`. Applies to the app's own modules (packages in `node_modules` keep their own
    * resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and
    * android (off by default: `.native` files are usually native code, which a WebView cannot
-   * run). `false` turns platform files off. See
+   * run). In React Native mode the app's `.ios` / `.android` files are native code too, so they
+   * are not probed unless `{ osFiles: true }`. `false` turns platform files off. See
    * {@link https://denext.dev/docs/platform-files}.
    *
    * @default true

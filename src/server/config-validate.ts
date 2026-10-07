@@ -865,16 +865,17 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
-/** `platformExtensions` is a boolean or `{ native?: boolean }`. */
+/** `platformExtensions` is a boolean or `{ native?: boolean, osFiles?: boolean }`. */
 function validatePlatformExtensions(value: unknown, fail: Fail): void {
   if (value === undefined || typeof value === "boolean") return;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    fail("platformExtensions", "must be a boolean or `{ native?: boolean }`");
+    fail("platformExtensions", "must be a boolean or `{ native?: boolean, osFiles?: boolean }`");
     return;
   }
   for (const [key, v] of Object.entries(value)) {
-    if (key !== "native") fail(`platformExtensions.${key}`, "is not a known option (native)");
-    else if (typeof v !== "boolean") fail("platformExtensions.native", "must be a boolean");
+    if (key !== "native" && key !== "osFiles") {
+      fail(`platformExtensions.${key}`, "is not a known option (native, osFiles)");
+    } else if (typeof v !== "boolean") fail(`platformExtensions.${key}`, "must be a boolean");
   }
 }
 

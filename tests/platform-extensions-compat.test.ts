@@ -181,3 +181,57 @@ for (const [platform, want] of CASES) {
     });
   }
 }
+
+/**
+ * A package shipping React Native's platform files (`Foo.ios.js`, `Foo.web.js`), reached through
+ * a relative import inside it, beside the app's own `label` files.
+ */
+function withPackage(reactNative: boolean, platformExtensions: string): Record<string, string> {
+  return {
+    ...spa(true, [".desktop"]),
+    "denext.config.ts": `export default { mode: "spa", spa: { entry: "./src/main.ts" }, ` +
+      `compatibilityMode: true, reactNative: ${reactNative}, ` +
+      `platformExtensions: ${platformExtensions} };\n`,
+    "src/main.ts": `import { label } from "./label";\nimport { x } from "rnlib";\n` +
+      `console.log(label, x);\n`,
+    "node_modules/rnlib/package.json": JSON.stringify({
+      name: "rnlib",
+      version: "1.0.0",
+      main: "lib/index.js",
+    }),
+    "node_modules/rnlib/lib/index.js": `export * from "./Foo";\n`,
+    "node_modules/rnlib/lib/Foo.js": `export const x = "PKG_PLAIN";\n`,
+    "node_modules/rnlib/lib/Foo.ios.js": `export const x = "PKG_IOS";\n`,
+    "node_modules/rnlib/lib/Foo.web.js": `export const x = "PKG_WEB";\n`,
+  };
+}
+
+// [React Native mode, platformExtensions, target, the app's file, the package's file]
+const PACKAGE_CASES: ReadonlyArray<readonly [boolean, string, Platform, string, string]> = [
+  // A package keeps its own resolution: plain outside React Native mode…
+  [false, "true", "ios", "IOS_LABEL", "PKG_PLAIN"],
+  [false, "true", "web", "WEB_LABEL", "PKG_PLAIN"],
+  // …its `.web` build in React Native mode, as before platform files.
+  [true, "true", "web", "WEB_LABEL", "PKG_WEB"],
+  // React Native mode: the app's `.ios` files are native code, opt-in with `osFiles`.
+  [true, "true", "ios", "WEB_LABEL", "PKG_WEB"],
+  [true, "{ osFiles: true }", "ios", "IOS_LABEL", "PKG_WEB"],
+];
+
+for (const [reactNative, option, platform, wantApp, wantPkg] of PACKAGE_CASES) {
+  const mode = reactNative ? "React Native mode" : "SPA";
+  Deno.test(`${mode} export --platform ${platform} (platformExtensions: ${option}): app ${wantApp}, package ${wantPkg}`, async () => {
+    const dir = await project(withPackage(reactNative, option));
+    try {
+      const { js } = await exported((await staticExport(dir, { platform })).outDir);
+      assertStringIncludes(js, wantApp);
+      assertStringIncludes(js, wantPkg);
+      const others = [...LABELS, "PKG_PLAIN", "PKG_IOS", "PKG_WEB"];
+      for (const other of others.filter((l) => l !== wantApp && l !== wantPkg)) {
+        assert(!js.includes(other), `${other} bundled`);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}

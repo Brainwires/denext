@@ -2590,6 +2590,16 @@ export function UpdatePrompt() {
         <code>OPTIONS</code>{" "}
         to the handler before your auth check. The native file downloads are not subject to CORS.
       </p>
+      <p>
+        A shell whose running UI is a platform export (<code>denext export --platform ios</code>,
+        see{" "}
+        <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>), or a check
+        given <code>platform</code>, also sends <code>x-denext-ota-platform</code>{" "}
+        so a per-target feed can serve its own export. That custom header makes the manifest request
+        preflighted too: a per-target feed must answer <code>OPTIONS</code> (<code>cors</code>{" "}
+        allows the header). A shell running a <code>web</code>{" "}
+        export with no other headers sends a simple <code>GET</code>.
+      </p>
       <Code lang="ts">
         {`const ota = createOtaHandler({ dir: "out", basePath: "/mobile-ui", cors: true });
 Deno.serve(async (req) => {

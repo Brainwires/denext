@@ -82,6 +82,8 @@ The dev server serves `web` by default. A shell that names its target gets that 
 - Any other client can do the same: open `http://localhost:3000/?__denext_platform=ios`. The dev
   server pins the target in a cookie, so the page's later requests (its modules, navigations,
   hot updates) keep it. A browser with no hint gets `web`.
+- The pin is a session cookie: it ends when the browser closes. To go back to `web` before that,
+  open `?__denext_platform=web` once (it pins `web`).
 
 The page's server render, its modules, its bundled routes (an MDX route, or every route under
 `DENEXT_DEV_UNBUNDLED=0`) and its Flight boundary follow the target, so a variant may be an
@@ -96,8 +98,12 @@ A platform export carries `_denext/platform.txt` (its target's name), so its OTA
 the target (`"platform": "ios"`). The manifest's version, and so its signature, covers that file;
 the `platform` field itself is not signed, so a shell checks the stamp against its own target too:
 dropping or changing the field never moves an export to another target. `checkForUiUpdate` and the
-desktop updater refuse a manifest built for another target (code `platform_mismatch`), and send their own target (`x-denext-ota-platform`) with the manifest
-request and every download, so one server can keep an export per target:
+desktop updater refuse a manifest built for another target (code `platform_mismatch`), and send
+their own target (`x-denext-ota-platform`) with the manifest request and every download, so one
+server can keep an export per target. The mobile shell sends it when its running UI is a platform
+export (or `checkForUiUpdate` is given `platform`); being a custom header, it makes a cross-origin
+manifest request preflighted, so the server must answer `OPTIONS` (`createOtaHandler`'s `cors`
+does). A shell running a `web` export sends a simple `GET`.
 
 ```ts
 import { createOtaHandler } from "denext/server";
@@ -145,6 +151,7 @@ works.
 // denext.config.ts
 export default {
   platformExtensions: { native: true }, // also probe .native after .ios / .android
+  // platformExtensions: { osFiles: true }, // React Native mode: probe the app's .ios / .android
   // platformExtensions: false,         // turn platform files off
 };
 ```
@@ -153,6 +160,11 @@ export default {
   run in a WebView; a migrated Expo app's `.native.tsx` files are usually that. Opt in with
   `platformExtensions: { native: true }` when yours are web-safe: iOS then probes `.ios` →
   `.native` → `.mobile` → `.web`.
+- In [React Native mode](/docs/react-native), the app's own `.ios` / `.android` files are not
+  probed either: there they are native code too (a React Native app keeps its iOS and Android
+  implementations in them). The iOS export probes `.mobile` → `.web` → plain. Opt in with
+  `platformExtensions: { osFiles: true }` when yours are web-safe. `.mobile`, `.desktop`, the
+  desktop OS suffixes and `.web` apply as in any app.
 - `platformExtensions: false` turns platform files off: every import resolves to the plain
   file (React Native mode still probes `.web` for its own needs).
 
