@@ -9,6 +9,9 @@
 //   deno task release 2.0.0-rc.5 --dry      # preview every step; write/commit nothing
 //
 // Order of operations:
+//   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
+//      coverage — a push to `development` skips them; dispatch ci.yml) is green, else ABORT
+//      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
@@ -29,6 +32,7 @@
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
+import { releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
 
 /**
  * Regenerate the `examples/effect` migrate golden against the just-bumped framework
@@ -331,8 +335,9 @@ async function main(): Promise<void> {
   const { version, dry, confirmed } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
-  if (dry) return await dryRun(version, tag);
+  if (dry) return await dryRun(version, tag, branch);
   await checkPreconditions(tag, branch);
+  await checkCi(branch, false);
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
   await runGate();
@@ -340,8 +345,9 @@ async function main(): Promise<void> {
 }
 
 /** `--dry`: preview steps 1–2 regardless of tree state; skip the gate; write nothing. */
-async function dryRun(version: string, tag: string): Promise<void> {
+async function dryRun(version: string, tag: string, branch: string): Promise<void> {
   console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
+  await checkCi(branch, true);
   await prepareRelease(version, true);
   console.log("3. docs:api          (skipped — dry run)");
   console.log("3b. badge:tests      (skipped — dry run)");
@@ -373,6 +379,24 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
   if (branch !== "development") {
     console.warn(`release: warning — on branch "${branch}", not "development".`);
   }
+}
+
+/**
+ * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage) passed on HEAD
+ * (scripts/release-ci.ts). A real run aborts otherwise; `--dry` reports and goes on.
+ */
+async function checkCi(branch: string, dry: boolean): Promise<void> {
+  const sha = await capture("git", "rev-parse", "HEAD");
+  const verdict = await releaseCiVerdict(sha).catch((err: Error) => ({
+    ok: false,
+    reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
+    run: undefined,
+  }));
+  const where = verdict.run ? ` — ${verdict.run.url}` : "";
+  if (verdict.ok) return console.log(`0. CI: ${verdict.reason}${where}`);
+  const message = `CI gate: ${verdict.reason}${where}\n  ${releaseCiHint(branch)}`;
+  if (dry) return console.log(`0. ${message}\n   (a real run stops here)`);
+  die(`${message}\nrelease aborted BEFORE any change.`);
 }
 
 /** Steps 1–2: version pins (+ the effect example golden) and the CHANGELOG roll. */

@@ -236,7 +236,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 
 1. **Start from a clean, pushed `development`** (`git status` clean; all work
    lands on `development` — never branch off it).
-2. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
+2. **Run the heavy CI jobs on that commit.** A push to `development` runs only
+   ci.yml's fast jobs; `integration`, `next-compat` and `coverage` run on pull
+   requests, `main` and a manual dispatch. Dispatch it and wait:
+   `gh workflow run ci.yml --ref development`, then
+   `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
+   The release script checks this itself (`scripts/release-ci.ts`): it refuses
+   to start unless the newest ci.yml run on HEAD that ran those jobs has
+   `check`, `integration`, `next-compat`, `coverage` and `ios-export-router`
+   green (it needs `gh`, logged in).
+3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every
    `packages/*/deno.json` peer pin, `examples/*/deno.json` JSR pins), rolls
@@ -247,19 +256,19 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    `deno task check`, `deno task doc-lint` and `deno publish --dry-run`, shows
    the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
    publish.
-3. **Before running it for a stable major/minor**, hand-edit the prose the bump
+4. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
    any stage language on the docs-site pages (`site/app/docs/*/content.md`).
-4. **Watch the publish and verify it went live:**
+5. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
    then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
-5. **Merge `development` into `main`** — `main` must always equal the published
+6. **Merge `development` into `main`** — `main` must always equal the published
    release: `gh pr create --base main --head development` then
    `gh pr merge <n> --merge`. A tag without this merge is an incomplete release.
-6. **Deploy the docs site** (`deno task docs:build` + the rsync in
+7. **Deploy the docs site** (`deno task docs:build` + the rsync in
    [the docs-site notes](./site/README.md)); it is not part of the script.
 
-7. **Package managers (stable releases, by hand).** The `release` job attaches
+8. **Package managers (stable releases, by hand).** The `release` job attaches
    generated manifests to the GitHub release (`scripts/gen-package-manifests.ts`,
    from its `SHA256SUMS`): `denext.rb` (Homebrew), `denext.json` (Scoop) and
    `Brainwires.denext.yaml` + `.installer.yaml` + `.locale.en-US.yaml` (winget).
