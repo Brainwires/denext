@@ -18,6 +18,10 @@ and this project adheres to
 
 ### Added
 
+- **`denext routes`** lists the app's pages and API route handlers as a table (kind, route, HTTP
+  methods, dynamic params, file), or `{ pages, api }` with `--json`. It scans `app/` without
+  importing a route module — an API route's methods are read from its source — and the MCP
+  `denext_list_routes` tool now reads the same listing (`src/build/route-list.ts`).
 - **Task retries:** `defineTask({ retry: { attempts, backoff } })` runs a failed task again up to
   `attempts` more times (`backoff`: a fixed delay in ms, or `{ strategy: "fixed" |
   "exponential", delayMs, maxDelayMs }`; default exponential from 1 s, capped at 5 min) and

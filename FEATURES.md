@@ -790,7 +790,8 @@ cache uses Deno's built-in `node:sqlite`.)
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
   `middleware`, `task`, `test`, `docker`; the engine takes `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
-  `dev`, `build`,
+  `routes` (the app's pages and API routes with methods, params and files, as a table or
+  `--json`; no route module is imported), `dev`, `build`,
   `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`; `test`
   passes `--watch`/`--coverage` through), `analyze` (build + a per-chunk client
   bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`

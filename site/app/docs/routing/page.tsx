@@ -31,6 +31,21 @@ export default function Routing() {
     hello/route.ts  GET/POST/... returning a Response
 middleware.ts       runs before routing (proxy.ts is the same hook)`}
       </Code>
+      <p>
+        <code>denext routes</code>{" "}
+        lists what these files add up to — each page and route handler with its HTTP methods,
+        dynamic params and file — as a table, or as JSON with <code>--json</code>. It reads{" "}
+        <code>app/</code>{" "}
+        without importing a route module (an API route's methods come from its source), so it needs
+        no dev server or build. The MCP <code>denext_list_routes</code> tool reads the same listing.
+      </p>
+      <Code lang="text">
+        {`$ denext routes
+KIND  ROUTE         METHODS   PARAMS  FILE
+page  /blog/[slug]  GET       slug    app/blog/[slug]/page.tsx
+page  /             GET       -       app/page.tsx
+api   /api/hello    GET,POST  -       app/api/hello/route.ts`}
+      </Code>
 
       <h2>Dynamic segments</h2>
       <Code lang="tsx">

@@ -10,6 +10,7 @@ import { createCommand, initCommand } from "./commands/create.ts";
 import { generateCommand } from "./commands/generate.ts";
 import { fallowCommand } from "./commands/fallow.ts";
 import { taskCommand } from "./commands/task.ts";
+import { routesCommand } from "./commands/routes.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
@@ -34,6 +35,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(exportCommand);
   reg.register(startCommand);
   reg.register(taskCommand);
+  reg.register(routesCommand);
   // Toolchain (deno passthrough).
   reg.register(testCommand);
   reg.register(lintCommand);

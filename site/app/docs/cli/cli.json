@@ -1357,6 +1357,21 @@
       ]
     },
     {
+      "name": "routes",
+      "summary": "List the app's pages and API routes (a table, or --json)",
+      "usage": "denext routes [dir]",
+      "description": "Scans app/ (or src/app/) without importing any route module: each route's kind,\npath, HTTP methods (an API route's exported handlers, read from its source), dynamic\nparams and file. --json prints { pages, api } for scripts.",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
       "name": "start",
       "summary": "Serve a production build",
       "usage": "denext start [dir] [options]",

@@ -102,7 +102,6 @@ Each is documented as a manual recipe today (the
   `denext/testing`) so a community adapter can prove itself.
 - **`denext generate migration | seed | ci`,** scaffolded the way `generate docker` is.
 - **`denext upgrade`:** bump the `denext` pin, its CLI task and every first-party plugin together.
-- **`denext routes`:** the app's pages and API routes as a table / `--json`.
 - **CDN cache headers by default:** an ISR hit emits `public, s-maxage=<revalidate>,
   stale-while-revalidate=…`, with a config key to turn it off.
 - **`global-error.tsx` hydration on the next-compat and static-export paths** (it hydrates on
