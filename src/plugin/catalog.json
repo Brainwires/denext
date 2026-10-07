@@ -421,8 +421,8 @@
     },
     {
       "name": "@denext/pages-router",
-      "version": "0.10.0",
-      "spec": "jsr:@denext/pages-router@^0.10.0",
+      "version": "0.11.0",
+      "spec": "jsr:@denext/pages-router@^0.11.0",
       "exports": [
         ".",
         "./client-runtime",
