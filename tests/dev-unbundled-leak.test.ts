@@ -97,7 +97,7 @@ Deno.test('a "use server" module in the graph is an action stub, not a leak', as
 // the dev boundary's id when the boundary holds it.
 Deno.test('unbundled dev serves a "use server" module as its action stub', async () => {
   const root = new URL("../", import.meta.url).href;
-  const { dir } = await project({
+  const { dir: written } = await project({
     "deno.json": JSON.stringify({
       imports: { "denext": `${root}mod.ts`, "@/": "./", "#actions": "./app/actions.ts" },
     }),
@@ -107,6 +107,7 @@ Deno.test('unbundled dev serves a "use server" module as its action stub', async
       `"use client";\nimport { save } from "@/app/actions.ts";\nexport const A = save;\n`,
     "app/Hash.tsx": `"use client";\nimport { save } from "#actions";\nexport const H = save;\n`,
   });
+  const dir = await Deno.realPath(written); // the transform names modules by their real path
   const dev = createUnbundledDev({
     projectDir: dir,
     appDir: join(dir, "app"),

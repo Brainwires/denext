@@ -180,13 +180,20 @@ async function server(dir: string, verb: "start" | "dev") {
     env: { NO_COLOR: "1" },
   }).spawn();
   const origin = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 240; i++) {
+  // Generous: a loaded machine takes a while to start (and, in dev, to build) the server.
+  let ready = false;
+  for (const deadline = Date.now() + 300_000; !ready && Date.now() < deadline;) {
     try {
       const res = await fetch(`${origin}/`);
       await res.body?.cancel();
-      if (res.ok) break;
+      ready = res.ok;
     } catch { /* not listening yet */ }
-    await new Promise((r) => setTimeout(r, 250));
+    if (!ready) await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!ready) {
+    child.kill("SIGTERM");
+    await child.status;
+    throw new Error(`denext ${verb} did not answer / within 300 s`);
   }
   return {
     origin,
