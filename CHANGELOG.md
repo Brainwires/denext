@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-07
+
 ### Breaking
 
 - **Deno Desktop needs runtime 2.9.7-denext.9.** An app packaged with an older runtime loses its
@@ -132,7 +134,6 @@ and this project adheres to
   `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
   when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the
   handler gets fresh `appCapabilities()`; create the tray icon again when `tray` turns `true`.
-
 - **Linux notification and badge facts (runtime 2.9.7-denext.11).** `appCapabilities()` reports
   where the badge shows (`badgeShows`: `"dock"`, `"launcher-entry"` for a count on the app's
   launcher where a dock reads launcher badges, or `"title"`, with `badgeReason`), and the
@@ -177,7 +178,6 @@ and this project adheres to
   runtime 2.9.7-denext.12, which a later denext release pins, the runtime runs `kbuildsycoca6` /
   `kbuildsycoca5` where installed after `xdg-mime`, so the first link on Plasma reaches the app
   without a re-login. Under 3.2.0's pin (denext.11) Plasma may need a re-login first.
-
 - **denext pins Deno Desktop runtime 2.9.7-denext.11 (3.1.0 pinned denext.8) and requires at
   least 2.9.7-denext.9.** `src/build/desktop-runtime-pin.json` points at the
   `denext-runtime-v2.9.7-denext.11` release (laufey `00f2128`, API 45), so `denext desktop` and the
@@ -257,7 +257,6 @@ and this project adheres to
   app's, `laufey-<app id>-<16 hex digits>.timer`, so an app whose id extends it keeps its own;
   `--no-block` under a 10 s timeout, so a stuck manager can't stall the package manager). An app
   id D-Bus can't take as a name (an element starting with a digit) gets neither.
-
 - **Windows CEF bundles take the layout of CEF's bootstrap**, for a runtime whose CEF backend runs
   web content in Chromium's sandbox on Windows (its laufey ships CEF's `bootstrap.exe` as the
   executable and the host as `laufey.dll`): the Windows package script and `denext desktop run` /
@@ -280,7 +279,6 @@ and this project adheres to
 - **Every `unsupported` from the `app`, `window` and `globalShortcuts` capabilities carries a
   reason** in `error.data.reason` (and in the message): which runtime API is missing, or what the
   session lacks.
-
 - **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
   against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
   and `denext/expo/manifest` and the [Expo APIs](https://denext.dev/docs/react-native#expo-apis)
@@ -471,25 +469,21 @@ and this project adheres to
 - **`expo-web-browser`'s `openAuthSessionAsync` refuses an http(s) `redirectUrl` in the native
   shell** instead of waiting forever: a native session ends only on a redirect to the app's own
   scheme.
-
 - **Three path checks now follow real paths, not just the text.** `denext mobile build`'s crash
   restore resolves each entry of its on-disk index and skips one outside the project (an
   `a/../../x` entry got through the old `..` prefix test); `denext codemod` no longer rewrites a
   symlinked source file (it could point outside the project); and the MCP tools' `dir` and
   `denext_render`'s `component` are refused when a symlink inside the project leads out of it.
-
 - **The Android share receiver bounds a whole share, and cleans up after itself.** One stream was
   capped at 256 MB, but a share could list any number of streams; it now copies at most 32 and
   512 MB per share, and deletes earlier shares' copies older than a day. Re-run
   `denext mobile add share-extension` to upgrade an unedited plugin.
-
 - **Documented: a native sign-in can complete silently, and a native session keeps its claims.**
   The [app backend guide](https://denext.dev/docs/app-backend) now says that an OAuth provider
   with a browser session may sign the user straight back in (set the provider's
   `authorizationParams.prompt` to make it ask), and that a refresh does not re-run
   `callbacks.session` (revoke the user's native sessions after a role change). Decided: both
   stay documented behavior rather than new options.
-
 - **Windows packaging signs every PE file of the bundle, so signed full-app updates install.**
   `scripts/package-windows.ts` Authenticode-signed only the `.exe`, but the pinned runtime refuses
   an update of a signed Windows app unless every PE file in it (`<App>.dll`, `WebView2Loader.dll`,
@@ -551,7 +545,6 @@ and this project adheres to
   `onRequest` runs, even one that carries the token and the app `Origin`. This adds a layer and
   does not replace the per-launch token: an engine that sends neither `Origin` nor
   `Sec-Fetch-Site` leaves a foreign request unmarked.
-
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
   `Bearer nat_…` session was read straight off the request, so it did not mark the render
   dynamic: an ISR page (`revalidate`) rendered for a native app's user was stored and served to
@@ -11116,7 +11109,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.1.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.2.0...development
+[3.2.0]: https://jsr.io/@denext/denext@3.2.0
 [3.1.0]: https://jsr.io/@denext/denext@3.1.0
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
