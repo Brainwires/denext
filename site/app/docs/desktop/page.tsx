@@ -1001,6 +1001,16 @@ export default {
           that scheme, host and path — through the custom-scheme flow above, owner check included.
         </li>
         <li>
+          The transport opens only Clerk's own pages: the instance's Frontend API, a Clerk domain,
+          or the authorization page of a social provider Clerk offers (Google, GitHub, Apple,
+          Microsoft, Facebook, Discord, GitLab, LinkedIn, X and the rest), each with its{" "}
+          <code>redirect_uri</code> on Clerk's{" "}
+          <code>/v1/oauth_callback</code>. Anything else is refused with the host named, so page
+          script cannot show a lookalike sign-in page in the trusted auth sheet. A custom OIDC
+          provider is added by host:{" "}
+          <code>{'installClerkDesktopBridge({ oauthHosts: ["sso.example.com"] })'}</code>.
+        </li>
+        <li>
           When another app handles the scheme (an Electron build of the same app, say), macOS still
           signs in through its sheet. On Windows and Linux the callback would reach the other app,
           so the transport rejects <code>scheme_owned_by_other_app</code>{" "}

@@ -178,12 +178,12 @@ Deno.test("clerk bridge: open() only takes a Clerk OAuth URL (redirect_uri = the
       "not a Clerk OAuth URL",
     );
     await pinned.open(
-      "https://idp.example/a?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      "https://github.com/login/oauth/authorize?client_id=x&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
     );
     await pinned.open("https://clerk.example.com/v1/client/sign_ins/x");
     // A development instance's shared credentials call back on Clerk's own domain.
     await pinned.open(
-      "https://idp.example/a?redirect_uri=https%3A%2F%2Fhappy-cat-1.clerk.accounts.dev%2Fv1%2Foauth_callback",
+      "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fhappy-cat-1.clerk.accounts.dev%2Fv1%2Foauth_callback",
     );
     // Google / GitHub with a development instance's shared credentials: what its Frontend API
     // returns as `external_verification_redirect_url`.
@@ -200,6 +200,48 @@ Deno.test("clerk bridge: open() only takes a Clerk OAuth URL (redirect_uri = the
       "not a Clerk OAuth URL",
     );
     assertEquals(starts.length, 4);
+  });
+});
+
+// The target must be the Clerk instance, a Clerk domain or a known provider's authorization page:
+// a page script must not open a phishing site in the OS auth sheet by tacking Clerk's
+// `redirect_uri` onto it.
+Deno.test("clerk bridge: open() refuses a page that is not a known OAuth provider's", async () => {
+  const starts: unknown[] = [];
+  await inDesktop({
+    authSession: {
+      start: (a) => (starts.push(a), { url: "t3code://app/?rotating_token_nonce=n" }),
+    },
+  }, async () => {
+    const shared = encodeURIComponent("https://clerk.shared.lcl.dev/v1/oauth_callback");
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    for (
+      const url of [
+        `https://phish.example/login?redirect_uri=${shared}`,
+        `https://github.com/evil/repo?redirect_uri=${shared}`, // GitHub, not its OAuth page
+        `https://www.facebook.com/evilpage?redirect_uri=${shared}`,
+        `https://accounts.google.com.evil.example/o/oauth2/auth?redirect_uri=${shared}`,
+      ]
+    ) {
+      const err = await assertRejects(() => t.open(url), TypeError, "oauthHosts");
+      assertStringIncludes(err.message, new URL(url).host);
+    }
+    assertEquals(starts, [], "nothing reached the auth session");
+    // Google and GitHub with a development instance's shared credentials, and Apple / Microsoft.
+    for (
+      const url of [
+        `https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=${shared}`,
+        `https://github.com/login/oauth/authorize?client_id=x&redirect_uri=${shared}`,
+        `https://appleid.apple.com/auth/authorize?redirect_uri=${shared}`,
+        `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?redirect_uri=${shared}`,
+      ]
+    ) await t.open(url);
+    assertEquals(starts.length, 4);
+    // A custom provider is opted in by host.
+    const custom = installClerkDesktopBridge({ oauthHosts: ["sso.example.com"] })!.bridge
+      .oauthTransport;
+    await custom.open(`https://sso.example.com/authorize?redirect_uri=${shared}`);
+    assertEquals(starts.length, 5);
   });
 });
 

@@ -135,6 +135,17 @@ export interface ClerkDesktopBridgeOptions {
    * `passkeys: true`). Leave it off with `@clerk/electron/react`'s provider, which does this itself.
    */
   readonly nativeClerk?: boolean | { readonly passkeys?: ClerkPasskeysAdapter };
+  /**
+   * More hosts whose pages the OAuth transport may open in the OS auth session (`"sso.example.com"`):
+   * a custom OIDC provider, or a social provider denext does not list. The transport opens only
+   * the Clerk instance's Frontend API, Clerk's own domains, and the authorization pages of the
+   * social providers Clerk offers (Google, GitHub, Apple, Microsoft, Facebook, Discord, GitLab,
+   * LinkedIn, X, Twitch, Slack, Spotify, TikTok, Bitbucket, Atlassian, Box, Coinbase, Dropbox,
+   * HubSpot, Hugging Face, LINE, Linear, Notion, Xero, Vercel), each with its `redirect_uri` on
+   * Clerk's OAuth callback; any other page is refused, naming its host. A host listed here is
+   * matched exactly, with any path.
+   */
+  readonly oauthHosts?: readonly string[];
 }
 
 /** What {@linkcode installClerkDesktopBridge} installed. */
@@ -278,13 +289,10 @@ interface PreparedFlow {
 const CLERK_OAUTH_CALLBACK_PATH = "/v1/oauth_callback";
 
 /**
- * Whether `target` is a Clerk OAuth URL: on the Frontend API itself, or a provider's
- * authorization URL whose `redirect_uri` is the Frontend API's OAuth callback (over https; on
- * `fapiHost` or a Clerk-operated domain when the Clerk instance names its host). Anything else is
- * a page script using the transport to open an arbitrary site in the OS auth session.
+ * Whether `target` names Clerk's OAuth callback as its `redirect_uri` (over https; on `fapiHost`
+ * or a Clerk-operated domain when the Clerk instance names its host).
  */
-function isClerkOAuthUrl(target: URL, fapiHost: string | undefined): boolean {
-  if (fapiHost !== undefined && target.host === fapiHost) return true;
+function redirectsToClerk(target: URL, fapiHost: string | undefined): boolean {
   let redirect: URL;
   try {
     redirect = new URL(target.searchParams.get("redirect_uri") ?? "");
@@ -293,6 +301,76 @@ function isClerkOAuthUrl(target: URL, fapiHost: string | undefined): boolean {
   }
   return redirect.protocol === "https:" && redirect.pathname === CLERK_OAUTH_CALLBACK_PATH &&
     (fapiHost === undefined || redirect.host === fapiHost || isClerkOperatedHost(redirect.host));
+}
+
+/**
+ * The authorization pages of the social providers Clerk offers: each host, and the path its
+ * authorize endpoint lives under where the host also serves other pages (a GitHub profile, a
+ * Facebook page). A dedicated identity host takes any path.
+ */
+const OAUTH_PROVIDER_PAGES: ReadonlyArray<readonly [host: string, path?: RegExp]> = [
+  ["accounts.google.com"],
+  ["github.com", /^\/login\/oauth\//],
+  ["appleid.apple.com"],
+  ["login.microsoftonline.com"],
+  ["login.live.com"],
+  ["www.facebook.com", /^\/(?:v[\d.]+\/)?dialog\/oauth/],
+  ["discord.com", /^\/(?:api\/)?oauth2\//],
+  ["gitlab.com", /^\/oauth\//],
+  ["www.linkedin.com", /^\/oauth\//],
+  ["x.com", /^\/i\/oauth2\//],
+  ["twitter.com", /^\/i\/oauth2\//],
+  ["api.twitter.com", /^\/oauth\//],
+  ["api.x.com", /^\/oauth\//],
+  ["id.twitch.tv"],
+  ["slack.com", /^\/(?:oauth|openid)\//],
+  ["accounts.spotify.com"],
+  ["www.tiktok.com", /^\/v2\/auth\//],
+  ["bitbucket.org", /^\/site\/oauth2\//],
+  ["auth.atlassian.com"],
+  ["account.box.com", /^\/api\/oauth2\//],
+  ["login.coinbase.com"],
+  ["www.coinbase.com", /^\/oauth\//],
+  ["www.dropbox.com", /^\/oauth2\//],
+  ["app.hubspot.com", /^\/oauth\//],
+  ["huggingface.co", /^\/oauth\//],
+  ["access.line.me"],
+  ["linear.app", /^\/oauth\//],
+  ["api.notion.com", /^\/v1\/oauth\//],
+  ["login.xero.com"],
+  ["vercel.com", /^\/(?:oauth|integrations)\//],
+];
+
+/** Whether `target` is a listed provider's authorization page, or on a host in `extra`. */
+function isProviderPage(target: URL, extra: readonly string[]): boolean {
+  if (extra.includes(target.host)) return true;
+  return OAUTH_PROVIDER_PAGES.some(([host, path]) =>
+    target.host === host && (path === undefined || path.test(target.pathname))
+  );
+}
+
+/**
+ * Why `target` is not a Clerk OAuth URL, or null when it is: on the Frontend API itself, or an
+ * authorization page — on a Clerk-operated domain, a listed social provider's
+ * ({@linkcode OAUTH_PROVIDER_PAGES}) or a host in `oauthHosts` — whose `redirect_uri` is the
+ * Frontend API's OAuth callback. Anything else is a page script using the transport to open an
+ * arbitrary site (a phishing page with a Clerk `redirect_uri` tacked on) in the trusted OS auth
+ * session.
+ */
+function clerkOAuthRefusal(
+  target: URL,
+  fapiHost: string | undefined,
+  oauthHosts: readonly string[],
+): string | null {
+  if (fapiHost !== undefined && target.host === fapiHost) return null;
+  if (!redirectsToClerk(target, fapiHost)) {
+    return `not a Clerk OAuth URL (its redirect_uri must be the Frontend API's ` +
+      `${CLERK_OAUTH_CALLBACK_PATH})`;
+  }
+  if (isClerkOperatedHost(target.host) || isProviderPage(target, oauthHosts)) return null;
+  return `${target.host} is not the Clerk instance or a known OAuth provider's authorization ` +
+    `page. If it is your instance's provider, add it to installClerkDesktopBridge({ ` +
+    `oauthHosts: [${JSON.stringify(target.host)}] })`;
 }
 
 /**
@@ -323,6 +401,7 @@ function oauthTransport(
   redirectUrl: () => string,
   preloadKey: string | undefined,
   getClerk: () => ClerkLike | undefined,
+  oauthHosts: readonly string[] = [],
 ): ClerkOAuthTransport {
   let pending = false;
   /** The flow `getRedirectUrl()` prepared (clerk-js calls it right before `open()`). */
@@ -344,11 +423,9 @@ function oauthTransport(
       if (target.protocol !== "https:") {
         throw new TypeError(`Clerk: refusing to open unsupported OAuth URL protocol: ${url}`);
       }
-      if (!isClerkOAuthUrl(target, frontendApiHost(getClerk))) {
-        throw new TypeError(
-          `Clerk: refusing to open ${target.origin}: not a Clerk OAuth URL (its redirect_uri ` +
-            `must be the Frontend API's ${CLERK_OAUTH_CALLBACK_PATH})`,
-        );
+      const refusal = clerkOAuthRefusal(target, frontendApiHost(getClerk), oauthHosts);
+      if (refusal !== null) {
+        throw new TypeError(`Clerk: refusing to open ${target.origin}: ${refusal}`);
       }
       pending = true;
       // The redirect (and its nonce) Clerk was given for this flow; a fresh one when `open()` came
@@ -480,6 +557,7 @@ export function installClerkDesktopBridge(
       redirectUrl,
       typeof preloadKey === "string" ? preloadKey : undefined,
       options.getClerk ?? defaultClerk,
+      options.oauthHosts,
     ),
   };
   const g = globalThis as {
