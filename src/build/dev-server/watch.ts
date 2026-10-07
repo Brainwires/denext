@@ -12,6 +12,7 @@ import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
 import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
+import { watchPlatformFiles } from "./platform.ts";
 
 /**
  * Whether a change set can be handled by Fast Refresh (re-import the route entry,
@@ -53,18 +54,35 @@ function applyUnbundledChange(st: DevState, changedPaths: string[]): void {
   else broadcast(st, "reload");
 }
 
-/**
- * Apply one debounced change set: bump the generation (busting module + bundle caches),
- * type-check off the render path, then pick CSS hot-swap / HMR update / Fast Refresh /
- * full reload.
- */
-function applyChanges(st: DevState, changedPaths: string[]): void {
+/** Start a new generation: bust the module, graph and bundle caches. */
+function bumpGeneration(st: DevState): void {
   st.generation++;
   st.manifest = null;
   resetModuleGraphCache(); // the import graph may have changed shape
   clearLiveCacheResults(); // in-process "use cache" trees are keyed by module URL, not content
   st.bundleCache.clear();
   st.chunkCache.clear();
+}
+
+/**
+ * A platform file came or went (anywhere in the project, not only the watched folders): the
+ * scan was forgotten, so every import may resolve to another file. Start a new generation,
+ * drop the per-module loop's transforms (each names the files its imports resolved to) and
+ * reload the page.
+ */
+function applyPlatformFilesChange(st: DevState): void {
+  bumpGeneration(st);
+  st.unbundled?.invalidateTransforms();
+  broadcast(st, "reload");
+}
+
+/**
+ * Apply one debounced change set: bump the generation (busting module + bundle caches),
+ * type-check off the render path, then pick CSS hot-swap / HMR update / Fast Refresh /
+ * full reload.
+ */
+function applyChanges(st: DevState, changedPaths: string[]): void {
+  bumpGeneration(st);
   typeCheck(st, changedPaths);
   if (cssOnly(changedPaths)) broadcast(st, "css");
   else if (st.unbundledActive && refreshable(st, changedPaths)) {
@@ -145,6 +163,7 @@ export async function watch(st: DevState): Promise<void> {
   const configFiles = configFilesOf(st);
   const configBasenames = new Set([...configFiles].map((p) => basename(p)));
   const watcher = Deno.watchFs(watchedPaths(st, configFiles), { recursive: true });
+  watchPlatformFiles(st, () => applyPlatformFilesChange(st));
   st.options.signal?.addEventListener("abort", () => {
     try {
       watcher.close();

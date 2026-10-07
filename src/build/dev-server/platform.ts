@@ -1,13 +1,15 @@
 // Dev server: each target's platform files (`BigButton.web.tsx`, or `.ios.tsx` for a shell that
 // named its target) on the native App Router path, where neither `deno bundle` nor Deno's loader
 // can probe: the same file-URL redirects the production build uses (see
-// ../platform-extensions.ts), rescanned once per generation.
+// ../platform-extensions.ts), from one project scan the dev server keeps until a file is
+// created, removed or renamed (../platform-watch.ts).
 
 import { join } from "@std/path";
 import { setModuleGraphRedirects } from "../module-graph.ts";
 import { type PlatformImportMap, platformImportMap } from "../platform-imports.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
-import { devPlatformOf, type Platform, projectPlatformRedirects } from "../platform-extensions.ts";
+import { devPlatformOf, keepPlatformScanner, type Platform } from "../platform-extensions.ts";
+import { watchProjectStructure } from "../platform-watch.ts";
 import { currentContext } from "../../server/request-context.ts";
 import type { DevState } from "./state.ts";
 
@@ -22,14 +24,25 @@ export async function devPlatformRedirects(
   st: DevState,
   platform: Platform = "web",
 ): Promise<Record<string, string>> {
-  const cached = st.platformRedirects.get(platform);
-  if (cached?.gen === st.generation) return cached.redirects;
   // `isCompat` (./compat.ts) reads the same memo; importing it would close a module cycle.
-  const redirects = await (st.compatP ??= detectNextCompat(st.paths))
-    ? {}
-    : await projectPlatformRedirects(st.paths.projectDir, st.paths.config, platform);
-  st.platformRedirects.set(platform, { gen: st.generation, redirects });
-  return redirects;
+  if (await (st.compatP ??= detectNextCompat(st.paths))) return {};
+  return await st.platformScanner.redirects(st.paths.config, platform);
+}
+
+/**
+ * Start watching which project files exist (../platform-watch.ts): a created, removed or
+ * renamed platform file (or the plain file of a module that has them) forgets the scan and
+ * calls `onChange`, so the next request resolves the new set.
+ *
+ * @param st The dev state.
+ * @param onChange Called after the scan was forgotten.
+ */
+export function watchPlatformFiles(st: DevState, onChange: () => void): void {
+  // Every other caller for this project (the alias-import pass) shares the session's scan.
+  keepPlatformScanner(st.platformScanner, st.options.signal);
+  watchProjectStructure(st.paths.projectDir, (paths) => {
+    if (st.platformScanner.invalidate(paths)) onChange();
+  }, st.options.signal);
 }
 
 /**

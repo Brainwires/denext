@@ -22,6 +22,7 @@ import {
 } from "../module-graph.ts";
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
+import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 
 /** What `denext start` reads from `manifest.json` (absent/old fields fall back). */
 export interface BuildInfo {
@@ -45,6 +46,8 @@ export interface BuildInfo {
   buildId?: string;
   /** The id came from `DENEXT_BUILD_ID` (deliberate and shared by replicas), not at random. */
   buildIdPinned?: boolean;
+  /** The server render's redirects and copies the build made (absent for an older build). */
+  serverCopies?: ServerCopiesManifest | null;
 }
 
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
@@ -66,6 +69,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     info.buildIdPinned = bm.buildIdPinned === true;
+    info.serverCopies = parseServerCopies(bm.serverCopies);
     if (bm.boundary && typeof bm.boundary === "object" && Array.isArray(bm.boundaryRoutes)) {
       info.boundary = {
         routes: new Set<string>(bm.boundaryRoutes),

@@ -93,6 +93,14 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       st.depsBuilt = null;
       st.runtimeBuilt = null;
     },
+    /**
+     * Which files exist changed (a platform file came or went): drop every cached transform,
+     * since each names the files its imports resolved to.
+     */
+    invalidateTransforms: (): void => {
+      st.cache.clear();
+      st.graphEpoch++;
+    },
     stop: async (): Promise<void> => {
       await esbuild.stop().catch(() => {});
     },

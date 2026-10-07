@@ -309,6 +309,27 @@ Each item is described in full under Changed, Fixed or Security below.
 - **The macOS `.dmg` step sizes its image explicitly.** `hdiutil create -srcfolder` underestimated
   the image on newer macOS runner images ("No space left on device"); the package script now passes
   `-size` (the bundle plus 25% and 64 MiB). The final UDZO image is still compressed.
+- **`denext start` scans and writes nothing for platform files or `"use cache"`.** `denext build`
+  compiles the server render's module copies into `.denext/server-copies/` and records them, with
+  the web target's redirects, in `manifest.json`. A start on a read-only `.denext` rendered the
+  plain files while the client bundles held the `.web` ones. A build from before, or a project
+  moved since its build, compiles at startup as before.
+- **A Pages Router app takes the app's platform files on both sides.** Its client bundles ignored
+  `Button.web.tsx`, and its server render loaded it only in `denext dev`, through a loader that
+  could lose it to concurrent loads; `denext build`'s prerender and `denext start` loaded the
+  plain file. The server render (dev, build, start) and the client bundles now take the `web`
+  target's files. `platformClientRedirects` from `denext/plugin-kit` gives a plugin's own
+  bundles (`bundleRoutes`' `redirects`) the same files.
+- **A shell's `denext dev` session gets the stylesheets its own platform files import.** The
+  route's extracted CSS was crawled through the `web` files only, so a stylesheet only
+  `Badge.ios.tsx` imports was missing from the iOS session (and the plain file's sheet served
+  instead).
+- **`denext dev` picks up a platform file created or removed anywhere in the project.** Only the
+  app folder was watched, so `components/Button.ios.tsx` added mid-session was served only after
+  a restart. The project scan is now kept across edits (it rescans when a platform file, or the
+  plain file of a module that has them, is created, removed or renamed) and skips every
+  dot-folder and nested build output (`out/`, `dist/`, `www/`, `coverage/`, `ios/`, `android/`):
+  on a 31,000-file monorepo root each rebuild spent about 1.7 s scanning, and now 0.1 s once.
 - **Concurrent server loads of a `"use cache"` module all get the compiled copy.** The server
   loader took a module another load was still compiling for an import cycle and loaded its
   original, for the life of the server: `denext start` warms every route at once, so a module two

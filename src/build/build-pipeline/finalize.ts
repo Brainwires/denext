@@ -1,6 +1,7 @@
 // Production build, stage 4: public-env tree-shaking, self-hosted fonts, the build
 // manifest, precompression, the atomic client swap, typed modules, and the size summary.
 
+import { buildServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
@@ -94,6 +95,7 @@ function buildManifestFor(
   ctx: BuildContext,
   publicEnvKeys: string[],
   fonts: Record<string, string>,
+  serverCopies: ServerCopiesManifest | null,
 ) {
   const pinnedId = envBuildId()?.trim();
   return {
@@ -124,6 +126,9 @@ function buildManifestFor(
     // Self-hosted Google fonts: Google stylesheet URL → local `@font-face` CSS. The prod
     // server installs this so those fonts render from `/_denext/fonts`.
     fonts,
+    // The server render's platform-file redirects and module copies (./server-copies.ts), so
+    // `denext start` walks and writes nothing. Absent for a next-compat build.
+    ...(serverCopies ? { serverCopies } : {}),
   };
 }
 
@@ -188,9 +193,10 @@ export async function finalizeBuild(
 ): Promise<void> {
   const publicEnvKeys = await timed("publicEnvKeys", () => collectPublicEnvKeys(ctx.clientDir));
   const fonts = await timed("selfHostPageFonts", () => selfHostPageFonts(ctx));
+  const serverCopies = await timed("serverCopies", () => buildServerCopies(ctx.paths, ctx.compat));
   await timed(
     "swapAndWriteManifest",
-    () => swapAndWriteManifest(ctx, buildManifestFor(ctx, publicEnvKeys, fonts)),
+    () => swapAndWriteManifest(ctx, buildManifestFor(ctx, publicEnvKeys, fonts, serverCopies)),
   );
   await timed("emitTypedModules", () =>
     emitTypedModules(ctx.manifest, {

@@ -166,6 +166,8 @@ class UseCacheCompiler {
   #nodes = new Map<string, Promise<ModuleNode>>();
   #needs = new Map<string, boolean>();
   #written = new Map<string, Promise<void>>();
+  /** Per decided module: settles once every copy its graph needs is written. */
+  #ready = new Map<string, Promise<void>>();
   #dir: Promise<void> | null = null;
   #aliases: Promise<ImportAliases> | null = null;
 
@@ -292,13 +294,43 @@ class UseCacheCompiler {
   async effectiveUrl(moduleUrl: string): Promise<string> {
     // Only transform project files; leave framework/std/npm and out-of-tree files as-is.
     if (!this.#own(moduleUrl) || this.#needs.get(moduleUrl) === false) return moduleUrl;
+    const ready = this.#ready.get(moduleUrl);
+    if (ready) {
+      await ready;
+      return this.#effective(moduleUrl);
+    }
     const graph = await this.#reach(moduleUrl);
     this.#decide(graph);
     // Every copy the module's graph imports exists before it loads.
     const copied = [...graph].filter(([u]) => this.#needs.get(u));
-    await Promise.all(copied.map(([u, n]) => this.#write(u, n)));
+    const written = Promise.all(copied.map(([u, n]) => this.#write(u, n))).then(() => {});
+    for (const u of graph.keys()) if (!this.#ready.has(u)) this.#ready.set(u, written);
+    await written;
     return this.#effective(moduleUrl);
   }
+}
+
+/**
+ * Compile the server copies of every module in `files` ahead of time (`denext build`, so
+ * `denext start` writes nothing and walks nothing): the copies are written under
+ * `opts.cacheDir`, and the result maps each module that loads a copy (file URL) to it.
+ *
+ * @param opts As for {@linkcode createUseCacheLoader}.
+ * @param files The project's source modules (absolute paths).
+ * @returns Module file URL → its copy's file URL, for the modules that have one.
+ */
+export async function compileServerCopies(
+  opts: UseCacheLoaderOptions,
+  files: readonly string[],
+): Promise<Record<string, string>> {
+  const compiler = new UseCacheCompiler(opts);
+  const out: Record<string, string> = {};
+  for (const file of files) {
+    const url = toUrl(file);
+    const eff = await compiler.effectiveUrl(url).catch(() => url);
+    if (eff !== url) out[url] = eff;
+  }
+  return out;
 }
 
 /**
@@ -316,15 +348,7 @@ export function createUseCacheLoader(
   opts: UseCacheLoaderOptions,
 ): ModuleLoader {
   const compiler = new UseCacheCompiler(opts);
-  // A crawl names modules by their real path (a boundary ref under macOS's `/private/var` for a
-  // project in `/var`): spell those through the project root, as its redirects and copies are.
-  const root = toFileUrl(resolve(opts.projectDir)).href + "/";
-  let real: string | null = null;
-  try {
-    real = toFileUrl(Deno.realPathSync(opts.projectDir)).href + "/";
-  } catch { /* no project dir on disk: nothing to respell */ }
-  const canonical = (url: string) =>
-    real && real !== root && url.startsWith(real) ? root + url.slice(real.length) : url;
+  const canonical = projectSpelling(opts.projectDir);
   return async (filePath: string): Promise<unknown> => {
     const url = canonical(toUrl(filePath));
     let eff: string;
@@ -335,5 +359,44 @@ export function createUseCacheLoader(
       eff = url; // any transform failure → load the original (never break loading)
     }
     return base(eff);
+  };
+}
+
+/**
+ * A module URL spelled through the project root: a crawl names modules by their real path (a
+ * boundary ref under macOS's `/private/var` for a project in `/var`), while redirects and copies
+ * are keyed by the root as given.
+ */
+function projectSpelling(projectDir: string): (url: string) => string {
+  const root = toFileUrl(resolve(projectDir)).href + "/";
+  let real: string | null = null;
+  try {
+    real = toFileUrl(Deno.realPathSync(projectDir)).href + "/";
+  } catch { /* no project dir on disk: nothing to respell */ }
+  return (url) =>
+    real && real !== root && url.startsWith(real) ? root + url.slice(real.length) : url;
+}
+
+/**
+ * A loader over copies {@linkcode compileServerCopies} wrote at build time (`denext start`):
+ * each module loads its target's variant, through its copy when it has one, with no walk, no
+ * compile and no write.
+ *
+ * @param base The underlying loader.
+ * @param opts The project root, the target's redirects and the copies (file URL → copy URL).
+ */
+export function createPrecompiledLoader(
+  base: ModuleLoader,
+  opts: {
+    projectDir: string;
+    redirects: Readonly<Record<string, string>>;
+    copies: Readonly<Record<string, string>>;
+  },
+): ModuleLoader {
+  const canonical = projectSpelling(opts.projectDir);
+  return (filePath: string): Promise<unknown> => {
+    const url = canonical(toUrl(filePath));
+    const target = opts.redirects[url] ?? url;
+    return base(opts.copies[target] ?? target);
   };
 }

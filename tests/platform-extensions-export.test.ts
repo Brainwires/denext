@@ -344,3 +344,59 @@ Deno.test("denext build + start: the web target's `.web` variant reaches the bun
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("denext build + start: start renders the build's server copies from a read-only .denext", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_platform_readonly_" });
+  const controller = new AbortController();
+  const outDir = join(dir, ".denext");
+  try {
+    await scaffoldApp(dir, {
+      ...FLIGHT_APP,
+      "denext.config.ts": `export default { cacheComponents: true };\n`,
+      "app/page.tsx": `import { Badge } from "../components/Badge.tsx";\n` +
+        `import { stamp } from "../lib/stamp.ts";\n` +
+        `export default async function Page(){ return <main><Badge/>{await stamp()}</main>; }\n`,
+      "lib/stamp.ts": `export async function stamp() { "use cache"; return "CACHED_STAMP"; }\n`,
+      "components/Badge.web.tsx": badge("WEB_BADGE"),
+    });
+    await build(dir);
+    // Nothing under .denext may be written from here on.
+    const walkDirs = async (p: string, mode: number) => {
+      for await (const e of Deno.readDir(p)) {
+        if (e.isDirectory) await walkDirs(join(p, e.name), mode);
+      }
+      await Deno.chmod(p, mode);
+    };
+    await walkDirs(outDir, 0o555);
+    const port = await new Promise<number>((resolve, reject) => {
+      startProdServer({
+        projectDir: dir,
+        port: 0,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: ({ port }) => resolve(port),
+      }).catch(reject);
+    });
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    assertStringIncludes(html, "WEB_BADGE", "the server render took the .web variant");
+    assertStringIncludes(html, "CACHED_STAMP");
+    assert(!html.includes("PLAIN_BADGE"));
+    const entries = await Array.fromAsync(Deno.readDir(outDir), (e) => e.name);
+    assert(!entries.includes("server-cache"), "start compiled nothing");
+    const manifest = JSON.parse(await Deno.readTextFile(join(outDir, "manifest.json")));
+    assertEquals(
+      manifest.serverCopies.redirects["components/Badge.tsx"],
+      "components/Badge.web.tsx",
+    );
+    assert(manifest.serverCopies.copies["app/page.tsx"], "the page's copy was compiled at build");
+  } finally {
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 50));
+    const restore = async (p: string) => {
+      await Deno.chmod(p, 0o755).catch(() => {});
+      for await (const e of Deno.readDir(p)) if (e.isDirectory) await restore(join(p, e.name));
+    };
+    await restore(outDir).catch(() => {});
+    await Deno.remove(dir, { recursive: true });
+  }
+});

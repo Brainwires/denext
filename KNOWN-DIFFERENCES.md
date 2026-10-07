@@ -191,13 +191,16 @@ internal design choice with no observable difference lives in
   on iOS and Android; denext's iOS and Android exports run in a WebView, where a `.native` file
   is usually native code that cannot run, so they are skipped unless
   `platformExtensions: { native: true }`. `.ios` / `.android` / `.mobile` / `.web` resolve as in
-  Metro (see [platform-specific files](https://denext.dev/docs/platform-files)).
+  Metro (see [platform-specific files](https://denext.dev/docs/platform-files)), except in React
+  Native mode, where the app's own `.ios` / `.android` files are native code too and are skipped
+  unless `platformExtensions: { osFiles: true }`.
 - **Platform files are resolved per target build, not per device.** Metro bundles per platform
   too; denext's `denext build`, `start` and a plain `denext export` are the `web` target, and
   `denext dev` serves `web` unless a shell names its target (`mobile dev`, `desktop dev`). An iOS,
   Android or desktop file is used only in that target's export (`denext export --platform`,
   `denext mobile build`, `denext desktop build` / `package`). Packages in `node_modules` keep
-  their own resolution: their `.ios.js` files are not picked, since they call native modules.
+  their own resolution: their `.ios.js` files are not picked, since they call native modules. A
+  Pages Router app (`@denext/pages-router`) takes the `web` target's files only.
 
 ## Security posture — safe defaults
 

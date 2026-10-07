@@ -67,7 +67,11 @@ denext builds one export per target, and only where a target is chosen:
 
 The server render of a platform export (prerendering, a Server Component, the first paint of a
 client component) resolves the same files as its client bundle, so hydration sees the markup it
-expects. `denext start` and the production server build stay `web`.
+expects. `denext start` and the production server build stay `web`. `denext build` compiles the
+server render's module copies (the importers rewritten to reach each `.web` file) into
+`.denext/server-copies/` and records them in the build manifest, so `denext start` reads them as
+they are: it scans nothing and writes nothing, and a read-only `.denext` serves the same files
+as the client bundles.
 
 An app with no platform files builds exactly as before, and one export serves every shell.
 
@@ -91,6 +95,12 @@ island where the plain file is a Server Component; each target's transforms and 
 cached apart. A next-compat app is the exception: its dev server render is one esbuild bundle
 per edit, built for `web`, so in `denext dev` every shell gets the `web` files, islands
 included. Its platform exports take each target's files.
+
+The dev server scans the project for platform files once and keeps the result: editing a file
+never rescans. Creating, removing or renaming a platform file anywhere in the project (not only
+under `app/`), or the plain file of a module that has them, rescans and reloads the page. The
+scan skips `node_modules`, every dot-folder (`.git`, `.next`, `.turbo`, …) and build or native
+output at any depth (`out/`, `dist/`, `www/`, `coverage/`, `ios/`, `android/`).
 
 ## Over-the-air updates
 
@@ -173,6 +183,10 @@ export default {
 Only the app's own modules. Packages in `node_modules` keep their own resolution (React Native
 mode probes their `.web` files): a React Native library's `.ios.js` file calls native modules,
 and the WebView shells run the library's web build.
+
+A [Pages Router](/docs/pages-router) app (`@denext/pages-router`) takes the `web` target's files
+in its server render and its client bundles alike, in `denext dev`, `build` and `start`; its
+pages do not take another target's files in a platform export or a shell's dev session.
 
 Route files (`page.tsx`, `layout.tsx`, …) do not take a variant; put the platform-specific part
 in a component the route imports. A variant importing its own plain module

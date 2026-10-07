@@ -4,7 +4,11 @@
 // compat build, manifest, bundles, reload channel, dev endpoints, watcher, request
 // handler) is a separately readable unit.
 
-import type { Platform } from "../platform-extensions.ts";
+import {
+  createPlatformScanner,
+  type Platform,
+  type PlatformScanner,
+} from "../platform-extensions.ts";
 import type { PlatformImportMap } from "../platform-imports.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
@@ -206,10 +210,11 @@ export interface DevState {
   compilerGen: number;
 
   /**
-   * Each target's platform files as file-URL redirects for the native path (`web`, or the
-   * target a shell named), rescanned per generation so an added or removed variant takes effect.
+   * The project's platform-file scan, which each target's file-URL redirects for the native path
+   * come from (`web`, or the target a shell named). Kept across generations: a created, removed
+   * or renamed platform file forgets it (`watchPlatformFiles`), an edit never does.
    */
-  readonly platformRedirects: Map<Platform, { gen: number; redirects: Record<string, string> }>;
+  readonly platformScanner: PlatformScanner;
   /** Each target's client import map (`devPlatformImports`), per generation. */
   readonly platformImports: Map<Platform, { gen: number; imports: PlatformImportMap }>;
 
@@ -315,7 +320,7 @@ export function createDevState(options: DevServerOptions): DevState {
     refreshMap: {},
     refreshGen: -1,
     compilerGen: -1,
-    platformRedirects: new Map(),
+    platformScanner: createPlatformScanner(paths.projectDir),
     platformImports: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoads: new Map(),

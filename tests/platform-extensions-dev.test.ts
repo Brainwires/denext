@@ -290,3 +290,94 @@ for (const unbundled of [true, false]) {
     }
   });
 }
+
+Deno.test("denext dev: a platform file created or removed mid-session outside app/ takes effect", async () => {
+  const dir = await project({
+    "app/page.tsx": `import { Shell } from "../components/Shell.tsx";\n` +
+      `export default function Page(){ return <main><Shell/></main>; }\n`,
+    "components/Shell.tsx": `"use client"\nimport { useState } from "denext";\n` +
+      `import { Badge } from "./Badge.tsx";\n` +
+      `export function Shell(){ const [n] = useState(0); return <div><Badge/>{n}</div>; }\n`,
+    "components/Badge.tsx": `export function Badge(){ return <b>PLAIN_BADGE</b>; }\n`,
+  });
+  const controller = new AbortController();
+  try {
+    const paths = await resolveProject(dir);
+    const port = await new Promise<number>((resolve) => {
+      startDevServer({
+        paths,
+        port: 0,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: ({ port }) => resolve(port),
+      });
+    });
+    const ios = { cookie: "__denext_platform=ios" };
+    const page = () => fetch(`http://127.0.0.1:${port}/`, { headers: ios }).then((r) => r.text());
+    const shell = () =>
+      fetch(`http://127.0.0.1:${port}/_denext/@fs${join(dir, "components", "Shell.tsx")}`, {
+        headers: ios,
+      }).then((r) => r.text());
+    /** Poll until `check` holds (the watcher's debounce, then the next request). */
+    const eventually = async (what: string, check: () => Promise<boolean>) => {
+      for (let i = 0; i < 100; i++) {
+        if (await check()) return;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error(`timed out: ${what}`);
+    };
+    assertStringIncludes(await page(), "PLAIN_BADGE");
+    assert(!(await shell()).includes("Badge.ios.tsx"), "no iOS file yet");
+
+    const variant = join(dir, "components", "Badge.ios.tsx");
+    await Deno.writeTextFile(variant, `export function Badge(){ return <b>IOS_BADGE</b>; }\n`);
+    await eventually("the iOS file rendered", async () => (await page()).includes("IOS_BADGE"));
+    await eventually("the iOS file served", async () => (await shell()).includes("Badge.ios.tsx"));
+
+    await Deno.remove(variant);
+    await eventually("the plain file rendered", async () => (await page()).includes("PLAIN_BADGE"));
+    await eventually("the plain file served", async () => !(await shell()).includes("Badge.ios"));
+  } finally {
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext dev: a stylesheet only a platform file imports reaches that session's route CSS", async () => {
+  const dir = await project({
+    "app/page.tsx": `import { Badge } from "../components/Badge.tsx";\n` +
+      `export default function Page(){ return <main><Badge/></main>; }\n`,
+    "components/Badge.tsx": `import "./plain.css";\n` +
+      `export function Badge(){ return <b class="plain">PLAIN_BADGE</b>; }\n`,
+    "components/Badge.ios.tsx": `import "./ios.css";\n` +
+      `export function Badge(){ return <b class="ios">IOS_BADGE</b>; }\n`,
+    "components/plain.css": `.plain-only { color: red; }\n`,
+    "components/ios.css": `.ios-only { color: blue; }\n`,
+  });
+  const controller = new AbortController();
+  try {
+    const paths = await resolveProject(dir);
+    const port = await new Promise<number>((resolve) => {
+      startDevServer({
+        paths,
+        port: 0,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: ({ port }) => resolve(port),
+      });
+    });
+    const css = (headers: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${port}/_denext/route.css?p=/`, { headers }).then((r) => r.text());
+    const ios = await css({ cookie: "__denext_platform=ios" });
+    assertStringIncludes(ios, ".ios-only", "the iOS session's route CSS has the iOS file's sheet");
+    assert(!ios.includes(".plain-only"), "the plain file's sheet is not the iOS session's");
+    const web = await css({});
+    assertStringIncludes(web, ".plain-only");
+    assert(!web.includes(".ios-only"), "the web route CSS keeps the plain file's sheet");
+  } finally {
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    await Deno.remove(dir, { recursive: true });
+  }
+});

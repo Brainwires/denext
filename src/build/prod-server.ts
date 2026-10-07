@@ -11,15 +11,16 @@ import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
-import { defaultLoader } from "../server/mod.ts";
+import type { ModuleLoader } from "../server/types.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { type ProjectPaths, resolveProject } from "./paths.ts";
 import { dirExists } from "./pipeline-shared.ts";
-import { createProdApp } from "./prod-server/app.ts";
+import { createProdApp, prodLoader } from "./prod-server/app.ts";
 import { assetResolvers } from "./prod-server/assets.ts";
 import { createProdHandler } from "./prod-server/handler.ts";
 import {
   assertBuildComplete,
+  type BuildInfo,
   readBuildInfo,
   resolveFlightBoundary,
 } from "./prod-server/manifest.ts";
@@ -70,9 +71,13 @@ async function assertBuilt(paths: ProjectPaths, clientDir: string): Promise<void
 }
 
 /** Build the prod request handler for an App Router project (plugins already applied). */
-async function buildHandler(paths: ProjectPaths, clientDir: string) {
+async function buildHandler(
+  paths: ProjectPaths,
+  clientDir: string,
+  info: BuildInfo,
+  load: ModuleLoader,
+) {
   const manifest = await scanRoutes(paths.appDir);
-  const info = await readBuildInfo(paths);
   const flight = await resolveFlightBoundary(paths, manifest, info);
   await assertBuildComplete(clientDir, manifest, flight.flightRoutes, info.staticRoutes);
   const assets = await assetResolvers(
@@ -82,7 +87,7 @@ async function buildHandler(paths: ProjectPaths, clientDir: string) {
     flight.flightRoutes,
     info.staticRoutes,
   );
-  const appHandler = await createProdApp(paths, manifest, info, flight, assets);
+  const appHandler = await createProdApp(paths, manifest, info, flight, assets, load);
   return createProdHandler(
     paths,
     clientDir,
@@ -108,20 +113,24 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
 
   const clientDir = join(paths.outDir, "client");
   await assertBuilt(paths, clientDir);
+  // The server render's loader (the build's platform files and copies), which plugins render
+  // through too: a Pages Router page then loads the files its client bundle was built with.
+  const info = await readBuildInfo(paths);
+  const load = await prodLoader(paths, info);
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
     config: paths.config ?? {},
     mode: "prod",
-    load: defaultLoader,
+    load,
   });
   // If startup fails AFTER plugins were applied (missing build, port in use, …), run
   // their teardown hooks before rethrowing — otherwise an embedded caller that starts
   // denext in-process leaks plugin-held resources on a failed boot. On the success path
   // teardown runs via `server.finished`.
   try {
-    const handler = await buildHandler(paths, clientDir);
+    const handler = await buildHandler(paths, clientDir, info, load);
     const server = serveWithPortFallback(
       {
         port: options.port ?? 3000,

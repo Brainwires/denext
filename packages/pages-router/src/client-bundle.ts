@@ -20,7 +20,14 @@
 
 import { join } from "@std/path";
 // Pipeline primitives come from the router-plugin toolkit (semver-stable facade).
-import { type AppCss, buildAppCss, bundleRoutes, extractRouteCss } from "@denext/denext/plugin-kit";
+import {
+  type AppCss,
+  buildAppCss,
+  bundleRoutes,
+  type DenextConfig,
+  extractRouteCss,
+  platformClientRedirects,
+} from "@denext/denext/plugin-kit";
 import { generateClientEntry, routeId } from "./client-entry.ts";
 import type { PagesScan } from "./scan.ts";
 
@@ -68,6 +75,11 @@ export interface ClientBundlerOptions {
    * the runtime never installs the iOS momentum-safe scroll shim. Default on.
    */
   momentumSafeScroll?: boolean;
+  /**
+   * The app config: its `platformExtensions` (and React Native mode) decide which platform files
+   * (`Button.web.tsx`) the bundles take, the same ones the server render loads.
+   */
+  config?: DenextConfig;
 }
 
 /** The bundler handed to the request handler and (optionally) the build step. */
@@ -166,11 +178,14 @@ async function bundle(
     tailwind: opts.tailwind,
   });
 
+  // The app's platform files (`Button.web.tsx`), as the server render resolves them.
   const out = await bundleRoutes(entriesFor(scan, opts.dev), {
     configPath: opts.configPath,
     minify: !opts.dev,
     dev: opts.dev,
     importMap: appCss?.importMap,
+    projectDir: opts.projectRoot,
+    redirects: await platformClientRedirects(opts.projectRoot, opts.config),
     momentumSafeScroll: opts.momentumSafeScroll,
   });
 

@@ -11,9 +11,12 @@ import {
   aliasRedirects,
   chooseVariant,
   composeRedirects,
+  createPlatformScanner,
   desktopPlatform,
   devPlatformOf,
   explicitVariant,
+  keepPlatformScanner,
+  keptPlatformScanner,
   missingVariantMessage,
   parsePlatform,
   pinDevPlatform,
@@ -26,6 +29,7 @@ import {
   platformVariantsOf,
   probePlatformSource,
   projectPlatformRedirects,
+  projectSourceFiles,
   readImportAliases,
   resolveImportAlias,
   resolvePlatformImport,
@@ -236,6 +240,72 @@ Deno.test("scanPlatformGroups → platformRedirects / platformGaps per target", 
       suffixes: ["android", "ios"],
       missing: ["web", "macos", "windows", "linux"],
     }]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platform scan: skips dot-folders and build output at any depth", async () => {
+  const dir = await tree({
+    "src/a.ts": "",
+    "src/a.ios.ts": "",
+    ".next/server/b.ios.ts": "",
+    ".turbo/c.ios.ts": "",
+    "apps/mobile/ios/App/d.ios.ts": "",
+    "apps/mobile/android/e.android.ts": "",
+    "apps/web/out/f.ios.ts": "",
+    "apps/web/www/g.ios.ts": "",
+    "apps/web/dist/h.ios.ts": "",
+    "apps/web/node_modules/pkg/i.ios.js": "",
+    "apps/web/src/j.ios.ts": "",
+  });
+  try {
+    const files = (await Array.fromAsync(projectSourceFiles(dir))).map((f) =>
+      f.slice(dir.length + 1)
+    );
+    assertEquals(files.sort(), ["apps/web/src/j.ios.ts", "src/a.ios.ts", "src/a.ts"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platform scanner: one walk, kept until a platform file comes or goes", async () => {
+  const dir = await tree({ "src/a.ts": "", "src/b.ts": "", "src/b.web.ts": "" });
+  try {
+    const scanner = createPlatformScanner(dir);
+    const first = scanner.files();
+    assert(first === scanner.files(), "concurrent callers share one walk");
+    const web = await scanner.redirects({}, "web");
+    assertEquals(Object.keys(web).length > 0, true);
+    assert(web === await scanner.redirects({}, "web"), "memoized per target");
+    // Editing or atomically saving a file that is not a platform file keeps the scan.
+    assertEquals(scanner.invalidate([join(dir, "src/a.ts")]), false);
+    assertEquals(scanner.invalidate([join(dir, "node_modules/x/y.ios.js")]), false);
+    assertEquals(scanner.invalidate([join(dir, ".git/index")]), false);
+    assert(first === scanner.files());
+    // The plain file of a module with variants, a new variant, or a folder: rescan.
+    assertEquals(scanner.invalidate([join(dir, "src/b.ts")]), true);
+    await scanner.groups();
+    assertEquals(scanner.invalidate([join(dir, "src/a.ios.ts")]), true);
+    assertEquals(scanner.invalidate([join(dir, "src/new-folder")]), true);
+    assert(first !== scanner.files(), "the walk is redone");
+    // A kept scanner serves projectPlatformRedirects for its project.
+    const controller = new AbortController();
+    keepPlatformScanner(scanner, controller.signal);
+    assert(keptPlatformScanner(dir) === scanner);
+    await scanner.redirects({}, "web");
+    await Deno.writeTextFile(join(dir, "src/a.web.ts"), "");
+    assertEquals(
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.includes("/a")),
+      false,
+      "the kept scan is used until invalidated",
+    );
+    scanner.invalidate([join(dir, "src/a.web.ts")]);
+    assert(
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.endsWith("/a")),
+    );
+    controller.abort();
+    assertEquals(keptPlatformScanner(dir), null);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

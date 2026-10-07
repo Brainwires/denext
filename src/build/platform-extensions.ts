@@ -35,10 +35,9 @@
 // keys ({@linkcode aliasRedirects}: an import map applies once, so the alias itself must name
 // the variant); the server render's copy loader follows aliases with the same rule.
 
-import { walk } from "@std/fs";
 import { getCookies } from "@std/http/cookie";
 import { parse as parseJsonc } from "@std/jsonc";
-import { basename, dirname, join, relative, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, join, relative, resolve, SEPARATOR as SEP, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 
 /** A build target. */
@@ -289,45 +288,72 @@ export interface PlatformGroup {
   readonly variants: readonly PlatformVariant[];
 }
 
+/** Folder names a platform scan never enters, at any depth: dependencies and build output. */
+const SKIPPED_DIRS = new Set(["node_modules", "out", "dist", "www", "coverage", "ios", "android"]);
+
 /**
- * Folders a platform scan never enters: dependencies and denext's output anywhere, and the
- * project root's own output folders and native shells (`out/`, `dist/`, `ios/`, `android/`).
- * Anchored at the root, so a project that itself lives under a folder named `android` scans.
+ * Whether a scan skips the folder `name`: every dot-folder (`.git`, `.denext`, `.next`,
+ * `.turbo`, `.vercel`, `.deno-desktop`, …), dependencies, and build output or native shells
+ * (`out/`, `dist/`, `www/`, `coverage/`, `ios/`, `android/`) at any depth, so a monorepo's
+ * `apps/mobile/ios` is skipped too.
  */
-function scanSkip(root: string): RegExp[] {
-  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return [
-    /[/\\](?:node_modules|\.denext|\.git)(?:[/\\]|$)/,
-    new RegExp(`^${escaped}[/\\\\](?:out|dist|ios|android|coverage)(?:[/\\\\]|$)`),
-  ];
+function skippedDir(name: string): boolean {
+  return name.startsWith(".") || SKIPPED_DIRS.has(name);
+}
+
+/** Whether a platform scan enters the folder `name` (see {@linkcode projectSourceFiles}). */
+export function isScannedDir(name: string): boolean {
+  return !skippedDir(name);
+}
+
+/** Whether `path` (absolute, under `root`) lies in a folder a scan skips. */
+function inSkippedDir(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  if (rel === "" || rel.startsWith("..")) return rel !== "";
+  const parts = rel.split(/[\\/]/);
+  return parts.slice(0, -1).some(skippedDir);
+}
+
+/** Whether `name` has a source extension a platform file may have. */
+function isSourceName(name: string): boolean {
+  return PLATFORM_SOURCE_EXTS.some((e) => name.endsWith(e));
 }
 
 /**
  * The app's own source modules under `rootDir` (absolute paths): every file a platform file
- * scan considers, outside dependencies, denext's output and the native shells.
+ * scan considers, outside dependencies, dot-folders, build output and the native shells.
  *
  * @param rootDir The project root.
  */
 export async function* projectSourceFiles(rootDir: string): AsyncGenerator<string> {
   const root = resolve(rootDir);
-  for await (
-    const entry of walk(root, {
-      includeDirs: false,
-      exts: PLATFORM_SOURCE_EXTS.map((e) => e.slice(1)),
-      skip: scanSkip(root),
-    })
-  ) yield entry.path;
+  const pending = [root];
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    let entries: Deno.DirEntry[];
+    try {
+      entries = await Array.fromAsync(Deno.readDir(dir));
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    const subdirs: string[] = [];
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        if (!skippedDir(entry.name)) subdirs.push(join(dir, entry.name));
+      } else if (entry.isFile && isSourceName(entry.name)) {
+        yield join(dir, entry.name);
+      }
+    }
+    pending.push(...subdirs.reverse());
+  }
 }
 
-/**
- * Every module under `rootDir` with platform files (the native App Router path's redirect
- * source, and `doctor`'s gap report).
- *
- * @param rootDir The project root.
- */
-export async function scanPlatformGroups(rootDir: string): Promise<PlatformGroup[]> {
+/** Group a scan's files into the modules that have platform files. */
+function groupPlatformFiles(files: readonly string[]): PlatformGroup[] {
   const byStem = new Map<string, PlatformVariant[]>();
-  for await (const path of projectSourceFiles(rootDir)) {
+  const present = new Set(files);
+  for (const path of files) {
     const split = splitPlatformName(basename(path));
     if (!split) continue;
     const stem = join(dirname(path), split.stem);
@@ -337,9 +363,111 @@ export async function scanPlatformGroups(rootDir: string): Promise<PlatformGroup
   }
   return [...byStem].sort(([a], [b]) => a.localeCompare(b)).map(([stem, variants]) => ({
     stem,
-    plain: PLATFORM_SOURCE_EXTS.map((e) => stem + e).find(isFile) ?? null,
+    plain: PLATFORM_SOURCE_EXTS.map((e) => stem + e).find((f) => present.has(f)) ?? null,
     variants: variants.sort((a, b) => a.file.localeCompare(b.file)),
   }));
+}
+
+/**
+ * Every module under `rootDir` with platform files (the native App Router path's redirect
+ * source, and `doctor`'s gap report).
+ *
+ * @param rootDir The project root.
+ */
+export async function scanPlatformGroups(rootDir: string): Promise<PlatformGroup[]> {
+  return groupPlatformFiles(await Array.fromAsync(projectSourceFiles(rootDir)));
+}
+
+/**
+ * A project's platform-file scan, kept across rebuilds (`denext dev`): the walk runs once, and
+ * again only after {@linkcode PlatformScanner.invalidate} reports a change to which files
+ * exist. Redirects depend only on that, so an edit to a file's content never rescans; an app
+ * with no platform files pays one walk and nothing after.
+ */
+export interface PlatformScanner {
+  /** The project root. */
+  readonly root: string;
+  /** Bumped by each invalidation that forgot the scan. */
+  readonly version: number;
+  /** The app's source files (one walk, shared by concurrent callers). */
+  files(): Promise<readonly string[]>;
+  /** The modules with platform files. */
+  groups(): Promise<readonly PlatformGroup[]>;
+  /** {@linkcode projectPlatformRedirects} for a target, memoized until the next invalidation. */
+  redirects(
+    config: DenextConfig | null | undefined,
+    platform: Platform,
+  ): Promise<Record<string, string>>;
+  /**
+   * Forget the scan when `paths` (created, removed or renamed) can change what it found: a
+   * platform file, the plain file of a module that has them, a folder, or (no `paths`) always.
+   * A source file that is neither (most edits' atomic saves) keeps the scan.
+   *
+   * @returns Whether the scan was forgotten.
+   */
+  invalidate(paths?: readonly string[]): boolean;
+}
+
+/**
+ * A {@linkcode PlatformScanner} for `rootDir`.
+ *
+ * @param rootDir The project root.
+ */
+export function createPlatformScanner(rootDir: string): PlatformScanner {
+  const root = resolve(rootDir);
+  // A watcher may report a path through the root's real path (macOS's `/private/var`).
+  let real = root;
+  try {
+    real = Deno.realPathSync(root);
+  } catch { /* no root on disk yet */ }
+  const canonical = (p: string) => {
+    const path = resolve(p);
+    return real !== root && (path === real || path.startsWith(real + SEP))
+      ? root + path.slice(real.length)
+      : path;
+  };
+  let files: Promise<readonly string[]> | null = null;
+  let groups: Promise<readonly PlatformGroup[]> | null = null;
+  let known = new Set<string>();
+  const redirects = new Map<string, Promise<Record<string, string>>>();
+  const scanner: PlatformScanner = {
+    root,
+    version: 0,
+    files: () => files ??= Array.fromAsync(projectSourceFiles(root)),
+    groups: () =>
+      groups ??= scanner.files().then((f) => {
+        const found = groupPlatformFiles(f);
+        known = new Set(found.flatMap((g) => PLATFORM_SOURCE_EXTS.map((e) => g.stem + e)));
+        return found;
+      }),
+    redirects(config, platform) {
+      const key = `${platform}:${JSON.stringify(config?.platformExtensions ?? null)}:${!!config
+        ?.reactNative}`;
+      let hit = redirects.get(key);
+      if (!hit) {
+        hit = scanner.groups().then((g) => redirectsFor(root, g, config, platform));
+        redirects.set(key, hit);
+      }
+      return hit;
+    },
+    invalidate(paths) {
+      const matters = !paths || paths.some((p) => {
+        const path = canonical(p);
+        if (inSkippedDir(root, path)) return false;
+        const name = basename(path);
+        // A folder (or a file with no source extension, which may be one) can move variants.
+        if (!isSourceName(name)) return !name.includes(".") && !skippedDir(name);
+        return splitPlatformName(name) !== null || known.has(path);
+      });
+      if (!matters) return false;
+      files = null;
+      groups = null;
+      redirects.clear();
+      (scanner as { version: number }).version++;
+      return true;
+    },
+  };
+  return scanner;
 }
 
 /**
@@ -528,9 +656,49 @@ export async function projectPlatformRedirects(
   config: DenextConfig | null | undefined,
   platform: Platform = "web",
 ): Promise<Record<string, string>> {
+  if (!platformResolution(config, platform)) return {};
+  const kept = keptPlatformScanner(projectDir);
+  if (kept) return await kept.redirects(config, platform);
+  return await redirectsFor(projectDir, await scanPlatformGroups(projectDir), config, platform);
+}
+
+/** The scanners a dev session keeps (by project root), so every caller shares one scan. */
+const keptScanners = new Map<string, PlatformScanner>();
+
+/**
+ * Share `scanner` with every {@linkcode projectPlatformRedirects} (and alias-import pass) for
+ * its project until `signal` aborts: a dev session's rebuilds then reuse one scan, which its
+ * watcher forgets when a platform file comes or goes.
+ *
+ * @param scanner The session's scanner.
+ * @param signal Ends the sharing (the session's shutdown).
+ */
+export function keepPlatformScanner(scanner: PlatformScanner, signal?: AbortSignal): void {
+  keptScanners.set(scanner.root, scanner);
+  signal?.addEventListener("abort", () => {
+    if (keptScanners.get(scanner.root) === scanner) keptScanners.delete(scanner.root);
+  });
+}
+
+/**
+ * The scanner a dev session keeps for `projectDir` ({@linkcode keepPlatformScanner}), or null.
+ *
+ * @param projectDir The project root.
+ */
+export function keptPlatformScanner(projectDir: string): PlatformScanner | null {
+  return keptScanners.get(resolve(projectDir)) ?? null;
+}
+
+/** {@linkcode projectPlatformRedirects} over an existing scan. */
+async function redirectsFor(
+  projectDir: string,
+  groups: readonly PlatformGroup[],
+  config: DenextConfig | null | undefined,
+  platform: Platform,
+): Promise<Record<string, string>> {
   const resolution = platformResolution(config, platform);
-  if (!resolution) return {};
-  const redirects = platformRedirects(await scanPlatformGroups(projectDir), resolution);
+  if (!resolution || groups.length === 0) return {};
+  const redirects = platformRedirects(groups, resolution);
   if (Object.keys(redirects).length === 0) return redirects;
   return { ...redirects, ...aliasRedirects(await readImportAliases(projectDir), redirects) };
 }

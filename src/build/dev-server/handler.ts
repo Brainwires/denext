@@ -2,7 +2,9 @@
 // black box, runtime script, unbundled modules, bundles, chunks, route CSS, health,
 // images), then the app itself with request timing recorded in the black box.
 
-import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
+import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
+import { withModuleGraphRedirects } from "../module-graph.ts";
+import { devPlatformImports } from "./platform.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
@@ -137,13 +139,22 @@ async function routeBundleResponse(st: DevState, request: Request, url: URL): Pr
   }
 }
 
-/** Per-route extracted stylesheet (transformed CSS the route's graph reaches). */
-async function routeCssResponse(st: DevState, url: URL): Promise<Response> {
+/**
+ * Per-route extracted stylesheet (transformed CSS the route's graph reaches), crawled through
+ * the session's platform files: a stylesheet only `Badge.ios.tsx` imports is the iOS session's.
+ */
+async function routeCssResponse(st: DevState, url: URL, platform: Platform): Promise<Response> {
   const routePath = url.searchParams.get("p");
   const m = await getManifest(st);
   const route = m.pages.find((p) => p.routePath === routePath);
   const css = await getCss(st);
-  const text = route && css ? await extractRouteCss(routeSourceFiles(route), css) : "";
+  const text = route && css
+    ? await withModuleGraphRedirects(
+      st.paths.configPath,
+      await devPlatformImports(st, platform),
+      () => extractRouteCss(routeSourceFiles(route), css),
+    )
+    : "";
   return new Response(text, {
     headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
   });
@@ -283,7 +294,7 @@ function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHan
         imageOptionsFromConfig(st.paths.config?.images, st.paths.publicDir),
       );
     }
-    if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url);
+    if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url, devPlatformOf(request));
     const chunk = chunkResponse(st, url);
     if (chunk) return chunk;
     const asset = await compatAssetResponse(st, request, url);

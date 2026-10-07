@@ -15,6 +15,25 @@ import { classifySpaChange } from "./shared.ts";
 import { isSelfWrite } from "../self-writes.ts";
 import { isFrameworkPath, linkedFrameworkDir } from "./framework-watch.ts";
 import { hasPathSegment, inNodeModules } from "../path-segments.ts";
+import { createPlatformScanner, keepPlatformScanner } from "../platform-extensions.ts";
+import { watchProjectStructure } from "../platform-watch.ts";
+
+/**
+ * Keep one platform-file scan for the session (every rebuild's redirects come from it) and
+ * forget it when a platform file comes or goes anywhere in the project: then rebuild, drop the
+ * per-module loop's transforms (each names the files its imports resolved to) and reload.
+ */
+function watchPlatformFiles(st: SpaDevState): void {
+  const scanner = createPlatformScanner(st.paths.projectDir);
+  keepPlatformScanner(scanner, st.options.signal);
+  watchProjectStructure(st.paths.projectDir, (changed) => {
+    if (!scanner.invalidate(changed)) return;
+    st.generation++;
+    st.devDir = null;
+    st.unbundled?.invalidateTransforms();
+    broadcastFrame(st, "reload");
+  }, st.options.signal);
+}
 
 function existingPaths(candidates: string[]): string[] {
   return candidates.filter((p) => {
@@ -134,6 +153,7 @@ async function flushBatch(
  */
 export function watch(st: SpaDevState): void {
   const { paths } = st;
+  watchPlatformFiles(st);
   const framework = linkedFrameworkDir();
   const watched = existingPaths([
     resolve(st.entryPath, ".."),
