@@ -102,8 +102,6 @@ Each is documented as a manual recipe today (the
 - **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
-- **`cors()` and `csrf()` API middlewares** for `createApi().use(...)`: an allowlist-driven
-  preflight, and an origin / double-submit check for cookie-authenticated route handlers.
 - **Task retries:** `defineTask({ retry: { attempts, backoff } })`, recorded in run history, with
   the overlap guard aware of a retrying run.
 - **`denext generate migration | seed | ci`,** scaffolded the way `generate docker` is.

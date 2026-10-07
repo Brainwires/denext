@@ -153,6 +153,12 @@ export interface ApiMiddlewareDocs {
    * secured in the document without repeating it.
    */
   security?: Record<string, string[]>[];
+  /**
+   * The error codes the middleware may fail with (`{ csrf_failed: 403 }`). They are folded into
+   * the endpoint's `errors` (a code the definition declares itself keeps its own spec), so
+   * `@denext/openapi` lists them with the endpoint's own responses.
+   */
+  errors?: Record<string, ErrorSpec>;
 }
 
 /** The symbol under which a middleware carries its {@link ApiMiddlewareDocs}. */
@@ -173,8 +179,36 @@ export function documentsSecurity<M extends ApiMiddleware<object, object>>(
   mw: M,
   security: Record<string, string[]>[],
 ): M {
-  (mw as unknown as Record<symbol, ApiMiddlewareDocs>)[MIDDLEWARE_DOCS] = { security };
+  return tagMiddlewareDocs(mw, { security });
+}
+
+/**
+ * Merge `docs` into the {@link ApiMiddlewareDocs} a middleware carries (first-party middleware
+ * documents its error codes this way; {@link documentsSecurity} its security requirement).
+ *
+ * @param mw The middleware to tag.
+ * @param docs What applying it documents.
+ * @returns The same middleware, tagged.
+ */
+export function tagMiddlewareDocs<M extends ApiMiddleware<object, object>>(
+  mw: M,
+  docs: ApiMiddlewareDocs,
+): M {
+  const slot = mw as unknown as Record<symbol, ApiMiddlewareDocs>;
+  slot[MIDDLEWARE_DOCS] = { ...slot[MIDDLEWARE_DOCS], ...docs };
   return mw;
+}
+
+/** The error codes a middleware chain documents, or `undefined` when none does. */
+function middlewareErrors(
+  chain: readonly ApiMiddleware<object, object>[],
+): Record<string, ErrorSpec> | undefined {
+  let out: Record<string, ErrorSpec> | undefined;
+  for (const mw of chain) {
+    const errors = (mw as unknown as Record<symbol, ApiMiddlewareDocs>)[MIDDLEWARE_DOCS]?.errors;
+    if (errors) out = { ...out, ...errors };
+  }
+  return out;
 }
 
 /**
@@ -272,7 +306,15 @@ function builder<Ctx extends object>(
       // A tagged middleware documents its OpenAPI requirement; fold it in unless the definition
       // declares `security` itself (an explicit `security: []` therefore forces "public").
       const documented = def.security === undefined ? middlewareSecurity(chain) : undefined;
-      const effectiveDef = documented ? { ...def, security: documented } : def;
+      // Error codes a middleware documents join the definition's (its own spec wins on a clash).
+      const chainErrors = middlewareErrors(chain);
+      const effectiveDef = documented || chainErrors
+        ? {
+          ...def,
+          ...(documented ? { security: documented } : {}),
+          ...(chainErrors ? { errors: { ...chainErrors, ...def.errors } } : {}),
+        }
+        : def;
       const meta: ApiRouteMeta = { def: effectiveDef, middleware: chain };
       const run: ApiHandler = (request, context) =>
         runDefined(meta, request, context, handler as DefinedHandler);

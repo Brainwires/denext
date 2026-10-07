@@ -39,7 +39,7 @@ import {
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
-import { isPreflight, preflightResponse, routeCorsPolicy } from "./cors.ts";
+import { endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
 
 /**
  * Path canonicalization (before config rules, middleware, and routing): collapse runs
@@ -446,7 +446,8 @@ function subRequestNotFound(pathname: string): Response {
 
 /**
  * A CORS preflight for an API route is answered here — before middleware — under the route's
- * effective policy (its `export const cors`, else the app's `cors`). A preflight carries no
+ * effective policy (the `cors()` middleware on the asked-about method's handler, else its
+ * `export const cors`, else the app's `cors`). A preflight carries no
  * credentials, so an auth guard in `middleware.ts` would otherwise refuse it and the browser
  * would never send the real, authenticated request. Nothing covers the route → `null`, and the
  * request continues as before (a route's own `OPTIONS` export, or a 405).
@@ -459,7 +460,7 @@ async function answerApiPreflight(state: RequestState): Promise<Response | null>
   const api = matchApi(manifest, locale ? locale.rest : state.pathname);
   if (!api) return null;
   const mod = await state.app.config.load(api.route.filePath);
-  const policy = routeCorsPolicy(state.app.cors ?? null, mod);
+  const policy = endpointCorsPolicy(state.app.cors ?? null, mod, state.request);
   return policy ? finalize(state, preflightResponse(state.request, policy)) : null;
 }
 

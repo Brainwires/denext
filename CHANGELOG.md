@@ -18,6 +18,17 @@ and this project adheres to
 
 ### Added
 
+- **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
+  `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
+  credentials), is validated at import, and scopes the policy to the method it guards: the
+  framework answers that method's preflight before `middleware.ts` and decorates every response
+  the endpoint produces, errors included; it replaces the route's `export const cors` and the
+  app's policy for that method. `csrf()` refuses a cookie-carrying non-`GET`/`HEAD`/`OPTIONS`
+  request from any origin but the app's own, `allowedOrigins` (config or option) or the Deno
+  Desktop origin — the Server Actions rule — with a 403 `csrf_failed`; `doubleSubmit` also
+  requires an `x-csrf-token` header echoing a `denext-csrf` cookie the middleware issues.
+  `ApiMiddlewareDocs` gains `errors`, so `csrf_failed` is listed on the endpoint in
+  `@denext/openapi`.
 - **`appCapabilities()` reports the Linux CEF sandbox and the Linux file chooser** (runtime
   2.9.7-denext.12): `sandbox` (`"namespace"`, `"setuid"`, `"chromium"` or `"off"`) with the
   runtime's `sandboxReason`, and `fileChooser` (`"portal"` or `"gtk"`) with `fileChooserReason`.

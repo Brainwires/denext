@@ -37,9 +37,9 @@ import { decodeWire, WIRE_HEADER, WireCodecError } from "../runtime/wire-codec.t
 import {
   applyCors,
   type CorsPolicy,
+  endpointCorsPolicy,
   isPreflight,
   preflightResponse,
-  routeCorsPolicy,
 } from "./cors.ts";
 
 const METHODS: HttpMethod[] = [
@@ -62,8 +62,8 @@ export interface ApiDispatchOptions {
   /** Reports an unknown throw from a `defineApi` route (instrumentation) before it is redacted. */
   onError?: (err: unknown) => void | Promise<void>;
   /**
-   * The app-level CORS policy (`config.cors`). A route's own `export const cors` overrides it;
-   * the effective policy answers a preflight and decorates every response the route produces.
+   * The app-level CORS policy (`config.cors`). A route's own `export const cors` overrides it,
+   * and a `cors()` middleware on the method's handler overrides both; the effective policy answers a preflight and decorates every response the route produces.
    */
   cors?: CorsPolicy | null;
 }
@@ -84,7 +84,7 @@ export async function handleApi(
   options: ApiDispatchOptions = {},
 ): Promise<Response> {
   const mod = (await load(match.route.filePath)) as ApiModule;
-  const cors = routeCorsPolicy(options.cors ?? null, mod);
+  const cors = endpointCorsPolicy(options.cors ?? null, mod, request);
   if (cors && isPreflight(request)) return preflightResponse(request, cors);
   return applyCors(request, await dispatchToHandler(mod, match, request, options), cors);
 }

@@ -112,7 +112,7 @@ export type {
   SchemaInput,
   SchemaOutput,
 } from "./define-api.ts";
-export { rateLimit, requireSession } from "./api-middleware.ts";
+export { cors, csrf, rateLimit, requireSession } from "./api-middleware.ts";
 // Typed live queries: a validated, gated `useLive` source (`defineSubscription`).
 export { defineSubscription } from "../runtime/define-subscription.ts";
 export type {
@@ -139,7 +139,12 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
-export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
+export type {
+  ApiRateLimitOptions,
+  CsrfDoubleSubmitOptions,
+  CsrfOptions,
+  RequireSessionOptions,
+} from "./api-middleware.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they

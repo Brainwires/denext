@@ -663,7 +663,9 @@ cache uses Deno's built-in `node:sqlite`.)
   declared `response` schema always runs (a stripping validator is a data-leak guard).
   `createApi().use(mw).define(…)` composes "before" middleware with typed context
   accumulation (auth and rate limiting reject before any schema runs); first-party
-  `requireSession()` and `rateLimit()` ship (`src/server/api-middleware.ts`).
+  `requireSession()`, `rateLimit()`, `cors()` (a per-endpoint CORS policy whose preflight
+  the framework answers) and `csrf()` (the Server Actions same-origin gate, plus an optional
+  double-submit token) ship (`src/server/api-middleware.ts`).
   `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes a route's definition
   for an OpenAPI/docs plugin.
 - **`@denext/openapi`** (`packages/openapi`): the same definitions as an OpenAPI 3.1

@@ -5813,6 +5813,23 @@
           "denextOnly": true
         },
         {
+          "name": "cors",
+          "slug": "cors",
+          "kind": "function",
+          "signature": "cors(config: CorsConfig): ApiMiddleware<object>",
+          "doc": "An allowlist-driven CORS policy for the endpoints a chain defines — the same exact-origin, fail-closed rules as the app's cors config (origins, methods, headers, exposeHeaders, credentials, maxAge), scoped to one endpoint. The framework answers a preflight for the method the policy guards (204, before middleware.ts and before this chain runs) and decorates every response the endpoint produces, errors included, with the headers the request's origin is granted. It REPLACES the route's export const cors and the app's cors for that method. The policy is validated here, so a bad one fails at import.",
+          "docFull": "An allowlist-driven CORS policy for the endpoints a chain defines — the same exact-origin,\nfail-closed rules as the app's `cors` config (`origins`, `methods`, `headers`,\n`exposeHeaders`, `credentials`, `maxAge`), scoped to one endpoint. The framework answers a\npreflight for the method the policy guards (`204`, before `middleware.ts` and before this\nchain runs) and decorates every response the endpoint produces, errors included, with the\nheaders the request's origin is granted. It REPLACES the route's `export const cors` and the\napp's `cors` for that method. The policy is validated here, so a bad one fails at import.\n\nCORS only tells a browser which origins may READ a response; pair it with {@link csrf} on a\ncookie-authenticated endpoint to refuse the cross-site writes a browser still sends.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The policy (the CorsConfig shape)."
+            }
+          ],
+          "returns": "A middleware carrying the resolved policy (no context extension).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "CorsConfig",
           "slug": "CorsConfig",
           "kind": "interface",
@@ -5999,6 +6016,47 @@
           "signature": "type CspSetting = strict | off | RouteCsp",
           "doc": "How a scope's Content-Security-Policy is decided (three-state): - \"strict\" — denext's default hash-based strict policy. - \"off\" — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a RouteCsp object — the strict policy plus the listed external opt-ins.",
           "docFull": "How a scope's Content-Security-Policy is decided (three-state):\n- `\"strict\"` — denext's default hash-based strict policy.\n- `\"off\"` — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set\n  the policy entirely at the edge/proxy).\n- a {@link RouteCsp} object — the strict policy plus the listed external opt-ins.\n\nSettable globally (`denext.config` `csp`) and per file (a route's `csp` export);\nthe per-file setting overrides the global one for that route.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "csrf",
+          "slug": "csrf",
+          "kind": "function",
+          "signature": "csrf(options?: CsrfOptions): ApiMiddleware<object>",
+          "doc": "Refuse cross-site state changes on a cookie-authenticated endpoint. A non-safe method (anything but GET/HEAD/OPTIONS) must come from the app's own origin, allowedOrigins (app config or these options) or the app's Deno Desktop origin — the Origin header, else Referer, and neither present is a refusal: the same gate Server Actions, the typed-API batch and denextAuth apply. With doubleSubmit the request must also echo the token cookie in a header. A refusal is a 403 csrf_failed envelope, before any schema runs; the code is folded into the endpoint's documented errors for @denext/openapi.",
+          "docFull": "Refuse cross-site state changes on a cookie-authenticated endpoint. A non-safe method\n(anything but `GET`/`HEAD`/`OPTIONS`) must come from the app's own origin, `allowedOrigins`\n(app config or these options) or the app's Deno Desktop origin — the `Origin` header, else\n`Referer`, and neither present is a refusal: the same gate Server Actions, the typed-API batch\nand `denextAuth` apply. With `doubleSubmit` the request must also echo the token cookie in a\nheader. A refusal is a 403 `csrf_failed` envelope, before any schema runs; the code is folded\ninto the endpoint's documented errors for `@denext/openapi`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Extra origins, the double-submit token, cookieless handling."
+            }
+          ],
+          "returns": "A middleware (no context extension).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CsrfDoubleSubmitOptions",
+          "slug": "CsrfDoubleSubmitOptions",
+          "kind": "interface",
+          "signature": "interface CsrfDoubleSubmitOptions",
+          "doc": "The double-submit half of CsrfOptions.",
+          "docFull": "The double-submit half of {@link CsrfOptions}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CsrfOptions",
+          "slug": "CsrfOptions",
+          "kind": "interface",
+          "signature": "interface CsrfOptions",
+          "doc": "Options for csrf.",
+          "docFull": "Options for {@link csrf}.",
           "params": [],
           "returns": "",
           "examples": [],
