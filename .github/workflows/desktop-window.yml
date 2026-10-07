@@ -27,18 +27,20 @@ on:
     - cron: "17 5 * * *" # nightly, 05:17 UTC
   push:
     branches: [development]
+    # What the test runs: `denext desktop package` (src/cli/commands/desktop*.ts), which writes the
+    # package scripts and runs `denext export` (src/cli/commands/serve.ts, after `patch.ts` applies
+    # any patches) through the build layer — export.ts, export-pipeline/, export-paths.ts,
+    # module-graph.ts, spa/, platform-*.ts, use-cache-loader.ts, scaffold.ts, pe-resources.ts and
+    # more: about 140 of src/build's files, so all of src/build is listed — then the packaged app
+    # (src/desktop, src/mobile). The render / server / runtime layers the export also runs are left
+    # to ci.yml (every push) and this workflow's nightly run.
     paths:
       - "src/desktop/**"
-      - "src/build/desktop*.ts"
-      - "src/build/desktop-runtime-pin.json"
-      - "src/build/app-update.ts"
-      - "src/build/ota-signing.ts"
-      - "src/build/safe-extract.ts"
-      - "src/build/file-lock.ts"
-      - "src/build/project-locks.ts"
+      - "src/build/**"
       - "src/cli/commands/desktop*.ts"
+      - "src/cli/commands/serve.ts"
+      - "src/cli/commands/patch.ts"
       - "src/mobile/**"
-      - "src/build/platform-*.ts"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"
@@ -90,15 +92,16 @@ jobs:
             ~/AppData/Local/deno/denext-desktop-runtime
           key: desktop-runtime-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
-      # (gnome-keyring + secret-tool), a notification server (dunst), the XDG scheme tools, and
-      # the WebKitGTK runtime the webview backend loads.
+      # (gnome-keyring + secret-tool), a notification server (dunst), xprop (x11-utils: the session
+      # script polls for the window manager), the XDG scheme tools, and the WebKitGTK runtime the
+      # webview backend loads.
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb xauth xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
+            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
             xdg-utils desktop-file-utils zenity \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
