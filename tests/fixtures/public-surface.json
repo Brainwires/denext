@@ -402,7 +402,7 @@
     "matchSegments:function",
     "parsePattern:function",
     "peelLocale:function",
-    "platformClientImportMap:function",
+    "platformClientRedirects:function",
     "readCappedBody:function",
     "registerFamily:function",
     "remixCodegen:namespace",
@@ -4191,8 +4191,10 @@
     "BundleOptions:interface",
     "ClassRuntimeMode:typeAlias",
     "MultiBundleOutput:interface",
+    "ServerModuleRef:interface",
+    "ServerModules:typeAlias",
     "bundleRoutes:function",
-    "platformClientImportMap:function"
+    "platformClientRedirects:function"
   ],
   "denext/build/css": [
     "AppCss:interface",

@@ -15,12 +15,19 @@ import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { djb2 } from "../runtime/djb2.ts";
 import {
   type ImportAliases,
+  keptPlatformScanner,
   projectSourceFiles,
   readImportAliases,
   resolveImportAlias,
   resolvePlatformImport,
 } from "./platform-extensions.ts";
-import { absolutizeSpecifiers, applyEdits, type Edit, parseModule } from "./swc-ast.ts";
+import {
+  absolutizeSpecifiers,
+  applyEdits,
+  type Edit,
+  parseModule,
+  pinImportMeta,
+} from "./swc-ast.ts";
 
 /** A target's import map for `deno bundle` and `deno info`. */
 export interface PlatformImportMap {
@@ -62,18 +69,47 @@ async function aliasImportsOf(
   return out;
 }
 
-/** The app modules that import anything through an alias, with those imports. */
+/**
+ * Each module's alias imports as last parsed, by path: reused while the file's modification time
+ * and the alias table are unchanged, so a dev rebuild parses only the files that were edited.
+ */
+const parsedAliasImports = new Map<
+  string,
+  { mtime: number; aliases: string; imports: Array<{ spec: string; url: string }> }
+>();
+
+/** `path`'s alias imports, from {@linkcode parsedAliasImports} when the file is unchanged. */
+async function aliasImportsOfFile(
+  path: string,
+  aliases: ImportAliases,
+  aliasKey: string,
+): Promise<Array<{ spec: string; url: string }>> {
+  const mtime = (await Deno.stat(path).catch(() => null))?.mtime?.getTime() ?? -1;
+  const hit = parsedAliasImports.get(path);
+  if (hit && hit.mtime === mtime && mtime !== -1 && hit.aliases === aliasKey) return hit.imports;
+  const source = await Deno.readTextFile(path).catch(() => "");
+  // Cheap pre-filter: most modules spell no alias at all.
+  const imports = aliases.some(([key]) => source.includes(key))
+    ? await aliasImportsOf(source, aliases)
+    : [];
+  parsedAliasImports.set(path, { mtime, aliases: aliasKey, imports });
+  return imports;
+}
+
+/**
+ * The app modules that import anything through an alias, with those imports. A dev session's
+ * kept scan ({@linkcode keptPlatformScanner}) supplies the file list, so a rebuild walks nothing.
+ */
 async function aliasImporters(
   projectDir: string,
   aliases: ImportAliases,
 ): Promise<AliasImports[]> {
-  const keys = aliases.map(([key]) => key);
+  const aliasKey = JSON.stringify(aliases);
+  const files = await keptPlatformScanner(projectDir)?.files() ??
+    await Array.fromAsync(projectSourceFiles(projectDir));
   const out: AliasImports[] = [];
-  for await (const path of projectSourceFiles(projectDir)) {
-    const source = await Deno.readTextFile(path).catch(() => "");
-    // Cheap pre-filter: most modules spell no alias at all.
-    if (!keys.some((k) => source.includes(k))) continue;
-    const imports = await aliasImportsOf(source, aliases);
+  for (const path of files) {
+    const imports = await aliasImportsOfFile(path, aliases, aliasKey);
     if (imports.length > 0) out.push({ url: toFileUrl(path).href, path, imports });
   }
   return out;
@@ -182,7 +218,8 @@ async function writeCopy(
   const edits: Edit[] = [];
   absolutizeSpecifiers(parsed.ctx, parsed.body, m.url, edits, (u) => u, rewrite);
   const path = fromFileUrl(copy);
-  await Deno.writeTextFile(path, applyEdits(parsed.ctx.bytes, edits));
+  // The copy lives in the copy dir; its `import.meta` keeps naming the module it stands in for.
+  await Deno.writeTextFile(path, await pinImportMeta(applyEdits(parsed.ctx.bytes, edits), m.url));
   const original = toFileUrl(await Deno.realPath(m.path)).href;
   return { [copy]: original, [toFileUrl(await Deno.realPath(path)).href]: original };
 }

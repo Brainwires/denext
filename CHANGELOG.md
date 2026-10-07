@@ -336,7 +336,8 @@ Each item is described in full under Changed, Fixed or Security below.
   routes share could run uncached. A real cycle is now copied whole.
 - **`import.meta.url`, `.filename`, `.dirname` and `.resolve()` in a `"use cache"` module name the
   module itself.** The compiled copy lives in `.denext/server-cache/`, so
-  `new URL("./data.json", import.meta.url)` looked for the file there.
+  `new URL("./data.json", import.meta.url)` looked for the file there. The same holds for the
+  copies platform files make (server render and client bundles).
 - **A `"use cache"` function imported through an import-map alias is cached.** The server loader
   followed only relative imports, so `import { getPosts } from "@/lib/data.ts"` loaded the
   module untransformed and ran it on every request.

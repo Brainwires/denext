@@ -485,7 +485,9 @@ Deno.test("platformImportMap: the modules that reach a variant through an alias 
   const dir = await tree({
     "deno.json": JSON.stringify({ imports: { "@/": "./", "#v": "./v.ts" } }),
     "page.ts": `import { m } from "@/mid";\nimport { v } from "#v";\nexport const got = m + v;\n`,
-    "mid.ts": `import { v } from "@/v.ts";\nimport { w } from "./w.ts";\nexport const m = v + w;\n`,
+    "mid.ts":
+      `import { v } from "@/v.ts";\nimport { w } from "./w.ts";\nexport const m = v + w;\n` +
+      `export const here = new URL("./w.ts", import.meta.url).href;\n`,
     "w.ts": `export const w = "W";\n`,
     "other.ts": `import { w } from "@/w.ts";\nexport const o = w;\n`,
     "v.ts": `export const v = "PLAIN";\n`,
@@ -510,6 +512,19 @@ Deno.test("platformImportMap: the modules that reach a variant through an alias 
     const mid = await Deno.readTextFile(new URL(importMap[url("mid.ts")]));
     assertStringIncludes(mid, JSON.stringify(url("v.ios.ts")));
     assertStringIncludes(mid, JSON.stringify(url("w.ts")), "a relative import is made absolute");
+    // The copy's import.meta keeps naming the module it stands in for.
+    assertStringIncludes(mid, `new URL("./w.ts", ${JSON.stringify(url("mid.ts"))})`);
+    // A rebuild with nothing edited parses nothing again, and sees an edit.
+    const again = await platformImportMap(dir, redirects, copyDir);
+    assertEquals(again.importMap, importMap);
+    await Deno.writeTextFile(
+      join(dir, "other.ts"),
+      `import { v } from "@/v.ts";\nexport const o = v;\n`,
+    );
+    const later = new Date(Date.now() + 2000);
+    await Deno.utime(join(dir, "other.ts"), later, later);
+    const edited = await platformImportMap(dir, redirects, copyDir);
+    assert(edited.importMap[url("other.ts")], "the edited module now reaches the variant");
     // A target with no variant to reach, or an app with no aliases, copies nothing.
     const web = await platformImportMap(dir, {}, join(dir, ".denext", "platform-imports", "web"));
     assertEquals(web, { importMap: {}, originals: {} });

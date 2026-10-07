@@ -400,3 +400,44 @@ Deno.test("denext build + start: start renders the build's server copies from a 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("denext build: a module reaching a variant through an alias keeps the client transforms", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_platform_transforms_" });
+  try {
+    const root = new URL("../", import.meta.url).href;
+    await scaffoldApp(dir, {
+      "denext.config.ts": `export default { reactCompiler: true, features: { FLAG_ON: true } };\n`,
+      "app/page.tsx": `import { Island } from "@/components/Island.tsx";\n` +
+        `export default function Page(){ return <main><Island/></main>; }\n`,
+      // The island is copied (its alias import reaches lib/v.web.ts): the copy must still be
+      // the compiled, feature-folded module.
+      "components/Island.tsx": `"use client"\nimport { useState } from "denext";\n` +
+        `import { feature } from "denext/feature";\nimport { v } from "@/lib/v.ts";\n` +
+        `function Child({ t }: { t: string }) { return <i>{t}</i>; }\n` +
+        `export function Island(){ const [n, setN] = useState(0); const t = v + n;\n` +
+        `  return <b onClick={() => setN(n + 1)}><Child t={t} />` +
+        `{feature("FLAG_ON") ? "FOLDED_ON" : "FOLDED_OFF"}</b>; }\n`,
+      "lib/v.ts": `export const v = "PLAIN_V";\n`,
+      "lib/v.web.ts": `export const v = "WEB_V";\n`,
+    }, { "@/": "./", "denext/feature": `${root}src/feature.ts` });
+    await build(dir);
+    const clientDir = join(dir, ".denext", "client");
+    let js = "";
+    for await (const e of Deno.readDir(clientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        js += await Deno.readTextFile(join(clientDir, e.name));
+      }
+    }
+    assertStringIncludes(js, "WEB_V");
+    assert(!js.includes("PLAIN_V"), "the plain file was bundled");
+    assertStringIncludes(js, "FOLDED_ON");
+    assert(!js.includes("FOLDED_OFF"), "feature() was not folded in the copy");
+    // The compiler's memo cache: the component allocates its cache slots, and the <Child>
+    // element is memoized in slot 0.
+    const island = js.slice(js.lastIndexOf("function", js.indexOf("FOLDED_ON")));
+    assert(/\{let [\w$]+=[\w$]+\(\d+\),/.test(island), "the copy is not the compiled module");
+    assert(/\([\w$]+,0,\(\)=>/.test(island), "the <Child> element is not memoized");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
