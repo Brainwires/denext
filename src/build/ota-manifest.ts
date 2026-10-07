@@ -9,6 +9,7 @@ import { dirname, join } from "@std/path";
 import {
   isExcludedFromOtaManifest,
   isOtaManifestPath,
+  isOtaPlatform,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_PATH,
@@ -66,10 +67,14 @@ export async function collectOtaManifest(
   return await makeOtaManifest(files, meta);
 }
 
-/** The export's {@linkcode OTA_PLATFORM_PATH} stamp (its target), or null without one. */
+/**
+ * The export's {@linkcode OTA_PLATFORM_PATH} stamp (its target, trimmed), or null without one. A
+ * stamp with stray whitespace still names its target, and then fails the manifest's stamp check
+ * (its bytes are not the target's) instead of passing for an unknown one.
+ */
 async function readPlatformStamp(dir: string): Promise<string | null> {
   try {
-    return await Deno.readTextFile(join(dir, ...OTA_PLATFORM_PATH.split("/")));
+    return (await Deno.readTextFile(join(dir, ...OTA_PLATFORM_PATH.split("/")))).trim();
   } catch {
     return null;
   }
@@ -80,13 +85,17 @@ async function readPlatformStamp(dir: string): Promise<string | null> {
  * `denext export --platform` writes it; the OTA manifest then names that target, and the signed
  * version covers the stamp.
  *
+ * A `web` export carries no stamp (every shell takes it), so `web` writes nothing.
+ *
  * @param dir The export (web root).
  * @param platform The target.
- * @throws When the export already carries another target's stamp.
+ * @throws RangeError when `platform` is not an export target; an Error when the export already
+ *   carries another target's stamp.
  */
 export async function writePlatformStamp(dir: string, platform: string): Promise<void> {
+  if (!isOtaPlatform(platform)) throw new RangeError(`${platform} is not an export target`);
   const current = await readPlatformStamp(dir);
-  if (current === platform) return;
+  if (current === platform || (current === null && platform === "web")) return;
   if (current !== null) {
     throw new Error(
       `${dir} is the ${current} export (${OTA_PLATFORM_PATH}); export again with ` +

@@ -211,7 +211,10 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
       signingKey,
     );
     printManifest(ctx, dir, dirArg, manifest);
-    if (manifest.platform === undefined) await warnUnstampedExport(ctx);
+    // `--platform web` asked for the unstamped export every shell takes.
+    if (manifest.platform === undefined && ctx.flags.platform !== "web") {
+      await warnUnstampedExport(ctx);
+    }
   } catch (err) {
     fail(`denext ota manifest: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -374,7 +377,7 @@ export const otaCommand: CommandSpec = {
       type: "string",
       valueName: "<target>",
       help:
-        "manifest: the target the export was built for (ios, android, macos, windows, linux, web); shells of another target refuse it",
+        "manifest: the target the export was built for (ios, android, macos, windows, linux); shells of another target refuse it. web names no target (no stamp), as `denext export` does",
     },
     {
       name: "dir",

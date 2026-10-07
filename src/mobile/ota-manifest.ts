@@ -33,7 +33,9 @@
  * refuse a manifest built for another target (code `platform_mismatch`). A platform export
  * carries the stamp file {@linkcode OTA_PLATFORM_PATH} (its content is the target's name), which
  * the file list — and so the version and the signature — covers; the field must agree with it.
- * A manifest without one (a `web` export) is accepted by every shell.
+ * The field itself is not signed: a shell checks the stamp against its own target, so stripping
+ * or changing the field cannot move a stamped export to another target. A manifest with neither
+ * (a `web` export, which carries no stamp) is accepted by every shell.
  *
  * File paths may not contain control characters (U+0000–U+001F, U+007F): a path holding a tab or
  * a newline could otherwise forge the `"<path>\t<sha256>\n"` lines the version hashes.
@@ -64,7 +66,7 @@ export const OTA_PLATFORM_HEADER = "x-denext-ota-platform";
 const OTA_PLATFORMS: readonly string[] = ["web", "ios", "android", "macos", "windows", "linux"];
 
 /** Whether `value` names an export target (`web`, `ios`, `android`, `macos`, `windows`, `linux`). */
-function isOtaPlatform(value: unknown): value is string {
+export function isOtaPlatform(value: unknown): value is string {
   return typeof value === "string" && OTA_PLATFORMS.includes(value);
 }
 
@@ -116,10 +118,11 @@ export interface OtaManifest {
    */
   readonly nativeFingerprint?: string;
   /**
-   * The target the export was built for (`ios`, `android`, `macos`, `windows`, `linux`, or `web`
-   * when stamped): a shell of another target refuses it (code `platform_mismatch`). Must match
-   * the export's {@linkcode OTA_PLATFORM_PATH} stamp, which the version covers. Absent: an
-   * unstamped (`web`) export every shell accepts.
+   * The target the export was built for (`ios`, `android`, `macos`, `windows`, `linux`): a shell
+   * of another target refuses it (code `platform_mismatch`). Must match the export's
+   * {@linkcode OTA_PLATFORM_PATH} stamp, which the version covers; the field is not signed, so a
+   * shell also checks the stamp itself. Absent with no stamp: a `web` export every shell accepts
+   * (`web` names no stamp, so it is never written here).
    */
   readonly platform?: string;
   /**
@@ -285,6 +288,13 @@ export async function makeOtaManifest(
   meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
   assertOtaMeta(meta);
+  if (meta.platform === "web") {
+    // A `web` export carries no stamp, and its manifest names no target: every shell takes it.
+    if (files.some((f) => f.path === OTA_PLATFORM_PATH)) {
+      throw new RangeError(`a web export carries no ${OTA_PLATFORM_PATH} stamp`);
+    }
+    meta = { ...meta, platform: undefined };
+  }
   if (meta.platform !== undefined) await assertPlatformStamp(files, meta.platform);
   const bad = files.find((f) => !isOtaManifestPath(f.path));
   if (bad) {
@@ -361,9 +371,11 @@ async function assertPlatformStamp(
 
 /**
  * Why a shell of target `expected` must refuse `manifest`, or null when it may install it: the
- * manifest names another target, or its `platform` disagrees with the signed
- * {@linkcode OTA_PLATFORM_PATH} stamp in its file list. A manifest without a `platform` (an
- * unstamped `web` export) fits every shell. The refusal's code is `platform_mismatch`.
+ * manifest names another target, its `platform` disagrees with the {@linkcode OTA_PLATFORM_PATH}
+ * stamp in its file list, or that stamp names another target. The stamp is what the version (and
+ * so the signature) covers; the `platform` field is not signed, so the stamp decides whether or
+ * not the field is present. A manifest with neither (an unstamped `web` export) fits every shell.
+ * The refusal's code is `platform_mismatch`.
  *
  * @param manifest A manifest that passed {@linkcode isOtaManifest}.
  * @param expected The shell's target (`ios`, `android`, `macos`, `windows`, `linux`).
@@ -373,14 +385,17 @@ export async function otaPlatformMismatch(
   expected: string,
 ): Promise<string | null> {
   const { platform } = manifest;
-  if (platform === undefined) return null;
   const stamp = manifest.files.find((f) => f.path === OTA_PLATFORM_PATH);
-  if (stamp?.sha256 !== await platformStampHash(platform)) {
+  if (platform !== undefined && stamp?.sha256 !== await platformStampHash(platform)) {
     return `the manifest says ${platform}, but its files carry no matching ${OTA_PLATFORM_PATH}`;
   }
-  return platform === expected
-    ? null
-    : `the UI was built for ${platform}; this app runs on ${expected}`;
+  if (platform !== undefined && platform !== expected) {
+    return `the UI was built for ${platform}; this app runs on ${expected}`;
+  }
+  if (stamp !== undefined && stamp.sha256 !== await platformStampHash(expected)) {
+    return `the UI's ${OTA_PLATFORM_PATH} stamp is another target's; this app runs on ${expected}`;
+  }
+  return null;
 }
 
 /**

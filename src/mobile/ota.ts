@@ -51,8 +51,10 @@ import {
  *   Checked only when both carry one.
  * - `platform_mismatch`: the manifest names another target than this shell's (`ios` /
  *   `android`): it is that platform's export (`denext export --platform`), with that platform's
- *   files. A manifest that names none fits every shell. Checked here, before the native side
- *   sees it; the target is covered by the signature through the export's stamp file.
+ *   files. Checked here, before the native side sees it. The manifest's `platform` field is not
+ *   signed; the export's stamp file is (the version covers it), so a stamped export is refused
+ *   by another target whether or not the field is present. Only a manifest with neither (a `web`
+ *   export) fits every shell.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
  * `native_mismatch`, and

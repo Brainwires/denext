@@ -72,8 +72,9 @@ const DEFAULT_APP_ID = "denext-desktop";
  * - `downgrade`: `manifest.sequence` is `<=` the highest accepted, or absent after a sequenced
  *   manifest was accepted;
  * - `platform_mismatch`: the manifest names another target (`denext export --platform`) than this
- *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), or its
- *   `platform` disagrees with the export's signed stamp file;
+ *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its
+ *   `platform` disagrees with the export's stamp file, or that stamp (which the version covers,
+ *   unlike the unsigned field) names another target, with or without the field;
  * - `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;
  * - `rejected`: the version was rolled back after failing to boot; refused until
  *   {@linkcode desktopUpdateReset}.
@@ -568,7 +569,7 @@ export async function checkForDesktopUpdate(
   const dir = dataDirOf(config);
   const manifest = await fetchManifest(config);
   await assertVerified(manifest, config.publicKey); // integrity + signature, verify-before-trust
-  await assertPlatform(manifest, config); // the target, which the signed stamp file covers
+  await assertPlatform(manifest, config); // the target: the stamp file the version covers
 
   const pointer = await readPointer(dir);
   if (pointer && pointer.version === manifest.version) return { available: false };

@@ -17,7 +17,12 @@ import { writeOtaManifest, writePlatformStamp } from "../src/build/ota-manifest.
 import { generateOtaKeyPair, importOtaSigningKey } from "../src/build/ota-signing.ts";
 import { createOtaHandler } from "../src/server/ota-handler.ts";
 import { checkForUiUpdate } from "../src/mobile/ota.ts";
-import { checkForDesktopUpdate, DesktopUpdateError } from "../src/desktop/updater.ts";
+import {
+  checkForDesktopUpdate,
+  DesktopUpdateError,
+  prepareDesktopUpdate,
+} from "../src/desktop/updater.ts";
+import { walk } from "@std/fs";
 import { buildRegistry } from "../src/cli/register.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -242,5 +247,97 @@ Deno.test("denext ota manifest: --platform names the target; an unnamed export o
     console.log = log;
     console.error = error;
     await Deno.remove(project, { recursive: true });
+  }
+});
+
+// The `platform` field is not signed; the stamp file is (the version covers it). Deleting the
+// field from another target's manifest must not make it installable: the stamp decides.
+Deno.test("otaPlatformMismatch: a stamped export without its platform field is still its target's", async () => {
+  const android = await makeOtaManifest([INDEX, await stampEntry("android")], {
+    platform: "android",
+  });
+  const { platform: _, ...stripped } = android;
+  assert(isOtaManifest(stripped));
+  assertStringIncludes((await otaPlatformMismatch(stripped, "ios"))!, "another target's");
+  assertEquals(await otaPlatformMismatch(stripped, "android"), null);
+  // A field naming the shell's own target cannot launder another target's stamp either.
+  assertStringIncludes(
+    (await otaPlatformMismatch({ ...stripped, platform: "ios" }, "ios"))!,
+    "no matching",
+  );
+});
+
+Deno.test("checkForUiUpdate: a stamped manifest stripped of its platform field is refused", async () => {
+  const android = await makeOtaManifest([INDEX, await stampEntry("android")], {
+    platform: "android",
+  });
+  const { platform: _, ...stripped } = android;
+  const serve = () => Promise.resolve(Response.json(stripped));
+  await inShell("ios", async (applies) => {
+    const r = await checkForUiUpdate({ baseUrl: "https://ui.test", fetch: serve as Any });
+    assertEquals(r.kind, "error");
+    assertEquals((r as { code?: string }).code, "platform_mismatch");
+    assertEquals(applies.length, 0);
+  });
+});
+
+Deno.test("desktop updater: a signed export stripped of its platform field is refused, nothing staged", async () => {
+  const pair = await generateOtaKeyPair();
+  const signingKey = await importOtaSigningKey(pair.privateKeyPem);
+  const linux = await exportDir("linux", "<html>LINUX</html>");
+  const data = await Deno.makeTempDir({ prefix: "denext_platform_ota_strip_" });
+  const real = globalThis.fetch;
+  try {
+    await writeOtaManifest(linux, { sequence: 7 }, signingKey);
+    const ota = createOtaHandler({ dir: linux, basePath: "/ui" });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = (await ota(new Request(String(input), init))) ??
+        new Response("missing", { status: 404 });
+      if (!String(input).endsWith("/_denext/ota.json")) return res;
+      const { platform: _, ...stripped } = await res.json(); // the signature still verifies
+      return Response.json(stripped);
+    }) as typeof fetch;
+    const config = {
+      feedUrl: "http://feed.test/ui",
+      publicKey: pair.publicKey,
+      dataDir: data,
+      platform: "macos" as const,
+    };
+    const checked = await assertRejects(() => checkForDesktopUpdate(config), DesktopUpdateError);
+    assertEquals(checked.code, "platform_mismatch");
+    const prepared = await assertRejects(() => prepareDesktopUpdate(config), DesktopUpdateError);
+    assertEquals(prepared.code, "platform_mismatch");
+    const left: string[] = [];
+    for await (const e of walk(data)) if (e.path !== data) left.push(e.path);
+    assertEquals(left, [], "a refused update stages nothing");
+    // The app of the stamp's own target still takes it.
+    assert((await checkForDesktopUpdate({ ...config, platform: "linux" })).available);
+  } finally {
+    globalThis.fetch = real;
+    for (const d of [linux, data]) await Deno.remove(d, { recursive: true });
+  }
+});
+
+Deno.test("platform stamps: web writes none, an unknown target is refused, a stamp is trimmed", async () => {
+  const web = await exportDir();
+  const padded = await exportDir();
+  try {
+    await writePlatformStamp(web, "web");
+    await assertRejects(() => Deno.stat(join(web, OTA_PLATFORM_PATH)), Deno.errors.NotFound);
+    const manifest = await writeOtaManifest(web, { platform: "web" });
+    assertEquals(manifest.platform, undefined, "web names no target");
+    assert(!manifest.files.some((f) => f.path === OTA_PLATFORM_PATH));
+    await assertRejects(() => writePlatformStamp(web, "phone"), RangeError, "not an export target");
+    await assertRejects(
+      async () => makeOtaManifest([INDEX, await stampEntry("ios")], { platform: "web" }),
+      RangeError,
+      "carries no",
+    );
+    // A hand-edited stamp with a newline names its target, and fails the stamp check loudly.
+    await Deno.mkdir(join(padded, "_denext"), { recursive: true });
+    await Deno.writeTextFile(join(padded, OTA_PLATFORM_PATH), "ios\n");
+    await assertRejects(() => writeOtaManifest(padded), RangeError, `stamp holding "ios"`);
+  } finally {
+    for (const d of [web, padded]) await Deno.remove(d, { recursive: true });
   }
 });

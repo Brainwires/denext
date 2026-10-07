@@ -105,9 +105,12 @@ Each item is described in full under Changed, Fixed or Security below.
   manifest records `platform` (the signed version covers the file); `denext ota manifest
   --platform <target>` names one by hand. `checkForUiUpdate` and the desktop updater refuse
   another target's UI (code `platform_mismatch`) and send `x-denext-ota-platform`, and
-  `createOtaHandler({ platforms })` serves each target its own export. `denext ota manifest`
-  warns when an app with platform files publishes an export that names no target. `denext/server`
-  exports the `OtaTarget` and `PlatformExtensionsConfig` types.
+  `createOtaHandler({ platforms })` serves each target its own export. The `platform` field is
+  not signed, so the shells check the stamp itself against their own target: a stamped export
+  stripped of the field is still refused by every other target. `web` names no target, so
+  `denext ota manifest --platform web` stamps nothing, as `denext export` does. `denext ota
+  manifest` warns when an app with platform files publishes an export that names no target.
+  `denext/server` exports the `OtaTarget` and `PlatformExtensionsConfig` types.
 - **`onAppCapabilitiesChanged(handler)` from `denext/desktop/app`.** The runtime's
   `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
   when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the
@@ -149,6 +152,10 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Changed
 
+- **Notification click `data` is documented as untrusted input.** `LocalNotification.data`, the
+  tap's action, the web `Notification` shim's `click` and the runtime's `notificationresponse`
+  say so: on Linux any process of the same user can forge a click, and on Windows a toast
+  activation. Validate `data` before acting on it.
 - **Linux file dialogs are only the runtime's.** `pickDocument` / `saveFile` / `pickFolder` no
   longer shell out to zenity or kdialog (separate installs a desktop may not ship, which differ in
   what they offer): without denext's pinned runtime's dialogs they answer `unavailable` and the page
@@ -536,7 +543,10 @@ Each item is described in full under Changed, Fixed or Security below.
 - **Desktop hardening.** The script that hands `desktop.preload` its key now removes its own
   element, so page code cannot read the key back from `document.scripts`; `denext/desktop/clerk`'s
   OAuth transport opens only a Clerk OAuth URL (one whose `redirect_uri` is the Frontend API's
-  `/v1/oauth_callback`, on the instance's host or Clerk's own domains); `shell.openExternal` and
+  `/v1/oauth_callback`, on the instance's host or Clerk's own domains) on the Frontend API, a
+  Clerk domain or a known social provider's authorization page (3.1.0 opened any `https` URL in
+  the OS auth sheet, so page script could show a phishing page there); another provider is added
+  with `installClerkDesktopBridge({ oauthHosts })`, and a refusal names the host; `shell.openExternal` and
   the auth-session browser launch open the normalized `URL.href` they checked, not the raw
   string; `shell.openPath` also refuses `.pyz`, `.pyzw`, `.pyc`, `.theme`, `.themepack`, `.rdp`
   and `.wsb`; and a loopback auth session is bound to the page that started it, as a

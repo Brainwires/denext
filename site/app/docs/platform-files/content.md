@@ -93,9 +93,10 @@ included. Its platform exports take each target's files.
 ## Over-the-air updates
 
 A platform export carries `_denext/platform.txt` (its target's name), so its OTA manifest names
-the target (`"platform": "ios"`). The manifest's version, and so its signature, covers that file.
-`checkForUiUpdate` and the desktop updater refuse a manifest built for another target (code
-`platform_mismatch`), and send their own target (`x-denext-ota-platform`) with the manifest
+the target (`"platform": "ios"`). The manifest's version, and so its signature, covers that file;
+the `platform` field itself is not signed, so a shell checks the stamp against its own target too:
+dropping or changing the field never moves an export to another target. `checkForUiUpdate` and the
+desktop updater refuse a manifest built for another target (code `platform_mismatch`), and send their own target (`x-denext-ota-platform`) with the manifest
 request and every download, so one server can keep an export per target:
 
 ```ts
@@ -107,8 +108,9 @@ const ota = createOtaHandler({
 });
 ```
 
-A request without the header gets the `web` export. A manifest that names no target (a `web`
-export) is taken by every shell, which is right for an app with no platform files; for one with
+A request without the header gets the `web` export. A manifest that names no target and carries no
+stamp (a `web` export; `--platform web` stamps nothing, as `denext export` does) is taken by every
+shell, which is right for an app with no platform files; for one with
 them, `denext ota manifest` warns and each shell should get its own export
 (`denext export --platform ios`, then `denext ota manifest out`; `--platform` names the target of
 an export that does not carry the file yet).
