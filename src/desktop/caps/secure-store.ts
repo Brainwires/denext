@@ -402,6 +402,26 @@ async function legacyItemPresent(
 }
 
 /**
+ * Run each key's operations one at a time, in call order: a move (read legacy, delete it, store,
+ * maybe put it back) is several steps, and a concurrent write or delete of the same key between
+ * them could be undone by it, or leave two items.
+ *
+ * @returns `serial(key, op)`: `op` runs once every earlier operation on `key` has settled.
+ */
+function keyQueue(): <T>(key: string, op: () => Promise<T>) => Promise<T> {
+  const tails = new Map<string, Promise<void>>();
+  return (key, op) => {
+    const result = (tails.get(key) ?? Promise.resolve()).then(op);
+    const tail = result.then(() => {}, () => {});
+    tails.set(key, tail);
+    void tail.then(() => {
+      if (tails.get(key) === tail) tails.delete(key);
+    });
+    return result;
+  };
+}
+
+/**
  * macOS under a runtime with its own store (the Keychain, written by the app's own process, so
  * only the app may read the item), with the items an older denext wrote through `/usr/bin/security`
  * moved over: those trust `security`, so any program of the user could read them. On a read miss
@@ -410,9 +430,13 @@ async function legacyItemPresent(
  * come back on a later read.
  *
  * In the login keychain the two can't coexist (one item per service + account): the runtime
- * refuses to store over an item it didn't write, so the legacy item is deleted first and, on a
- * read, restored if the store still fails. `security` is pointed at a (service, key) only while
- * the runtime's own item isn't there (`security delete-generic-password` would match it too).
+ * refuses to store over an item it didn't write, so the legacy item is deleted first and, when the
+ * store still fails, put back with the value it held (read with `security -w` before the delete),
+ * on a write as on a read: a failed write leaves the old value, never nothing. A write first asks
+ * the runtime's store for the key (no prompt): a store that can't answer (the keychain locked)
+ * fails the write before the legacy item is touched. `security` is pointed at a (service, key)
+ * only while the runtime's own item isn't there (`security delete-generic-password` would match it
+ * too). Each key's operations run one at a time (see {@linkcode keyQueue}).
  *
  * @param runtime The runtime's store.
  * @param legacy The `security` CLI.
@@ -426,8 +450,18 @@ function migratingBackend(
 ): SecureBackend {
   // Keys with no legacy item left, as far as this process knows: no `security` call for them.
   const settled = new Set<string>();
-  /** Store `b64` in the runtime's store over a legacy item known to be there. */
-  const replaceLegacy = async (key: string, b64: string, signal: AbortSignal) => {
+  const serial = keyQueue();
+  /**
+   * Store `b64` in the runtime's store over a legacy item known to be there, holding `kept`
+   * (`null`: it could not be read). When the store fails after the legacy item was deleted to make
+   * room, the item is put back with `kept` and the store's error is thrown.
+   */
+  const replaceLegacy = async (
+    key: string,
+    b64: string,
+    kept: string | null,
+    signal: AbortSignal,
+  ) => {
     try {
       // The data-protection keychain: no clash; the legacy copy goes after.
       await runtime.set(key, b64, signal);
@@ -435,40 +469,66 @@ function migratingBackend(
     } catch {
       // The login keychain: the legacy item is in the way.
       await legacy.delete(key, signal);
-      await runtime.set(key, b64, signal);
+      await storeOrRestore(key, b64, kept, signal);
     }
     settled.add(key);
   };
-  return {
-    get: async (key, signal) => {
-      const stored = await runtime.get(key, signal);
-      if (stored !== null || settled.has(key)) return stored;
-      const old = (await present(key, signal)) ? await legacy.get(key, signal) : null;
-      // Not there, or not a value this cap wrote (not our base64): leave it alone.
-      if (old === null || decodeStored(old) === null) {
-        settled.add(key);
-        return null;
-      }
-      try {
-        await replaceLegacy(key, old, signal);
-      } catch {
-        // Keep the user's value where it was (the next read retries the move).
-        await legacy.set(key, old, signal).catch(() => {});
-      }
-      return old;
-    },
-    set: async (key, b64, signal) => {
-      if (settled.has(key)) return runtime.set(key, b64, signal);
-      if (await present(key, signal)) return replaceLegacy(key, b64, signal);
+  /** Store `b64` where the legacy item was; on a failure put `kept` back, then throw. */
+  const storeOrRestore = async (
+    key: string,
+    b64: string,
+    kept: string | null,
+    signal: AbortSignal,
+  ) => {
+    try {
+      await runtime.set(key, b64, signal);
+    } catch (err) {
+      if (kept !== null) await legacy.set(key, kept, signal).catch(() => {});
+      throw err;
+    }
+  };
+  /** A read miss: move a legacy item this cap wrote over, returning its value. */
+  const migrateOnRead = async (key: string, signal: AbortSignal) => {
+    const old = (await present(key, signal)) ? await legacy.get(key, signal) : null;
+    // Not there, or not a value this cap wrote (not our base64): leave it alone.
+    if (old === null || decodeStored(old) === null) {
+      settled.add(key);
+      return null;
+    }
+    // On a failure the user's value stays where it was (the next read retries the move).
+    await replaceLegacy(key, old, old, signal).catch(() => {});
+    return old;
+  };
+  /** A write while a legacy item may be there. */
+  const migrateOnWrite = async (key: string, b64: string, signal: AbortSignal) => {
+    if (!(await present(key, signal))) {
       await runtime.set(key, b64, signal);
       settled.add(key);
-    },
-    delete: async (key, signal) => {
-      await runtime.delete(key, signal);
-      // The runtime's item is gone, so `security` can only match a legacy one.
-      if (!settled.has(key)) await legacy.delete(key, signal);
-      settled.add(key);
-    },
+      return;
+    }
+    // Can the runtime's store answer at all (no prompt)? If not, nothing is touched.
+    await runtime.get(key, signal);
+    await replaceLegacy(key, b64, await legacy.get(key, signal), signal);
+  };
+  return {
+    get: (key, signal) =>
+      serial(key, async () => {
+        const stored = await runtime.get(key, signal);
+        if (stored !== null || settled.has(key)) return stored;
+        return migrateOnRead(key, signal);
+      }),
+    set: (key, b64, signal) =>
+      serial(
+        key,
+        () => settled.has(key) ? runtime.set(key, b64, signal) : migrateOnWrite(key, b64, signal),
+      ),
+    delete: (key, signal) =>
+      serial(key, async () => {
+        await runtime.delete(key, signal);
+        // The runtime's item is gone, so `security` can only match a legacy one.
+        if (!settled.has(key)) await legacy.delete(key, signal);
+        settled.add(key);
+      }),
   };
 }
 

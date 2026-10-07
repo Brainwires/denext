@@ -228,6 +228,74 @@ Deno.test("secureStore (macOS, runtime store): a move that can't store keeps the
   assertEquals(mac.violations, []);
 });
 
+Deno.test("secureStore (macOS, runtime store): a write whose store fails after the legacy delete puts the old value back, and fails", async () => {
+  // The keychain locks right after the legacy item is deleted to make room (prompts are off, so
+  // the runtime's store refuses). The old code deleted the legacy item and lost it: it had no copy.
+  let locked = false;
+  let lockOnDelete = true;
+  const mac = fakeMac("login", { runtimeFails: () => locked });
+  mac.login.set("tok", { value: b64("signed-in token"), owner: "security" });
+  const cap = secureStoreCapability({
+    service: "com.example.app",
+    os: "darwin",
+    api: mac.api,
+    run: async (cmd, args, stdin, signal) => {
+      const answer = await mac.run(cmd, args, stdin, signal);
+      if (args[0] === "delete-generic-password" && lockOnDelete) locked = true;
+      return answer;
+    },
+  });
+  const err = await assertRejects(
+    () => call(cap, "set", { key: "tok", value: "new" }),
+    DesktopCapError,
+  );
+  assertEquals(err.code, "backend_unavailable");
+  assertStringIncludes(err.message, "locked");
+  // The new value isn't saved; the old one is intact, where it was.
+  assertEquals(mac.login.get("tok"), { value: b64("signed-in token"), owner: "security" });
+  assertEquals(mac.violations, []);
+  // Unlocked again: the next write moves it over and removes the legacy item.
+  locked = lockOnDelete = false;
+  await call(cap, "set", { key: "tok", value: "new" });
+  assertEquals(mac.login.get("tok"), { value: b64("new"), owner: "runtime" });
+  assertEquals(await call(cap, "get", { key: "tok" }), "new");
+  assertEquals(mac.violations, []);
+});
+
+Deno.test("secureStore (macOS, runtime store): a write while the keychain is locked fails before the legacy item is touched", async () => {
+  const mac = fakeMac("login", { runtimeFails: () => true });
+  mac.login.set("tok", { value: b64("signed-in token"), owner: "security" });
+  const cap = capOn(mac);
+  const err = await assertRejects(
+    () => call(cap, "set", { key: "tok", value: "new" }),
+    DesktopCapError,
+  );
+  assertEquals(err.code, "backend_unavailable");
+  // Only looked (attributes): never read the secret, deleted or rewrote the item.
+  assertEquals(ops(mac), ["find-generic-password"]);
+  assert(!mac.cli.some((a) => a.includes("-w")), JSON.stringify(mac.cli));
+  assertEquals(mac.login.get("tok"), { value: b64("signed-in token"), owner: "security" });
+});
+
+for (const keychain of ["login", "data-protection"] as const) {
+  Deno.test(`secureStore (macOS, runtime store, ${keychain}): a key's operations run one at a time, so a move never undoes a write`, async () => {
+    const mac = fakeMac(keychain);
+    mac.login.set("tok", { value: b64("old"), owner: "security" });
+    const cap = capOn(mac);
+    // A first read starts the move; a write of the same key arrives before it finishes.
+    const [read, write] = await Promise.all([
+      call(cap, "get", { key: "tok" }),
+      call(cap, "set", { key: "tok", value: "new" }),
+    ]);
+    assertEquals(read, "old");
+    assertEquals(write, { ok: true });
+    assertEquals(mac.runtimeItems.get("tok"), { value: b64("new"), owner: "runtime" });
+    assertEquals(await call(cap, "get", { key: "tok" }), "new");
+    assertEquals([...mac.login.values()].filter((i) => i.owner === "security"), []);
+    assertEquals(mac.violations, []);
+  });
+}
+
 Deno.test("secureStore (macOS, runtime store): a value this cap didn't write is left alone", async () => {
   const mac = fakeMac("login");
   // Not our base64 (another tool's item under the same service and account).

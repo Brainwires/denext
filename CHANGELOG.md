@@ -285,6 +285,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A macOS `secureStore.set` over an item an older denext wrote can no longer lose it.** In the
+  login keychain the runtime's store refuses to store over that item, so it is deleted first; when
+  the store then failed (the keychain locked, with prompts off) the old value was gone. The write
+  now reads the old value first (`security -w`), asks the runtime's store whether it can answer
+  before touching anything (a locked keychain fails the write with the item intact), and puts the
+  item back with its old value if the store fails after the delete, returning the store's error.
+  Each key's secure-store operations now also run one at a time, so a first-read move can't undo a
+  concurrent write of the same key.
 - **`denext desktop doctor --linux` no longer warns about a locked keyring that unlocks by
   itself.** gnome-keyring keeps a keyring with no password (an autologin's login keyring, as on
   Cinnamon) unencrypted and reports it locked until first use, which unlocks it with no prompt; the
