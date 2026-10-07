@@ -7,6 +7,7 @@
 import type { ImportAliases, Platform, PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
 import type * as esbuild from "esbuild";
+import type { ServerModuleRef } from "../client-imports.ts";
 
 /** Dev URL prefixes (see the `dev-unbundled.ts` module header). */
 export const DEP_PREFIX = "/_denext/@dep/";
@@ -191,6 +192,12 @@ export interface UnbundledDevOptions {
    * copy of a package next to them, or fetch chunks that are gone.
    */
   onDepsRebuilt?: () => void;
+  /**
+   * The `"use server"` modules the dev boundary knows (id → file URL + export names). A
+   * `"use server"` module is never served as written: the browser gets its action stub, named
+   * by this id and exports (else by the id the boundary would give it and its static exports).
+   */
+  serverModules?: () => Iterable<readonly [string, ServerModuleRef]>;
 }
 
 /** What React Native mode adds to the unbundled loop (from `reactNativeBundleOptions`). */

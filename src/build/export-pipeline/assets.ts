@@ -23,7 +23,7 @@ import {
   compatModuleList,
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
-import { exportBuildDir, type ExportContext, exportImportMap } from "./context.ts";
+import { exportBuildDir, exportClientResolution, type ExportContext } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /**
@@ -72,11 +72,19 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
   }
 }
 
+/** Each export's boundary manifest, crawled once ({@linkcode boundaryManifest}). */
+const boundaries = new WeakMap<ExportContext, Promise<BoundaryManifest>>();
+
 /** The app-wide boundary manifest (crawled from every route's full server tree). */
 function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
-  return appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
-    npm: ctx.compat ? npmBoundaryByImporter : undefined,
-  });
+  let boundary = boundaries.get(ctx);
+  if (!boundary) {
+    boundary = appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
+      npm: ctx.compat ? npmBoundaryByImporter : undefined,
+    });
+    boundaries.set(ctx, boundary);
+  }
+  return boundary;
 }
 
 /**
@@ -126,11 +134,13 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
     if (ctx.flightRoutes.has(route.routePath) || ctx.staticRoutes.has(route.routePath)) continue;
+    // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
+    const server = (await boundaryManifest(ctx)).server;
     const bundle = await bundleRoute(route, {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: exportImportMap(ctx),
+      ...exportClientResolution(ctx, server),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
@@ -165,7 +175,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: exportImportMap(ctx),
+      ...exportClientResolution(ctx, boundary.server),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);

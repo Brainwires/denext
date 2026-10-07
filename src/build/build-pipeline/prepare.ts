@@ -91,12 +91,14 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
   // The web target's platform files (`.web.tsx`): file-URL redirects on the native path (the
   // compat bundles probe them), which every crawl below resolves through too.
+  const platformRedirects = compat
+    ? {}
+    : await projectPlatformRedirects(projectDir, paths.config, "web");
   const platformImports = compat ? { importMap: {}, originals: {} } : await platformImportMap(
     projectDir,
-    await projectPlatformRedirects(projectDir, paths.config, "web"),
+    platformRedirects,
     join(paths.outDir, "platform-imports", "web"),
   );
-  const platformRedirects = platformImports.importMap;
   setModuleGraphRedirects(paths.configPath, platformImports);
   if (!compat) {
     await assertPlatformFilesResolve(
@@ -145,11 +147,13 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     hasFlight: boundaryRoutes.length > 0,
     css: null,
     cssImportMap: {},
+    transforms: {},
     platformRedirects,
     routes: [],
     staticRoutes: [],
     clientRoutes: [],
     boundary: null,
+    serverModules: new Map(),
     usesLive: false,
     classRuntime,
     usesActivity,

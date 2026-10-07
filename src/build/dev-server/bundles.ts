@@ -18,7 +18,7 @@ import {
   importFunctionExports,
   routeEntryFiles,
 } from "../module-graph.ts";
-import { bundleImportMap } from "./assets.ts";
+import { bundleResolution } from "./assets.ts";
 import { isCompat } from "./compat.ts";
 import { devBoundaryFor, flightRoutesFor, getManifest, getUnbundled } from "./manifest.ts";
 import { renderPlatform } from "./platform.ts";
@@ -56,7 +56,9 @@ async function buildRouteBundle(
   const bundle = await bundleRoute(route, {
     configPath: st.paths.configPath,
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
-    importMap: await bundleImportMap(st, platform),
+    ...await bundleResolution(st, platform),
+    // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
+    server: (await devBoundaryFor(st, platform)).manifest.server,
     dev: true, // emit Fast Refresh registration into the entry
     devMetaFooter: await routeDevMeta(st, route),
   });
@@ -150,7 +152,7 @@ async function bundledFlightEntry(
   const bundle = await bundleFlightEntry(boundary, {
     configPath: st.paths.configPath,
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
-    importMap: await bundleImportMap(st, platform),
+    ...await bundleResolution(st, platform),
     dev: true, // emit Fast Refresh registration for client islands
     classRuntime: "eager", // dev installs the class runtime unconditionally
   });
@@ -169,10 +171,12 @@ export async function getGlobalErrorBundle(
 ): Promise<string> {
   const m = await getManifest(st);
   if (!m.rootGlobalError) return "// no global-error.tsx";
+  const target = (await isCompat(st)) ? "web" : platform;
   const bundle = await bundleGlobalError(m.rootGlobalError, {
     configPath: st.paths.configPath,
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
-    importMap: await bundleImportMap(st, (await isCompat(st)) ? "web" : platform),
+    ...await bundleResolution(st, target),
+    server: (await devBoundaryFor(st, target)).manifest.server,
     dev: true,
   });
   cacheChunks(st, bundle);

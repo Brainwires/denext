@@ -189,7 +189,6 @@ export async function prepareExport(
     load: await exportLoader(paths, platform, platformRedirects),
     platform,
     platformRedirects,
-    platformImports: platformImports.importMap,
     flightRoutes: new Set(),
     staticRoutes: new Set(),
     cssRoutes: new Set(),

@@ -7,6 +7,10 @@ import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
+import { generateServerStub } from "../client-imports.ts";
+import { scanDirective } from "../directives.ts";
+import { serverModuleIdFor } from "../boundary-ids.ts";
+import { staticExportNames } from "../module-graph.ts";
 import { importedNames, prepareReactNativeSource } from "./react-native.ts";
 import {
   firstPartyProbe,
@@ -108,16 +112,42 @@ async function refreshFooterFor(
 /**
  * The module's source as it is served: as written, or — in React Native mode — with the
  * worklets transform and the `require` hoist applied ({@linkcode prepareReactNativeSource}).
- * Null when it cannot be read (esbuild then reports the missing file).
+ * A `"use server"` module is served as its action stub instead ({@linkcode actionStub}): its
+ * source never reaches the browser. Null when it cannot be read (esbuild then reports the
+ * missing file).
  */
-async function servedSource(st: UnbundledState, abs: string): Promise<string | null> {
+async function servedSource(
+  st: UnbundledState,
+  abs: string,
+): Promise<{ source: string | null; action: boolean }> {
   let source: string;
   try {
     source = await Deno.readTextFile(abs);
   } catch {
-    return null;
+    return { source: null, action: false };
   }
-  return st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source;
+  if (scanDirective(source) === "server") {
+    return { source: await actionStub(st, abs), action: true };
+  }
+  return {
+    source: st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source,
+    action: false,
+  };
+}
+
+/**
+ * The action stub the browser gets for the `"use server"` module at `abs`: the dev boundary's
+ * id and exports for it, else the id the boundary gives a module (its real path under the app
+ * dir) and its static export names.
+ */
+async function actionStub(st: UnbundledState, abs: string): Promise<string> {
+  const url = toFileUrl(await Deno.realPath(abs).catch(() => abs)).href;
+  for (const [id, ref] of st.opts.serverModules?.() ?? []) {
+    if (ref.url === url || ref.url === toFileUrl(abs).href) {
+      return generateServerStub(id, ref.exports);
+    }
+  }
+  return generateServerStub(serverModuleIdFor(st.opts.appDir, url), await staticExportNames(abs));
 }
 
 /** esbuild plugin: load `abs` (+ footer), externalize + rewrite every import it makes. */
@@ -184,9 +214,10 @@ export async function transform(
 
   const entry: TransformEntry = { mtimeMs, code: "", deps: [], selfAccepting: false };
   st.known.add(abs);
-  const source = await servedSource(st, abs);
+  const { source, action } = await servedSource(st, abs);
   const names = new Map<string, Set<string>>();
-  const footer = source === null
+  // An action stub registers no components (an edit to the action reloads its importers).
+  const footer = source === null || action
     ? ""
     : await refreshFooterFor(st, abs, entry, source, names, platform);
   // No deno-loader: every import is externalized by the rewrite plugin, so esbuild only

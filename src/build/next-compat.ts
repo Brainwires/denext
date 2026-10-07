@@ -74,6 +74,7 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
+import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
@@ -2383,18 +2384,22 @@ async function writeAnalyzeMeta(
  * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
  */
 export function serverStubPlugin(
-  servers: Iterable<[string, { url: string; exports: string[] }]>,
-  stubOf: (moduleId: string, exports: string[]) => string,
+  servers: Iterable<readonly [string, { url: string; exports: readonly string[] }]>,
+  stubOf: (moduleId: string, exports: readonly string[]) => string,
 ): esbuild.Plugin {
-  const byPath = new Map<string, { id: string; exports: string[] }>();
+  const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
-    byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+    if (ref.url.startsWith("file:")) byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
   }
   return {
     name: "denext-server-stub",
     setup(build) {
+      // An app `"use server"` module the boundary does not hold (so no stub id is registered
+      // for it) is stubbed anyway, and the build then fails naming it: its source never ships.
+      const unknown = new Set<string>();
+      build.initialOptions.metafile = true;
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
-        const s = byPath.get(args.path);
+        const s = byPath.get(args.path) ?? byPath.get(await realPathOr(args.path));
         if (s) {
           return {
             contents: stubOf(s.id, s.exports),
@@ -2402,12 +2407,13 @@ export function serverStubPlugin(
             resolveDir: dirname(args.path),
           };
         }
+        if ((await readDirective(args.path)) !== "server") return null;
         // A `"use server"` file inside an npm package that is not in the boundary — the other
         // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
         // client code imports the package's ESM build while its islands are the server
         // bundle's CJS files. Its code must not ship either; nothing registers it on the
         // server, so calling it fails there (no island renders it).
-        if (!inNodeModules(args.path) || (await readDirective(args.path)) !== "server") return null;
+        if (!inNodeModules(args.path)) unknown.add(args.path);
         const exports = await staticExportNames(args.path);
         return {
           contents: stubOf(`unregistered:${args.path.split(/[\\/]/).slice(-3).join("/")}`, exports),
@@ -2415,8 +2421,44 @@ export function serverStubPlugin(
           resolveDir: dirname(args.path),
         };
       });
+      build.onEnd((result) => {
+        if (unknown.size === 0) return;
+        const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
+        const leaks: ServerModuleLeak[] = [...unknown].map((module) => ({
+          module,
+          entries: ["a client bundle"],
+          chain: metafileChain(result.metafile, cwd, module),
+        }));
+        unknown.clear();
+        throw new Error(formatServerModuleLeaks(leaks, cwd));
+      });
     },
   };
+}
+
+/**
+ * The import chain an esbuild metafile records from an entry point to `target` (absolute paths,
+ * the target last), or none. Metafile paths are relative to the build's working directory.
+ */
+function metafileChain(
+  metafile: esbuild.Metafile | undefined,
+  cwd: string,
+  target: string,
+): string[] {
+  if (!metafile) return [];
+  const abs = (p: string) => resolve(cwd, p.replace(/^[a-z-]+:/i, ""));
+  const importedBy = new Map<string, string>();
+  for (const [from, input] of Object.entries(metafile.inputs)) {
+    for (const imp of input.imports) {
+      if (!importedBy.has(abs(imp.path))) importedBy.set(abs(imp.path), abs(from));
+    }
+  }
+  const chain = [target];
+  for (let at = importedBy.get(target); at && !chain.includes(at); at = importedBy.get(at)) {
+    chain.unshift(at);
+  }
+  // Drop the generated entry (a staged temp file) the chain starts from.
+  return chain.length > 1 ? chain.slice(1) : chain;
 }
 
 /** Release esbuild's long-lived service process (call once at process end). */

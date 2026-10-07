@@ -8,7 +8,7 @@ import type { ModuleLoader } from "./types.ts";
 import type { Directive } from "../build/directives.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
-import { clientIdFor } from "../build/module-graph.ts";
+import { clientIdFor } from "../build/boundary-ids.ts";
 import { toFileUrl } from "@std/path";
 import type { AppConfig } from "./app-config.ts";
 

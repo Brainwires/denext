@@ -36,12 +36,14 @@ export interface BuildContext {
   readonly hasFlight: boolean;
   /** The app's CSS assets (null when the app has no stylesheets). */
   readonly css: AppCss | null;
-  /** The bundler import map: CSS shims + the client-transform redirects. */
+  /** The bundler import map's CSS shims. */
   cssImportMap: Record<string, string>;
+  /** The client transforms (auto-memo, qrl, AsyncContext, feature folds) by module file URL. */
+  transforms: Record<string, string>;
   /**
-   * The web target's platform files (`.web.tsx`) as the client bundles' import map (native path
-   * only; empty when the app has none): file-URL redirects plus the rewritten copies of the app
-   * modules that reach one through an import-map alias. Merged last into {@link cssImportMap}.
+   * The web target's platform-file redirects (`.web.tsx`, native path only; empty when the app
+   * has none), keyed by file URL. The client bundles resolve them with the action stubs and the
+   * transforms (./client-imports.ts).
    */
   readonly platformRedirects: Record<string, string>;
   /** Route bundles produced so far (the manifest's `generatedRoutes`). */
@@ -52,6 +54,11 @@ export interface BuildContext {
   readonly clientRoutes: PageRoute[];
   /** The app-wide boundary manifest (only when the app has a Flight route). */
   boundary: BoundaryManifest | null;
+  /**
+   * The `"use server"` modules every route reaches (the boundary's `server`, computed whether or
+   * not the app has a Flight route): each client bundle gets an action stub for them.
+   */
+  serverModules: BoundaryManifest["server"];
   /** Whether the Flight entry bundles the Live transport. */
   usesLive: boolean;
   /**

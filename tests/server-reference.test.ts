@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   actionIdFor,
@@ -87,6 +87,77 @@ Deno.test("bundleFlightEntry strips server-action code, keeps a dispatch stub", 
     assertStringIncludes(bundle, "GO_MARKER"); // client code present
     assert(!bundle.includes("ACTION_SECRET_TOKEN_77"), "server-action code leaked into bundle");
     assertStringIncludes(bundle, actionIdFor("a_actions", "save")); // dispatch stub wired to the opaque id
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** An app whose island imports a secret-holding action through `spec` (an alias by default). */
+async function aliasActionApp(
+  spec = "@/actions.ts",
+): Promise<{ dir: string; boundary: BoundaryManifest }> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_alias_action_" }));
+  const root = new URL("../", import.meta.url).href;
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+      imports: {
+        "denext": `${root}mod.ts`,
+        "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+        "denext/client": `${root}src/client/mod.ts`,
+        "denext/client-runtime": `${root}src/client/client-runtime.ts`,
+        "@/": "./",
+      },
+    }),
+  );
+  const actionsPath = join(dir, "actions.ts");
+  await Deno.writeTextFile(
+    actionsPath,
+    `"use server"\nconst SECRET = "ALIAS_SECRET_TOKEN_88";\nexport function save(v){ return SECRET + v; }\n`,
+  );
+  const widgetPath = join(dir, "Widget.tsx");
+  await Deno.writeTextFile(
+    widgetPath,
+    `"use client"\nimport { save } from "${spec}";\n` +
+      `export function Widget(){ return <button onClick={() => save("x")}>GO_MARKER</button>; }\n`,
+  );
+  return {
+    dir,
+    boundary: {
+      client: new Map([["c_widget", { url: toFileUrl(widgetPath).href, exports: ["Widget"] }]]),
+      server: new Map([["a_actions", { url: toFileUrl(actionsPath).href, exports: ["save"] }]]),
+    },
+  };
+}
+
+// The leak 3.2.0 fixed: an island importing its action through an import-map alias bundled the
+// action's source (the stub was keyed by file URL, which `deno bundle` never maps an alias to).
+Deno.test("bundleFlightEntry: an action imported through an import-map alias ships as its stub", async () => {
+  const { dir, boundary } = await aliasActionApp();
+  try {
+    const output = await bundleFlightEntry(boundary, { configPath: join(dir, "deno.json") });
+    const bundle = [...output.files.values()].join("\n");
+    assertStringIncludes(bundle, "GO_MARKER");
+    assert(!bundle.includes("ALIAS_SECRET_TOKEN_88"), "server-action code leaked into bundle");
+    assertStringIncludes(bundle, actionIdFor("a_actions", "save"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// Fail closed: with the stub mapping broken (the bundle is told of no server modules), the
+// bundle that ships the action's source is refused, naming the module and its importer.
+Deno.test('bundleFlightEntry: a bundle that ships a "use server" module fails', async () => {
+  const { dir, boundary } = await aliasActionApp("./actions.ts");
+  try {
+    const err = await assertRejects(() =>
+      bundleFlightEntry(boundary, { configPath: join(dir, "deno.json"), server: [] })
+    );
+    const message = err instanceof Error ? err.message : String(err);
+    assertStringIncludes(message, `a "use server" module would ship to the browser`);
+    assertStringIncludes(message, "  actions.ts\n    imported through Widget.tsx");
+    assertStringIncludes(message, `shipped by the "use client" islands bundle`);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

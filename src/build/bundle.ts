@@ -5,7 +5,6 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
-import { actionIdFor } from "../runtime/server-action.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
@@ -18,6 +17,13 @@ import {
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
+import {
+  findShippedServerModules,
+  formatServerModuleLeaks,
+  importerChains,
+  type ServerModuleLeak,
+} from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
 
 /**
@@ -892,11 +898,27 @@ export interface BundleOptions {
   /** Minify the output (production builds); omit for readable dev output. */
   minify?: boolean;
   /**
-   * Extra import-map redirects merged into the bundle's config `imports` (keyed
-   * by full module URL). Used to replace `"use server"` modules with client
-   * stubs so server code never enters the browser bundle.
+   * Extra import-map entries merged into the bundle's config `imports` (keyed by full module
+   * URL): the CSS shims. The app's own modules resolve through {@linkcode redirects},
+   * {@linkcode rewritten} and {@linkcode server} instead, which reach aliased imports too.
    */
   importMap?: Record<string, string>;
+  /**
+   * The project root whose import-map aliases the client resolution follows (see
+   * ./client-imports.ts). Defaults to the config's directory; unset with a `file:` URL config
+   * (an app with no `deno.json`, which has no aliases).
+   */
+  projectDir?: string;
+  /** The target's platform-file redirects (`projectPlatformRedirects`), keyed by file URL. */
+  redirects?: Record<string, string>;
+  /** The client transforms: a module's file URL → its transformed file's URL. */
+  rewritten?: Record<string, string>;
+  /**
+   * The `"use server"` modules (the boundary's `server`): every import of one, however it is
+   * spelled, resolves to a generated action stub, so server code never enters the bundle. A
+   * bundle that still ships a `"use server"` module fails.
+   */
+  server?: ServerModules;
   /**
    * Dev build: emit Fast Refresh registration into the generated entry (family
    * registration + `enableFastRefresh()` + a full-reload fallback). Off for
@@ -943,23 +965,7 @@ export interface BundleOptions {
   instrumentationClient?: string | null;
 }
 
-/**
- * Generate a browser stub module for a `"use server"` module: each export becomes
- * a client dispatch stub (POSTs to the action endpoint). Used as the redirect
- * target so the real server module never reaches the browser bundle.
- *
- * @param moduleId The server module's stable id.
- * @param exports The server module's exported symbol names.
- * @returns The stub module source.
- */
-export function generateServerStub(moduleId: string, exports: string[]): string {
-  const lines = exports.map((name) =>
-    name === "default"
-      ? `export default clientActionStub(${JSON.stringify(actionIdFor(moduleId, "default"))});`
-      : `export const ${name} = clientActionStub(${JSON.stringify(actionIdFor(moduleId, name))});`
-  );
-  return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
-}
+export { generateServerStub } from "./client-imports.ts";
 
 /**
  * Bundle the app-wide Flight entry, redirecting every `"use server"` module to a
@@ -970,40 +976,32 @@ export function generateServerStub(moduleId: string, exports: string[]): string 
  * @param opts Bundle config + minify flag.
  * @returns The bundled Flight entry (entry file + any dynamic-import chunks).
  */
-export async function bundleFlightEntry(
+export function bundleFlightEntry(
   boundary: BoundaryManifest,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  const stubDir = await Deno.makeTempDir({ prefix: "denext_stubs_" });
-  const importMap: Record<string, string> = {};
-  try {
-    for (const [moduleId, ref] of boundary.server) {
-      const stubPath = join(stubDir, moduleId.replace(/[^a-z0-9]/gi, "_") + ".ts");
-      await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
-      importMap[ref.url] = toFileUrl(stubPath).href;
-    }
-    return await bundleSourceFiles(
-      generateFlightEntry(
-        boundary,
-        opts.dev,
-        false,
-        opts.usesLive ?? true,
-        opts.instrumentationClient ?? null,
-        opts.classRuntime ?? "lazy",
-        opts.usesActivity ?? false,
-        opts.usesViewTransition ?? false,
-        opts.features ?? {},
-      ),
-      {
-        configPath: opts.configPath,
-        minify: opts.minify,
-        // Merge any CSS redirects from the caller with the server-stub redirects.
-        importMap: { ...opts.importMap, ...importMap },
-      },
-    );
-  } finally {
-    await Deno.remove(stubDir, { recursive: true });
-  }
+  return bundleSourceFiles(
+    generateFlightEntry(
+      boundary,
+      opts.dev,
+      false,
+      opts.usesLive ?? true,
+      opts.instrumentationClient ?? null,
+      opts.classRuntime ?? "lazy",
+      opts.usesActivity ?? false,
+      opts.usesViewTransition ?? false,
+      opts.features ?? {},
+    ),
+    {
+      configPath: opts.configPath,
+      minify: opts.minify,
+      importMap: opts.importMap,
+      projectDir: opts.projectDir,
+      redirects: opts.redirects,
+      rewritten: opts.rewritten,
+      server: opts.server ?? boundary.server,
+    },
+  );
 }
 
 /**
@@ -1417,10 +1415,65 @@ async function realProjectDir(configPath: string): Promise<string> {
   }
 }
 
-/** A generated entry as {@link assertNoServerOnlyLeaks} sees it: its source and emitted basename. */
+/**
+ * A bundled entry as {@link assertNoServerOnlyLeaks} sees it: its source, emitted basename and
+ * the path it was bundled from.
+ */
 interface BundledEntry {
   source: string;
   file: string;
+  path: string;
+}
+
+/** What a bundle resolved through, for its checks: the client resolution and the merged config. */
+interface BundleResolution {
+  client: ClientImports;
+  configPath: string;
+}
+
+/** Each shipped path of a rewritten copy → the app module it stands in for (real paths). */
+function copyOriginals(client: ClientImports): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [copy, original] of Object.entries(client.originals)) {
+    out.set(fromFileUrl(copy), fromFileUrl(original));
+  }
+  return out;
+}
+
+/**
+ * Fail a bundle that shipped a `"use server"` module (see ./server-module-guard.ts): any entry,
+ * any module, wherever it came from. `shipped` maps each entry's label to the source paths it
+ * emitted; the error names each module (a copy as its app original), the chain that imported it
+ * and the entries that shipped it.
+ */
+async function assertNoServerModules(
+  shipped: Array<{ label: string; entry: string; sources: Set<string> }>,
+  resolution: BundleResolution,
+  projectDir: string,
+): Promise<void> {
+  const originals = copyOriginals(resolution.client);
+  const found = new Map<string, ServerModuleLeak & { raw: string }>();
+  for (const { label, sources } of shipped) {
+    for (const raw of await findShippedServerModules(sources)) {
+      const module = originals.get(raw) ?? raw;
+      const leak = found.get(module) ?? { module, raw, entries: [], chain: [] };
+      leak.entries.push(label);
+      found.set(module, leak);
+    }
+  }
+  if (found.size === 0) return;
+  const leaks = [...found.values()];
+  const chains = await importerChains(
+    shipped.map((s) => s.entry),
+    resolution.configPath,
+    leaks.map((l) => l.raw),
+    { deno: denoExecutable(), args: minDepAgeArgs() },
+  );
+  for (const leak of leaks) {
+    // The chain starts at the generated entry (a temp file the label already names).
+    leak.chain = (chains.get(leak.raw) ?? []).slice(1).map((p) => originals.get(p) ?? p);
+  }
+  throw new Error(formatServerModuleLeaks(leaks, projectDir));
 }
 
 /**
@@ -1430,23 +1483,35 @@ interface BundledEntry {
  * --platform=browser` emits those verbatim, so without this the page would fail only in
  * the browser. Only denext-generated entries are checked (each is named by its header),
  * and only what the bundle actually emitted counts (the source maps' `sources`), so a
- * `"use server"` module the import map redirected to a stub never appears. A dev caller
- * surfaces the thrown error in the overlay + console; `denext build` exits non-zero with it.
+ * `"use server"` module the import map redirected to a stub never appears. Every entry is
+ * first checked for a shipped `"use server"` module ({@linkcode assertNoServerModules}). A
+ * dev caller surfaces the thrown error in the overlay + console; `denext build` exits
+ * non-zero with it.
  */
 async function assertNoServerOnlyLeaks(
   entries: BundledEntry[],
   run: DenoBundleRun,
   opts: BundleOptions,
+  resolution: BundleResolution,
 ): Promise<void> {
   const projectDir = await realProjectDir(opts.configPath);
+  const originals = copyOriginals(resolution.client);
+  const shippedBy: Array<{ label: string; entry: string; sources: Set<string> }> = [];
+  for (const { source, file, path } of entries) {
+    const sources = new Set<string>();
+    for (const chunk of entryChunkClosure(file, run.files)) {
+      for (const s of run.sources.get(chunk) ?? []) sources.add(s);
+    }
+    const label = await generatedEntryLabel(source, projectDir);
+    shippedBy.push({ label: label ?? "the app's client entry", entry: path, sources });
+  }
+  await assertNoServerModules(shippedBy, resolution, projectDir);
   const found = new Map<string, { leak: ServerOnlyLeak; entries: string[] }>();
-  for (const { source, file } of entries) {
+  for (const [i, { source }] of entries.entries()) {
     const label = await generatedEntryLabel(source, projectDir);
     if (!label) continue;
-    const shipped = new Set<string>();
-    for (const chunk of entryChunkClosure(file, run.files)) {
-      for (const s of run.sources.get(chunk) ?? []) shipped.add(s);
-    }
+    // A rewritten copy is checked (and named) as the app module it stands in for.
+    const shipped = [...shippedBy[i].sources].map((s) => originals.get(s) ?? s);
     for (const leak of await findServerOnlyLeaks(shipped, projectDir)) {
       const entry = found.get(leak.module) ?? { leak, entries: [] };
       entry.entries.push(label);
@@ -1454,6 +1519,28 @@ async function assertNoServerOnlyLeaks(
     }
   }
   if (found.size > 0) throw new Error(formatServerOnlyLeaks(found, projectDir));
+}
+
+/**
+ * Resolve a bundle's app modules (./client-imports.ts: the platform redirects, the client
+ * transforms, an action stub per `"use server"` module, and the rewritten copies that make an
+ * aliased import reach them), written under `tmpDir`, and the merged config `deno bundle` runs
+ * with.
+ */
+async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<BundleResolution> {
+  const client = await clientImportMap({
+    projectDir: opts.projectDir ??
+      (opts.configPath.startsWith("file:") ? null : dirname(opts.configPath)),
+    redirects: opts.redirects,
+    rewritten: opts.rewritten,
+    server: opts.server,
+    dir: join(tmpDir, "client-imports"),
+  });
+  const configPath = await prepareConfig(tmpDir, {
+    configPath: opts.configPath,
+    importMap: { ...opts.importMap, ...client.importMap },
+  });
+  return { client, configPath };
 }
 
 /**
@@ -1482,8 +1569,14 @@ export async function bundleSourceFiles(
   const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
-    const configPath = await prepareConfig(tmpDir, opts);
-    const run = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
+    const resolution = await bundleResolution(tmpDir, opts);
+    const run = await runDenoBundle(
+      [entryPath],
+      resolution.configPath,
+      outDir,
+      opts.minify,
+      opts.dev,
+    );
     const { files } = run;
     const entry = "entry.js";
     if (!files.has(entry)) {
@@ -1491,7 +1584,12 @@ export async function bundleSourceFiles(
         `deno bundle produced no entry file (got: ${[...files.keys()].join(", ") || "nothing"})`,
       );
     }
-    await assertNoServerOnlyLeaks([{ source: entrySource, file: entry }], run, opts);
+    await assertNoServerOnlyLeaks(
+      [{ source: entrySource, file: entry, path: entryPath }],
+      run,
+      opts,
+      resolution,
+    );
     return run.maps.size > 0 ? { entry, files, maps: run.maps } : { entry, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
@@ -1536,8 +1634,14 @@ export async function bundleRoutes(
         Deno.writeTextFile(entryPaths[i], momentumScrollSeed(opts.momentumSafeScroll) + re.source)
       ),
     );
-    const configPath = await prepareConfig(tmpDir, opts);
-    const run = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);
+    const resolution = await bundleResolution(tmpDir, opts);
+    const run = await runDenoBundle(
+      entryPaths,
+      resolution.configPath,
+      outDir,
+      opts.minify,
+      opts.dev,
+    );
     const { files } = run;
 
     const entries = new Map<string, string>();
@@ -1552,9 +1656,14 @@ export async function bundleRoutes(
       entries.set(re.key, out);
     });
     await assertNoServerOnlyLeaks(
-      routeEntries.map((re) => ({ source: re.source, file: entries.get(re.key)! })),
+      routeEntries.map((re, i) => ({
+        source: re.source,
+        file: entries.get(re.key)!,
+        path: entryPaths[i],
+      })),
       run,
       opts,
+      resolution,
     );
     return { entries, files };
   } finally {

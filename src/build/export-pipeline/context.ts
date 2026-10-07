@@ -5,6 +5,7 @@ import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import type { I18nConfig } from "../../server/i18n.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { AppCss } from "../css.ts";
+import type { BoundaryManifest } from "../module-graph.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { join } from "@std/path";
 import { routeId } from "../paths.ts";
@@ -65,11 +66,6 @@ export interface ExportContext {
    * map and server loader; empty when the app has none).
    */
   readonly platformRedirects: Record<string, string>;
-  /**
-   * The client bundles' import map for the target: {@link platformRedirects} plus rewritten
-   * copies of the app modules that reach a variant through an import-map alias.
-   */
-  readonly platformImports: Record<string, string>;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
@@ -89,9 +85,21 @@ export function exportBuildDir(paths: ProjectPaths): string {
   return join(paths.outDir, "export");
 }
 
-/** The `deno bundle` import map for the native client bundles: CSS shims + platform files. */
-export function exportImportMap(ctx: ExportContext): Record<string, string> {
-  return { ...ctx.css?.importMap, ...ctx.platformImports };
+/**
+ * How the native client bundles resolve the app's modules: the CSS shims, and the target's
+ * platform files and an action stub per `"use server"` module in `server` (./client-imports.ts,
+ * which also reaches the ones an import-map alias names).
+ */
+export function exportClientResolution(
+  ctx: ExportContext,
+  server: BoundaryManifest["server"],
+) {
+  return {
+    importMap: { ...ctx.css?.importMap },
+    projectDir: ctx.projectDir,
+    redirects: ctx.platformRedirects,
+    server,
+  };
 }
 
 /** The hydration script for a route, or none for a static route. */

@@ -54,6 +54,10 @@ Each item is described in full under Changed, Fixed or Security below.
   files a page stored with `directory: "cache"` before are not found there.
 - **Windows CEF apps packaged on runtime 2.9.7-denext.9 can't update themselves** to the layout of
   CEF's bootstrap (runtime 2.9.7-denext.11): reinstall them.
+- **A client bundle that would ship a `"use server"` module's source fails the build**, and a SPA
+  that imports a `"use server"` module (it has no server to call) no longer builds. A page that
+  hydrates as a whole now calls the actions it imports on the server instead of running them in
+  the browser.
 
 ### Added
 
@@ -409,6 +413,26 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Security
 
+- **A `"use server"` module's source no longer ships in a public client bundle.** The client
+  bundles replaced each action module with a stub keyed by the module's file URL, but `deno
+  bundle` resolves an app module's import-map aliases with the app's own `deno.json` and never maps
+  the result, so an island that imported its action as `@/app/actions.ts`, through an exact key
+  (`#actions`), a re-export or a barrel got the action's real source — every constant and
+  credential in it — in `.denext/client/*.js` / `out/_denext/client/`, served publicly (`denext
+  build` and `denext export`, **0.5.0 through 3.1.0**). A page that hydrates as a whole (a hook
+  and no `"use client"`) shipped an action it imported however it was spelled (**0.5.0 through
+  3.1.0**), the unbundled dev server served every `"use server"` module as written at
+  `/_denext/@fs/…` (**2.0.0-rc.5 through 3.1.0**, dev only), and the platform files' rewritten
+  copies (unreleased) bypassed the stub too. Now every client bundle resolves the app's modules
+  one way (`src/build/client-imports.ts`): each action module is a redirect to its stub, as a
+  platform file is a redirect to its variant, and every app module that names one through an
+  alias is copied with that import rewritten, so every spelling reaches the stub; whole-route
+  bundles and the next-compat client entries get the stubs too, and the dev server serves the
+  stub. Behind that, the build fails closed: a client bundle that still ships a module whose
+  directive prologue says `"use server"` (whatever produced it) is refused, naming the module,
+  the import chain that reached it and the fix. A SPA has no server to call, so a SPA that
+  imports a `"use server"` module now fails to build. **Rebuild and redeploy**, and rotate any
+  secret an action module held: it was readable by anyone who loaded the page.
 - **The iOS shell's export router no longer serves files outside the web directory.**
   `DenextExportRouter` (every generated `DenextBridgeViewController`) checked `basePath + path`
   with the decoded request path, so `/%2e%2e%2fsecret` reached it as `/../secret` and could

@@ -91,7 +91,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
     configPath: paths.configPath,
     momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
     minify: prodMinify(),
-    importMap: ctx.cssImportMap,
+    ...clientResolution(ctx),
   });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
   // chunks across routes collapse to one file.
@@ -116,18 +116,39 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
 }
 
 /**
+ * How every native client bundle resolves the app's modules: the CSS shims, and the platform
+ * redirects, client transforms and an action stub per `"use server"` module the routes reach
+ * (./client-imports.ts), so an aliased import of an action reaches its stub too.
+ */
+function clientResolution(ctx: BuildContext) {
+  return {
+    importMap: ctx.cssImportMap,
+    projectDir: ctx.projectDir,
+    redirects: ctx.platformRedirects,
+    rewritten: ctx.transforms,
+    server: ctx.serverModules,
+  };
+}
+
+/**
  * The app-wide boundary manifest (client islands + server-action modules), computed once
  * and shared by the native Flight bundle AND the compat pipeline. Crawls from every
  * route's full server tree (page + layouts + templates + slots), not just page files, so
  * a client island imported only by a layout is found (H1). Also decides whether the
  * Flight entry bundles the Live WebSocket transport (a build-time `denext/live`
  * specifier scan) — a Flight app that never uses a live feature ships none of it.
+ *
+ * Its `"use server"` modules are recorded for every app ({@linkcode BuildContext.serverModules}):
+ * a whole-route hydration bundle stubs an action it imports just as the islands bundle does.
  */
 export async function computeBoundary(ctx: BuildContext): Promise<void> {
-  if (!ctx.hasFlight) return;
-  ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
+  if (ctx.manifest.pages.length === 0) return;
+  const boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
     npm: ctx.compat ? npmBoundaryByImporter : undefined,
   });
+  ctx.serverModules = boundary.server;
+  if (!ctx.hasFlight) return;
+  ctx.boundary = boundary;
   ctx.usesLive = await appImportsLive(
     ctx.projectDir,
     await localModulesOutside(ctx.projectDir, ctx.manifest.pages),
@@ -146,7 +167,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     configPath: ctx.paths.configPath,
     momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
     minify: prodMinify(),
-    importMap: ctx.cssImportMap,
+    ...clientResolution(ctx),
     usesLive: ctx.usesLive,
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,

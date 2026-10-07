@@ -3,8 +3,8 @@
 // Refresh registrations),
 // merged into the client bundle's import map.
 
-import { composeRedirects, type Platform } from "../platform-extensions.ts";
-import { devPlatformImports } from "./platform.ts";
+import type { Platform } from "../platform-extensions.ts";
+import { devPlatformRedirects } from "./platform.ts";
 import { reactCompilerEnabled } from "../../server/config.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
 import { tailwindPaths } from "../tailwind.ts";
@@ -74,20 +74,15 @@ async function getRefreshMap(st: DevState): Promise<Record<string, string>> {
 }
 
 /**
- * The merged client-bundle import map (CSS + compiler + qrl + Fast Refresh redirects) for a
- * target's bundles.
+ * How a target's client bundles resolve the app's modules: the CSS shims, the compiler + qrl +
+ * Fast Refresh copies, and the target's platform files (./client-imports.ts, which the caller
+ * gives the action stubs too).
  */
-export async function bundleImportMap(
-  st: DevState,
-  platform: Platform = "web",
-): Promise<Record<string, string> | undefined> {
-  const css = await getCss(st);
-  const refresh = await getRefreshMap(st);
-  const merged = {
-    ...css?.importMap,
-    ...refresh,
-    // The target's platform files, pointed at a variant's refresh copy when it has one.
-    ...composeRedirects((await devPlatformImports(st, platform)).importMap, refresh),
+export async function bundleResolution(st: DevState, platform: Platform = "web") {
+  return {
+    importMap: { ...(await getCss(st))?.importMap },
+    projectDir: st.paths.projectDir,
+    rewritten: await getRefreshMap(st),
+    redirects: await devPlatformRedirects(st, platform),
   };
-  return Object.keys(merged).length > 0 ? merged : undefined;
 }

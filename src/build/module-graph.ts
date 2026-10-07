@@ -22,6 +22,7 @@ import {
 } from "@std/path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
 import {
   missingVariantMessage,
   type PlatformResolution,
@@ -29,6 +30,9 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
+
+// The boundary ids live in a leaf module the server runtime imports without this crawler.
+export { clientIdFor, shortHash };
 
 /** A discovered boundary module: its file URL and (optionally) its export names. */
 export interface BoundaryRef {
@@ -46,38 +50,9 @@ export interface BoundaryManifest {
   server: Map<string, BoundaryRef>;
 }
 
-/**
- * A stable, dependency-free short hash (FNV-1a, 32-bit) rendered in base-36.
- * Used to derive client/server ids from a module's app-relative path so ids are
- * deterministic across machines and runs.
- */
-export function shortHash(input: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
-}
-
 /** `dir` with exactly one trailing platform separator, for a prefix test on local paths. */
 function dirPrefix(dir: string): string {
   return dir.endsWith(SEPARATOR) ? dir : dir + SEPARATOR;
-}
-
-/** The app-relative, forward-slashed path of a module (the id/hash basis). */
-function relKey(appDir: string, fileUrl: string): string {
-  return relative(appDir, fromFileUrl(fileUrl)).replaceAll("\\", "/");
-}
-
-/** Derive the stable client id (`c_<hash>`) for a `"use client"` module. */
-export function clientIdFor(appDir: string, fileUrl: string): string {
-  return "c_" + shortHash(relKey(appDir, fileUrl));
-}
-
-/** Derive the stable module id (`<hash>`) for a `"use server"` module. */
-function serverModuleIdFor(appDir: string, fileUrl: string): string {
-  return shortHash(relKey(appDir, fileUrl));
 }
 
 /** Minimal shape of the `deno info --json` output we consume. */

@@ -114,14 +114,22 @@ function copiedImporters(
  * platform redirects, and copies of the app modules whose alias imports reach a redirected
  * module (see the module comment). Without aliases, or without redirects, the redirects alone.
  *
+ * A redirect need not be a platform file: the client bundles also redirect each `"use server"`
+ * module to its action stub (./client-imports.ts), so an alias import of an action is rewritten
+ * to the stub by the same rule.
+ *
  * @param projectDir The project root.
- * @param redirects {@linkcode projectPlatformRedirects} for the target.
+ * @param redirects {@linkcode projectPlatformRedirects} for the target (plus, for a client
+ *   bundle, the action stubs).
  * @param copyDir Where the copies are written (emptied first).
+ * @param rewritten The client transforms (module file URL → its transformed file's URL): a
+ *   module that has one is copied from the transformed source, so the copy keeps the transform.
  */
 export async function platformImportMap(
   projectDir: string,
   redirects: Readonly<Record<string, string>>,
   copyDir: string,
+  rewritten: Readonly<Record<string, string>> = {},
 ): Promise<PlatformImportMap> {
   const none = { importMap: { ...redirects }, originals: {} };
   if (!Object.keys(redirects).some((k) => k.startsWith("file:"))) return none;
@@ -149,7 +157,8 @@ export async function platformImportMap(
   };
   const originals: Record<string, string> = {};
   for (const m of copied) {
-    Object.assign(originals, await writeCopy(m, copyOf.get(m.url)!, rewrite(m)));
+    const source = rewritten[m.url] ? fromFileUrl(rewritten[m.url]) : m.path;
+    Object.assign(originals, await writeCopy(m, source, copyOf.get(m.url)!, rewrite(m)));
   }
   const importMap: Record<string, string> = {};
   for (const [from, to] of Object.entries(redirects)) importMap[from] = copyOf.get(to) ?? to;
@@ -158,16 +167,17 @@ export async function platformImportMap(
 }
 
 /**
- * Write `m`'s copy to `copy` with its relative imports made absolute and the alias imports
- * `rewrite` names replaced. Returns the original for each spelling of the copy `deno info` may
- * report (it names modules by their real path).
+ * Write `m`'s copy (of `source`: the module, or its transformed file) to `copy` with its relative
+ * imports made absolute and the alias imports `rewrite` names replaced. Returns the original for
+ * each spelling of the copy `deno info` may report (it names modules by their real path).
  */
 async function writeCopy(
   m: AliasImports,
+  source: string,
   copy: string,
   rewrite: (spec: string) => string | null,
 ): Promise<Record<string, string>> {
-  const parsed = await parseModule(await Deno.readTextFile(m.path));
+  const parsed = await parseModule(await Deno.readTextFile(source));
   if (!parsed) return {};
   const edits: Edit[] = [];
   absolutizeSpecifiers(parsed.ctx, parsed.body, m.url, edits, (u) => u, rewrite);

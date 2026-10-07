@@ -138,6 +138,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
   await buildNextCompatClientEntries({
     ...opts,
     clientDir: clientOut,
+    server: st.compatBoundary?.server,
     entries: clientRoutes.map((r) => ({
       id: routeId(r.routePath),
       source: generateRouteEntry(r, {

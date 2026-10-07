@@ -47,6 +47,8 @@ export function getUnbundled(st: DevState): UnbundledDev {
       platformResolution(st.paths.config, st.unbundledCompat ? "web" : platform),
     // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
     onDepsRebuilt: () => broadcast(st, "reload"),
+    // The browser gets each `"use server"` module as its action stub, by the boundary's id.
+    serverModules: () => st.compatBoundary?.server ?? [],
   });
 }
 

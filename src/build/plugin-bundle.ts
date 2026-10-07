@@ -32,3 +32,4 @@
 
 export { bundleRoutes } from "./bundle.ts";
 export type { BundleOptions, ClassRuntimeMode, MultiBundleOutput } from "./bundle.ts";
+export type { ServerModuleRef, ServerModules } from "./client-imports.ts";

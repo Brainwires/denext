@@ -263,6 +263,11 @@ export interface BuildNextCompatClientOptions {
   clientDir: string;
   /** The client hydration entries to bundle. */
   entries: NextCompatClientEntry[];
+  /**
+   * The `"use server"` modules the entries may import (the boundary's `server`), each bundled
+   * as its action stub. Any other app `"use server"` module a bundle reaches fails the build.
+   */
+  server?: Iterable<readonly [string, { url: string; exports: readonly string[] }]>;
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
   momentumSafeScroll?: boolean;
   /** Minify the output bundles (production). */
@@ -361,9 +366,13 @@ export async function buildNextCompatClientEntries(
     optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
-    // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
-    // real esbuild plugins, which is what callers pass.
-    extraPlugins: options.extraPlugins as esbuild.Plugin[] | undefined,
+    // Actions first (stubbed, never instrumented), then the caller's plugins. Public type is
+    // `unknown[]` (to not expose esbuild's types); the bundler expects real esbuild plugins,
+    // which is what callers pass.
+    extraPlugins: [
+      serverStubPlugin(options.server ?? [], generateServerStub),
+      ...(options.extraPlugins as esbuild.Plugin[] | undefined ?? []),
+    ],
     platformExtensions: options.platformExtensions,
     jsxInJs: options.jsxInJs,
   });

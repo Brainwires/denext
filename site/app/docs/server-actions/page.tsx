@@ -19,6 +19,15 @@ export default function ServerActions() {
         and export an async function. It runs only on the server; the client gets a typed stub that
         posts to a generated same-origin endpoint.
       </p>
+      <Callout kind="note">
+        The stub replaces the module in every client bundle and in the dev server, however the
+        import is spelled — relative, an import-map alias (<code>@/app/actions.ts</code>,{" "}
+        <code>#actions</code>), a re-export or a barrel — so the module's source and any secret in
+        it stay on the server. A client bundle that would still ship a <code>"use server"</code>
+        {" "}
+        module fails the build, naming the module and the imports that reached it. A SPA has no
+        server to call, so a SPA that imports one is refused.
+      </Callout>
       <Code lang="tsx">
         {`// app/actions.ts
 "use server";
