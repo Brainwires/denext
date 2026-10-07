@@ -14,6 +14,7 @@ import {
   isDesktopBridgeError,
   resetDesktopBridgeForTesting,
 } from "../src/desktop/bridge-client.ts";
+import { secureStoreCapability } from "../src/desktop/caps/secure-store.ts";
 import { createFakeDesktopRuntime, type FakeMethod } from "./helpers/desktop-fake-runtime.ts";
 
 type G = {
@@ -147,6 +148,103 @@ Deno.test("clerk bridge: open() runs the custom-scheme session exactly like @cle
   });
 });
 
+Deno.test("clerk bridge: open() only takes a Clerk OAuth URL (redirect_uri = the FAPI's oauth_callback)", async () => {
+  const starts: unknown[] = [];
+  await inDesktop({
+    authSession: {
+      start: (a) => (starts.push(a), { url: "t3code://app/?rotating_token_nonce=n" }),
+    },
+  }, async () => {
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    for (
+      const url of [
+        "https://evil.example/phish", // no redirect_uri at all
+        "https://evil.example/a?redirect_uri=https%3A%2F%2Fevil.example%2Fcb",
+        "https://idp.example/a?redirect_uri=http%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      ]
+    ) {
+      await assertRejects(() => t.open(url), TypeError, "not a Clerk OAuth URL");
+    }
+    assertEquals(starts, [], "nothing reached the auth session");
+    // With the Clerk instance loaded, its Frontend API host is pinned too.
+    const clerk = { frontendApi: "clerk.example.com" } as unknown as ClerkLike;
+    const pinned = installClerkDesktopBridge({ getClerk: () => clerk })!.bridge.oauthTransport;
+    await assertRejects(
+      () =>
+        pinned.open(
+          "https://idp.example/a?redirect_uri=https%3A%2F%2Fother.example%2Fv1%2Foauth_callback",
+        ),
+      TypeError,
+      "not a Clerk OAuth URL",
+    );
+    await pinned.open(
+      "https://github.com/login/oauth/authorize?client_id=x&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+    );
+    await pinned.open("https://clerk.example.com/v1/client/sign_ins/x");
+    // A development instance's shared credentials call back on Clerk's own domain.
+    await pinned.open(
+      "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fhappy-cat-1.clerk.accounts.dev%2Fv1%2Foauth_callback",
+    );
+    // Google / GitHub with a development instance's shared credentials: what its Frontend API
+    // returns as `external_verification_redirect_url`.
+    await pinned.open(
+      "https://accounts.google.com/o/oauth2/auth?client_id=x&redirect_uri=https%3A%2F%2Fclerk.shared.lcl.dev%2Fv1%2Foauth_callback&state=s",
+    );
+    // Only that host, not the rest of lcl.dev.
+    await assertRejects(
+      () =>
+        pinned.open(
+          "https://idp.example/a?redirect_uri=https%3A%2F%2Fevil.lcl.dev%2Fv1%2Foauth_callback",
+        ),
+      TypeError,
+      "not a Clerk OAuth URL",
+    );
+    assertEquals(starts.length, 4);
+  });
+});
+
+// The target must be the Clerk instance, a Clerk domain or a known provider's authorization page:
+// a page script must not open a phishing site in the OS auth sheet by tacking Clerk's
+// `redirect_uri` onto it.
+Deno.test("clerk bridge: open() refuses a page that is not a known OAuth provider's", async () => {
+  const starts: unknown[] = [];
+  await inDesktop({
+    authSession: {
+      start: (a) => (starts.push(a), { url: "t3code://app/?rotating_token_nonce=n" }),
+    },
+  }, async () => {
+    const shared = encodeURIComponent("https://clerk.shared.lcl.dev/v1/oauth_callback");
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    for (
+      const url of [
+        `https://phish.example/login?redirect_uri=${shared}`,
+        `https://github.com/evil/repo?redirect_uri=${shared}`, // GitHub, not its OAuth page
+        `https://www.facebook.com/evilpage?redirect_uri=${shared}`,
+        `https://accounts.google.com.evil.example/o/oauth2/auth?redirect_uri=${shared}`,
+      ]
+    ) {
+      const err = await assertRejects(() => t.open(url), TypeError, "oauthHosts");
+      assertStringIncludes(err.message, new URL(url).host);
+    }
+    assertEquals(starts, [], "nothing reached the auth session");
+    // Google and GitHub with a development instance's shared credentials, and Apple / Microsoft.
+    for (
+      const url of [
+        `https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=${shared}`,
+        `https://github.com/login/oauth/authorize?client_id=x&redirect_uri=${shared}`,
+        `https://appleid.apple.com/auth/authorize?redirect_uri=${shared}`,
+        `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?redirect_uri=${shared}`,
+      ]
+    ) await t.open(url);
+    assertEquals(starts.length, 4);
+    // A custom provider is opted in by host.
+    const custom = installClerkDesktopBridge({ oauthHosts: ["sso.example.com"] })!.bridge
+      .oauthTransport;
+    await custom.open(`https://sso.example.com/authorize?redirect_uri=${shared}`);
+    assertEquals(starts.length, 5);
+  });
+});
+
 Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is one, else the preload key", async () => {
   const run = async (osSession: boolean, preloadKey?: string) => {
     const starts: Record<string, unknown>[] = [];
@@ -163,7 +261,9 @@ Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is o
       if (preloadKey) gk.__denextPreloadKey = preloadKey;
       const t = installClerkDesktopBridge()!.bridge.oauthTransport;
       delete gk.__denextPreloadKey; // what the injected script does after the preload
-      await t.open("https://accounts.google.com/o/oauth2/auth?state=x");
+      await t.open(
+        "https://accounts.google.com/o/oauth2/auth?state=x&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      );
     });
     return starts[0];
   };
@@ -180,6 +280,49 @@ Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is o
   assertEquals([late.binding, late.osSessionOnly], [undefined, undefined]);
 });
 
+Deno.test("clerk bridge: Windows/Linux — getRedirectUrl carries a fresh per-flow nonce that open() binds", async () => {
+  const flows = async (osSession: boolean) => {
+    const out: { redirect: string; start: Record<string, unknown> }[] = [];
+    await inDesktop({
+      authSession: {
+        capabilities: () => ({ osSession, ephemeral: false }),
+        start: (a) => {
+          const args = a as Record<string, unknown>;
+          out.at(-1)!.start = args;
+          return { url: `${args.callbackPrefix}&rotating_token_nonce=n1` };
+        },
+      },
+    }, async () => {
+      const gk = globalThis as { __denextPreloadKey?: string };
+      gk.__denextPreloadKey = "pk-0123456789abcdef";
+      const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+      delete gk.__denextPreloadKey;
+      for (let i = 0; i < 2; i++) {
+        // clerk-js: getRedirectUrl() (sent to Clerk as the sign-in's redirect), then open().
+        out.push({ redirect: String(await t.getRedirectUrl()), start: {} });
+        await t.open(
+          "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        );
+      }
+    });
+    return out;
+  };
+  const [a, b] = await flows(false);
+  for (const f of [a, b]) {
+    const nonce = new URL(f.redirect).searchParams.get("denext_nonce") ?? "";
+    assert(/^[A-Za-z0-9_-]{43}$/.test(nonce), `a 256-bit base64url nonce: ${f.redirect}`);
+    assertEquals(f.redirect, `t3code://app/?denext_nonce=${nonce}`);
+    assertEquals(f.start.nonce, nonce, "the runtime gets the nonce Clerk was given");
+    assertEquals(f.start.callbackPrefix, f.redirect);
+    assertEquals(f.start.binding, "clerk-client-nonce");
+  }
+  assert(a.start.nonce !== b.start.nonce, "each flow has its own nonce");
+  // macOS (an OS sheet): the redirect stays the bare origin; the sheet binds the callback.
+  const [mac] = await flows(true);
+  assertEquals(mac.redirect, "t3code://app/");
+  assertEquals([mac.start.nonce, mac.start.osSessionOnly], [undefined, true]);
+});
+
 Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear error naming the fix", async () => {
   const owned = () => {
     throw {
@@ -192,7 +335,11 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     authSession: { capabilities: () => ({ osSession: false, ephemeral: false }), start: owned },
   }, async () => {
     const t = installClerkDesktopBridge()!.bridge.oauthTransport;
-    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    const err = await assertRejects(() =>
+      t.open(
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      )
+    );
     const e = err as Error & { code?: string; handler?: string };
     assertEquals(e.code, "scheme_owned_by_other_app");
     assertEquals(e.handler, "com.t3tools.t3code");
@@ -200,7 +347,10 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     assertStringIncludes(e.message, 'claimDeepLinkScheme("t3code")');
     // The transport is free again for the retry after the user claims the scheme.
     await assertRejects(
-      () => t.open("https://accounts.google.com/o/oauth2/auth"),
+      () =>
+        t.open(
+          "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        ),
       Error,
       "t3code:",
     );
@@ -220,7 +370,11 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     },
   }, async () => {
     const t = installClerkDesktopBridge()!.bridge.oauthTransport;
-    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    const err = await assertRejects(() =>
+      t.open(
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      )
+    );
     assertEquals((err as { code?: string }).code, "timeout");
     assertStringIncludes((err as Error).message, "no callback within the timeout");
   });
@@ -282,9 +436,15 @@ Deno.test("clerk bridge: nativeClerk switches the SDK's hotloaded clerk-js to na
         open(u: URL): Promise<{ callbackUrl: string }>;
       };
       assertEquals(await transport.getRedirectUrl(), "t3code://app/");
-      const cb = await transport.open(new URL("https://accounts.google.com/o/oauth2/auth?x=1"));
+      const cb = await transport.open(
+        new URL(
+          "https://accounts.google.com/o/oauth2/auth?x=1&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        ),
+      );
       assertEquals(cb.callbackUrl, "t3code://app/?rotating_token_nonce=n1");
-      assertEquals(opened, ["https://accounts.google.com/o/oauth2/auth?x=1"]);
+      assertEquals(opened, [
+        "https://accounts.google.com/o/oauth2/auth?x=1&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      ]);
       // Requests carry no cookies, `_is_native`, and the saved client JWT; responses save it.
       const req: Record<string, unknown> = {
         url: new URL("https://x.clerk.accounts.dev/v1/client"),
@@ -661,7 +821,78 @@ Deno.test("startClerkBrowserSignIn: the redemption must succeed, load a client a
   assertEquals(loaded, 2, "the client is loaded only once the redemption returned one");
 });
 
-Deno.test("clerk bridge: a keychain failure other than `unavailable` reaches Clerk; the memory fallback warns once", async () => {
+// A locked Secret Service whose unlock prompt nobody answers (autologin Plasma/GNOME: gcr shows
+// the prompt, secret-tool blocks): the cap gives up after its answer timeout with
+// `backend_unavailable`. That used to reach clerk-js from its before-request hook, so every
+// Frontend API request failed (each after another full timeout) and clerk-js never loaded.
+Deno.test("clerk bridge: a keychain that never answers falls back to memory for the launch, so Clerk loads", async () => {
+  let spawned = 0;
+  const cap = secureStoreCapability({
+    service: "dev.denext.clerk-example",
+    os: "linux",
+    answerTimeoutMs: 20,
+    // secret-tool waiting on an unanswered prompt: never settles, not even when killed.
+    run: () => {
+      spawned++;
+      return new Promise(() => {});
+    },
+  });
+  const ctx = {
+    emit: () => {},
+    appSupportDir: "",
+    runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    os: "linux" as const,
+    signal: new AbortController().signal,
+  };
+  const via = (m: string) => (args: unknown) => cap.methods[m].handler(args, ctx);
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    await inDesktop(
+      { secureStore: { get: via("get"), set: via("set"), delete: via("delete") } },
+      async () => {
+        const { tokenCache } = installClerkDesktopBridge({ nativeClerk: true })!.bridge;
+        // What clerk-js's first Frontend API request does: read the client JWT. No token.
+        assertEquals(await tokenCache.getToken("__client"), null);
+        // The sign-in's JWT is kept (in memory) and read back by the next request.
+        await tokenCache.saveToken("__client", "jwt-1");
+        assertEquals(await tokenCache.getToken("__client"), "jwt-1");
+        await tokenCache.clearToken("__client");
+        assertEquals(await tokenCache.getToken("__client"), null);
+      },
+    );
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(spawned, 1, "after the first deadline the launch stays in memory");
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "did not answer");
+  assertStringIncludes(warnings[0], "only until the app quits");
+});
+
+Deno.test("clerk bridge: a keychain past the bridge deadline (`timeout`) also falls back to memory", async () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await inDesktop({
+      secureStore: {
+        get: () => {
+          throw { code: "timeout", message: "no answer in 30000 ms" };
+        },
+      },
+    }, async () => {
+      const { tokenCache } = installClerkDesktopBridge()!.bridge;
+      assertEquals(await tokenCache.getToken("k"), null);
+      await tokenCache.saveToken("k", "v");
+      assertEquals(await tokenCache.getToken("k"), "v");
+    });
+  } finally {
+    console.warn = warn;
+  }
+});
+
+Deno.test("clerk bridge: a keychain error (not a missing or unanswering store) reaches Clerk; the memory fallback warns once", async () => {
   await inDesktop({
     secureStore: {
       get: () => 42, // not a string: read as no token

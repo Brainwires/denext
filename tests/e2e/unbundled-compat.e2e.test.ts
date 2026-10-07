@@ -12,10 +12,10 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { exists } from "@std/fs";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { createUnbundledDev } from "../../src/build/dev-unbundled.ts";
 
-const EXAMPLE = new URL("../../examples/next-compat", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/next-compat", import.meta.url));
 
 type UnbundledDev = ReturnType<typeof createUnbundledDev>;
 

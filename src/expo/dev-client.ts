@@ -34,6 +34,13 @@ export function hideMenu(): void {}
 export function closeMenu(): void {}
 
 /**
+ * Show or hide the dev menu's floating tools button: there is none here.
+ *
+ * @param _visible Whether to show it (ignored).
+ */
+export function setToolsButtonVisible(_visible: boolean): void {}
+
+/**
  * Add items to the dev menu: there is none here, so they are dropped.
  *
  * @param _items The items.

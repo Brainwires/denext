@@ -12,7 +12,8 @@
  *     the app's identifier);
  *   - `oauthTransport.getRedirectUrl()` is the page origin plus `/` (`t3code://app/`), exactly what
  *     `@clerk/electron`'s main process returns for `createClerkBridge({ renderer: { scheme, host }
- *     })`; `oauthTransport.open(url)` opens the provider in the system browser and resolves
+ *     })`, plus a per-flow `?denext_nonce=…` on Windows and Linux (see below);
+ *     `oauthTransport.open(url)` opens the provider in the system browser and resolves
  *     `{ callbackUrl }` once a deep link to that redirect URL (same scheme, host and path) comes
  *     back, one flow at a time, giving up after 180 s — the main process's semantics — over
  *     `openAuthSession`'s custom-scheme flow (scheme declared, owner checked, callback consumed
@@ -24,10 +25,16 @@
  * URL it opens (the provider's), and the callback carries a `rotating_token_nonce` that clerk-js
  * redeems with `signIn.reload({ rotatingTokenNonce })` — a request authenticated by this client's
  * own client JWT (from the token cache, an `Authorization` header) on this client's sign-in
- * resource. Whether Clerk's servers refuse that nonce from a DIFFERENT client cannot be checked
- * from the client code, so the custom scheme is used only when this app handles it
- * (`scheme_owned_by_other_app` otherwise, on Windows and Linux; on macOS the OS sheet catches its
- * own callback). See the desktop docs ("Clerk on Deno Desktop").
+ * resource. Where the callback travels as a deep link (Windows and Linux), any same-user program
+ * can open `<scheme>://app/?rotating_token_nonce=…` while a sign-in is pending, so the transport
+ * does not rely on Clerk binding that nonce to this client: `getRedirectUrl()` writes a fresh
+ * per-session secret (`denext_nonce`, 256 bits) into the redirect URL Clerk returns to, and the
+ * runtime completes the session only with a callback that carries it back (compared in constant
+ * time; a callback without it, with another one or replayed later is swallowed). On macOS the OS
+ * sheet catches its own callback, which never travels as a deep link. The custom scheme is still
+ * used only when this app handles it (`scheme_owned_by_other_app` otherwise, on Windows and
+ * Linux), since a program that receives the real callback learns the nonce too. See the desktop
+ * docs ("Clerk on Deno Desktop").
  *
  * Passkeys and `invalid_rp`: a macOS build not signed by the relying party's Apple team gets
  * `invalid_rp` for every native request. The bridge then stops offering native passkeys for the
@@ -128,6 +135,17 @@ export interface ClerkDesktopBridgeOptions {
    * `passkeys: true`). Leave it off with `@clerk/electron/react`'s provider, which does this itself.
    */
   readonly nativeClerk?: boolean | { readonly passkeys?: ClerkPasskeysAdapter };
+  /**
+   * More hosts whose pages the OAuth transport may open in the OS auth session (`"sso.example.com"`):
+   * a custom OIDC provider, or a social provider denext does not list. The transport opens only
+   * the Clerk instance's Frontend API, Clerk's own domains, and the authorization pages of the
+   * social providers Clerk offers (Google, GitHub, Apple, Microsoft, Facebook, Discord, GitLab,
+   * LinkedIn, X, Twitch, Slack, Spotify, TikTok, Bitbucket, Atlassian, Box, Coinbase, Dropbox,
+   * HubSpot, Hugging Face, LINE, Linear, Notion, Xero, Vercel), each with its `redirect_uri` on
+   * Clerk's OAuth callback; any other page is refused, naming its host. A host listed here is
+   * matched exactly, with any path.
+   */
+  readonly oauthHosts?: readonly string[];
 }
 
 /** What {@linkcode installClerkDesktopBridge} installed. */
@@ -176,22 +194,39 @@ function explainSchemeOwner(err: unknown, scheme: string): unknown {
   return err;
 }
 
-/** The token cache over the keychain (`secure-store`), in memory when that is not enabled. */
+/**
+ * Keychain failures the token cache answers from memory for the rest of the launch: the
+ * capability is not enabled (`unavailable`), the OS store cannot answer (`backend_unavailable`:
+ * no Secret Service, or a locked keyring whose unlock prompt nobody answered within the cap's
+ * deadline), or the call outlived the bridge's own deadline (`timeout`). Every Frontend API
+ * request reads the token first, so throwing any of these at clerk-js would fail its load, and
+ * it would wait out the deadline again on every request.
+ */
+const MEMORY_FALLBACK_CODES = new Set(["unavailable", "backend_unavailable", "timeout"]);
+
+/** The token cache over the keychain (`secure-store`), in memory when that cannot answer. */
 function tokenCache(prefix: string): ClerkTokenCache {
   const memory = new Map<string, string>();
-  let warned = false;
+  // Once the keychain has failed over, stay in memory for this launch: a get and a later save
+  // must see the same store, and a locked keyring must not cost each request another deadline.
+  let inMemory = false;
   const fallback = (err: unknown): boolean => {
-    if ((err as { code?: unknown })?.code !== "unavailable") return false;
-    if (!warned) {
-      warned = true;
+    const e = err as { code?: unknown; message?: unknown } | null;
+    if (typeof e?.code !== "string" || !MEMORY_FALLBACK_CODES.has(e.code)) return false;
+    if (!inMemory) {
+      inMemory = true;
       console.warn(
-        "denext/desktop/clerk: the secure-store capability is not enabled (`denext desktop add " +
-          "secure-store`); Clerk's session lasts only until the app quits.",
+        e.code === "unavailable"
+          ? "denext/desktop/clerk: the secure-store capability is not enabled (`denext desktop " +
+            "add secure-store`); Clerk's session lasts only until the app quits."
+          : `denext/desktop/clerk: the OS keychain did not answer (${String(e.message)}); ` +
+            "Clerk's session lasts only until the app quits.",
       );
     }
     return true;
   };
   const rpc = async <T>(method: string, args: unknown, memo: () => T): Promise<T> => {
+    if (inMemory) return memo();
     try {
       return await desktopRpc<T>("secureStore", method, args);
     } catch (err) {
@@ -213,32 +248,194 @@ function tokenCache(prefix: string): ClerkTokenCache {
   };
 }
 
+/** The query parameter the per-session callback nonce rides in (the runtime checks it). */
+const CALLBACK_NONCE_PARAM = "denext_nonce";
+
+/** A fresh callback nonce: 32 random bytes, base64url (43 characters, 256 bits). */
+function callbackNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /**
  * How a Clerk OAuth session is bound, since Clerk's callback carries no `state` the transport
  * could set: in the OS's auth session where the runtime has one (macOS; the callback goes to the
- * sheet, never through a deep link), else by Clerk's own client-bound `rotating_token_nonce`,
+ * sheet, never through a deep link), else by a per-session callback nonce in the redirect URL,
  * claimed with the preload key (only a bridge installed from `desktop.preload` holds it).
  */
 async function clerkBinding(preloadKey: string | undefined): Promise<SchemeSessionInternals> {
   if (await hasOsAuthSession()) return { osSessionOnly: true };
-  return preloadKey ? { binding: "clerk-client-nonce", bindingKey: preloadKey } : {};
+  return preloadKey
+    ? { binding: "clerk-client-nonce", bindingKey: preloadKey, nonce: callbackNonce() }
+    : {};
+}
+
+/** `base` with the session's callback nonce (when it has one) as `denext_nonce`. */
+function withNonce(base: string, binding: SchemeSessionInternals): string {
+  if (binding.nonce === undefined) return base;
+  const url = new URL(base);
+  url.searchParams.set(CALLBACK_NONCE_PARAM, binding.nonce);
+  return url.href;
+}
+
+/** A flow's redirect URL and binding, made by `getRedirectUrl()` and used by the next `open()`. */
+interface PreparedFlow {
+  readonly redirect: string;
+  readonly binding: SchemeSessionInternals;
+}
+
+/** The path of Clerk's OAuth callback on its Frontend API (every provider's redirect URI). */
+const CLERK_OAUTH_CALLBACK_PATH = "/v1/oauth_callback";
+
+/**
+ * Whether `target` names Clerk's OAuth callback as its `redirect_uri` (over https; on `fapiHost`
+ * or a Clerk-operated domain when the Clerk instance names its host).
+ */
+function redirectsToClerk(target: URL, fapiHost: string | undefined): boolean {
+  let redirect: URL;
+  try {
+    redirect = new URL(target.searchParams.get("redirect_uri") ?? "");
+  } catch {
+    return false;
+  }
+  return redirect.protocol === "https:" && redirect.pathname === CLERK_OAUTH_CALLBACK_PATH &&
+    (fapiHost === undefined || redirect.host === fapiHost || isClerkOperatedHost(redirect.host));
+}
+
+/**
+ * The authorization pages of the social providers Clerk offers: each host, and the path its
+ * authorize endpoint lives under where the host also serves other pages (a GitHub profile, a
+ * Facebook page). A dedicated identity host takes any path.
+ */
+const OAUTH_PROVIDER_PAGES: ReadonlyArray<readonly [host: string, path?: RegExp]> = [
+  ["accounts.google.com"],
+  ["github.com", /^\/login\/oauth\//],
+  ["appleid.apple.com"],
+  ["login.microsoftonline.com"],
+  ["login.live.com"],
+  ["www.facebook.com", /^\/(?:v[\d.]+\/)?dialog\/oauth/],
+  ["discord.com", /^\/(?:api\/)?oauth2\//],
+  ["gitlab.com", /^\/oauth\//],
+  ["www.linkedin.com", /^\/oauth\//],
+  ["x.com", /^\/i\/oauth2\//],
+  ["twitter.com", /^\/i\/oauth2\//],
+  ["api.twitter.com", /^\/oauth\//],
+  ["api.x.com", /^\/oauth\//],
+  ["id.twitch.tv"],
+  ["slack.com", /^\/(?:oauth|openid)\//],
+  ["accounts.spotify.com"],
+  ["www.tiktok.com", /^\/v2\/auth\//],
+  ["bitbucket.org", /^\/site\/oauth2\//],
+  ["auth.atlassian.com"],
+  ["account.box.com", /^\/api\/oauth2\//],
+  ["login.coinbase.com"],
+  ["www.coinbase.com", /^\/oauth\//],
+  ["www.dropbox.com", /^\/oauth2\//],
+  ["app.hubspot.com", /^\/oauth\//],
+  ["huggingface.co", /^\/oauth\//],
+  ["access.line.me"],
+  ["linear.app", /^\/oauth\//],
+  ["api.notion.com", /^\/v1\/oauth\//],
+  ["login.xero.com"],
+  ["vercel.com", /^\/(?:oauth|integrations)\//],
+];
+
+/** Whether `target` is a listed provider's authorization page, or on a host in `extra`. */
+function isProviderPage(target: URL, extra: readonly string[]): boolean {
+  if (extra.includes(target.host)) return true;
+  return OAUTH_PROVIDER_PAGES.some(([host, path]) =>
+    target.host === host && (path === undefined || path.test(target.pathname))
+  );
+}
+
+/**
+ * Why `target` is not a Clerk OAuth URL, or null when it is: on the Frontend API itself, or an
+ * authorization page — on a Clerk-operated domain, a listed social provider's
+ * ({@linkcode OAUTH_PROVIDER_PAGES}) or a host in `oauthHosts` — whose `redirect_uri` is the
+ * Frontend API's OAuth callback. Anything else is a page script using the transport to open an
+ * arbitrary site (a phishing page with a Clerk `redirect_uri` tacked on) in the trusted OS auth
+ * session.
+ */
+function clerkOAuthRefusal(
+  target: URL,
+  fapiHost: string | undefined,
+  oauthHosts: readonly string[],
+): string | null {
+  if (fapiHost !== undefined && target.host === fapiHost) return null;
+  if (!redirectsToClerk(target, fapiHost)) {
+    return `not a Clerk OAuth URL (its redirect_uri must be the Frontend API's ` +
+      `${CLERK_OAUTH_CALLBACK_PATH})`;
+  }
+  if (isClerkOperatedHost(target.host) || isProviderPage(target, oauthHosts)) return null;
+  return `${target.host} is not the Clerk instance or a known OAuth provider's authorization ` +
+    `page. If it is your instance's provider, add it to installClerkDesktopBridge({ ` +
+    `oauthHosts: [${JSON.stringify(target.host)}] })`;
+}
+
+/**
+ * Clerk's own domains. A development instance's shared OAuth credentials (Google, GitHub) call
+ * back on `clerk.shared.lcl.dev`, not on the instance's `*.clerk.accounts.dev` host.
+ */
+const CLERK_DOMAINS = [
+  "clerk.accounts.dev",
+  "accounts.dev",
+  "clerk.dev",
+  "clerk.com",
+  "clerk.shared.lcl.dev",
+];
+
+/** Whether `host` is one of {@linkcode CLERK_DOMAINS} or under one. */
+function isClerkOperatedHost(host: string): boolean {
+  return CLERK_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/** The Clerk instance's Frontend API host (`clerk.example.com`), when it is loaded. */
+function frontendApiHost(getClerk: () => ClerkLike | undefined): string | undefined {
+  const fapi = (getClerk() as { frontendApi?: unknown } | undefined)?.frontendApi;
+  return typeof fapi === "string" && fapi !== "" ? fapi.replace(/^https?:\/\//, "") : undefined;
 }
 
 /** The OAuth transport (`@clerk/electron`'s main-process semantics, see the module docs). */
 function oauthTransport(
   redirectUrl: () => string,
   preloadKey: string | undefined,
+  getClerk: () => ClerkLike | undefined,
+  oauthHosts: readonly string[] = [],
 ): ClerkOAuthTransport {
   let pending = false;
+  /** The flow `getRedirectUrl()` prepared (clerk-js calls it right before `open()`). */
+  let prepared: PreparedFlow | undefined;
+  const prepare = async (): Promise<PreparedFlow> => {
+    const base = redirectUrl();
+    const binding = await clerkBinding(preloadKey);
+    return { redirect: withNonce(base, binding), binding };
+  };
   return {
-    getRedirectUrl: () => Promise.resolve().then(redirectUrl),
+    getRedirectUrl: async () => {
+      const flow = await prepare();
+      prepared = flow;
+      return flow.redirect;
+    },
     open: async (url) => {
       if (pending) throw new Error("Clerk: an OAuth flow is already pending.");
-      if (new URL(url).protocol !== "https:") {
+      const target = new URL(url);
+      if (target.protocol !== "https:") {
         throw new TypeError(`Clerk: refusing to open unsupported OAuth URL protocol: ${url}`);
       }
-      const redirect = redirectUrl();
+      const refusal = clerkOAuthRefusal(target, frontendApiHost(getClerk), oauthHosts);
+      if (refusal !== null) {
+        throw new TypeError(`Clerk: refusing to open ${target.origin}: ${refusal}`);
+      }
       pending = true;
+      // The redirect (and its nonce) Clerk was given for this flow; a fresh one when `open()` came
+      // without `getRedirectUrl()` (a nonce Clerk never saw: the session then fails closed).
+      const flow = prepared ?? await prepare().catch((err) => {
+        pending = false;
+        throw err;
+      });
+      prepared = undefined;
+      const redirect = flow.redirect;
       try {
         const { url: callbackUrl } = await startDesktopSchemeAuthSession(url, {
           callbackScheme: schemeOf(redirect),
@@ -246,7 +443,7 @@ function oauthTransport(
           pkce: "not-applicable",
           reason: CLERK_OAUTH_PKCE_REASON,
           timeoutMs: OAUTH_TIMEOUT_MS,
-        }, await clerkBinding(preloadKey));
+        }, flow.binding);
         return { callbackUrl };
       } catch (err) {
         throw explainSchemeOwner(err, schemeOf(redirect));
@@ -359,6 +556,8 @@ export function installClerkDesktopBridge(
     oauthTransport: oauthTransport(
       redirectUrl,
       typeof preloadKey === "string" ? preloadKey : undefined,
+      options.getClerk ?? defaultClerk,
+      options.oauthHosts,
     ),
   };
   const g = globalThis as {

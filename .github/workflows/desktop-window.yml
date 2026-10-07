@@ -3,6 +3,13 @@
 # the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
 # the Clerk bridge, and a full-app update installed, left unconfirmed and rolled back).
 #
+# Windows also runs the Authenticode phases: "sign" packages builds signed with two throwaway
+# self-signed certificates and checks the signer of every PE file, and, because the hosted runner
+# is elevated, "trusted update" trusts those certificates machine-wide (removed again at the end)
+# so the runtime's same-signer check is enforced: a build signed by the other certificate is
+# refused (`os_signature`), the same signer's installs and is confirmed. A non-elevated Windows
+# host runs "sign" and skips "trusted update" with the reason.
+#
 # A check that cannot run on a hosted runner reports `skip` with its reason; every skip is listed in
 # the job summary, and a skip without a reason fails the run. The last job puts every check of every
 # OS in one table.
@@ -20,16 +27,19 @@ on:
     - cron: "17 5 * * *" # nightly, 05:17 UTC
   push:
     branches: [development]
+    # What the test runs: `denext desktop package` (src/cli/commands/desktop*.ts), which writes the
+    # package scripts and runs `denext export` (src/cli/commands/serve.ts, after `patch.ts` applies
+    # any patches) through the build layer — export.ts, export-pipeline/, export-paths.ts,
+    # module-graph.ts, spa/, platform-*.ts, use-cache-loader.ts, scaffold.ts, pe-resources.ts and
+    # more: about 140 of src/build's files, so all of src/build is listed — then the packaged app
+    # (src/desktop, src/mobile). The render / server / runtime layers the export also runs are left
+    # to ci.yml (every push) and this workflow's nightly run.
     paths:
       - "src/desktop/**"
-      - "src/build/desktop*.ts"
-      - "src/build/desktop-runtime-pin.json"
-      - "src/build/app-update.ts"
-      - "src/build/ota-signing.ts"
-      - "src/build/safe-extract.ts"
-      - "src/build/file-lock.ts"
-      - "src/build/project-locks.ts"
+      - "src/build/**"
       - "src/cli/commands/desktop*.ts"
+      - "src/cli/commands/serve.ts"
+      - "src/cli/commands/patch.ts"
       - "src/mobile/**"
       - "scripts/install.sh"
       - "scripts/install.ps1"
@@ -82,15 +92,16 @@ jobs:
             ~/AppData/Local/deno/denext-desktop-runtime
           key: desktop-runtime-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
-      # (gnome-keyring + secret-tool), a notification server (dunst), the XDG scheme tools, and
-      # the WebKitGTK runtime the webview backend loads.
+      # (gnome-keyring + secret-tool), a notification server (dunst), xprop (x11-utils: the session
+      # script polls for the window manager), the XDG scheme tools, and the WebKitGTK runtime the
+      # webview backend loads.
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb xauth xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
+            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
             xdg-utils desktop-file-utils zenity \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
@@ -100,6 +111,10 @@ jobs:
         run: e2e/linux-session.sh deno task test:window
       - name: Window test
         if: runner.os != 'Linux'
+        env:
+          # Windows: let the trusted-update phases trust their throwaway code-signing certificates
+          # in LocalMachine\Root + TrustedPublisher (the hosted runner is elevated; no dialog).
+          KITCHEN_SINK_TRUST_TEST_ROOT: ${{ runner.os == 'Windows' && '1' || '' }}
         run: deno task test:window
       - name: Upload results and logs
         if: always()

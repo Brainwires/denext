@@ -5,7 +5,7 @@
 // the desktop e2e/integration suites; here we cover the pure guard logic.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import {
   desktopCommand,
   packageScriptAge,
@@ -478,6 +478,7 @@ Deno.test({
   sanitizeResources: false,
   fn: async () => {
     const dir = await tempDir("denext_desktop_dev_attach_");
+    const withPreload = await tempDir("denext_desktop_dev_preload_ok_");
     const ac = new AbortController();
     const server = Deno.serve(
       { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: () => {} },
@@ -498,11 +499,31 @@ Deno.test({
       assertStringIncludes(r.out, "Building the desktop app (deno desktop) into ");
       assert(!r.out.includes(`into ${dir}`));
       assert(await exists(join(dir, ".denext", "desktop-dev-entry.ts")));
+      assert(!(await exists(join(dir, ".denext", "desktop-preload.dev.js"))), "no preload");
       assertEquals(await (await fetch(`http://127.0.0.1:${server.addr.port}/`)).text(), "dev");
+      // With a desktop.preload (a second project: the config is loaded once per dir), the session
+      // bundles it (unminified) into .denext/ for the window before building it.
+      await Deno.writeTextFile(join(withPreload, "desktop.ts"), 'const n: number = "nan";\n');
+      await Deno.writeTextFile(join(withPreload, "preload.ts"), 'globalThis.preloaded = "yes";\n');
+      await Deno.writeTextFile(
+        join(withPreload, "denext.config.ts"),
+        'export default { desktop: { preload: "./preload.ts" } };\n',
+      );
+      const p = await withEnv(
+        STOCK,
+        () => runVerb(["dev"], withPreload, { host: "127.0.0.1", port: server.addr.port }),
+      );
+      assertEquals(p.code, 1, p.err);
+      assertStringIncludes(p.err, "denext desktop dev: deno desktop exited with code 1");
+      assertStringIncludes(
+        await Deno.readTextFile(join(withPreload, ".denext", "desktop-preload.dev.js")),
+        'globalThis.preloaded = "yes"',
+      );
     } finally {
       ac.abort();
       await server.finished;
       await Deno.remove(dir, { recursive: true });
+      await Deno.remove(withPreload, { recursive: true });
     }
   },
 });
@@ -561,6 +582,130 @@ Deno.test("desktop add: --json reports the result; --list --json is the catalog;
     assertEquals(bad.code, 1);
     assertStringIncludes(bad.err, "denext desktop add: ");
     assertStringIncludes(bad.err, "teleport");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop: the project dir and the lock plan per action", () => {
+  const ctx = (positionals: string[], flags: Record<string, boolean> = {}, cwd?: string) =>
+    makeCtx({ positionals, flags, global: cwd ? { cwd } : {} });
+  // The dir is the second positional, except for `add`, whose positionals are capabilities.
+  assertEquals(desktopCommand.moduleDir!(ctx(["doctor", "/proj/a"])), resolve("/proj/a"));
+  assertEquals(desktopCommand.moduleDir!(ctx(["add", "fs"])), resolve("."));
+  assertEquals(desktopCommand.moduleDir!(ctx(["run"])), resolve("."));
+  assertEquals(
+    desktopCommand.moduleDir!(ctx(["run", "/proj/a"], {}, "/proj/b")),
+    resolve("/proj/b"),
+  );
+  // Only a real `package` run locks, and only dist/ (the script's own export takes the rest).
+  assertEquals(desktopCommand.locks!(ctx(["package", "/proj/a"])), {
+    projectDir: resolve("/proj/a"),
+    packageDirs: ["dist"],
+  });
+  assertEquals(desktopCommand.locks!(ctx(["package"], { "regenerate-scripts": true })), undefined);
+  for (const action of ["run", "build", "dev", "doctor", "publish-update"]) {
+    assertEquals(desktopCommand.locks!(ctx([action])), undefined, action);
+  }
+});
+
+Deno.test("desktop: no action means run", async () => {
+  const dir = await tempDir("denext_desktop_default_");
+  try {
+    const r = await runVerb([], dir);
+    assertEquals(r.code, 1);
+    assertStringIncludes(r.err, `no desktop entry at ${join(dir, "desktop.ts")}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop doctor is dispatched with the dir positional and --json", async () => {
+  const dir = await tempDir("denext_desktop_doctor_");
+  const cap = capture();
+  const exit = stubExit();
+  let code = 0;
+  try {
+    await withEnv(STOCK, async () => {
+      try {
+        await desktopCommand.run(makeCtx({ positionals: ["doctor", dir], global: { json: true } }));
+      } catch (e) {
+        if (!String(e).includes("__exit__")) throw e;
+        code = exit.calls[0];
+      }
+    });
+  } finally {
+    exit.restore();
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  // The real doctor ran (on a Linux host it also reads this session), so assert its shape: the
+  // runtime status the env selected, the checks for this host, and an exit code that matches.
+  const report = JSON.parse(cap.logs.join("\n"));
+  assertEquals(report.os, Deno.build.os);
+  assertEquals(report.runtime.status.mode, "stock");
+  assertEquals(report.checks[0], "runtime");
+  assertEquals(report.linux === null, Deno.build.os !== "linux");
+  const errors = report.findings.filter((f: { level: string }) => f.level === "error");
+  assertEquals(code, errors.length > 0 ? 1 : 0, JSON.stringify(report.findings));
+});
+
+Deno.test("desktop package: a pnpm workspace gets the denoFlags hint; refused denoFlags stop it", async () => {
+  const dir = await tempDir("denext_desktop_pkg_flags_");
+  const warns: string[] = [];
+  const warn = console.warn;
+  console.warn = (...a: unknown[]) => void warns.push(a.map(String).join(" "));
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const seen = join(dir, "seen.json");
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-linux.ts"),
+      "// buildDesktopBundle / parseDesktopPackageArgs\n" +
+        `await Deno.writeTextFile(${JSON.stringify(seen)}, "ran");\n`,
+    );
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "nodeModulesDir": "manual" }');
+    await Deno.writeTextFile(join(dir, "pnpm-workspace.yaml"), "packages: []\n");
+    const hinted = await runVerb(["package"], dir, { "target-os": "linux" });
+    assertEquals(hinted.code, 0, hinted.err);
+    assertStringIncludes(warns.join("\n"), "this is a pnpm workspace");
+    assertStringIncludes(warns.join("\n"), '"--node-modules-dir=none"');
+    assertEquals(await Deno.readTextFile(seen), "ran");
+    await Deno.remove(seen);
+    // A permission flag in desktop.denoFlags is refused before the script runs.
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { desktop: { denoFlags: ["--allow-all"] } };\n',
+    );
+    const refused = await runVerb(["package"], dir, { "target-os": "linux" });
+    assertEquals(refused.code, 1);
+    assertStringIncludes(refused.err, "denext desktop package: ");
+    assertStringIncludes(refused.err, "desktop.denoFlags[0]` permission flags are not accepted");
+    assert(!(await exists(seen)), "the packaging script never ran");
+  } finally {
+    console.warn = warn;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop package --regenerate-scripts: a second run is up to date; an unremovable .bak stops it", async () => {
+  const dir = await tempDir("denext_desktop_regen_again_");
+  try {
+    const first = await runVerb(["package"], dir, { "regenerate-scripts": true });
+    assertEquals(first.code, 0, first.err);
+    assertStringIncludes(first.out, "Regenerated 3 script(s)");
+    const again = await runVerb(["package"], dir, { "regenerate-scripts": true });
+    assertEquals(again.code, 0, again.err);
+    assertStringIncludes(again.out, "Already up to date.");
+    assertEquals(again.out.includes("updated"), false);
+    // A stale script whose .bak is a non-empty directory: the .bak can't be replaced, so the
+    // command fails rather than lose the old script.
+    const script = join(dir, "scripts", "package-linux.ts");
+    await Deno.writeTextFile(script, "// old\n");
+    await Deno.mkdir(join(`${script}.bak`, "keep"), { recursive: true });
+    const blocked = await runVerb(["package"], dir, { "regenerate-scripts": true });
+    assert(blocked.thrown instanceof Error, "the remove error propagates");
+    assert(!(blocked.thrown instanceof Deno.errors.NotFound));
+    assertEquals(await Deno.readTextFile(script), "// old\n", "the old script is kept");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

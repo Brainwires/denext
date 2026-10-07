@@ -14,7 +14,7 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { runStdioServer } from "../../mcp/server.ts";
 import { activeTools, resolveToolNames, TOOL_GROUPS } from "../../mcp/tools.ts";
 import { VERSION } from "../../../mod.ts";
-import { pinnedDenextCli } from "../self-exec.ts";
+import { DENEXT_TASK_CLI_SPEC, pinnedDenextCli } from "../self-exec.ts";
 import {
   addMcp,
   type AddMcpResult,
@@ -57,8 +57,17 @@ function initOptions(ctx: CommandContext): { clients: McpClient[]; disable?: str
 async function runInit(ctx: CommandContext): Promise<void> {
   const dir = resolve(ctx.global.cwd ?? ctx.positionals[1] ?? ".");
   const dryRun = ctx.flags["dry-run"] === true;
-  // The task runs the denext this project pins; a project without a pin gets this CLI's own.
-  const cli = pinnedDenextCli(dir) ?? `jsr:@denext/denext@^${VERSION}/cli`;
+  // The task runs the denext this project pins; a project without a pin gets this CLI's own, and
+  // so does one whose pin can't be written into a task command line (`>=…`, `*`).
+  const own = `jsr:@denext/denext@^${VERSION}/cli`;
+  const pinned = pinnedDenextCli(dir);
+  const taskSafe = pinned !== null && DENEXT_TASK_CLI_SPEC.test(pinned);
+  if (pinned !== null && !taskSafe) {
+    console.error(
+      `   !! WARNING: the project's denext pin ${pinned} can't run from a task; using ${own}`,
+    );
+  }
+  const cli = taskSafe ? pinned : own;
   const result = await addMcp(dir, cli, {
     ...initOptions(ctx),
     dryRun,

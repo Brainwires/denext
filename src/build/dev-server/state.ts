@@ -4,10 +4,17 @@
 // compat build, manifest, bundles, reload channel, dev endpoints, watcher, request
 // handler) is a separately readable unit.
 
+import {
+  createPlatformScanner,
+  type Platform,
+  type PlatformScanner,
+} from "../platform-extensions.ts";
+import type { PlatformImportMap } from "../platform-imports.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import type { ModuleLoader } from "../../server/types.ts";
+import type { FlightBoundaryState } from "../../server/app-config.ts";
 import type { UnbundledDev } from "../dev-unbundled.ts";
 import type { BoundaryManifest } from "../module-graph.ts";
 import type { AppCss } from "../css.ts";
@@ -15,6 +22,12 @@ import type { MiddlewareRunner } from "../../server/middleware.ts";
 import type { Instrumentation } from "../../server/instrumentation.ts";
 import { DevEventLog } from "../dev-events.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
+
+/** A target's Flight boundary in dev: the routes, the tagged modules and the crawl they came from. */
+export interface DevBoundary extends FlightBoundaryState {
+  /** The boundary manifest the Flight entry is generated from. */
+  readonly manifest: BoundaryManifest;
+}
 
 /** Live-reload / Fast Refresh SSE stream. */
 export const RELOAD_PATH = "/_denext/reload";
@@ -63,6 +76,12 @@ export interface DevServerOptions {
    * malicious site a developer visits cannot subscribe to the reload channel.
    */
   allowedDevOrigins?: string[];
+  /**
+   * The session token a non-loopback bind requires of every request from another machine
+   * (`dev-server/dev-token.ts`). Default: derived from `hostname` (none on loopback; else
+   * `DENEXT_DEV_TOKEN`, or a fresh one).
+   */
+  devToken?: string;
   /**
    * Force the unbundled per-module dev loop on (`true`) or off (`false`), overriding the
    * `DENEXT_DEV_UNBUNDLED` env default. An explicit option keeps mode selection per-server
@@ -139,6 +158,15 @@ export interface DevState {
   readonly flightServers: Map<string, { url: string }>;
   boundaryGen: number;
   flightBundle: string | null;
+  /**
+   * Each other target's Flight boundary this generation, crawled through its platform files
+   * (`devBoundaryFor`): its variants may reach other `"use client"` modules than web's files.
+   * `value` is set once the crawl settles, for the synchronous `clientEntryFor`.
+   */
+  readonly platformBoundaries: Map<
+    Platform,
+    { gen: number; boundary: Promise<DevBoundary>; value?: DevBoundary }
+  >;
 
   /**
    * next-compat (drop-in) mode: rewrite react→denext so npm React libraries render on
@@ -181,10 +209,23 @@ export interface DevState {
   refreshGen: number;
   compilerGen: number;
 
+  /**
+   * The project's platform-file scan, which each target's file-URL redirects for the native path
+   * come from (`web`, or the target a shell named). Kept across generations: a created, removed
+   * or renamed platform file forgets it (`watchPlatformFiles`), an edit never does.
+   */
+  readonly platformScanner: PlatformScanner;
+  /** Each target's client import map (`devPlatformImports`), per generation. */
+  readonly platformImports: Map<Platform, { gen: number; imports: PlatformImportMap }>;
+
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
-  ucLoad: ModuleLoader | null;
-  ucLoadGen: number;
+  /**
+   * Per target (its platform files ride the same copy loader), rebuilt per generation: the
+   * render's cache-busting loader and the query-less one that tags the Flight boundary, over one
+   * set of copies.
+   */
+  readonly ucLoads: Map<Platform, { gen: number; load: ModuleLoader; tag: ModuleLoader }>;
 
   /**
    * Client bundle cache keyed by route path (cleared on change). Entry code only; split
@@ -267,6 +308,7 @@ export function createDevState(options: DevServerOptions): DevState {
     flightServers: new Map(),
     boundaryGen: -1,
     flightBundle: null,
+    platformBoundaries: new Map(),
     compatP: undefined,
     compatLoad: null,
     compatBuiltGen: -1,
@@ -282,9 +324,10 @@ export function createDevState(options: DevServerOptions): DevState {
     refreshMap: {},
     refreshGen: -1,
     compilerGen: -1,
+    platformScanner: createPlatformScanner(paths.projectDir),
+    platformImports: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
-    ucLoad: null,
-    ucLoadGen: -1,
+    ucLoads: new Map(),
     bundleCache: new Map(),
     chunkCache: new Map(),
     routeInFlight: new Map(),

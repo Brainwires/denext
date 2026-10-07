@@ -19,7 +19,7 @@ import type { ModuleLoader } from "./types.ts";
 import { serveWithPortFallback } from "./serve-utils.ts";
 
 export { createApp } from "./app.ts";
-export type { AppConfig, RequestHandler, RequestLogInfo } from "./app.ts";
+export type { AppConfig, FlightBoundaryState, RequestHandler, RequestLogInfo } from "./app.ts";
 export { renderPage } from "./render-page.ts";
 export type { PageContext, RenderedPage, RenderPageOptions, SignalSink } from "./render-page.ts";
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
@@ -52,7 +52,7 @@ export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
-export { createOtaHandler, type OtaHandlerOptions } from "./ota-handler.ts";
+export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
   type OtaChannel,
@@ -277,6 +277,7 @@ export {
   type MdxConfig,
   type MobileConfig,
   type MobileFlavorConfig,
+  type PlatformExtensionsConfig,
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,

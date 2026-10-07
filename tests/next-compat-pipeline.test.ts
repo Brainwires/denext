@@ -57,6 +57,9 @@ Deno.test("resolveReactFamilyFile: every mapped react-family specifier resolves 
   assertEquals(resolveReactFamilyFile("react-dom/server.edge"), { file: "react-dom-server.js" });
   assertEquals(resolveReactFamilyFile("react-is"), { file: "react-is.js" });
   assertEquals(resolveReactFamilyFile("react/jsx-dev-runtime"), { file: "jsx-runtime.js" });
+  assertEquals(resolveReactFamilyFile("react/compiler-runtime"), {
+    file: "react-compiler-runtime.js",
+  });
   // No warning on a mapped specifier.
   assert(resolveReactFamilyFile("react").warning === undefined);
 });

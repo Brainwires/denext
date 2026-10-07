@@ -20,6 +20,12 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
+import {
+  type Platform,
+  platformResolution,
+  projectPlatformRedirects,
+} from "./platform-extensions.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { compileCssAsset } from "./css-url.ts";
 import { optimizePackageImportsList } from "./optimize-package-imports.ts";
 import { CLIENT_PREFIX } from "./prod-server/assets.ts";
@@ -34,15 +40,36 @@ export async function dirExists(path: string): Promise<boolean> {
   }
 }
 
-/** Run plugin setup (route-synthesizer plugins must register before the route scan). */
+/**
+ * Run plugin setup (route-synthesizer plugins must register before the route scan). A plugin's
+ * server render (a Pages Router page prerendered at build) loads the app's modules through the
+ * web target's platform files, as its client bundles (`platformClientImportMap`) and
+ * `denext start` do: the redirects are computed on the first load, after setup.
+ */
 export function setupPlugins(paths: ProjectPaths, mode: "build" | "export"): Promise<void> {
   return applyPlugins({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
     config: paths.config ?? {},
     mode,
-    load: defaultLoader,
+    load: webPlatformLoader(paths, mode),
   });
+}
+
+/** A loader that takes the web target's platform files, set up on its first call. */
+function webPlatformLoader(paths: ProjectPaths, mode: "build" | "export"): ModuleLoader {
+  let loader: Promise<ModuleLoader> | null = null;
+  const create = async (): Promise<ModuleLoader> => {
+    const redirects = await projectPlatformRedirects(paths.projectDir, paths.config, "web");
+    if (Object.keys(redirects).length === 0) return defaultLoader;
+    return createUseCacheLoader(defaultLoader, {
+      projectDir: paths.projectDir,
+      cacheDir: join(paths.outDir, "server-cache", `plugins-${mode}`),
+      redirects,
+      useCache: false,
+    });
+  };
+  return async (filePath) => (await (loader ??= create()))(filePath);
 }
 
 /**
@@ -95,6 +122,7 @@ export function compatBuildOptions(
   paths: ProjectPaths,
   cssImportMap?: Record<string, string>,
   clientDir: string = join(paths.outDir, "client"),
+  platform: Platform = "web",
 ) {
   return {
     projectDir,
@@ -112,6 +140,9 @@ export function compatBuildOptions(
     optimizePackageImports: optimizePackageImportsList(paths.config),
     useCache: resolveCacheComponents(paths.config),
     cssImportMap,
+    // The target's platform files (`BigButton.ios.tsx`), for the server AND client bundles,
+    // so the static render and the hydrating client pick the same variant.
+    appPlatform: platformResolution(paths.config, platform),
     // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's
     // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
     // would be wiped by that swap).

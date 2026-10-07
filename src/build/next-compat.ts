@@ -20,6 +20,12 @@
  * @module
  */
 
+import {
+  missingVariantMessage,
+  type PlatformResolution,
+  platformVariantsOf,
+  probePlatformSource,
+} from "./platform-extensions.ts";
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
@@ -68,6 +74,7 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
+import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
@@ -94,6 +101,8 @@ export const REACT_ALIASES: Record<string, string> = {
   "react-is": "react-is.js",
   "react/jsx-runtime": "jsx-runtime.js",
   "react/jsx-dev-runtime": "jsx-runtime.js",
+  // npm libraries precompiled with the React Compiler import `c` from here.
+  "react/compiler-runtime": "react-compiler-runtime.js",
 };
 
 /**
@@ -184,6 +193,10 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "react-dom-test-utils": u("src/compat/test-utils.ts"),
     "react-is": u("src/compat/react-is.ts"),
     "jsx-runtime": u("src/jsx/jsx-runtime.ts"),
+    // `react/compiler-runtime` (React-Compiler output's `c`) and `denext/compiler-runtime`:
+    // the memo cache must come from the one hooks instance the components render with.
+    "react-compiler-runtime": u("src/compat/react-compiler-runtime.ts"),
+    "compiler-runtime": u("src/runtime/compiler-runtime.ts"),
     // What `react` and the JSX runtime are for importers inside node_modules (see
     // LIBRARY_REACT_ALIASES): the same instance, with library elements recorded.
     "react-lib": u("src/compat/react-lib.ts"),
@@ -414,6 +427,21 @@ export interface BundleNextCompatOptions {
 }
 
 /**
+ * An import that resolves to nothing but has other targets' platform files: fail with the
+ * message naming them (esbuild's own would say only "Could not resolve"), else leave it to the
+ * next resolver.
+ */
+function missingVariant(
+  spec: string,
+  base: string,
+  appPlatform: PlatformResolution,
+): esbuild.OnResolveResult | null {
+  const variants = platformVariantsOf(base);
+  if (variants.length === 0) return null;
+  return { errors: [{ text: missingVariantMessage(spec, variants, appPlatform) }] };
+}
+
+/**
  * Resolve an app's OWN source imports (path-alias `@/…` from the deno.json import
  * map, and relative `./`/`../`) by probing extensions — the extensionless imports
  * Next.js apps use everywhere. This is handled here rather than by the deno-loader
@@ -514,8 +542,19 @@ function appImportBase(
 export function appResolverPlugin(
   configPath: string,
   platformExtensions?: readonly string[],
+  appPlatform?: PlatformResolution | null,
 ): esbuild.Plugin {
   const exts = withPlatformExtensions(SOURCE_EXTS, platformExtensions);
+  // The app's own modules take the target's platform files (`platformExtensions` config);
+  // without one (turned off) they probe what packages do. A package's modules (the importer or
+  // the file named is in node_modules) keep their own resolution: a React Native library's
+  // `.ios.js` calls native modules, and the shells run its web build.
+  const own = (base: string, importer: string) =>
+    !!appPlatform && !inNodeModules(base) && !inNodeModules(importer);
+  const probe = (base: string, importer: string) =>
+    own(base, importer)
+      ? probePlatformSource(base, appPlatform!, probeSourceFile, SOURCE_EXTS)
+      : probeSourceFile(base, exts);
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
   let prefixes: Array<[string, string]> | null = null;
@@ -532,8 +571,9 @@ export function appResolverPlugin(
         if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         const base = appImportBase(p, args.importer, await ensure());
         if (base) {
-          const found = probeSourceFile(base, exts);
-          return found ? await withPackageSideEffects(found) : null;
+          const found = probe(base, args.importer);
+          if (found) return await withPackageSideEffects(found);
+          return own(base, args.importer) ? missingVariant(p, base, appPlatform!) : null;
         }
         // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
         // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
@@ -543,7 +583,7 @@ export function appResolverPlugin(
         if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
-          const rootProbe = probeSourceFile(resolve(dirname(configPath), p), exts);
+          const rootProbe = probe(resolve(dirname(configPath), p), args.importer);
           if (rootProbe) return await withPackageSideEffects(rootProbe);
         }
         return null; // npm/jsr/bare → deno-loader
@@ -651,6 +691,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/desktop/app": "desktop-app.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
+  "denext/compiler-runtime": "compiler-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
@@ -1166,6 +1207,13 @@ export interface BundleNextCompatModulesOptions {
    * variant wins over its native one. Omit to probe exactly the defaults.
    */
   platformExtensions?: readonly string[];
+  /**
+   * The target's platform files for the app's OWN modules (`BigButton.ios.tsx`; see
+   * `platform-extensions.ts`), probed ahead of the defaults for relative/alias imports.
+   * Packages keep {@link platformExtensions}. Omit (or null, `platformExtensions: false`) to
+   * resolve app imports like package subpaths.
+   */
+  appPlatform?: PlatformResolution | null;
   /**
    * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
    * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
@@ -2033,10 +2081,27 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
 }
 
 /**
- * esbuild plugin (SSR bundle): an absolute URL INTO the framework — what a build-time
- * transform emits for its runtime import (the `"use cache"` wrapper's `src/server/cache.ts`)
- * — is the same shared denext instance the SSR loader runs on: external, never bundled (its
- * `@std/*` deps aren't resolvable through the app's config anyway).
+ * Whether `url` is one of the framework's own modules, which the SSR bundle keeps external:
+ * anything under `<root>/src/` (every runtime URL a build-time transform emits — the
+ * `"use cache"` wrapper's `src/server/cache.ts`, the compiler / qrl / async-context runtimes
+ * — and every `exports` entry but two) plus the root `mod.ts` (the `"."` export).
+ *
+ * Deliberately NOT the whole framework root: an app that lives INSIDE a denext checkout
+ * (`examples/*`, `apps/*`, test fixtures) has its `.denext/` output and its own
+ * `node_modules/` under the root too. On Windows every absolute path is re-resolved as its
+ * `file://` URL (`windowsPathSpecifiers` in `deno-loader-plugins.ts`), so a whole-root rule
+ * marked the build's own entry points and injected shim external, and esbuild refused them.
+ * Exported for testing.
+ */
+export function isFrameworkModuleUrl(url: string, fwRoot: string): boolean {
+  return url.startsWith(new URL("src/", fwRoot).href) || url === new URL("mod.ts", fwRoot).href;
+}
+
+/**
+ * esbuild plugin (SSR bundle): an absolute URL INTO the framework's own modules (see
+ * {@link isFrameworkModuleUrl}) is the same shared denext instance the SSR loader runs on:
+ * external, never bundled (its `@std/*` deps aren't resolvable through the app's config
+ * anyway).
  */
 function frameworkUrlExternalPlugin(): esbuild.Plugin {
   const fwRoot = frameworkRootUrl();
@@ -2044,7 +2109,7 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
     name: "denext-framework-url-external",
     setup(build) {
       build.onResolve({ filter: /^(?:file|https?):\/\// }, (args) => {
-        return args.path.startsWith(fwRoot) ? { path: args.path, external: true } : null;
+        return isFrameworkModuleUrl(args.path, fwRoot) ? { path: args.path, external: true } : null;
       });
     },
   };
@@ -2126,7 +2191,7 @@ async function compatPlugins(
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
     ...(await sourcePlugins(options, workerBuild)),
-    appResolverPlugin(options.configPath, options.platformExtensions),
+    appResolverPlugin(options.configPath, options.platformExtensions, options.appPlatform),
     nodeModulesFileUrlPlugin(),
     ...(deno ? [nodeBuiltinResolvePlugin()] : []),
     ...nodeModulesPlugins(options),
@@ -2323,18 +2388,22 @@ async function writeAnalyzeMeta(
  * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
  */
 export function serverStubPlugin(
-  servers: Iterable<[string, { url: string; exports: string[] }]>,
-  stubOf: (moduleId: string, exports: string[]) => string,
+  servers: Iterable<readonly [string, { url: string; exports: readonly string[] }]>,
+  stubOf: (moduleId: string, exports: readonly string[]) => string,
 ): esbuild.Plugin {
-  const byPath = new Map<string, { id: string; exports: string[] }>();
+  const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
-    byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+    if (ref.url.startsWith("file:")) byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
   }
   return {
     name: "denext-server-stub",
     setup(build) {
+      // An app `"use server"` module the boundary does not hold (so no stub id is registered
+      // for it) is stubbed anyway, and the build then fails naming it: its source never ships.
+      const unknown = new Set<string>();
+      build.initialOptions.metafile = true;
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
-        const s = byPath.get(args.path);
+        const s = byPath.get(args.path) ?? byPath.get(await realPathOr(args.path));
         if (s) {
           return {
             contents: stubOf(s.id, s.exports),
@@ -2342,12 +2411,13 @@ export function serverStubPlugin(
             resolveDir: dirname(args.path),
           };
         }
+        if ((await readDirective(args.path)) !== "server") return null;
         // A `"use server"` file inside an npm package that is not in the boundary — the other
         // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
         // client code imports the package's ESM build while its islands are the server
         // bundle's CJS files. Its code must not ship either; nothing registers it on the
         // server, so calling it fails there (no island renders it).
-        if (!inNodeModules(args.path) || (await readDirective(args.path)) !== "server") return null;
+        if (!inNodeModules(args.path)) unknown.add(args.path);
         const exports = await staticExportNames(args.path);
         return {
           contents: stubOf(`unregistered:${args.path.split(/[\\/]/).slice(-3).join("/")}`, exports),
@@ -2355,8 +2425,44 @@ export function serverStubPlugin(
           resolveDir: dirname(args.path),
         };
       });
+      build.onEnd((result) => {
+        if (unknown.size === 0) return;
+        const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
+        const leaks: ServerModuleLeak[] = [...unknown].map((module) => ({
+          module,
+          entries: ["a client bundle"],
+          chain: metafileChain(result.metafile, cwd, module),
+        }));
+        unknown.clear();
+        throw new Error(formatServerModuleLeaks(leaks, cwd));
+      });
     },
   };
+}
+
+/**
+ * The import chain an esbuild metafile records from an entry point to `target` (absolute paths,
+ * the target last), or none. Metafile paths are relative to the build's working directory.
+ */
+function metafileChain(
+  metafile: esbuild.Metafile | undefined,
+  cwd: string,
+  target: string,
+): string[] {
+  if (!metafile) return [];
+  const abs = (p: string) => resolve(cwd, p.replace(/^[a-z-]+:/i, ""));
+  const importedBy = new Map<string, string>();
+  for (const [from, input] of Object.entries(metafile.inputs)) {
+    for (const imp of input.imports) {
+      if (!importedBy.has(abs(imp.path))) importedBy.set(abs(imp.path), abs(from));
+    }
+  }
+  const chain = [target];
+  for (let at = importedBy.get(target); at && !chain.includes(at); at = importedBy.get(at)) {
+    chain.unshift(at);
+  }
+  // Drop the generated entry (a staged temp file) the chain starts from.
+  return chain.length > 1 ? chain.slice(1) : chain;
 }
 
 /** Release esbuild's long-lived service process (call once at process end). */

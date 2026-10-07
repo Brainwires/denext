@@ -3,7 +3,8 @@
 // (the runner leaves `kitchen-sink-runner.json` in the app's data folder), it runs them at once,
 // hands the results to the `kitchen` extension (which writes the runner's report) and quits; opened
 // by hand, it waits for the button and shows the manual release checks (`manual-checks.tsx`). On the window test's full-app update launches it runs only that
-// phase's checks, and the install phase hands over to the updater instead of quitting.
+// phase's checks, and the install phase hands over to the updater instead of quitting. On the
+// navigation launch it runs nothing: `navigation.tsx` drives that phase from the layout.
 
 import { useEffect, useRef, useState } from "denext";
 import { type DeepLinkEvent, onDeepLink, onOpenFile, type OpenedFile } from "denext/mobile";
@@ -17,6 +18,7 @@ import {
   runChecks,
 } from "./checks.ts";
 import { ManualChecks } from "./manual-checks.tsx";
+import { NAVIGATION_PHASE } from "./navigation.tsx";
 
 export function KitchenSink() {
   const [results, setResults] = useState<CheckResult[]>([]);
@@ -42,7 +44,8 @@ export function KitchenSink() {
     if (autorun) {
       await kitchen.report({ results: all, expected: checksFor(phase).map(([name]) => name) });
       // The install phase: swap in the staged update and relaunch it (the updater quits the app).
-      if (phase === "update-install" && all.every((r) => r.status === "pass")) {
+      const installs = phase === "update-install" || phase === "trusted-install";
+      if (installs && all.every((r) => r.status === "pass")) {
         const r = await kitchen.updateInstall({});
         await kitchen.mark({ name: "update-install", data: JSON.stringify(r) });
         if (r.ok && r.result.quitting) return;
@@ -60,7 +63,8 @@ export function KitchenSink() {
     kitchen.setup({}).then((setup: KitchenSetup) => {
       ctx.current = { setup, links, files };
       setState("idle");
-      if (setup.autorun) void run();
+      // The navigation phase is the layout's (`navigation.tsx`): it clicks away from this page.
+      if (setup.autorun && setup.phase !== NAVIGATION_PHASE) void run();
     }, (err: unknown) => {
       setError(err instanceof Error ? err.message : String(err));
       setState("error");

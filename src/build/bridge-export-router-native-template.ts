@@ -10,7 +10,9 @@
 // once, before the first page) returns `DenextExportRouter` instead: a path with an extension
 // passes through, `/route` is `/route/index.html` or `/route.html` when the export has that
 // page, and anything else is still the root `index.html` (a single-page app's client routes
-// keep working).
+// keep working). A path that leaves `basePath` (a decoded `/../secret`) is refused the way
+// Android's `exportedPage` refuses a `/..` path: a navigation gets the root `index.html`, and
+// an asset gets nothing (Capacitor's own router would serve `basePath + path`, outside the UI).
 //
 // `basePath` is the directory the UI is served from: Capacitor sets it through
 // `WebViewAssetHandler.setAssetPath` from the instance's `appLocation` (the bundled `public/`,
@@ -21,6 +23,10 @@
 // Android's counterpart is part of the composed MainActivity (`DenextExportRoutes` in
 // mobile-native-install.ts). Edit this as source: it is compiled only in an app (verified on a
 // device against Capacitor 8). Every `\`` below is an escaped template-literal character.
+//
+// The candidate order mirrors `EXPORT_PAGE_SUFFIXES` (export-paths.ts), the mapping every TS
+// surface uses; tests/export-routes-conformance.test.ts holds both routers to the shared vectors
+// (tests/fixtures/export-routes.json), compiling this one with swiftc where it exists.
 
 /** The `router()` override, first thing in the bridge view controller's class body. */
 export const EXPORT_ROUTER_OVERRIDE =
@@ -38,10 +44,16 @@ export const EXPORT_ROUTER_SWIFT = `
 /// \`/route\` → \`/route/index.html\` or \`/route.html\` when the export has that page, else the root
 /// \`index.html\` (a single-page app's client routes keep working). \`basePath\` is the directory
 /// the UI is served from (the bundled \`public/\` or an over-the-air UI), set by Capacitor.
+/// \`path\` arrives decoded (\`/%2e%2e%2fsecret\` is \`/../secret\`), so a path that leaves that
+/// directory is refused: a navigation gets the root \`index.html\`, anything else the directory
+/// itself, which the asset handler cannot read (the request fails).
 struct DenextExportRouter: Router {
     var basePath: String = ""
     func route(for path: String) -> String {
         let url = URL(fileURLWithPath: path)
+        guard staysInside(path) else {
+            return basePath + (url.pathExtension.isEmpty ? "/index.html" : "/")
+        }
         guard url.pathExtension.isEmpty else { return basePath + path }
         let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
         if !trimmed.isEmpty {
@@ -51,6 +63,15 @@ struct DenextExportRouter: Router {
             }
         }
         return basePath + "/index.html"
+    }
+
+    /// Whether \`path\` names a file under \`basePath\`: no \`..\` segment, and once standardized
+    /// the path is \`basePath\` or below it.
+    private func staysInside(_ path: String) -> Bool {
+        if path.split(separator: "/").contains("..") { return false }
+        let root = URL(fileURLWithPath: basePath.isEmpty ? "/" : basePath).standardizedFileURL.path
+        let resolved = URL(fileURLWithPath: basePath + path).standardizedFileURL.path
+        return resolved == root || resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 }
 `;

@@ -3,6 +3,7 @@
 // metadata). Kept here — reached through `denext/desktop` — so the three scripts stay short and a
 // fix reaches every project that regenerates them.
 
+import { desktopPlatform, PLATFORM_ENV } from "./platform-extensions.ts";
 import {
   desktopIncludeArgs,
   desktopNpmArgs,
@@ -23,7 +24,8 @@ import {
   msiProductVersion,
   readDenoJson,
 } from "./desktop-installers.ts";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -313,10 +315,15 @@ export interface PreparedDesktopPackage {
 
 /**
  * A package run's setup: the app name, the installer plan (`--format`, else
- * `desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`
- * sync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up
- * version or identifier is warned about), `dist/`,
- * and — unless `--no-export` — the static export (`deno task export`).
+ * `desktop.installers.<os>`, else the defaults), `dist/`, unless `--no-export` the static export
+ * (`deno task export`), then the `.deno-desktop/app.json` + `compile.include` + deno.json
+ * `desktop.app` sync and the package metadata (read after that sync wrote the deep links into
+ * deno.json; a made-up version or identifier is warned about).
+ *
+ * The sync runs AFTER the export, right before `deno desktop` reads deno.json: under
+ * `denext desktop package` the CLI's CSS re-exec keeps a backup of the project's deno.json while the
+ * script runs, and the export's own CLI restores that backup when it starts, which undid a sync
+ * done before it (the bundle then took deno.json's identifier, not `denext.config.ts`'s).
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
@@ -330,12 +337,23 @@ export async function prepareDesktopPackage(
 ): Promise<PreparedDesktopPackage> {
   const appName = await desktopAppName(entryUrl);
   const plan = await desktopInstallerPlan(entryUrl, os, args.formats, args.add);
+  await Deno.mkdir("dist", { recursive: true });
+  if (args.export) await desktopRun(["deno", "task", "export"], desktopExportEnv(os));
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
-  await Deno.mkdir("dist", { recursive: true });
-  if (args.export) await desktopRun(["deno", "task", "export"]);
   return { name: desktopSlug(appName), plan, meta };
+}
+
+/**
+ * The environment of a package run's `deno task export`: the TARGET OS's platform (`windows`
+ * when cross-packaging from a Mac), so the export resolves its `.windows` / `.desktop` files,
+ * not the host's.
+ *
+ * @param os The target OS.
+ */
+export function desktopExportEnv(os: DesktopOs): Record<string, string> {
+  return { [PLATFORM_ENV]: desktopPlatform(os) };
 }
 
 /** Options for {@linkcode desktopRun}. */
@@ -544,6 +562,189 @@ export async function buildDesktopBundle(
   const cmd = await desktopBundleCommand(entryUrl, os, o);
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   await desktopRun(cmd, await desktopRuntimeEnv(entryUrl, o.target));
+  if (os === "windows") {
+    await desktopWindowsCefLayout(
+      o.out,
+      await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl)),
+    );
+  }
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
   return o.out;
+}
+
+/**
+ * The Windows CEF bundle layout behind CEF's bootstrap. A runtime whose laufey runs web content
+ * in Chromium's sandbox on Windows ships CEF's `bootstrap.exe` as laufey's CEF executable and the
+ * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.7) names the executable
+ * `<App>.exe` and writes the runtime to `<App>.dll`, but the bootstrap loads its client, the
+ * host, as `<App>.dll`, and the host loads the runtime as `<App>.runtime.dll`. So this moves
+ * `<App>.dll` to `<App>.runtime.dll` and `laufey.dll` to `<App>.dll`, and gives `<App>.exe` the
+ * app's icon (`AppIcon.ico`, when the bundle has one) and a version resource naming the app in
+ * place of CEF's ("CEF bootstrap" in Task Manager otherwise). Signing comes after this.
+ *
+ * A bundle without `laufey.dll` (the webview backend; a CEF runtime without the sandbox, such as
+ * denext.9) is left as it is.
+ *
+ * @param bundleDir The bundle directory `deno desktop` wrote (`dist/<name>-<label>`).
+ * @param meta The package metadata: the version resource's name, publisher and version.
+ * @returns Whether the bundle had the CEF bootstrap layout (and was rearranged).
+ */
+export async function desktopWindowsCefLayout(
+  bundleDir: string,
+  meta: Pick<DesktopPackageMeta, "name" | "publisher" | "version">,
+): Promise<boolean> {
+  const host = join(bundleDir, "laufey.dll");
+  if (!(await Deno.stat(host).then((s) => s.isFile, () => false))) return false;
+  const stem = basename(bundleDir);
+  if (stem.toLowerCase() === "laufey") {
+    throw new Error(`a CEF app can't be named "laufey": its host library takes that name`);
+  }
+  const exe = join(bundleDir, `${stem}.exe`);
+  const runtime = join(bundleDir, `${stem}.dll`);
+  await Deno.rename(runtime, join(bundleDir, `${stem}.runtime.dll`));
+  await Deno.rename(host, runtime);
+  const icon = await Deno.readFile(join(bundleDir, "AppIcon.ico")).catch(() => undefined);
+  const version = peVersionWords(meta.version);
+  await Deno.writeFile(
+    exe,
+    stampPeResources(await Deno.readFile(exe), {
+      icon,
+      version,
+      strings: {
+        CompanyName: meta.publisher,
+        FileDescription: meta.name,
+        FileVersion: version.join("."),
+        InternalName: stem,
+        OriginalFilename: `${stem}.exe`,
+        ProductName: meta.name,
+        ProductVersion: meta.version,
+      },
+    }),
+  );
+  return true;
+}
+
+/**
+ * Whether a built Windows bundle runs behind CEF's bootstrap, laying it out first when the stock
+ * `deno desktop` built it ({@linkcode desktopWindowsCefLayout}). A `deno desktop` that knows the
+ * layout writes it itself: no `laufey.dll` is left, and the runtime is already
+ * `<App>.runtime.dll`.
+ *
+ * @param bundleDir The bundle directory `deno desktop` wrote (`<App>/`).
+ * @param meta The app's name, publisher and version, for the executable's version resource.
+ * @returns Whether the bundle has the bootstrap layout.
+ */
+export async function desktopWindowsBootstrapBundle(
+  bundleDir: string,
+  meta: Pick<DesktopPackageMeta, "name" | "publisher" | "version">,
+): Promise<boolean> {
+  if (await desktopWindowsCefLayout(bundleDir, meta)) return true;
+  return await isFileAt(bundleDir, `${basename(bundleDir)}.runtime.dll`);
+}
+
+/** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
+const SIGN_BATCH = 32;
+/** The RFC-3161 timestamp server used when `DENEXT_SIGN_TIMESTAMP_URL` is unset. */
+const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
+
+/**
+ * Whether `path` holds a PE image: `MZ`, then `PE\0\0` at the offset the DOS header's
+ * `e_lfanew` names. The header decides, not the extension: an `.exe`, a `.dll`, a CEF helper or a
+ * native `.node` addon are all PE files, and a renamed one still is.
+ */
+async function isPeFile(path: string): Promise<boolean> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true });
+  } catch {
+    return false;
+  }
+  try {
+    const dos = new Uint8Array(64);
+    if ((await file.read(dos)) !== 64 || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
+    const peAt = new DataView(dos.buffer).getUint32(0x3c, true);
+    if (peAt < 64 || peAt > 64 * 1024 * 1024) return false;
+    await file.seek(peAt, Deno.SeekMode.Start);
+    const sig = new Uint8Array(4);
+    if ((await file.read(sig)) !== 4) return false;
+    return sig[0] === 0x50 && sig[1] === 0x45 && sig[2] === 0 && sig[3] === 0;
+  } finally {
+    file.close();
+  }
+}
+
+/**
+ * Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not
+ * followed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the
+ * running app's signature — the `.exe`, `<App>.dll`, `WebView2Loader.dll`, the app-local VC++
+ * runtime, CEF's DLLs and helpers and any `.node` addon — so all of them are signed, third-party
+ * files included.
+ *
+ * @param dir The bundle directory.
+ * @returns The PE files' paths.
+ */
+export async function desktopPeFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (d: string) => {
+    for await (const e of Deno.readDir(d)) {
+      const path = join(d, e.name);
+      if (e.isDirectory) await walk(path);
+      else if (e.isFile && await isPeFile(path)) out.push(path);
+    }
+  };
+  await walk(dir);
+  return out.sort();
+}
+
+/** What {@linkcode desktopSignWindows} runs commands and reads settings through (tests stub them). */
+export interface DesktopSignWindowsDeps {
+  /** Runs a command (default {@linkcode desktopRun}). */
+  readonly run?: typeof desktopRun;
+  /** Whether a tool resolves (default {@linkcode desktopHasTool}). */
+  readonly has?: (cmd: string) => Promise<boolean>;
+  /** Reads an environment variable (default `Deno.env.get`). */
+  readonly env?: (name: string) => string | undefined;
+  /** Prints a warning (default `console.warn`). */
+  readonly warn?: (message: string) => void;
+}
+
+/**
+ * Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password
+ * `DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few
+ * dozen files per `signtool sign` call. Without a certificate, or without `signtool` (off
+ * Windows), nothing is signed and a warning says so. The password, which signtool takes only as
+ * `/p`, is redacted from a failure message.
+ *
+ * @param files The files to sign (a bundle's PE files from {@linkcode desktopPeFiles}, or an .msi).
+ * @param deps The command runner, tool probe, environment and warning sink.
+ * @returns Whether the files were signed.
+ */
+export async function desktopSignWindows(
+  files: readonly string[],
+  deps: DesktopSignWindowsDeps = {},
+): Promise<boolean> {
+  const env = deps.env ?? ((name: string) => Deno.env.get(name));
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
+  if (files.length === 0) return false;
+  const what = files.length === 1 ? files[0] : `${files.length} files`;
+  const cert = env("DENEXT_WINDOWS_CERT");
+  if (!cert) {
+    warn(`  no DENEXT_WINDOWS_CERT set — ${what} not Authenticode-signed.`);
+    return false;
+  }
+  if (!(await (deps.has ?? desktopHasTool)("signtool"))) {
+    warn(`  signtool not found (Windows SDK) — ${what} not signed; sign on a Windows host/CI.`);
+    return false;
+  }
+  const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
+  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
+  const pass = env("DENEXT_WINDOWS_CERT_PASSWORD");
+  if (pass) args.push("/p", pass);
+  const run = deps.run ?? desktopRun;
+  for (let i = 0; i < files.length; i += SIGN_BATCH) {
+    await run(["signtool", ...args, ...files.slice(i, i + SIGN_BATCH)], undefined, {
+      secrets: pass ? [pass] : [],
+    });
+  }
+  return true;
 }

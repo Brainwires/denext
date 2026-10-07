@@ -4,8 +4,10 @@
 import { join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
-import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { createUseCacheLoaders } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
+import { devPlatformRedirects, renderPlatform } from "./platform.ts";
+import type { Platform } from "../platform-extensions.ts";
 
 /**
  * Dev module loader: cache-bust via the generation query so edits reload.
@@ -35,22 +37,34 @@ export function createDevLoader(
   st: DevState,
   getManifest: () => Promise<RouteManifest>,
   isCompat: () => Promise<boolean>,
-  opts: { bust?: boolean } = {},
+  opts: { bust?: boolean; platform?: Platform } = {},
 ): ModuleLoader {
-  const base = baseLoaderFor(st, opts.bust ?? true);
+  const bust = opts.bust ?? true;
+  const base = baseLoaderFor(st, bust);
   return async (filePath) => {
     if (await isCompat()) {
       await getManifest();
       return st.compatLoad!(filePath);
     }
-    if (!st.useCacheEnabled) return base(filePath);
-    if (st.ucLoadGen !== st.generation) {
-      st.ucLoad = createUseCacheLoader(base, {
+    // The rendered request's target (or the one asked for): its platform files ride the same
+    // per-generation copy loader, one per target (each writes its own copies).
+    const platform = opts.platform ?? renderPlatform();
+    const redirects = await devPlatformRedirects(st, platform);
+    if (!st.useCacheEnabled && Object.keys(redirects).length === 0) return base(filePath);
+    let current = st.ucLoads.get(platform);
+    if (current?.gen !== st.generation) {
+      const dir = platform === "web" ? String(st.generation) : `${st.generation}-${platform}`;
+      // The render and the boundary tagging share one compiler, so a module the render loads
+      // as a copy is tagged (an action registered) as that same copy.
+      const [load, tag] = createUseCacheLoaders([baseLoaderFor(st), baseLoaderFor(st, false)], {
         projectDir: st.paths.projectDir,
-        cacheDir: join(st.paths.outDir, "server-cache", String(st.generation)),
+        cacheDir: join(st.paths.outDir, "server-cache", dir),
+        redirects,
+        useCache: st.useCacheEnabled,
       });
-      st.ucLoadGen = st.generation;
+      current = { gen: st.generation, load, tag };
+      st.ucLoads.set(platform, current);
     }
-    return st.ucLoad!(filePath);
+    return (bust ? current.load : current.tag)(filePath);
   };
 }

@@ -26,6 +26,16 @@ export interface RequestLogInfo {
   requestId: string;
 }
 
+/** A Flight boundary: the routes that render through Flight and the modules they tag. */
+export interface FlightBoundaryState {
+  /** Route paths that render via Flight. */
+  readonly routes: Set<string>;
+  /** `"use client"` modules (client id → ref). */
+  readonly clients: Map<string, { url: string }>;
+  /** `"use server"` modules (module id → ref). */
+  readonly servers: Map<string, { url: string }>;
+}
+
 /**
  * Configuration for {@linkcode createApp}: how to resolve the route manifest and
  * load modules, plus optional cross-cutting behavior (request logging, per-request
@@ -45,6 +55,12 @@ export interface AppConfig {
    * {@link load}; prod/export leave it unset.
    */
   tagLoad?: ModuleLoader;
+  /**
+   * The scope client-reference tagging is done once per (default: once per process). Dev
+   * returns the rendered request's target (`web`, `ios`, …): each target's loader yields its
+   * own island instances (its platform files), and each must be tagged.
+   */
+  tagScope?: () => string;
   /** Directory of static assets served at the URL root. */
   publicDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
@@ -254,6 +270,12 @@ export interface AppConfig {
    * boundary manifest.
    */
   flightServers?: Map<string, { url: string }>;
+  /**
+   * The Flight boundary of the request being rendered, when it is not {@link flightRoutes} /
+   * {@link flightClients} / {@link flightServers}: dev returns a platform session's own
+   * boundary (its platform files may reach other `"use client"` modules), null for those.
+   */
+  flightBoundary?: () => Promise<FlightBoundaryState | null>;
   /**
    * Enable Cache Components / Partial Prerendering (Next.js 16). When on (and a
    * {@link pageCache} is present), a cacheable GET renders a request-independent

@@ -2,7 +2,8 @@
 /**
  * Package this `deno desktop` app for Windows distribution. `deno desktop` produces a
  * complete bundle directory (the `.exe`, its `.dll`s, and resources); this builds one or
- * both arches, Authenticode-signs the `.exe` when a code-signing certificate is provided, and
+ * both arches, Authenticode-signs every PE file in the bundle (the `.exe`, its `.dll`s, any
+ * `.node`) when a code-signing certificate is provided, and
  * wraps each bundle in its installers (an `.msi` by default). Signing only runs where
  * `signtool` is available (Windows) and a cert is configured.
  *
@@ -58,7 +59,9 @@ import {
   desktopOptionalInstaller,
   desktopPackageArches,
   type DesktopPackageMeta,
+  desktopPeFiles,
   desktopRun as run,
+  desktopSignWindows,
   desktopToolGate,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
@@ -72,7 +75,6 @@ const TARGETS: Record<string, string> = {
 // from the output basename and rejects '_' (so a raw `x86_64` suffix drops resources).
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
-const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
 const OS = "windows";
 
 /** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon). */
@@ -84,41 +86,10 @@ async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<stri
   });
 }
 
-/** Authenticode-sign `file` (the bundle's .exe, or an .msi) when a certificate is configured;
- * else skip with a warning. */
-async function sign(file: string): Promise<void> {
-  const cert = Deno.env.get("DENEXT_WINDOWS_CERT");
-  if (!cert) {
-    console.warn(
-      `  no DENEXT_WINDOWS_CERT set — ${file} is not Authenticode-signed.`,
-    );
-    return;
-  }
-  if (!(await has("signtool"))) {
-    console.warn(
-      `  signtool not found (Windows SDK) — ${file} is not signed; sign on a Windows host/CI.`,
-    );
-    return;
-  }
-  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ??
-    DEFAULT_TIMESTAMP_URL;
-  const args = [
-    "sign",
-    "/f",
-    cert,
-    "/fd",
-    "sha256",
-    "/tr",
-    timestamp,
-    "/td",
-    "sha256",
-  ];
-  // signtool takes a .pfx password only as `/p` (no environment or file form), so it is
-  // redacted from the failure message; keep it out of logs by setting it as a CI secret.
-  const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
-  if (pass) args.push("/p", pass);
-  args.push(file);
-  await run(["signtool", ...args], undefined, { secrets: pass ? [pass] : [] });
+/** Authenticode-sign `files` with DENEXT_WINDOWS_CERT through `signtool`, batched; without a
+ * certificate or signtool, skip with a warning (see desktopSignWindows). */
+async function sign(files: string[]): Promise<void> {
+  await desktopSignWindows(files);
 }
 
 /** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
@@ -212,12 +183,15 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  if (signing) await sign(`${dir}/${name}-${LABELS[arch]}.exe`);
+  // EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime, CEF's
+  // DLLs, any .node), found by its header: the runtime refuses an update of a signed app unless
+  // each one carries the running app's signature.
+  if (signing) await sign(await desktopPeFiles(dir));
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
     : null;
-  if (built && signing) await sign(built);
+  if (built && signing) await sign([built]);
   if (built) out.push(built);
   // A default .msi that could not be built falls back to the .zip.
   const msiSkipped = plan.formats.includes("msi") && !built;

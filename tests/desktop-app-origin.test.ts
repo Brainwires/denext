@@ -8,11 +8,15 @@ import {
   DEFAULT_DESKTOP_APP_ORIGIN,
   desktopAppIdentifierError,
   desktopSchemeError,
+  normalizeDesktopBridgeOrigin,
   parseDesktopAppOrigin,
   RESERVED_DESKTOP_SCHEMES,
 } from "../src/desktop/app-origin.ts";
 import {
   DESKTOP_RELAY_MARKING_RUNTIME,
+  DESKTOP_RELAY_TOKEN_RUNTIME,
+  DESKTOP_WS_URL_ENV,
+  desktopRuntimeSkewWarning,
   isMemoryTransport,
   LOOPBACK_TRUST,
   memoryGate,
@@ -148,7 +152,11 @@ Deno.test("config: desktop.app.origin requires a valid identifier (runtime seman
 
 Deno.test("config: deepLinks, singleInstance, inspectable, preload and the window keys", () => {
   validateDesktop({
-    app: { deepLinks: ["t3code", "t3code-dev"], singleInstance: true },
+    app: {
+      deepLinks: ["t3code", "t3code-dev"],
+      singleInstance: true,
+      bridgeOrigins: ["https://idp.example", "dev://*", "*"],
+    },
     inspectable: false,
     preload: "./preload.ts",
     window: { width: 1200, height: 800, title: "T3", resizable: true },
@@ -162,6 +170,9 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     [{ app: { deepLinks: ["https"] } }, "desktop.app.deepLinks[0]"],
     [{ app: { deepLinks: [1] } }, "desktop.app.deepLinks[0]"],
     [{ app: { singleInstance: "yes" } }, "desktop.app.singleInstance"],
+    [{ app: { bridgeOrigins: "https://idp.example" } }, "desktop.app.bridgeOrigins"],
+    [{ app: { bridgeOrigins: ["https://idp.example/login"] } }, "desktop.app.bridgeOrigins[0]"],
+    [{ app: { bridgeOrigins: ["*", 5] } }, "desktop.app.bridgeOrigins[1]"],
     [{ app: [] }, "desktop.app"],
     [{ inspectable: 1 }, "desktop.inspectable"],
     [{ preload: "" }, "desktop.preload"],
@@ -181,6 +192,37 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     const err = assertThrows(() => validateDesktop(desktop), Error, undefined, field);
     assertStringIncludes(String(err), `\`${field}`, field);
   }
+});
+
+Deno.test("normalizeDesktopBridgeOrigin: laufey's entry forms, as a browser serializes them", () => {
+  const cases: Array<[string, string | null]> = [
+    ["*", "*"],
+    ["myapp://app", "myapp://app"],
+    ["MyApp://App/", "myapp://app"],
+    ["myapp://*", "myapp://*"],
+    ["MyApp://*/", "myapp://*"],
+    ["https://Example.com:443/", "https://example.com"],
+    ["https://example.com:8443", "https://example.com:8443"],
+    ["http://127.0.0.1:80", "http://127.0.0.1"],
+    ["http://127.0.0.1:5173", "http://127.0.0.1:5173"],
+    ["http://[::1]:5173", "http://[::1]:5173"],
+    ["custom://host:80", "custom://host:80"], // only a special scheme drops its default port
+    // Not an entry.
+    ["", null],
+    ["**", null],
+    ["example.com", null],
+    ["https://example.com/path", null],
+    ["https://example.com?q", null],
+    ["https://u@example.com", null],
+    ["https://*.example.com", null],
+    ["https://example.com:99999", null],
+    ["https://", null],
+    ["file:///tmp", null],
+    ["data://x", null],
+    ["about://blank", null],
+    ["1http://x", null],
+  ];
+  for (const [entry, want] of cases) assertEquals(normalizeDesktopBridgeOrigin(entry), want, entry);
 });
 
 Deno.test("trust: no published origin is the stock loopback world", () => {
@@ -223,6 +265,27 @@ Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", 
   // Default: detected from the running runtime — plain `deno test` has no Deno.desktop.
   assertEquals(resolveDesktopTrust("t3code://app").trust.kind, "refuse");
   assertEquals(resolveDesktopTrust(undefined).trust, LOOPBACK_TRUST);
+});
+
+Deno.test("runtime skew: the memory world without DENO_DESKTOP_WS_URL names denext.9 and the fix", () => {
+  const memory = resolveDesktopTrust("t3code://app", "t3code://app", true).trust;
+  // denext.7 / .8: the memory transport and the relay mark, but no relay URL published.
+  for (const published of [undefined, ""]) {
+    const w = desktopRuntimeSkewWarning(memory, published);
+    assert(w !== undefined, String(published));
+    assertEquals(DESKTOP_RELAY_TOKEN_RUNTIME, "2.9.7-denext.9");
+    assertStringIncludes(w, `older than ${DESKTOP_RELAY_TOKEN_RUNTIME}`);
+    assertStringIncludes(w, DESKTOP_WS_URL_ENV);
+    assertStringIncludes(w, "WebSockets");
+    assertStringIncludes(w, "full-app updates");
+    assertStringIncludes(w, "Repackage the app with the runtime denext pins");
+  }
+  // denext.9+: the relay URL is published.
+  const relay = `ws://127.0.0.1:4321/.deno-desktop-relay/${"a".repeat(64)}`;
+  assertEquals(desktopRuntimeSkewWarning(memory, relay), undefined);
+  // The stock runtime has no relay at all, and a refused world already says why.
+  assertEquals(desktopRuntimeSkewWarning(LOOPBACK_TRUST, undefined), undefined);
+  assertEquals(desktopRuntimeSkewWarning({ kind: "refuse", reason: "x" }, undefined), undefined);
 });
 
 Deno.test("runtimeMarksRelay: feature-detects authSession.cancel (denext.7+), fails closed", () => {

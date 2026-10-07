@@ -9,8 +9,10 @@ import { dirname, join } from "@std/path";
 import {
   isExcludedFromOtaManifest,
   isOtaManifestPath,
+  isOtaPlatform,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
+  OTA_PLATFORM_PATH,
   type OtaManifest,
   type OtaManifestFile,
   type OtaManifestMeta,
@@ -46,6 +48,10 @@ export async function collectOtaManifest(
   dir: string,
   meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
+  // A platform export's stamp names its target (`denext export --platform`): the manifest says
+  // so too, unless the caller named one (which must then agree — `makeOtaManifest` checks).
+  const stamped = await readPlatformStamp(dir);
+  if (stamped !== null && meta.platform === undefined) meta = { ...meta, platform: stamped };
   const paths = (await listFiles(dir, "")).filter((p) => !isExcludedFromOtaManifest(p));
   const bad = paths.find((p) => !isOtaManifestPath(p));
   if (bad !== undefined) {
@@ -59,6 +65,46 @@ export async function collectOtaManifest(
     files.push({ path, sha256: await sha256Hex(bytes), size: bytes.byteLength });
   }
   return await makeOtaManifest(files, meta);
+}
+
+/**
+ * The export's {@linkcode OTA_PLATFORM_PATH} stamp (its target, trimmed), or null without one. A
+ * stamp with stray whitespace still names its target, and then fails the manifest's stamp check
+ * (its bytes are not the target's) instead of passing for an unknown one.
+ */
+async function readPlatformStamp(dir: string): Promise<string | null> {
+  try {
+    return (await Deno.readTextFile(join(dir, ...OTA_PLATFORM_PATH.split("/")))).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write `dir`'s {@linkcode OTA_PLATFORM_PATH} stamp: the target a platform export was built for.
+ * `denext export --platform` writes it; the OTA manifest then names that target, and the signed
+ * version covers the stamp.
+ *
+ * A `web` export carries no stamp (every shell takes it), so `web` writes nothing.
+ *
+ * @param dir The export (web root).
+ * @param platform The target.
+ * @throws RangeError when `platform` is not an export target; an Error when the export already
+ *   carries another target's stamp.
+ */
+export async function writePlatformStamp(dir: string, platform: string): Promise<void> {
+  if (!isOtaPlatform(platform)) throw new RangeError(`${platform} is not an export target`);
+  const current = await readPlatformStamp(dir);
+  if (current === platform || (current === null && platform === "web")) return;
+  if (current !== null) {
+    throw new Error(
+      `${dir} is the ${current} export (${OTA_PLATFORM_PATH}); export again with ` +
+        `\`denext export --platform ${platform}\` instead of relabelling it`,
+    );
+  }
+  const target = join(dir, ...OTA_PLATFORM_PATH.split("/"));
+  await Deno.mkdir(dirname(target), { recursive: true });
+  await Deno.writeTextFile(target, platform);
 }
 
 /** The default signed `sequence`: the current Unix time in whole seconds. */
@@ -98,6 +144,9 @@ export async function writeOtaManifest(
   const stamped = signingKey && meta.sequence === undefined
     ? { ...meta, sequence: defaultOtaSequence() }
     : meta;
+  // `denext ota manifest --platform` on an export without a stamp: stamp it first, so the
+  // version covers the target.
+  if (meta.platform !== undefined) await writePlatformStamp(dir, meta.platform);
   const collected = await collectOtaManifest(dir, stamped);
   const manifest = signingKey ? await signOtaManifest(collected, signingKey) : collected;
   const target = join(dir, ...OTA_MANIFEST_PATH.split("/"));

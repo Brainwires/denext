@@ -4,30 +4,34 @@
  *
  * Under denext's pinned runtime it uses the runtime's own dialogs, `Deno.desktop.dialog`
  * (`NSOpenPanel` / `NSSavePanel` as a sheet on the app window on macOS, `IFileOpenDialog` /
- * `IFileSaveDialog` on Windows, `GtkFileChooserNative` — the portal under Flatpak/Snap — on Linux),
+ * `IFileSaveDialog` on Windows; on Linux the desktop's own dialog through xdg-desktop-portal's
+ * FileChooser wherever the portal offers one, else GTK's chooser — runtime 2.9.7-denext.12, which
+ * reports the choice as `platformFeatures().fileChooser`; GTK's `GtkFileChooserNative` before it),
  * with the page's MIME `types` as the dialog's file-type filters. Where the runtime has none (the
- * stock runtime, or a backend whose `windowCapabilities().fileDialogs` is false), it drives the OS
- * dialog programs as subprocesses instead:
+ * stock runtime, or a backend whose `windowCapabilities().fileDialogs` is false), macOS and Windows
+ * drive the OS dialog programs as subprocesses instead:
  * - macOS: `osascript` (`choose file` / `choose file name` / `choose folder`).
- * - Linux: `zenity --file-selection` (`--save` / `--directory`), falling back to `kdialog`.
  * - Windows: PowerShell `System.Windows.Forms` Open/Save/FolderBrowser dialogs (STA).
+ * Linux has no such program it can count on (zenity and kdialog are separate installs that a
+ * desktop may not ship, and they differ in what they offer), so there a dialog without the runtime's
+ * is `unavailable` and the page uses `<input type="file">`.
  *
  * SECURITY / contract (both paths):
  * - `Deno.Command` takes an argv array (no shell); the only page-supplied string is `suggestedName`.
  *   It is first reduced to a plain file name with no leading `-` ({@link sanitizeSuggestedName}),
  *   then (native) handed to the runtime as the dialog's proposed name, or (subprocess) passed as an
  *   AppleScript `on run argv` item AFTER `--` (osascript's getopt otherwise parses a dash-led
- *   trailing arg as `-e <script>`), a zenity `--filename=` value / kdialog argument, or — on Windows —
- *   an ENVIRONMENT variable (`powershell.exe -Command` joins trailing argv into the command text, so
- *   an argv value there would be code). Never interpolated into a script.
+ *   trailing arg as `-e <script>`), or — on Windows — an ENVIRONMENT variable (`powershell.exe
+ *   -Command` joins trailing argv into the command text, so an argv value there would be code).
+ *   Never interpolated into a script.
  * - A pick returns `{ path, handle }` (openFile: `{ files: [{ …, handle }] }`); `path` is display-only
  *   and the page never sends it back — authority is the opaque {@link PickedPaths} `handle`
  *   (openFile → read, saveFile → readwrite, pickFolder → folder). A non-null saveFile/pickFolder
  *   answer ALWAYS carries a handle.
  * - Cancel → openFile `{ files: [] }`, saveFile/pickFolder `null` (the mobile pickers' contract).
  * - Another native dialog already open → `busy`.
- * - No dialog at all (the stock runtime on a headless Linux without zenity/kdialog) →
- *   `unavailable`, so the page falls back to `<input type="file">`.
+ * - No dialog at all (Linux without the runtime's dialogs) → `unavailable`, so the page falls
+ *   back to `<input type="file">`.
  *
  * The cap does its own file I/O (broad read/write by design): openFile with `readData` returns the
  * file's bytes (base64); saveFile writes the passed data to the chosen path.
@@ -72,8 +76,8 @@ export const DIALOG_NAME_ENV = "DENEXT_DIALOG_SUGGESTED_NAME";
 
 /**
  * Reduce a page-supplied suggested file name to a plain name: the last path component, control
- * characters removed, and no leading `-` (so it can never be read as an option by `osascript` /
- * `kdialog`, whose getopt still parses a dash-led trailing argument) — `undefined` when empty.
+ * characters removed, and no leading `-` (so it can never be read as an option by `osascript`,
+ * whose getopt still parses a dash-led trailing argument) — `undefined` when empty.
  *
  * @param raw The page's `suggestedName`.
  * @returns The sanitized name, or `undefined`.
@@ -112,10 +116,7 @@ function openFileCommands(os: Os): DialogCandidate[] {
   if (os === "windows") {
     return [psDialog("$d = New-Object System.Windows.Forms.OpenFileDialog;", "$d.FileName")];
   }
-  return [
-    { cmd: "zenity", args: ["--file-selection"] },
-    { cmd: "kdialog", args: ["--getopenfilename"] },
-  ];
+  return []; // Linux: only the runtime's dialogs
 }
 
 /**
@@ -149,18 +150,7 @@ function saveFileCommands(os: Os, suggestedName?: string): DialogCandidate[] {
       ),
     ];
   }
-  return [
-    {
-      cmd: "zenity",
-      args: [
-        "--file-selection",
-        "--save",
-        "--confirm-overwrite",
-        ...(suggestedName ? [`--filename=${name}`] : []),
-      ],
-    },
-    { cmd: "kdialog", args: ["--getsavefilename", suggestedName ? name : "."] },
-  ];
+  return []; // Linux: only the runtime's dialogs
 }
 
 /** Candidates for a folder picker. */
@@ -171,16 +161,18 @@ function pickFolderCommands(os: Os): DialogCandidate[] {
       psDialog("$d = New-Object System.Windows.Forms.FolderBrowserDialog;", "$d.SelectedPath"),
     ];
   }
-  return [
-    { cmd: "zenity", args: ["--file-selection", "--directory"] },
-    { cmd: "kdialog", args: ["--getexistingdirectory"] },
-  ];
+  return []; // Linux: only the runtime's dialogs
 }
+
+/** Why a Linux dialog is `unavailable` without the runtime's dialogs. */
+const LINUX_NO_DIALOGS =
+  "this Deno Desktop runtime has no native file dialogs here; denext's pinned runtime has them " +
+  "(the desktop's own dialog through xdg-desktop-portal, or GTK's)";
 
 /**
  * Try each candidate until one spawns: `code: null` (program missing) tries the next; a non-zero exit
- * is a cancel (`null`); a zero exit's trimmed stdout is the chosen path. All programs missing →
- * `unavailable`.
+ * is a cancel (`null`); a zero exit's trimmed stdout is the chosen path. All programs missing (or
+ * none, on Linux) → `unavailable`.
  */
 async function runDialog(
   candidates: DialogCandidate[],
@@ -194,7 +186,12 @@ async function runDialog(
     const path = stdout.trim();
     return path.length > 0 ? path : null;
   }
-  throw new DesktopCapError("unavailable", `no native ${name} dialog program is available`);
+  throw new DesktopCapError(
+    "unavailable",
+    candidates.length === 0
+      ? `no native ${name} dialog: ${LINUX_NO_DIALOGS}`
+      : `no native ${name} dialog program is available`,
+  );
 }
 
 /** The default runner: spawn the program; a missing binary is reported as `code: null`. */
@@ -218,7 +215,7 @@ async function defaultRun(
 const RUN_PERMS: Readonly<Record<Os, string[]>> = {
   darwin: ["osascript"],
   windows: ["powershell.exe"],
-  linux: ["zenity", "kdialog"],
+  linux: [],
 };
 
 /** The runtime's dialog API (`Deno.desktop.dialog`). */

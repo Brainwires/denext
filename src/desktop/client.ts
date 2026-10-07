@@ -1,8 +1,8 @@
 /**
  * The page side of Deno Desktop extensions (`denext/desktop/client`): a typed proxy for a
  * user extension's methods ({@linkcode desktopExtension}), a subscription to the runtime's
- * event stream ({@linkcode onDesktopEvent}), and the URL for a WebSocket to the app's own server
- * ({@linkcode desktopWebSocketUrl}).
+ * event stream ({@linkcode onDesktopEvent}), the URL for a WebSocket to the app's own server
+ * ({@linkcode desktopWebSocketUrl}), and the OS the app runs on ({@linkcode desktopOs}).
  *
  * An extension is TypeScript that runs in the desktop app's Deno process
  * (`defineDesktopExtension` from `denext/desktop`) and is enabled in
@@ -45,7 +45,52 @@ export {
   isDesktopBridgeError,
 } from "./bridge-client.ts";
 // Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
-export { desktopWebSocketUrl, desktopWsOrigin } from "./ws-origin.ts";
+export { desktopWebSocketUrl, desktopWsUrl } from "./ws-origin.ts";
+
+/** The operating system a Deno Desktop app runs on, as Deno spells it (`Deno.build.os`). */
+export type DesktopOs =
+  | "darwin"
+  | "linux"
+  | "windows"
+  | "android"
+  | "freebsd"
+  | "netbsd"
+  | "aix"
+  | "solaris"
+  | "illumos";
+
+const DESKTOP_OSES: ReadonlySet<string> = new Set<DesktopOs>([
+  "darwin",
+  "linux",
+  "windows",
+  "android",
+  "freebsd",
+  "netbsd",
+  "aix",
+  "solaris",
+  "illumos",
+]);
+
+/**
+ * The operating system this page's Deno Desktop app runs on (`"darwin"`, `"windows"`, `"linux"`,
+ * …, Deno's `Deno.build.os`), or `undefined` off desktop (the web, iOS, Android, SSR). The desktop
+ * runtime hands every page it serves the OS, frames included and under either runtime, so this
+ * needs no capability and no bridge call. Read it instead of the injected global, which is
+ * private.
+ *
+ * @returns The OS, or `undefined`.
+ * @example
+ * ```ts
+ * import { desktopOs } from "denext/desktop/client";
+ *
+ * const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";
+ * ```
+ */
+export function desktopOs(): DesktopOs | undefined {
+  const g = (globalThis as { __denext?: { desktop?: unknown; os?: unknown } }).__denext;
+  if (typeof g !== "object" || g === null || g.desktop !== true) return undefined;
+  return typeof g.os === "string" && DESKTOP_OSES.has(g.os) ? g.os as DesktopOs : undefined;
+}
 
 /**
  * The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its

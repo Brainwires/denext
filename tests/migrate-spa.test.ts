@@ -69,6 +69,7 @@ async function assertPnpmDesktopDenoJson(dir: string): Promise<void> {
   assertEquals(cfg.compilerOptions.jsxImportSource, "react");
   assert(String(cfg.imports["react"]).includes("@denext/denext"), "react → denext");
   assert(String(cfg.imports["react-dom/client"]).includes("/react-dom/client"));
+  assert(String(cfg.imports["react/compiler-runtime"]).endsWith("/react/compiler-runtime"));
   assertEquals(cfg.imports["~/"], "./src/");
   assert(String(cfg.imports["denext/desktop"]).includes("/desktop"));
   // manual mode → npm deps resolve from node_modules, no npm: passthrough entries.

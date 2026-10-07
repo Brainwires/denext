@@ -8,6 +8,7 @@ import {
   Profiler,
   SuspenseList,
   useDebugValue,
+  useEffect,
   useInsertionEffect,
   useState,
 } from "../mod.ts";
@@ -195,6 +196,41 @@ Deno.test("act flushes a pending state update", async () => {
     bump();
   });
   assertEquals(container.innerHTML, "<p>1</p>");
+});
+
+Deno.test("an awaited act settles un-awaited promise chains the callback started", async () => {
+  // React's awaited act yields a macrotask and keeps flushing until no work is left, so a
+  // handler that fires a promise chain without awaiting it — here a rejected save whose
+  // .catch/.then re-enables the form only after a render and its passive effect — has
+  // committed by the time `await act(...)` returns.
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let submit = () => {};
+  function Form(): VNode {
+    const [phase, setPhase] = useState<"idle" | "saving" | "failed">("idle");
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+      if (attempt === 0) return;
+      void Promise.reject(new Error("unavailable"))
+        .catch(() => false)
+        .finally(() => {})
+        .then((ok) => {
+          if (!ok) setPhase("failed");
+        });
+    }, [attempt]);
+    submit = () => {
+      setPhase("saving");
+      void Promise.resolve()
+        .then(() => Promise.resolve())
+        .then(() => setAttempt((n) => n + 1));
+    };
+    return h("p", null, phase);
+  }
+  createRoot(container as Any).render(h(Form, null));
+  await act(() => {
+    submit();
+  });
+  assertEquals(container.innerHTML, "<p>failed</p>");
 });
 
 Deno.test("Context.Consumer renders children with the provided value", async () => {

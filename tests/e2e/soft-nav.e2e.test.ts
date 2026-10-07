@@ -10,8 +10,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const FIXTURE = new URL("./fixtures/soft-nav", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/soft-nav", import.meta.url));
 
 const clickLink = (href: string) =>
   `Array.from(document.querySelectorAll('a')).find((a) => a.getAttribute('href') === '${href}').click()`;

@@ -479,8 +479,14 @@ async function keepMode(target: string, temp: string): Promise<void> {
   await Deno.chmod(temp, mode & 0o7777);
 }
 
-/** The realpath of `path`, or of its nearest existing ancestor when it does not exist yet. */
-async function realPathOfNearest(path: string): Promise<string> {
+/**
+ * The realpath of `path`, or of its nearest existing ancestor when it does not exist yet. Also
+ * the MCP tools' containment re-check (a lexically-inside path through a symlink is outside).
+ *
+ * @param path An absolute path.
+ * @returns The realpath of it or its nearest existing ancestor.
+ */
+export async function realPathOfNearest(path: string): Promise<string> {
   let current = path;
   for (let i = 0; i < 64; i++) {
     try {
@@ -494,8 +500,34 @@ async function realPathOfNearest(path: string): Promise<string> {
   return current;
 }
 
-/** Whether `p` is `dir` itself or lives under it. */
-function within(p: string, dir: string): boolean {
+/**
+ * {@linkcode realPathOfNearest}, synchronously (for a caller that is synchronous by contract).
+ *
+ * @param path An absolute path.
+ * @returns The realpath of it or its nearest existing ancestor.
+ */
+export function realPathOfNearestSync(path: string): string {
+  let current = path;
+  for (let i = 0; i < 64; i++) {
+    try {
+      return Deno.realPathSync(current);
+    } catch {
+      const parent = resolve(current, "..");
+      if (parent === current) return current;
+      current = parent;
+    }
+  }
+  return current;
+}
+
+/**
+ * Whether `p` is `dir` itself or lives under it (both real paths).
+ *
+ * @param p The path.
+ * @param dir The directory.
+ * @returns Whether `p` is inside `dir`.
+ */
+export function within(p: string, dir: string): boolean {
   return p === dir || p.startsWith(dir + "/") || p.startsWith(dir + "\\");
 }
 

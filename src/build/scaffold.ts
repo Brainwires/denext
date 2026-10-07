@@ -837,6 +837,7 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 import {
   desktopAppName as appName,
   desktopDenoFlagArgs,
+  desktopExportEnv,
   desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
@@ -943,29 +944,26 @@ async function mergeUniversal(
   }
 }
 
-/** The bundle's main executable path (from Info.plist CFBundleExecutable). */
-async function mainExecutable(app: string): Promise<string> {
+/** A string value of the bundle's Info.plist; throws when it is missing or empty. */
+async function infoPlistString(app: string, key: string): Promise<string> {
   const p = await new Deno.Command("plutil", {
-    args: [
-      "-extract",
-      "CFBundleExecutable",
-      "raw",
-      "-o",
-      "-",
-      \`\${app}/Contents/Info.plist\`,
-    ],
+    args: ["-extract", key, "raw", "-o", "-", \`\${app}/Contents/Info.plist\`],
     stdout: "piped",
     stderr: "null",
   }).output();
-  const name = new TextDecoder().decode(p.stdout).trim();
+  const value = new TextDecoder().decode(p.stdout).trim();
+  if (!p.success || !value) {
+    throw new Error(\`could not read \${key} from \${app}/Contents/Info.plist\`);
+  }
+  return value;
+}
+
+/** The bundle's main executable path (from Info.plist CFBundleExecutable). */
+async function mainExecutable(app: string): Promise<string> {
   // Fail loudly rather than returning an empty basename: an empty name would never
   // match in the sign loop's \`file === mainExe\` guard, so the main executable would be
   // signed twice (the second time without entitlements) — a silent invariant break.
-  if (!p.success || !name) {
-    throw new Error(
-      \`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`,
-    );
-  }
+  const name = await infoPlistString(app, "CFBundleExecutable");
   return \`\${app}/Contents/MacOS/\${name}\`;
 }
 
@@ -976,12 +974,22 @@ async function sign(
   identity: string | undefined,
   entitlements?: string,
   provisioningProfile?: string,
+  profileIdentifier?: string,
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
   const mainExe = await mainExecutable(app);
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
   if (identity && provisioningProfile) {
+    // The profile was checked against this identifier: a bundle built with another one would
+    // carry a profile (and App ID entitlement) for a different app, which AMFI refuses at launch.
+    const bundleId = await infoPlistString(app, "CFBundleIdentifier");
+    if (bundleId !== profileIdentifier) {
+      throw new Error(
+        \`\${app} has the bundle identifier \${bundleId}, but the provisioning profile was \` +
+          \`checked against \${profileIdentifier} (desktop.app.identifier)\`,
+      );
+    }
     await Deno.copyFile(provisioningProfile, \`\${app}/Contents/embedded.provisionprofile\`);
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
@@ -1035,6 +1043,22 @@ async function notarize(app: string, profile: string): Promise<void> {
   }
 }
 
+/** Image size in MiB for a .dmg of \`bytes\` of content: 25% headroom plus 64 MiB. hdiutil's own
+ * estimate for \`-srcfolder\` runs short on some macOS images ("No space left on device"); with
+ * UDZO the final image is still compressed, so the headroom only sizes the temporary image. */
+function dmgSizeMb(bytes: number): number {
+  return Math.ceil((bytes * 1.25) / (1024 * 1024)) + 64;
+}
+
+/** Total bytes under \`path\`; a symlink counts as the link itself, never its target. */
+async function treeBytes(path: string): Promise<number> {
+  const info = await Deno.lstat(path);
+  if (!info.isDirectory) return info.size;
+  let total = 0;
+  for await (const e of Deno.readDir(path)) total += await treeBytes(\`\${path}/\${e.name}\`);
+  return total;
+}
+
 async function makeDmg(app: string): Promise<string> {
   const dmg = app.replace(/\\.app$/, ".dmg");
   await Deno.remove(dmg).catch(() => {});
@@ -1045,6 +1069,8 @@ async function makeDmg(app: string): Promise<string> {
     app.split("/").pop()!.replace(/\\.app$/, ""),
     "-srcfolder",
     app,
+    "-size",
+    \`\${dmgSizeMb(await treeBytes(app))}m\`,
     "-ov",
     "-format",
     "UDZO",
@@ -1092,6 +1118,8 @@ interface Signing {
   entitlements: string | undefined;
   /** desktop.macos.provisioningProfile (or DENEXT_PROVISIONING_PROFILE), checked. */
   provisioningProfile: string | undefined;
+  /** The bundle identifier the profile was checked against (the built .app must carry it). */
+  profileIdentifier: string | undefined;
   notaryProfile: string | undefined;
   /** "Developer ID Installer: …" for the .pkg. */
   installerIdentity: string | undefined;
@@ -1123,6 +1151,7 @@ async function signingFromEnv(): Promise<Signing> {
     identity,
     entitlements: mac.entitlements,
     provisioningProfile: mac.provisioningProfile,
+    profileIdentifier: mac.identifier,
     notaryProfile,
     installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
@@ -1177,7 +1206,7 @@ async function finishArtifacts(
   const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
-      await sign(app, s.identity, s.entitlements, s.provisioningProfile);
+      await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (formats.includes("dmg")) installers.push(await makeDmg(app));
@@ -1217,9 +1246,13 @@ async function main(): Promise<void> {
     opts.formats,
     opts.add,
   );
-  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
+  // The export resolves the macOS target's platform files (\`.macos\`, \`.desktop\`).
+  if (opts.export) await run(["deno", "task", "export"], desktopExportEnv("darwin"));
+  // .deno-desktop/app.json (the app origin + identifier), its deno.json compile.include, and the
+  // config's desktop.app name / identifier mirrored into deno.json, where deno desktop reads them.
+  // After the export: \`denext desktop package\` keeps a backup of deno.json while this script runs,
+  // and the export's CLI restores it when it starts, which would undo a sync done before it.
   await syncDesktopAppConfig(import.meta.url);
-  if (opts.export) await run(["deno", "task", "export"]);
   await Deno.mkdir("dist", { recursive: true });
   const artifacts = await buildArtifacts(opts, name);
   const installers = await finishArtifacts(
@@ -1415,7 +1448,8 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Windows distribution. \`deno desktop\` produces a
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
- * both arches, Authenticode-signs the \`.exe\` when a code-signing certificate is provided, and
+ * both arches, Authenticode-signs every PE file in the bundle (the \`.exe\`, its \`.dll\`s, any
+ * \`.node\`) when a code-signing certificate is provided, and
  * wraps each bundle in its installers (an \`.msi\` by default). Signing only runs where
  * \`signtool\` is available (Windows) and a cert is configured.
  *
@@ -1471,7 +1505,9 @@ import {
   desktopOptionalInstaller,
   desktopPackageArches,
   type DesktopPackageMeta,
+  desktopPeFiles,
   desktopRun as run,
+  desktopSignWindows,
   desktopToolGate,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
@@ -1485,7 +1521,6 @@ const TARGETS: Record<string, string> = {
 // from the output basename and rejects '_' (so a raw \`x86_64\` suffix drops resources).
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
-const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
 const OS = "windows";
 
 /** Build a Windows bundle directory for \`arch\` at dist/<name>-<label> (.ico icon). */
@@ -1497,41 +1532,10 @@ async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<stri
   });
 }
 
-/** Authenticode-sign \`file\` (the bundle's .exe, or an .msi) when a certificate is configured;
- * else skip with a warning. */
-async function sign(file: string): Promise<void> {
-  const cert = Deno.env.get("DENEXT_WINDOWS_CERT");
-  if (!cert) {
-    console.warn(
-      \`  no DENEXT_WINDOWS_CERT set — \${file} is not Authenticode-signed.\`,
-    );
-    return;
-  }
-  if (!(await has("signtool"))) {
-    console.warn(
-      \`  signtool not found (Windows SDK) — \${file} is not signed; sign on a Windows host/CI.\`,
-    );
-    return;
-  }
-  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ??
-    DEFAULT_TIMESTAMP_URL;
-  const args = [
-    "sign",
-    "/f",
-    cert,
-    "/fd",
-    "sha256",
-    "/tr",
-    timestamp,
-    "/td",
-    "sha256",
-  ];
-  // signtool takes a .pfx password only as \`/p\` (no environment or file form), so it is
-  // redacted from the failure message; keep it out of logs by setting it as a CI secret.
-  const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
-  if (pass) args.push("/p", pass);
-  args.push(file);
-  await run(["signtool", ...args], undefined, { secrets: pass ? [pass] : [] });
+/** Authenticode-sign \`files\` with DENEXT_WINDOWS_CERT through \`signtool\`, batched; without a
+ * certificate or signtool, skip with a warning (see desktopSignWindows). */
+async function sign(files: string[]): Promise<void> {
+  await desktopSignWindows(files);
 }
 
 /** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
@@ -1625,12 +1629,15 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  if (signing) await sign(\`\${dir}/\${name}-\${LABELS[arch]}.exe\`);
+  // EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime, CEF's
+  // DLLs, any .node), found by its header: the runtime refuses an update of a signed app unless
+  // each one carries the running app's signature.
+  if (signing) await sign(await desktopPeFiles(dir));
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
     : null;
-  if (built && signing) await sign(built);
+  if (built && signing) await sign([built]);
   if (built) out.push(built);
   // A default .msi that could not be built falls back to the .zip.
   const msiSkipped = plan.formats.includes("msi") && !built;

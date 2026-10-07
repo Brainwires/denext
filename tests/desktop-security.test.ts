@@ -25,6 +25,7 @@ import { generateOtaKeyPair, importOtaSigningKey } from "../src/build/ota-signin
 import { createFakeDesktopRuntime } from "./helpers/desktop-fake-runtime.ts";
 import { injectedGlobal } from "./helpers/desktop-bridge-server.ts";
 import { withProps } from "./helpers/deno-stub.ts";
+import { buildAs } from "./_app-update-helpers.ts";
 import { boot, exportDir, get, pageRpc, TOKEN_HEADER } from "./helpers/desktop-run-boot.ts";
 
 // --- PKCE ---------------------------------------------------------------------------------------
@@ -191,7 +192,8 @@ async function packagedApp(root: string): Promise<string> {
   const app = join(root, "App.app");
   await Deno.mkdir(join(app, "Contents", "MacOS"), { recursive: true });
   await Deno.writeTextFile(join(app, "Contents", "MacOS", "app"), "#!/bin/sh\n");
-  return app;
+  // Built as the version the tests publish (the publisher reads it back).
+  return await buildAs(app, "2.0.0");
 }
 
 Deno.test("full-app update SECURITY (wrong_app): the app id is signed; a re-targeted manifest does not verify", async () => {

@@ -2,7 +2,12 @@
 // against the fake runtime gate (tests/helpers/desktop-fake-runtime.ts).
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { desktopExtension, isDesktopBridgeError, onDesktopEvent } from "../src/desktop/client.ts";
+import {
+  desktopExtension,
+  desktopOs,
+  isDesktopBridgeError,
+  onDesktopEvent,
+} from "../src/desktop/client.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { createFakeDesktopRuntime, until } from "./helpers/desktop-fake-runtime.ts";
 
@@ -123,4 +128,32 @@ Deno.test("desktopExtension: the proxy is read-only, has no `in` keys, and reuse
     delete client.listDevices;
   }, TypeError);
   assert(client.listDevices === first, "the method survives the refused write and delete");
+});
+
+Deno.test("desktopOs: the injected OS in a desktop page, undefined anywhere else", () => {
+  const g = globalThis as { __denext?: unknown };
+  const prev = g.__denext;
+  try {
+    delete g.__denext;
+    assertEquals(desktopOs(), undefined);
+    for (const os of ["darwin", "windows", "linux"] as const) {
+      // A frame gets the marker and the OS without the token: still answered.
+      g.__denext = { desktop: true, os };
+      assertEquals(desktopOs(), os);
+      g.__denext = { desktop: true, os, token: "t" };
+      assertEquals(desktopOs(), os);
+    }
+    // Not the desktop marker, or an OS Deno never reports: undefined.
+    g.__denext = { os: "darwin" };
+    assertEquals(desktopOs(), undefined);
+    g.__denext = { desktop: true, os: "beos" };
+    assertEquals(desktopOs(), undefined);
+    g.__denext = { desktop: true, os: 7 };
+    assertEquals(desktopOs(), undefined);
+    g.__denext = null;
+    assertEquals(desktopOs(), undefined);
+  } finally {
+    if (prev === undefined) delete g.__denext;
+    else g.__denext = prev;
+  }
 });

@@ -27,6 +27,8 @@ import {
 import { dictGet, parsePlist, type PlistDict, type PlistNode } from "./plist-value.ts";
 import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
+import { manifestMetaDataValue } from "./mobile-native-config.ts";
+import { formatDoctorFindings } from "./doctor-format.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -306,7 +308,25 @@ async function mainActivities(root: string): Promise<string[]> {
 
 /** What marks a shell that routes an exported page to its own HTML, per platform. */
 const IOS_EXPORT_ROUTER = "DenextExportRouter";
+/** What marks an iOS export router that refuses a path leaving the web directory. */
+const IOS_EXPORT_ROUTER_GUARD = "staysInside";
 const ANDROID_EXPORT_ROUTES = "DenextExportRoutes";
+
+/** Whether the iOS bridge has the export router but not its path-traversal guard. */
+async function iosRouterLacksGuard(root: string): Promise<boolean> {
+  const bridge = await readText(join(root, BRIDGE_VIEW_CONTROLLER));
+  return bridge !== null && bridge.includes(IOS_EXPORT_ROUTER) &&
+    !bridge.includes(IOS_EXPORT_ROUTER_GUARD);
+}
+
+const UNGUARDED_ROUTER: MobileDoctorFinding = {
+  check: "export-routes",
+  level: "error",
+  message: "the iOS shell's export router predates the path guard: a request can read files " +
+    "outside the web directory",
+  fix: "run `denext mobile add export-routes` (an unedited bridge is upgraded; an edited one " +
+    "needs `--force` or the `staysInside` guard copied by hand); then ship a new binary",
+};
 
 const exportRoutes: Check = {
   id: "export-routes",
@@ -314,7 +334,8 @@ const exportRoutes: Check = {
   applies: (p) => Promise.resolve(p.webDir !== null && (p.hasIos || p.hasAndroid)),
   run: async (p) => {
     const page = p.webDir === null ? null : await nestedPage(p.webDir);
-    if (page === null) return [];
+    const unguarded = p.hasIos && await iosRouterLacksGuard(p.root);
+    if (page === null) return unguarded ? [UNGUARDED_ROUTER] : [];
     const missing: string[] = [];
     if (p.hasIos) {
       const bridge = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
@@ -324,8 +345,9 @@ const exportRoutes: Check = {
       const activities = await mainActivities(p.root);
       if (!activities.some((t) => t.includes(ANDROID_EXPORT_ROUTES))) missing.push("Android");
     }
-    if (missing.length === 0) return [];
-    return [{
+    const guard = unguarded ? [UNGUARDED_ROUTER] : [];
+    if (missing.length === 0) return guard;
+    return [...guard, {
       check: "export-routes",
       level: "error",
       message: `${p.webDirName}/ is a multi-page export (${p.webDirName}/${page}), but the ` +
@@ -904,6 +926,53 @@ const fastlane: Check = {
     })),
 };
 
+/** Where `denext mobile add-ota` writes each platform's OTA store. */
+const OTA_STORES = {
+  iOS: "ios/App/App/DenextOtaStore.swift",
+  Android: "android/app/src/main/java/dev/denext/ota/DenextOtaStore.java",
+} as const;
+
+/** Whether the iOS Info.plist / Android manifest embeds an OTA public key. */
+function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): boolean {
+  if (platform === "iOS") {
+    const key = p.infoPlist ? dictGet(p.infoPlist, "DenextOtaPublicKey") : undefined;
+    return key?.kind === "string" && key.text.trim() !== "";
+  }
+  const meta = p.androidManifest
+    ? manifestMetaDataValue(p.androidManifest, "dev.denext.ota.PUBLIC_KEY")
+    : undefined;
+  return (meta ?? "").trim() !== "";
+}
+
+/**
+ * Over-the-air updates without a public key: a script in the page can call the OTA plugin, so an
+ * unsigned UI is only as trustworthy as every origin it may come from. A release embeds the key.
+ */
+const otaSigning: Check = {
+  id: "ota-signing",
+  profiles: ["release"],
+  applies: async (p) =>
+    (await readText(join(p.root, OTA_STORES.iOS))) !== null ||
+    (await readText(join(p.root, OTA_STORES.Android))) !== null,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const platform of ["iOS", "Android"] as const) {
+      if ((await readText(join(p.root, OTA_STORES[platform]))) === null) continue;
+      if (otaKeyEmbedded(p, platform)) continue;
+      findings.push({
+        check: "ota-signing",
+        level: "error",
+        message: `${platform}: over-the-air UI updates are installed without a public key, so ` +
+          "the app accepts an unsigned UI (a script injected into the page can install one " +
+          "that persists)",
+        fix: "`denext ota keygen`, then `denext mobile add-ota --public-key <key>.pub`; sign " +
+          "every manifest (`--sign` / DENEXT_OTA_SIGNING_KEY) and ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
@@ -927,6 +996,7 @@ const CHECKS: readonly Check[] = [
   webStorage,
   cssShimLeak,
   fastlane,
+  otaSigning,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */
@@ -963,25 +1033,5 @@ export async function runMobileDoctor(opts: MobileDoctorOptions): Promise<Mobile
  * @returns The text, without a trailing newline.
  */
 export function formatMobileDoctor(report: MobileDoctorReport): string {
-  const lines = report.checks.map((id) => {
-    const found = report.findings.filter((f) => f.check === id);
-    const mark = found.some((f) => f.level === "error") ? "✖" : found.length > 0 ? "!" : "✔";
-    return `  ${mark} ${id}`;
-  });
-  for (const f of report.findings) {
-    lines.push(
-      "",
-      `  ${f.level === "error" ? "ERROR  " : "WARNING"} [${f.check}] ${f.message}`,
-      `          fix: ${f.fix}`,
-    );
-  }
-  const errors = report.findings.filter((f) => f.level === "error").length;
-  const warnings = report.findings.length - errors;
-  lines.push(
-    "",
-    errors + warnings === 0
-      ? "  All checks passed."
-      : `  ${errors} error(s), ${warnings} warning(s).`,
-  );
-  return lines.join("\n");
+  return formatDoctorFindings(report.checks, report.findings).join("\n");
 }

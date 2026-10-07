@@ -10,6 +10,7 @@ import {
   resetDesktopAuthSessionForTesting,
 } from "../src/desktop/auth-session-runtime.ts";
 import { injectDesktopGlobal } from "../src/build/desktop.ts";
+import { until } from "./helpers/desktop-fake-runtime.ts";
 
 const TOKEN = "per-launch-token-abcdef";
 const ENDPOINT = "http://127.0.0.1:8000/_denext/desktop/auth-session";
@@ -55,6 +56,18 @@ function req(body: unknown, opts: ReqOpts = {}): Request {
 }
 
 const noopBrowser = () => {};
+
+/** How long a test waits for the session to open (polled; generous for a loaded machine). */
+const WAIT_MS = 10_000;
+
+/**
+ * A browser that only records that it was opened: the session is open (busy, cancellable) from
+ * then on, which the tests wait for instead of sleeping.
+ */
+function trackedBrowser(): { open: () => void; opened: () => boolean } {
+  let opened = false;
+  return { open: () => void (opened = true), opened: () => opened };
+}
 
 Deno.test("desktop auth-session: missing token → 403", async () => {
   resetDesktopAuthSessionForTesting();
@@ -166,14 +179,15 @@ Deno.test("desktop auth-session: fragment in redirect_uri → 400 invalid", asyn
 
 Deno.test("desktop auth-session: second concurrent call → 409 busy", async () => {
   resetDesktopAuthSessionForTesting();
-  // First call: a no-op browser, so it stays pending until its short timeout.
+  // First call: a browser that does nothing, so it stays pending until its short timeout.
+  const browser = trackedBrowser();
   const first = handleDesktopAuthSession(
-    req({ authUrl: VALID_AUTH_URL, timeoutMs: 300 }),
+    req({ authUrl: VALID_AUTH_URL, timeoutMs: 1_000 }),
     TOKEN,
-    noopBrowser,
+    browser.open,
   );
-  // Let the first call get past body-parse and set the busy flag.
-  await new Promise((r) => setTimeout(r, 60));
+  // The browser opens once the first call is past body-parse and has set the busy flag.
+  await until(browser.opened, WAIT_MS);
   const second = await handleDesktopAuthSession(
     req({ authUrl: VALID_AUTH_URL }),
     TOKEN,
@@ -211,8 +225,9 @@ Deno.test("desktop auth-session: happy path resolves 200 with the callback URL",
 
 Deno.test("desktop auth-session: { cancel: true } ends the open session (499 cancelled)", async () => {
   resetDesktopAuthSessionForTesting();
-  const open = handleDesktopAuthSession(req({ authUrl: VALID_AUTH_URL }), TOKEN, noopBrowser);
-  await new Promise((r) => setTimeout(r, 60)); // past body-parse: the session is open
+  const browser = trackedBrowser();
+  const open = handleDesktopAuthSession(req({ authUrl: VALID_AUTH_URL }), TOKEN, browser.open);
+  await until(browser.opened, WAIT_MS); // past body-parse: the session is open
   const cancel = await handleDesktopAuthSession(req({ cancel: true }), TOKEN, noopBrowser);
   assertEquals(cancel.status, 200);
   assertEquals(await cancel.json(), { cancelled: true });
@@ -224,14 +239,60 @@ Deno.test("desktop auth-session: { cancel: true } ends the open session (499 can
   assertEquals(await idle.json(), { cancelled: false });
 });
 
-Deno.test("desktop auth-session: a cancel goes through the same gate (token, origin)", async () => {
+Deno.test("desktop auth-session: a keyed session is bound to its page (cancel must name it; its request going away ends it)", async () => {
   resetDesktopAuthSessionForTesting();
+  const KEY = "page-a-0123456789abcdef";
+  const browser = trackedBrowser();
   const open = handleDesktopAuthSession(
-    req({ authUrl: VALID_AUTH_URL, timeoutMs: 300 }),
+    req({ authUrl: VALID_AUTH_URL, session: KEY }),
+    TOKEN,
+    browser.open,
+  );
+  await until(browser.opened, WAIT_MS);
+  // Another window's cancel (no key, or its own key) does not end this page's session.
+  for (const body of [{ cancel: true }, { cancel: true, session: "page-b-0123456789abcdef" }]) {
+    const other = await handleDesktopAuthSession(req(body), TOKEN, noopBrowser);
+    assertEquals(await other.json(), { cancelled: false });
+  }
+  const mine = await handleDesktopAuthSession(
+    req({ cancel: true, session: KEY }),
     TOKEN,
     noopBrowser,
   );
-  await new Promise((r) => setTimeout(r, 60));
+  assertEquals(await mine.json(), { cancelled: true });
+  assertEquals((await open).status, 499);
+  // A malformed key is refused outright.
+  const bad = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, session: "short" }),
+    TOKEN,
+    noopBrowser,
+  );
+  assertEquals(bad.status, 400);
+  // The starting page going away (its request aborted) ends the session as cancelled.
+  const page = new AbortController();
+  const start = req({ authUrl: VALID_AUTH_URL, session: KEY });
+  const goneBrowser = trackedBrowser();
+  const gone = handleDesktopAuthSession(
+    new Request(start, { signal: page.signal }),
+    TOKEN,
+    goneBrowser.open,
+  );
+  await until(goneBrowser.opened, WAIT_MS);
+  page.abort();
+  const res = await gone;
+  assertEquals(res.status, 499);
+  await res.body?.cancel();
+});
+
+Deno.test("desktop auth-session: a cancel goes through the same gate (token, origin)", async () => {
+  resetDesktopAuthSessionForTesting();
+  const browser = trackedBrowser();
+  const open = handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, timeoutMs: 300 }),
+    TOKEN,
+    browser.open,
+  );
+  await until(browser.opened, WAIT_MS);
   const forged = await handleDesktopAuthSession(
     req({ cancel: true }, { token: "wrong-token-xxxxxxxxx" }),
     TOKEN,

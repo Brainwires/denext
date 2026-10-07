@@ -61,6 +61,12 @@ export const CATALOG: SpecEntry[] = [
     denext: "src/jsx/jsx-runtime.ts",
     group: "react",
   },
+  {
+    specifier: "react/compiler-runtime",
+    real: "react/compiler-runtime",
+    denext: "src/compat/react-compiler-runtime.ts",
+    group: "react",
+  },
   // ReactDOM
   {
     specifier: "react-dom",

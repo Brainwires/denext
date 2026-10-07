@@ -20,9 +20,19 @@ import {
   SEPARATOR,
   toFileUrl,
 } from "@std/path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
+import {
+  missingVariantMessage,
+  type PlatformResolution,
+  platformVariantsOf,
+} from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
-import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
+import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
+
+// The boundary ids live in a leaf module the server runtime imports without this crawler.
+export { clientIdFor, shortHash };
 
 /** A discovered boundary module: its file URL and (optionally) its export names. */
 export interface BoundaryRef {
@@ -40,38 +50,9 @@ export interface BoundaryManifest {
   server: Map<string, BoundaryRef>;
 }
 
-/**
- * A stable, dependency-free short hash (FNV-1a, 32-bit) rendered in base-36.
- * Used to derive client/server ids from a module's app-relative path so ids are
- * deterministic across machines and runs.
- */
-export function shortHash(input: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
-}
-
 /** `dir` with exactly one trailing platform separator, for a prefix test on local paths. */
 function dirPrefix(dir: string): string {
   return dir.endsWith(SEPARATOR) ? dir : dir + SEPARATOR;
-}
-
-/** The app-relative, forward-slashed path of a module (the id/hash basis). */
-function relKey(appDir: string, fileUrl: string): string {
-  return relative(appDir, fromFileUrl(fileUrl)).replaceAll("\\", "/");
-}
-
-/** Derive the stable client id (`c_<hash>`) for a `"use client"` module. */
-export function clientIdFor(appDir: string, fileUrl: string): string {
-  return "c_" + shortHash(relKey(appDir, fileUrl));
-}
-
-/** Derive the stable module id (`<hash>`) for a `"use server"` module. */
-function serverModuleIdFor(appDir: string, fileUrl: string): string {
-  return shortHash(relKey(appDir, fileUrl));
 }
 
 /** Minimal shape of the `deno info --json` output we consume. */
@@ -116,6 +97,33 @@ function runtimeReachable(info: DenoInfo, roots: string[]): DenoInfoModule[] {
     }
   }
   return out;
+}
+
+/**
+ * Fail with a clear message when a module the routes reach is missing but has other targets'
+ * platform files (`./BigButton` with only `.ios` and `.android` variants, built for web) —
+ * `deno bundle` and the server render would only say "Module not found". Reads the same
+ * (cached) graph the boundary and hydration crawls use.
+ *
+ * @param entryFiles The route entry modules.
+ * @param projectDir The project root (the message names the module relative to it).
+ * @param resolution The target, or null when platform files are off.
+ */
+export async function assertPlatformFilesResolve(
+  entryFiles: string[],
+  projectDir: string,
+  resolution: PlatformResolution | null,
+): Promise<void> {
+  if (!resolution || entryFiles.length === 0) return;
+  const { info, roots } = await denoInfoGraph(entryFiles);
+  for (const m of runtimeReachable(info, roots)) {
+    if (!m.error || !m.specifier.startsWith("file://")) continue;
+    const path = fromFileUrl(m.specifier);
+    const variants = platformVariantsOf(path);
+    if (variants.length === 0) continue;
+    const spec = "./" + relative(projectDir, path).replaceAll("\\", "/");
+    throw new Error(missingVariantMessage(spec, variants, resolution));
+  }
 }
 
 /** {@link BoundaryManifest} as the build manifest stores it: ids → project-relative paths. */
@@ -209,6 +217,95 @@ interface GraphCache {
   resolved: Map<string, string>;
 }
 const graphCaches = new Map<string, GraphCache>();
+
+/**
+ * A set of import-map redirects a crawl resolves through, keyed for the graph caches; `originals`
+ * names the app module each rewritten copy in it stands in for.
+ */
+type GraphRedirects = {
+  configPath: string;
+  importMap: Record<string, string>;
+  originals: Readonly<Record<string, string>>;
+  key: string;
+} | null;
+
+/** A crawl's import map: redirects, and the originals of the copies it maps to. */
+export interface GraphImportMap {
+  /** Import-map redirects (a target's platform files), keyed by file URL or bare specifier. */
+  readonly importMap: Record<string, string>;
+  /** Each rewritten copy's file URL → the app module it stands in for (reported instead). */
+  readonly originals?: Readonly<Record<string, string>>;
+}
+
+/** The import-map redirects every crawl resolves through (see {@linkcode setModuleGraphRedirects}). */
+let graphRedirects: GraphRedirects = null;
+
+/** Redirects scoped to one async call tree ({@linkcode withModuleGraphRedirects}). */
+const scopedRedirects = new AsyncLocalStorage<GraphRedirects>();
+
+/** The redirects the current crawl resolves through: its scope's, else the process-wide set. */
+function activeRedirects(): GraphRedirects {
+  const scoped = scopedRedirects.getStore();
+  return scoped === undefined ? graphRedirects : scoped;
+}
+
+/** The redirect record for `importMap` over `configPath`, or null when there is nothing to apply. */
+function redirectsOf(configPath: string | null, map: GraphImportMap): GraphRedirects {
+  const { importMap, originals = {} } = map;
+  const entries = Object.entries(importMap).sort(([a], [b]) => a.localeCompare(b));
+  return configPath && entries.length > 0
+    ? { configPath, importMap, originals, key: shortHash(JSON.stringify(entries)) }
+    : null;
+}
+
+/**
+ * Make every `deno info` crawl resolve through `importMap` (a target's platform-file redirects,
+ * keyed by file URL) on top of `configPath`, so the boundary, hydration and live scans see the
+ * modules that target's bundle and server render load. An empty map (or null) restores plain
+ * resolution. Graphs are cached per redirect set.
+ *
+ * @param configPath The app's deno config.
+ * @param map The redirects (and the originals of the copies they name).
+ */
+export function setModuleGraphRedirects(
+  configPath: string | null,
+  map: GraphImportMap = { importMap: {} },
+): void {
+  graphRedirects = redirectsOf(configPath, map);
+}
+
+/**
+ * Run `fn` with every `deno info` crawl it starts resolving through `importMap` instead of the
+ * process-wide set ({@linkcode setModuleGraphRedirects}): `denext dev` computes another target's
+ * Flight boundary this way while requests for the web target crawl concurrently.
+ *
+ * @param configPath The app's deno config.
+ * @param map The target's redirects (empty: plain resolution).
+ * @param fn The crawls.
+ */
+export function withModuleGraphRedirects<T>(
+  configPath: string | null,
+  map: GraphImportMap,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return scopedRedirects.run(redirectsOf(configPath, map), fn);
+}
+
+/**
+ * Report each rewritten copy in `info` as the app module it stands in for (module records and
+ * import edges alike), so the scans over the graph name the app's own files.
+ */
+function renameCopies(info: DenoInfo, originals: Readonly<Record<string, string>>): void {
+  if (Object.keys(originals).length === 0) return;
+  const name = (s: string) => originals[s] ?? s;
+  for (const m of info.modules) {
+    m.specifier = name(m.specifier);
+    for (const dep of m.dependencies ?? []) {
+      if (dep.code?.specifier) dep.code.specifier = name(dep.code.specifier);
+      if (dep.type?.specifier) dep.type.specifier = name(dep.type.specifier);
+    }
+  }
+}
 const graphInFlight = new Map<string, Promise<ModuleGraph>>();
 let graphSpawns = 0;
 
@@ -219,6 +316,32 @@ export function resetModuleGraphCache(): void {
   npmBoundaryCache.clear();
 }
 
+/**
+ * Whether a cached crawl of the project at `projectDir` (one whose entries lie in it) reached the
+ * module at `path` (an absolute path, as given or through its real path): `true` / `false`, or
+ * `null` when no crawl of that project is cached (the dev watcher then cannot tell, and treats an
+ * edit as one to the app).
+ *
+ * @param path The file.
+ * @param projectDir The project root.
+ */
+export function cachedGraphHas(path: string, projectDir: string): boolean | null {
+  const roots = new Set([toFileUrl(resolve(projectDir)).href + "/"]);
+  const urls = new Set([toFileUrl(path).href]);
+  try {
+    roots.add(toFileUrl(Deno.realPathSync(projectDir)).href + "/");
+    urls.add(toFileUrl(Deno.realPathSync(path)).href);
+  } catch { /* removed: its logical path is all there is */ }
+  const ours = (url: string) => [...roots].some((r) => url.startsWith(r));
+  let known = false;
+  for (const cache of graphCaches.values()) {
+    if (![...cache.entries].some(ours)) continue;
+    known = true;
+    if (cache.info.modules.some((m) => urls.has(m.specifier))) return true;
+  }
+  return known ? false : null;
+}
+
 /** How many `deno info` processes the graph layer has spawned (test/diagnostics seam). */
 export function moduleGraphSpawnCount(): number {
   return graphSpawns;
@@ -227,7 +350,9 @@ export function moduleGraphSpawnCount(): number {
 /** The cache a request reads/feeds: `false` → none, `true`/unset → "default", else by name. */
 function cacheNameOf(cache: boolean | string | undefined): string | null {
   if (cache === false) return null;
-  return cache === true || cache === undefined ? "default" : cache;
+  const name = cache === true || cache === undefined ? "default" : cache;
+  const redirects = activeRedirects();
+  return redirects ? `${name}@${redirects.key}` : name;
 }
 
 /** The modules `deno info` reports as reachable from `roots`, in graph order. */
@@ -287,6 +412,14 @@ function liveCwd(): boolean {
   }
 }
 
+/** `--config` with the active graph redirects merged in, or nothing. */
+async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
+  const redirects = activeRedirects();
+  if (!redirects) return [];
+  const { configPath, importMap } = redirects;
+  return ["--config", await prepareConfig(tmpDir, { configPath, importMap })];
+}
+
 async function spawnDenoInfo(
   entryFiles: string[],
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
@@ -307,6 +440,7 @@ async function spawnDenoInfo(
         "--unstable-sloppy-imports",
         ...minDepAgeArgs(),
         "--json",
+        ...await redirectConfigArgs(tmpDir),
         // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
         toFileUrl(barrel).href,
       ],
@@ -318,6 +452,7 @@ async function spawnDenoInfo(
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }
     const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
+    renameCopies(info, activeRedirects()?.originals ?? {});
     // The barrel's dependency list maps each entry as WRITTEN (`file://…` of the given path)
     // to the specifier `deno info` reports for it (resolved/realpath'd), so BFS roots match
     // the module records exactly.

@@ -27,6 +27,7 @@
 //
 // @module
 
+import { devPlatformOf, type Platform } from "./platform-extensions.ts";
 import * as esbuild from "esbuild";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
@@ -59,12 +60,18 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   const st: UnbundledState = createUnbundledState(opts);
   if (opts.reactNative) seedReactNativeSpecs(st);
   return {
-    /** Handle an unbundled dev request, or return null if the URL isn't ours. */
-    handle: (_request: Request, url: URL, manifest: RouteManifest) => handle(st, url, manifest),
+    /**
+     * Handle an unbundled dev request, or return null if the URL isn't ours. Served for the
+     * target the request names (`devPlatformOf`: the desktop proxy's header, the page's
+     * `?__denext_platform=` or its cookie), `web` by default.
+     */
+    handle: (request: Request, url: URL, manifest: RouteManifest) =>
+      handle(st, url, manifest, devPlatformOf(request)),
     entryUrlFor,
     spaEntryUrl,
     supportsRoute,
-    serveFlightEntry: (boundary: BoundaryManifest) => serveFlightEntry(st, boundary),
+    serveFlightEntry: (boundary: BoundaryManifest, platform: Platform = "web") =>
+      serveFlightEntry(st, boundary, platform),
     onChange: (changed: string[]) => onChange(st, changed),
     /**
      * Whether a batch of edits invalidates React Native mode's dependency bundle (a dependency
@@ -86,12 +93,20 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       st.depsBuilt = null;
       st.runtimeBuilt = null;
     },
+    /**
+     * Which files exist changed (a platform file came or went): drop every cached transform,
+     * since each names the files its imports resolved to.
+     */
+    invalidateTransforms: (): void => {
+      st.cache.clear();
+      st.graphEpoch++;
+    },
     stop: async (): Promise<void> => {
       await esbuild.stop().catch(() => {});
     },
     // exposed for tests
     _internal: {
-      transform: (abs: string) => transform(st, abs),
+      transform: (abs: string, platform: Platform = "web") => transform(st, abs, platform),
       propagate: (abs: string, seen: Set<string>) => propagate(st, abs, seen),
       versionOf: (abs: string) => versionOf(st, abs),
       ensureDeps: () => ensureDeps(st),

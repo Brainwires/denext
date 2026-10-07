@@ -19,10 +19,22 @@
 // so edits are picked up on reload) and memoized per loader instance.
 
 import { djb2 } from "../runtime/djb2.ts";
-import { extname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
-import { swcParse } from "./swc-ast.ts";
+import {
+  absolutizeSpecifiers,
+  applyEdits,
+  type Edit,
+  literalSpecifiers,
+  parseModule,
+  pinImportMeta,
+} from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import {
+  type ImportAliases,
+  readImportAliases,
+  resolvePlatformImport,
+} from "./platform-extensions.ts";
 
 /** Options for {@link createUseCacheLoader}. */
 export interface UseCacheLoaderOptions {
@@ -34,6 +46,17 @@ export interface UseCacheLoaderOptions {
    * fresh copies rather than a natively-cached stale module.
    */
   cacheDir: string;
+  /**
+   * Import redirects keyed by resolved file URL (the target's platform files, from
+   * `platformRedirects`): an import whose URL is a key loads its value instead, and every module
+   * on the way to one is copied with the import rewritten.
+   */
+  redirects?: Readonly<Record<string, string>>;
+  /**
+   * Compile `"use cache"` directives (default true). `false` copies modules only to apply
+   * {@link redirects} (Cache Components off), leaving every directive as written.
+   */
+  useCache?: boolean;
 }
 
 /** Deterministic short hash (djb2 → base36) for a module URL. */
@@ -51,101 +74,257 @@ function underRoot(fileUrl: string, rootDir: string): boolean {
   return fileUrl.startsWith(rootUrl);
 }
 
+/** One local import of a module: as written, the file it names, and the module to load. */
+interface LocalImport {
+  readonly spec: string;
+  readonly url: string;
+  readonly target: string;
+}
+
 /**
- * Parse `source` and return the resolved absolute URLs of its **relative** import/
- * export specifiers (the only ones that can point at other local project files).
- * Bare specifiers (`npm:`, `jsr:`, `@std/…`) are skipped. Returns `[]` on a parse
- * error (the module is then treated as a leaf).
+ * Parse `source` and return its import/export specifiers — static, and each `import()` written
+ * as a literal ({@linkcode literalSpecifiers}) — that name local files: relative ones, and bare
+ * ones the project's import map aliases to a file (`@/components/Button.tsx`), each resolved by
+ * {@linkcode resolvePlatformImport} (the platform variant applied). Packages (`npm:`, `jsr:`,
+ * `@std/…`) are skipped. Returns `[]` on a parse error (the module is then treated as a leaf).
  */
-async function localImports(source: string, moduleUrl: string): Promise<string[]> {
-  let ast;
-  try {
-    const parse = await swcParse();
-    ast = await parse("0;\n" + source);
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of ast.body ?? []) {
-    const spec = item?.source?.value;
-    if (typeof spec !== "string") continue;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-    out.push(new URL(spec, moduleUrl).href);
+async function localImports(
+  source: string,
+  moduleUrl: string,
+  aliases: ImportAliases,
+  redirects: Readonly<Record<string, string>>,
+): Promise<LocalImport[]> {
+  const parsed = await parseModule(source);
+  if (!parsed) return [];
+  const out: LocalImport[] = [];
+  for (const { value: spec } of literalSpecifiers(parsed.body)) {
+    const hit = resolvePlatformImport(spec, moduleUrl, aliases, redirects);
+    if (hit) out.push({ spec, ...hit });
   }
   return out;
 }
 
 /**
+ * Whether a copy rewrites `imp`'s alias specifier: it names its file outright (the copy no longer
+ * relies on the import map), but an extensionless alias is left to the import map unless it must
+ * reach another file. A relative specifier is the absolutizing pass's.
+ */
+function rewritesBare(imp: LocalImport, changed: boolean): boolean {
+  if (imp.spec.startsWith("./") || imp.spec.startsWith("../")) return false;
+  return changed || extname(new URL(imp.url).pathname) !== "";
+}
+
+/**
+ * Only absolutize `source`'s relative specifiers (mapped through `resolve`) and replace the
+ * bare ones `bare` names, for a copy that compiles nothing else.
+ */
+async function rewriteLocalImports(
+  source: string,
+  moduleUrl: string,
+  resolve: (absUrl: string) => string,
+  bare: (spec: string) => string | null,
+): Promise<{ code: string; changed: boolean }> {
+  const parsed = await parseModule(source);
+  if (!parsed) return { code: source, changed: false };
+  const edits: Edit[] = [];
+  if (!absolutizeSpecifiers(parsed.ctx, parsed.body, moduleUrl, edits, resolve, bare)) {
+    return { code: source, changed: false };
+  }
+  return { code: applyEdits(parsed.ctx.bytes, edits), changed: true };
+}
+
+/** One project module as the compiler sees it: its source, local imports and directive. */
+interface ModuleNode {
+  /** Its source, or null when it is unreadable (then it loads as itself). */
+  readonly source: string | null;
+  readonly imports: readonly LocalImport[];
+  /** Whether it has a `"use cache"` directive to compile. */
+  readonly useCache: boolean;
+}
+
+/**
  * A per-instance compiler that maps a module's `file:` URL to the URL that should
- * actually be imported — the original when its subtree contains no `"use cache"`,
- * or a written transformed copy otherwise. Post-order over the import graph, so a
- * parent's copy imports its children's (possibly transformed) effective URLs.
+ * actually be imported — the original when its subtree contains no `"use cache"` and reaches
+ * no platform redirect, or a written transformed copy otherwise.
+ *
+ * Three steps, each memoized per URL, so concurrent loads (a production server warming every
+ * route with `Promise.all`, overlapping dev requests) share the work and never take another
+ * load's half-finished state for an answer: parse each reachable module once; decide which
+ * modules need a copy, a fixpoint over the whole reached graph, so an import cycle is copied
+ * whole (rather than one member loading its original, and with it the plain files); then write
+ * each copy, its imports pointing at the copies of the modules that have one. A copy's name is a
+ * hash of its module's URL, so a parent knows its child's copy before that is written.
  */
 class UseCacheCompiler {
-  #memo = new Map<string, string>();
-  #inProgress = new Set<string>();
-  #ensured = false;
+  #nodes = new Map<string, Promise<ModuleNode>>();
+  #needs = new Map<string, boolean>();
+  #written = new Map<string, Promise<void>>();
+  /** Per decided module: settles once every copy its graph needs is written. */
+  #ready = new Map<string, Promise<void>>();
+  #dir: Promise<void> | null = null;
+  #aliases: Promise<ImportAliases> | null = null;
 
   constructor(private opts: UseCacheLoaderOptions) {}
 
-  async #ensureDir(): Promise<void> {
-    if (this.#ensured) return;
-    await Deno.mkdir(this.opts.cacheDir, { recursive: true });
-    this.#ensured = true;
+  /** Whether `url` is a project module the compiler may copy. */
+  #own(url: string): boolean {
+    return underRoot(url, this.opts.projectDir);
   }
 
-  /** The effective import URL for `moduleUrl` (original, or a transformed copy). */
-  async effectiveUrl(moduleUrl: string): Promise<string> {
-    const cached = this.#memo.get(moduleUrl);
-    if (cached) return cached;
-    // Only transform project files; leave framework/std/npm and out-of-tree files
-    // as-is. A cycle (in-progress) resolves to the original to break the recursion.
-    if (!underRoot(moduleUrl, this.opts.projectDir) || this.#inProgress.has(moduleUrl)) {
-      return moduleUrl;
-    }
-    this.#inProgress.add(moduleUrl);
-    try {
-      const result = await this.#compute(moduleUrl);
-      this.#memo.set(moduleUrl, result);
-      return result;
-    } finally {
-      this.#inProgress.delete(moduleUrl);
-    }
+  /** The copy's file URL for `moduleUrl` (named by its URL, so known before it is written). */
+  #copyUrl(moduleUrl: string): string {
+    const ext = extname(fromFileUrl(moduleUrl)) || ".ts";
+    return toFileUrl(join(this.opts.cacheDir, `uc_${hash(moduleUrl)}${ext}`)).href;
   }
 
-  async #compute(moduleUrl: string): Promise<string> {
+  /** `moduleUrl`'s source and local imports, read and parsed once. */
+  #node(moduleUrl: string): Promise<ModuleNode> {
+    let node = this.#nodes.get(moduleUrl);
+    if (!node) {
+      node = this.#readNode(moduleUrl);
+      this.#nodes.set(moduleUrl, node);
+    }
+    return node;
+  }
+
+  async #readNode(moduleUrl: string): Promise<ModuleNode> {
     let source: string;
     try {
       source = await Deno.readTextFile(fromFileUrl(moduleUrl));
     } catch {
-      return moduleUrl; // unreadable → import the original
+      return { source: null, imports: [], useCache: false }; // unreadable → the original
     }
-
-    // Resolve each local import to its effective URL (post-order recursion).
-    const imports = await localImports(source, moduleUrl);
-    const childMap = new Map<string, string>();
-    let anyChildCopied = false;
-    for (const imp of imports) {
-      const eff = await this.effectiveUrl(imp);
-      childMap.set(imp, eff);
-      if (eff !== imp) anyChildCopied = true;
-    }
-
-    // No directive here and no transformed child ⇒ this module is unchanged.
-    if (!source.includes("use cache") && !anyChildCopied) return moduleUrl;
-
-    const { code, changed } = await transformUseCache(source, moduleUrl, {
-      resolveSpecifier: (abs) => childMap.get(abs) ?? abs,
-      alwaysRewriteImports: true,
-    });
-    if (!changed) return moduleUrl;
-
-    await this.#ensureDir();
-    const ext = extname(fromFileUrl(moduleUrl)) || ".ts";
-    const outPath = join(this.opts.cacheDir, `uc_${hash(moduleUrl)}${ext}`);
-    await Deno.writeTextFile(outPath, code);
-    return toFileUrl(outPath).href;
+    const aliases = await (this.#aliases ??= readImportAliases(this.opts.projectDir));
+    const imports = await localImports(source, moduleUrl, aliases, this.opts.redirects ?? {});
+    const useCache = this.opts.useCache !== false && source.includes("use cache");
+    return { source, imports, useCache };
   }
+
+  /** Every project module reachable from `entry` (itself included), parsed. */
+  async #reach(entry: string): Promise<Map<string, ModuleNode>> {
+    const graph = new Map<string, ModuleNode>();
+    let frontier = [entry];
+    while (frontier.length > 0) {
+      const batch = [...new Set(frontier)].filter((u) => !graph.has(u));
+      const nodes = await Promise.all(batch.map((u) => this.#node(u)));
+      frontier = [];
+      batch.forEach((u, i) => graph.set(u, nodes[i]));
+      for (const node of nodes) {
+        for (const imp of node.imports) {
+          if (this.#own(imp.target) && !graph.has(imp.target)) frontier.push(imp.target);
+        }
+      }
+    }
+    return graph;
+  }
+
+  /**
+   * Decide which of `graph`'s modules need a copy: one with a directive or a redirected import,
+   * and every module that imports one (a fixpoint, so a cycle settles). Synchronous, and `graph`
+   * holds each module's whole subtree, so every decision is final.
+   */
+  #decide(graph: Map<string, ModuleNode>): void {
+    const open = [...graph].filter(([u]) => !this.#needs.has(u));
+    for (const [u, n] of open) {
+      const direct = n.useCache || n.imports.some((i) => i.target !== i.url);
+      this.#needs.set(u, n.source !== null && direct);
+    }
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const [u, n] of open) {
+        if (this.#needs.get(u) || n.source === null) continue;
+        if (n.imports.some((i) => this.#needs.get(i.target))) {
+          this.#needs.set(u, true);
+          grew = true;
+        }
+      }
+    }
+  }
+
+  /** The URL an import of `target` loads: its copy when it has one. */
+  #effective(target: string): string {
+    return this.#needs.get(target) ? this.#copyUrl(target) : target;
+  }
+
+  /** Write `moduleUrl`'s copy, once. */
+  #write(moduleUrl: string, node: ModuleNode): Promise<void> {
+    let done = this.#written.get(moduleUrl);
+    if (!done) {
+      done = this.#writeCopy(moduleUrl, node.source!, node.imports);
+      this.#written.set(moduleUrl, done);
+    }
+    return done;
+  }
+
+  async #writeCopy(
+    moduleUrl: string,
+    source: string,
+    imports: readonly LocalImport[],
+  ): Promise<void> {
+    const childMap = new Map<string, string>();
+    const bareMap = new Map<string, string>();
+    for (const imp of imports) {
+      const eff = this.#effective(imp.target);
+      childMap.set(imp.url, eff);
+      if (rewritesBare(imp, eff !== imp.url)) bareMap.set(imp.spec, eff);
+    }
+    const resolveSpecifier = (abs: string) => childMap.get(abs) ?? abs;
+    const resolveBare = (spec: string) => bareMap.get(spec) ?? null;
+    const { code } = this.opts.useCache === false
+      ? await rewriteLocalImports(source, moduleUrl, resolveSpecifier, resolveBare)
+      : await transformUseCache(source, moduleUrl, {
+        resolveSpecifier,
+        resolveBare,
+        alwaysRewriteImports: true,
+      });
+    await (this.#dir ??= Deno.mkdir(this.opts.cacheDir, { recursive: true }));
+    // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,
+    // and a non-literal `import()` resolves a relative specifier against that module too.
+    const copy = fromFileUrl(this.#copyUrl(moduleUrl));
+    await Deno.writeTextFile(copy, await pinImportMeta(code, moduleUrl, { dynamicImports: true }));
+  }
+
+  /** The effective import URL for `moduleUrl` (original, or a transformed copy). */
+  async effectiveUrl(moduleUrl: string): Promise<string> {
+    // Only transform project files; leave framework/std/npm and out-of-tree files as-is.
+    if (!this.#own(moduleUrl) || this.#needs.get(moduleUrl) === false) return moduleUrl;
+    const ready = this.#ready.get(moduleUrl);
+    if (ready) {
+      await ready;
+      return this.#effective(moduleUrl);
+    }
+    const graph = await this.#reach(moduleUrl);
+    this.#decide(graph);
+    // Every copy the module's graph imports exists before it loads.
+    const copied = [...graph].filter(([u]) => this.#needs.get(u));
+    const written = Promise.all(copied.map(([u, n]) => this.#write(u, n))).then(() => {});
+    for (const u of graph.keys()) if (!this.#ready.has(u)) this.#ready.set(u, written);
+    await written;
+    return this.#effective(moduleUrl);
+  }
+}
+
+/**
+ * Compile the server copies of every module in `files` ahead of time (`denext build`, so
+ * `denext start` writes nothing and walks nothing): the copies are written under
+ * `opts.cacheDir`, and the result maps each module that loads a copy (file URL) to it.
+ *
+ * @param opts As for {@linkcode createUseCacheLoader}.
+ * @param files The project's source modules (absolute paths).
+ * @returns Module file URL → its copy's file URL, for the modules that have one.
+ */
+export async function compileServerCopies(
+  opts: UseCacheLoaderOptions,
+  files: readonly string[],
+): Promise<Record<string, string>> {
+  const compiler = new UseCacheCompiler(opts);
+  const out: Record<string, string> = {};
+  for (const file of files) {
+    const url = toUrl(file);
+    const eff = await compiler.effectiveUrl(url).catch(() => url);
+    if (eff !== url) out[url] = eff;
+  }
+  return out;
 }
 
 /**
@@ -162,15 +341,72 @@ export function createUseCacheLoader(
   base: ModuleLoader,
   opts: UseCacheLoaderOptions,
 ): ModuleLoader {
+  return createUseCacheLoaders([base], opts)[0];
+}
+
+/**
+ * {@linkcode createUseCacheLoader} over several base loaders that share ONE compiler (one walk,
+ * one set of copies): the dev server renders through a cache-busting base and tags the Flight
+ * boundary through a query-less one, and both must load the same copies.
+ *
+ * @param bases The underlying loaders.
+ * @param opts Project root and the (generation-scoped) copy cache dir.
+ * @returns One wrapping loader per base, in order.
+ */
+export function createUseCacheLoaders(
+  bases: readonly ModuleLoader[],
+  opts: UseCacheLoaderOptions,
+): ModuleLoader[] {
   const compiler = new UseCacheCompiler(opts);
-  return async (filePath: string): Promise<unknown> => {
-    const url = toUrl(filePath);
+  const canonical = projectSpelling(opts.projectDir);
+  return bases.map((base) => async (filePath: string): Promise<unknown> => {
+    const url = canonical(toUrl(filePath));
     let eff: string;
     try {
-      eff = await compiler.effectiveUrl(url);
+      // A module loaded by its plain path (a boundary ref being tagged) loads its variant too.
+      eff = await compiler.effectiveUrl(opts.redirects?.[url] ?? url);
     } catch {
       eff = url; // any transform failure → load the original (never break loading)
     }
     return base(eff);
+  });
+}
+
+/**
+ * A module URL spelled through the project root: a crawl names modules by their real path (a
+ * boundary ref under macOS's `/private/var` for a project in `/var`), while redirects and copies
+ * are keyed by the root as given.
+ */
+function projectSpelling(projectDir: string): (url: string) => string {
+  const root = toFileUrl(resolve(projectDir)).href + "/";
+  let real: string | null = null;
+  try {
+    real = toFileUrl(Deno.realPathSync(projectDir)).href + "/";
+  } catch { /* no project dir on disk: nothing to respell */ }
+  return (url) =>
+    real && real !== root && url.startsWith(real) ? root + url.slice(real.length) : url;
+}
+
+/**
+ * A loader over copies {@linkcode compileServerCopies} wrote at build time (`denext start`):
+ * each module loads its target's variant, through its copy when it has one, with no walk, no
+ * compile and no write.
+ *
+ * @param base The underlying loader.
+ * @param opts The project root, the target's redirects and the copies (file URL → copy URL).
+ */
+export function createPrecompiledLoader(
+  base: ModuleLoader,
+  opts: {
+    projectDir: string;
+    redirects: Readonly<Record<string, string>>;
+    copies: Readonly<Record<string, string>>;
+  },
+): ModuleLoader {
+  const canonical = projectSpelling(opts.projectDir);
+  return (filePath: string): Promise<unknown> => {
+    const url = canonical(toUrl(filePath));
+    const target = opts.redirects[url] ?? url;
+    return base(opts.copies[target] ?? target);
   };
 }

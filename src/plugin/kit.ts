@@ -123,7 +123,7 @@ export { PageCache } from "../server/mod.ts";
 // ── Client-route bundling (build step) ─────────────────────────────────────
 // Produce a route's browser entry bundle — call from an `addBuildStep` to emit a
 // plugin's client bundles for production.
-export { bundleRoutes } from "../build/plugin-bundle.ts";
+export { bundleRoutes, platformClientRedirects } from "../build/plugin-bundle.ts";
 
 // ── CSS pipeline (build step) ──────────────────────────────────────────────
 // Compile and collect a route's CSS the same way the core App Router does.

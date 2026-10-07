@@ -33,6 +33,12 @@ Deno.test("compatDepUrl maps react/next/denext to the runtime, npm to the dep bu
   assertEquals(compatDepUrl(st, "react"), `${DEP_PREFIX}${REACT_ALIASES["react"] ?? "react.js"}`);
   assert(compatDepUrl(st, "react-dom/client")!.startsWith(DEP_PREFIX));
   assertEquals(compatDepUrl(st, "react-is"), `${DEP_PREFIX}react-is.js`);
+  // React-Compiler-precompiled npm code, and the codemod's rewrite of it: the shared runtime.
+  assertEquals(
+    compatDepUrl(st, "react/compiler-runtime"),
+    `${DEP_PREFIX}react-compiler-runtime.js`,
+  );
+  assertEquals(compatDepUrl(st, "denext/compiler-runtime"), `${DEP_PREFIX}compiler-runtime.js`);
   assertEquals(compatDepUrl(st, "next/link"), `${DEP_PREFIX}${NEXT_ALIASES["next/link"]}`);
   assertEquals(compatDepUrl(st, "next/not-a-module"), null, "unmapped next/* is left alone");
   assertEquals(compatDepUrl(st, "denext"), `${DEP_PREFIX}react.js`);

@@ -183,6 +183,11 @@ export interface DesktopPackageMeta {
   readonly license?: string;
   /** The `deno desktop` backend (`"webview"` unless deno.json `desktop.backend` says otherwise). */
   readonly backend: string;
+  /**
+   * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on the
+   * package with `secret-tool` (absent means off).
+   */
+  readonly secureStore?: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -250,7 +255,13 @@ export function packageMetaFrom(
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
     license: str((deno as Obj | undefined)?.license),
     backend: str(field(deno, "desktop").backend) ?? "webview",
+    secureStore: capabilityOn(field(cfgDesktop, "capabilities"), "secureStore", "secure-store"),
   };
+}
+
+/** Whether a `desktop.capabilities` entry is on (present, not `false` / `null`), by either name. */
+function capabilityOn(caps: Obj, ...names: string[]): boolean {
+  return names.some((n) => caps[n] !== undefined && caps[n] !== false && caps[n] !== null);
 }
 
 /**
@@ -749,6 +760,14 @@ function linuxDeps(backend: string): ReadonlyArray<readonly [string, string]> {
   return LINUX_RUNTIME_DEPS[backend] ?? LINUX_RUNTIME_DEPS.webview;
 }
 
+/**
+ * The packages an enabled capability runs, as (Debian package, RPM package): the secure store's
+ * `secret-tool` (a stock Ubuntu desktop ships libsecret without it).
+ */
+function linuxCapabilityDeps(meta: DesktopPackageMeta): ReadonlyArray<readonly [string, string]> {
+  return meta.secureStore === true ? [["libsecret-tools", "libsecret"]] : [];
+}
+
 /** Strip control characters (a `.desktop` / control value is one line). */
 function oneLine(s: string): string {
   // deno-lint-ignore no-control-regex
@@ -763,13 +782,16 @@ function oneLine(s: string): string {
  * code is expanded by the launcher into exactly one argv element (no shell, no re-splitting), and
  * the value is a URL that starts with its scheme, so it can never be read as an option; it stays
  * the last token, with no `--` that a runtime predating `--` handling would take as the URL.
+ * `Icon` names the app id, the name {@linkcode stageLinuxRoot} installs the icon under in the
+ * hicolor theme (and pixmaps); with no icon to install, the entry names none.
  *
  * @param meta The package metadata.
+ * @param icon Whether the package installs an icon (default `true`).
  * @returns The entry text.
  */
-export function linuxDesktopEntry(meta: DesktopPackageMeta): string {
+export function linuxDesktopEntry(meta: DesktopPackageMeta, icon = true): string {
   const pkg = debianPackageName(meta.name);
-  const id = /^[A-Za-z0-9.-]+$/.test(meta.identifier) ? meta.identifier : `com.deno.desktop.${pkg}`;
+  const id = linuxAppId(meta);
   const env = `LAUFEY_APP_ID=${id}${meta.singleInstance ? " LAUFEY_SINGLE_INSTANCE=1" : ""}`;
   const mime = meta.deepLinks.map((s) => `x-scheme-handler/${s};`).join("");
   return [
@@ -778,13 +800,24 @@ export function linuxDesktopEntry(meta: DesktopPackageMeta): string {
     `Name=${oneLine(meta.name)}`,
     `Comment=${oneLine(meta.description)}`,
     `Exec=env ${env} ${pkg}${mime ? " %u" : ""}`,
-    `Icon=${pkg}`,
+    ...(icon ? [`Icon=${id}`] : []),
     `StartupWMClass=${id}`,
     "Terminal=false",
     "Categories=Utility;",
     ...(mime ? [`MimeType=${mime}`] : []),
     "",
   ].join("\n");
+}
+
+/**
+ * The app id a Linux package installs under: `desktop.app.identifier` when it is a valid
+ * `.desktop` file id, else `com.deno.desktop.<package>`. It names the `.desktop` entry, the
+ * window's `StartupWMClass` and the icon.
+ */
+function linuxAppId(meta: DesktopPackageMeta): string {
+  return /^[A-Za-z0-9.-]+$/.test(meta.identifier)
+    ? meta.identifier
+    : `com.deno.desktop.${debianPackageName(meta.name)}`;
 }
 
 /** The width × height of a PNG (its IHDR), or `undefined` for anything else. */
@@ -795,8 +828,170 @@ function pngSize(bytes: Uint8Array): [number, number] | undefined {
   return [v.getUint32(16), v.getUint32(20)];
 }
 
-/** The hicolor sizes an icon theme lists (an icon of another size goes to pixmaps only). */
+/** The hicolor sizes an icon theme lists. */
 const HICOLOR_SIZES = [16, 22, 24, 32, 48, 64, 96, 128, 256, 512];
+
+/**
+ * The hicolor directory size for a square icon of `size` pixels: its own size when the theme lists
+ * it, else the largest listed size below it (a launcher scales the bigger image down); `undefined`
+ * below 16 px.
+ */
+function hicolorSize(size: number): number | undefined {
+  return HICOLOR_SIZES.filter((s) => s <= size).at(-1);
+}
+
+/**
+ * The Linux packages' install hooks: refresh the desktop-entry database (the `MimeType`
+ * scheme handlers) and the hicolor icon cache, where those tools exist; a missing tool or a
+ * failed refresh never fails the install.
+ */
+const LINUX_REFRESH = [
+  "command -v update-desktop-database >/dev/null 2>&1 && " +
+  "update-desktop-database -q /usr/share/applications || :",
+  "command -v gtk-update-icon-cache >/dev/null 2>&1 && " +
+  "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :",
+];
+
+/**
+ * Whether `id` can be a D-Bus well-known name and GApplication id (what the runtime needs to own
+ * it and to post notifications through the portal): at most 255 bytes, two or more `.`-separated
+ * elements of `[A-Za-z0-9_-]`, none empty or starting with a digit.
+ *
+ * @param id The app id.
+ * @returns Whether it is one.
+ */
+export function isDbusAppId(id: string): boolean {
+  const parts = id.split(".");
+  return id.length <= 255 && parts.length >= 2 &&
+    parts.every((p) => /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(p));
+}
+
+/**
+ * The D-Bus service file a package installs as `/usr/share/dbus-1/services/<app id>.service`, so
+ * D-Bus starts the app for a click on one of its notifications while it isn't running (the
+ * runtime posts them through the xdg-desktop-portal and owns the app id's name while it runs,
+ * runtime 2.9.7-denext.11). `Exec` runs the launcher with the environment the `.desktop` entry
+ * sets, plus `--laufey-dbus-activated` (the click that follows is the launch). `undefined` when
+ * the app id can't be a D-Bus name.
+ *
+ * @param meta The package metadata.
+ * @returns The service file text, or `undefined`.
+ */
+export function linuxDbusService(meta: DesktopPackageMeta): string | undefined {
+  const id = linuxAppId(meta);
+  if (!isDbusAppId(id)) return undefined;
+  const env = `LAUFEY_APP_ID=${id}${meta.singleInstance ? " LAUFEY_SINGLE_INSTANCE=1" : ""}`;
+  const pkg = debianPackageName(meta.name);
+  return [
+    "[D-BUS Service]",
+    `Name=${id}`,
+    `Exec=/usr/bin/env ${env} /usr/bin/${pkg} --laufey-dbus-activated`,
+    "",
+  ].join("\n");
+}
+
+/** The longest app id part the runtime's notification timer unit names keep. */
+const TIMER_APP_ID_MAX = 200;
+
+/** The 16 lowercase hex digits of the FNV-1a 64 hash of `text`'s UTF-8 bytes (the runtime's tag ids). */
+function fnv1a64Hex(text: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (const b of new TextEncoder().encode(text)) {
+    h ^= BigInt(b);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+/**
+ * The app id as the runtime's scheduled-notification timer unit names carry it
+ * (`laufey-<this>-<tag id>.timer`): a byte a unit name can't hold becomes `_`, and an id longer
+ * than 200 bytes keeps its first 191 plus `_` and the first 8 hex digits of its own FNV-1a 64
+ * hash, so the unit name stays within systemd's 255 characters.
+ *
+ * @param id The app id.
+ * @returns The part of the unit name.
+ */
+export function linuxTimerAppPart(id: string): string {
+  let out = "";
+  for (const b of new TextEncoder().encode(id)) {
+    const c = String.fromCharCode(b);
+    out += /^[A-Za-z0-9_.:-]$/.test(c) ? c : "_";
+  }
+  return out.length > TIMER_APP_ID_MAX
+    ? `${out.slice(0, TIMER_APP_ID_MAX - 9)}_${fnv1a64Hex(id).slice(0, 8)}`
+    : out;
+}
+
+/**
+ * The systemd glob for every one of the app's scheduled-notification timers and no other app's:
+ * `laufey-<app part>-`, exactly 16 `[0-9a-f]`, then `.timer`, so an app whose id extends this
+ * one's (`<id>-extra`) keeps its timers.
+ *
+ * @param id The app id.
+ * @returns The glob.
+ */
+export function linuxTimerGlob(id: string): string {
+  return `laufey-${linuxTimerAppPart(id)}-${"[0-9a-f]".repeat(16)}.timer`;
+}
+
+/**
+ * Shell lines a package's removal runs to stop the scheduled-notification timers the runtime made
+ * for `id` in each user's systemd manager (`laufey-<app id>-<tag id>.timer`, transient; each would
+ * otherwise run the removed executable at its time), matched by {@linkcode linuxTimerGlob}: every
+ * user logind knows (logged in or lingering). `--no-block` and, where it exists, `timeout 10` keep
+ * a manager that doesn't answer from stalling the package manager; `|| :` keeps a user without a
+ * running manager, or a system without systemd, from failing the removal.
+ *
+ * @param id The app id.
+ * @returns The lines.
+ */
+export function linuxTimerCleanup(id: string): string[] {
+  return [
+    "if command -v loginctl >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then",
+    "  laufey_timeout=",
+    '  if command -v timeout >/dev/null 2>&1; then laufey_timeout="timeout 10"; fi',
+    "  for user in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do",
+    `    $laufey_timeout systemctl --user --machine="$user"@ --no-block stop '${
+      linuxTimerGlob(id)
+    }' >/dev/null 2>&1 || :`,
+    "  done",
+    "fi",
+  ];
+}
+
+/**
+ * The `.deb` maintainer script `name` (`postinst` / `postrm`): {@linkcode LINUX_REFRESH} (dpkg's
+ * own triggers do the same on Debian / Ubuntu; this covers a system without them); `postrm` also
+ * stops the app's scheduled-notification timers ({@linkcode linuxTimerCleanup}) when the package
+ * has a D-Bus app id.
+ *
+ * @param name The script.
+ * @param appId The package's D-Bus app id, if it has one.
+ * @returns The script text.
+ */
+export function debMaintainerScript(name: "postinst" | "postrm", appId?: string): string {
+  // postrm: after a remove or a purge; an upgrade's old-version postrm leaves it to the postinst.
+  const when = name === "postinst" ? "configure" : "remove|purge";
+  const cleanup = name === "postrm" && appId ? linuxTimerCleanup(appId) : [];
+  return [
+    "#!/bin/sh",
+    "set -e",
+    'case "$1" in',
+    `  ${when})`,
+    ...[...LINUX_REFRESH, ...cleanup].map((l) => `    ${l}`),
+    "    ;;",
+    "esac",
+    "exit 0",
+    "",
+  ].join("\n");
+}
+
+/** The package's D-Bus app id, when its app id can be one. */
+function dbusAppIdOf(meta: DesktopPackageMeta): string | undefined {
+  const id = linuxAppId(meta);
+  return isDbusAppId(id) ? id : undefined;
+}
 
 /** Copy `src` into `dest` recursively, keeping executable bits and symlinks. */
 async function copyTree(src: string, dest: string): Promise<void> {
@@ -817,10 +1012,80 @@ async function copyTree(src: string, dest: string): Promise<void> {
 }
 
 /**
+ * The CEF backend's setuid sandbox helper, at the bundle's root (laufey's `chrome-sandbox`). A
+ * `.deb` / `.rpm` installs it root-owned with mode 4755, so web content runs in Chromium's
+ * sandbox even where unprivileged user namespaces are restricted (Ubuntu 23.10+'s AppArmor);
+ * Chromium uses it only when it cannot create a user namespace. Every other file keeps its
+ * `0o755` / `0o644` ({@linkcode bundleFileMode}): nothing else is setuid, setgid or writable by
+ * group or others. A tarball or an AppImage cannot install it so (the user unpacks it, or it
+ * mounts `nosuid`), and the runtime then turns the sandbox off with a warning.
+ */
+export const CEF_SANDBOX_HELPER = "chrome-sandbox";
+
+/** The mode a system package installs the sandbox helper with (setuid root, `rwsr-xr-x`). */
+const SANDBOX_HELPER_MODE = 0o4755;
+
+/**
+ * A `.deb` data entry's mode: the sandbox helper of the app's install directory is setuid root,
+ * every other entry keeps its own (already masked) mode.
+ *
+ * @param e The staged entry ({@linkcode walkBundle} of the staged root).
+ * @param pkg The package name (the app installs under `usr/lib/<pkg>`).
+ * @returns The entry with the mode the package installs it with.
+ */
+function linuxPackageEntry(e: BundleEntry, pkg: string): BundleEntry {
+  return e.kind === "file" && e.path === `usr/lib/${pkg}/${CEF_SANDBOX_HELPER}`
+    ? { ...e, mode: SANDBOX_HELPER_MODE }
+    : e;
+}
+
+/** One `%files` line of an `.rpm` spec: a path, owned as a directory only, or setuid root. */
+export interface RpmFile {
+  readonly path: string;
+  readonly attr?: "dir" | "setuid";
+}
+
+/**
+ * The `%files` an `.rpm` owns: `owned` as staged, except that when the app ships the sandbox
+ * helper its install directory is listed entry by entry (`%dir` for the directory itself) so the
+ * helper alone carries `%attr(4755,root,root)`; rpm has no per-file override inside a directory
+ * it owns whole.
+ *
+ * @param stage The staged root ({@linkcode stageLinuxRoot}).
+ * @param pkg The package name.
+ * @param owned The installed paths the package owns.
+ * @returns The `%files` entries.
+ */
+export async function rpmFiles(
+  stage: string,
+  pkg: string,
+  owned: readonly string[],
+): Promise<RpmFile[]> {
+  const lib = `/usr/lib/${pkg}`;
+  const libDir = join(stage, "usr", "lib", pkg);
+  const helper = await Deno.lstat(join(libDir, CEF_SANDBOX_HELPER)).catch(() => undefined);
+  if (!helper?.isFile) return owned.map((path) => ({ path }));
+  const names: string[] = [];
+  for await (const e of Deno.readDir(libDir)) names.push(e.name);
+  names.sort();
+  return owned.flatMap((path): RpmFile[] =>
+    path !== lib ? [{ path }] : [
+      { path: lib, attr: "dir" },
+      ...names.map((name): RpmFile => ({
+        path: `${lib}/${name}`,
+        ...(name === CEF_SANDBOX_HELPER ? { attr: "setuid" as const } : {}),
+      })),
+    ]
+  );
+}
+
+/**
  * Lay out the installed filesystem of a Linux package under `root`: the bundle at
  * `/usr/lib/<package>/`, a `/usr/bin/<package>` link to its launcher, the `.desktop` entry, and the
- * bundle's `AppIcon.png` as `/usr/share/pixmaps/<package>.png` (and in the hicolor theme when it is
- * a square theme size).
+ * bundle's icon under the app id: `AppIcon.png` as `/usr/share/pixmaps/<id>.png` and, when it is
+ * square, `/usr/share/icons/hicolor/<n>x<n>/apps/<id>.png` (the theme size at or below it), and an
+ * `AppIcon.svg` as `/usr/share/icons/hicolor/scalable/apps/<id>.svg`. The entry's `Icon=` names
+ * that id, or is left out when the bundle has no icon.
  *
  * @param bundleDir The finished bundle directory.
  * @param exe The launcher's file name inside the bundle.
@@ -840,23 +1105,33 @@ export async function stageLinuxRoot(
   // `type`: Windows refuses a link whose (relative) target it cannot resolve from the cwd unless
   // told its kind — a Linux package built on Windows.
   await Deno.symlink(`../lib/${pkg}/${exe}`, join(root, "usr", "bin", pkg), { type: "file" });
+  const id = linuxAppId(meta);
+  const entry = `${id}.desktop`;
+  const owned = [`/usr/lib/${pkg}`, `/usr/bin/${pkg}`, `/usr/share/applications/${entry}`];
+  const icons: Array<[string, Uint8Array]> = [];
+  const png = await Deno.readFile(join(bundleDir, "AppIcon.png")).catch(() => undefined);
+  const size = png && pngSize(png);
+  if (png && size) {
+    icons.push([`usr/share/pixmaps/${id}.png`, png]);
+    const theme = size[0] === size[1] ? hicolorSize(size[0]) : undefined;
+    if (theme) icons.push([`usr/share/icons/hicolor/${theme}x${theme}/apps/${id}.png`, png]);
+  }
+  const svg = await Deno.readFile(join(bundleDir, "AppIcon.svg")).catch(() => undefined);
+  if (svg) icons.push([`usr/share/icons/hicolor/scalable/apps/${id}.svg`, svg]);
+  for (const [t, bytes] of icons) {
+    await Deno.mkdir(dirname(join(root, t)), { recursive: true });
+    await Deno.writeFile(join(root, t), bytes);
+    owned.push(`/${t}`);
+  }
   const apps = join(root, "usr", "share", "applications");
   await Deno.mkdir(apps, { recursive: true });
-  const entry = `${linuxDesktopEntry(meta).match(/^StartupWMClass=(.*)$/m)![1]}.desktop`;
-  await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta));
-  const owned = [`/usr/lib/${pkg}`, `/usr/bin/${pkg}`, `/usr/share/applications/${entry}`];
-  const icon = await Deno.readFile(join(bundleDir, "AppIcon.png")).catch(() => undefined);
-  const size = icon && pngSize(icon);
-  if (icon && size) {
-    const targets = [`usr/share/pixmaps/${pkg}.png`];
-    if (size[0] === size[1] && HICOLOR_SIZES.includes(size[0])) {
-      targets.push(`usr/share/icons/hicolor/${size[0]}x${size[0]}/apps/${pkg}.png`);
-    }
-    for (const t of targets) {
-      await Deno.mkdir(dirname(join(root, t)), { recursive: true });
-      await Deno.writeFile(join(root, t), icon);
-      owned.push(`/${t}`);
-    }
+  await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta, icons.length > 0));
+  const service = linuxDbusService(meta);
+  if (service) {
+    const services = join(root, "usr", "share", "dbus-1", "services");
+    await Deno.mkdir(services, { recursive: true });
+    await Deno.writeTextFile(join(services, `${id}.service`), service);
+    owned.push(`/usr/share/dbus-1/services/${id}.service`);
   }
   return owned;
 }
@@ -885,7 +1160,10 @@ export function debControl(
     `Architecture: ${debianArch(arch)}`,
     `Maintainer: ${oneLine(meta.publisher)}`,
     `Installed-Size: ${installedKiB}`,
-    `Depends: ${linuxDeps(meta.backend).map(([, p]) => p).join(", ")}`,
+    `Depends: ${
+      [...linuxDeps(meta.backend).map(([, p]) => p), ...linuxCapabilityDeps(meta).map(([d]) => d)]
+        .join(", ")
+    }`,
     "Section: utils",
     "Priority: optional",
     `Description: ${oneLine(meta.description)}`,
@@ -1009,7 +1287,8 @@ function buildTime(): number {
  * Build a `.deb` for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written
  * here), so it cross-builds from any OS. Installs into `/usr/lib/<package>` with a
  * `/usr/bin/<package>` link, the `.desktop` entry (deep-link schemes as `x-scheme-handler/*`) and
- * the icon; the desktop and icon databases are refreshed by their own dpkg triggers.
+ * the icon; the `postinst` / `postrm` refresh the desktop and icon databases
+ * ({@linkcode debMaintainerScript}).
  *
  * @param o What to build.
  * @returns The `.deb` path.
@@ -1020,11 +1299,17 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
     const stage = join(top, "root");
     const controlDir = join(top, "control");
     await stageLinuxRoot(o.bundleDir, o.exe, o.meta, stage);
-    const entries = await walkBundle(stage);
+    const pkg = debianPackageName(o.meta.name);
+    const entries = (await walkBundle(stage)).map((e) => linuxPackageEntry(e, pkg));
     const kib = Math.ceil(entries.reduce((n, e) => n + e.size, 0) / 1024);
     const mtime = buildTime();
     await Deno.mkdir(controlDir);
     await Deno.writeTextFile(join(controlDir, "control"), debControl(o.meta, o.arch, kib));
+    for (const script of ["postinst", "postrm"] as const) {
+      const file = join(controlDir, script);
+      await Deno.writeTextFile(file, debMaintainerScript(script, dbusAppIdOf(o.meta)));
+      if (Deno.build.os !== "windows") await Deno.chmod(file, 0o755);
+    }
     const control = await gzipBytes(
       await tarEntries(controlDir, await walkBundle(controlDir), mtime),
     );
@@ -1073,15 +1358,25 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
 /**
  * The `rpmbuild` spec for a staged Linux root: the files are copied as staged (no strip, no
  * debuginfo, no automatic dependency scan), `Requires` names the backend's shared libraries by
- * soname (every RPM distro provides those, whatever it calls the package).
+ * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (its
+ * `secret-tool`) when the secure store is on; `%post` / `%postun` refresh the desktop and icon
+ * databases.
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).
- * @param owned The installed paths the package owns.
+ * @param owned The installed paths the package owns ({@linkcode rpmFiles}: the sandbox helper
+ *   setuid root).
  * @returns The spec text.
  */
-export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly string[]): string {
-  const requires = linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`);
+export function rpmSpec(
+  meta: DesktopPackageMeta,
+  stage: string,
+  owned: readonly (string | RpmFile)[],
+): string {
+  const requires = [
+    ...linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`),
+    ...linuxCapabilityDeps(meta).map(([, rpm]) => `Requires: ${rpm}`),
+  ];
   // rpmbuild expands `%macro` / `%(shell)` / `%{lua:…}` everywhere in the spec, so every value
   // that comes from the project carries its `%` as the literal `%%`.
   const lit = (s: string) => s.replaceAll("%", "%%");
@@ -1105,9 +1400,32 @@ export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly
     "mkdir -p %{buildroot}",
     `cp -a '${lit(stage.replaceAll("'", "'\\''"))}'/. %{buildroot}/`,
     "",
+    // Scriptlets run under /bin/sh; `|| :` keeps a missing tool from failing the transaction.
+    "%post",
+    ...LINUX_REFRESH,
+    "",
+    "%postun",
+    ...LINUX_REFRESH,
+    // An erase ($1 is 0), not an upgrade: stop the app's scheduled-notification timers.
+    ...(dbusAppIdOf(meta)
+      ? [
+        'if [ "$1" = 0 ]; then',
+        ...linuxTimerCleanup(dbusAppIdOf(meta)!).map((l) => `  ${l}`),
+        "fi",
+      ]
+      : []),
+    "",
     "%files",
     "%defattr(-,root,root,-)",
-    ...owned.map(lit),
+    ...owned.map((f) => {
+      const { path, attr } = typeof f === "string" ? { path: f, attr: undefined } : f;
+      const prefix = attr === "dir"
+        ? "%dir "
+        : attr === "setuid"
+        ? `%attr(${SANDBOX_HELPER_MODE.toString(8)},root,root) `
+        : "";
+      return prefix + lit(path);
+    }),
     "",
   ].join("\n");
 }
@@ -1129,8 +1447,9 @@ export async function buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<stri
   try {
     const stage = join(top, "root");
     const owned = await stageLinuxRoot(o.bundleDir, o.exe, o.meta, stage);
+    const files = await rpmFiles(stage, debianPackageName(o.meta.name), owned);
     const spec = join(top, "app.spec");
-    await Deno.writeTextFile(spec, rpmSpec(o.meta, stage, owned));
+    await Deno.writeTextFile(spec, rpmSpec(o.meta, stage, files));
     const rpms = join(top, "rpms");
     await runTool("rpmbuild", [
       "-bb",

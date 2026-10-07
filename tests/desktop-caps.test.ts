@@ -2,7 +2,13 @@
 // Handlers are called directly with a fake DesktopCapCtx; the security-critical fs path-scoping
 // gets dedicated `..` / absolute / symlink-escape cases (the peer's e2e proves the wire).
 
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join } from "@std/path";
 import type {
   DesktopCapability,
@@ -734,6 +740,21 @@ Deno.test("shell: every spawn gets the bridge deadline's signal; the default spa
   await assertRejects(() => runShellTool("sleep", ["1"], undefined, abort.signal), DesktopCapError);
 });
 
+Deno.test("shell.openExternal opens the normalized href it checked, not the raw string", async () => {
+  const spawned: string[][] = [];
+  const cap = shellCapability({
+    dirs: { data: "/d", cache: "/c", documents: "/o" },
+    config: { openExternal: ["https:"], openPath: false, reveal: false, trash: false },
+    spawn: (_cmd, args) => {
+      spawned.push(args);
+      return Promise.resolve();
+    },
+  });
+  await call(cap, "openExternal", { url: '  https://Example.com/a b?q="x"  ' });
+  const opened = spawned[0][spawned[0].length - 1];
+  assertEquals(opened, "https://example.com/a%20b?q=%22x%22");
+});
+
 Deno.test("shell SECURITY: the Windows trash is spawned with the path in env, never argv", async () => {
   const root = await Deno.makeTempDir({ prefix: "denext-shell-wtrash-" });
   try {
@@ -760,6 +781,10 @@ Deno.test("shell SECURITY: the Windows trash is spawned with the path in env, ne
 
 Deno.test("shell.openPath SECURITY: programs, scripts and launchers are refused (fs write + open ≠ RCE)", async () => {
   for (const bad of ["x.bat", "X.CMD", "a.vbs", "s.hta", "l.lnk", "t.terminal", "c.command"]) {
+    assert(isExecutableOpenTarget(`/app/data/${bad}`), bad);
+  }
+  // Python zipapps / bytecode, Windows themes, Remote Desktop and Sandbox configs run too.
+  for (const bad of ["a.pyz", "a.pyzw", "a.pyc", "t.theme", "t.themepack", "r.rdp", "s.wsb"]) {
     assert(isExecutableOpenTarget(`/app/data/${bad}`), bad);
   }
   assert(isExecutableOpenTarget("C:\\app\\data\\x.bat. . "), "trailing dots/spaces are ignored");
@@ -1384,9 +1409,19 @@ Deno.test("dialogs: per-OS program is spawned with the path/name as discrete arg
     const mac = capturingDialogs("darwin", folder);
     await call(mac.cap, "pickFolder", {});
     assertEquals(mac.calls[0], ["osascript", ["-e", "POSIX path of (choose folder)"]]);
+    // Linux: only the runtime's dialogs — no program is spawned, and without them the call is
+    // `unavailable` (the page keeps <input type="file">).
     const lin = capturingDialogs("linux", folder);
-    await call(lin.cap, "openFile", {});
-    assertEquals(lin.calls[0][0], "zenity");
+    for (const method of ["openFile", "pickFolder"] as const) {
+      const err = await assertRejects(() => call(lin.cap, method, {}), DesktopCapError);
+      assertEquals(err.code, "unavailable");
+      assertStringIncludes(err.message, "xdg-desktop-portal");
+    }
+    await assertRejects(
+      () => call(lin.cap, "saveFile", { data: "x", suggestedName: "a.txt" }),
+      DesktopCapError,
+    );
+    assertEquals(lin.calls, []);
     const win = capturingDialogs("windows", folder);
     await call(win.cap, "openFile", {});
     assertEquals(win.calls[0][0], "powershell.exe");
@@ -1402,7 +1437,7 @@ Deno.test("dialogs: per-OS program is spawned with the path/name as discrete arg
   }
 });
 
-Deno.test("dialogs SECURITY: a dash-led suggestedName can never become an osascript/kdialog option", async () => {
+Deno.test("dialogs SECURITY: a dash-led suggestedName can never become an osascript option", async () => {
   // Reproduced on macOS: `osascript -e … <name>` with name `-e<script>` ran the injected script
   // (getopt still parses a dash-led trailing arg). The name now follows `--` and is sanitized.
   const inject = '-eproperty p : (do shell script "touch /tmp/pwned")';
@@ -1421,21 +1456,21 @@ Deno.test("dialogs SECURITY: a dash-led suggestedName can never become an osascr
     const [, margs] = mac.calls[0];
     assertEquals(margs[margs.length - 2], "--");
     assert(!margs[margs.length - 1].startsWith("-"), margs[margs.length - 1]);
-    // Linux: kdialog's positional start dir must not be dash-led either.
+    // Linux spawns no dialog program at all (the runtime's dialogs only), so no argv to inject.
     const calls: Array<[string, string[]]> = [];
     const lin = dialogsCapability({
       picked: new PickedPaths(),
       os: "linux",
       run: (cmd, args) => {
         calls.push([cmd, args]);
-        return Promise.resolve(
-          cmd === "zenity" ? { code: null, stdout: "" } : { code: 0, stdout: out },
-        );
+        return Promise.resolve({ code: 0, stdout: out });
       },
     });
-    await call(lin, "saveFile", { data: "x", suggestedName: "-platformpluginpath" });
-    assertEquals(calls[1][0], "kdialog");
-    assert(calls[1][1].every((a) => a === "--getsavefilename" || !a.startsWith("-")));
+    await assertRejects(
+      () => call(lin, "saveFile", { data: "x", suggestedName: "-platformpluginpath" }),
+      DesktopCapError,
+    );
+    assertEquals(calls, []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -1533,7 +1568,7 @@ Deno.test("dialogs: no dialog program available → unavailable (page falls back
   const picked = new PickedPaths();
   const none = dialogsCapability({
     picked,
-    os: "linux",
+    os: "darwin",
     run: () => Promise.resolve({ code: null, stdout: "" }),
   });
   const err = await assertRejects(() => call(none, "pickFolder", {}), DesktopCapError);
@@ -2019,7 +2054,9 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   const cap = secureStoreCapability({
     service: "svc",
     os: "linux",
-    run: () => Promise.resolve({ code, stdout }),
+    // `search` (the locked-keyring double-check after a silent miss) finds nothing.
+    run: (_cmd, args) =>
+      Promise.resolve(args[0] === "search" ? { code: 0, stdout: "" } : { code, stdout }),
   });
   assertEquals(await call(cap, "get", { key: "k" }), null, "empty stdout");
   stdout = "%%% not base64 %%%";
@@ -2044,8 +2081,9 @@ Deno.test({
     assertEquals(await realSecureRun("cat", [], "secret on stdin"), {
       code: 0,
       stdout: "secret on stdin",
+      stderr: "",
     });
-    assertEquals(await realSecureRun("cat", []), { code: 0, stdout: "" });
+    assertEquals(await realSecureRun("cat", []), { code: 0, stdout: "", stderr: "" });
     assertEquals(
       await rejectCode(realSecureRun("denext-no-such-credential-cli", ["get"])),
       "backend_unavailable",

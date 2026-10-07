@@ -10,7 +10,19 @@ import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { exportSpa } from "../spa.ts";
+import {
+  assertPlatformFilesResolve,
+  routeEntryFiles,
+  setModuleGraphRedirects,
+} from "../module-graph.ts";
+import { detectNextCompat } from "../next-compat-detect.ts";
+import {
+  type Platform,
+  platformResolution,
+  projectPlatformRedirects,
+} from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
 import {
   freshStagingDir,
@@ -86,7 +98,9 @@ export async function exportWithoutAppRouter(
   paths: ProjectPaths,
   options: StaticExportOptions,
 ): Promise<StaticExportResult | null> {
-  if (paths.config?.mode === "spa") return await exportSpa(paths, { outDir: options.outDir });
+  if (paths.config?.mode === "spa") {
+    return await exportSpa(paths, { outDir: options.outDir, platform: options.platform });
+  }
   if (await dirExists(paths.appDir)) return null;
   return await exportPagesRouter(paths, options);
 }
@@ -96,11 +110,25 @@ export async function exportWithoutAppRouter(
  * into server-side caching during the export render. Clears any stale transformed copies
  * from a previous run first (names key on source URL).
  */
-async function exportLoader(paths: ProjectPaths): Promise<ModuleLoader> {
-  if (!resolveCacheComponents(paths.config)) return defaultLoader;
-  const cacheDir = join(paths.outDir, "server-cache");
+async function exportLoader(
+  paths: ProjectPaths,
+  platform: Platform,
+  redirects: Record<string, string>,
+): Promise<ModuleLoader> {
+  const useCache = resolveCacheComponents(paths.config);
+  if (!useCache && Object.keys(redirects).length === 0) return defaultLoader;
+  // Per target: Deno caches a module by URL for the life of the process, so two targets'
+  // exports in one process must not share a copy's path.
+  const cacheDir = join(paths.outDir, "server-cache", platform);
   await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-  return createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });
+  // The target's platform files reach the server render the way `use cache` does: modules on
+  // the way to a variant are copied with the import rewritten.
+  return createUseCacheLoader(defaultLoader, {
+    projectDir: paths.projectDir,
+    cacheDir,
+    redirects,
+    useCache,
+  });
 }
 
 /** Set up plugins, scan the routes, resolve i18n and the output dirs, pick the loader. */
@@ -119,6 +147,30 @@ export async function prepareExport(
     config: paths.config ?? {},
   });
   const manifest = await scanRoutes(paths.appDir);
+  const platform = options.platform ?? "web";
+  // The native App Router path resolves the target's platform files through file-URL
+  // redirects; a next-compat app resolves them in its esbuild bundles instead.
+  const native = !(await detectNextCompat(paths));
+  const platformRedirects = native
+    ? await projectPlatformRedirects(paths.projectDir, paths.config, platform)
+    : {};
+  // The client bundles and crawls resolve aliases with Deno's own resolver, so the modules that
+  // reach a variant through one are rewritten for them (the server loader follows aliases).
+  const platformImports = await platformImportMap(
+    paths.projectDir,
+    platformRedirects,
+    join(paths.outDir, "platform-imports", platform),
+  );
+  // The boundary / hydration crawls see the modules this target loads, and a module that only
+  // other targets have fails here with a message naming its variants.
+  setModuleGraphRedirects(paths.configPath, platformImports);
+  if (native) {
+    await assertPlatformFilesResolve(
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+      paths.projectDir,
+      platformResolution(paths.config, platform),
+    );
+  }
   // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
   // previous export stays intact (and servable) until the new one is complete — a failed
   // export never leaves an empty `out/`.
@@ -134,13 +186,16 @@ export async function prepareExport(
     i18n: options.i18n ?? paths.i18n ?? undefined,
     outDir,
     clientOut,
-    load: await exportLoader(paths),
+    load: await exportLoader(paths, platform, platformRedirects),
+    platform,
+    platformRedirects,
     flightRoutes: new Set(),
     staticRoutes: new Set(),
     cssRoutes: new Set(),
     css: null,
     compat: false,
     compatModuleMap: null,
+    transforms: {},
     pages: 0,
     skipped: [],
   };

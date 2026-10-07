@@ -12,8 +12,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/actions", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/actions SSRs the action endpoint and hydrates the client island",

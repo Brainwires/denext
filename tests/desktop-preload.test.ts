@@ -52,7 +52,13 @@ Deno.test("injectDesktopGlobal: the preload key exists only while the preload ru
   const KEY = "preload-key-0123456789";
   const html = await injectDesktopGlobal(SHELL, TOKEN, false, PRELOAD, KEY);
   const list = scripts(html);
-  assertEquals(list[1], `<script>globalThis.__denextPreloadKey=${JSON.stringify(KEY)}</script>`);
+  assertEquals(
+    list[1],
+    `<script>globalThis.__denextPreloadKey=${
+      JSON.stringify(KEY)
+    };document.currentScript&&document.currentScript.remove()</script>`,
+    "the key's element detaches itself, so document.scripts never shows the key to the page",
+  );
   assertEquals(list[2], `<script>${PRELOAD}</script>`);
   assertEquals(list[3], "<script>delete globalThis.__denextPreloadKey</script>");
   assertStringIncludes(list[4], 'src="/_denext/client/index.js"'); // the page's own scripts after

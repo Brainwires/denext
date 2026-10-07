@@ -36,11 +36,11 @@ import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
 import {
   nativeAdapterOf,
-  nativeBearerToken,
+  nativeBearerOf,
   resolveNative,
   verifyNativeAccessToken,
 } from "./native.ts";
-import { currentContext } from "../request-context.ts";
+import { currentContext, headers } from "../request-context.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -311,7 +311,11 @@ function currentSession(): Promise<AuthSession | null> {
   // A native app authenticates with `Authorization: Bearer nat_…` instead of the cookie. A
   // presented native token decides alone — an invalid one is signed out, never "fall back to
   // the cookie" — while any other Authorization (an API token) leaves the cookie path as is.
-  const bearer = nativeBearerToken(currentContext()?.request);
+  // The header is read through `headers()`, the same guarded API the cookie path's
+  // `cookies()` is: it marks the render dynamic (a bearer page is never stored by ISR and
+  // answers `private, no-store`), postpones under PPR, throws inside `"use cache"` and reads
+  // empty under `force-static` — a user's page can't be cached and served to the next visitor.
+  const bearer = currentContext() ? nativeBearerOf(headers().get("authorization")) : undefined;
   if (bearer !== undefined) return verifyNativeAccessToken(activeConfig, bearer);
   return readAuthSession(activeConfig);
 }

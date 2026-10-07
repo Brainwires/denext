@@ -7,16 +7,23 @@
 // classification, stylesheets, next-compat SSR bundles, route + Flight bundles, fonts) and
 // `render` (every page × param set × locale, then `public/`). This module runs them in order.
 
+import { writePlatformStamp } from "./ota-manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import {
   bundleExportFlight,
   bundleExportRoutes,
   classifyRoutes,
   emitExportCss,
+  exportClientTransforms,
   selfHostExportFonts,
   setupCompat,
 } from "./export-pipeline/assets.ts";
-import type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
+import type {
+  ExportContext,
+  StaticExportOptions,
+  StaticExportResult,
+} from "./export-pipeline/context.ts";
+import { setModuleGraphRedirects } from "./module-graph.ts";
 import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pipeline/prepare.ts";
 import { copyPublic, renderAllPages } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
@@ -25,6 +32,34 @@ import { writeMobileExportExtras } from "./mobile-export-extras.ts";
 import { writeDesktopPreload } from "./desktop-preload.ts";
 
 export type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
+
+/** Bundle, render and write everything of one App Router export. */
+async function renderExport(ctx: ExportContext): Promise<void> {
+  const { paths } = ctx;
+  // 1. Client bundles (minified) + stylesheets + fonts.
+  await classifyRoutes(ctx);
+  await emitExportCss(ctx);
+  await setupCompat(ctx);
+  // The client transforms `denext build` applies (one shared path), before any client bundle.
+  await exportClientTransforms(ctx);
+  await bundleExportRoutes(ctx);
+  await bundleExportFlight(ctx);
+  await selfHostExportFonts(ctx);
+  // 2. Render every page (× each static param set).
+  await renderAllPages(ctx);
+  // 3. Copy public assets.
+  await copyPublic(paths.publicDir, ctx.outDir);
+  // 3b. Mobile extras: the appLinks association files and the Background Runner script.
+  await writeMobileExportExtras(paths.projectDir, paths.config, ctx.outDir);
+  // 3c. `desktop.preload`, bundled for the desktop runtime to inline first into every page.
+  await writeDesktopPreload(paths, ctx.outDir);
+  // 3d. A platform export names its target (an OTA manifest of it then does too).
+  if (ctx.platform !== "web") await writePlatformStamp(ctx.outDir, ctx.platform);
+  // Tear down the shared esbuild service the compat SSR build started (one-shot export).
+  if (ctx.compat) await stopNextCompat();
+  // 4. Everything rendered: swap the staging dir into `out/`.
+  await finishExport(ctx);
+}
 
 /** Pre-render a denext app to a static, host-anywhere directory. */
 export async function staticExport(
@@ -40,25 +75,12 @@ export async function staticExport(
   const early = await exportWithoutAppRouter(paths, options);
   if (early) return early;
 
-  const ctx = await prepareExport(projectDir, paths, options);
-  // 1. Client bundles (minified) + stylesheets + fonts.
-  await classifyRoutes(ctx);
-  await emitExportCss(ctx);
-  await setupCompat(ctx);
-  await bundleExportRoutes(ctx);
-  await bundleExportFlight(ctx);
-  await selfHostExportFonts(ctx);
-  // 2. Render every page (× each static param set).
-  await renderAllPages(ctx);
-  // 3. Copy public assets.
-  await copyPublic(paths.publicDir, ctx.outDir);
-  // 3b. Mobile extras: the appLinks association files and the Background Runner script.
-  await writeMobileExportExtras(paths.projectDir, paths.config, ctx.outDir);
-  // 3c. `desktop.preload`, bundled for the desktop runtime to inline first into every page.
-  await writeDesktopPreload(paths, ctx.outDir);
-  // Tear down the shared esbuild service the compat SSR build started (one-shot export).
-  if (ctx.compat) await stopNextCompat();
-  // 4. Everything rendered: swap the staging dir into `out/`.
-  await finishExport(ctx);
-  return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
+  try {
+    const ctx = await prepareExport(projectDir, paths, options);
+    await renderExport(ctx);
+    return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
+  } finally {
+    // The target's graph redirects belong to this export only.
+    setModuleGraphRedirects(null);
+  }
 }

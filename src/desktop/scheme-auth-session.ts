@@ -22,7 +22,9 @@
  *    the initiating client some other way — and then a `state` is mandatory too, unless the session
  *    may only run in the OS's auth session (`osSessionOnly`, whose callback never travels as a deep
  *    link) or it is `denext/desktop/clerk`'s transport, proven by the per-launch preload key
- *    (`binding: "clerk-client-nonce"`; see that module).
+ *    (`binding: "clerk-client-nonce"`; see that module). That binding also needs a per-session
+ *    callback nonce (rule 4b): the transport puts it in the redirect URL it gives Clerk, so only a
+ *    callback that went through THIS sign-in carries it.
  * 3. The callback must match the expected target EXACTLY: scheme, host and path of the URL's own
  *    `redirect_uri` when that is a `<scheme>:` URL, else of the `callbackPrefix` the caller gives.
  * 4. `state` round-trips: when the target is the URL's `redirect_uri`, the URL's `state` (if any)
@@ -30,6 +32,13 @@
  *    the caller's `state` option (if any). A callback for the target with a missing or different
  *    `state` is swallowed — it neither resolves the session nor reaches the page's routes — and the
  *    session keeps waiting.
+ * 4b. A callback nonce (`nonce`, at least 128 bits of base64url, generated per session by the
+ *    caller that also wrote it into the redirect URL) must come back exactly once as the
+ *    `denext_nonce` query parameter, compared in constant time. It is mandatory with the Clerk
+ *    binding, whose callback has no `state`: a forged deep link (any same-user program can open
+ *    `<scheme>://…?rotating_token_nonce=…`) cannot complete the session without it, whether or not
+ *    Clerk binds its `rotating_token_nonce` to the initiating client. A callback without it, with
+ *    another one, or replayed after the session settled is swallowed like a bad `state`.
  * 5. Who handles the scheme is checked before the system browser opens
  *    (`Deno.desktop.getSchemeOwner`): `none` → register (never forced) and re-check; `other` →
  *    refuse with `scheme_owned_by_other_app` (+ the handler, for display) so the caller falls back
@@ -76,6 +85,10 @@ const MAX_REASON_CHARS = 500;
 const CLERK_NONCE_BINDING = "clerk-client-nonce";
 /** The query parameter Clerk's native OAuth callback carries (the client-bound sign-in nonce). */
 const CLERK_NONCE_PARAM = "rotating_token_nonce";
+/** The query parameter that carries the per-session callback nonce (rule 4b). */
+const CALLBACK_NONCE_PARAM = "denext_nonce";
+/** A callback nonce: base64url, at least 22 characters (≥ 128 bits). */
+const CALLBACK_NONCE = /^[A-Za-z0-9_-]{22,128}$/;
 /** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding. */
 const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 /** A session key: what the starting page keeps to cancel its own session. */
@@ -95,6 +108,8 @@ interface StartRequest {
   readonly target: Target;
   /** The `state` the callback must carry, or `null` when none is expected. */
   readonly state: string | null;
+  /** The callback nonce the callback must carry (rule 4b), or `null` when none is expected. */
+  readonly nonce: string | null;
   readonly timeoutMs: number;
   /** A private OS auth session (macOS); ignored by the system browser. */
   readonly ephemeral: boolean;
@@ -108,6 +123,8 @@ interface StartRequest {
 interface Pending {
   readonly target: Target;
   readonly state: string | null;
+  /** The per-session callback nonce (rule 4b), or `null`. */
+  readonly nonce: string | null;
   readonly resolve: (url: string) => void;
   readonly reject: (err: DesktopCapError) => void;
   /** Set while the OS's auth session (the sheet) owns the session: deep links never resolve it. */
@@ -306,22 +323,33 @@ function sameSecret(a: string, b: string): boolean {
 }
 
 /**
- * Whether a waived-PKCE session without `state` is allowed: only with `osSessionOnly`, or as the
- * Clerk transport proven by the preload key. A `binding` without a valid key is `invalid` (a page
- * cannot claim it).
+ * Whether the session claims the Clerk binding, proven by the preload key. A `binding` without a
+ * valid key is `invalid` (a page cannot claim it).
  */
-function checkStateless(
-  args: Record<string, unknown>,
-  osSessionOnly: boolean,
-  preloadKey: string | undefined,
-): boolean {
+function checkBinding(args: Record<string, unknown>, preloadKey: string | undefined): boolean {
   const binding = optString(args, "binding");
-  if (binding === undefined) return osSessionOnly;
+  if (binding === undefined) return false;
   const key = optString(args, "bindingKey") ?? "";
   if (binding !== CLERK_NONCE_BINDING || !preloadKey || !sameSecret(key, preloadKey)) {
     throw invalid("binding is reserved for denext/desktop/clerk installed from desktop.preload");
   }
   return true;
+}
+
+/**
+ * Rule 4b: the per-session callback nonce (≥ 128 bits of base64url), mandatory with the Clerk
+ * binding; `null` when none is given (and none is required).
+ */
+function checkNonce(args: Record<string, unknown>, required: boolean): string | null {
+  const nonce = optString(args, "nonce");
+  if (nonce === undefined) {
+    if (required) throw invalid("the Clerk binding needs a per-session callback nonce");
+    return null;
+  }
+  if (!CALLBACK_NONCE.test(nonce)) {
+    throw invalid("nonce must be 22–128 base64url characters (at least 128 bits)");
+  }
+  return nonce;
 }
 
 /** `ephemeral`: absent → `false`; else a boolean. */
@@ -361,8 +389,10 @@ export function parseSchemeAuthStart(
   const waived = checkPkce(url, args);
   const state = expectedState(url, args, fromRedirect);
   const osSessionOnly = optFlag(args, "osSessionOnly");
-  const stateless = checkStateless(args, osSessionOnly, preloadKey);
-  if (waived && state === null && !stateless) {
+  const bound = checkBinding(args, preloadKey);
+  const nonce = checkNonce(args, bound);
+  // A waived-PKCE session without `state`: only OS-only, or the Clerk transport (with its nonce).
+  if (waived && state === null && !osSessionOnly && !bound) {
     throw invalid(
       'pkce: "not-applicable" needs a state the callback must carry (or osSessionOnly)',
     );
@@ -372,6 +402,7 @@ export function parseSchemeAuthStart(
     scheme,
     target,
     state,
+    nonce,
     timeoutMs: checkTimeout(args.timeoutMs),
     ephemeral: checkEphemeral(args.ephemeral),
     osSessionOnly,
@@ -415,21 +446,30 @@ async function ensureSchemeOwner(api: DesktopAppApi | undefined, scheme: string)
   }
 }
 
-/** Where an incoming callback URL stands against the open session (rules 3 and 4). */
+/** Where an incoming callback URL stands against the open session (rules 3, 4 and 4b). */
 function matchCallback(open: Pending, url: string): "match" | "bad_state" | "other" {
   const got = targetOf(url);
   if (!got || !sameTarget(got, open.target)) return "other";
-  const states = new URL(url).searchParams.getAll("state");
+  const params = new URL(url).searchParams;
+  const states = params.getAll("state");
   if (open.state !== null && (states.length !== 1 || states[0] !== open.state)) {
     return "bad_state";
+  }
+  if (open.nonce !== null) {
+    const nonces = params.getAll(CALLBACK_NONCE_PARAM);
+    if (nonces.length !== 1 || !sameSecret(nonces[0], open.nonce)) return "bad_state";
   }
   return "match";
 }
 
-/** Whether `url` carries a Clerk sign-in nonce (never routed to the page outside its session). */
+/**
+ * Whether `url` carries a Clerk sign-in nonce or a callback nonce: never routed to the page
+ * outside its session (a forgery or a replay).
+ */
 function hasClerkNonce(url: string): boolean {
   try {
-    return new URL(url).searchParams.has(CLERK_NONCE_PARAM);
+    const params = new URL(url).searchParams;
+    return params.has(CLERK_NONCE_PARAM) || params.has(CALLBACK_NONCE_PARAM);
   } catch {
     return false;
   }
@@ -602,6 +642,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       const open: Pending = {
         target: req.target,
         state: req.state,
+        nonce: req.nonce,
         resolve: (url) => (settle(), resolve(url)),
         reject: (err) => (settle(), reject(err)),
         viaOs: false,

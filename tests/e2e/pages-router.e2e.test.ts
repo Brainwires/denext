@@ -18,9 +18,10 @@ import {
   launchBrowser,
   type RunningServer,
 } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/pages-router", import.meta.url).pathname;
-const CLI = new URL("../../cli.ts", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/pages-router", import.meta.url));
+const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 
 /**
  * Build + serve the example through the **CLI** (not the in-process `build()`),

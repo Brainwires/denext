@@ -171,7 +171,11 @@ interface PopupWindow {
   location?: { origin: string; href: string };
   opener?: { postMessage(message: unknown, targetOrigin: string): void } | null;
   close?: () => void;
+  name?: string;
 }
+
+/** The window name the web fallback opens its popup under; only that window completes. */
+export const AUTH_SESSION_WINDOW = "denext-auth-session";
 
 const PLUGIN_NAME = "DenextAuthSession";
 /** The `type` of the message {@linkcode completeAuthSession} posts to the opener. */
@@ -333,7 +337,7 @@ function startWeb(url: string): RunningSession {
       authSessionError("unsupported", "no window to open the sign-in popup from (SSR?)"),
     );
   }
-  const popup = g.open(url, "denext-auth-session", "popup,width=520,height=720");
+  const popup = g.open(url, AUTH_SESSION_WINDOW, "popup,width=520,height=720");
   if (!popup) return failed(authSessionError("unsupported", "the sign-in popup was blocked"));
   let finish: (outcome: { url: string } | { error: AuthSessionError }) => void = () => {};
   const result = new Promise<string>((resolve, reject) => {
@@ -492,9 +496,10 @@ export async function openAuthSession(
  * `state` and all) to the window that opened the popup, addressed to this origin only, then
  * closes the popup. Not needed inside the native shell, where the callback never loads a page.
  *
- * @returns `true` when it posted to an opener; `false` when this page has no opener (it was
- * opened directly, or the provider's `Cross-Origin-Opener-Policy` severed it), so the page can
- * fall back to handling the callback itself.
+ * @returns `true` when it posted to an opener; `false` when this page is not the auth-session
+ * popup (its window is not named `denext-auth-session`) or has no opener (it was opened
+ * directly, or the provider's `Cross-Origin-Opener-Policy` severed it), so the page can fall
+ * back to handling the callback itself.
  * @example
  * ```tsx
  * // app/auth/callback/complete.tsx
@@ -514,6 +519,10 @@ export function completeAuthSession(): boolean {
   const g = globalThis as PopupWindow;
   const opener = g.opener;
   const location = g.location;
+  // Only the popup openAuthSession opened: any other same-origin window this page loads in (one a
+  // page opened with window.open, an attacker's tab) would hand its URL, and a code with it, to
+  // whatever opened it.
+  if (g.name !== AUTH_SESSION_WINDOW) return false;
   if (!opener || !location || typeof opener.postMessage !== "function") return false;
   opener.postMessage({ type: CALLBACK_MESSAGE, url: location.href }, location.origin);
   g.close?.();

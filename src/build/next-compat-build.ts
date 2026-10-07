@@ -11,6 +11,7 @@
  * @module
  */
 
+import type { PlatformResolution } from "./platform-extensions.ts";
 import { join } from "@std/path";
 import { keyedBundleRef } from "./next-compat-loader.ts";
 import type * as esbuild from "esbuild";
@@ -54,6 +55,10 @@ export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 // `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
 // the doc-lint entry set. `MdxBuildOptions` rides along — the `mdxOptions` fields are public.
 export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.ts";
+// `Platform` is re-exported for the JSR docs only: `PlatformResolution` (an option type here)
+// names it, and a public type may not reference a private one.
+// fallow-ignore-next-line unused-type
+export type { Platform, PlatformResolution } from "./platform-extensions.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -137,6 +142,11 @@ export interface BuildNextCompatModulesOptions {
    * with the same URLs the client bundle mints.
    */
   assets?: AssetOptions;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -207,6 +217,7 @@ export async function buildNextCompatModules(
     optimizePackageImports: options.optimizePackageImports,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
+    appPlatform: options.appPlatform,
     assets: options.assets,
   });
 
@@ -252,6 +263,11 @@ export interface BuildNextCompatClientOptions {
   clientDir: string;
   /** The client hydration entries to bundle. */
   entries: NextCompatClientEntry[];
+  /**
+   * The `"use server"` modules the entries may import (the boundary's `server`), each bundled
+   * as its action stub. Any other app `"use server"` module a bundle reaches fails the build.
+   */
+  server?: Iterable<readonly [string, { url: string; exports: readonly string[] }]>;
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
   momentumSafeScroll?: boolean;
   /** Minify the output bundles (production). */
@@ -306,6 +322,11 @@ export interface BuildNextCompatClientOptions {
   platformExtensions?: readonly string[];
   /** Parse `.js` as JSX. Forwarded to {@link BundleNextCompatModulesOptions.jsxInJs}. */
   jsxInJs?: boolean;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -344,9 +365,14 @@ export async function buildNextCompatClientEntries(
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
-    // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
-    // real esbuild plugins, which is what callers pass.
-    extraPlugins: options.extraPlugins as esbuild.Plugin[] | undefined,
+    appPlatform: options.appPlatform,
+    // Actions first (stubbed, never instrumented), then the caller's plugins. Public type is
+    // `unknown[]` (to not expose esbuild's types); the bundler expects real esbuild plugins,
+    // which is what callers pass.
+    extraPlugins: [
+      serverStubPlugin(options.server ?? [], generateServerStub),
+      ...(options.extraPlugins as esbuild.Plugin[] | undefined ?? []),
+    ],
     platformExtensions: options.platformExtensions,
     jsxInJs: options.jsxInJs,
   });
@@ -419,6 +445,11 @@ export interface BuildNextCompatFlightOptions {
    * `installViewTransitionSupport()` and the marking runtime is dropped. Defaults to `false`.
    */
   usesViewTransition?: boolean;
+  /**
+   * The target's platform files for the app's own modules. Forwarded to
+   * {@link BundleNextCompatModulesOptions.appPlatform}.
+   */
+  appPlatform?: PlatformResolution | null;
 }
 
 /**
@@ -489,6 +520,7 @@ export async function buildNextCompatFlightEntry(
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
+    appPlatform: options.appPlatform,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],

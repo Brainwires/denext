@@ -12,6 +12,7 @@
 //            cross-builds Linux and Windows from any OS, macOS packages on a Mac.
 //   add      enable Deno Desktop capabilities in desktop.capabilities (./desktop-add.ts)
 //   publish-update  pack a packaged app into a signed full-app update (archive + app-update.json)
+//   doctor   the pinned runtime and, on Linux, what the session provides (./desktop-doctor.ts)
 //
 // `run`/`build`/`package` serve a static export over loopback. `dev` is the desktop half of
 // dev-server attach (the Metro model): the window proxies to `denext dev` so the CSP and the dev
@@ -20,7 +21,8 @@
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
 
-import { dirname, join, resolve } from "@std/path";
+import { desktopPlatform } from "../../build/platform-extensions.ts";
+import { dirname, join, resolve, toFileUrl } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
 import { startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
@@ -39,6 +41,7 @@ import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
 import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
+import { DESKTOP_DOCTOR_FLAGS, desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
@@ -49,6 +52,11 @@ import {
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
+import {
+  desktopAppName,
+  desktopWindowsBootstrapBundle,
+} from "../../build/desktop-package-script.ts";
+import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
@@ -63,10 +71,12 @@ function desktopDir(ctx: CommandContext): string {
  * run` then keeps its window open for as long as the user likes, and must not block builds.
  */
 async function exportSpa(dir: string): Promise<void> {
-  console.log(`\n  denext desktop — exporting SPA  ▸  ${dir}\n`);
+  // The window runs on this machine: resolve this OS's platform files (`.macos`, `.desktop`).
+  const platform = desktopPlatform(Deno.build.os);
+  console.log(`\n  denext desktop — exporting SPA [${platform}]  ▸  ${dir}\n`);
   const result = await withProjectLocks(
     { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
-    () => runBuildStep(() => staticExport(dir), "desktop export"),
+    () => runBuildStep(() => staticExport(dir, { platform }), "desktop export"),
   );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
@@ -93,11 +103,14 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
-    "                                         Sign a full-app update (archive + app-update.json)",
+    "                                         Sign a full-app update (archive + app-update.json)\n" +
+    "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +
+    "  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n" +
+    "                                         Secret Service and portals, each with a fix (--json)",
   positionals: [
     {
       name: "action",
-      help: "run | build | dev | package | add | publish-update (default: run)",
+      help: "run | build | dev | package | add | publish-update | doctor (default: run)",
     },
     { name: "dir", help: "Project directory (default: .)" },
   ],
@@ -146,7 +159,7 @@ export const desktopCommand: CommandSpec = {
       type: "boolean",
       help:
         "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
-        "keeping a .bak of any file that differs; adopt the current scripts in an existing project",
+        "keeping a .bak of any file that differs",
     },
     {
       name: "verify-runtime",
@@ -162,6 +175,7 @@ export const desktopCommand: CommandSpec = {
     },
     ...DESKTOP_ADD_FLAGS,
     ...PUBLISH_UPDATE_FLAGS,
+    ...DESKTOP_DOCTOR_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
@@ -176,9 +190,10 @@ export const desktopCommand: CommandSpec = {
     if (action === "package") return await packageDesktop(ctx, dir);
     if (action === "add") return await desktopAdd(ctx);
     if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
+    if (action === "doctor") return void await desktopDoctor(ctx, dir);
     console.error(
       `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
-        `publish-update).`,
+        `publish-update | doctor).`,
     );
     Deno.exit(1);
   },
@@ -276,6 +291,12 @@ function hostDesktopOs(): DesktopOs {
 interface BuiltDesktopWindow {
   readonly exe: string;
   readonly scratch: string;
+  /**
+   * The Windows CEF layout behind CEF's bootstrap (`desktopWindowsBootstrapBundle`): the bootstrap
+   * moves the process to the executable's directory, so the launch names the project directory
+   * in `LAUFEY_CWD` for the host to change back to.
+   */
+  readonly bootstrap: boolean;
 }
 
 /**
@@ -313,7 +334,15 @@ async function buildDesktopWindow(
       stderr: "inherit",
     }).output();
     if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
-    return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch };
+    // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does
+    // (or as a `deno desktop` that knows it already wrote it).
+    const scriptUrl = toFileUrl(join(dir, "scripts", "run.ts")).href;
+    const bootstrap = os === "windows" &&
+      await desktopWindowsBootstrapBundle(
+        plan.bundle,
+        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl)),
+      );
+    return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch, bootstrap };
   } catch (err) {
     await removeScratch(scratch);
     throw err;
@@ -336,7 +365,7 @@ function launchDesktopWindow(
 ): DesktopWindow & { readonly code: Promise<number> } {
   const child = new Deno.Command(built.exe, {
     cwd: dir,
-    env,
+    env: built.bootstrap ? { ...env, LAUFEY_CWD: resolve(dir) } : env,
     stdin: "null",
     stdout: "inherit",
     stderr: "inherit",

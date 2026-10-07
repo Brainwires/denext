@@ -16,8 +16,9 @@ import {
   pollFor,
   type RunningServer,
 } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/resumability", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/resumability", import.meta.url));
 
 /** Read an array of element textContents (via a JSON round-trip through evaluate). */
 async function texts(

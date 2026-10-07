@@ -171,6 +171,33 @@ Deno.test("origin gate: an allowed LAN host loads the dev assets, others are sti
   assertEquals(devOriginAllowed(new Request(lan, { headers: sameOrigin }), lan, []), false);
 });
 
+Deno.test("origin gate: on a LAN host a bare client is refused — only a browser's same-origin request passes", () => {
+  const allowed = effectiveDevOrigins([[]], "192.168.1.5");
+  const lan = new URL("http://192.168.1.5:3000/_denext/@fs/app/.env");
+  // curl from another machine: no Sec-Fetch-Site, no Origin — the Host alone proves nothing.
+  assertEquals(devOriginAllowed(new Request(lan), lan, allowed), false);
+  // A same-host Origin without Sec-Fetch-Site (an older browser) is still refused off loopback.
+  assertEquals(
+    devOriginAllowed(
+      new Request(lan, { headers: { origin: "http://192.168.1.5:3000" } }),
+      lan,
+      allowed,
+    ),
+    false,
+  );
+  assertEquals(
+    devOriginAllowed(
+      new Request(lan, { headers: { "sec-fetch-site": "same-origin" } }),
+      lan,
+      allowed,
+    ),
+    true,
+  );
+  // On loopback a bare client (curl, the MCP tools) keeps working.
+  const local = new URL("http://localhost:3000/_denext/dev-state");
+  assertEquals(devOriginAllowed(new Request(local), local, allowed), true);
+});
+
 // --- QR ---------------------------------------------------------------------------
 
 /** The eight data masks (ISO/IEC 18004 table 10). */

@@ -7,13 +7,24 @@ import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
+import { generateServerStub } from "../client-imports.ts";
+import { scanDirective } from "../directives.ts";
+import { serverModuleIdFor } from "../boundary-ids.ts";
+import { staticExportNames } from "../module-graph.ts";
 import { importedNames, prepareReactNativeSource } from "./react-native.ts";
-import { firstPartyResolver, resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
+import {
+  firstPartyProbe,
+  firstPartyResolver,
+  resolveFirstParty,
+  rewriteSpecifier,
+} from "./resolve.ts";
+import type { Platform } from "../platform-extensions.ts";
 import {
   addImporter,
   loaderFor,
   norm,
   type TransformEntry,
+  transformKey,
   type UnbundledState,
   versionOf,
 } from "./state.ts";
@@ -44,8 +55,8 @@ function outputText(result: esbuild.BuildResult<{ write: false }>): string {
 }
 
 /** The cached transform of `abs` if its source and every dep version are unchanged. */
-function cachedTransform(st: UnbundledState, abs: string, mtimeMs: number): TransformEntry | null {
-  const hit = st.cache.get(abs);
+function cachedTransform(st: UnbundledState, key: string, mtimeMs: number): TransformEntry | null {
+  const hit = st.cache.get(key);
   if (!hit || hit.mtimeMs !== mtimeMs) return null;
   return hit.deps.every((d) => versionOf(st, d.abs) === d.v) ? hit : null;
 }
@@ -71,6 +82,7 @@ async function refreshFooterFor(
   entry: TransformEntry,
   source: string,
   imported: Map<string, Set<string>>,
+  platform: Platform,
 ): Promise<string> {
   try {
     const parsed = await parseModule(source);
@@ -80,7 +92,7 @@ async function refreshFooterFor(
     }
     const url = toFileUrl(abs).href;
     // Import-map aliases resolve as the rewrite resolves them, so a hook imported by `@/…` is named.
-    const firstParty = await firstPartyResolver(st, abs);
+    const firstParty = await firstPartyResolver(st, abs, platform);
     const resolveSpec = (spec: string) => {
       const hit = firstParty(spec);
       return hit ? toFileUrl(hit).href : undefined;
@@ -100,16 +112,42 @@ async function refreshFooterFor(
 /**
  * The module's source as it is served: as written, or — in React Native mode — with the
  * worklets transform and the `require` hoist applied ({@linkcode prepareReactNativeSource}).
- * Null when it cannot be read (esbuild then reports the missing file).
+ * A `"use server"` module is served as its action stub instead ({@linkcode actionStub}): its
+ * source never reaches the browser. Null when it cannot be read (esbuild then reports the
+ * missing file).
  */
-async function servedSource(st: UnbundledState, abs: string): Promise<string | null> {
+async function servedSource(
+  st: UnbundledState,
+  abs: string,
+): Promise<{ source: string | null; action: boolean }> {
   let source: string;
   try {
     source = await Deno.readTextFile(abs);
   } catch {
-    return null;
+    return { source: null, action: false };
   }
-  return st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source;
+  if (scanDirective(source) === "server") {
+    return { source: await actionStub(st, abs), action: true };
+  }
+  return {
+    source: st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source,
+    action: false,
+  };
+}
+
+/**
+ * The action stub the browser gets for the `"use server"` module at `abs`: the dev boundary's
+ * id and exports for it, else the id the boundary gives a module (its real path under the app
+ * dir) and its static export names.
+ */
+async function actionStub(st: UnbundledState, abs: string): Promise<string> {
+  const url = toFileUrl(await Deno.realPath(abs).catch(() => abs)).href;
+  for (const [id, ref] of st.opts.serverModules?.() ?? []) {
+    if (ref.url === url || ref.url === toFileUrl(abs).href) {
+      return generateServerStub(id, ref.exports);
+    }
+  }
+  return generateServerStub(serverModuleIdFor(st.opts.appDir, url), await staticExportNames(abs));
 }
 
 /** esbuild plugin: load `abs` (+ footer), externalize + rewrite every import it makes. */
@@ -118,6 +156,7 @@ function moduleRewritePlugin(
   abs: string,
   loaded: { source: string | null; footer: string; names: Map<string, Set<string>> },
   entry: TransformEntry,
+  platform: Platform,
 ): esbuild.Plugin {
   const { footer, names } = loaded;
   return {
@@ -146,7 +185,7 @@ function moduleRewritePlugin(
       });
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
-        const firstParty = await resolveFirstParty(st, args.path, args.importer || abs);
+        const firstParty = await resolveFirstParty(st, args.path, args.importer || abs, platform);
         if (firstParty) addImporter(st, firstParty, abs);
         return {
           path: rewriteSpecifier(st, args.path, firstParty, entry, names.get(args.path)),
@@ -163,26 +202,34 @@ function moduleRewritePlugin(
  * module, appends the Fast Refresh footer that registers each export's family (the
  * hook that makes an edit swap in place).
  */
-export async function transform(st: UnbundledState, abs: string): Promise<TransformEntry> {
+export async function transform(
+  st: UnbundledState,
+  abs: string,
+  platform: Platform = "web",
+): Promise<TransformEntry> {
   const mtimeMs = await mtimeOf(abs);
-  const hit = cachedTransform(st, abs, mtimeMs);
+  const key = transformKey(abs, platform);
+  const hit = cachedTransform(st, key, mtimeMs);
   if (hit) return hit;
 
   const entry: TransformEntry = { mtimeMs, code: "", deps: [], selfAccepting: false };
   st.known.add(abs);
-  const source = await servedSource(st, abs);
+  const { source, action } = await servedSource(st, abs);
   const names = new Map<string, Set<string>>();
-  const footer = source === null ? "" : await refreshFooterFor(st, abs, entry, source, names);
+  // An action stub registers no components (an edit to the action reloads its importers).
+  const footer = source === null || action
+    ? ""
+    : await refreshFooterFor(st, abs, entry, source, names, platform);
   // No deno-loader: every import is externalized by the rewrite plugin, so esbuild only
   // transforms this one file (JSX/TS via its built-in loaders) — a warm rebuild is
   // ~5ms, the property that makes per-module HMR feel instant.
   const result = await singleModuleBuild(
     [abs],
-    [moduleRewritePlugin(st, abs, { source, footer, names }, entry)],
+    [moduleRewritePlugin(st, abs, { source, footer, names }, entry, platform)],
     st.opts.define,
   );
   entry.code = outputText(result);
-  st.cache.set(abs, entry);
+  st.cache.set(key, entry);
   return entry;
 }
 
@@ -194,8 +241,11 @@ function entryRewritePlugin(
   src: string,
   importerKey: string,
   sink: TransformEntry,
+  platform: Platform,
 ): esbuild.Plugin {
   const { appDir } = st.opts;
+  // A page / island the entry names by file URL takes the target's platform file too.
+  const probe = firstPartyProbe(st, platform);
   return {
     name: "denext-dev-entry-rewrite",
     setup(build) {
@@ -216,8 +266,8 @@ function entryRewritePlugin(
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.path === ENTRY_NS) return null; // handled above
         const firstParty = args.path.startsWith("file://")
-          ? norm(fromFileUrl(args.path))
-          : await resolveFirstParty(st, args.path, args.importer || appDir);
+          ? norm(probe(fromFileUrl(args.path)) ?? fromFileUrl(args.path))
+          : await resolveFirstParty(st, args.path, args.importer || appDir, platform);
         if (firstParty) addImporter(st, firstParty, importerKey);
         return { path: rewriteSpecifier(st, args.path, firstParty, sink), external: true };
       });
@@ -236,10 +286,12 @@ export async function transformGeneratedEntry(
   st: UnbundledState,
   src: string,
   importerKey: string,
+  platform: Platform = "web",
 ): Promise<string> {
   const sink: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: true };
+  const seeded = momentumScrollSeed(st.opts.momentumSafeScroll) + src;
   const result = await singleModuleBuild([ENTRY_NS], [
-    entryRewritePlugin(st, momentumScrollSeed(st.opts.momentumSafeScroll) + src, importerKey, sink),
+    entryRewritePlugin(st, seeded, importerKey, sink, platform),
   ]);
   return outputText(result);
 }

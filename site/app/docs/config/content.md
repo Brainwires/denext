@@ -265,9 +265,13 @@ Per-request observability is code, not config: export `onRequest(info)` from
   hand — `denext dev --lan` and an explicit `--host` allow the address they
   bind (`--host 0.0.0.0` allows this machine's own addresses), and
   `--allowed-dev-origin <origin>` (repeatable, or comma-separated) adds entries
-  for one run. A listed host is trusted like loopback: a device that can reach
-  it can read the app's transformed source. Cross-site pages are still refused
-  (`Sec-Fetch-Site` / `Origin`). See
+  for one run. A network bind also requires its session token from every
+  other machine (the URL `denext dev` prints carries it; see
+  [Live reload on a device](/docs/mobile#live-reload-on-a-device)), and off
+  loopback a request must carry the browser's `Sec-Fetch-Site: same-origin`;
+  cross-site pages are refused (`Sec-Fetch-Site` / `Origin`). `/_denext/@fs` never serves a dotfile or dot-directory (`.env*`,
+  `.git/`, `.denext/`), a key store (`*.pem`, `*.key`, `*.p12`, …) or any file
+  that is neither a JS / TS / JSON module under the project nor in the app's module graph. See
   [Live reload on a device](/docs/mobile#live-reload-on-a-device). An entry may
   also be a Deno Desktop app's custom-scheme origin (`"myapp://app"`, validated
   as [`desktop.app.origin`](/docs/desktop#desktop-app-origin) is): it admits a
@@ -405,7 +409,9 @@ export default {
 ## Build & optimization
 
 Build-time switches. All off by default except `nodeResolve`,
-`momentumSafeScroll` and the `optimizePackageImports` defaults.
+`momentumSafeScroll` and the `optimizePackageImports` defaults. The client transforms among them
+(`reactCompiler`, `asyncContext`, `features`) apply to `denext build` and `denext export` alike,
+every `--platform` target included.
 
 - **`reactCompiler`** — `boolean`. The build-time auto-memoization compiler (a
   React-Compiler-style pass; Next.js's key). Conservative by construction —
@@ -485,6 +491,11 @@ Build-time switches. All off by default except `nodeResolve`,
   sticky headers move with it until the fling settles. Set `false` to opt out
   (it holds in every build: App Router, Pages Router, SPA, dev and export). See
   [`denext/mobile`](/docs/mobile#the-denextmobile-runtime).
+- **`platformExtensions`** — `boolean | { native? }` (**default on**). Platform-specific files:
+  an import of `./BigButton` resolves to `BigButton.ios.tsx` in the iOS export,
+  `BigButton.desktop.tsx` in a desktop package and `BigButton.web.tsx` on the web, else to the
+  plain file. `{ native: true }` also probes `.native` after the OS on iOS and Android; `false`
+  turns platform files off. See [platform-specific files](/docs/platform-files).
 - **`reactNative`** — `boolean | { rootStyle?, expoShims?, lists?, aliases?,
   desktopPackage? }` (off; SPA mode only). Builds a React Native / Expo app's
   source for the web through `react-native-web`: `react-native` resolves to

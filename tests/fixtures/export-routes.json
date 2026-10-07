@@ -1,0 +1,191 @@
+{
+  "$comment": [
+    "The spec of which exported file serves a URL path, shared by every surface that serves a static",
+    "export: resolveExportPath (src/build/export-paths.ts), the desktop request handler",
+    "(createDesktopHandler), the SPA servers' shell decision (wantsShell), and the Capacitor shells'",
+    "native routers (iOS DenextExportRouter, Android DenextExportRoutes). tests/export-routes-",
+    "conformance.test.ts runs every vector against each of them.",
+    "",
+    "files: the export directory every surface is run over. outside: files written BESIDE it, which",
+    "no vector may ever serve (traversal).",
+    "",
+    "Each vector: url is the request target after the origin (query and fragment included; the",
+    "surfaces see URL.pathname). pages and navigation are resolveExportPath(pathname). serves is",
+    "what a request without an Accept: text/html header gets: a file of `files`, \"shell\" (no page",
+    "serves it and it is a navigation, so a surface that does single-page client routing serves the",
+    "root index.html), or null (404). nativeSkip names why the native routers are not held to a",
+    "vector (input they never see, or a documented difference)."
+  ],
+  "files": {
+    "index.html": "<!doctype html><head></head><div id=root>ROOT</div>",
+    "about/index.html": "<!doctype html><head></head><main>ABOUT_DIR</main>",
+    "blog.html": "<!doctype html><head></head><main>BLOG_FLAT</main>",
+    "docs/index.html": "<!doctype html><head></head><main>DOCS_DIR</main>",
+    "docs.html": "<!doctype html><head></head><main>DOCS_FLAT</main>",
+    "a/b/index.html": "<!doctype html><head></head><main>A_B</main>",
+    "nested/page.html": "<!doctype html><head></head><main>NESTED_PAGE</main>",
+    "x.html": "<!doctype html><head></head><main>X_PAGE</main>",
+    "assets/app.js": "console.log('APP_JS');"
+  },
+  "outside": {
+    "secret.html": "<main>SECRET</main>",
+    "secret/index.html": "<main>SECRET</main>"
+  },
+  "vectors": [
+    { "url": "/", "pages": ["/index.html"], "navigation": true, "serves": "index.html" },
+    { "url": "/index.html", "pages": ["/index.html"], "navigation": false, "serves": "index.html" },
+    {
+      "url": "/about",
+      "pages": ["/about/index.html", "/about.html"],
+      "navigation": true,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/about/",
+      "pages": ["/about/index.html", "/about.html"],
+      "navigation": true,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/about/index.html",
+      "pages": ["/about/index.html"],
+      "navigation": false,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/blog",
+      "pages": ["/blog/index.html", "/blog.html"],
+      "navigation": true,
+      "serves": "blog.html"
+    },
+    {
+      "url": "/blog/",
+      "pages": ["/blog/index.html", "/blog.html"],
+      "navigation": true,
+      "serves": "blog.html"
+    },
+    { "url": "/blog.html", "pages": ["/blog.html"], "navigation": false, "serves": "blog.html" },
+    {
+      "url": "/docs",
+      "pages": ["/docs/index.html", "/docs.html"],
+      "navigation": true,
+      "serves": "docs/index.html",
+      "note": "the directory page wins over the .html page"
+    },
+    { "url": "/docs.html", "pages": ["/docs.html"], "navigation": false, "serves": "docs.html" },
+    {
+      "url": "/a/b",
+      "pages": ["/a/b/index.html", "/a/b.html"],
+      "navigation": true,
+      "serves": "a/b/index.html"
+    },
+    {
+      "url": "/a/b/",
+      "pages": ["/a/b/index.html", "/a/b.html"],
+      "navigation": true,
+      "serves": "a/b/index.html"
+    },
+    {
+      "url": "/nested/page",
+      "pages": ["/nested/page/index.html", "/nested/page.html"],
+      "navigation": true,
+      "serves": "nested/page.html"
+    },
+    {
+      "url": "/a",
+      "pages": ["/a/index.html", "/a.html"],
+      "navigation": true,
+      "serves": "shell",
+      "note": "a directory without a page of its own is a client route"
+    },
+    {
+      "url": "/settings/profile",
+      "pages": ["/settings/profile/index.html", "/settings/profile.html"],
+      "navigation": true,
+      "serves": "shell"
+    },
+    { "url": "/assets/app.js", "pages": [], "navigation": false, "serves": "assets/app.js" },
+    { "url": "/missing.js", "pages": [], "navigation": false, "serves": null },
+    { "url": "/missing.html", "pages": ["/missing.html"], "navigation": false, "serves": null },
+    {
+      "url": "/about?tab=1",
+      "pages": ["/about/index.html", "/about.html"],
+      "navigation": true,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/about#top",
+      "pages": ["/about/index.html", "/about.html"],
+      "navigation": true,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/about/?q=1#x",
+      "pages": ["/about/index.html", "/about.html"],
+      "navigation": true,
+      "serves": "about/index.html"
+    },
+    {
+      "url": "/x.html?v=2",
+      "pages": ["/x.html"],
+      "navigation": false,
+      "serves": "x.html"
+    },
+    {
+      "url": "/../secret",
+      "pages": ["/secret/index.html", "/secret.html"],
+      "navigation": true,
+      "serves": "shell",
+      "note": "the URL parser removes the dot segment, so it never leaves the export"
+    },
+    {
+      "url": "/%2e%2e/secret",
+      "pages": ["/secret/index.html", "/secret.html"],
+      "navigation": true,
+      "serves": "shell",
+      "note": "an encoded dot segment is a dot segment to the URL parser"
+    },
+    {
+      "url": "/a/../../secret.html",
+      "pages": ["/secret.html"],
+      "navigation": false,
+      "serves": null
+    },
+    {
+      "url": "/%2e%2e%2fsecret",
+      "pages": ["/%2e%2e%2fsecret/index.html", "/%2e%2e%2fsecret.html"],
+      "navigation": true,
+      "serves": "shell",
+      "note": "with an encoded slash the decoded path climbs out of the export: serveStatic refuses it, and the native routers, which see the decoded path (/../secret), refuse it too"
+    },
+    {
+      "url": "/%2e%2e%2fsecret.html",
+      "pages": ["/%2e%2e%2fsecret.html"],
+      "navigation": false,
+      "serves": null,
+      "note": "the native routers see /../secret.html: Android leaves it to Capacitor, iOS refuses it"
+    },
+    {
+      "url": "/a%2Fb",
+      "pages": ["/a%2Fb/index.html", "/a%2Fb.html"],
+      "navigation": true,
+      "serves": "a/b/index.html",
+      "note": "an encoded slash is decoded before the file is read"
+    },
+    {
+      "url": "//about",
+      "pages": ["//about/index.html", "//about.html"],
+      "navigation": true,
+      "serves": "about/index.html",
+      "note": "an empty segment collapses when the file is read"
+    },
+    {
+      "url": "/x.html/",
+      "pages": ["/x.html/index.html", "/x.html.html"],
+      "navigation": true,
+      "serves": "x.html",
+      "note": "no page candidate exists, but the path itself names a file (the trailing slash collapses), served as an asset",
+      "nativeSkip": "iOS reads the extension of the whole path (html) and passes it through"
+    }
+  ]
+}

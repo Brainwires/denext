@@ -4,7 +4,7 @@
  * `denext/expo/ui/swift-ui` render with web layout and ignore their modifiers.
  * Importing and calling them never throws.
  *
- * Generated from the export list of `@expo/ui` 57.0.20, a superset of the 57.0.14 that
+ * Generated from the export list of `@expo/ui` 57.0.20 and brought up to the 58.0.11 that
  * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names.
  *
  * @example
@@ -798,3 +798,11 @@ export const widgetURL: (...args: unknown[]) => StubModifier = /* @__PURE__ */ s
 /** Stand-in for the `activityBackgroundTint` modifier: an inert config. */
 export const activityBackgroundTint: (...args: unknown[]) => StubModifier =
   /* @__PURE__ */ stubModifier("activityBackgroundTint");
+
+/** Stand-in for the `preferredColorScheme` modifier: an inert config. */
+export const preferredColorScheme: (...args: unknown[]) => StubModifier =
+  /* @__PURE__ */ stubModifier("preferredColorScheme");
+
+/** Stand-in for the `presentationCornerRadius` modifier: an inert config. */
+export const presentationCornerRadius: (...args: unknown[]) => StubModifier =
+  /* @__PURE__ */ stubModifier("presentationCornerRadius");

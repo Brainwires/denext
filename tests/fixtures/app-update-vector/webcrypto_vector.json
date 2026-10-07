@@ -1,4 +1,4 @@
 {
-  "signed": "{\"schema\":1,\"app\":\"com.example.vector\",\"version\":\"1.2.3\",\"platforms\":{\"x86_64-unknown-linux-gnu-webview\":{\"url\":\"https://example.com/a.tar.gz\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"size\":4242,\"kind\":\"bundle\"}},\"releaseNotes\":\"Grüße ✓\",\"publishedAt\":\"2026-10-01T00:00:00Z\"}",
-  "signature": "ewqkUCxb3OzAr4d7THTrDOaIg/UXRiw472s380ox9dk6PR8TACxAtJmA3Ee6T2s56M+HaKErnUKSlKeuhX55oQ=="
+  "signed": "{\"schema\":1,\"app\":\"com.example.vector\",\"version\":\"1.2.3\",\"platforms\":{\"x86_64-unknown-linux-gnu-webview\":{\"url\":\"https://example.com/a.tar.gz\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"size\":4242,\"kind\":\"bundle\"}},\"releaseNotes\":\"Grüße ✓\",\"publishedAt\":\"2026-10-01T00:00:00Z\",\"expiresAt\":\"2026-10-15T00:00:00.000Z\",\"sequence\":1790812800}",
+  "signature": "p5BKheNVKIB356O99tUTpyBUUxpReCZSbfrV75QnFlBq7hH7PEiSaZH6M0gei2XCdXfUnN61oCvngZz97ENLew=="
 }

@@ -115,6 +115,47 @@ Deno.test("mobile doctor: a clean project passes both profiles", async () => {
   }
 });
 
+Deno.test("mobile doctor --release: OTA installed without a public key is an error, per platform", async () => {
+  const iosStore = "ios/App/App/DenextOtaStore.swift";
+  const androidStore = "android/app/src/main/java/dev/denext/ota/DenextOtaStore.java";
+  const dir = await project({
+    ...cleanFiles(),
+    [iosStore]: "// ota\n",
+    [androidStore]: "// ota\n",
+  });
+  try {
+    assert(mobileDoctorChecks("release").includes("ota-signing"));
+    assert(!mobileDoctorChecks("store").includes("ota-signing"));
+    const unsigned = await runMobileDoctor({ root: dir, profile: "release" });
+    const found = unsigned.findings.filter((f) => f.check === "ota-signing");
+    assertEquals(found.map((f) => f.message.split(":")[0]), ["iOS", "Android"]);
+    assert(found.every((f) => f.level === "error" && f.fix.includes("--public-key")));
+    // Embed the key on iOS only: Android is still flagged.
+    await Deno.writeTextFile(
+      join(dir, "ios/App/App/Info.plist"),
+      plist("\t<key>DenextOtaPublicKey</key>\n\t<string>MFkw</string>"),
+    );
+    const half = await runMobileDoctor({ root: dir, profile: "release" });
+    assertEquals(
+      half.findings.filter((f) => f.check === "ota-signing").map((f) => f.message.split(":")[0]),
+      ["Android"],
+    );
+    await Deno.writeTextFile(
+      join(dir, "android/app/src/main/AndroidManifest.xml"),
+      '<manifest><application><meta-data android:name="dev.denext.ota.PUBLIC_KEY" android:value="MFkw" /></application></manifest>',
+    );
+    const signed = await runMobileDoctor({ root: dir, profile: "release" });
+    assertEquals(signed.findings.filter((f) => f.check === "ota-signing"), []);
+    // Without OTA installed the check does not apply.
+    await Deno.remove(join(dir, iosStore));
+    await Deno.remove(join(dir, androidStore));
+    const none = await runMobileDoctor({ root: dir, profile: "release" });
+    assert(!none.checks.includes("ota-signing"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("mobile doctor --store flags every planted App Review problem, each with a fix", async () => {
   const files: Record<string, string | null> = {
     ...cleanFiles(),

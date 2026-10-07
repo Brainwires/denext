@@ -13,8 +13,9 @@
 
 import { assert } from "@std/assert";
 import { buildAndServe, emulateNetwork, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/actions", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/actions shows an optimistic row + pending button, then reconciles",

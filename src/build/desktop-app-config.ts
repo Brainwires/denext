@@ -7,7 +7,8 @@
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   laufey-launch.json       the webview backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`, `inspectable`), read at process start from the packaged bundle:
+//                            `singleInstance`, `inspectable`, `bridgeOrigins`), read at process
+//                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
 //                            Windows and Linux
 //
@@ -17,7 +18,9 @@
 
 import { dirname, fromFileUrl, join } from "@std/path";
 import {
+  DEFAULT_DESKTOP_APP_ORIGIN,
   desktopAppIdentifierError,
+  normalizeDesktopBridgeOrigin,
   normalizeDesktopDeepLinks,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
@@ -49,6 +52,12 @@ export interface LaufeyLaunchConfig {
   readonly singleInstance?: boolean;
   /** Whether DevTools can be opened (`desktop.inspectable`; off by default in a packaged app). */
   readonly inspectable?: boolean;
+  /**
+   * The documents the window's native JS bridge serves (file only, no env var): the app origin,
+   * then `desktop.app.bridgeOrigins`. Without it laufey would pin the bridge to the custom
+   * schemes' every origin, or (the default `app://localhost`, no custom scheme) to none at all.
+   */
+  readonly bridgeOrigins?: string[];
 }
 
 /** Where a window is launched from, for {@linkcode desktopInspectable}. */
@@ -127,6 +136,34 @@ export function desktopLaunchConfig(config: unknown): LaufeyLaunchConfig | null 
 }
 
 /**
+ * The documents the packaged app's native JS bridge serves (`laufey-launch.json`
+ * `"bridgeOrigins"`): the app origin (`desktop.app.origin`, else the runtime's default
+ * `app://localhost`) and nothing broader, then any `desktop.app.bridgeOrigins` (normalized,
+ * de-duplicated); `["*"]` when those list `"*"`. Throws on an entry that is not an origin,
+ * `"<scheme>://*"` or `"*"` (config validation reports it first).
+ *
+ * @param config The project config.
+ * @returns The entries, the app origin first.
+ */
+export function desktopBridgeOrigins(config: unknown): string[] {
+  const appOrigin = desktopAppIdentity(config)?.origin ?? DEFAULT_DESKTOP_APP_ORIGIN;
+  const raw = appBlock(config)?.bridgeOrigins;
+  if (raw !== undefined && !Array.isArray(raw)) {
+    throw new Error("desktop.app.bridgeOrigins must be an array");
+  }
+  const out = [appOrigin];
+  for (const entry of (raw ?? []) as unknown[]) {
+    const normalized = typeof entry === "string" ? normalizeDesktopBridgeOrigin(entry) : null;
+    if (normalized === null) {
+      throw new Error(`invalid desktop.app.bridgeOrigins entry ${JSON.stringify(entry)}`);
+    }
+    if (normalized === "*") return ["*"];
+    if (!out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+/**
  * The same settings as `LAUFEY_*` env vars, for an unpackaged `deno desktop` run (no bundle to put
  * `laufey-launch.json` in).
  *
@@ -194,7 +231,8 @@ async function loadConfigBeside(entryUrl: string): Promise<unknown> {
 
 /**
  * Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the
- * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).
+ * project's `denext.config.ts` (the bridge pinned to the app origin, {@linkcode
+ * desktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).
  * On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
@@ -210,9 +248,10 @@ export async function writeLaufeyLaunchConfig(
   const config = await loadConfigBeside(entryUrl);
   // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
   // written: without it the runtime would leave them on.
-  const launch = {
+  const launch: LaufeyLaunchConfig = {
     ...desktopLaunchConfig(config),
     inspectable: desktopInspectable(config, "package"),
+    bridgeOrigins: desktopBridgeOrigins(config),
   };
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });

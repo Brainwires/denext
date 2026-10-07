@@ -35,6 +35,7 @@ import {
   bounce,
   createTray,
   getLaunchAtLogin,
+  isDesktopBridgeError,
   listShortcuts,
   onAppMenuItem,
   registerShortcut,
@@ -46,11 +47,12 @@ import {
 import {
   desktopExtension,
   desktopWebSocketUrl,
-  desktopWsOrigin,
+  desktopWsUrl,
   onDesktopEvent,
 } from "denext/desktop/client";
 import {
   getScreens,
+  getTitleBarPreferences,
   getWindowState,
   maximizeWindow,
   onCloseRequested,
@@ -72,7 +74,19 @@ export interface KitchenSetup {
   /** `main` (every check), or a full-app update phase of the window test ({@link PHASE_CHECKS}). */
   readonly phase: string;
   readonly updateUrls:
-    | { good: string; badSignature: string; downgrade: string; wrongApp: string; real: string }
+    | {
+      good: string;
+      badSignature: string;
+      downgrade: string;
+      wrongApp: string;
+      expired: string;
+      replayed: string;
+      real: string;
+      /** Windows, the trusted-update phases: the update build signed with the app's certificate. */
+      trustedA: string;
+      /** The same build re-signed with another certificate. */
+      trustedB: string;
+    }
     | null;
   readonly os: "darwin" | "windows" | "linux";
   readonly target: string;
@@ -83,6 +97,13 @@ export interface KitchenSetup {
   readonly passkeyRpIds: readonly string[];
   /** `desktop.app.origin` (e.g. `kitchensink://app`). */
   readonly appOrigin: string;
+  /**
+   * The runner's view of the Linux session (`XDG_SESSION_TYPE`, else `WAYLAND_DISPLAY` /
+   * `DISPLAY`), for a runtime whose own probe answers `"unknown"`; `null` elsewhere or by hand.
+   */
+  readonly sessionType: "wayland" | "x11" | "tty" | null;
+  /** The packaged app's backend as the runner found it; `null` when the app was opened by hand. */
+  readonly backend: "webview" | "cef" | null;
 }
 
 /** One check's outcome. */
@@ -166,6 +187,39 @@ async function sizes(): Promise<string> {
     `frame ${box(st?.bounds)}, min ${st?.minimumSize}, max ${st?.maximumSize}`;
 }
 
+/**
+ * Why a geometry check cannot pass here, when the compositor overrode the request: the window
+ * stays unmaximized yet covers its screen's work area (a tiling window manager such as Sway tiles
+ * every window to its slot), so `setWindowBounds` / `maximizeWindow` cannot change it. The runtime
+ * reports no tiling fact (`windowCapabilities()` / the session probe), so this reads the outcome.
+ * `null` when the window does not fill the screen: a real failure, reported as one.
+ */
+async function compositorOwnsGeometry(asked: string): Promise<string | null> {
+  const st = await getWindowState().catch(() => null);
+  const frame = st?.bounds ?? st?.contentBounds;
+  if (!st || !frame || st.maximized || st.fullscreen) return null;
+  const screen = st.screen ?? (await getScreens().catch(() => [])).find((s) => s.isPrimary);
+  if (!screen) return null;
+  // 90% in both dimensions: a tiled window loses only the gaps and the bar to the screen.
+  const fills = (r: { width: number; height: number }) =>
+    frame.width >= r.width * 0.9 && frame.height >= r.height * 0.9;
+  if (!fills(screen.workArea) && !fills(screen.bounds)) return null;
+  return `the compositor controls this window's geometry (a tiling window manager): asked ` +
+    `${asked}, the window stays ${frame.width}x${frame.height}, unmaximized, filling the ` +
+    `${screen.workArea.width}x${screen.workArea.height} work area`;
+}
+
+/** Run `step`; when it fails because the compositor owns the geometry, skip with that reason. */
+async function unlessTiled<T>(asked: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    const reason = await compositorOwnsGeometry(asked);
+    if (reason) throw new Skip(reason);
+    throw err;
+  }
+}
+
 /** The error code a rejected bridge call carries. */
 async function rejection(p: Promise<unknown>): Promise<string> {
   try {
@@ -174,6 +228,23 @@ async function rejection(p: Promise<unknown>): Promise<string> {
     return String((err as { code?: unknown }).code ?? (err as Error).message);
   }
   throw new Error("expected the call to be refused, but it succeeded");
+}
+
+/**
+ * A CEF window in a Wayland session: the runtime's own session probe, else the runner's (a runtime
+ * before 2.9.7-denext.10 answers `"unknown"`); the runner's backend, else CEF's cookie store (only
+ * CEF reports one).
+ */
+function cefOnWayland(
+  caps: Awaited<ReturnType<typeof windowCapabilities>>,
+  setup: KitchenSetup,
+): boolean {
+  const session = caps.sessionType === "unknown" || caps.sessionType === null
+    ? setup.sessionType
+    : caps.sessionType;
+  const cef = setup.backend === "cef" ||
+    caps.cookieEncryption === "os" || caps.cookieEncryption === "basic";
+  return session === "wayland" && cef;
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 2;
@@ -245,8 +316,9 @@ const runtimeChecks: Check[] = [
   }],
   ["websocket: the page dials the runtime's relay with the app origin", async ({ setup }) => {
     if (!setup.pinnedRuntime) throw new Skip("the stock runtime serves the page on loopback");
-    const relay = desktopWsOrigin();
-    assert(relay, "__denext.wsOrigin is missing");
+    const relay = desktopWsUrl();
+    assert(relay, "__denext.wsUrl is missing");
+    assert(/\/\.deno-desktop-relay\/[0-9a-f]{64}$/.test(relay), "the relay URL has no token");
     const url = desktopWebSocketUrl("/_kitchen/ws");
     assert(url.startsWith(`${relay}/`), `dialed ${url}, not the relay`);
     const ws = new WebSocket(url);
@@ -266,7 +338,7 @@ const runtimeChecks: Check[] = [
     } finally {
       ws.close();
     }
-    return `${relay} · Origin ${location.origin}`;
+    return `${new URL(relay).origin} + token · Origin ${location.origin}`;
   }],
   ["preload: ran first, after the __denext global", () => {
     const p = (globalThis as {
@@ -449,7 +521,6 @@ const windowChecks: Check[] = [
         "sizeConstraints",
         "screens",
         "closeGuard",
-        "fileDrop",
       ] as const
     ) {
       eq(caps[k], true, `windowCapabilities().${k}`);
@@ -459,6 +530,34 @@ const windowChecks: Check[] = [
     assert(state.bounds && state.bounds.width > 0, "no window bounds");
     await setWindowTitle("denext kitchen sink — running checks");
     return `${state.bounds.width}x${state.bounds.height}`;
+  }],
+  ["window: the user's title bar preferences (for an app-drawn title bar)", async ({ setup }) => {
+    const p = await getTitleBarPreferences();
+    assert(
+      ["left", "right"].includes(p.side) && Array.isArray(p.buttons.left) &&
+        Array.isArray(p.buttons.right),
+      "no buttons / side",
+    );
+    // macOS: the traffic lights on the left; Windows: the caption buttons on the right; Linux:
+    // the desktop's own layout (xdg-desktop-portal, then GSettings, then GTK's defaults), or the
+    // usual layout before runtime 2.9.7-denext.12 (source "unknown").
+    if (setup.os === "darwin") eq(p.side, "left", "the macOS buttons' side");
+    if (setup.os === "windows") eq(p.side, "right", "the Windows buttons' side");
+    return `${p.side} ${JSON.stringify(p.buttons)} double-click ${p.doubleClick} (${p.source})`;
+  }],
+  ["window: file drop (onFileDrop fires)", async ({ setup }) => {
+    const caps = await windowCapabilities();
+    if (caps.fileDrop !== true && cefOnWayland(caps, setup)) {
+      // laufey docs/drag-and-drop.md: CEF hands drag data only to Alloy-style browsers (laufey's
+      // are Chrome style), and under Wayland there is no drag source to ask for the paths.
+      const reason = typeof caps.fileDropReason === "string" && caps.fileDropReason
+        ? caps.fileDropReason
+        : "CEF under Wayland: CEF delivers drag data only to Alloy-style browsers (laufey's are " +
+          "Chrome style) and Wayland has no drag source to ask for the paths";
+      throw new Skip(reason);
+    }
+    eq(caps.fileDrop, true, "windowCapabilities().fileDrop");
+    return "fileDrop";
   }],
   ["window: screens", async () => {
     const screens = await getScreens();
@@ -475,12 +574,13 @@ const windowChecks: Check[] = [
     // clamps a window to the work area, so ask for a size that fits it and assert exactly that.
     const { width, height, why } = await fittingSize(900, 700);
     await setWindowSize(width, height);
-    await waitFor(
-      () => near(innerWidth, width) && near(innerHeight, height),
-      `${width}x${height}`,
-      5000,
-      sizes,
-    );
+    await unlessTiled(`${width}x${height}`, () =>
+      waitFor(
+        () => near(innerWidth, width) && near(innerHeight, height),
+        `${width}x${height}`,
+        5000,
+        sizes,
+      ));
     const state = await getWindowState();
     assert(state.contentBounds, "no contentBounds");
     assert(
@@ -498,12 +598,13 @@ const windowChecks: Check[] = [
         "minimumSize",
       );
       await setWindowSize(300, 200);
-      await waitFor(
-        () => near(innerWidth, 640) && near(innerHeight, 480),
-        "640x480 (the minimum)",
-        5000,
-        sizes,
-      );
+      await unlessTiled("300x200 (clamped to the 640x480 minimum)", () =>
+        waitFor(
+          () => near(innerWidth, 640) && near(innerHeight, 480),
+          "640x480 (the minimum)",
+          5000,
+          sizes,
+        ));
       const small = `${innerWidth}x${innerHeight}`;
       await setMaximumWindowSize(820, 620);
       await setWindowSize(1400, 1100);
@@ -523,7 +624,10 @@ const windowChecks: Check[] = [
   }],
   ["window: maximize / unmaximize", async () => {
     await maximizeWindow();
-    await waitFor(async () => (await getWindowState()).maximized, "maximized");
+    await unlessTiled(
+      "maximized",
+      () => waitFor(async () => (await getWindowState()).maximized, "maximized"),
+    );
     await unmaximizeWindow();
     await waitFor(
       async () => !(await getWindowState()).maximized,
@@ -686,7 +790,24 @@ const nativeChecks: Check[] = [
     assert(r.ok, `check failed: ${r.code}: ${r.message}`);
     eq(r.result.available, true, "available");
     eq(r.result.version, "99.0.0", "version");
-    return `${r.result.currentVersion} → ${r.result.version}`;
+    assert(Number.isSafeInteger(r.result.sequence), `sequence ${r.result.sequence}`);
+    assert(r.result.expiresAt && Date.parse(r.result.expiresAt) > Date.now(), "expiresAt");
+    const status = await kitchen.updateStatus({});
+    eq(status?.manifestSequence, r.result.sequence, "the install's recorded sequence");
+    return `${r.result.currentVersion} → ${r.result.version} (sequence ${r.result.sequence})`;
+  }],
+  ["updater: an expired manifest is refused (expired)", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.expired });
+    eq(r.ok ? `available: ${r.result.available}` : r.code, "expired", "the check");
+    return "expired";
+  }],
+  ["updater: a lower sequence than accepted is refused (replayed)", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    // Runs after the newer manifest's check recorded its sequence as the install's floor.
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.replayed });
+    eq(r.ok ? `available: ${r.result.available}` : r.code, "replayed", "the check");
+    return "replayed";
   }],
   ["updater: another key's signature is refused", async ({ setup }) => {
     if (!setup.updateUrls) throw new Skip("no local update server");
@@ -859,8 +980,8 @@ const securityChecks: Check[] = [
       token: pageToken(),
       origin: location.origin,
     }) as { relay: string | null; probes: Array<{ name: string; status: string }> };
-    assert(relay, "the runtime published no loopback relay (DENO_DESKTOP_WS_ORIGIN)");
-    eq(probes.length, 3, "probes run");
+    assert(relay, "the runtime published no loopback relay (DENO_DESKTOP_WS_URL)");
+    eq(probes.length, 4, "probes run");
     for (const p of probes) {
       assert(!/ (2\d\d|101) /.test(`${p.status} `), `${p.name} was accepted: ${p.status}`);
     }
@@ -1013,7 +1134,20 @@ const securityChecks: Check[] = [
         await bridge.tokenCache.clearToken("kitchen-probe");
       }
       eq(await bridge.tokenCache.getToken("kitchen-probe"), null, "getToken after clearToken");
-      eq(await bridge.oauthTransport.getRedirectUrl(), `${setup.appOrigin}/`, "getRedirectUrl()");
+      // macOS signs in through ASWebAuthenticationSession (no nonce); Windows and Linux use the
+      // system browser, so each flow's redirect carries a per-flow `denext_nonce`.
+      const redirect = new URL(await bridge.oauthTransport.getRedirectUrl());
+      eq(
+        `${redirect.protocol}//${redirect.host}${redirect.pathname}`,
+        `${setup.appOrigin}/`,
+        "getRedirectUrl() target",
+      );
+      const nonce = redirect.searchParams.getAll("denext_nonce");
+      if (setup.os === "darwin") eq(nonce.length, 0, "getRedirectUrl() nonce on macOS");
+      else {assert(
+          nonce.length === 1 && /^[A-Za-z0-9_-]{22,}$/.test(nonce[0]),
+          `getRedirectUrl() nonce: ${redirect.search}`,
+        );}
       const refused = await rejection(bridge.oauthTransport.open("http://example.com/oauth"));
       assert(/unsupported OAuth URL protocol/.test(refused), `open(http:) → ${refused}`);
       return `keychain round trip; ${setup.appOrigin}/; http: refused`;
@@ -1095,6 +1229,10 @@ export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
       eq(s.trial, false, "trial");
       eq(s.rolledBackFrom, UPDATE_VERSION, "rolledBackFrom");
       eq(s.rejected, UPDATE_VERSION, "rejected");
+      assert(
+        s.rejectedVersions?.includes(UPDATE_VERSION),
+        `rejectedVersions ${s.rejectedVersions}`,
+      );
       return `back on ${s.version}, ${s.rolledBackFrom} rejected`;
     }],
     ["update rollback: the rolled-back version is refused from then on", async ({ setup }) => {
@@ -1102,6 +1240,76 @@ export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
       const r = await kitchen.updateCheck({ url: setup.updateUrls.real });
       eq(r.ok ? `available: ${r.result.available}` : r.code, "rejected", "the check");
       return "rejected";
+    }],
+  ],
+  // Windows only, on a runner that trusts the window test's throwaway code-signing roots (an
+  // elevated CI runner): the runtime's same-signer check is enforced only for a trusted chain.
+  // The installed 1.0.0 is signed with certificate A (`e2e/window-test.ts` "sign" phase).
+  "trusted-install": [
+    ["trusted install: the A-signed 1.0.0, not on trial", async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.configured, true, `configured (${s?.reason})`);
+      eq(s.trial, false, "trial");
+      eq(s.version, "1.0.0", "version");
+      return `${s.version} at ${s.install}`;
+    }],
+    [
+      `trusted install: ${UPDATE_VERSION} re-signed with another certificate (B) is refused (os_signature)`,
+      async ({ setup }) => {
+        assert(setup.updateUrls, "no local update server");
+        const r = await kitchen.updateDownload({ url: setup.updateUrls.trustedB }, {
+          timeoutMs: 150_000,
+        });
+        eq(r.ok ? `staged (${r.result.signatureMode})` : r.code, "os_signature", "the download");
+        const s = await kitchen.updateStatus({});
+        eq(s?.version, "1.0.0", "version after the refusal");
+        eq(s.trial, false, "trial after the refusal");
+        return `os_signature: ${r.message}`;
+      },
+    ],
+    [
+      `trusted install: ${UPDATE_VERSION} signed with the same certificate (A) stages as authenticode`,
+      async ({ setup }) => {
+        assert(setup.updateUrls, "no local update server");
+        const r = await kitchen.updateDownload({ url: setup.updateUrls.trustedA }, {
+          timeoutMs: 150_000,
+        });
+        assert(r.ok, `download / stage failed: ${r.code}: ${r.message}`);
+        eq(r.result.version, UPDATE_VERSION, "staged version");
+        eq(r.result.signatureMode, "authenticode", "signature mode");
+        assert(r.result.signer, "no signer reported");
+        return `${r.result.version}, authenticode, signer ${r.result.signer}`;
+      },
+    ],
+  ],
+  "trusted-trial": [
+    [
+      `trusted trial: ${UPDATE_VERSION} runs on trial and confirmAppUpdate() confirms it`,
+      async () => {
+        const s = await kitchen.updateStatus({});
+        eq(s?.version, UPDATE_VERSION, "version");
+        eq(s.trial, true, "trial");
+        eq(s.updatedFrom, "1.0.0", "updatedFrom");
+        const r = await kitchen.updateConfirm({});
+        assert(r.ok, `confirmAppUpdate() threw ${r.code}: ${r.message}`);
+        eq(r.result, true, "confirmAppUpdate()");
+        const after = await kitchen.updateStatus({});
+        eq(after?.pendingVersion ?? null, null, "pendingVersion after confirming");
+        return `${s.version} from ${s.updatedFrom}, confirmed`;
+      },
+    ],
+  ],
+  "trusted-relaunch": [
+    [`trusted relaunch: still ${UPDATE_VERSION}, not on trial, nothing rolled back`, async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.version, UPDATE_VERSION, "version");
+      eq(s.trial, false, "trial");
+      eq(s.rolledBackFrom ?? null, null, "rolledBackFrom");
+      assert(
+        !s.rejectedVersions?.includes(UPDATE_VERSION),
+        `rejectedVersions ${s.rejectedVersions}`,
+      );
+      return `${s.version}, confirmed, no rollback`;
     }],
   ],
 };
@@ -1183,41 +1391,57 @@ const appChecks: Check[] = [
     }
     return `menu set; click → ${got[0]}`;
   }],
-  ["tray: create, bounds, update, destroy", async ({ setup }) => {
-    const caps = await appCapabilities();
-    eq(caps.tray, true, "appCapabilities().tray");
-    const tray = await createTray({
-      icon: PNG_1X1,
-      tooltip: "denext kitchen sink",
-      menu: [{ id: "show", label: "Show" }, "separator", { role: "quit" }],
-    });
-    try {
-      await sleep(300);
-      const bounds = await tray.getBounds();
-      if (setup.os === "darwin") {
-        assert(bounds && bounds.width > 0, `bounds ${JSON.stringify(bounds)}`);
+  [
+    "tray: create, bounds, update, destroy (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      // A session with no tray host (stock GNOME, the CI's Xvfb) is reported, never a dead icon.
+      if (!caps.tray) throw new Skip(`no tray icon here: ${caps.trayReason ?? "not reported"}`);
+      const tray = await createTray({
+        icon: PNG_1X1,
+        tooltip: "denext kitchen sink",
+        menu: [{ id: "show", label: "Show" }, "separator", { role: "quit" }],
+      }).catch((err) => {
+        if (!isDesktopBridgeError(err) || err.code !== "unsupported") throw err;
+        const reason = (err.data as { reason?: unknown } | undefined)?.reason;
+        throw new Skip(`createTray(): ${typeof reason === "string" ? reason : err.message}`);
+      });
+      try {
+        await sleep(300);
+        const bounds = await tray.getBounds();
+        if (setup.os === "darwin") {
+          assert(bounds && bounds.width > 0, `bounds ${JSON.stringify(bounds)}`);
+        }
+        await tray.update({ tooltip: null, menu: [{ id: "show", label: "Show again" }] });
+        return `bounds ${bounds ? `${bounds.width}x${bounds.height}` : "null (not reported here)"}`;
+      } finally {
+        await tray.destroy();
       }
-      await tray.update({ tooltip: null, menu: [{ id: "show", label: "Show again" }] });
-      return `bounds ${bounds ? `${bounds.width}x${bounds.height}` : "null (not reported here)"}`;
-    } finally {
-      await tray.destroy();
-    }
-  }],
-  ["dock: badge, attention and the Dock menu", async ({ setup }) => {
-    const caps = await appCapabilities();
-    eq(caps.badge, true, "appCapabilities().badge");
-    await setBadge(3);
-    await setBadge(null);
-    await bounce();
-    eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
-    await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
-    const applied = await raw("app").setDockMenu({
-      menu: [{ id: "kitchen-chat", label: "New chat" }],
-    });
-    eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
-    await setQuickActions([]);
-    return `badge + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
-  }],
+    },
+  ],
+  [
+    "dock: badge, attention and the Dock menu (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (!caps.badge) throw new Skip("no badge here: this runtime has no Deno.dock");
+      await setBadge(3);
+      await setBadge(null);
+      await bounce();
+      eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
+      await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
+      const applied = await raw("app").setDockMenu({
+        menu: [{ id: "kitchen-chat", label: "New chat" }],
+      });
+      eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
+      await setQuickActions([]);
+      // Where the badge showed (runtime 2.9.7-denext.11): the Dock, a Linux launcher count, or
+      // the window-title prefix, with the runtime's reason.
+      const shows = caps.badgeShows === "title" && caps.badgeReason
+        ? `title (${caps.badgeReason})`
+        : caps.badgeShows;
+      return `badge on ${shows} + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
+    },
+  ],
   ["notifications: permission status from the OS", async () => {
     const caps = await raw("notifications").capabilities({});
     const state = await checkPermission("notifications");
@@ -1231,6 +1455,32 @@ const appChecks: Check[] = [
     return `${state}; schedule ${caps.schedule}, persists ${caps.schedulePersists}, ` +
       `actions ${caps.actions}, cold start ${caps.coldStart}`;
   }],
+  [
+    "notifications: a click starts a quit app, a schedule posts while closed (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await raw("notifications").capabilities({});
+      // macOS and Windows: the OS does both (macOS from a signed bundle), as reported above.
+      if (setup.os !== "linux") {
+        return `cold start ${caps.coldStart}, persists ${caps.schedulePersists}`;
+      }
+      // Linux (runtime 2.9.7-denext.11): the portal and the app's D-Bus service file (a .deb /
+      // .rpm install) for the click, a systemd user manager for the schedule; else the runtime
+      // says why. An older runtime has neither and gives no reason.
+      const missing: string[] = [];
+      if (caps.coldStart !== true) {
+        missing.push(
+          `a click can't start the app: ${caps.coldStartReason ?? "not in this runtime"}`,
+        );
+      }
+      if (caps.schedulePersists !== true) {
+        missing.push(
+          `a schedule waits for the app: ${caps.schedulePersistsReason ?? "not in this runtime"}`,
+        );
+      }
+      if (missing.length > 0) throw new Skip(missing.join("; "));
+      return `cold start and posting while closed (transport ${caps.transport})`;
+    },
+  ],
   ["notifications: schedule / pending / cancel through the OS", async ({ setup }) => {
     await needScheduling();
     await setNotificationCategories([{ id: "kitchen", actions: [{ id: "open", title: "Open" }] }]);
@@ -1415,7 +1665,16 @@ const appChecks: Check[] = [
     const caps = await shortcutCapabilities();
     if (!caps.globalShortcuts) throw new Skip("no global shortcuts in this session");
     let pressed = 0;
-    const s = await registerShortcut("CommandOrControl+Alt+Shift+F9", () => pressed++);
+    const s = await registerShortcut("CommandOrControl+Alt+Shift+F9", () => pressed++).catch(
+      (err) => {
+        // The XDG GlobalShortcuts portal (where the user binds each shortcut): GNOME's asks a
+        // person once, and with no one to approve it the registration comes back `denied`.
+        if (caps.userBinds && (err as { code?: unknown })?.code === "denied") {
+          throw new Skip("the desktop's portal requires user approval for global shortcuts");
+        }
+        throw err;
+      },
+    );
     try {
       assert((await listShortcuts()).includes(s.accelerator), "listShortcuts()");
       await sleep(300);

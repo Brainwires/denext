@@ -3,6 +3,13 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## Unreleased
+
+- Client bundles take the app's [platform-specific files](https://denext.dev/docs/platform-files)
+  for the `web` target (`Button.web.tsx`), through `platformClientRedirects` from
+  `@denext/denext/plugin-kit`, matching the server render. Requires the denext release that
+  exports it.
+
 ## 0.10.0 — denext 2.0.0 compatibility
 
 - Requires denext ≥ 2.0.0: pipeline primitives are imported from `@denext/denext/plugin-kit` (`revalidatePath`, `buildNextCompatModules`, `createNextCompatServerLoader`, the `RouteParams`/`I18nConfig`/`Component` contracts) instead of `denext/server` and `denext/build/next-compat`.

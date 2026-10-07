@@ -34,23 +34,25 @@ function isWebSocketUpgrade(req: Request): boolean {
  * `Set-Cookie` `Domain`/`Secure` attributes stripped so cookies bind to the proxy
  * origin over http); a WebSocket upgrade is bridged to the backend with the request
  * `Cookie` forwarded on the handshake. Call only for requests that already matched a
- * proxy prefix (see {@link matchesProxyPrefix}).
+ * proxy prefix (see {@link matchesProxyPrefix}). `extraHeaders` go upstream on both (the
+ * desktop dev proxy's `x-denext-dev-token` for a LAN dev server).
  */
 export function proxyToBackend(
   req: Request,
   url: URL,
   cfg: SpaProxyConfig,
+  extraHeaders: Readonly<Record<string, string>> = {},
 ): Response | Promise<Response> {
   const backend = new URL(cfg.target);
   if (isWebSocketUpgrade(req)) {
     try {
-      return proxyWebSocket(req, url, backend);
+      return proxyWebSocket(req, url, backend, extraHeaders);
     } catch (e) {
       console.error("denext proxy: ws upgrade failed", e);
       return new Response("ws proxy error", { status: 502 });
     }
   }
-  return proxyHttp(req, url, backend);
+  return proxyHttp(req, url, backend, extraHeaders);
 }
 
 /**
@@ -73,10 +75,16 @@ function fetchDecodedEncoding(contentEncoding: string | null): boolean {
   return enc === "gzip" || enc === "br";
 }
 
-async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response> {
+async function proxyHttp(
+  req: Request,
+  url: URL,
+  backend: URL,
+  extraHeaders: Readonly<Record<string, string>>,
+): Promise<Response> {
   const target = new URL(url.pathname + url.search, backend);
   const headers = new Headers(req.headers);
   headers.set("host", backend.host);
+  for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
   // Let `fetch` negotiate the upstream encoding with ITS defaults rather than the browser's
   // list: it decodes exactly the encodings it advertises (gzip, br), so the strip below is
   // correct by construction. Forwarding the browser's `Accept-Encoding` would let a backend
@@ -213,7 +221,12 @@ function wireClient(b: WsBridge): void {
   client.onerror = closeUpstream;
 }
 
-function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
+function proxyWebSocket(
+  req: Request,
+  url: URL,
+  backend: URL,
+  extraHeaders: Readonly<Record<string, string>>,
+): Response {
   const { protocols, cookie } = upgradeHeaders(req);
   // Read everything needed from the request BEFORE upgrading: once upgraded, its headers are
   // gone ("Request closed").
@@ -232,7 +245,7 @@ function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
   }
   // Forward the browser's own Origin (never forge the backend's): the backend's WebSocket
   // origin check must see who actually connected, or a cross-site page could ride the proxy.
-  const headers: Record<string, string> = { host: backend.host };
+  const headers: Record<string, string> = { ...extraHeaders, host: backend.host };
   if (origin) headers.origin = origin;
   if (cookie) headers.cookie = cookie;
   const upstream = new NodeWebSocket(backendWs.toString(), protocols, { headers });

@@ -13,6 +13,7 @@
 import { assert, assertEquals } from "@std/assert";
 import type { Page } from "@astral/astral";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
 const PROBE = `(() => {
   const w = window;
@@ -46,7 +47,7 @@ async function probe(page: Page, url: string, ready: string) {
 const APPS = [
   {
     name: "a Next-convention layout (<html>/<head>/<body>) hydrating its full tree",
-    dir: new URL("./fixtures/soft-nav", import.meta.url).pathname,
+    dir: fromFileUrl(new URL("./fixtures/soft-nav", import.meta.url)),
     // The layout's counter is an eager client component: the whole page tree hydrates. It
     // counting a click proves hydration happened.
     ready: "(document.querySelector('[data-testid=navcount]').click(), " +
@@ -54,7 +55,7 @@ const APPS = [
   },
   {
     name: "examples/notes (a denext-convention layout with a client error boundary)",
-    dir: new URL("../../examples/notes", import.meta.url).pathname,
+    dir: fromFileUrl(new URL("../../examples/notes", import.meta.url)),
     ready: "document.readyState === 'complete'",
   },
 ];

@@ -15,6 +15,7 @@
 
 import { isAbsolute, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { resolveProject } from "../build/paths.ts";
+import { realPathOfNearest, within } from "../ui/security.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import type { RouteParams } from "../router/segments.ts";
@@ -70,7 +71,11 @@ export async function renderComponent(
   const root = resolve(dir);
   const abs = resolve(root, componentPath);
   const rel = relative(root, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  // ...and by real path: a symlink inside the project may point out of it.
+  if (
+    rel.startsWith("..") || isAbsolute(rel) ||
+    !within(await realPathOfNearest(abs), await realPathOfNearest(root))
+  ) {
     throw new Error(`component path escapes the project: ${componentPath}`);
   }
   // Cache-bust the import so an edit between calls (long-lived MCP process) is reflected.

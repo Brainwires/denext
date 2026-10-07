@@ -1,6 +1,7 @@
 // Unbundled dev: HMR change computation over the reverse import graph.
 
-import { bump, fsUrlPath, norm, type UnbundledState, versionOf } from "./state.ts";
+import { bump, fsUrlPath, norm, transformKey, type UnbundledState, versionOf } from "./state.ts";
+import { PLATFORMS } from "../platform-extensions.ts";
 
 /**
  * Find the accept boundaries an edit to `abs` propagates to: `abs` itself if it
@@ -55,7 +56,8 @@ export function onChange(st: UnbundledState, changedRaw: string[]): HmrChange {
   let structuralReload = false;
   for (const abs of changedRaw.map(norm)) {
     bump(st, abs);
-    st.cache.delete(abs); // force re-transform on next serve
+    // Force a re-transform on next serve, for every target that served it.
+    for (const platform of PLATFORMS) st.cache.delete(transformKey(abs, platform));
     if (!st.known.has(abs) && !st.importers.has(abs)) continue; // not ours — caller falls back
     anyKnown = true;
     const found = propagate(st, abs, new Set());

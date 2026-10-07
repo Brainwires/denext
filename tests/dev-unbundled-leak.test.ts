@@ -6,7 +6,9 @@
 // would ship without JavaScript is left alone, however server-only its imports are.
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
+import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
+import { actionIdFor } from "../src/runtime/server-action.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
 import { assertNoDevServerOnlyLeaks } from "../src/build/dev-unbundled/entries.ts";
@@ -86,6 +88,47 @@ Deno.test('a "use server" module in the graph is an action stub, not a leak', as
   try {
     assertEquals(await assertNoDevServerOnlyLeaks(st, route(join(dir, "app/page.tsx"))), undefined);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// The browser never receives a `"use server"` module's source in dev: asked for by any spelling
+// (the importer's rewritten `@fs` URL, or directly), it is served as its action stub, named by
+// the dev boundary's id when the boundary holds it.
+Deno.test('unbundled dev serves a "use server" module as its action stub', async () => {
+  const root = new URL("../", import.meta.url).href;
+  const { dir: written } = await project({
+    "deno.json": JSON.stringify({
+      imports: { "denext": `${root}mod.ts`, "@/": "./", "#actions": "./app/actions.ts" },
+    }),
+    "app/actions.ts": `"use server";\nconst SECRET = "DEV_SECRET_99";\n` +
+      `export async function save() { return SECRET; }\n`,
+    "app/Alias.tsx":
+      `"use client";\nimport { save } from "@/app/actions.ts";\nexport const A = save;\n`,
+    "app/Hash.tsx": `"use client";\nimport { save } from "#actions";\nexport const H = save;\n`,
+  });
+  const dir = await Deno.realPath(written); // the transform names modules by their real path
+  const dev = createUnbundledDev({
+    projectDir: dir,
+    appDir: join(dir, "app"),
+    configPath: join(dir, "deno.json"),
+    outDir: join(dir, ".denext"),
+    compat: false,
+    serverModules:
+      () => [["known1", { url: toFileUrl(join(dir, "app/actions.ts")).href, exports: ["save"] }]],
+  });
+  try {
+    const actions = join(dir, "app", "actions.ts");
+    for (const importer of ["Alias.tsx", "Hash.tsx"]) {
+      const code = (await dev._internal.transform(join(dir, "app", importer))).code;
+      assertStringIncludes(code, `/_denext/@fs${actions}`); // resolved to the module's URL…
+    }
+    const served = (await dev._internal.transform(actions)).code; // …which serves the stub
+    assertEquals(served.includes("DEV_SECRET_99"), false);
+    assertStringIncludes(served, actionIdFor("known1", "save"));
+    assertStringIncludes(served, "clientActionStub");
+  } finally {
+    await dev.stop();
     await Deno.remove(dir, { recursive: true });
   }
 });

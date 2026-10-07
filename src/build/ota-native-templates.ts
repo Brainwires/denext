@@ -34,8 +34,12 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * Generation 6: the bridge serves an exported multi-page app's routes from the UI directory in
  * use, bundled or over the air (`DenextExportRouter`, see
  * bridge-export-router-native-template.ts); the bump keeps an older denext from rewriting it away.
+ * Generation 7: the store pins the origins a UI may come from (`DenextOtaOrigins` /
+ * `dev.denext.ota.ORIGINS`), and without a public key accepts only a pinned https origin or
+ * loopback; the bump keeps an older denext from rewriting that check away. The same unreleased
+ * generation's router refuses a path that leaves the UI directory (a decoded `/../secret`).
  */
-export const OTA_TEMPLATE_VERSION = 6;
+export const OTA_TEMPLATE_VERSION = 7;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:
@@ -817,6 +821,31 @@ final class DenextOtaStore: @unchecked Sendable {
     static let publicKeyInfoKey = "DenextOtaPublicKey"
     /// The hosts an unsigned UI may come from over plain http when no public key is embedded.
     static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]"]
+    /// The Info.plist string key pinning the origins a UI may come from (space- or
+    /// comma-separated, \`denext mobile add-ota --ota-origin\`). Read from the app binary only.
+    static let originsInfoKey = "DenextOtaOrigins"
+
+    /// The pinned origins (Info.plist \`DenextOtaOrigins\`); empty when none are pinned.
+    static let pinnedOrigins: [URL] = {
+        let text = Bundle.main.object(forInfoDictionaryKey: originsInfoKey) as? String ?? ""
+        return text.split(whereSeparator: { $0 == " " || $0 == "," || $0.isNewline })
+            .compactMap { URL(string: String($0)) }
+            .filter { $0.host != nil && $0.scheme != nil }
+    }()
+
+    /// A URL's port, or its scheme's default (443 for https, else 80).
+    static func effectivePort(_ url: URL) -> Int {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    }
+
+    /// Whether \`url\` is on one of the pinned origins (scheme, host and port).
+    static func isPinnedOrigin(_ url: URL) -> Bool {
+        pinnedOrigins.contains { pin in
+            pin.scheme?.lowercased() == url.scheme?.lowercased()
+                && pin.host?.lowercased() == url.host?.lowercased()
+                && effectivePort(pin) == effectivePort(url)
+        }
+    }
 
     enum PublicKeyConfig {
         case unset
@@ -891,12 +920,19 @@ final class DenextOtaStore: @unchecked Sendable {
         return Data("denext-ota-v3\\n\\(v2)\\n\\(nativeFingerprint)".utf8)
     }
 
-    /// The download policy, checked before any file is fetched. With a public key embedded, the
-    /// manifest must carry a valid signature over \`payload\` (code \`signature\`), whatever the
-    /// transport. Without one, only https, or plain http to a loopback host, is allowed (code
-    /// \`insecure\`). A signature protects integrity only: over plain http the request headers
-    /// (bearer tokens) still cross the network in the clear.
+    /// The download policy, checked before any file is fetched. With origins pinned
+    /// (\`DenextOtaOrigins\`), \`baseUrl\` must be on one of them (code \`insecure\`). With a public
+    /// key embedded, the manifest must carry a valid signature over \`payload\` (code
+    /// \`signature\`), whatever the transport. Without one, only a pinned https origin or a
+    /// loopback host is allowed (code \`insecure\`): a script in the page can call the plugin, so an
+    /// unsigned UI from any https server it names would install itself for good. A signature
+    /// protects integrity only: over plain http the request headers (bearer tokens) still cross
+    /// the network in the clear.
     static func checkTrust(baseUrl: URL, payload: Data, signature: String?) throws {
+        let host = (baseUrl.host ?? "").lowercased()
+        if !pinnedOrigins.isEmpty && !isPinnedOrigin(baseUrl) && !loopbackHosts.contains(host) {
+            throw OtaError(code: "insecure", message: "Refusing a UI from \\(host): it is not one of the pinned \\(originsInfoKey).")
+        }
         switch publicKey {
         case .key(let key):
             guard let signature = signature,
@@ -908,11 +944,11 @@ final class DenextOtaStore: @unchecked Sendable {
         case .invalid:
             throw OtaError(code: "signature", message: "Info.plist \\(publicKeyInfoKey) is not a base64 P-256 public key.")
         case .unset:
-            let host = (baseUrl.host ?? "").lowercased()
-            guard baseUrl.scheme?.lowercased() == "https" || loopbackHosts.contains(host) else {
+            let pinnedHttps = baseUrl.scheme?.lowercased() == "https" && isPinnedOrigin(baseUrl)
+            guard pinnedHttps || loopbackHosts.contains(host) else {
                 throw OtaError(
                     code: "insecure",
-                    message: "Refusing an unsigned UI over plain http from \\(host); use https or embed a public key."
+                    message: "Refusing an unsigned UI from \\(host); embed a public key or pin its https origin (denext mobile add-ota --ota-origin)."
                 )
             }
         }
@@ -2161,6 +2197,12 @@ final class DenextOtaStore {
     static final Set<String> LOOPBACK_HOSTS = new HashSet<>(Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]"));
     /** The emulator's alias for the host machine: loopback too, but only in a debuggable build. */
     static final String EMULATOR_HOST = "10.0.2.2";
+    /**
+     * The {@code <meta-data>} (inside {@code <application>}) pinning the origins a UI may come from
+     * (space- or comma-separated, {@code denext mobile add-ota --ota-origin}). Read from the app
+     * binary only.
+     */
+    static final String ORIGINS_META = "dev.denext.ota.ORIGINS";
 
     /** Deletes discarded directories off the main thread. */
     private static final ExecutorService JANITOR = Executors.newSingleThreadExecutor((runnable) -> {
@@ -2441,14 +2483,19 @@ final class DenextOtaStore {
      * the clear.
      */
     void checkTrust(Uri base, byte[] payload, @Nullable String signature) throws OtaException {
+        String host = base.getHost() == null ? "" : base.getHost().toLowerCase(Locale.ROOT);
+        boolean loopback = LOOPBACK_HOSTS.contains(host) || (EMULATOR_HOST.equals(host) && isDebuggable());
+        List<Uri> pins = pinnedOrigins();
+        boolean pinned = isPinnedOrigin(pins, base);
+        if (!pins.isEmpty() && !pinned && !loopback) {
+            throw new OtaException("insecure", "Refusing a UI from " + host + ": it is not one of the pinned " + ORIGINS_META + ".");
+        }
         String encodedKey = publicKeyMetaData();
         if (encodedKey == null) {
-            String host = base.getHost() == null ? "" : base.getHost().toLowerCase(Locale.ROOT);
-            boolean loopback = LOOPBACK_HOSTS.contains(host) || (EMULATOR_HOST.equals(host) && isDebuggable());
-            if (!"https".equalsIgnoreCase(base.getScheme()) && !loopback) {
+            if (!(pinned && "https".equalsIgnoreCase(base.getScheme())) && !loopback) {
                 throw new OtaException(
                     "insecure",
-                    "Refusing an unsigned UI over plain http from " + host + "; use https or embed a public key."
+                    "Refusing an unsigned UI from " + host + "; embed a public key or pin its https origin (denext mobile add-ota --ota-origin)."
                 );
             }
             return;
@@ -2531,6 +2578,45 @@ final class DenextOtaStore {
 
     /** The {@link #PUBLIC_KEY_META} value, or null when the app embeds none. */
     @Nullable
+    /** The pinned origins ({@link #ORIGINS_META}); empty when none are pinned. */
+    private List<Uri> pinnedOrigins() throws OtaException {
+        ApplicationInfo info;
+        try {
+            info = context.getPackageManager().getApplicationInfo(context.getPackageName(), PackageManager.GET_META_DATA);
+        } catch (PackageManager.NameNotFoundException ex) {
+            throw new OtaException("insecure", "Could not read the app's meta-data.");
+        }
+        Object value = info.metaData == null ? null : info.metaData.get(ORIGINS_META);
+        List<Uri> pins = new ArrayList<>();
+        if (value == null) {
+            return pins;
+        }
+        for (String part : String.valueOf(value).split("[\\\\s,]+")) {
+            Uri pin = Uri.parse(part);
+            if (!part.isEmpty() && pin.getScheme() != null && pin.getHost() != null) {
+                pins.add(pin);
+            }
+        }
+        return pins;
+    }
+
+    /** A URI's port, or its scheme's default (443 for https, else 80). */
+    private static int effectivePort(Uri uri) {
+        return uri.getPort() != -1 ? uri.getPort() : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+    }
+
+    /** Whether {@code uri} is on one of {@code pins} (scheme, host and port). */
+    static boolean isPinnedOrigin(List<Uri> pins, Uri uri) {
+        for (Uri pin : pins) {
+            if (pin.getScheme().equalsIgnoreCase(String.valueOf(uri.getScheme()))
+                && pin.getHost().equalsIgnoreCase(String.valueOf(uri.getHost()))
+                && effectivePort(pin) == effectivePort(uri)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String publicKeyMetaData() throws OtaException {
         ApplicationInfo info;
         try {

@@ -3,23 +3,30 @@ name: CI
 # All work lands on `development` (see AGENTS.md → Releasing); `main` only ever receives the
 # development → main merge PR at a release. Triggering on `main` alone meant an rc could be
 # tagged from sixty commits none of which had been through CI. So every push to `development`
-# runs the fast `check` job; the three heavy jobs (integration builds, real-npm next-compat,
-# the coverage re-run of the whole suite) stay on pull requests and `main`, where they gate
-# the release merge — a dozen pushes a day to the working branch would otherwise queue an
-# hour of runners each. A newer push to `development` cancels the run of the one before it;
-# `main` and PR runs are never cancelled.
+# runs the fast `check` job (and the macOS `ios-export-router` job); the three heavy jobs
+# (integration builds, real-npm next-compat, the coverage re-run of the whole suite) run on pull
+# requests, `main` and a manual dispatch, not on a plain push — a dozen pushes a day to the
+# working branch would otherwise queue an hour of runners each.
+#
+# A release is cut from a commit these heavy jobs passed on: `deno task release` refuses to tag
+# unless the newest ci.yml run on HEAD that ran them has every job green. On `development` that
+# run is a dispatch: `gh workflow run ci.yml --ref development`, then `gh run watch`.
+#
+# A newer push to `development` cancels the push run before it; dispatch, `main` and PR runs are
+# never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch).
 on:
   push:
     branches: [main, development]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/development' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
 
 jobs:
   # Fast feedback: formatting, lint, type-check, the unit test suite, and doc
@@ -77,8 +84,8 @@ jobs:
   # Split out so it runs in parallel with `check` instead of extending it.
   integration:
     runs-on: ubuntu-latest
-    # Heavy: PRs and `main` only (see the trigger comment at the top).
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -104,8 +111,8 @@ jobs:
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
     runs-on: ubuntu-latest
-    # Heavy: PRs and `main` only (see the trigger comment at the top).
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -136,8 +143,8 @@ jobs:
   # (currently 80%; baseline ~84-86%). Parallel with the other jobs.
   coverage:
     runs-on: ubuntu-latest
-    # Heavy: PRs and `main` only (see the trigger comment at the top).
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -155,3 +162,29 @@ jobs:
 
       - name: Coverage (fails under the threshold)
         run: deno task test:coverage
+
+  # The iOS shell's export router (Swift), compiled with swiftc and run over the shared export-route
+  # vectors (tests/export-routes-conformance.test.ts). The test is ignored where there is no darwin
+  # + swiftc, so the Linux jobs never run it; this job does, on every event, and fails if the
+  # compiled case was ignored rather than passed.
+  ios-export-router:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: swiftc is on the runner
+        run: swiftc --version
+
+      - name: Export routes conformance (the iOS router compiled with swiftc)
+        env:
+          NO_COLOR: "1" # plain test names for the grep below
+        run: |
+          set -o pipefail
+          deno test -A --unstable-kv tests/export-routes-conformance.test.ts 2>&1 | tee "$RUNNER_TEMP/export-routes.txt"
+          grep -E 'the iOS router \(compiled\) serves every vector \.\.\. ok' "$RUNNER_TEMP/export-routes.txt"

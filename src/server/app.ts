@@ -24,7 +24,12 @@ import { createAppLinksHandler } from "./app-links.ts";
 import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
 import type { RequestContext } from "./request-context.ts";
 
-export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
+export type {
+  AppConfig,
+  FlightBoundaryState,
+  RequestHandler,
+  RequestLogInfo,
+} from "./app-config.ts";
 export { applyDefaultSecurityHeaders, hstsHeaderValue } from "./response-headers.ts";
 export { routeUsesBoundary } from "./flight-routing.ts";
 

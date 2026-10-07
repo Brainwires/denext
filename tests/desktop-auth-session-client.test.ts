@@ -2,7 +2,7 @@
 // per-launch desktop token, POSTs to the loopback endpoint, and maps the response (or a failure)
 // to an AuthSessionError. Driven with a stubbed `fetch` and `globalThis.__denext` — no runtime.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import {
   startDesktopAuthSession,
   startDesktopSchemeAuthSession,
@@ -68,7 +68,9 @@ Deno.test("startDesktopAuthSession: 200 with a url resolves, sending the token +
   const headers = new Headers(seen?.init?.headers);
   assertEquals(headers.get("x-denext-desktop-token"), "tok-123");
   assertEquals(headers.get("content-type"), "application/json");
-  assertEquals(JSON.parse(String(seen?.init?.body)), { authUrl: AUTH_URL, timeoutMs: 1000 });
+  const { session, ...sent } = JSON.parse(String(seen?.init?.body));
+  assertEquals(sent, { authUrl: AUTH_URL, timeoutMs: 1000 });
+  assertMatch(session, /^[0-9a-f-]{36}$/, "a per-call session key binds the session to this page");
 });
 
 Deno.test("startDesktopAuthSession: a non-200 maps the response code", async () => {
@@ -145,7 +147,10 @@ Deno.test("startDesktopAuthSession: the cancel overlay's button cancels the brow
       button.dispatch("click");
       const err = await assertRejects(() => run);
       assertEquals(codeOf(err), "cancelled");
-      assertEquals(ep.bodies[1], { cancel: true });
+      // The cancel names the session the start opened (bound to this page).
+      const start = ep.bodies[0] as { session?: string };
+      assert(typeof start.session === "string" && start.session.length >= 16);
+      assertEquals(ep.bodies[1], { cancel: true, session: start.session });
       assertEquals(doc.button(), undefined, "the overlay is gone");
     });
   } finally {

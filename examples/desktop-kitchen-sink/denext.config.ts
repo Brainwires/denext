@@ -34,6 +34,9 @@ export default {
       deepLinks: ["kitchensink-link"],
       // A second launch hands its links and files to the running app and exits.
       singleInstance: true,
+      // The Linux packages install it in the hicolor theme as `dev.denext.kitchen-sink`, the
+      // `.desktop` entry's `Icon=` (macOS and Windows keep the default icon).
+      icons: { linux: "./icons/linux.png" },
     },
     // Runs in the window before the page's own scripts (Electron's preload).
     preload: "./desktop/preload.ts",

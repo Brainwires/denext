@@ -108,6 +108,7 @@ Deno.test("checkForUiUpdate: a different version → apply with baseUrl, headers
   const { plugin: p, calls } = plugin({ current: null, bundled: BUNDLED, pending: null });
   await withShell({ DenextOta: p }, async () => {
     const f = okManifest();
+    // An unstamped UI and no `platform` option: no target header (a simple GET, no preflight).
     const headers = { authorization: "Bearer secret" };
     const r = await checkForUiUpdate({ baseUrl: BASE, headers, fetch: f.fetch });
     assertEquals(r, { kind: "applied", version: SERVER });

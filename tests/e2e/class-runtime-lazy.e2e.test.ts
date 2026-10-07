@@ -11,11 +11,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
 
-const FIXTURE = new URL("./fixtures/class-dep", import.meta.url).pathname;
-const VENDOR = new URL("./fixtures/class-dep-vendor", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/class-dep", import.meta.url));
+const VENDOR = fromFileUrl(new URL("./fixtures/class-dep-vendor", import.meta.url));
 const DEP_DIR = join(FIXTURE, "node_modules", "@acme", "ui");
 
 /** The client file that carries the reconciler half of the class runtime, or null. */

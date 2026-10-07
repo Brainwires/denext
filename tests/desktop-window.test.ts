@@ -20,6 +20,10 @@ import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import { installWindowCloseHandler } from "../src/build/desktop.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppApi } from "../src/desktop/launch-events.ts";
+import { until } from "./helpers/desktop-fake-runtime.ts";
+
+/** How long a test waits for an async effect (polled; generous for a loaded machine). */
+const WAIT_MS = 10_000;
 
 /** A fake pinned-runtime window recording every call. */
 class FakeWindow extends EventTarget {
@@ -352,6 +356,78 @@ Deno.test("window: state and display events are emitted as signals", () => {
   ]);
 });
 
+Deno.test("window.titleBarPreferences: the runtime's answer, validated; followed live", async () => {
+  const answer = {
+    buttons: { left: ["close", "minimize", "bogus"], right: ["appmenu"] },
+    side: "left",
+    doubleClick: "minimize",
+    colorScheme: "dark",
+    accentColor: "#3daee9",
+    font: "Noto Sans Bold 10",
+    source: "portal",
+  };
+  const api = fakeApi({ titleBarPreferences: () => Promise.resolve(answer) });
+  const { call, ctl, emitted } = setup({ api, os: "linux" });
+  assertEquals(await call("titleBarPreferences"), {
+    ...answer,
+    // An item the page wouldn't know is dropped.
+    buttons: { left: ["close", "minimize"], right: ["appmenu"] },
+  });
+  // The runtime's change event becomes the page's signal.
+  ctl.install();
+  api.dispatchEvent(new Event("titlebarpreferenceschanged"));
+  assertEquals(emitted, [["window", "titleBarPreferences", null]]);
+  // Unexpected values take the OS's default for that field.
+  const odd = fakeApi({
+    titleBarPreferences: () =>
+      Promise.resolve({
+        buttons: "nope",
+        side: "top",
+        doubleClick: "explode",
+        colorScheme: 3,
+        accentColor: "red",
+        font: 7,
+        source: "magic",
+      }),
+  });
+  assertEquals(await setup({ api: odd, os: "windows" }).call("titleBarPreferences"), {
+    buttons: { left: [], right: [] },
+    side: "right",
+    doubleClick: "maximize",
+    colorScheme: "no-preference",
+    accentColor: null,
+    font: null,
+    source: "unknown",
+  });
+});
+
+Deno.test("window.titleBarPreferences: before runtime 2.9.7-denext.12, the OS's usual layout", async () => {
+  const mac = await setup({ os: "darwin" }).call("titleBarPreferences");
+  assertEquals(mac, {
+    buttons: { left: ["close", "minimize", "maximize"], right: [] },
+    side: "left",
+    doubleClick: "maximize",
+    colorScheme: "no-preference",
+    accentColor: null,
+    font: null,
+    source: "unknown",
+  });
+  const linux = await setup({ os: "linux" }).call("titleBarPreferences") as {
+    buttons: unknown;
+    side: string;
+  };
+  assertEquals(linux.buttons, { left: ["menu"], right: ["minimize", "maximize", "close"] });
+  assertEquals(linux.side, "right");
+  // A runtime whose call throws answers the same.
+  const throwing = fakeApi({ titleBarPreferences: () => Promise.reject(new Error("no portal")) });
+  assertEquals(
+    (await setup({ api: throwing, os: "windows" }).call("titleBarPreferences") as {
+      source: string;
+    }).source,
+    "unknown",
+  );
+});
+
 Deno.test("window close guard: off → the window closes; on → held, asked, answered", async () => {
   const { ctl, emitted, call, win, exits } = setup();
   const close = () => new Event("close", { cancelable: true });
@@ -378,7 +454,7 @@ Deno.test("window close guard: off → the window closes; on → held, asked, an
   const id2 = (emitted[1][2] as { id: string }).id;
   assertEquals(await call("closeRespond", { id: id2, close: true }), { closing: true });
   assert(win.closed);
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
 });
 
@@ -420,7 +496,7 @@ Deno.test("window.quit: Deno.desktop.quit decides (a guarded close holds it); st
     exit: (c) => void exits.push(c),
   });
   assertEquals(await stock.capability.methods.quit.handler({}, ctx()), { quitting: true });
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
 });
 
@@ -440,7 +516,7 @@ Deno.test("window drops: files become read-only handles, folders readFolder; tak
         detail: { paths: [file, folder, join(dir, "gone.txt"), 42], count: 4, x: 30, y: 40 },
       }),
     );
-    await new Promise((r) => setTimeout(r, 20));
+    await until(() => emitted.length > 0, WAIT_MS);
     assertEquals(emitted, [["window", "drop", null]]);
     const drops = await call("takeDrops") as Array<
       { x: number; y: number; files: Array<Record<string, unknown>> }
@@ -655,7 +731,7 @@ Deno.test("window close guard: turning it off drops the pending request; close()
   await call("setCloseGuard", { enabled: true });
   assertEquals(await call("close"), null);
   assert(win.closed);
-  await new Promise((r) => setTimeout(r, 5));
+  await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
   // ...and the guard is gone with it.
   assertEquals(ctl.interceptClose(new Event("close", { cancelable: true })), false);
@@ -819,4 +895,36 @@ Deno.test("resolver: the window settings and app folders reach runDesktop", asyn
     Error,
     "desktop.backdrop",
   );
+});
+
+Deno.test("window: capabilities carry the session probe's facts; unknown without the probe", async () => {
+  const before = await setup().call("capabilities") as Record<string, unknown>;
+  assertEquals([before.sessionType, before.cookieEncryption], ["unknown", "unknown"]);
+  const probed = await setup({
+    api: fakeApi({
+      platformFeatures: () =>
+        Promise.resolve({ os: "linux", sessionType: "wayland", cookieEncryption: "basic" }),
+    }),
+  }).call("capabilities") as Record<string, unknown>;
+  assertEquals([probed.sessionType, probed.cookieEncryption], ["wayland", "basic"]);
+  assertEquals(probed.closeGuard, true, "the window's own keys are unchanged");
+});
+
+Deno.test("window: unsupported says why (data.reason)", async () => {
+  const win = new StockWindow();
+  const ctl = createWindowController({ window: win, emit: () => {} });
+  const call = (m: string, a: unknown = {}) =>
+    Promise.resolve().then(() => ctl.capability.methods[m].handler(a, ctx()));
+  const err = await assertRejects(() => call("maximize"), DesktopCapError);
+  assertEquals(err.data, { reason: "this Deno Desktop runtime has no BrowserWindow.maximize" });
+  const screens = await assertRejects(() => call("screens"), DesktopCapError);
+  assert(
+    String((screens.data as { reason?: unknown }).reason).includes("pinned runtime adds it"),
+  );
+  const none = createWindowController({ window: undefined, emit: () => {} });
+  const noWin = await assertRejects(
+    () => Promise.resolve().then(() => none.capability.methods.state.handler({}, ctx())),
+    DesktopCapError,
+  );
+  assertEquals(noWin.data, { reason: "no window was adopted (not a desktop run)" });
 });

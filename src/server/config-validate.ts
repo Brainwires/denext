@@ -17,6 +17,7 @@ import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 import {
   desktopAppIdentifierError,
   desktopSchemeError,
+  normalizeDesktopBridgeOrigin,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
@@ -250,13 +251,30 @@ function validateDeepLinks(deepLinks: unknown, fail: Fail): void {
   });
 }
 
-/** `desktop.app`: origin + identifier, deep-link schemes, singleInstance. */
+/** `desktop.app.bridgeOrigins`: origins, `<scheme>://*` or `*`. */
+function validateBridgeOrigins(origins: unknown, fail: Fail): void {
+  if (origins === undefined) return;
+  if (!Array.isArray(origins)) {
+    fail("desktop.app.bridgeOrigins", "must be an array of origins");
+  }
+  (origins as unknown[]).forEach((entry, i) => {
+    if (typeof entry !== "string" || normalizeDesktopBridgeOrigin(entry) === null) {
+      fail(
+        `desktop.app.bridgeOrigins[${i}]`,
+        'must be an origin ("https://idp.example"), "<scheme>://*" or "*"',
+      );
+    }
+  });
+}
+
+/** `desktop.app`: origin + identifier, deep-link schemes, singleInstance, bridge origins. */
 function validateDesktopApp(app: unknown, fail: Fail): void {
   if (app === undefined) return;
   if (!isPlainObject(app)) fail("desktop.app", "must be an object");
   const a = app as Record<string, unknown>;
   validateDesktopOrigin(a, fail);
   validateDeepLinks(a.deepLinks, fail);
+  validateBridgeOrigins(a.bridgeOrigins, fail);
   if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
     fail("desktop.app.singleInstance", "must be a boolean");
   }
@@ -847,6 +865,20 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** `platformExtensions` is a boolean or `{ native?: boolean, osFiles?: boolean }`. */
+function validatePlatformExtensions(value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("platformExtensions", "must be a boolean or `{ native?: boolean, osFiles?: boolean }`");
+    return;
+  }
+  for (const [key, v] of Object.entries(value)) {
+    if (key !== "native" && key !== "osFiles") {
+      fail(`platformExtensions.${key}`, "is not a known option (native, osFiles)");
+    } else if (typeof v !== "boolean") fail(`platformExtensions.${key}`, "must be a boolean");
+  }
+}
+
 /** The string fields of a `mobile.flavors` entry. */
 const FLAVOR_STRINGS = [
   "appId",
@@ -1072,6 +1104,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validatePlatformExtensions(config.platformExtensions, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);

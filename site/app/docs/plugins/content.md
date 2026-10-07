@@ -276,7 +276,10 @@ learn. Per the tiers above, the **app runtime** comes from `@denext/denext` and 
   `enableFastRefresh`) — from `@denext/denext/plugin-kit`
 - the browser bundler (`bundleRoutes`) — from `@denext/denext/plugin-kit`, for a plugin
   that generates its own hydration entries. It shells out to `deno bundle` (code
-  splitting on, no npm), so entries that share a runtime download it once.
+  splitting on, no npm), so entries that share a runtime download it once. Pass it
+  `redirects: await platformClientRedirects(projectDir, config)` (with `projectDir`) so the bundles take the
+  app's [platform-specific files](/docs/platform-files) (`Button.web.tsx`), the ones a plugin's
+  server render loads through `ctx.load`.
 - the CSS pipeline (`buildAppCss`, `extractRouteCss`) — from `@denext/denext/plugin-kit`,
   so a plugin's own bundles can `import "./x.css"` (imports resolve to JS shims) and it
   can extract per-route CSS to `<link>`.

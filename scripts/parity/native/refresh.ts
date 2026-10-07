@@ -30,8 +30,9 @@ import {
   reactNativeExpectedDeps,
   rnBaselinePath,
 } from "./spec.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fromFileUrl(new URL("../../../", import.meta.url)).replace(/[\\/]$/, "");
 
 async function writeBaseline(path: string, captured: Baseline): Promise<void> {
   await Deno.mkdir(path.replace(/\/[^/]+$/, ""), { recursive: true });

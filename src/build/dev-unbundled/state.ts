@@ -4,8 +4,10 @@
 // `createUnbundledState` — the explicit form of what used to be the captured locals of
 // one large closure. See `../dev-unbundled.ts` for the module header + URL scheme.
 
+import type { ImportAliases, Platform, PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
 import type * as esbuild from "esbuild";
+import type { ServerModuleRef } from "../client-imports.ts";
 
 /** Dev URL prefixes (see the `dev-unbundled.ts` module header). */
 export const DEP_PREFIX = "/_denext/@dep/";
@@ -105,16 +107,18 @@ export function norm(p: string): string {
 }
 
 /**
- * esbuild loader for a source path's extension (default tsx — permissive for JSX). With
- * `jsxInJs` (React Native mode) a `.js` module parses as JSX, as Metro's Babel preset does.
+ * esbuild loader for a source path's extension. With `jsxInJs` (React Native mode) a `.js`
+ * module parses as JSX, as Metro's Babel preset does. Any other extension is not a module and
+ * throws: parsing an arbitrary file as TSX would echo its text back in the error.
  */
 export function loaderFor(path: string, jsxInJs = false): esbuild.Loader {
-  if (path.endsWith(".ts")) return "ts";
+  if (/\.[cm]?ts$/.test(path)) return "ts";
+  if (path.endsWith(".tsx")) return "tsx";
   if (jsxInJs && path.endsWith(".js")) return "jsx";
-  if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "js";
+  if (/\.[cm]?js$/.test(path)) return "js";
   if (path.endsWith(".json")) return "json";
   if (path.endsWith(".jsx")) return "jsx";
-  return "tsx";
+  throw new Error(`not a JS / TS / JSON module: ${path}`);
 }
 
 /** A cached module transform: its source mtime, the emitted JS, and its dep edges. */
@@ -175,12 +179,25 @@ export interface UnbundledDevOptions {
    */
   reactNative?: ReactNativeDevOptions;
   /**
+   * How a target resolves the app's own platform files (`BigButton.ios.tsx`; see
+   * `../platform-extensions.ts`): each request is served for the target its page named
+   * (`devPlatformOf`), `web` by default. Absent, or null for a target (`platformExtensions:
+   * false`), the plain files resolve; React Native mode then still probes its `.web.*`.
+   */
+  resolvePlatform?: (platform: Platform) => PlatformResolution | null;
+  /**
    * Called when the dependency bundle is rebuilt under a live page (React Native mode: a new
    * package or name was imported; compat: a module discovered a package the first build lacked,
    * which renames the bundle's shared chunks). The page must reload rather than load a second
    * copy of a package next to them, or fetch chunks that are gone.
    */
   onDepsRebuilt?: () => void;
+  /**
+   * The `"use server"` modules the dev boundary knows (id → file URL + export names). A
+   * `"use server"` module is never served as written: the browser gets its action stub, named
+   * by this id and exports (else by the id the boundary would give it and its static exports).
+   */
+  serverModules?: () => Iterable<readonly [string, ServerModuleRef]>;
 }
 
 /** What React Native mode adds to the unbundled loop (from `reactNativeBundleOptions`). */
@@ -210,7 +227,10 @@ export interface UnbundledState {
    * URLs (`?v=`) so only a changed dep re-fetches while unchanged deps stay cached.
    */
   readonly version: Map<string, number>;
-  /** Transform cache (abs path → last emitted transform). */
+  /**
+   * Transform cache (abs path, per target — {@linkcode transformKey} → last emitted transform):
+   * a module's rewritten imports name the target's platform files, so targets never share one.
+   */
   readonly cache: Map<string, TransformEntry>;
   /** Reverse import graph (dep → its importers) for HMR boundary propagation. */
   readonly importers: Map<string, Set<string>>;
@@ -241,7 +261,8 @@ export interface UnbundledState {
   depsBuilt: Promise<void> | null;
   runtimeBuilt: Promise<void> | null;
   mergedConfigPath: string | null;
-  aliasPrefixes: Array<[string, string]> | null;
+  /** The app's import-map aliases (`readImportAliases`), loaded once. */
+  aliasPrefixes: ImportAliases | null;
   /**
    * React Native: the names the app's modules import from each package specifier, so the
    * dependency bundle's entry for it can re-export them (CommonJS packages included).
@@ -258,6 +279,11 @@ export interface UnbundledState {
 }
 
 /** Create the shared state for one project (dirs under `<outDir>/dev-unbundled/`). */
+/** The transform-cache key of `abs` served for `platform` (the bare path for `web`). */
+export function transformKey(abs: string, platform: Platform): string {
+  return platform === "web" ? abs : `${platform}:${abs}`;
+}
+
 export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState {
   const base = join(opts.outDir, "dev-unbundled");
   return {

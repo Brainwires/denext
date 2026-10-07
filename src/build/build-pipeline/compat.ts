@@ -70,6 +70,8 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
   await buildNextCompatClientEntries({
     ...compatOptions(ctx),
     clientDir: ctx.clientDir,
+    // A hydrated route's own imports of an action get its stub, as the Flight bundle's do.
+    server: ctx.serverModules,
     entries: clientRoutes.map((route) => ({
       id: routeId(route.routePath),
       source: generateRouteEntry(route, {

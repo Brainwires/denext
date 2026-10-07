@@ -26,8 +26,10 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * the bump makes 2.10.0 (generation 1) keep such a bridge instead of rewriting it unguarded.
  * Generation 3: the bridge serves an exported multi-page app's routes (`DenextExportRouter`, see
  * bridge-export-router-native-template.ts); the bump keeps an older denext from rewriting it away.
+ * Generation 4: the router refuses a path that leaves the UI directory (a decoded `/../secret`);
+ * the bump keeps an older denext from rewriting that check away.
  */
-export const AUTH_SESSION_TEMPLATE_VERSION = 3;
+export const AUTH_SESSION_TEMPLATE_VERSION = 4;
 
 /**
  * A template as the installer writes it: a first line

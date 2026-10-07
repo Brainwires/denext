@@ -121,6 +121,8 @@ ours is open yet.
 | [Menus, accelerators and close events](#menus-accelerators-and-close-events)                 | laufey, Deno, denext | planned                                                                      |
 | [Notifications](#notifications)                                                              | laufey, Deno, denext | planned                                                                      |
 | [Node-API addons on Windows](#node-api-addons-on-windows)                                    | Deno runtime         | planned (Linux half upstream in deno#36718)                                  |
+| [Chromium's sandbox on Windows (CEF)](#chromiums-sandbox-on-windows-cef)                     | laufey, Deno, denext | planned                                                                      |
+| [No network requests from the CEF backend](#no-network-requests-from-the-cef-backend)        | laufey               | planned                                                                      |
 | [Signed full-app self-updates](#signed-full-app-self-updates)                                | Deno runtime, denext | builds on deno#36421; ours planned                                           |
 | [Reliability fixes](#reliability-fixes)                                                      | laufey               | planned                                                                      |
 | [Build fixes](#build-fixes)                                                                  | laufey               | [laufey#85](https://github.com/littledivy/laufey/pull/85)                    |
@@ -242,7 +244,9 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **What:** `Deno.desktop.getSchemeOwner` and `registerScheme({ force })`, plus a first-launch
   registration that runs only when the scheme is unowned or already the app's: Windows `HKCU` with
   an owner marker (the user's `UserChoice` is read, never written), macOS LaunchServices, Linux a
-  hidden XDG `.desktop` entry with `xdg-mime`. The Windows `.msi` writes the same keys at install.
+  hidden XDG `.desktop` entry with `xdg-mime` (then, from runtime 2.9.7-denext.12, KDE's
+  `kbuildsycoca6` / `kbuildsycoca5` where installed, so the first link on Plasma reaches the app
+  without a re-login). The Windows `.msi` writes the same keys at install.
 - **Why:** a deep link only reaches an app the OS knows about, and on Windows a link clicked
   before the app's first launch failed until the installer registered it. Registration must never
   take a scheme another app owns.
@@ -305,6 +309,22 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   Moriuchi) and [littledivy/laufey#81](https://github.com/littledivy/laufey/pull/81) (Sasivarnan R),
   all open and cherry-picked with their authorship. Ours is planned.
 
+### Title bar preferences
+
+- **What:** `Deno.desktop.titleBarPreferences()` and its `titlebarpreferenceschanged` event (runtime
+  2.9.7-denext.12): how the user set up title bars — the window buttons on each side and their
+  order, the double-click action, the colour scheme, the accent colour, the title bar font. On
+  Linux it reads xdg-desktop-portal's Settings first (Plasma's portal reports KWin's button order;
+  GNOME's, `button-layout`), then GSettings, then GTK's defaults, and follows `SettingChanged`
+  live; macOS reports the traffic lights on the left and `AppleActionOnDoubleClick`; Windows the
+  caption buttons on the right.
+- **Why:** windows with a frame already look like the rest of the desktop (the compositor draws
+  it on KWin, Sway and X11; GTK's own header bar on GNOME), but a page that hides its title bar
+  and draws its own had nothing to match. `denext/desktop/window`'s `getTitleBarPreferences()`
+  and `makeWindowDraggable` (its double click) use it.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
 ### Device-independent sizing on Windows
 
 - **What:** window sizes, positions and size limits are the page area in device-independent
@@ -344,7 +364,25 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   cancelable with an `AbortSignal`, never blocking the runtime (on Windows they run on laufey's
   own STA thread).
 - **Why:** stock Deno Desktop had only `alert` / `confirm` / `prompt`. Without the runtime, denext
-  falls back to shelling out to osascript, PowerShell, zenity or kdialog.
+  falls back to shelling out to osascript (macOS) or PowerShell (Windows); on Linux the dialogs are
+  only the runtime's (zenity and kdialog are separate installs that differ in what they offer).
+- **Linux (runtime 2.9.7-denext.12):** the desktop's own dialog through xdg-desktop-portal's
+  FileChooser, called directly (not only inside Flatpak / Snap), wherever the portal offers one; GTK's
+  chooser where it doesn't (a wlroots desktop with only `xdg-desktop-portal-wlr`).
+  `platformFeatures().fileChooser` says which, `fileChooserReason` why GTK's.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
+### The secure store on Linux
+
+- **What:** `Deno.desktop.secureStore` (runtime 2.9.7-denext.12): `get` / `set` / `delete` of a
+  small secret per (service, account) in the Secret Service through libsecret (loaded at run time),
+  with the state around it read over D-Bus first: no provider ("install gnome-keyring", "enable
+  KWallet's Secret Service"), a locked keyring no one here can unlock (refused at once) or an
+  unlock prompt nobody answers (refused after the timeout) reject `SecureStoreUnavailable` with
+  the reason. Never a plaintext fallback, and a locked item is never `null`.
+- **Why:** denext's `secure-store` ran `secret-tool`, which a stock Ubuntu desktop doesn't ship, and
+  told a locked keyring from a missing item only by parsing its output.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
@@ -404,12 +442,17 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   `capabilities()` and `requestPermission()`. A click on a notification from an earlier run, or
   the one that launched the app, arrives as `notificationresponse`, kept in
   `launchNotificationResponses` until the app listens. Windows toasts carry action buttons and
-  reach the app through its COM activator.
+  reach the app through its COM activator. A response's `data` and action are untrusted input: on Linux any
+  process of the same user can forge a click, and on Windows a toast activation.
 - **Why:** actions were folded into `click`, nothing could be scheduled, and the click that
   launched the app was lost, so a reminder couldn't open the item it was about.
 - **Layer:** laufey, Deno runtime, denext.
-- **Upstream:** planned. macOS shows notifications only from a signed app, and Linux has no
-  cold-start click (the freedesktop protocol sends it to the connection that posted it).
+- **Upstream:** planned. macOS shows notifications only from a signed app. On Linux (runtime
+  2.9.7-denext.11) the runtime posts through the xdg-desktop-portal, so a click starts an app that
+  quit (D-Bus activation of the app id's name, from the `.deb` / `.rpm`'s service file), and a
+  systemd transient user timer posts a scheduled notification while the app is closed; without the
+  portal (1.19+) it falls back to the freedesktop protocol, which sends a click to the connection
+  that posted it, so there is no click after quit.
 
 ### Node-API addons on Windows
 
@@ -423,6 +466,33 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Upstream:** planned; it fixes the Windows half of deno#36596. The Linux half landed upstream
   in [denoland/deno#36718](https://github.com/denoland/deno/pull/36718) (Leo Kettmeir), which the
   fork includes.
+
+### Chromium's sandbox on Windows (CEF)
+
+- **What:** on the `cef` backend, Windows apps run their web content in Chromium's sandbox:
+  renderers at Untrusted integrity, the GPU process at Low. CEF's Windows sandbox exists only
+  inside its `bootstrap.exe`, so that is the app's executable and laufey's CEF host is a library it
+  loads (see [the Windows CEF layout](#the-windows-cef-layout)).
+- **Why:** the Windows CEF backend ran every child process unsandboxed, so a compromised renderer
+  had the user's full rights. macOS and Linux already ran sandboxed.
+- **Limits:** the bootstrap starts the app in its install folder, so an app started from a shell
+  or a shortcut does not keep the directory it was started from (denext's launchers, the forked
+  workers and the updater pass theirs in `LAUFEY_CWD`, which the host changes back to); a
+  bootstrap signed with a certificate Windows doesn't trust refuses to start (trust a self-signed
+  development certificate first); and an app packaged with denext 3.1.x or earlier (runtime
+  denext.8) can't update itself to the new layout: reinstall it.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
+### No network requests from the CEF backend
+
+- **What:** the CEF host makes no network requests of its own (runtime 2.9.7-denext.11): no
+  network time, component updater, account or search-engine traffic, and on Linux no Hunspell
+  dictionary downloads. A feature or switch the app's own command line sets still wins.
+- **Why:** Chromium contacted Google from a CEF window even with background networking off, so a
+  window's traffic was not only the app's.
+- **Layer:** laufey.
+- **Upstream:** planned.
 
 ### Signed full-app self-updates
 
@@ -495,24 +565,35 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 
 Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`).
 
-| Release          | What it adds                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `2.9.7-denext.1` | The stable app origin over the memory transport, per-app storage, the launch file, the app identifier, deep links and single instance.                                                                                                                                                                                                                                                                                 |
-| `2.9.7-denext.2` | Scheme registration with the OS (and the `.msi` registering it), native passkeys.                                                                                                                                                                                                                                                                                                                                      |
-| `2.9.7-denext.3` | The window API: state, size limits, screens, chrome, a cancelable close and quit, the initial window.                                                                                                                                                                                                                                                                                                                  |
-| `2.9.7-denext.4` | Drag and drop, native file dialogs, the rich clipboard, signed full-app self-updates, Node-API addons on Windows.                                                                                                                                                                                                                                                                                                      |
-| `2.9.7-denext.5` | Global shortcuts, launch at login, DevTools control, menu accelerators and close events, scheduled and actionable notifications.                                                                                                                                                                                                                                                                                       |
-| `2.9.7-denext.6` | OS sign-in sessions (`Deno.desktop.authSession`) and `runOnMainThread` (laufey API 42).                                                                                                                                                                                                                                                                                                                                |
-| `2.9.7-denext.7` | The 3.1 security and fork-code audit fixes: the WebSocket relay forwards one marked upgrade (`x-deno-desktop-relay`) and only a `101` back, `node:http` serves under the memory transport, cancelled scheme requests abort the app's `request.signal`, updater hardening. `Deno.desktop.authSession.cancel()`, which closes the macOS sheet from code. laufey `b993068` (crate 0.8.0, API 43). **denext requires it.** |
-| `2.9.7-denext.8` | macOS windows open in front at launch (the first window had opened behind other apps' windows, so WebKit paused `requestAnimationFrame`), WKWebView reports `outerWidth` / `outerHeight`, and a DevTools lock-ordering deadlock fix. laufey `e1bfe17` (API 43). The current pin.                                                                                                                                       |
+| Release           | What it adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2.9.7-denext.1`  | The stable app origin over the memory transport, per-app storage, the launch file, the app identifier, deep links and single instance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `2.9.7-denext.2`  | Scheme registration with the OS (and the `.msi` registering it), native passkeys.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `2.9.7-denext.3`  | The window API: state, size limits, screens, chrome, a cancelable close and quit, the initial window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `2.9.7-denext.4`  | Drag and drop, native file dialogs, the rich clipboard, signed full-app self-updates, Node-API addons on Windows.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `2.9.7-denext.5`  | Global shortcuts, launch at login, DevTools control, menu accelerators and close events, scheduled and actionable notifications.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `2.9.7-denext.6`  | OS sign-in sessions (`Deno.desktop.authSession`) and `runOnMainThread` (laufey API 42).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `2.9.7-denext.7`  | The 3.1 security and fork-code audit fixes: the WebSocket relay forwards one marked upgrade (`x-deno-desktop-relay`) and only a `101` back, `node:http` serves under the memory transport, cancelled scheme requests abort the app's `request.signal`, updater hardening. `Deno.desktop.authSession.cancel()`, which closes the macOS sheet from code. laufey `b993068` (crate 0.8.0, API 43). **denext requires it.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `2.9.7-denext.8`  | macOS windows open in front at launch (the first window had opened behind other apps' windows, so WebKit paused `requestAnimationFrame`), WKWebView reports `outerWidth` / `outerHeight`, and a DevTools lock-ordering deadlock fix. laufey `e1bfe17` (API 43).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `2.9.7-denext.9`  | The 3.1.1 audit: the WebSocket relay requires a per-launch token (`DENO_DESKTOP_WS_URL`), the scheme bridge marks requests from other origins' documents (`x-deno-desktop-cross-origin`), bindings answer only the app's own documents (`bindOptions.origins`, the launch file's `bridgeOrigins`), the clipboard reads, global shortcuts, launch at login, notifications and forced scheme registration need an unscoped `--allow-sys`, update manifests must carry `expiresAt` and `sequence`, a staged update must be built as the manifest's version (`version_mismatch`), and single-instance helper and worker launches run headless, so the host and runtime classifiers agree. laufey `1d1ae22` (API 44). **denext requires it.**                                                                                                                                                                                                                                                                                |
+| `2.9.7-denext.10` | Linux, probed rather than guessed: `Deno.desktop.platformFeatures()` (async) reports the session type, a tray host (followed live, with a `platformfeatureschanged` event), the Secret Service and its lock state, KWallet, the notification server and the portal versions. CEF's cookie store no longer hangs on a keyring no one can unlock: a profile with no OS-key cookies starts with `--password-store=basic`, one that has them waits for the key and is never switched (Chromium would delete them). The Chromium sandbox for CEF on macOS and Linux (user namespaces, else a setuid-root `chrome-sandbox` from a `.deb` / `.rpm`, else off with a warning). Wayland clipboard, global-shortcut, client-side-decoration sizing and exit fixes. WebKitGTK streamed `fetch` bodies reach the page as each write arrives (WebKit bug 322545). `.deb` / `.rpm` install the icon under the app id, refresh the desktop databases and depend on `secret-tool` only when the app runs it. laufey `611abcd` (API 45). |
+| `2.9.7-denext.11` | Chromium's sandbox for CEF on Windows, behind CEF's bootstrap (`<App>.exe` is the bootstrap, `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime; see [the Windows CEF layout](#the-windows-cef-layout)). Linux notifications through the xdg-desktop-portal: D-Bus activation, so a click starts an app that quit, systemd transient user timers that post a scheduled notification while the app is closed, and launcher badges. The runtime never rewrites the process's argv in place (a D-Bus-activated app crashed), and `Deno.args` leaves out the runtime's own switches. The CEF host makes no network requests of its own (no network time, component updater, account or search-engine traffic, and on Linux no Hunspell dictionary downloads). FFI libraries load from paths relative to the app, the X11 clipboard takes large (INCR) transfers, and the webview `.deb`'s dependencies, the AppImage icon and a tray created late are fixed. laufey `00f2128` (API 45). The current pin.          |
 
-denext needs `2.9.7-denext.7` or later wherever the app runs at its custom origin. The relay mark
-is how the app tells a request any local process sent through the relay from one its own page
-made, so a window on an older runtime (supplied through `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`,
-`DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no per-launch token and every
-`/_denext/desktop/*` endpoint is refused, with a startup message naming the fix. denext detects
-the release by `Deno.desktop.authSession.cancel`, which shipped with the mark. The stock runtime
-has no relay and is unaffected.
+denext needs `2.9.7-denext.9`: under an older runtime the page gets no relay URL (its WebSockets
+fail), the runtime refuses the update manifests denext publishes (it doesn't know `expiresAt` and
+`sequence`), and its laufey ignores the launch file's `bridgeOrigins`. denext detects it at
+startup: an app at its custom origin whose runtime publishes no `DENO_DESKTOP_WS_URL` prints one
+warning that names the runtime as older than `2.9.7-denext.9`, says the page's WebSockets and
+full-app updates won't work, and gives the fix (repackage with the runtime denext pins). The
+endpoints stay up there, since a `denext.7` or `denext.8` runtime still marks relayed requests.
+
+A runtime older than `2.9.7-denext.7` is refused outright wherever the app runs at its custom
+origin. The relay mark is how the app tells a request any local process sent through the relay
+from one its own page made, so a window on such a runtime (supplied through
+`DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no
+per-launch token and every `/_denext/desktop/*` endpoint is refused, with a startup message naming
+the fix. denext detects that release by `Deno.desktop.authSession.cancel`, which shipped with the
+mark. The stock runtime has no relay and is unaffected by either check.
 
 ## How it's tested
 
@@ -603,6 +684,26 @@ them pass.
 The packaged app's `--allow-*` flags don't change: the download happens in the packaging step, not
 in the app.
 
+### The Windows CEF layout
+
+A runtime whose CEF backend runs Chromium's sandbox on Windows (2.9.7-denext.11) lays a Windows
+CEF app out as:
+
+```
+<App>/
+  <App>.exe          CEF's bootstrap, with the app's icon and version resources
+  <App>.dll          laufey's CEF host (laufey.dll, renamed): the bootstrap loads it by its name
+  <App>.runtime.dll  the runtime: the host loads it by the executable's name
+  libcef.dll, ...
+```
+
+The stock 2.9.7 CLI names the runtime `<App>.dll` and leaves `laufey.dll` in place, so denext's
+package script and `denext desktop run` / `dev` move the two and stamp the executable's resources
+(TypeScript, so it works from any host) whenever `laufey.dll` is in the bundle; a bundle that
+already has `<App>.runtime.dll` is used as it is. The signing step signs every PE file, both
+libraries included: a signed bootstrap loads only a client library signed with the same, trusted,
+certificate. The webview backend keeps `<App>.exe` (its host) and `<App>.dll` (the runtime).
+
 ## Opting out
 
 `DENEXT_DESKTOP_RUNTIME=stock` builds with the stock Deno Desktop runtime. Your app still builds,
@@ -615,7 +716,8 @@ packages and runs; what the stock runtime lacks degrades instead of breaking:
   rejects `unsupported`; ask `windowCapabilities()` what the current runtime can do.
 - Capabilities that need the runtime answer `unavailable`, and the page keeps its web path: the
   WebView clipboard, the WebView `Notification` API, the in-page context menu. File dialogs run
-  through the OS dialog programs (osascript, PowerShell, zenity or kdialog).
+  through the OS dialog programs on macOS and Windows (osascript, PowerShell); on Linux they answer
+  `unavailable` and the page keeps `<input type="file">`.
 
 Every `denext/mobile` and `denext/desktop` function is feature-detected this way, so one codebase
 works on either runtime.

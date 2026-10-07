@@ -1,13 +1,15 @@
 /**
- * `expo-file-system` for denext: SDK 57's object API (`File`, `Directory`, `Paths`) over
+ * `expo-file-system` for denext: SDK 58's object API (`File`, `Directory`, `Paths`) over
  * `denext/mobile`'s filesystem (the app's own files through `@capacitor/filesystem` in the
  * Capacitor shell, the Origin Private File System on the web).
  *
  * Expo's API is synchronous (it runs over JSI); the Capacitor bridge and OPFS are not. So:
  *
- * - `exists`, `size`, `info()`, `list()`, `create()`, `write()`, `delete()`, `copySync()`,
- *   `moveSync()` and `rename()` act at once on an index the shim keeps (in `localStorage`,
- *   so it survives a reload), and reach the real files in order, in the background;
+ * - `exists`, `size`, `info()`, `list()`, `create()`, `writeSync()`, `delete()`,
+ *   `copySync()`, `moveSync()` and `rename()` act at once on an index the shim keeps (in
+ *   `localStorage`, so it survives a reload), and reach the real files in order, in the
+ *   background; `write()` (async since SDK 58) does the same, settles once the write is on
+ *   disk and rejects if it could not be made;
  * - `text()`, `bytes()`, `base64()`, `arrayBuffer()` and `json()` wait for those writes, so
  *   they always see them;
  * - `textSync()`, `bytesSync()` and `base64Sync()` answer only for files written or read in
@@ -27,7 +29,7 @@
  * const dir = new Directory(Paths.document, "drafts");
  * dir.create({ idempotent: true, intermediates: true });
  * const file = new File(dir, "note.json");
- * file.write(JSON.stringify({ text: "hi" }));
+ * await file.write(JSON.stringify({ text: "hi" }));
  * const note = JSON.parse(await file.text());
  * ```
  *
@@ -52,6 +54,10 @@ import {
   toBytes,
   writeBytes,
 } from "./internal/fs.ts";
+import { unavailable } from "./internal/common.ts";
+
+/** The package name the shim's errors carry. */
+const PKG = "expo-file-system";
 
 /** How {@linkcode File.write} and the readers carry text. */
 export enum EncodingType {
@@ -111,6 +117,23 @@ export interface FileWriteOptions {
   /** Add to the end instead of replacing. */
   append?: boolean;
 }
+
+/** A hash algorithm {@linkcode File.digest} takes. */
+export type FileDigestAlgorithm = "MD5" | "SHA-1" | "SHA-256" | "SHA-384" | "SHA-512";
+
+/** Options for {@linkcode File.canPreview}. */
+export type FileCanPreviewOptions = {
+  /** The file's MIME type, when its extension does not tell. */
+  mimeType?: string;
+};
+
+/** Options for {@linkcode File.preview}. */
+export type FilePreviewOptions = {
+  /** The preview's title. */
+  title?: string;
+  /** The file's MIME type, when its extension does not tell. */
+  mimeType?: string;
+};
 
 /** Options for copy and move. */
 export interface RelocationOptions {
@@ -328,11 +351,78 @@ export class File extends FileSystemEntry {
     writeBytes(this.uri, new Uint8Array());
   }
 
-  /** Write `content` (text, base64 text, or bytes), replacing or appending. */
-  write(content: string | Uint8Array, options: FileWriteOptions = {}): void {
-    const bytes = toBytes(content, options.encoding);
-    if (options.append) appendBytes(this.uri, bytes);
-    else writeBytes(this.uri, bytes);
+  /**
+   * Write `content` (text, base64 text, or bytes), replacing or appending. The file reads back
+   * the new content at once (`exists`, `size`, the readers); the promise settles once the
+   * write has reached the real file, and rejects if it could not.
+   *
+   * @param content The content.
+   * @param options The encoding, and whether to append.
+   * @returns A promise that settles once the change is on disk.
+   */
+  write(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions = {}): Promise<void> {
+    try {
+      return this.#writeNow(content, options);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
+  /**
+   * Write `content` at once (SDK 57's `write`): the file reads back the new content
+   * immediately and reaches the real file in the background.
+   *
+   * @param content The content.
+   * @param options The encoding, and whether to append.
+   */
+  writeSync(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions = {}): void {
+    void this.#writeNow(content, options);
+  }
+
+  /** Apply a write now; the promise is its write to the real file (failures are logged too). */
+  #writeNow(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions): Promise<void> {
+    const bytes = toBytes(
+      content instanceof ArrayBuffer ? new Uint8Array(content) : content,
+      options.encoding,
+    );
+    return options.append ? appendBytes(this.uri, bytes) : writeBytes(this.uri, bytes);
+  }
+
+  /**
+   * The hex digest of the contents with `algorithm` (WebCrypto: the SHA family; `MD5` rejects
+   * with `ERR_UNAVAILABLE`, as `md5` is always null here).
+   *
+   * @param algorithm The hash.
+   * @returns The lowercase hex digest.
+   */
+  async digest(algorithm: FileDigestAlgorithm): Promise<string> {
+    if (algorithm === "MD5") {
+      throw unavailable(PKG, "File.digest('MD5')", "WebCrypto has no MD5; use SHA-256.");
+    }
+    const hash = await crypto.subtle.digest(algorithm, (await this.bytes()).slice());
+    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  /**
+   * Whether the platform can preview the file: never here (Expo's web build answers the same).
+   *
+   * @param _options The MIME type (ignored).
+   * @returns `false`.
+   */
+  canPreview(_options?: FileCanPreviewOptions): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  /**
+   * Open the platform's file preview (Quick Look, an Android viewer): not available here.
+   *
+   * @param _options The title and MIME type (ignored).
+   * @returns Rejects with `ERR_UNAVAILABLE`.
+   */
+  preview(_options?: FilePreviewOptions): Promise<void> {
+    return Promise.reject(
+      unavailable(PKG, "File.preview", "Share the file (expo-sharing) or open it instead."),
+    );
   }
 
   /** Delete the file. */
@@ -573,11 +663,11 @@ export class Paths {
 }
 
 // ── the legacy top-level functions ─────────────────────────────────────────────────────
-// expo-file-system 57 still exports the pre-SDK-54 functions from its root, but only as
+// expo-file-system 58 still exports the pre-SDK-54 functions from its root, but only as
 // deprecation stubs: each warns and throws, pointing at the object API or at
 // `expo-file-system/legacy`. These behave the same, with Expo's own message.
 
-/** Warn and build the error expo-file-system 57 throws from a legacy top-level function. */
+/** Warn and build the error expo-file-system 58 throws from a legacy top-level function. */
 function legacyMethod(name: string): Error {
   const message = `Method ${name} imported from "expo-file-system" is deprecated.\n` +
     `You can migrate to the new filesystem API using "File" and "Directory" classes or ` +
@@ -588,7 +678,7 @@ function legacyMethod(name: string): Error {
 }
 
 /**
- * @deprecated Use `new File().info()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new File().info()`. Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  * @param _options The options.
@@ -598,7 +688,7 @@ export function getInfoAsync(_fileUri: string, _options?: Record<string, unknown
 }
 
 /**
- * @deprecated Use `new File().text()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new File().text()`. Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  * @param _options The options.
@@ -611,7 +701,7 @@ export function readAsStringAsync(
 }
 
 /**
- * @deprecated Rejects, as in expo-file-system 57.
+ * @deprecated Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  */
@@ -620,7 +710,7 @@ export function getContentUriAsync(_fileUri: string): Promise<never> {
 }
 
 /**
- * @deprecated Use `new File().write()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new File().write()`. Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  * @param _contents The text.
@@ -636,7 +726,7 @@ export function writeAsStringAsync(
 
 /**
  * @deprecated Use `new File().delete()` or `new Directory().delete()`. Rejects, as in
- * expo-file-system 57.
+ * expo-file-system 58.
  *
  * @param _fileUri The URI.
  * @param _options The options.
@@ -645,13 +735,13 @@ export function deleteAsync(_fileUri: string, _options?: Record<string, unknown>
   return Promise.reject(legacyMethod("deleteAsync"));
 }
 
-/** @deprecated Rejects, as in expo-file-system 57. */
+/** @deprecated Rejects, as in expo-file-system 58. */
 export function deleteLegacyDocumentDirectoryAndroid(): Promise<never> {
   return Promise.reject(legacyMethod("deleteLegacyDocumentDirectoryAndroid"));
 }
 
 /**
- * @deprecated Use `new File().move()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new File().move()`. Rejects, as in expo-file-system 58.
  *
  * @param _options The source and destination.
  */
@@ -660,7 +750,7 @@ export function moveAsync(_options: { from: string; to: string }): Promise<never
 }
 
 /**
- * @deprecated Use `new File().copy()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new File().copy()`. Rejects, as in expo-file-system 58.
  *
  * @param _options The source and destination.
  */
@@ -669,7 +759,7 @@ export function copyAsync(_options: { from: string; to: string }): Promise<never
 }
 
 /**
- * @deprecated Use `new Directory().create()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new Directory().create()`. Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  * @param _options The options.
@@ -682,7 +772,7 @@ export function makeDirectoryAsync(
 }
 
 /**
- * @deprecated Use `new Directory().list()`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `new Directory().list()`. Rejects, as in expo-file-system 58.
  *
  * @param _fileUri The URI.
  */
@@ -690,18 +780,18 @@ export function readDirectoryAsync(_fileUri: string): Promise<never> {
   return Promise.reject(legacyMethod("readDirectoryAsync"));
 }
 
-/** @deprecated Use `Paths.availableDiskSpace`. Rejects, as in expo-file-system 57. */
+/** @deprecated Use `Paths.availableDiskSpace`. Rejects, as in expo-file-system 58. */
 export function getFreeDiskStorageAsync(): Promise<never> {
   return Promise.reject(legacyMethod("getFreeDiskStorageAsync"));
 }
 
-/** @deprecated Use `Paths.totalDiskSpace`. Rejects, as in expo-file-system 57. */
+/** @deprecated Use `Paths.totalDiskSpace`. Rejects, as in expo-file-system 58. */
 export function getTotalDiskCapacityAsync(): Promise<never> {
   return Promise.reject(legacyMethod("getTotalDiskCapacityAsync"));
 }
 
 /**
- * @deprecated Use `File.downloadFileAsync`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `File.downloadFileAsync`. Rejects, as in expo-file-system 58.
  *
  * @param _uri The remote URL.
  * @param _fileUri The destination URI.
@@ -716,7 +806,7 @@ export function downloadAsync(
 }
 
 /**
- * @deprecated Use `fetch`. Rejects, as in expo-file-system 57.
+ * @deprecated Use `fetch`. Rejects, as in expo-file-system 58.
  *
  * @param _url The remote URL.
  * @param _fileUri The file URI.
@@ -731,7 +821,7 @@ export function uploadAsync(
 }
 
 /**
- * @deprecated Throws, as in expo-file-system 57.
+ * @deprecated Throws, as in expo-file-system 58.
  *
  * @param _uri The remote URL.
  * @param _fileUri The destination URI.
@@ -750,7 +840,7 @@ export function createDownloadResumable(
 }
 
 /**
- * @deprecated Throws, as in expo-file-system 57.
+ * @deprecated Throws, as in expo-file-system 58.
  *
  * @param _url The remote URL.
  * @param _fileUri The file URI.

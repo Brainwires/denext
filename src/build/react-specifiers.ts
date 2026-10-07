@@ -24,6 +24,7 @@ export const REACT_FAMILY_SPECIFIERS = [
   "react-dom/test-utils",
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
+  "react/compiler-runtime",
   "react-is",
 ] as const;
 
@@ -36,6 +37,7 @@ export const REACT_FAMILY_CORE = [
   "react-dom/server",
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
+  "react/compiler-runtime",
   "react-is",
 ] as const;
 
@@ -46,6 +48,7 @@ export const REACT_FAMILY_CLIENT = [
   "react-dom/client",
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
+  "react/compiler-runtime",
   "react-is",
 ] as const;
 

@@ -194,28 +194,49 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
-- **A pending Clerk sign-in on Windows and Linux accepts a forged callback.** Clerk's callback
-  carries only its own nonce (no `state` the app can check), so while a sign-in is pending another
-  program can send one; at most it signs the app in to the sender's account. Out-of-session and
-  repeat callbacks are dropped; macOS uses the OS sheet, which no other program can reach.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app
   (an Electron build of the same app, say) handles `myapp:` links, the callback would go to it, so
   `denext/desktop/clerk` refuses with `scheme_owned_by_other_app`; Clerk's native redirect
   allowlist takes no loopback URL to fall back to. Call `claimDeepLinkScheme` from the user's click
-  and sign in again. macOS is unaffected (its sheet catches the callback).
+  and sign in again. macOS is unaffected (its sheet catches the callback). A program that merely
+  sends the app a forged callback is refused: each sign-in's redirect carries a per-session
+  `denext_nonce` the callback must bring back, so the forgery protection does not depend on Clerk
+  binding its `rotating_token_nonce` to the client.
 - **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
-- **Notifications:** Linux has no scheduler (delivered while the app runs, late after a quit) and
-  a click after quit can't start the app; macOS shows them only from a signed bundle; a repeat is
-  scheduled 16 ahead; buttons carry a title only; `data` is capped at 4 KiB.
+- **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
+  while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
+  user manager; macOS shows them only from a signed bundle. A click's `data` is untrusted (any
+  process of the same user can send one). [Details](https://denext.dev/docs/desktop#desktop-notifications).
+- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
+  keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
+  (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
+  ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **The Linux clipboard** is readable by an app in the background while the session is unlocked,
+  as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
+  `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
+  on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
+- **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
+  needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
+  doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
+- **A CEF window on Windows can wait for slow proxy auto-detection.** On a network where WPAD / PAC
+  discovery is slow, Chromium waits for the proxy configuration before it applies its loopback
+  bypass, so the page's Live WebSocket (through the runtime's loopback relay) can take 10 s or more
+  to connect at startup. The webview backend and macOS / Linux are unaffected.
+- **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
+  2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
+  Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
+  turn spellcheck on for those languages. Windows and macOS use the OS spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
-  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a Linux badge is a
-  title prefix). Ask `windowCapabilities()` and `appCapabilities()`.
+  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a badge is a
+  window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
+  `windowCapabilities()` and `appCapabilities()`.
 - **macOS can hand your deep-link scheme to another app;** denext requires PKCE S256 and an exact
   `redirect_uri` + `state` match, and refuses a scheme another app owns. On macOS 13+
   `setLaunchAtLogin` may need approval in Login Items.
@@ -226,8 +247,16 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use.
-- **On macOS, other programs of the same user can read `secureStore` items** (they are written by
-  `/usr/bin/security`, which the item trusts).
+- **`secureStore` per OS:** on macOS other programs of the same user can read its items (they are
+  written by `/usr/bin/security`, which the item trusts); on Linux it needs a Secret Service
+  provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
+  unlocked — runtime 2.9.7-denext.12 reaches it through libsecret, older runtimes through
+  `secret-tool` (`libsecret-tools` / `libsecret`) — else every call rejects `backend_unavailable`
+  with the reason (never a plaintext fallback).
+- **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
+  page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
+  with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF
+  window on Wayland can't be named to the portal, so its portal dialog isn't modal to the window.
 - **Some desktop paths can only be verified by hand** (Touch ID / Windows Hello passkeys, signed
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
   no CI runner has the hardware or identities, so they are checked before each final release

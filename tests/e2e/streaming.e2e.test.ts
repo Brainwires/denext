@@ -7,8 +7,9 @@
 
 import { assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/streaming", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/streaming", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/streaming renders async Server Components and streams a shell",

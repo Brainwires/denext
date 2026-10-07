@@ -33,6 +33,7 @@ import {
   writeFile,
 } from "../src/mobile/mod.ts";
 import { holdAwake } from "../src/mobile/keep-awake.ts";
+import { secureStoreIsSecret } from "../src/mobile/secure-store.ts";
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
@@ -107,6 +108,28 @@ Deno.test("secureStore: without the capability it falls back (web path) and warn
   const mine = warnings.filter((w) => w.includes('"secureStore"'));
   assertEquals(mine.length, 1, "warns once per capability");
   assert(mine[0].includes("denext desktop add secure-store"));
+});
+
+Deno.test("secureStoreIsSecret: the desktop keychain counts, a missing capability does not", async () => {
+  await inDesktop({ secureStore: { get: () => null } }, async () => {
+    assertEquals(await secureStoreIsSecret(), true);
+  });
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await inDesktop({}, async () => {
+      assertEquals(await secureStoreIsSecret(), false);
+      // ...so a gated value is refused rather than written to browser storage.
+      await assertRejects(
+        () => secureStore.set("k", "v", { requireBiometric: true }),
+        TypeError,
+        "requireBiometric needs a secret store",
+      );
+    });
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(await secureStoreIsSecret(), false, "the web has no secret store");
 });
 
 Deno.test("files: desktop → the fs capability with checked relative paths", async () => {

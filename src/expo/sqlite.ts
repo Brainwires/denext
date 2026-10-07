@@ -1,13 +1,13 @@
 /**
- * `expo-sqlite` for denext: SDK 57's async API over `denext/mobile`'s
+ * `expo-sqlite` for denext: SDK 58's async API over `denext/mobile`'s
  * {@linkcode openSqlite} (a file through `@capacitor-community/sqlite` in the Capacitor shell;
  * the app's own `@sqlite.org/sqlite-wasm` in a worker on the web, persisted to OPFS without
  * cross-origin isolation).
  *
  * Expo's synchronous API (`openDatabaseSync`, `runSync`, `getAllSync`, …) runs over JSI; the
  * Capacitor bridge and the web worker are asynchronous, so it is not provided. Nor are
- * sessions, extensions, serialization, backups, change listeners, libSQL sync or the
- * `kv-store` / `localStorage/install` entry points.
+ * sessions, extensions, serialization, backups, change listeners, `interruptSync` or the
+ * `kv-store` / `localStorage/install` entry points (SDK 58 dropped libSQL sync).
  *
  * @example
  * ```ts
@@ -58,8 +58,6 @@ export interface SQLiteOpenOptions {
   useNewConnection?: boolean;
   /** Finalize prepared statements left open on close. */
   finalizeUnusedStatementsBeforeClosing?: boolean;
-  /** libSQL sync (not provided here). */
-  libSQLOptions?: { url: string; authToken: string; remoteOnly?: boolean };
 }
 
 /** The folder databases live in (a name only: the backing decides the real place). */

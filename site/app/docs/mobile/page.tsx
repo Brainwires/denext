@@ -81,7 +81,11 @@ export default function Mobile() {
         from <code>about/index.html</code> (or{" "}
         <code>about.html</code>); an app with no denext native plugin gets them from{" "}
         <code>denext mobile add export-routes</code> (<code>denext mobile doctor</code>{" "}
-        flags a shell without them).
+        flags a shell without them). An iOS bridge written before 3.2.0 lacks the router&apos;s path
+        guard (a request could read files outside the web directory):{" "}
+        <code>denext mobile doctor --store</code> / <code>--release</code> report it as an{" "}
+        <code>export-routes</code> error. Run <code>denext mobile add export-routes</code>{" "}
+        (<code>--force</code> for an edited bridge) and ship a new binary.
       </p>
       <p>
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
@@ -218,7 +222,12 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         copies (<code>ios/App/App/capacitor.config.json</code>,{" "}
         <code>android/app/src/main/assets/capacitor.config.json</code>) itself, so they stop
         pointing at the dev server even when the closing <code>cap copy</code>{" "}
-        fails; then run your export and <code>npx cap copy</code> before a release build.
+        fails; then run your export and <code>npx cap copy</code> before a release build.{" "}
+        <code>denext mobile build --release</code>{" "}
+        (and the fastlane lanes, which run it) refuses while that backup is on disk, or while the
+        Capacitor config's <code>server</code> names a LAN / loopback <code>http</code> URL or sets
+        {" "}
+        <code>cleartext</code>, unless a flavor's <code>serverUrl</code> sets the server on purpose.
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
@@ -251,8 +260,18 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         </a>{" "}
         (or{" "}
         <code>--allowed-dev-origin</code>) lists any other host. Anything on the network that can
-        reach an allowed address can load the dev app and its source, so use <code>--lan</code>{" "}
-        on a network you trust.
+        reach an allowed address could load the dev app and its source, so a network bind carries a
+        session token: the printed URL and its QR code end in{" "}
+        <code>?__denext_dev=…</code>. The first request with it sets an HttpOnly,{" "}
+        <code>SameSite=Strict</code>{" "}
+        cookie and redirects to the clean URL; from then on every request from another machine —
+        pages,{" "}
+        <code>/_denext/*</code>, the module graph, the reload stream and the Live socket — needs
+        that cookie (or the <code>x-denext-dev-token</code> header) and is a <code>403</code>{" "}
+        without it. Requests from this machine's loopback need nothing. The token is new on each
+        run. <code>denext mobile dev --lan</code> writes the tokened URL into{" "}
+        <code>server.url</code>, and <code>denext desktop dev --lan</code>{" "}
+        sends it from the window's dev proxy.
       </p>
 
       <h2 id="the-denextmobile-runtime">
@@ -397,6 +416,19 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         tree-shakes on its own, and on the web (and during SSR) each function takes its
         plain-browser path.
       </Callout>
+
+      <h2 id="platform-files">Platform-specific files</h2>
+      <p>
+        A component that differs a lot on a phone can have a file of its own:{" "}
+        <code>BigButton.ios.tsx</code>, <code>BigButton.android.tsx</code>, or{" "}
+        <code>BigButton.mobile.tsx</code> for both. <code>denext mobile build ios</code>{" "}
+        exports with the <code>ios</code> target before <code>cap sync</code>, so the shell's{" "}
+        <code>webDir</code> holds an export that resolves <code>./BigButton</code> to{" "}
+        <code>.ios</code>, then <code>.mobile</code>, then{" "}
+        <code>.web</code>, then the plain file, and leaves the other variants out;{" "}
+        <code>denext export --platform ios</code> builds the same export by hand. See{" "}
+        <a href="/docs/platform-files">platform-specific files</a>.
+      </p>
 
       <h2 id="native-capabilities">Native capabilities</h2>
       <p>
@@ -1309,9 +1341,10 @@ export async function signIn() {
           <strong>Web:</strong> a popup (call it from a click handler, or it is blocked:{" "}
           <code>unsupported</code>). Use an https page of your origin as the redirect URI and call
           {" "}
-          <code>completeAuthSession()</code>{" "}
-          there: it posts the page's URL to the opener, addressed to this origin only, and closes
-          the popup. A popup closed without a callback rejects{" "}
+          <code>completeAuthSession()</code> there: in the popup <code>openAuthSession</code>{" "}
+          opened (its window is named <code>denext-auth-session</code>; any other window gets{" "}
+          <code>false</code>) it posts the page's URL to the opener, addressed to this origin only,
+          and closes the popup. A popup closed without a callback rejects{" "}
           <code>cancelled</code>. A provider that sends{" "}
           <code>Cross-Origin-Opener-Policy: same-origin</code>{" "}
           cuts the popup off from the page; use a full-page redirect for it.
@@ -1533,6 +1566,13 @@ const id = await scheduleNotification({
 });
 onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or an action id`}
       </Code>
+      <p>
+        A tap&apos;s <code>data</code>{" "}
+        (and its action) is untrusted input, not proof that the app scheduled it: in a Deno Desktop
+        window on Linux any process of the same user can forge a click, and on Windows a toast
+        activation. Validate it before acting on it; the default <code>data.path</code> /{" "}
+        <code>data.url</code> navigation already applies the deep-link acceptance rules.
+      </p>
       <p>
         Triggers: <code>date</code>, <code>interval</code> (<code>seconds</code>, optionally{" "}
         <code>repeats</code>, at least 60 s when repeating), <code>daily</code>,{" "}
@@ -2550,6 +2590,16 @@ export function UpdatePrompt() {
         <code>OPTIONS</code>{" "}
         to the handler before your auth check. The native file downloads are not subject to CORS.
       </p>
+      <p>
+        A shell whose running UI is a platform export (<code>denext export --platform ios</code>,
+        see{" "}
+        <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>), or a check
+        given <code>platform</code>, also sends <code>x-denext-ota-platform</code>{" "}
+        so a per-target feed can serve its own export. That custom header makes the manifest request
+        preflighted too: a per-target feed must answer <code>OPTIONS</code> (<code>cors</code>{" "}
+        allows the header). A shell running a <code>web</code>{" "}
+        export with no other headers sends a simple <code>GET</code>.
+      </p>
       <Code lang="ts">
         {`const ota = createOtaHandler({ dir: "out", basePath: "/mobile-ui", cors: true });
 Deno.serve(async (req) => {
@@ -2596,6 +2646,18 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         <code>denext ota keygen --force</code>{" "}
         replaces a key pair (the new key is written before the old one goes) and warns that every
         installed binary embedding the old public key refuses the new signatures.
+      </p>
+      <p>
+        <strong>Pinned origins.</strong> <code>add-ota --ota-origin https://ota.example.com</code>
+        {" "}
+        (repeatable, or comma-separated; https only, plain http only to loopback) writes the
+        Info.plist string <code>DenextOtaOrigins</code> and the <code>dev.denext.ota.ORIGINS</code>
+        {" "}
+        meta-data, and the app then refuses a <code>baseUrl</code> on any other origin (code{" "}
+        <code>insecure</code>), signed or not. A binary with no public key accepts an unsigned UI
+        only from a pinned https origin or loopback: any script in the page can call the plugin, so
+        an unsigned update from whatever server it names would replace the UI for good.{" "}
+        <code>denext mobile doctor --release</code> fails when OTA is installed without a key.
       </p>
       <p>
         <strong>Release order and the native gate.</strong> Signing also stamps a{" "}
@@ -2733,6 +2795,11 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <code>native_mismatch</code>: the manifest's <code>nativeFingerprint</code>{" "}
           differs from the one the app binary embeds: the UI was built for another native layer.
         </li>
+        <li>
+          <code>platform_mismatch</code>: the manifest names another platform's export (
+          <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
+          by <code>checkForUiUpdate</code> before the native side sees it.
+        </li>
       </ul>
       <p>
         <strong>Rollback rules.</strong>
@@ -2789,6 +2856,15 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <code>denext/desktop/updater</code>: see{" "}
         <a href="/docs/desktop#desktop-updates">Desktop UI self-updates</a>; it also replaces the
         whole signed app with <a href="/docs/desktop#desktop-app-updates">full-app self-updates</a>.
+      </p>
+
+      <p>
+        An app with <a href="/docs/platform-files">platform-specific files</a>{" "}
+        ships one export per platform: <code>denext export --platform ios</code>{" "}
+        stamps the target into the export, the manifest names it, a shell of the other platform
+        refuses it (code <code>platform_mismatch</code>), and{" "}
+        <code>{"createOtaHandler({ platforms: { ios, android } })"}</code>{" "}
+        serves each shell its own.
       </p>
 
       <h3 id="ota-channels">Channels and staged rollouts</h3>

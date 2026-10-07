@@ -40,10 +40,12 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * Generation 3: the bridge serves an exported multi-page app's routes (`DenextExportRouter`, see
  * bridge-export-router-native-template.ts), which an older denext would rewrite away; the bridge
  * with no registrations at all is what `denext mobile add export-routes` writes.
+ * Generation 4: the router refuses a path that leaves the UI directory (a decoded `/../secret`),
+ * which an older denext would rewrite away.
  * Bump again only when a released generation would drop a registration, the frame guard or the
- * router.
+ * router (or one of its checks).
  */
-export const APP_EXTENSION_TEMPLATE_VERSION = 3;
+export const APP_EXTENSION_TEMPLATE_VERSION = 4;
 
 /** The marker family of the app extension templates. */
 const FAMILY = "app-extension";
@@ -614,8 +616,16 @@ public class DenextShareReceivePlugin extends Plugin {
             else item.put("text", value);
         }
         JSArray files = new JSArray();
+        pruneShareCache(context);
+        long[] budget = { MAX_SHARE_TOTAL_BYTES };
+        int taken = 0;
         for (Uri uri : streams) {
-            JSObject file = copy(context, uri, type);
+            // A hostile sender may list thousands of streams: copy the first few only.
+            if (taken++ >= MAX_SHARED_STREAMS) {
+                Log.w(TAG, "ignored shared streams past " + MAX_SHARED_STREAMS);
+                break;
+            }
+            JSObject file = copy(context, uri, type, budget);
             if (file != null) files.put(file);
         }
         if (files.length() > 0) item.put("files", files);
@@ -631,6 +641,23 @@ public class DenextShareReceivePlugin extends Plugin {
 
     /** The most one shared stream may copy (a hostile sender must not fill the cache dir). */
     private static final long MAX_SHARED_BYTES = 256L * 1024 * 1024;
+    /** The most streams one share copies. */
+    private static final int MAX_SHARED_STREAMS = 32;
+    /** The most one share copies across all its streams. */
+    private static final long MAX_SHARE_TOTAL_BYTES = 512L * 1024 * 1024;
+    /** Copies older than this are deleted at the next share (the app has long taken them). */
+    private static final long SHARE_CACHE_MAX_AGE_MS = 24L * 60 * 60 * 1000;
+
+    /** Delete earlier shares' copies older than {@link #SHARE_CACHE_MAX_AGE_MS}. */
+    private static void pruneShareCache(Context context) {
+        File[] old = new File(context.getCacheDir(), "denext-share").listFiles();
+        if (old == null) return;
+        long cutoff = System.currentTimeMillis() - SHARE_CACHE_MAX_AGE_MS;
+        for (File f : old) {
+            //noinspection ResultOfMethodCallIgnored
+            if (f.isFile() && f.lastModified() < cutoff) f.delete();
+        }
+    }
 
     /**
      * Whether the content: URI is served by one of THIS app's own providers. A share intent is
@@ -653,9 +680,13 @@ public class DenextShareReceivePlugin extends Plugin {
         }
     }
 
-    /** Copy a content: stream into the cache; null for any other scheme, this app's own provider, an oversized stream, or on failure. */
+    /**
+     * Copy a content: stream into the cache, within what is left of the share's {@code budget}
+     * (bytes, decremented); null for any other scheme, this app's own provider, an oversized
+     * stream or share, or on failure.
+     */
     @Nullable
-    private static JSObject copy(Context context, Uri uri, @Nullable String fallbackType) {
+    private static JSObject copy(Context context, Uri uri, @Nullable String fallbackType, long[] budget) {
         if (!ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) return null;
         if (isOwnProvider(context, uri)) {
             Log.w(TAG, "refused a shared stream from this app's own provider");
@@ -675,8 +706,10 @@ public class DenextShareReceivePlugin extends Plugin {
             for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
                 total += n;
                 if (total > MAX_SHARED_BYTES) throw new java.io.IOException("shared stream too large");
+                if (total > budget[0]) throw new java.io.IOException("share too large");
                 out.write(buffer, 0, n);
             }
+            budget[0] -= total;
         } catch (Exception e) {
             Log.w(TAG, "could not copy a shared stream", e);
             //noinspection ResultOfMethodCallIgnored

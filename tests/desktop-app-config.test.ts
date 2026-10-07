@@ -3,11 +3,18 @@
 // packaged `laufey-launch.json` per OS, the `LAUFEY_*` env for an unpackaged window, and the
 // `denext doctor` check over them.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_APP_CONFIG_FILE,
   desktopAppIdentity,
+  desktopBridgeOrigins,
   desktopInspectable,
   desktopLaunchConfig,
   laufeyLaunchEnv,
@@ -66,6 +73,40 @@ Deno.test("desktopLaunchConfig: appId, the ORIGIN's scheme (not app, not deep li
   });
   assertEquals(desktopLaunchConfig({ desktop: { app: { identifier: "../x" } } }), null);
   assertEquals(desktopLaunchConfig({}), null);
+});
+
+Deno.test("desktopBridgeOrigins: the app origin first, then the configured ones; * pins nothing", () => {
+  assertEquals(desktopBridgeOrigins(T3), ["t3code://app"]);
+  assertEquals(desktopBridgeOrigins({}), ["app://localhost"]);
+  assertEquals(desktopBridgeOrigins(undefined), ["app://localhost"]);
+  assertEquals(
+    desktopBridgeOrigins({
+      desktop: {
+        app: {
+          ...T3.desktop.app,
+          bridgeOrigins: [
+            "https://IdP.example:443/",
+            "t3code://app", // the app origin again: not repeated
+            "https://idp.example", // the same origin, already listed
+            "http://127.0.0.1:5173",
+            "Other://*",
+          ],
+        },
+      },
+    }),
+    ["t3code://app", "https://idp.example", "http://127.0.0.1:5173", "other://*"],
+  );
+  assertEquals(
+    desktopBridgeOrigins({ desktop: { app: { bridgeOrigins: ["https://a.example", "*"] } } }),
+    ["*"],
+  );
+  for (const bad of [["https://a.example/path"], ["file://x"], [""], [1], "https://a.example"]) {
+    assertThrows(
+      () => desktopBridgeOrigins({ desktop: { app: { bridgeOrigins: bad } } }),
+      Error,
+      "bridgeOrigins",
+    );
+  }
 });
 
 Deno.test("laufeyLaunchPath: Contents/Resources on macOS, next to the exe elsewhere", () => {
@@ -249,6 +290,8 @@ Deno.test("sync + launch file: driven from a package script's import.meta.url", 
       customSchemes: ["t3code"],
       singleInstance: true,
       inspectable: false,
+      // The bridge pinned to the app origin alone, not laufey's default of every t3code:// origin.
+      bridgeOrigins: ["t3code://app"],
     });
     const linux = join(dir, "dist", "t3-x64");
     await Deno.mkdir(linux, { recursive: true });
@@ -268,7 +311,11 @@ Deno.test("launch file: without a config it still turns DevTools off", async () 
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
     const written = await writeLaufeyLaunchConfig(entry, "linux", join(dir, "dist"));
     assertEquals(written, join(dir, "dist", "laufey-launch.json"));
-    assertEquals(JSON.parse(await Deno.readTextFile(written!)), { inspectable: false });
+    // The runtime's default origin pins the bridge (no custom scheme would leave it unpinned).
+    assertEquals(JSON.parse(await Deno.readTextFile(written!)), {
+      inspectable: false,
+      bridgeOrigins: ["app://localhost"],
+    });
     assertEquals(await syncDesktopAppConfig(entry), { appJson: "none", include: "no-deno-json" });
   } finally {
     await Deno.remove(dir, { recursive: true });

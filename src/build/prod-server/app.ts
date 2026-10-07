@@ -34,6 +34,8 @@ import type { ModuleLoader } from "../../server/types.ts";
 import { createNextCompatServerLoader } from "../next-compat-loader.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { projectPlatformRedirects } from "../platform-extensions.ts";
+import { precompiledServerLoader } from "../server-copies.ts";
 import type { AssetResolvers } from "./assets.ts";
 import type { BuildInfo, FlightBoundary } from "./manifest.ts";
 
@@ -46,7 +48,7 @@ import type { BuildInfo, FlightBoundary } from "./manifest.ts";
  * content, so a stale copy could otherwise shadow edited source after a restart without
  * a rebuild).
  */
-async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleLoader> {
+export async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleLoader> {
   let load: ModuleLoader = defaultLoader;
   const compat = info.nextCompat && info.compatModuleMap.size > 0;
   if (compat) {
@@ -54,10 +56,27 @@ async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleL
   }
   // A compat bundle already carries the `"use cache"` transform (applied at bundle time, so
   // the module stays inside the react→denext bundle); the runtime rewrite is for native apps.
-  if (resolveCacheComponents(paths.config) && !compat) {
+  // The same rewrite applies the web target's platform files (`.web.tsx`) to the server render,
+  // matching the client bundle the build made. The build compiled those copies already
+  // (./server-copies.ts): use them, with no walk and no write (a read-only `.denext` works).
+  if (!compat) {
+    const precompiled = precompiledServerLoader(load, paths, info.serverCopies);
+    if (precompiled) return precompiled;
+  }
+  // An older build, or a project moved since it was built: compile at startup.
+  const useCache = resolveCacheComponents(paths.config) && !compat;
+  const redirects = compat
+    ? {}
+    : await projectPlatformRedirects(paths.projectDir, paths.config, "web");
+  if (useCache || Object.keys(redirects).length > 0) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-    load = createUseCacheLoader(load, { projectDir: paths.projectDir, cacheDir });
+    load = createUseCacheLoader(load, {
+      projectDir: paths.projectDir,
+      cacheDir,
+      redirects,
+      useCache,
+    });
   }
   return load;
 }
@@ -130,8 +149,8 @@ export async function createProdApp(
   info: BuildInfo,
   { flightRoutes, boundary }: FlightBoundary,
   assets: AssetResolvers,
+  load: ModuleLoader,
 ): Promise<(request: Request) => Promise<Response>> {
-  const load = await prodLoader(paths, info);
   await timed("warmRouteModules", () => warmRouteModules(manifest, load));
   const middlewareRunner = await loadMiddleware(paths, load);
   setNextRuntimeEnv();

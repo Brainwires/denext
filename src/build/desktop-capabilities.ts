@@ -50,9 +50,11 @@ export interface DesktopPermissionSet {
  *
  * - `none`: no new permission.
  * - `scoped`: permissions limited to named paths / APIs.
- * - `broad`: an unscoped read or write (paths the user picks at run time cannot be listed at
- *   build time, and Deno Desktop bakes permissions at build time), so the runtime's
- *   per-session picked-path allowlist is the only thing narrowing it.
+ * - `broad`: an unscoped permission. An unscoped read or write (paths the user picks at run time
+ *   cannot be listed at build time, and Deno Desktop bakes permissions at build time), so the
+ *   runtime's per-session picked-path allowlist is the only thing narrowing it; or an unscoped
+ *   `--allow-sys` (every system-information API), which the pinned runtime requires for the
+ *   clipboard reads, global shortcuts, launch at login and OS notifications.
  * - `full`: a spawned program or a native library, which can do anything the user can.
  */
 export type DesktopTrust = "none" | "scoped" | "broad" | "full";
@@ -90,17 +92,19 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     value: true,
     api: ["secureStore"],
     os: {
-      // The runtime drives the OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS
-      // `security`, Linux `secret-tool`, Windows WinRT PasswordVault via `powershell.exe`.
+      // The OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS `security`, Windows
+      // WinRT PasswordVault via `powershell.exe`. Linux: the runtime's own store (2.9.7-denext.12:
+      // the Secret Service through libsecret), which needs an unscoped --allow-sys; `secret-tool`
+      // on older runtimes.
       darwin: { run: ["security"] },
-      linux: { run: ["secret-tool"] },
+      linux: { run: ["secret-tool"], sys: ["*"] },
       windows: { run: ["powershell.exe"] },
     },
     trust: "full",
     notes:
       "OS keychain via CLI (Keychain `security` / libsecret `secret-tool` / Windows PasswordVault)",
     manual: [
-      "secure-store: Linux users need libsecret and a running Secret Service (GNOME Keyring, KWallet); without one the runtime refuses rather than writing a plain file.",
+      "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (runtime 2.9.7-denext.12; secret-tool from libsecret-tools / libsecret before it, which the .deb / .rpm then depend on). Without one every call fails `backend_unavailable` with the reason, never a plain file.",
       "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
     ],
   },
@@ -180,11 +184,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["pickDocument", "saveFile", "pickFolder"],
     all: { read: ["*"], write: ["*"] },
     os: {
-      // Native panels are driven as subprocesses (osascript / PowerShell / zenity|kdialog), not
-      // FFI — the same argv-only pattern the other caps use.
+      // Without the runtime's own panels, macOS and Windows drive them as subprocesses (osascript /
+      // PowerShell), not FFI — the same argv-only pattern the other caps use. Linux uses only the
+      // runtime's (xdg-desktop-portal's FileChooser, else GTK's): nothing to run.
       darwin: { run: ["osascript"] },
       windows: { run: ["powershell.exe"] },
-      linux: { run: ["zenity", "kdialog"] },
     },
     // FULL, not broad: `--allow-run=osascript` / `powershell.exe` are script interpreters, so any
     // code in the Deno process can run arbitrary commands through them.
@@ -193,7 +197,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     manual: [
       "dialogs: --allow-run of osascript (macOS) / powershell.exe (Windows) lets any code in the Deno process run arbitrary scripts through them; the runtime itself passes only fixed scripts.",
       "dialogs: a path the user picks is only known at run time, but Deno Desktop bakes permissions at build time, so reading or writing it needs an unscoped --allow-read / --allow-write. The runtime narrows it to the paths picked this session; any other code in the Deno process is not narrowed.",
-      "dialogs: Linux users need zenity or kdialog installed.",
+      "dialogs: on Linux the dialogs are the runtime's: the desktop's own (xdg-desktop-portal's FileChooser) wherever the portal offers one, GTK's otherwise (`platformFeatures().fileChooser` says which); without denext's pinned runtime they answer `unavailable` and the page keeps <input type=\"file\">.",
     ],
   },
   notifications: {
@@ -208,9 +212,15 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       'requestPermission("notifications")',
       "requestPushPermission",
     ],
-    // A runtime API (Deno.desktop.notifications of denext's pinned runtime), no --allow-* of its
-    // own. Under the stock runtime the page keeps the WebView's Notification API (immediate only).
-    trust: "none",
+    // A runtime API (Deno.desktop.notifications of denext's pinned runtime): `new Notification()`
+    // and scheduling it need --allow-sys, unscoped. Under the stock runtime the page keeps the
+    // WebView's Notification API (immediate only).
+    // denext's pinned runtime requires an UNSCOPED --allow-sys for it (`Deno.errors.NotCapable`
+    // otherwise; a partial `--allow-sys=<names>` does not satisfy it): an app that can read the
+    // clipboard, take global keys, start at login or post OS notifications may also read every
+    // system-information API.
+    all: { sys: ["*"] },
+    trust: "broad",
     notes:
       "OS notifications: scheduled, repeating, actions, click routing (pinned runtime; WebView otherwise)",
     manual: [
@@ -236,10 +246,15 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     key: "clipboard",
     value: true,
     api: ["readClipboard", "writeClipboard", "clipboardFormats"],
-    // A runtime API (Deno.desktop.clipboard in denext's pinned runtime), no --allow-* of its own.
-    // Under the stock runtime the cap answers `unavailable` and the page keeps the WebView's
-    // navigator.clipboard.
-    trust: "none",
+    // A runtime API (Deno.desktop.clipboard in denext's pinned runtime): reading it and its change
+    // listener need --allow-sys, unscoped (writing needs nothing). Under the stock runtime the cap
+    // answers `unavailable` and the page keeps the WebView's navigator.clipboard.
+    // denext's pinned runtime requires an UNSCOPED --allow-sys for it (`Deno.errors.NotCapable`
+    // otherwise; a partial `--allow-sys=<names>` does not satisfy it): an app that can read the
+    // clipboard, take global keys, start at login or post OS notifications may also read every
+    // system-information API.
+    all: { sys: ["*"] },
+    trust: "broad",
     notes:
       "native clipboard: text, HTML and PNG images (pinned runtime; WebView navigator.clipboard otherwise)",
   },
@@ -255,9 +270,15 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     key: "globalShortcuts",
     value: true,
     api: ["registerShortcut (denext/desktop/app)", "unregisterShortcut", "listShortcuts"],
-    // A runtime API (Deno.desktop.shortcuts), no --allow-* of its own. It still adds trust beyond
-    // the window: the app reacts to the registered key combinations while any app has the focus.
-    trust: "none",
+    // A runtime API (Deno.desktop.shortcuts): registering needs --allow-sys, unscoped. It adds
+    // trust beyond the window: the app reacts to the registered key combinations while any app has
+    // the focus.
+    // denext's pinned runtime requires an UNSCOPED --allow-sys for it (`Deno.errors.NotCapable`
+    // otherwise; a partial `--allow-sys=<names>` does not satisfy it): an app that can read the
+    // clipboard, take global keys, start at login or post OS notifications may also read every
+    // system-information API.
+    all: { sys: ["*"] },
+    trust: "broad",
     notes: "system-wide keyboard shortcuts (pinned runtime)",
     manual: [
       "global-shortcuts: a registered combination reaches the app while ANY app has the keyboard focus, and the other app no longer sees it — register only the shortcuts the user asked for, and let them change or turn them off.",
@@ -268,9 +289,14 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     key: "launchAtLogin",
     value: true,
     api: ["getLaunchAtLogin (denext/desktop/app)", "setLaunchAtLogin"],
-    // A runtime API (Deno.desktop.launchAtLogin), no --allow-* of its own; it writes an OS login
-    // entry named after desktop.app.identifier.
-    trust: "none",
+    // A runtime API (Deno.desktop.launchAtLogin): `set` needs --allow-sys, unscoped (`get` needs
+    // nothing); it writes an OS login entry named after desktop.app.identifier.
+    // denext's pinned runtime requires an UNSCOPED --allow-sys for it (`Deno.errors.NotCapable`
+    // otherwise; a partial `--allow-sys=<names>` does not satisfy it): an app that can read the
+    // clipboard, take global keys, start at login or post OS notifications may also read every
+    // system-information API.
+    all: { sys: ["*"] },
+    trust: "broad",
     notes:
       "start the app at login: macOS login item / Windows Run value / Linux autostart (pinned runtime)",
     manual: [
@@ -367,6 +393,8 @@ interface DesktopFlagConfig {
     readonly extraPermissions?: DesktopPermissionSet;
     /** Full-app self-update: its manifest host and extra hosts need `--allow-net`. */
     readonly update?: { readonly manifestUrl?: unknown; readonly hosts?: unknown };
+    /** Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`. */
+    readonly app?: { readonly deepLinks?: unknown };
   };
   readonly spa?: {
     readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
@@ -406,9 +434,10 @@ function updateNetHosts(
 }
 
 const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
+/** A flag's values; an unscoped flag (no `=`) is `["*"]`, the whole kind. */
 function valuesOfFlag(flag: string): string[] {
   const eq = flag.indexOf("=");
-  return eq < 0 ? [] : flag.slice(eq + 1).split(",");
+  return eq < 0 ? ["*"] : flag.slice(eq + 1).split(",");
 }
 
 /** The `run` / `ffi` / `sys` values from the capabilities' flags, unioned with extraPermissions'. */
@@ -439,7 +468,10 @@ function bakeableSets(
  * proxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:
  * - the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a
  *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
- *   runtime cap layer confines it);
+ *   runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it
+ *   (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`
+ *   declares a scheme (claiming it back needs it): the pinned runtime refuses those with
+ *   `NotCapable` under a partial `--allow-sys=<names>`;
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
  *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
  *   (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);
@@ -466,6 +498,12 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   for (const host of updateNetHosts(cfg.desktop?.update)) net.add(host);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
+  // Deep links: the pinned runtime lets the app claim a declared scheme back from another handler
+  // (`registerScheme({ force: true })`, `claimDeepLinkScheme` on a user action) only with an
+  // unscoped --allow-sys.
+  if (Array.isArray(cfg.desktop?.app?.deepLinks) && cfg.desktop.app.deepLinks.length > 0) {
+    sys.add("*");
+  }
   // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).
   const needsWrite = capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
     (extra.write?.length ?? 0) > 0;
@@ -794,7 +832,8 @@ export function formatDesktopAddReport(
       "",
       report.trust === "full"
         ? "  Trust: FULL: a spawned program or native library can do anything the user can."
-        : "  Trust: BROAD: an unscoped filesystem permission (see the dialogs note).",
+        : "  Trust: BROAD: an unscoped permission: the filesystem (see the dialogs note) or every " +
+          "system-information API (--allow-sys).",
     );
   }
   if (report.manual.length > 0) {

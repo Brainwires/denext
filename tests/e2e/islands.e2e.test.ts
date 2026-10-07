@@ -10,8 +10,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type { Page } from "@astral/astral";
 import { buildAndServe, collectConsoleLogs, launchBrowser, type RunningServer } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/islands", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/islands", import.meta.url));
 
 /** textContent of one element (or "" if absent), via evaluate. */
 function text(page: { evaluate: (js: string) => Promise<unknown> }, selector: string) {

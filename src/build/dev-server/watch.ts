@@ -2,16 +2,18 @@
 // it — a CSS hot-swap, a per-module HMR update, a whole-route Fast Refresh, or a full
 // reload — and kick off the async type-check.
 
-import { resetModuleGraphCache } from "../module-graph.ts";
+import { cachedGraphHas, resetModuleGraphCache } from "../module-graph.ts";
 import { clearLiveCacheResults } from "../../server/cache.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
 import type { PluginBuildContext } from "../../plugin/mod.ts";
-import { basename, join } from "@std/path";
+import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
 import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
+import { watchPlatformFiles } from "./platform.ts";
+import { isSelfWrite } from "../self-writes.ts";
 
 /**
  * Whether a change set can be handled by Fast Refresh (re-import the route entry,
@@ -53,18 +55,35 @@ function applyUnbundledChange(st: DevState, changedPaths: string[]): void {
   else broadcast(st, "reload");
 }
 
-/**
- * Apply one debounced change set: bump the generation (busting module + bundle caches),
- * type-check off the render path, then pick CSS hot-swap / HMR update / Fast Refresh /
- * full reload.
- */
-function applyChanges(st: DevState, changedPaths: string[]): void {
+/** Start a new generation: bust the module, graph and bundle caches. */
+function bumpGeneration(st: DevState): void {
   st.generation++;
   st.manifest = null;
   resetModuleGraphCache(); // the import graph may have changed shape
   clearLiveCacheResults(); // in-process "use cache" trees are keyed by module URL, not content
   st.bundleCache.clear();
   st.chunkCache.clear();
+}
+
+/**
+ * A platform file came or went (anywhere in the project, not only the watched folders): the
+ * scan was forgotten, so every import may resolve to another file. Start a new generation,
+ * drop the per-module loop's transforms (each names the files its imports resolved to) and
+ * reload the page.
+ */
+function applyPlatformFilesChange(st: DevState): void {
+  bumpGeneration(st);
+  st.unbundled?.invalidateTransforms();
+  broadcast(st, "reload");
+}
+
+/**
+ * Apply one debounced change set: bump the generation (busting module + bundle caches),
+ * type-check off the render path, then pick CSS hot-swap / HMR update / Fast Refresh /
+ * full reload.
+ */
+function applyChanges(st: DevState, changedPaths: string[]): void {
+  bumpGeneration(st);
   typeCheck(st, changedPaths);
   if (cssOnly(changedPaths)) broadcast(st, "css");
   else if (st.unbundledActive && refreshable(st, changedPaths)) {
@@ -122,6 +141,48 @@ function watchedPaths(st: DevState, configFiles: Set<string>): string[] {
   });
 }
 
+/** The file kinds a project-wide content edit can be: modules, data and stylesheets. */
+const EDITED_EXTS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".mts",
+  ".json",
+  ".css",
+  ".md",
+  ".mdx",
+]);
+
+/**
+ * A filter over the project-wide watcher's paths (../platform-watch.ts) for the change sets the
+ * folder watcher does not already deliver: a source file outside the watched paths (each as
+ * given and through its real path) and not one of denext's own writes, which the app's module
+ * graph reaches — a stylesheet always (route CSS is crawled apart), and any file when no crawl is
+ * cached to ask.
+ */
+function outsideEdits(
+  projectDir: string,
+  watched: readonly string[],
+): (paths: string[]) => string[] {
+  const roots = new Set<string>();
+  for (const p of watched) {
+    roots.add(p);
+    try {
+      roots.add(Deno.realPathSync(p));
+    } catch { /* gone */ }
+  }
+  const covered = (p: string) =>
+    [...roots].some((r) => p === r || p.startsWith(r.endsWith(SEPARATOR) ? r : r + SEPARATOR));
+  return (paths) =>
+    [...new Set(paths)].filter((p) => {
+      const ext = extname(p);
+      if (!EDITED_EXTS.has(ext) || covered(p) || isSelfWrite(p)) return false;
+      return ext === ".css" || cachedGraphHas(p, projectDir) !== false;
+    });
+}
+
 /**
  * Split a change set into config edits (restart note) and the rest (rebuild). Config edits
  * are classified by BASENAME: Deno.watchFs may report realpath-resolved event paths (e.g.
@@ -138,13 +199,42 @@ function handleChangeSet(st: DevState, configBasenames: Set<string>, changedPath
 }
 
 /**
- * Watch app + public dirs (and middleware/config) and invalidate on change. Closes cleanly
- * on shutdown so the watcher and live-reload streams don't outlive the server.
+ * Watch app + public dirs (and middleware/config), and every other project source through the
+ * project-wide watch, and invalidate on change. Closes cleanly on shutdown so the watchers and
+ * live-reload streams don't outlive the server.
  */
 export async function watch(st: DevState): Promise<void> {
   const configFiles = configFilesOf(st);
   const configBasenames = new Set([...configFiles].map((p) => basename(p)));
-  const watcher = Deno.watchFs(watchedPaths(st, configFiles), { recursive: true });
+  const watched = watchedPaths(st, configFiles);
+  const watcher = Deno.watchFs(watched, { recursive: true });
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  // Accumulate the paths changed during a debounce window so the refresh-vs-reload
+  // decision sees the whole burst.
+  let changed: string[] = [];
+  const queue = (paths: readonly string[]) => {
+    if (paths.length === 0) return;
+    changed.push(...paths);
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      const changedPaths = changed;
+      changed = [];
+      // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
+      // reload the change set triggers serves freshly generated types/store — then apply the set.
+      // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
+      void withBuildDirLock(
+        st.paths.projectDir,
+        () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
+      )
+        .catch(() => false)
+        .finally(() => handleChangeSet(st, configBasenames, changedPaths));
+    }, 60);
+  };
+  // The project-wide watch (one walk's skip rules: dot-folders, node_modules, build output) also
+  // delivers content edits outside the watched folders — `components/X.tsx` — as the same
+  // change sets an edit under `app/` makes.
+  const outside = outsideEdits(st.paths.projectDir, watched);
+  watchPlatformFiles(st, () => applyPlatformFilesChange(st), (paths) => queue(outside(paths)));
   st.options.signal?.addEventListener("abort", () => {
     try {
       watcher.close();
@@ -153,27 +243,7 @@ export async function watch(st: DevState): Promise<void> {
     // Release the unbundled dev loop's esbuild service (no-op if it never started).
     void st.unbundled?.stop();
   });
-  let debounce: ReturnType<typeof setTimeout> | undefined;
-  // Accumulate the paths changed during a debounce window so the refresh-vs-reload
-  // decision sees the whole burst.
-  let changed: string[] = [];
   try {
-    for await (const event of watcher) {
-      for (const p of event.paths) changed.push(p);
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        const changedPaths = changed;
-        changed = [];
-        // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
-        // reload the change set triggers serves freshly generated types/store — then apply the set.
-        // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
-        void withBuildDirLock(
-          st.paths.projectDir,
-          () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
-        )
-          .catch(() => false)
-          .finally(() => handleChangeSet(st, configBasenames, changedPaths));
-      }, 60);
-    }
+    for await (const event of watcher) queue(event.paths);
   } catch { /* watcher closed on shutdown */ }
 }

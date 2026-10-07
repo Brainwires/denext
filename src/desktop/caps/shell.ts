@@ -67,7 +67,10 @@ const EXECUTABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   "pkg", "mpkg", "fileloc", "webloc", "inetloc", "prefpane", "saver", "kext", "osax", "dylib",
   // Linux / generic
   "desktop", "sh", "bash", "zsh", "csh", "ksh", "fish", "run", "appimage", "bin", "elf", "out",
-  "py", "pyw", "pl", "rb", "php", "deb", "rpm", "flatpakref", "flatpak", "snap",
+  "py", "pyw", "pyz", "pyzw", "pyc", "pl", "rb", "php", "deb", "rpm", "flatpakref", "flatpak",
+  "snap",
+  // Windows, run by their handlers: themes (fetch remote resources), Remote Desktop, Sandbox.
+  "theme", "themepack", "rdp", "wsb",
 ]);
 
 /** A path's final component, Windows-normalized (trailing dots/spaces stripped), lower-cased. */
@@ -355,18 +358,21 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
           if (typeof url !== "string") {
             throw new DesktopCapError("validation", "url must be a string");
           }
-          let scheme: string;
+          let parsed: URL;
           try {
-            scheme = new URL(url).protocol; // e.g. "https:"
+            parsed = new URL(url);
           } catch {
             throw new DesktopCapError("validation", "url is not a valid URL");
           }
+          const scheme = parsed.protocol; // e.g. "https:"
           if (!deps.config.openExternal.includes(scheme)) {
             throw new DesktopCapError("forbidden", `scheme "${scheme}" is not allowed`, {
               status: 403,
             });
           }
-          const [cmd, cmdArgs] = browserLaunchArgs(os, url);
+          // The normalized href, not the string as given: what was checked is what is opened (a
+          // raw string's whitespace, quotes or backslashes are for the opener to reinterpret).
+          const [cmd, cmdArgs] = browserLaunchArgs(os, parsed.href);
           await spawn(cmd, cmdArgs, undefined, ctx.signal);
           return { ok: true };
         },

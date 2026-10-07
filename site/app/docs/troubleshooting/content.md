@@ -508,6 +508,17 @@ release the app, and stamp later UI releases with
 version or build number committed to the native sources counts, so set those on
 the build command line. See [Native fingerprint](/docs/mobile#native-fingerprint).
 
+### An over-the-air update is refused with `platform_mismatch`
+
+**Cause.** The manifest names another target than the app's (`"platform": "android"` served to
+the iOS app): the server offers one platform's export to every shell, and an app with
+platform-specific files builds each platform its own.
+
+**Fix.** Serve each shell its own export: `denext export --platform ios` (then
+`denext ota manifest out`) per platform, and `createOtaHandler({ platforms: { ios, android } })`,
+which picks the export by the `x-denext-ota-platform` header the app sends. See
+[Over-the-air updates](/docs/platform-files#over-the-air-updates).
+
 ## React Native mode
 
 The entries below are for an app built with `reactNative: true`. The full guide is

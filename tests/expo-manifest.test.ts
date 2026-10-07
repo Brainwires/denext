@@ -14,6 +14,7 @@ import {
 } from "../src/build/expo-shims.ts";
 import { runtimeEntryPoints } from "../src/build/next-compat.ts";
 import { isSqliteWasmBridgeImport } from "../src/build/sqlite-wasm.ts";
+import { fromFileUrl } from "@std/path";
 
 const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 
@@ -135,28 +136,28 @@ Deno.test("sqlite bridge: only denext/mobile's import of sqlite-wasm.ts is exter
 
 /** T3 Code's apps/mobile package.json: `$T3_MOBILE_PACKAGE_JSON`, else the sibling checkout. */
 const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
-  new URL("../../t3code/apps/mobile/package.json", import.meta.url).pathname;
+  fromFileUrl(new URL("../../t3code/apps/mobile/package.json", import.meta.url));
 
 /** The expo-* dependencies of T3's app that deliberately have no shim. */
 const NOT_SHIMMED: string[] = [];
 
 /**
- * Shims for packages T3's app does not depend on, pinned to their Expo SDK 57 release instead
+ * Shims for packages T3's app does not depend on, pinned to their Expo SDK 58 release instead
  * (`expo-status-bar`: React Native mode's StatusBar makes it more than Expo's no-op web build).
  */
 const BEYOND_T3: Readonly<Record<string, string>> = {
-  "expo-status-bar": "57.0.1",
-  "expo-apple-authentication": "57.0.2",
-  "expo-local-authentication": "57.0.3",
-  "expo-location": "57.0.20",
-  "expo-application": "57.0.3",
-  "expo-maps": "57.0.3",
-  "expo-tracking-transparency": "57.0.2",
-  "expo-media-library": "57.0.5",
-  "expo-navigation-bar": "57.0.2",
-  "expo-screen-capture": "57.0.3",
-  "expo-screen-orientation": "57.0.2",
-  "expo-store-review": "57.0.3",
+  "expo-status-bar": "58.0.3",
+  "expo-apple-authentication": "58.0.2",
+  "expo-local-authentication": "58.0.2",
+  "expo-location": "58.0.10",
+  "expo-application": "58.0.3",
+  "expo-maps": "58.0.4",
+  "expo-tracking-transparency": "58.0.2",
+  "expo-media-library": "58.0.5",
+  "expo-navigation-bar": "58.0.4",
+  "expo-screen-capture": "58.0.5",
+  "expo-screen-orientation": "58.0.2",
+  "expo-store-review": "58.0.2",
 };
 
 let t3Present = false;
@@ -175,7 +176,7 @@ Deno.test({
     for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
       const pkg = packageOf(key);
       if (Object.hasOwn(BEYOND_T3, pkg)) {
-        assertEquals(shim.pinned, BEYOND_T3[pkg], `${key} pin (SDK 57 release)`);
+        assertEquals(shim.pinned, BEYOND_T3[pkg], `${key} pin (SDK 58 release)`);
         continue;
       }
       assert(pkg in deps, `${pkg} is not a dependency of T3's app`);

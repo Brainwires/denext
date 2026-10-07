@@ -51,6 +51,11 @@ export interface GetStringOptions {
 export interface SetStringOptions {
   /** The format of `text`; it is always written as plain text. */
   inputFormat?: StringFormat;
+  /**
+   * Android: `isSensitive` hides the copied text from the clipboard preview (ignored: the
+   * clipboard plugin has no such flag).
+   */
+  android?: { isSensitive?: boolean };
 }
 
 /** What a clipboard listener receives. */

@@ -787,6 +787,9 @@ export async function deleteNotificationChannelAsync(channelId: string): Promise
 
 // ---- Local scheduling (over denext/mobile's local notifications) -----------------------------
 
+/** How exactly an Android notification fires (see {@linkcode DateTriggerInput.delivery}). */
+export type NotificationDelivery = "bestEffort" | "alarmClock";
+
 /** A trigger that only names the Android channel (delivered now). */
 export type ChannelAwareTriggerInput = {
   /** The Android channel. */
@@ -833,6 +836,11 @@ export type DailyTriggerInput = {
   type: SchedulableTriggerInputTypes.DAILY;
   /** The Android channel. */
   channelId?: string;
+  /**
+   * Android: how exactly it fires. `alarmClock` schedules it as an exact alarm that also fires
+   * in Doze (the plugin's `allowWhileIdle`); `bestEffort` (the default) lets the OS batch it.
+   */
+  delivery?: NotificationDelivery;
   /** The hour. */
   hour: number;
   /** The minute. */
@@ -845,6 +853,11 @@ export type WeeklyTriggerInput = {
   type: SchedulableTriggerInputTypes.WEEKLY;
   /** The Android channel. */
   channelId?: string;
+  /**
+   * Android: how exactly it fires. `alarmClock` schedules it as an exact alarm that also fires
+   * in Doze (the plugin's `allowWhileIdle`); `bestEffort` (the default) lets the OS batch it.
+   */
+  delivery?: NotificationDelivery;
   /** The weekday, 1–7 with 1 = Sunday. */
   weekday: number;
   /** The hour. */
@@ -859,6 +872,11 @@ export type MonthlyTriggerInput = {
   type: SchedulableTriggerInputTypes.MONTHLY;
   /** The Android channel. */
   channelId?: string;
+  /**
+   * Android: how exactly it fires. `alarmClock` schedules it as an exact alarm that also fires
+   * in Doze (the plugin's `allowWhileIdle`); `bestEffort` (the default) lets the OS batch it.
+   */
+  delivery?: NotificationDelivery;
   /** The day of the month. */
   day: number;
   /** The hour. */
@@ -873,6 +891,11 @@ export type YearlyTriggerInput = {
   type: SchedulableTriggerInputTypes.YEARLY;
   /** The Android channel. */
   channelId?: string;
+  /**
+   * Android: how exactly it fires. `alarmClock` schedules it as an exact alarm that also fires
+   * in Doze (the plugin's `allowWhileIdle`); `bestEffort` (the default) lets the OS batch it.
+   */
+  delivery?: NotificationDelivery;
   /** The day of the month. */
   day: number;
   /** The month, 0–11. */
@@ -891,6 +914,11 @@ export type DateTriggerInput = {
   date: Date | number;
   /** The Android channel. */
   channelId?: string;
+  /**
+   * Android: how exactly it fires. `alarmClock` schedules it as an exact alarm that also fires
+   * in Doze (the plugin's `allowWhileIdle`); `bestEffort` (the default) lets the OS batch it.
+   */
+  delivery?: NotificationDelivery;
 };
 
 /** `seconds` from now; with `repeats`, every `seconds` (at least 60). */
@@ -952,6 +980,11 @@ export type NotificationContentInput = {
   autoDismiss?: boolean;
   /** The category whose buttons it shows. */
   categoryIdentifier?: string;
+  /**
+   * The thread it is grouped under in Notification Center (iOS); it also groups it on Android
+   * (the plugin's `group`).
+   */
+  threadIdentifier?: string;
   /** Android: ongoing (ignored). */
   sticky?: boolean;
   /** iOS: attachments (ignored). */
@@ -1067,6 +1100,14 @@ function fromLocal(local: LocalNotification): Notification {
   };
 }
 
+/** A trigger's Android delivery (`bestEffort` when it names none). */
+function deliveryOf(trigger: NotificationTriggerInput): NotificationDelivery {
+  return trigger && typeof trigger === "object" && "delivery" in trigger &&
+      trigger.delivery === "alarmClock"
+    ? "alarmClock"
+    : "bestEffort";
+}
+
 /** Expo's trigger as denext's (null: deliver now). */
 function toTrigger(trigger: NotificationTriggerInput): LocalNotificationTrigger | null {
   if (trigger === null || trigger === undefined) return null;
@@ -1152,6 +1193,8 @@ export async function scheduleNotificationAsync(
     categoryId: content.categoryIdentifier,
     sound: soundOf(content.sound),
     badge: content.badge,
+    ...(content.threadIdentifier === undefined ? {} : { group: content.threadIdentifier }),
+    ...(deliveryOf(trigger) === "alarmClock" ? { allowWhileIdle: true } : {}),
   });
   return identifier;
 }

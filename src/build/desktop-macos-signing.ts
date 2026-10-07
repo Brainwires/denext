@@ -47,6 +47,12 @@ export interface DesktopMacosSigning {
   readonly entitlements?: string;
   /** The profile to copy to `Contents/embedded.provisionprofile` before signing, if any. */
   readonly provisioningProfile?: string;
+  /**
+   * With a profile: the bundle identifier it was checked against (`desktop.app.identifier` in
+   * `denext.config.ts`, else deno.json's, as the package scripts mirror it for `deno desktop`).
+   * The scripts refuse to embed the profile in a bundle whose `CFBundleIdentifier` differs.
+   */
+  readonly identifier?: string;
 }
 
 /** Options for {@linkcode desktopMacosSigning}. */
@@ -389,14 +395,19 @@ export async function desktopMacosSigning(
   }
   let entitlements = mergeEntitlements(await readBaseEntitlements(options.entitlements), overlay);
   let profilePath: string | undefined;
+  let identifier: string | undefined;
   if (setting) {
     profilePath = await profileFile(root, setting, options.identity);
-    const identifier = identifierOf(config) ?? identifierOf(await readDenoJson(root));
+    identifier = identifierOf(config) ?? identifierOf(await readDenoJson(root));
     entitlements = await profileEntitlements(profilePath, identifier, entitlements, options);
   } else {
     refuseRestrictedWithoutProfile(entitlements);
   }
   const file = await Deno.makeTempFile({ prefix: "denext-entitlements-", suffix: ".plist" });
   await Deno.writeTextFile(file, renderPlist(entitlements));
-  return { entitlements: file, provisioningProfile: profilePath };
+  return {
+    entitlements: file,
+    provisioningProfile: profilePath,
+    ...(identifier ? { identifier } : {}),
+  };
 }

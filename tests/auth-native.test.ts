@@ -4,7 +4,26 @@
 // revokes the family; a forged token does not), sign-out revocation, the native origin gate +
 // CORS, the config-time checks, and the same token flow over the SQLite adapter.
 
-import { assert, assertEquals, assertMatch, assertNotEquals, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
+import { h as el } from "../src/jsx/jsx-runtime.ts";
+import type { RouteManifest } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
+import { isPostpone, type Postpone, withPrerender } from "../src/runtime/prerender.ts";
+import { createApp } from "../src/server/app.ts";
+import {
+  inMemoryCacheStore,
+  PageCache,
+  setCacheStore,
+  withCacheScope,
+} from "../src/server/cache.ts";
 import type { AuthAdapter } from "../src/server/auth/adapter.ts";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import { auth, denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
@@ -22,7 +41,11 @@ import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
 import type { CorsConfig } from "../src/server/config.ts";
 import { resolveCors } from "../src/server/cors.ts";
-import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import {
+  createRequestContext,
+  type RequestContext,
+  runWithContext,
+} from "../src/server/request-context.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -613,4 +636,105 @@ Deno.test("sqliteAuthAdapter: families dead past the retention are deleted at th
   } finally {
     await adapter.close?.();
   }
+});
+
+// ---- the bearer path goes through the same cache guards as the cookie path ------------
+
+/** An ISR page (`revalidate = 60`) whose body names the signed-in user. */
+function isrApp(): (request: Request) => Promise<Response> {
+  const modules: Record<string, unknown> = {
+    "layout.tsx": { default: (p: { children: unknown }) => el("main", null, p.children as never) },
+    "page.tsx": {
+      default: async () => el("p", { id: "who" }, `hi ${(await auth())?.user.name ?? "anon"}`),
+      revalidate: 60,
+    },
+  };
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern(""),
+      routePath: "/",
+      filePath: "page.tsx",
+      layoutChain: ["layout.tsx"],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
+    }],
+    api: [],
+    rootLayout: "layout.tsx",
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+  return createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+  });
+}
+
+Deno.test("an ISR page read with a native bearer is private and never served to the next visitor", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const h = await setup();
+  denextAuth(h.config);
+  const tokens = await signedIn(h);
+  const handler = isrApp();
+  const mine = await handler(
+    new Request(`${ORIGIN}/`, { headers: { authorization: `Bearer ${tokens.access_token}` } }),
+  );
+  assertStringIncludes(await mine.text(), "hi Ada");
+  assertStringIncludes(mine.headers.get("cache-control") ?? "", "private");
+  assertStringIncludes(mine.headers.get("cache-control") ?? "", "no-store");
+  const anonymous = await handler(new Request(`${ORIGIN}/`));
+  const body = await anonymous.text();
+  assertStringIncludes(body, "hi anon");
+  assert(!body.includes("Ada"), "the bearer user's page leaked to an anonymous visitor");
+  assertNotEquals(anonymous.headers.get("x-denext-cache"), "HIT");
+});
+
+Deno.test("auth() with a native bearer postpones during a PPR prerender", async () => {
+  const h = await setup();
+  denextAuth(h.config);
+  const tokens = await signedIn(h);
+  const thrown = await asBearer(tokens.access_token, () =>
+    withPrerender(async () => {
+      try {
+        await auth();
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    }));
+  assert(isPostpone(thrown), "a bearer read must postpone like a cookie read");
+  assertEquals((thrown as Postpone).api, "headers");
+});
+
+Deno.test('auth() with a native bearer throws inside a "use cache" scope', async () => {
+  const h = await setup();
+  denextAuth(h.config);
+  const tokens = await signedIn(h);
+  await asBearer(tokens.access_token, async () => {
+    const err = await assertRejects(() => withCacheScope(() => auth()));
+    assertStringIncludes(String(err), '"use cache"');
+  });
+});
+
+Deno.test("auth() with a native bearer reads signed out under force-static and stays cacheable", async () => {
+  const h = await setup();
+  denextAuth(h.config);
+  const tokens = await signedIn(h);
+  const ctx = createRequestContext(
+    new Request(`${ORIGIN}/`, { headers: { authorization: `Bearer ${tokens.access_token}` } }),
+  );
+  ctx.segmentConfig = { dynamic: "force-static" } as RequestContext["segmentConfig"];
+  assertEquals(await runWithContext(ctx, () => auth()), null);
+  assert(!ctx.usedDynamicApi, "force-static must not mark the render dynamic");
+  // Outside force-static the same read marks the render dynamic.
+  const live = createRequestContext(
+    new Request(`${ORIGIN}/`, { headers: { authorization: `Bearer ${tokens.access_token}` } }),
+  );
+  assertEquals((await runWithContext(live, () => auth()))?.user.id, h.userId);
+  assert(live.usedDynamicApi, "a bearer read must mark the render dynamic");
 });

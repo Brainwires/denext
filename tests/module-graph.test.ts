@@ -2,12 +2,14 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
   buildBoundaryManifest,
+  cachedGraphHas,
   clientIdFor,
   computeBoundaryRoutes,
   crawlLocalModules,
   exportListNames,
   importFunctionExports,
   isUnderFrameworkSrc,
+  resetModuleGraphCache,
   routeEntryFiles,
   shortHash,
 } from "../src/build/module-graph.ts";
@@ -384,4 +386,22 @@ Deno.test("boundary manifest serializes to project-relative paths and back", asy
   const back = deserializeBoundary(JSON.parse(JSON.stringify(s)), project);
   assertEquals(back.client.get("c_nm")?.url, url("node_modules/vaul/dist/index.mjs"));
   assertEquals(back.server.get("s_x"), { url: url("apps/web/app/actions.ts"), exports: ["save"] });
+});
+
+Deno.test("cachedGraphHas: what a cached crawl of the project reached; null with none", async () => {
+  resetModuleGraphCache();
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_graph_has_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "a.ts"), `import "./b.ts";\n`);
+    await Deno.writeTextFile(join(dir, "b.ts"), `export const b = 1;\n`);
+    await Deno.writeTextFile(join(dir, "c.ts"), `export const c = 1;\n`);
+    assertEquals(cachedGraphHas(join(dir, "b.ts"), dir), null, "nothing crawled yet");
+    await crawlLocalModules([join(dir, "a.ts")]);
+    assertEquals(cachedGraphHas(join(dir, "b.ts"), dir), true);
+    assertEquals(cachedGraphHas(join(dir, "c.ts"), dir), false);
+    assertEquals(cachedGraphHas(join(dir, "c.ts"), join(dir, "other")), null, "another project");
+  } finally {
+    resetModuleGraphCache();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

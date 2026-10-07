@@ -46,27 +46,45 @@ on:
   push:
     branches: [development]
     paths:
+      # The desktop code, and the src/build modules the desktop tests and src/build/desktop*.ts
+      # import directly (the render / server / runtime layers below them are ci.yml's, every push).
       - "src/desktop/**"
       - "src/build/desktop*.ts"
       - "src/build/desktop-runtime-pin.json"
-      - "src/build/app-update.ts"
+      - "src/build/app-update*.ts"
+      - "src/build/ota-signing.ts"
+      - "src/build/ota-manifest.ts"
       - "src/build/safe-extract.ts"
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
       - "src/build/scaffold.ts"
       - "src/build/fallow-template.ts"
+      - "src/build/pe-resources.ts"
+      - "src/build/plist-value.ts"
+      - "src/build/export-paths.ts"
+      - "src/build/export.ts"
+      - "src/build/platform-*.ts"
+      - "src/build/precompress.ts"
+      - "src/build/bundle.ts"
+      - "src/build/paths.ts"
+      - "src/build/json-edit.ts"
+      - "src/build/config-edit.ts"
+      - "src/build/patch-diff.ts"
+      - "src/build/css-config-guard.ts"
+      - "src/build/dev-proxy.ts"
+      - "src/build/dev-server/lan.ts"
+      - "src/build/dev-server/dev-token.ts"
+      - "src/build/doctor-format.ts"
+      - "src/build/spa/shared.ts"
+      - "src/build/react-native-desktop.ts"
       - "src/cli/commands/desktop*.ts"
-      - "src/mobile/notification-trigger.ts"
-      - "src/mobile/desktop-queue.ts"
-      - "src/mobile/open-file.ts"
-      - "src/react-native/desktop.ts"
+      - "src/cli/commands/doctor.ts"
+      - "src/client/live-client.ts"
+      - "src/mobile/**"
+      - "src/react-native/desktop*.ts"
       - "scripts/desktop-pin-runtime.ts"
       - "scripts/coverage-floor.ts"
-      - "scripts/ci/desktop-secure-store-roundtrip.ts"
-      - "scripts/ci/desktop-run-smoke.ts"
-      - "scripts/ci/desktop-relocation-smoke.ts"
-      - "scripts/ci/desktop-cross-package-check.ts"
-      - "scripts/ci/desktop-launch-smoke.ts"
+      - "scripts/ci/desktop-*.ts"
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
       - "tests/integration/scaffold.test.ts"
@@ -473,28 +491,64 @@ jobs:
           deno install
       - name: Package (.tar.gz + .deb + .rpm)
         run: deno run -A scripts/package-linux.ts --format tar.gz,deb,rpm && ls -la dist
+      # The app id (desktop.app.identifier) names the .desktop entry, the hicolor icon, the D-Bus
+      # service (notification-click activation) and the scheduled-notification timers postrm stops.
       - name: .deb — install through apt (dependencies resolved), check, remove
         run: |
           set -eux
+          id=com.example.denext-native
           dpkg-deb --info dist/denext-native-x64.deb
           sudo apt-get install -y ./dist/denext-native-x64.deb
           test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
-          desktop-file-validate /usr/share/applications/com.example.denext-native.desktop
-          grep -q 'MimeType=x-scheme-handler/denextnative;' /usr/share/applications/com.example.denext-native.desktop
+          desktop-file-validate /usr/share/applications/$id.desktop
+          grep -q 'MimeType=x-scheme-handler/denextnative;' /usr/share/applications/$id.desktop
           grep -q '"inspectable": false' /usr/lib/denext-native/laufey-launch.json
           ! ldd /usr/lib/denext-native/denext-native-x64 | grep 'not found'
-          sudo apt-get remove -y denext-native
+          # The icon, in the hicolor theme under the app id, and the entry's Icon= naming it.
+          grep -qx "Icon=$id" /usr/share/applications/$id.desktop
+          ls /usr/share/icons/hicolor/*/apps/$id.png
+          # The D-Bus service file, for the app id.
+          grep -qx "Name=$id" /usr/share/dbus-1/services/$id.service
+          # postrm: the desktop database refresh and the notification-timer cleanup are in it, and
+          # dpkg runs it on the removal (its --debug=2 trace) — the scheme handler leaves the
+          # desktop database with it.
+          grep -q "systemctl --user" /var/lib/dpkg/info/denext-native.postrm
+          grep -q "laufey-$id-" /var/lib/dpkg/info/denext-native.postrm
+          grep -q 'x-scheme-handler/denextnative=' /usr/share/applications/mimeinfo.cache
+          sudo apt-get remove -y -o DPkg::Options::=--debug=2 denext-native 2>&1 | tee "$RUNNER_TEMP/remove.log"
+          grep -E 'D0+2: fork/exec /var/lib/dpkg/info/denext-native\.postrm \( remove \)' "$RUNNER_TEMP/remove.log"
+          ! grep -q 'x-scheme-handler/denextnative=' /usr/share/applications/mimeinfo.cache
           test ! -e /usr/bin/denext-native && test ! -e /usr/lib/denext-native
+          test ! -e /usr/share/dbus-1/services/$id.service
+          ! ls /usr/share/icons/hicolor/*/apps/$id.png
+          test ! -e /usr/share/applications/$id.desktop
       - name: .rpm — install through dnf on Fedora, check, remove
         run: |
           docker run --rm -v "$PWD/dist:/dist" fedora:latest bash -euxc '
+            id=com.example.denext-native
             rpm -qpR /dist/denext-native-x64.rpm
             dnf install -y /dist/denext-native-x64.rpm
             test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
-            grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/com.example.denext-native.desktop
+            grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/$id.desktop
+            grep -qx "Icon=$id" /usr/share/applications/$id.desktop
+            ls /usr/share/icons/hicolor/*/apps/$id.png
+            grep -qx "Name=$id" /usr/share/dbus-1/services/$id.service
             ! ldd /usr/lib/denext-native/denext-native-x64 | grep "not found"
             rpm -e denext-native
-            test ! -e /usr/lib/denext-native'
+            test ! -e /usr/lib/denext-native
+            test ! -e /usr/share/dbus-1/services/$id.service'
+      # The CEF backend's .deb: its setuid sandbox helper installs root-owned with mode 4755.
+      - name: CEF backend .deb — chrome-sandbox is setuid root
+        run: |
+          set -eux
+          deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.desktop.backend = "cef"; Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          grep -q '"backend": "cef"' deno.json
+          deno run -A scripts/package-linux.ts --no-export --format deb
+          sudo apt-get install -y ./dist/denext-native-x64.deb
+          test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
+          test "$(stat -c '%a %U %G' /usr/lib/denext-native/chrome-sandbox)" = "4755 root root"
+          sudo apt-get remove -y denext-native
+          test ! -e /usr/lib/denext-native
 
   installers-macos:
     name: installers (macos-latest — .dmg mounted, .pkg installed; unsigned)

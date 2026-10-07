@@ -137,6 +137,69 @@ Deno.test("desktop handler: assets are served no-store, navigations get the shel
   }
 });
 
+Deno.test("desktop handler: a multi-page export's routes load their own page, not the root shell", async () => {
+  // A static App Router export (examples/clerk): `<a href="/protected">` must load
+  // `protected/index.html`. It used to get the root `index.html`, so the link "did nothing".
+  const dir = await exportDir();
+  const outside = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, "protected"));
+    await Deno.writeTextFile(
+      join(dir, "protected", "index.html"),
+      "<!doctype html><head></head><main>PROTECTED</main>",
+    );
+    await Deno.writeTextFile(
+      join(dir, "about.html"),
+      "<!doctype html><head></head><main>ABOUT</main>",
+    );
+    await Deno.writeTextFile(join(outside, "index.html"), "<main>OUTSIDE</main>");
+    await Deno.symlink(outside, join(dir, "leak"));
+    const handle = createDesktopHandler({}, dir, undefined, "tok-pages");
+    const get = (path: string, headers: Record<string, string>) =>
+      handle(
+        new Request(`http://127.0.0.1${path}`, { headers }),
+        new URL(`http://127.0.0.1${path}`),
+      );
+    // A hard navigation (the link without the client router) and the client router's soft-nav fetch.
+    const navigation = {
+      accept: "text/html",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-dest": "document",
+    };
+    const softNav = { "x-denext-nav": "1", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" };
+
+    for (const path of ["/protected", "/protected/", "/protected/index.html"]) {
+      const res = await get(path, navigation);
+      assertEquals(res.status, 200, path);
+      assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
+      assertEquals(res.headers.get("cache-control"), "no-store, must-revalidate");
+      const html = await res.text();
+      assertStringIncludes(html, "PROTECTED", path);
+      // The page gets the same desktop global (with the token) the root shell gets.
+      assertStringIncludes(html, "globalThis.__denext=", path);
+      assertStringIncludes(html, "tok-pages", path);
+    }
+    const soft = await (await get("/protected", softNav)).text();
+    assertStringIncludes(soft, "PROTECTED");
+    assert(!soft.includes("tok-pages"), "a non-document fetch never gets the token");
+
+    assertStringIncludes(await (await get("/about", navigation)).text(), "ABOUT");
+    // `/` and a client-side route of a single-page app still get the root shell.
+    assertStringIncludes(await (await get("/", navigation)).text(), "<div id=root>");
+    assertStringIncludes(
+      await (await get("/settings/profile", navigation)).text(),
+      "<div id=root>",
+    );
+    // A page reached through a symlink out of the export is not served.
+    const leak = await (await get("/leak", navigation)).text();
+    assert(!leak.includes("OUTSIDE"));
+    assertStringIncludes(leak, "<div id=root>");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
 Deno.test("desktop handler: onRequest intercepts before serving; a null result falls through", async () => {
   const dir = await exportDir();
   try {

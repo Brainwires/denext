@@ -2,6 +2,9 @@
 // black box, runtime script, unbundled modules, bundles, chunks, route CSS, health,
 // images), then the app itself with request timing recorded in the black box.
 
+import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
+import { withModuleGraphRedirects } from "../module-graph.ts";
+import { devPlatformImports } from "./platform.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
@@ -106,43 +109,52 @@ function gatedDevEndpoint(
 }
 
 /** App-wide Flight bundle (client islands + registry). */
-async function flightBundleResponse(st: DevState): Promise<Response> {
+async function flightBundleResponse(st: DevState, request: Request): Promise<Response> {
   try {
-    return jsResponse(await getFlightBundle(st));
+    return jsResponse(await getFlightBundle(st, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "Flight bundle error", err);
   }
 }
 
 /** On-demand `global-error.tsx` hydration bundle. */
-async function globalErrorBundleResponse(st: DevState): Promise<Response> {
+async function globalErrorBundleResponse(st: DevState, request: Request): Promise<Response> {
   try {
-    return jsResponse(await getGlobalErrorBundle(st));
+    return jsResponse(await getGlobalErrorBundle(st, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "global-error bundle error", err);
   }
 }
 
 /** On-demand client route bundle (`?p=<routePath>`). */
-async function routeBundleResponse(st: DevState, url: URL): Promise<Response> {
+async function routeBundleResponse(st: DevState, request: Request, url: URL): Promise<Response> {
   const routePath = url.searchParams.get("p");
   const m = await getManifest(st);
   const route = m.pages.find((p) => p.routePath === routePath);
   if (!route) return new Response("// route not found", { status: 404 });
   try {
-    return jsResponse(await getRouteBundle(st, route));
+    return jsResponse(await getRouteBundle(st, route, devPlatformOf(request)));
   } catch (err) {
     return bundleErrorResponse(st, "Bundle error", err);
   }
 }
 
-/** Per-route extracted stylesheet (transformed CSS the route's graph reaches). */
-async function routeCssResponse(st: DevState, url: URL): Promise<Response> {
+/**
+ * Per-route extracted stylesheet (transformed CSS the route's graph reaches), crawled through
+ * the session's platform files: a stylesheet only `Badge.ios.tsx` imports is the iOS session's.
+ */
+async function routeCssResponse(st: DevState, url: URL, platform: Platform): Promise<Response> {
   const routePath = url.searchParams.get("p");
   const m = await getManifest(st);
   const route = m.pages.find((p) => p.routePath === routePath);
   const css = await getCss(st);
-  const text = route && css ? await extractRouteCss(routeSourceFiles(route), css) : "";
+  const text = route && css
+    ? await withModuleGraphRedirects(
+      st.paths.configPath,
+      await devPlatformImports(st, platform),
+      () => extractRouteCss(routeSourceFiles(route), css),
+    )
+    : "";
   return new Response(text, {
     headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
   });
@@ -252,6 +264,14 @@ async function appResponse(
 
 /** The dev server's request handler over `appHandler` (the createApp handler). */
 export function createDevHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
+  const handle = devRequestHandler(st, appHandler);
+  // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module, Flight and
+  // navigation requests resolve that target's platform files too.
+  return async (request) => pinDevPlatform(request, await handle(request));
+}
+
+/** {@linkcode createDevHandler}'s routing, before the platform cookie. */
+function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
   return async (request) => {
     const url = new URL(request.url);
     // Live Server Components WebSocket upgrade (before appHandler so the long-lived
@@ -262,8 +282,8 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
     if (url.pathname === DEV_RELOAD_JS_PATH) return jsResponse(DEV_RELOAD_SCRIPT);
     const unbundled = await unbundledResponse(st, request, url);
     if (unbundled) return unbundled;
-    if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st);
-    if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st);
+    if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st, request);
+    if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st, request);
     // Liveness/readiness probe endpoint (for load balancers / k8s).
     if (url.pathname === "/_denext/health") {
       return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
@@ -274,12 +294,12 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
         imageOptionsFromConfig(st.paths.config?.images, st.paths.publicDir),
       );
     }
-    if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url);
+    if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url, devPlatformOf(request));
     const chunk = chunkResponse(st, url);
     if (chunk) return chunk;
     const asset = await compatAssetResponse(st, request, url);
     if (asset) return asset;
-    if (url.pathname === ROUTE_BUNDLE_PATH) return routeBundleResponse(st, url);
+    if (url.pathname === ROUTE_BUNDLE_PATH) return routeBundleResponse(st, request, url);
     return appResponse(st, appHandler, request, url);
   };
 }

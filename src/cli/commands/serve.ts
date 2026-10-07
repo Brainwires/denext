@@ -3,6 +3,7 @@
 // `.env` + CSS/module re-exec gate before dispatching them). Logic lives in
 // `src/build/*` / `src/testing/*`; these specs only orchestrate.
 
+import { parsePlatform, type Platform, PLATFORM_ENV } from "../../build/platform-extensions.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { envGet } from "../../runtime/env-safe.ts";
 import { ensureAppDir, installShutdown, projectDir, runBuildStep } from "../shared.ts";
@@ -13,6 +14,7 @@ import { build } from "../../build/build.ts";
 import { staticExport } from "../../build/export.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
 import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
+import { devSessionToken, withDevTokenParam } from "../../build/dev-server/dev-token.ts";
 import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 
@@ -81,15 +83,23 @@ export function allowedDevOriginFlag(
  */
 function devBind(
   ctx: CommandContext,
-): { hostname?: string; onListen?: (info: { hostname: string; port: number }) => void } {
+): {
+  hostname?: string;
+  devToken?: string;
+  onListen?: (info: { hostname: string; port: number }) => void;
+} {
   const host = ctx.flags.host as string | undefined;
-  if (ctx.flags.lan !== true) return { hostname: host };
+  if (ctx.flags.lan !== true) return { hostname: host, devToken: devSessionToken(host) };
   if (host !== undefined) fail("denext dev: --lan picks the address itself; drop --host.");
   const address = pickLanAddress();
   if (!address) fail("denext dev --lan: this machine has no LAN IPv4 address (is Wi-Fi on?).");
+  // A LAN bind: the printed URL (and its QR code) carries the session token.
+  const devToken = devSessionToken(address);
   return {
     hostname: address,
-    onListen: ({ port }) => console.log(lanBanner(`http://${address}:${port}`)),
+    devToken,
+    onListen: ({ port }) =>
+      console.log(lanBanner(withDevTokenParam(`http://${address}:${port}`, devToken))),
   };
 }
 
@@ -124,7 +134,9 @@ export const devCommand: CommandSpec = {
     "The dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\n" +
     "explicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\n" +
     "binds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n" +
-    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
+    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.\n" +
+    "A non-loopback bind (--lan, --host) prints its URL with a session token\n" +
+    "(?__denext_dev=…): other machines need it for every request; this one does not.",
   run: async (ctx) => {
     const allowed = allowedDevOriginFlag(ctx.flags["allowed-dev-origin"]);
     if (!allowed.ok) fail(`denext dev: ${allowed.error}`);
@@ -138,6 +150,7 @@ export const devCommand: CommandSpec = {
       paths,
       port: port ?? 3000,
       hostname: bind.hostname,
+      devToken: bind.devToken,
       onListen: bind.onListen,
       allowedDevOrigins: allowed.origins,
       strictPort: port !== undefined,
@@ -166,6 +179,20 @@ export const buildCommand: CommandSpec = {
   },
 };
 
+/**
+ * The export's target: `--platform`, else {@linkcode PLATFORM_ENV} (what `denext desktop
+ * package`'s script sets for its `deno task export` child), else `web`. Exits on a bad value.
+ */
+function exportPlatform(flag: unknown): Platform {
+  try {
+    if (typeof flag === "string") return parsePlatform(flag, "--platform");
+    return parsePlatform(Deno.env.get(PLATFORM_ENV), PLATFORM_ENV);
+  } catch (err) {
+    console.error(`denext export: ${(err as Error).message}`);
+    Deno.exit(1);
+  }
+}
+
 export const exportCommand: CommandSpec = {
   name: "export",
   envTier: "production",
@@ -179,6 +206,13 @@ export const exportCommand: CommandSpec = {
     valueName: "hidden",
     help: "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a " +
       "crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)",
+  }, {
+    name: "platform",
+    type: "string",
+    valueName: "<target>",
+    help: "The target whose platform files (Button.ios.tsx, .android, .mobile, .macos/.windows/" +
+      ".linux, .desktop, .web) the export resolves: web (default), ios, android, macos, windows, " +
+      "linux (also DENEXT_PLATFORM)",
   }],
   run: async (ctx) => {
     const sourcemaps = ctx.flags.sourcemaps;
@@ -189,9 +223,12 @@ export const exportCommand: CommandSpec = {
       Deno.exit(1);
     }
     if (sourcemaps === "hidden") Deno.env.set(SOURCEMAPS_ENV, "hidden");
+    const platform = exportPlatform(ctx.flags.platform);
     const { dir } = await appProject(ctx);
-    console.log(`\n  denext export (static)  ▸  ${dir}\n`);
-    const result = await runBuildStep(() => staticExport(dir), "export");
+    console.log(
+      `\n  denext export (static)${platform === "web" ? "" : ` [${platform}]`}  ▸  ${dir}\n`,
+    );
+    const result = await runBuildStep(() => staticExport(dir, { platform }), "export");
     console.log(
       `\n  Exported ${result.pages} page(s) to ${result.outDir}` +
         (result.skipped.length

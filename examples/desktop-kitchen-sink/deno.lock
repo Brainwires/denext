@@ -1,53 +1,7 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/encoding@1": "1.0.11",
-    "jsr:@std/fs@1": "1.0.24",
-    "jsr:@std/http@1": "1.1.4",
-    "jsr:@std/internal@^1.0.14": "1.0.14",
-    "jsr:@std/json@^1.1.0": "1.1.0",
-    "jsr:@std/jsonc@1": "1.0.3",
-    "jsr:@std/media-types@1": "1.1.0",
-    "jsr:@std/path@1": "1.1.6",
-    "jsr:@std/path@^1.1.5": "1.1.6",
-    "npm:@node-rs/crc32@1.10.8": "1.10.8",
-    "npm:ws@8": "8.21.3"
-  },
-  "jsr": {
-    "@std/encoding@1.0.11": {
-      "integrity": "e7cef2f0b3153bccc17431e7c864a1de03a4b6d9647389c43e08aaa775d37385"
-    },
-    "@std/fs@1.0.24": {
-      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
-      "dependencies": [
-        "jsr:@std/internal",
-        "jsr:@std/path@^1.1.5"
-      ]
-    },
-    "@std/http@1.1.4": {
-      "integrity": "4f1575226ca7c0df1df38b26d50265fed30869b2a63ab867edc5b92492150c8c"
-    },
-    "@std/internal@1.0.14": {
-      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
-    },
-    "@std/json@1.1.0": {
-      "integrity": "93330d3ed4054d6b1ffe54b075432c80a5f671be77277b978931e018014cb1cc"
-    },
-    "@std/jsonc@1.0.3": {
-      "integrity": "9a4bb168c6b64e8e89944e45f96390a6e6e6865f59f02f0a70b24653911f2d64",
-      "dependencies": [
-        "jsr:@std/json"
-      ]
-    },
-    "@std/media-types@1.1.0": {
-      "integrity": "c9d093f0c05c3512932b330e3cc1fe1d627b301db33a4c2c2185c02471d6eaa4"
-    },
-    "@std/path@1.1.6": {
-      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
-      "dependencies": [
-        "jsr:@std/internal"
-      ]
-    }
+    "npm:@node-rs/crc32@1.10.8": "1.10.8"
   },
   "npm": {
     "@node-rs/crc32-android-arm-eabi@1.10.8": {
@@ -132,9 +86,6 @@
         "@node-rs/crc32-win32-ia32-msvc",
         "@node-rs/crc32-win32-x64-msvc"
       ]
-    },
-    "ws@8.21.3": {
-      "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="
     }
   },
   "workspace": {
@@ -146,14 +97,14 @@
       "jsr:@denext/avif@0.1.2": {},
       "jsr:@denext/content-collections@0.4.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@3.0.2": {
+      "jsr:@denext/denext@3.1.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
@@ -177,13 +128,13 @@
       },
       "jsr:@denext/effect@0.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "npm:effect@^3.22.0"
         ]
       },
       "jsr:@denext/graphql@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -191,7 +142,7 @@
       },
       "jsr:@denext/htmx@2.0.11": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/path@1"
         ]
       },
@@ -199,20 +150,20 @@
       "jsr:@denext/og@0.1.1": {},
       "jsr:@denext/openapi@0.3.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/pages-router@0.10.0": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.1.1": {
         "dependencies": [
-          "jsr:@denext/denext@^3.0.2",
+          "jsr:@denext/denext@^3.1.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

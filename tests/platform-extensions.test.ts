@@ -1,0 +1,718 @@
+// Platform-specific files (src/build/platform-extensions.ts): each target's probe order, the
+// `.native` opt-in, `platformExtensions: false`, the explicit-extension variant, the
+// missing-variant message, the project scan → file-URL redirects and per-target gaps, the
+// config validation, `denext doctor`'s check, the server loader's redirect, the unbundled dev
+// probe and the wiring that picks the target (`--platform`, mobile build, desktop package).
+
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { join, toFileUrl } from "@std/path";
+import * as esbuild from "esbuild";
+import {
+  aliasRedirects,
+  chooseVariant,
+  composeRedirects,
+  createPlatformScanner,
+  desktopPlatform,
+  devPlatformOf,
+  explicitVariant,
+  keepPlatformScanner,
+  keptPlatformScanner,
+  missingVariantMessage,
+  parsePlatform,
+  pinDevPlatform,
+  type Platform,
+  platformFilesReport,
+  platformGaps,
+  platformRedirects,
+  platformResolution,
+  platformSuffixes,
+  platformVariantsOf,
+  probePlatformSource,
+  projectPlatformRedirects,
+  projectSourceFiles,
+  readImportAliases,
+  resolveImportAlias,
+  resolvePlatformImport,
+  scanPlatformGroups,
+  splitPlatformName,
+  withDevPlatform,
+} from "../src/build/platform-extensions.ts";
+import { devProxyTokenHeaders } from "../src/build/dev-server/dev-token.ts";
+import { pinSessionPlatforms } from "../src/build/mobile-dev.ts";
+import { appResolverPlugin, probeSourceFile, SOURCE_EXTS } from "../src/build/next-compat.ts";
+import { validateDenextConfig } from "../src/server/config-validate.ts";
+import type { DenextConfig } from "../src/server/config.ts";
+import { createUseCacheLoader } from "../src/build/use-cache-loader.ts";
+import { platformImportMap } from "../src/build/platform-imports.ts";
+import { firstPartyProbe } from "../src/build/dev-unbundled/resolve.ts";
+import type { UnbundledState } from "../src/build/dev-unbundled/state.ts";
+import { planMobileBuild } from "../src/build/mobile-build.ts";
+import { desktopExportEnv } from "../src/build/desktop-package-script.ts";
+import { scaffoldFiles } from "../src/build/scaffold.ts";
+import { platformFilesCheck } from "../src/cli/commands/doctor.ts";
+
+/** A temp dir holding `files` (relative path → contents). */
+async function tree(files: Record<string, string>): Promise<string> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_platform_unit_" }));
+  for (const [name, src] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, name, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, name), src);
+  }
+  return dir;
+}
+
+Deno.test("platformSuffixes: most specific first, every list ending in .web", () => {
+  const table: Record<Platform, string[]> = {
+    web: [".web"],
+    ios: [".ios", ".mobile", ".web"],
+    android: [".android", ".mobile", ".web"],
+    macos: [".macos", ".desktop", ".web"],
+    windows: [".windows", ".desktop", ".web"],
+    linux: [".linux", ".desktop", ".web"],
+  };
+  for (const [platform, want] of Object.entries(table)) {
+    assertEquals(platformSuffixes(platform as Platform), want, platform);
+  }
+});
+
+Deno.test("platformSuffixes: `.native` is opt-in, after the OS, on phones only", () => {
+  assertEquals(platformSuffixes("ios", { native: true }), [".ios", ".native", ".mobile", ".web"]);
+  assertEquals(platformSuffixes("android", { native: true }), [
+    ".android",
+    ".native",
+    ".mobile",
+    ".web",
+  ]);
+  assertEquals(platformSuffixes("macos", { native: true }), [".macos", ".desktop", ".web"]);
+  assertEquals(platformSuffixes("web", { native: true }), [".web"]);
+});
+
+Deno.test("platformResolution: on by default, `{ native }` read, `false` turns it off", () => {
+  const ios = platformResolution({}, "ios")!;
+  assertEquals(ios.suffixes, [".ios", ".mobile", ".web"]);
+  assertEquals(ios.extensions.slice(0, 5), [
+    ".ios.tsx",
+    ".ios.ts",
+    ".ios.jsx",
+    ".ios.js",
+    ".ios.mjs",
+  ]);
+  assertEquals(ios.extensions.length, 15);
+  assertEquals(platformResolution(undefined)!.platform, "web");
+  assertEquals(platformResolution({ platformExtensions: true }, "web")!.suffixes, [".web"]);
+  assertEquals(
+    platformResolution({ platformExtensions: { native: true } }, "ios")!.suffixes,
+    [".ios", ".native", ".mobile", ".web"],
+  );
+  assertEquals(platformResolution({ platformExtensions: false }, "ios"), null);
+});
+
+Deno.test("platformResolution: React Native mode leaves out .ios / .android unless `osFiles`", () => {
+  const rn = (platformExtensions?: DenextConfig["platformExtensions"]) => (platform: Platform) =>
+    platformResolution({ reactNative: true, platformExtensions }, platform)!.suffixes;
+  assertEquals(rn()("ios"), [".mobile", ".web"]);
+  assertEquals(rn()("android"), [".mobile", ".web"]);
+  assertEquals(rn({ native: true })("ios"), [".native", ".mobile", ".web"]);
+  // The desktop OS suffixes and `.web` still apply.
+  assertEquals(rn()("macos"), [".macos", ".desktop", ".web"]);
+  assertEquals(rn()("web"), [".web"]);
+  assertEquals(rn({ osFiles: true })("ios"), [".ios", ".mobile", ".web"]);
+  assertEquals(rn({ osFiles: true, native: true })("android"), [
+    ".android",
+    ".native",
+    ".mobile",
+    ".web",
+  ]);
+  // Outside React Native mode the OS files are always probed.
+  assertEquals(
+    platformResolution({ platformExtensions: { osFiles: false } }, "ios")!.suffixes,
+    [".ios", ".mobile", ".web"],
+  );
+});
+
+Deno.test("parsePlatform / desktopPlatform: the target names", () => {
+  assertEquals(parsePlatform(undefined), "web");
+  assertEquals(parsePlatform(""), "web");
+  assertEquals(parsePlatform("android"), "android");
+  assertThrows(() => parsePlatform("iphone"), Error, "--platform must be one of web, ios");
+  assertThrows(() => parsePlatform("x", "DENEXT_PLATFORM"), Error, "DENEXT_PLATFORM must be");
+  assertEquals(desktopPlatform("darwin"), "macos");
+  assertEquals(desktopPlatform("windows"), "windows");
+  assertEquals(desktopPlatform("linux"), "linux");
+});
+
+Deno.test("splitPlatformName: a suffix right before the source extension only", () => {
+  assertEquals(splitPlatformName("BigButton.ios.tsx"), { stem: "BigButton", suffix: "ios" });
+  assertEquals(splitPlatformName("a.b.desktop.mjs"), { stem: "a.b", suffix: "desktop" });
+  assertEquals(splitPlatformName("BigButton.tsx"), null);
+  assertEquals(splitPlatformName("types.ios.d.ts"), null);
+  assertEquals(splitPlatformName("x.ios.css"), null);
+  assertEquals(splitPlatformName("x.test.ts"), null);
+});
+
+Deno.test("probePlatformSource: each target picks its own file, then the plain one", async () => {
+  const dir = await tree({
+    "B.tsx": "",
+    "B.ios.tsx": "",
+    "B.mobile.ts": "",
+    "B.desktop.tsx": "",
+    "B.native.tsx": "",
+    "Only.web.ts": "",
+    "Dir/index.android.tsx": "",
+    "Dir/index.tsx": "",
+  });
+  try {
+    const probe = (base: string, platform: Platform, config: DenextConfig = {}) =>
+      probePlatformSource(
+        join(dir, base),
+        platformResolution(config, platform),
+        probeSourceFile,
+        SOURCE_EXTS,
+      )?.slice(dir.length + 1);
+    assertEquals(probe("B", "web"), "B.tsx");
+    assertEquals(probe("B", "ios"), "B.ios.tsx");
+    assertEquals(probe("B", "android"), "B.mobile.ts");
+    assertEquals(probe("B", "linux"), "B.desktop.tsx");
+    assertEquals(probe("B", "android", { platformExtensions: { native: true } }), "B.native.tsx");
+    // An explicit extension (the Deno spelling) takes the variant too.
+    assertEquals(probe("B.tsx", "ios"), "B.ios.tsx");
+    assertEquals(probe("B.tsx", "web"), "B.tsx");
+    // `.web` is every target's last resort before the plain file.
+    assertEquals(probe("Only", "macos"), "Only.web.ts");
+    assertEquals(probe("Dir", "android"), "Dir/index.android.tsx");
+    assertEquals(probe("Dir", "ios"), "Dir/index.tsx");
+    // Off: the plain file only.
+    assertEquals(probe("B", "ios", { platformExtensions: false }), "B.tsx");
+    assertEquals(explicitVariant(join(dir, "B.json"), platformResolution({}, "ios")!), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("missingVariantMessage: names the variants and what to add", async () => {
+  const dir = await tree({ "BigButton.ios.tsx": "", "BigButton.android.tsx": "" });
+  try {
+    const variants = platformVariantsOf(join(dir, "BigButton"));
+    assertEquals(variants.map((v) => v.suffix), ["android", "ios"]);
+    assertEquals(
+      missingVariantMessage("./BigButton", variants, platformResolution({}, "web")!),
+      "`./BigButton` has `.android` and `.ios` variants but none for web: add `BigButton.tsx` " +
+        "or `BigButton.web.tsx`",
+    );
+    assertEquals(platformVariantsOf(join(dir, "BigButton.tsx")).length, 2);
+    assertEquals(platformVariantsOf(join(dir, "missing-dir", "X")), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("scanPlatformGroups → platformRedirects / platformGaps per target", async () => {
+  const dir = await tree({
+    "src/Pad.ios.tsx": "",
+    "src/Pad.android.tsx": "",
+    "src/Card.tsx": "",
+    "src/Card.desktop.tsx": "",
+    "src/plain.ts": "",
+    "node_modules/lib/x.ios.js": "",
+    "out/_denext/y.web.js": "",
+    "ios/App/z.ios.ts": "",
+  });
+  try {
+    const groups = await scanPlatformGroups(dir);
+    assertEquals(groups.map((g) => g.stem.slice(dir.length + 1)), ["src/Card", "src/Pad"]);
+    assertEquals(groups[0].plain, join(dir, "src/Card.tsx"));
+    assertEquals(groups[1].plain, null);
+    assertEquals(chooseVariant(groups[1], platformResolution({}, "web")!), null);
+
+    const url = (rel: string) => toFileUrl(join(dir, rel)).href;
+    const mac = platformRedirects(groups, platformResolution({}, "macos"));
+    assertEquals(mac[url("src/Card")], url("src/Card.desktop.tsx"));
+    assertEquals(mac[url("src/Card.tsx")], url("src/Card.desktop.tsx"));
+    assertEquals(mac[url("src/Card.js")], url("src/Card.desktop.tsx"));
+    assert(!(url("src/Pad") in mac), "a gap gets no redirect");
+    const ios = platformRedirects(groups, platformResolution({}, "ios"));
+    assertEquals(ios[url("src/Pad.tsx")], url("src/Pad.ios.tsx"));
+    assert(!(url("src/Card.tsx") in ios), "the plain file needs no redirect");
+    assertEquals(platformRedirects(groups, null), {});
+
+    assertEquals(platformGaps(dir, groups, {}), [{
+      module: "src/Pad",
+      suffixes: ["android", "ios"],
+      missing: ["web", "macos", "windows", "linux"],
+    }]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platform scan: skips dot-folders and build output at any depth", async () => {
+  const dir = await tree({
+    "src/a.ts": "",
+    "src/a.ios.ts": "",
+    ".next/server/b.ios.ts": "",
+    ".turbo/c.ios.ts": "",
+    "apps/mobile/ios/App/d.ios.ts": "",
+    "apps/mobile/android/e.android.ts": "",
+    "apps/web/out/f.ios.ts": "",
+    "apps/web/www/g.ios.ts": "",
+    "apps/web/dist/h.ios.ts": "",
+    "apps/web/node_modules/pkg/i.ios.js": "",
+    "apps/web/src/j.ios.ts": "",
+  });
+  try {
+    const files = (await Array.fromAsync(projectSourceFiles(dir))).map((f) =>
+      f.slice(dir.length + 1)
+    );
+    assertEquals(files.sort(), ["apps/web/src/j.ios.ts", "src/a.ios.ts", "src/a.ts"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platform scanner: one walk, kept until a platform file comes or goes", async () => {
+  const dir = await tree({ "src/a.ts": "", "src/b.ts": "", "src/b.web.ts": "" });
+  try {
+    const scanner = createPlatformScanner(dir);
+    const first = scanner.files();
+    assert(first === scanner.files(), "concurrent callers share one walk");
+    const web = await scanner.redirects({}, "web");
+    assertEquals(Object.keys(web).length > 0, true);
+    assert(web === await scanner.redirects({}, "web"), "memoized per target");
+    // Editing or atomically saving a file that is not a platform file keeps the scan.
+    assertEquals(scanner.invalidate([join(dir, "src/a.ts")]), false);
+    assertEquals(scanner.invalidate([join(dir, "node_modules/x/y.ios.js")]), false);
+    assertEquals(scanner.invalidate([join(dir, ".git/index")]), false);
+    assert(first === scanner.files());
+    // The plain file of a module with variants, a new variant, or a folder: rescan.
+    assertEquals(scanner.invalidate([join(dir, "src/b.ts")]), true);
+    await scanner.groups();
+    assertEquals(scanner.invalidate([join(dir, "src/a.ios.ts")]), true);
+    assertEquals(scanner.invalidate([join(dir, "src/new-folder")]), true);
+    assert(first !== scanner.files(), "the walk is redone");
+    // A kept scanner serves projectPlatformRedirects for its project.
+    const controller = new AbortController();
+    keepPlatformScanner(scanner, controller.signal);
+    assert(keptPlatformScanner(dir) === scanner);
+    await scanner.redirects({}, "web");
+    await Deno.writeTextFile(join(dir, "src/a.web.ts"), "");
+    assertEquals(
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.includes("/a")),
+      false,
+      "the kept scan is used until invalidated",
+    );
+    scanner.invalidate([join(dir, "src/a.web.ts")]);
+    assert(
+      Object.keys(await projectPlatformRedirects(dir, {}, "web")).some((k) => k.endsWith("/a")),
+    );
+    controller.abort();
+    assertEquals(keptPlatformScanner(dir), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("composeRedirects: a variant with a transformed copy redirects to the copy", () => {
+  assertEquals(
+    composeRedirects({ "file:///a.tsx": "file:///a.ios.tsx", "file:///b": "file:///b.web.ts" }, {
+      "file:///a.ios.tsx": "file:///.denext/copy.tsx",
+    }),
+    { "file:///a.tsx": "file:///.denext/copy.tsx", "file:///b": "file:///b.web.ts" },
+  );
+  const same = { "file:///a": "file:///a.web.ts" };
+  assertEquals(composeRedirects(same, undefined), same);
+});
+
+Deno.test("config: platformExtensions is a boolean or `{ native?, osFiles? }`", () => {
+  validateDenextConfig({ platformExtensions: false });
+  validateDenextConfig({ platformExtensions: { native: true, osFiles: true } });
+  assertThrows(
+    () => validateDenextConfig({ platformExtensions: "ios" } as unknown as DenextConfig),
+    Error,
+    "`platformExtensions` must be a boolean",
+  );
+  assertThrows(
+    () => validateDenextConfig({ platformExtensions: { ios: true } } as unknown as DenextConfig),
+    Error,
+    "`platformExtensions.ios` is not a known option",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig({ platformExtensions: { native: "yes" } } as unknown as DenextConfig),
+    Error,
+    "`platformExtensions.native` must be a boolean",
+  );
+  assertThrows(
+    () => validateDenextConfig({ platformExtensions: { osFiles: 1 } } as unknown as DenextConfig),
+    Error,
+    "`platformExtensions.osFiles` must be a boolean",
+  );
+});
+
+Deno.test("doctor: the platform-files check lists each gap per target", async () => {
+  const dir = await tree({
+    "app/BigButton.ios.tsx": "",
+    "app/BigButton.android.tsx": "",
+    "app/Nav.web.tsx": "",
+  });
+  try {
+    const check = await platformFilesCheck(dir, {});
+    assertEquals(check?.ok, false);
+    assertEquals(check?.critical, false);
+    assertStringIncludes(
+      check!.detail,
+      "app/BigButton (.android, .ios) has no file for web, macos, windows, linux",
+    );
+    await Deno.writeTextFile(join(dir, "app/BigButton.tsx"), "");
+    const fixed = await platformFilesReport(dir, {});
+    assertEquals(fixed?.ok, true);
+    assertStringIncludes(fixed!.detail, "2 module(s) with platform files; 1 without a plain file");
+    assertEquals(await platformFilesCheck(dir, { platformExtensions: false }), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  const empty = await tree({ "app/page.tsx": "" });
+  try {
+    assertEquals(await platformFilesCheck(empty, {}), null);
+  } finally {
+    await Deno.remove(empty, { recursive: true });
+  }
+});
+
+Deno.test("server loader: redirects load the variant through a rewritten importer", async () => {
+  const dir = await tree({
+    "page.ts": `import { v } from "./v.ts";\nexport const got = v;\n`,
+    "v.ts": `export const v = "PLAIN";\n`,
+    "v.ios.ts": `export const v = "IOS";\n`,
+    "keep.ts": `export const got = "UNTOUCHED";\n`,
+  });
+  try {
+    const redirects = platformRedirects(
+      await scanPlatformGroups(dir),
+      platformResolution({}, "ios"),
+    );
+    const loads: string[] = [];
+    const load = createUseCacheLoader((p) => {
+      loads.push(p);
+      return import(p);
+    }, {
+      projectDir: dir,
+      cacheDir: join(dir, ".denext", "server-cache"),
+      redirects,
+      useCache: false,
+    });
+    const page = await load(join(dir, "page.ts")) as { got: string };
+    assertEquals(page.got, "IOS");
+    assert(loads[0].includes("/.denext/server-cache/"), "the importer was copied");
+    // A module with nothing to redirect loads as itself.
+    await load(join(dir, "keep.ts"));
+    assertEquals(loads[1], toFileUrl(join(dir, "keep.ts")).href);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("import aliases: the alias resolves first, then the variant; the client keys agree", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({
+      imports: {
+        "@/": "./",
+        "@/lib/": "./lib/",
+        "#v": "./lib/v.ts",
+        "pkg": "npm:left-pad@1",
+        "denext": "jsr:@denext/denext",
+      },
+    }),
+    "lib/v.ts": `export const v = "PLAIN";\n`,
+    "lib/v.ios.ts": `export const v = "IOS";\n`,
+    "lib/w.ts": `export const w = "PLAIN";\n`,
+  });
+  try {
+    const aliases = await readImportAliases(dir);
+    // Local entries only, longest key first (an import map's prefix rule).
+    assertEquals(aliases.map(([k]) => k), ["@/lib/", "@/", "#v"]);
+    const url = (rel: string) => toFileUrl(join(dir, rel)).href;
+    assertEquals(resolveImportAlias("@/lib/v.ts", aliases), url("lib/v.ts"));
+    assertEquals(resolveImportAlias("#v", aliases), url("lib/v.ts"));
+    assertEquals(resolveImportAlias("pkg", aliases), null);
+
+    const redirects = await projectPlatformRedirects(dir, {}, "ios");
+    const importer = url("app/page.tsx");
+    for (const spec of ["@/lib/v.ts", "@/lib/v", "#v", "../lib/v.ts"]) {
+      assertEquals(
+        resolvePlatformImport(spec, importer, aliases, redirects)?.target,
+        url("lib/v.ios.ts"),
+        `${spec} reaches the iOS file`,
+      );
+    }
+    assertEquals(
+      resolvePlatformImport("@/lib/w.ts", importer, aliases, redirects)?.target,
+      url("lib/w.ts"),
+    );
+    assertEquals(resolvePlatformImport("pkg", importer, aliases, redirects), null);
+    assertEquals(resolvePlatformImport("denext", importer, aliases, redirects), null);
+
+    // The client bundle's import-map keys: each alias spelling of a redirected file, and each
+    // resolves by the server's rule to the same target.
+    const keys = aliasRedirects(aliases, redirects);
+    for (const spec of ["@/lib/v.ts", "@/lib/v", "#v"]) {
+      assertEquals(keys[spec], url("lib/v.ios.ts"));
+    }
+    for (const [spec, target] of Object.entries(keys)) {
+      assertEquals(resolvePlatformImport(spec, importer, aliases, redirects)?.target, target, spec);
+    }
+    assertEquals(redirects["#v"], url("lib/v.ios.ts"), "projectPlatformRedirects carries them");
+    // A target with nothing to redirect gets no keys.
+    assertEquals(await projectPlatformRedirects(dir, {}, "web"), {});
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("import aliases: an `importMap` file is read the same way", async () => {
+  const dir = await tree({
+    "deno.jsonc": `// a comment\n{ "importMap": "./maps/import_map.json" }\n`,
+    "maps/import_map.json": JSON.stringify({ imports: { "~/": "../src/" } }),
+  });
+  try {
+    const aliases = await readImportAliases(dir);
+    assertEquals(aliases, [["~/", toFileUrl(join(dir, "src")).href + "/"]]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("platformImportMap: the modules that reach a variant through an alias get rewritten copies", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({ imports: { "@/": "./", "#v": "./v.ts" } }),
+    "page.ts": `import { m } from "@/mid";\nimport { v } from "#v";\nexport const got = m + v;\n`,
+    "mid.ts":
+      `import { v } from "@/v.ts";\nimport { w } from "./w.ts";\nexport const m = v + w;\n` +
+      `export const here = new URL("./w.ts", import.meta.url).href;\n`,
+    "w.ts": `export const w = "W";\n`,
+    "other.ts": `import { w } from "@/w.ts";\nexport const o = w;\n`,
+    "v.ts": `export const v = "PLAIN";\n`,
+    "v.ios.ts": `export const v = "IOS";\n`,
+  });
+  try {
+    const url = (rel: string) => toFileUrl(join(dir, rel)).href;
+    const copyDir = join(dir, ".denext", "platform-imports", "ios");
+    const redirects = await projectPlatformRedirects(dir, {}, "ios");
+    const { importMap, originals } = await platformImportMap(dir, redirects, copyDir);
+    // `mid` reaches the variant by an alias, and `page` reaches `mid` by one: both are copied;
+    // `other` reaches no variant and keeps loading as itself.
+    const copies = Object.entries(originals).filter(([c]) => c.startsWith(toFileUrl(copyDir).href));
+    assertEquals(copies.map(([, o]) => o).sort(), [url("mid.ts"), url("page.ts")].sort());
+    assert(importMap[url("page.ts")]?.includes("/.denext/platform-imports/ios/"));
+    assertEquals(importMap[url("mid")], importMap[url("mid.ts")], "the extensionless spelling too");
+    assertEquals(importMap[url("other.ts")], undefined);
+    assertEquals(importMap[url("v.ts")], url("v.ios.ts"));
+    const page = await Deno.readTextFile(new URL(importMap[url("page.ts")]));
+    assertStringIncludes(page, JSON.stringify(importMap[url("mid.ts")]));
+    assertStringIncludes(page, JSON.stringify(url("v.ios.ts")));
+    const mid = await Deno.readTextFile(new URL(importMap[url("mid.ts")]));
+    assertStringIncludes(mid, JSON.stringify(url("v.ios.ts")));
+    assertStringIncludes(mid, JSON.stringify(url("w.ts")), "a relative import is made absolute");
+    // The copy's import.meta keeps naming the module it stands in for.
+    assertStringIncludes(mid, `new URL("./w.ts", ${JSON.stringify(url("mid.ts"))})`);
+    // A rebuild with nothing edited parses nothing again, and sees an edit.
+    const again = await platformImportMap(dir, redirects, copyDir);
+    assertEquals(again.importMap, importMap);
+    await Deno.writeTextFile(
+      join(dir, "other.ts"),
+      `import { v } from "@/v.ts";\nexport const o = v;\n`,
+    );
+    const later = new Date(Date.now() + 2000);
+    await Deno.utime(join(dir, "other.ts"), later, later);
+    const edited = await platformImportMap(dir, redirects, copyDir);
+    assert(edited.importMap[url("other.ts")], "the edited module now reaches the variant");
+    // A target with no variant to reach, or an app with no aliases, copies nothing.
+    const web = await platformImportMap(dir, {}, join(dir, ".denext", "platform-imports", "web"));
+    assertEquals(web, { importMap: {}, originals: {} });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("server loader: an import-map alias reaches the variant, directly and through a plain module", async () => {
+  const dir = await tree({
+    "deno.json": JSON.stringify({ imports: { "@/": "./", "#v": "./v.ts" } }),
+    "page.ts": `import { v } from "@/v.ts";\nimport { m } from "@/mid.ts";\n` +
+      `import { v as x } from "#v";\nexport const got = [v, m, x].join();\n`,
+    "mid.ts": `import { v } from "./v.ts";\nexport const m = "MID:" + v;\n`,
+    "v.ts": `export const v = "PLAIN";\n`,
+    "v.ios.ts": `export const v = "IOS";\n`,
+  });
+  try {
+    const load = createUseCacheLoader((p) => import(p), {
+      projectDir: dir,
+      cacheDir: join(dir, ".denext", "server-cache"),
+      redirects: await projectPlatformRedirects(dir, {}, "ios"),
+      useCache: false,
+    });
+    const page = await load(join(dir, "page.ts")) as { got: string };
+    assertEquals(page.got, "IOS,MID:IOS,IOS");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("unbundled dev: the first-party probe takes the target's file", async () => {
+  const dir = await tree({ "B.tsx": "", "B.web.tsx": "", "C.tsx": "", "C.web.js": "" });
+  try {
+    const state = (opts: Partial<UnbundledState["opts"]>) =>
+      ({ opts: { projectDir: dir, ...opts } }) as unknown as UnbundledState;
+    const on = state({ resolvePlatform: (p) => platformResolution({}, p) });
+    const web = firstPartyProbe(on);
+    assertEquals(web(join(dir, "B")), join(dir, "B.web.tsx"));
+    assertEquals(web(join(dir, "B.tsx")), join(dir, "B.web.tsx"));
+    assertEquals(firstPartyProbe(on, "ios")(join(dir, "C")), join(dir, "C.web.js"));
+    // Off: plain files, unless React Native mode still asks for `.web`.
+    const off = state({ resolvePlatform: () => null });
+    assertEquals(firstPartyProbe(off)(join(dir, "B")), join(dir, "B.tsx"));
+    const rn = firstPartyProbe(state({
+      resolvePlatform: () => null,
+      reactNative: { plugins: [], platformExtensions: [".web.js"], define: {} },
+    }));
+    assertEquals(rn(join(dir, "C")), join(dir, "C.web.js"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appResolverPlugin: the esbuild app resolver probes the target and names a gap", async () => {
+  const dir = await tree({
+    "deno.json": "{}",
+    "main.ts": `import { a } from "./a";\nimport { b } from "./b.ts";\nconsole.log(a, b);\n`,
+    "a.ts": `export const a = "A_PLAIN";\n`,
+    "a.android.ts": `export const a = "A_ANDROID";\n`,
+    "b.ios.ts": `export const b = "B_IOS";\n`,
+    "b.android.ts": `export const b = "B_ANDROID";\n`,
+  });
+  const run = (platform: Platform) =>
+    esbuild.build({
+      entryPoints: [join(dir, "main.ts")],
+      bundle: true,
+      write: false,
+      logLevel: "silent",
+      plugins: [
+        appResolverPlugin(join(dir, "deno.json"), undefined, platformResolution({}, platform)),
+      ],
+    });
+  try {
+    const android = (await run("android")).outputFiles[0].text;
+    assertStringIncludes(android, "A_ANDROID");
+    assertStringIncludes(android, "B_ANDROID");
+    assert(!android.includes("A_PLAIN") && !android.includes("B_IOS"));
+    const err = await run("web").then(() => null, (e) => e as esbuild.BuildFailure);
+    assertStringIncludes(
+      err!.errors[0].text,
+      "`./b.ts` has `.android` and `.ios` variants but none for web: add `b.ts` or `b.web.ts`",
+    );
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("wiring: mobile build exports with its platform, desktop package with the target OS", async () => {
+  const dir = await tree({
+    "capacitor.config.json": JSON.stringify({ appId: "dev.x", appName: "X", webDir: "out" }),
+    "android/app/build.gradle": 'versionCode 1\nversionName "1.0"\n',
+  });
+  try {
+    const plan = await planMobileBuild({
+      root: dir,
+      appDir: dir,
+      platform: "android",
+      cli: ["run", "-A", "cli.ts"],
+      deno: "deno",
+    });
+    assertEquals(plan.commands[0].args.slice(-4), ["export", dir, "--platform", "android"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  assertEquals(desktopExportEnv("windows"), { DENEXT_PLATFORM: "windows" });
+  assertEquals(desktopExportEnv("darwin"), { DENEXT_PLATFORM: "macos" });
+  // Every package script's export names its target. The Linux and Windows scripts export through
+  // prepareDesktopPackage; the macOS one runs the export itself, and once exported for `web`.
+  const scripts = scaffoldFiles({ dir: ".", desktop: true });
+  const mac = scripts.find((f) => f.path === "scripts/package-macos.ts")!.content;
+  assertStringIncludes(mac, `run(["deno", "task", "export"], desktopExportEnv("darwin"))`);
+  for (const os of ["linux", "windows"]) {
+    const script = scripts.find((f) => f.path === `scripts/package-${os}.ts`)!.content;
+    assertStringIncludes(script, "prepareDesktopPackage(import.meta.url, OS, opts)");
+    assert(!script.includes(`run(["deno", "task", "export"]`), `${os} runs the export itself`);
+  }
+});
+
+Deno.test("dev hints: header, then query, then cookie, else web; the query is pinned", () => {
+  const req = (url: string, headers: Record<string, string> = {}) =>
+    new Request(`http://dev${url}`, { headers });
+  assertEquals(devPlatformOf(req("/")), "web");
+  assertEquals(devPlatformOf(req("/?__denext_platform=android")), "android");
+  assertEquals(devPlatformOf(req("/", { cookie: "a=1; __denext_platform=ios" })), "ios");
+  assertEquals(
+    devPlatformOf(req("/", { "x-denext-platform": "macos", cookie: "__denext_platform=ios" })),
+    "macos",
+  );
+  assertEquals(
+    devPlatformOf(req("/?__denext_platform=phone")),
+    "web",
+    "an unknown value is ignored",
+  );
+
+  const pinned = pinDevPlatform(req("/?__denext_platform=ios"), new Response("ok"));
+  assertEquals(pinned.headers.get("set-cookie"), "__denext_platform=ios; Path=/; SameSite=Lax");
+  assertEquals(pinDevPlatform(req("/"), new Response("ok")).headers.get("set-cookie"), null);
+  // `?__denext_platform=web` is the reset: it wins over a pinned cookie and pins `web`.
+  const reset = req("/?__denext_platform=web", { cookie: "__denext_platform=ios" });
+  assertEquals(devPlatformOf(reset), "web");
+  assertEquals(
+    pinDevPlatform(reset, new Response("ok")).headers.get("set-cookie"),
+    "__denext_platform=web; Path=/; SameSite=Lax",
+  );
+  const immutable = Response.redirect("http://dev/x", 302);
+  assertStringIncludes(
+    pinDevPlatform(req("/?__denext_platform=ios"), immutable).headers.get("set-cookie")!,
+    "__denext_platform=ios",
+  );
+
+  assertEquals(
+    withDevPlatform("http://192.168.1.5:3000/?__denext_dev=t", "android"),
+    "http://192.168.1.5:3000/?__denext_dev=t&__denext_platform=android",
+  );
+  assertEquals(
+    devProxyTokenHeaders("http://localhost:3000/?__denext_platform=windows"),
+    { "x-denext-platform": "windows" },
+  );
+});
+
+Deno.test("mobile dev: each native config copy's server.url names its shell", async () => {
+  const dir = await tree({
+    "ios/App/App/capacitor.config.json": JSON.stringify(
+      {
+        appId: "x",
+        server: { url: "http://192.168.1.5:3000/?__denext_dev=t", cleartext: true },
+      },
+      null,
+      2,
+    ),
+    "android/app/src/main/assets/capacitor.config.json": JSON.stringify({
+      appId: "x",
+      server: { url: "http://192.168.1.5:3000" },
+    }),
+  });
+  try {
+    const changed = await pinSessionPlatforms(dir);
+    assertEquals(changed.length, 2);
+    const read = async (rel: string) => JSON.parse(await Deno.readTextFile(join(dir, rel)));
+    const ios = await read("ios/App/App/capacitor.config.json");
+    assertEquals(ios.server.url, "http://192.168.1.5:3000/?__denext_dev=t&__denext_platform=ios");
+    assertEquals(ios.server.cleartext, true);
+    const android = await read("android/app/src/main/assets/capacitor.config.json");
+    assertEquals(android.server.url, "http://192.168.1.5:3000/?__denext_platform=android");
+    assertEquals(await pinSessionPlatforms(dir), [], "a second pass changes nothing");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -80,13 +80,23 @@ export function osDataDir(
   return join(base, appId);
 }
 
+/** The cache root's folder inside the OS cache folder for the app (see {@link desktopAppDirs}). */
+const CACHE_SUBDIR = "denext";
+
 /**
  * The `data` / `cache` / `documents` roots for `appId` on `os`, each `join`ed with `appId` so two
  * apps never share a folder. `data` is {@link osDataDir}; the other two:
  *
- * - macOS: `~/Library/Caches/<id>`, `~/Documents/<id>`.
+ * - macOS: `~/Library/Caches/<id>/denext`, `~/Documents/<id>`.
  * - Windows: `%LOCALAPPDATA%/<id>/Cache`, `~/Documents/<id>`.
- * - Linux: `$XDG_CACHE_HOME|~/.cache /<id>`, `$XDG_DOCUMENTS_DIR|~/Documents /<id>`.
+ * - Linux: `$XDG_CACHE_HOME|~/.cache /<id>/denext`, `$XDG_DOCUMENTS_DIR|~/Documents /<id>`.
+ *
+ * The cache root is a folder of its own ({@link CACHE_SUBDIR}) inside the OS cache folder for the
+ * app, never that folder itself: the web engine keeps its caches there too, keyed by the same id —
+ * Chromium (CEF) maps its profile's HTTP and code caches to `~/Library/Caches/<id>/CEF/…`, WKWebView
+ * keeps `~/Library/Caches/<id>/WebKit/…`, and WebKitGTK's default context `~/.cache/<id>/WebKitCache`.
+ * A page's `directory: "cache"` must not list, read or rewrite those. (Windows' `Cache` folder is
+ * already one of its own.)
  *
  * @param appId The app's reverse-DNS identifier (`desktop.app.identifier`), or a fallback name.
  * @param os The target OS (defaults to the running one; a param so every branch is unit-tested).
@@ -101,7 +111,7 @@ export function desktopAppDirs(
   if (os === "darwin") {
     return {
       data,
-      cache: join(home, "Library", "Caches", appId),
+      cache: join(home, "Library", "Caches", appId, CACHE_SUBDIR),
       documents: join(home, "Documents", appId),
     };
   }
@@ -115,5 +125,9 @@ export function desktopAppDirs(
   }
   const cacheBase = nonEmpty(env("XDG_CACHE_HOME")) ?? join(home, ".cache");
   const docsBase = nonEmpty(env("XDG_DOCUMENTS_DIR")) ?? join(home, "Documents");
-  return { data, cache: join(cacheBase, appId), documents: join(docsBase, appId) };
+  return {
+    data,
+    cache: join(cacheBase, appId, CACHE_SUBDIR),
+    documents: join(docsBase, appId),
+  };
 }

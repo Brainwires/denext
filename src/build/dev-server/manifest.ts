@@ -1,6 +1,8 @@
 // The route manifest and the Flight boundary, refreshed per generation, plus the
 // lazily-created unbundled dev loop.
 
+import { type Platform, platformResolution } from "../platform-extensions.ts";
+import { devPlatformImports, devPlatformRedirects } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
 import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
@@ -11,15 +13,18 @@ import {
   type BoundaryManifest,
   buildBoundaryManifest,
   computeBoundaryRoutes,
+  type GraphImportMap,
   importFunctionExports,
   routeEntryFiles,
+  withModuleGraphRedirects,
 } from "../module-graph.ts";
 import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
 import { ensureCompatBuilt, isCompat } from "./compat.ts";
-import { baseLoaderFor } from "./loaders.ts";
-import type { DevState } from "./state.ts";
+import { createDevLoader } from "./loaders.ts";
+import type { ModuleLoader } from "../../server/types.ts";
+import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 import type { NpmBoundaryFinder } from "../module-graph.ts";
 import { broadcast } from "./reload.ts";
@@ -36,8 +41,15 @@ export function getUnbundled(st: DevState): UnbundledDev {
     features: featureFlags(st.paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
+    // Each target's platform files for the app's own modules (`web` unless the page names one).
+    // A next-compat app serves every shell the web target: its server render in dev is the
+    // per-generation esbuild bundle, built for web, and its islands must match it.
+    resolvePlatform: (platform) =>
+      platformResolution(st.paths.config, st.unbundledCompat ? "web" : platform),
     // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
     onDepsRebuilt: () => broadcast(st, "reload"),
+    // The browser gets each `"use server"` module as its action stub, by the boundary's id.
+    serverModules: () => st.compatBoundary?.server ?? [],
   });
 }
 
@@ -90,15 +102,18 @@ export async function getManifest(st: DevState): Promise<RouteManifest> {
   // Single-flight: `st.manifest ??= await scan()` reads and writes around the await, so N
   // requests arriving after a rebuild each ran their own scan (and typed-module emit). The
   // `??=` on the PROMISE is atomic.
-  if (!st.manifest) {
-    st.manifest = await (st.manifestInFlight ??= scanManifest(st).finally(() => {
+  let manifest = st.manifest;
+  if (!manifest) {
+    manifest = st.manifest = await (st.manifestInFlight ??= scanManifest(st).finally(() => {
       st.manifestInFlight = null;
     }));
   }
-  await refreshBoundary(st, st.manifest);
+  await refreshBoundary(st, manifest);
   await getCss(st); // ensure cssAssets is current before styleHrefsFor is read
   await resolveUnbundledMode(st);
-  return st.manifest;
+  // The scan this request used: a file event during the awaits above clears `st.manifest`
+  // for the NEXT request, and must not hand this one null.
+  return manifest;
 }
 
 /**
@@ -118,9 +133,20 @@ async function compatNpmFinder(st: DevState): Promise<NpmBoundaryFinder | undefi
   return await isCompat(st) ? npmBoundaryByImporter : undefined;
 }
 
+/**
+ * The loader `platform`'s Flight boundary is tagged through: the render's own copies (a module
+ * that reaches a variant or a `"use cache"` module renders as a copy), query-less as the render
+ * imports them, so an action registers as the instance the page renders and runs what it imports.
+ */
+function tagLoaderFor(st: DevState, platform: Platform): ModuleLoader {
+  return createDevLoader(st, () => getManifest(st), () => isCompat(st), { bust: false, platform });
+}
+
 /** Recompute the Flight boundary for this generation (routes, client refs, server refs). */
 async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   if (st.boundaryGen === st.generation) return;
+  // Install this generation's platform-file redirects for the crawls below.
+  await devPlatformImports(st);
   const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages, {
     npm: await compatNpmFinder(st),
   });
@@ -139,6 +165,84 @@ async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
     // SAME island instances the page bundle references (through the compat loader).
     await ensureCompatBuilt(st, m);
   }
-  await tagServerModules(boundary.server, boundaryRefLoader(st.compatLoad ?? baseLoaderFor(st)));
+  await tagServerModules(
+    boundary.server,
+    boundaryRefLoader(st.compatLoad ?? tagLoaderFor(st, "web")),
+  );
   st.boundaryGen = st.generation;
+}
+
+/** Whether two redirect maps resolve the same way. */
+function sameRedirects(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+/** The web target's boundary, as {@linkcode refreshBoundary} left it. */
+function webBoundary(st: DevState): DevBoundary {
+  return {
+    routes: st.flightRoutes,
+    clients: st.flightClients,
+    servers: st.flightServers,
+    manifest: st.compatBoundary ?? { client: new Map(), server: new Map() },
+  };
+}
+
+/**
+ * Crawl `platform`'s Flight boundary through its redirects: which routes reach a
+ * `"use client"` module, and which modules those are, when its platform files load.
+ */
+async function scanPlatformBoundary(
+  st: DevState,
+  m: RouteManifest,
+  platform: Platform,
+  imports: GraphImportMap,
+): Promise<DevBoundary> {
+  return await withModuleGraphRedirects(st.paths.configPath, imports, async () => {
+    const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages);
+    const manifest = await buildBoundaryManifest(st.paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], { exportsOf: importFunctionExports });
+    await tagServerModules(manifest.server, boundaryRefLoader(tagLoaderFor(st, platform)));
+    return { routes, clients: manifest.client, servers: manifest.server, manifest };
+  });
+}
+
+/**
+ * The Flight boundary `platform` renders and hydrates with this generation. A target whose
+ * platform files resolve like web's shares web's ({@linkcode refreshBoundary}); another gets its
+ * own crawl, since a variant may be a `"use client"` module where the plain file is not, or
+ * reach other islands. A next-compat app serves every shell the web target in dev, so its
+ * boundary is web's.
+ *
+ * @param st The dev state.
+ * @param platform The rendered request's target.
+ */
+export async function devBoundaryFor(st: DevState, platform: Platform): Promise<DevBoundary> {
+  const m = await getManifest(st);
+  if (platform === "web" || await isCompat(st)) return webBoundary(st);
+  const redirects = await devPlatformRedirects(st, platform);
+  if (sameRedirects(redirects, await devPlatformRedirects(st, "web"))) return webBoundary(st);
+  const cached = st.platformBoundaries.get(platform);
+  if (cached?.gen === st.generation) return await cached.boundary;
+  const entry: { gen: number; boundary: Promise<DevBoundary>; value?: DevBoundary } = {
+    gen: st.generation,
+    boundary: scanPlatformBoundary(st, m, platform, await devPlatformImports(st, platform)),
+  };
+  st.platformBoundaries.set(platform, entry);
+  entry.boundary.then((value) => entry.value = value, () => st.platformBoundaries.delete(platform));
+  return await entry.boundary;
+}
+
+/**
+ * The routes that render through Flight for `platform`, synchronously: its settled boundary
+ * ({@linkcode devBoundaryFor} runs before a render links its client entry), else web's.
+ *
+ * @param st The dev state.
+ * @param platform The rendered request's target.
+ */
+export function flightRoutesFor(st: DevState, platform: Platform): Set<string> {
+  if (platform === "web") return st.flightRoutes;
+  const cached = st.platformBoundaries.get(platform);
+  return cached?.gen === st.generation && cached.value ? cached.value.routes : st.flightRoutes;
 }

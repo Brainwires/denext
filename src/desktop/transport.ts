@@ -15,10 +15,13 @@
  *   report exactly that URL — so a request is trusted only when `info` says memory (see
  *   {@linkcode isMemoryTransport}). Trust = the memory transport AND the per-launch token; an `Origin`, when present, must equal the app origin
  *   byte for byte, and a request without one is accepted only because it came over the memory
- *   transport. WebSocket upgrades arrive through the runtime's loopback relay, which admits only an
- *   `Origin` equal to the app origin; the app checks the same again. The runtime marks what it
- *   relays ({@linkcode isRelayConnection}); on such a request nothing but an upgrade with the exact
- *   `Origin` is accepted, and no per-launch token is ever injected.
+ *   transport. WebSocket upgrades arrive through the runtime's loopback relay, which admits only a
+ *   request target carrying its per-launch relay token (`DENO_DESKTOP_WS_URL`) and an `Origin`
+ *   equal to the app origin; the app checks the `Origin` again. The runtime marks what it relays
+ *   ({@linkcode isRelayConnection}); on such a request nothing but an upgrade with the exact
+ *   `Origin` is accepted, and no per-launch token is ever injected. Its scheme bridge also marks a
+ *   request from another origin's document ({@linkcode isCrossOriginMarked}), which no
+ *   `/_denext/desktop/*` endpoint accepts.
  * - **`loopback`** — the stock Deno Desktop runtime (no memory transport, no published origin). The
  *   page runs at `http://127.0.0.1:<port>` and the gates keep their loopback rules: a loopback
  *   `Host` (the DNS-rebinding defence) and an `Origin` equal to `http://<Host>`.
@@ -30,40 +33,30 @@
  */
 
 import { parseDesktopAppOrigin } from "./app-origin.ts";
+import { parseDesktopRelayUrl } from "./ws-origin.ts";
 
 /** The env var the denext-pinned runtime publishes the page origin in (`myapp://app`). */
 export const DESKTOP_APP_ORIGIN_ENV = "DENO_DESKTOP_APP_ORIGIN";
 /**
- * The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in
- * (`ws://127.0.0.1:<port>`): the address the page dials for a WebSocket to its own server.
+ * The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch
+ * token included (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`): the URL the page dials,
+ * with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own
+ * process (child processes don't inherit it).
  */
-export const DESKTOP_WS_ORIGIN_ENV = "DENO_DESKTOP_WS_ORIGIN";
-
-/** The hosts the runtime's WebSocket relay may listen on (it binds loopback only). */
-const RELAY_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]", "localhost"]);
+export const DESKTOP_WS_URL_ENV = "DENO_DESKTOP_WS_URL";
 
 /**
- * The relay origin the page dials for a WebSocket to its own server (injected as
- * `globalThis.__denext.wsOrigin`), from the runtime-published `DENO_DESKTOP_WS_ORIGIN`: a `ws:`
- * origin on a loopback host with a port, nothing else. Anything else (unset, unparseable, a path,
- * a remote host) is `undefined`, so the page keeps dialing its own host. Pure.
+ * The relay URL the page dials for a WebSocket to its own server (injected as
+ * `globalThis.__denext.wsUrl`), from the runtime-published `DENO_DESKTOP_WS_URL`: `ws:` on a
+ * loopback host with a port and the path `/.deno-desktop-relay/<64 lowercase hex>`, nothing else.
+ * Anything else (unset, unparseable, another path, a remote host) is `undefined`, so the page keeps
+ * dialing its own host. Pure.
  *
- * @param published The `DENO_DESKTOP_WS_ORIGIN` value, if any.
- * @returns The normalized origin (`ws://127.0.0.1:51234`), or `undefined`.
+ * @param published The `DENO_DESKTOP_WS_URL` value, if any.
+ * @returns The normalized URL, or `undefined`.
  */
-export function resolveDesktopWsOrigin(published: string | undefined): string | undefined {
-  if (!published) return undefined;
-  let url: URL;
-  try {
-    url = new URL(published);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "ws:" || !RELAY_HOSTS.has(url.hostname) || url.port === "") return undefined;
-  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-    return undefined;
-  }
-  return `ws://${url.host}`;
+export function resolveDesktopWsUrl(published: string | undefined): string | undefined {
+  return parseDesktopRelayUrl(published);
 }
 
 /** The desktop world the app runs in (see the module docs). */
@@ -178,6 +171,38 @@ export function resolveDesktopTrust(
 }
 
 /**
+ * The first denext Deno Desktop runtime that publishes its WebSocket relay with a per-launch token
+ * ({@linkcode DESKTOP_WS_URL_ENV}) and accepts the full-app update manifests denext publishes
+ * (`expiresAt` + `sequence`); denext needs it or later.
+ */
+export const DESKTOP_RELAY_TOKEN_RUNTIME = "2.9.7-denext.9";
+
+/**
+ * The startup warning for a memory-world app under a runtime older than {@linkcode
+ * DESKTOP_RELAY_TOKEN_RUNTIME}: such a runtime has the memory transport (and, from denext.7, the
+ * relay marking, so the gates keep working) but publishes no {@linkcode DESKTOP_WS_URL_ENV}. Then
+ * the page's WebSockets have nowhere to go and the runtime refuses denext's update manifests. Only
+ * the absence of the variable is a version signal; any other world, or a published value, is
+ * `undefined`. Pure.
+ *
+ * @param trust The decided world ({@linkcode resolveDesktopTrust}).
+ * @param publishedWsUrl The `DENO_DESKTOP_WS_URL` value, if any.
+ * @returns The warning to print once at startup, or `undefined`.
+ */
+export function desktopRuntimeSkewWarning(
+  trust: DesktopTrust,
+  publishedWsUrl: string | undefined,
+): string | undefined {
+  if (trust.kind !== "memory" || (publishedWsUrl !== undefined && publishedWsUrl !== "")) {
+    return undefined;
+  }
+  return `this Deno Desktop runtime is older than ${DESKTOP_RELAY_TOKEN_RUNTIME} (it publishes ` +
+    `no ${DESKTOP_WS_URL_ENV}), so the page's WebSockets (Live, desktopWebSocketUrl) fail and ` +
+    "full-app updates are refused. Repackage the app with the runtime denext pins (unset " +
+    "DENORT_DESKTOP_BIN, LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR).";
+}
+
+/**
  * The part of `Deno.ServeHandlerInfo` the gates read. Typed loosely because `transport: "memory"`
  * is not in the stock `Deno.NetAddr` type.
  */
@@ -229,6 +254,33 @@ export const DESKTOP_RELAY_HEADER = "x-deno-desktop-relay";
 export function isRelayConnection(request: Request): boolean {
   try {
     return request.headers.has(DESKTOP_RELAY_HEADER);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The request header the denext-pinned runtime's scheme bridge sets (exactly once, after dropping
+ * every copy a client sent) on a request from a document that is not the app's own, as far as the
+ * engine discloses it: an `Origin` that is present and not exactly the app origin (`null`
+ * included), or a `Sec-Fetch-Site` other than `same-origin` / `none`. The request is still
+ * forwarded (an identity provider's `form_post` callback is a legitimate cross-site POST), and its
+ * ABSENCE proves nothing on its own: an engine that sends neither header leaves a foreign request
+ * unmarked. Defense in depth next to the per-launch token, never a gate by itself.
+ */
+export const DESKTOP_CROSS_ORIGIN_HEADER = "x-deno-desktop-cross-origin";
+
+/**
+ * Whether the runtime marked `request` as coming from another origin's document
+ * ({@linkcode DESKTOP_CROSS_ORIGIN_HEADER}). The header's presence is the mark, whatever its
+ * value; headers that cannot be read count as marked (fail closed).
+ *
+ * @param request The request.
+ * @returns Whether it is cross-origin-marked.
+ */
+export function isCrossOriginMarked(request: Request): boolean {
+  try {
+    return request.headers.has(DESKTOP_CROSS_ORIGIN_HEADER);
   } catch {
     return true;
   }

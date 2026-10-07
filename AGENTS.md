@@ -339,7 +339,8 @@ App extensions: `denext mobile add share-extension | widget --name <N> [--config
 `startLiveActivity`/`updateLiveActivity`/`endLiveActivity` (iOS only; they share an App Group).
 Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
 `denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
-when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
+when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`), and a network bind requires its
+per-run token from other machines (the printed URL carries `?__denext_dev=…`). Docs:
 https://denext.dev/docs/mobile
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
@@ -377,6 +378,18 @@ Credentials are env-only. App backend:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
 https://denext.dev/docs/app-backend
 
+**Platform-specific files:** `BigButton.ios.tsx`, `.android`, `.mobile` (any phone), `.macos` /
+`.windows` / `.linux`, `.desktop` (any desktop OS) and `.web` beside a plain `BigButton.tsx`, as in
+React Native. Import the plain module (`./BigButton`, `./BigButton.tsx`, or an alias such as
+`@/components/BigButton`); each target's export picks its file (ios: `.ios` → `.mobile` → `.web`
+→ plain) and drops the rest. `build`, `start` and a plain `export` are the `web` target; `denext dev`
+serves `web` unless a shell names its target (`mobile dev`, `desktop dev`). `denext export
+--platform <t>` (or `DENEXT_PLATFORM=<t>`), `denext mobile build` and `denext desktop build` /
+`package` build the others. `createOtaHandler({ platforms })` serves each target its own export;
+a shell refuses another target's UI (`platform_mismatch`). `.native` is opt-in (`platformExtensions: { native: true }`);
+only the app's own modules take a variant; keep a plain file so type checking resolves.
+Docs: https://denext.dev/docs/platform-files
+
 **A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
@@ -395,9 +408,12 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
-`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
+`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
+(`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing Secret Service provider
+or a locked keyring rejects `backend_unavailable` with the reason — runtime 2.9.7-denext.12 uses
+libsecret itself, older runtimes `secret-tool`) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
@@ -409,7 +425,11 @@ buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
 is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
+`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
+reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` from the runtime's probe
+(`"unknown"` before runtime denext.10), and `denext desktop doctor [--linux]` lists what the session lacks,
+with fixes. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -421,7 +441,9 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `restoreWindow` / `setFullScreen` + `onWindowStateChange`, `getWindowState` (persist `normalBounds`),
 `setWindowBounds` / `setMinimumWindowSize` / `setMaximumWindowSize`, `getScreens` + `onDisplayChanged`,
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
-`makeWindowDraggable(el)` for a hidden title bar, `onCloseRequested(() => boolean)` (cancelable close),
+`makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
+`getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(() => boolean)` (cancelable close),
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and
@@ -431,16 +453,19 @@ packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtensi
 `desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
 leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
-`--allow-*` from `desktop.capabilities` instead of `-A`, and
-`denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
-a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+`--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
+`launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
+`--allow-sys`, which the pinned runtime requires for them), and
+`denext desktop package --regenerate-scripts` rewrites them from the current template (a `.bak`
+and a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
 the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
-packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; the custom origin requires runtime 2.9.7-denext.7+, older ones start with every desktop endpoint refused; what it changes and why: https://denext.dev/docs/desktop-runtime;
+packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
+origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.11 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -460,11 +485,15 @@ makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
 Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
 provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
-passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
-only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
-Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
+passkey API, so `denext/desktop/clerk` signs in through the browser. On Linux a `.deb` / `.rpm` install
+(xdg-desktop-portal 1.19+, systemd user manager) posts scheduled notifications while the app is closed
+and a click starts it; an AppImage or tarball delivers only while the app runs. OS limits:
+https://denext.dev/docs/limitations
+Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay with its
+per-launch token (`DENO_DESKTOP_WS_URL`, injected into the app's top-level page; where the engine
+omits `Sec-Fetch-Dest`, the `Origin` check still holds, so only a same-origin frame could get it): denext's Live
 client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
-`denext/desktop/client`. With `notifications` enabled, the web `new Notification(...)` /
+`denext/desktop/client` (never the bare relay origin: it answers 403). With `notifications` enabled, the web `new Notification(...)` /
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
 `openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
 registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
@@ -489,8 +518,13 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
 `downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
-`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
-bundle swap that rolls back if the new version never confirms).
+`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build; on
+Windows: on every PE file, which the package script signs), an atomic
+bundle swap that rolls back if the new version never confirms). The manifest expires (`expiresAt`,
+default 30 days, `expired`) and carries a growing `sequence` (`replayed`): re-sign it before it
+expires with `denext desktop publish-update --resign` (`publish-update` warns when the manifest in
+`--out` expires within 7 days); the artifact must be built as the version
+published (`version_mismatch`).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
@@ -725,7 +759,11 @@ denext ships tooling so agents get it right the first time:
 ## Releasing: `main` always equals the published release
 
 All work lands on `development`, and releases are cut there with
-`deno task release <version>` (which tags `v<version>` and pushes). Active
+`deno task release <version>` (which tags `v<version>` and pushes). The script
+first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
+with `check` and `ios-export-router`) are green on HEAD: a push to `development`
+skips them, so dispatch ci.yml on the commit first
+(`gh workflow run ci.yml --ref development`, then wait for it). Active
 `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not

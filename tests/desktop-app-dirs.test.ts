@@ -3,8 +3,8 @@
 // one machine assert every OS's paths; the updater's dir is pinned so the shared-helper refactor
 // (extracting env/homeDir/osDataDir out of updater.ts) keeps installed apps' paths byte-identical.
 
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { assertEquals, assertNotEquals } from "@std/assert";
+import { dirname, join } from "@std/path";
 import { desktopAppDirs, osDataDir } from "../src/desktop/app-dirs.ts";
 
 const APP = "com.example.app";
@@ -42,7 +42,7 @@ Deno.test("app-dirs macOS: data/cache/documents and the updater dir", () => {
     assertEquals(osDataDir(APP, "darwin"), join(home, "Library", "Application Support", APP));
     assertEquals(desktopAppDirs(APP, "darwin"), {
       data: join(home, "Library", "Application Support", APP),
-      cache: join(home, "Library", "Caches", APP),
+      cache: join(home, "Library", "Caches", APP, "denext"),
       documents: join(home, "Documents", APP),
     });
     assertEquals(
@@ -81,7 +81,7 @@ Deno.test("app-dirs Linux: XDG dirs (and their ~ fallbacks) and the updater dir"
     assertEquals(osDataDir(APP, "linux"), join("/home/tester/.xdgdata", APP));
     assertEquals(desktopAppDirs(APP, "linux"), {
       data: join("/home/tester/.xdgdata", APP),
-      cache: join("/home/tester/.xdgcache", APP),
+      cache: join("/home/tester/.xdgcache", APP, "denext"),
       documents: join(home, "Documents", APP),
     });
     assertEquals(updaterDir("linux"), join("/home/tester/.xdgdata", APP, "ui-updates"));
@@ -90,9 +90,28 @@ Deno.test("app-dirs Linux: XDG dirs (and their ~ fallbacks) and the updater dir"
   withEnv({ HOME: home }, () => {
     assertEquals(desktopAppDirs(APP, "linux"), {
       data: join(home, ".local", "share", APP),
-      cache: join(home, ".cache", APP),
+      cache: join(home, ".cache", APP, "denext"),
       documents: join(home, "Documents", APP),
     });
     assertEquals(updaterDir("linux"), join(home, ".local", "share", APP, "ui-updates"));
+  });
+});
+
+Deno.test("app-dirs: the cache root is a folder of its own, never the engine's cache folder", () => {
+  // The web engines keep their caches in the OS cache folder keyed by the app id
+  // (~/Library/Caches/<id>/CEF and /WebKit on macOS, ~/.cache/<id>/WebKitCache on Linux), so the
+  // page's `directory: "cache"` is a sub-folder: listing it can't reach theirs.
+  const home = "/home/tester";
+  withEnv({ HOME: home }, () => {
+    for (const os of ["darwin", "linux", "windows"] as const) {
+      const cache = desktopAppDirs(APP, os).cache;
+      const engineFolder = os === "darwin"
+        ? join(home, "Library", "Caches", APP)
+        : os === "linux"
+        ? join(home, ".cache", APP)
+        : join(home, "AppData", "Local", APP);
+      assertEquals(dirname(cache), engineFolder, os);
+      assertNotEquals(cache, engineFolder, os);
+    }
   });
 });

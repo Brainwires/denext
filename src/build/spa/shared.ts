@@ -5,6 +5,7 @@ import { join, normalize, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
 import { computeCsp } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { resolveExportPath } from "../export-paths.ts";
 
 /** The client-asset URL prefix (matches the App Router prod server). */
 export const CLIENT_PREFIX = "/_denext/client/";
@@ -386,6 +387,5 @@ export function wantsShell(request: Request, pathname: string): boolean {
   if (accept.includes("text/html")) return true;
   // Extensionless paths are navigations (client-router routes); a path with a file
   // extension that wasn't served as an asset above is a genuine 404.
-  const last = pathname.slice(pathname.lastIndexOf("/") + 1);
-  return !last.includes(".");
+  return resolveExportPath(pathname).navigation;
 }

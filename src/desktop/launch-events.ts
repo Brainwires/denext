@@ -244,6 +244,36 @@ export interface DesktopAppApi {
   screens?(): DesktopScreen[];
   /** What window features this backend supports (`fileDialogs`, `state`, `fileDragOut`, …). */
   windowCapabilities?(): Record<string, boolean>;
+  /**
+   * What this session provides (runtime 2.9.7-denext.10 and later): the tray host, the Secret
+   * Service, the session type, the portal versions, the cookie store. Resolves `null` outside a
+   * desktop app; absent on older runtimes. Async: the runtime probes off the JavaScript thread.
+   * Read through `caps/platform.ts`, which validates it. `"platformfeatureschanged"` says it may
+   * have changed (a tray host came or went).
+   */
+  platformFeatures?(): Promise<unknown>;
+  /**
+   * How the user set up title bars (runtime 2.9.7-denext.12 and later): the buttons on each side,
+   * the double-click action, the colour scheme. `"titlebarpreferenceschanged"` says it changed.
+   * Read through `caps/window.ts`, which validates it.
+   */
+  titleBarPreferences?(): Promise<unknown>;
+  /**
+   * The OS's secret store in the runtime (2.9.7-denext.12 and later; the Secret Service on Linux,
+   * `supported` false elsewhere). A store that can't answer rejects with an error named
+   * `"SecureStoreUnavailable"`.
+   */
+  readonly secureStore?: {
+    readonly supported: boolean;
+    get(service: string, account: string, options?: { timeout?: number }): Promise<string | null>;
+    set(
+      service: string,
+      account: string,
+      value: string,
+      options?: { label?: string; timeout?: number },
+    ): Promise<void>;
+    delete(service: string, account: string, options?: { timeout?: number }): Promise<void>;
+  };
   /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
   quit?(): boolean;
   /** The OS's own file dialogs. */

@@ -410,7 +410,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   (`sequence`), a UI that needs a newer binary (`--min-native`) or one built for
   another native layer (`--native-fingerprint`, signed payload v3), and rolls
   back a UI that never boots (`createOtaHandler` in `denext/server` serves the
-  export).
+  export). A platform export names its target in the manifest and a shell
+  refuses another target's UI (`platform_mismatch`);
+  `createOtaHandler({ platforms })` serves each target its own export.
 - **`denext mobile fingerprint`** — a SHA-256 of the native layer (`ios/`,
   `android/`, `capacitor.config.*` minus `server`, installed Capacitor plugin
   versions): `--json`, `--diff <old.json>` (what changed, OTA-safe or not),
@@ -430,6 +432,14 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `--restore`); `denext dev --lan` binds the LAN IPv4 and prints a QR code;
   `allowedDevOrigins` / `--allowed-dev-origin` and an explicit `--host` open
   the dev origin gate to a named host only.
+- **Platform-specific files** — `Name.ios.tsx`, `.android`, `.mobile`,
+  `.macos` / `.windows` / `.linux`, `.desktop` and `.web` beside a plain
+  `Name.tsx`, as in React Native: each target's export (`denext export
+  --platform` / `DENEXT_PLATFORM`, `denext mobile build`, `denext desktop build`
+  / `package`) resolves the app's own imports, aliases included, to its file and
+  leaves the rest out of the bundle; `mobile dev` and `desktop dev` serve each
+  shell its own files. — `src/build/platform-extensions.ts`,
+  `src/build/platform-imports.ts`.
 - **Deno Desktop apps** — `denext desktop run | dev | build | package` export
   the app and build it with `deno desktop`: `run` and `dev` build into a temp
   directory with the packaged app's own least-privilege `--allow-*` and launch it,
@@ -474,6 +484,11 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   passkeys (`{ rpIds }` required). Picked files and folders travel as scoped
   handles, never paths. — `src/desktop/caps/mod.ts`,
   `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
+- **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
+  on this machine, with a fix for each gap: the pinned runtime and its cache,
+  the `deno` version, and on Linux the session's tray host, Secret Service and
+  lock state, notification server, xdg-desktop-portal versions and systemd user
+  manager. — `src/build/desktop-doctor.ts`.
 - **The window and the app's chrome** — `denext/desktop/window`: maximize,
   minimize, fullscreen and their events, size, position and limits, the
   displays, title-bar styles, Mica / Acrylic / vibrancy backdrops, a cancelable
@@ -525,9 +540,10 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   stand-ins, `Appearance.setColorScheme` is added, expo-router's route context is
   generated from `app/`, and the shell gets Expo web's root style. —
   `src/build/react-native.ts`.
-- **`denext/expo/*`** — 35 drop-in `expo-*` shims (Expo SDK 57) over
-  `denext/mobile` and web APIs (haptics, secure-store, file-system, sqlite,
-  notifications, auth-session, web-browser, widgets, …), aliased automatically
+- **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`
+  modules (Expo SDK 58) over `denext/mobile` and web APIs (haptics,
+  secure-store, file-system, sqlite, notifications, auth-session, web-browser,
+  widgets, …), aliased automatically
   in `reactNative` mode; `denext/expo/manifest` lists each one's status and
   omissions. `registerRootComponent` mounts through `AppRegistry`, so the app's
   own entry is the web entry. — `src/expo/manifest.ts`.

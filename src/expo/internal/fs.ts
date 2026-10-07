@@ -69,12 +69,16 @@ function saveIndex(): void {
   } catch { /* quota or blocked storage: the index lives for this session only */ }
 }
 
-/** Run `op` after every change queued before it; a failure is logged, not thrown. */
-function enqueue(op: () => Promise<unknown>): void {
-  queue = (queue ?? Promise.resolve()).then(op).then(
-    () => {},
-    (err) => console.warn("[denext/expo/file-system] could not persist a change:", err),
+/**
+ * Run `op` after every change queued before it. A failure is logged and never stops the queue;
+ * the returned promise is `op`'s own outcome, for a caller that reports it (an awaited write).
+ */
+function enqueue(op: () => Promise<unknown>): Promise<void> {
+  const done = (queue ?? Promise.resolve()).then(op).then(() => {});
+  queue = done.catch((err) =>
+    console.warn("[denext/expo/file-system] could not persist a change:", err)
   );
+  return done;
 }
 
 /** Wait until every queued change has reached the real files. */
@@ -164,8 +168,12 @@ function remember(uri: string, bytes: Uint8Array): void {
   record(uri, { dir: false, size: bytes.byteLength, mtime: Date.now() });
 }
 
-/** Write `bytes` to the file `uri` now (index + cache) and to the real file in order. */
-export function writeBytes(uri: string, bytes: Uint8Array): void {
+/**
+ * Write `bytes` to the file `uri` now (index + cache) and to the real file in order.
+ *
+ * @returns A promise that settles once the real file is written, rejecting if it could not be.
+ */
+export function writeBytes(uri: string, bytes: Uint8Array): Promise<void> {
   if (!backing(uri)) {
     throw new Error(
       `Cannot write to ${uri}: only file:///documents/ and file:///cache/ are writable`,
@@ -173,17 +181,22 @@ export function writeBytes(uri: string, bytes: Uint8Array): void {
   }
   ensureParents(uri, true);
   remember(uri, bytes);
-  enqueue(() => persist(uri, bytes));
+  return enqueue(() => persist(uri, bytes));
 }
 
 /**
  * Index `uri` as a copy of `source` (or `source` plus `extra`) now, and move the bytes in
  * order: they are read from disk inside the queue, after every earlier change.
  */
-function deferredWrite(uri: string, source: string, size: number, extra?: Uint8Array): void {
+function deferredWrite(
+  uri: string,
+  source: string,
+  size: number,
+  extra?: Uint8Array,
+): Promise<void> {
   ensureParents(uri, true);
   record(uri, { dir: false, size, mtime: Date.now() });
-  enqueue(async () => {
+  return enqueue(async () => {
     const base = await readBacking(source);
     const bytes = extra ? concat(base, extra) : base;
     cacheMap().set(uri, bytes);
@@ -191,12 +204,16 @@ function deferredWrite(uri: string, source: string, size: number, extra?: Uint8A
   });
 }
 
-/** Append `bytes` to the file `uri`, reading what it holds first when it is not cached. */
-export function appendBytes(uri: string, bytes: Uint8Array): void {
+/**
+ * Append `bytes` to the file `uri`, reading what it holds first when it is not cached.
+ *
+ * @returns A promise that settles once the real file is written, rejecting if it could not be.
+ */
+export function appendBytes(uri: string, bytes: Uint8Array): Promise<void> {
   const known = cacheMap().get(uri);
   const entry = stat(uri);
   if (known || !entry) return writeBytes(uri, concat(known ?? new Uint8Array(), bytes));
-  deferredWrite(uri, uri, entry.size + bytes.byteLength, bytes);
+  return deferredWrite(uri, uri, entry.size + bytes.byteLength, bytes);
 }
 
 /** `a` then `b`. */

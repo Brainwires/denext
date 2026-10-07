@@ -380,8 +380,13 @@ export const useForegroundPermissions: (
 });
 
 /** Background location: not available (denied, and not askable). */
-function backgroundDenied(): Promise<PermissionResponse> {
-  return Promise.resolve({ ...permissionResponse(PermissionStatus.DENIED), canAskAgain: false });
+function backgroundDenied(): Promise<LocationPermissionResponse> {
+  return Promise.resolve({
+    ...permissionResponse(PermissionStatus.DENIED),
+    canAskAgain: false,
+    ios: { scope: "none", accuracy: "full" },
+    android: { accuracy: "none" },
+  });
 }
 
 /**
@@ -390,7 +395,7 @@ function backgroundDenied(): Promise<PermissionResponse> {
  *
  * @returns Denied.
  */
-export function getBackgroundPermissionsAsync(): Promise<PermissionResponse> {
+export function getBackgroundPermissionsAsync(): Promise<LocationPermissionResponse> {
   return backgroundDenied();
 }
 
@@ -399,7 +404,7 @@ export function getBackgroundPermissionsAsync(): Promise<PermissionResponse> {
  *
  * @returns Denied.
  */
-export function requestBackgroundPermissionsAsync(): Promise<PermissionResponse> {
+export function requestBackgroundPermissionsAsync(): Promise<LocationPermissionResponse> {
   return backgroundDenied();
 }
 
@@ -407,9 +412,9 @@ export function requestBackgroundPermissionsAsync(): Promise<PermissionResponse>
 export const useBackgroundPermissions: (
   options?: PermissionHookOptions<object>,
 ) => [
-  PermissionResponse | null,
-  () => Promise<PermissionResponse>,
-  () => Promise<PermissionResponse>,
+  LocationPermissionResponse | null,
+  () => Promise<LocationPermissionResponse>,
+  () => Promise<LocationPermissionResponse>,
 ] = createPermissionHook({
   getMethod: getBackgroundPermissionsAsync,
   requestMethod: requestBackgroundPermissionsAsync,

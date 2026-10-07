@@ -51,8 +51,9 @@ import {
 import { RN_OVERLAY_EXPORTS } from "../../../src/build/react-native.ts";
 import { checkLists } from "./lists.ts";
 import { checkDesktop } from "./desktop.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fromFileUrl(new URL("../../../", import.meta.url)).replace(/[\\/]$/, "");
 
 interface Ledger {
   gaps: { specifier: string; symbol: string; category: string }[];

@@ -24,6 +24,10 @@ import { createAppController, type DockLike, type TrayLike } from "../src/deskto
 import { nativeMenu } from "../src/desktop/caps/menu.ts";
 import { createPullQueue } from "../src/desktop/caps/queue.ts";
 import { withDenoProps, withProps } from "./helpers/deno-stub.ts";
+import { until } from "./helpers/desktop-fake-runtime.ts";
+
+/** How long a test waits for an async effect (polled; generous for a loaded machine). */
+const WAIT_MS = 10_000;
 
 /** A handler context recording what the capability emits. */
 function ctxOf(window?: unknown): DesktopCapCtx & { emitted: Array<[string, unknown]> } {
@@ -212,8 +216,7 @@ Deno.test("notifications: a running app tops a series up when half of it fired",
   clock += (REPEAT_HORIZON / 2 + 1) * 3600_000;
   f.scheduled.splice(0, REPEAT_HORIZON / 2);
   half.run();
-  await new Promise((r) => setTimeout(r, 10));
-  assertEquals(f.scheduled.length, REPEAT_HORIZON);
+  await until(() => f.scheduled.length === REPEAT_HORIZON, WAIT_MS);
   const ats = f.scheduled.map((e) => e.at as number);
   assertEquals(new Set(ats).size, ats.length);
   assertEquals(ats.at(-1), NOW + 3600_000 * (REPEAT_HORIZON + REPEAT_HORIZON / 2));
@@ -231,8 +234,7 @@ Deno.test("notifications: a launch tops up the series an earlier run left", asyn
     actions: [{ action: "snooze", title: "Snooze" }],
   });
   notificationsCapability({ api: f.api, now: () => NOW, timer: () => () => {} });
-  await new Promise((r) => setTimeout(r, 20));
-  assertEquals(f.scheduled.length, REPEAT_HORIZON);
+  await until(() => f.scheduled.length === REPEAT_HORIZON, WAIT_MS);
   assert(f.scheduled.every((e) => e.title === "Left" && e.actions?.[0]?.action === "snooze"));
 });
 
@@ -716,7 +718,55 @@ Deno.test("notifications: malformed arguments are validation errors and schedule
     actions: true,
     clicks: true,
     categories: true,
+    // No session probe in this runtime: unknown, no reasons.
+    transport: "unknown",
+    coldStartReason: null,
+    schedulePersistsReason: null,
   });
+});
+
+Deno.test("notifications: capabilities pass on the runtime's Linux reasons (runtime 2.9.7-denext.11)", async () => {
+  const f = fakeNotifications();
+  const caps = (features: Record<string, unknown>) =>
+    call(
+      notificationsCapability({
+        api: { ...f.api, platformFeatures: () => Promise.resolve(features) },
+        autoTopUp: false,
+      }),
+      "capabilities",
+    ) as Promise<Record<string, unknown>>;
+  // An AppImage on GNOME without a systemd user manager: the freedesktop transport.
+  const appImage = await caps({
+    os: "linux",
+    notificationTransport: "freedesktop",
+    notificationColdStart: false,
+    notificationColdStartReason: "no dev.acme.app.desktop is installed",
+    notificationScheduleWhileClosed: false,
+    notificationScheduleReason: "no systemd user manager on the session bus",
+  });
+  assertEquals(
+    [appImage.transport, appImage.coldStartReason, appImage.schedulePersistsReason],
+    [
+      "freedesktop",
+      "no dev.acme.app.desktop is installed",
+      "no systemd user manager on the session bus",
+    ],
+  );
+  // The .deb on GNOME: the portal, nothing missing (a stray reason is not passed on).
+  const deb = await caps({
+    os: "linux",
+    notificationTransport: "portal",
+    notificationColdStart: true,
+    notificationColdStartReason: "stray",
+    notificationScheduleWhileClosed: true,
+  });
+  assertEquals(
+    [deb.transport, deb.coldStartReason, deb.schedulePersistsReason],
+    ["portal", null, null],
+  );
+  // No notification server: no transport. macOS: null facts.
+  assertEquals((await caps({ notificationTransport: null })).transport, null);
+  assertEquals((await caps({ notificationTransport: "dbus" })).transport, "unknown");
 });
 
 Deno.test("notifications: one-shot interval / calendar triggers are one OS notification; a finite series stops", async () => {
@@ -859,9 +909,9 @@ Deno.test("notifications: a launch tops up only the series that are short, soone
       return () => {};
     },
   });
-  await new Promise((r) => setTimeout(r, 20));
   const ofSeries = (id: number) => f.scheduled.filter((e) => e.tag.startsWith(`denext-${id}-`));
-  assertEquals(ofSeries(1).length, REPEAT_HORIZON);
+  // The launch's top-up is done once the short series is full and its check is armed.
+  await until(() => ofSeries(1).length === REPEAT_HORIZON && armed.length > 0, WAIT_MS);
   const added = ofSeries(1).filter((e) => e.at !== NOW + DAY);
   assert(added.every((e) => e.title === "" && e.body === "" && e.actions?.length === 0));
   assertEquals(ofSeries(2).length, REPEAT_HORIZON, "a full series gets nothing more");
@@ -1175,7 +1225,14 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     icons: false,
     tooltips: false,
     tray: true,
+    trayReason: null,
+    trayHost: "unknown",
+    secretService: "unknown",
+    sessionType: "unknown",
+    cookieEncryption: "unknown",
     badge: false,
+    badgeShows: "unknown",
+    badgeReason: null,
     bounce: false,
     dockMenu: false,
   });
@@ -1221,4 +1278,353 @@ Deno.test("app: the runtime's Deno.Tray and Deno.dock are used when none is inje
     const caps = await call(cap, "capabilities") as Record<string, boolean>;
     assertEquals([caps.tray, caps.badge], [false, false]);
   });
+});
+
+// --- the runtime's session probe (Deno.desktop.platformFeatures, runtime 2.9.7-denext.10) ------
+
+/** What a Linux session with no tray host (stock GNOME) answers. */
+const NO_TRAY_HOST = {
+  os: "linux",
+  sessionType: "wayland",
+  desktopHint: "GNOME",
+  sessionBus: true,
+  trayHost: false,
+  trayReason: "no StatusNotifierWatcher (GNOME needs the AppIndicator extension)",
+  trayClicks: false,
+  trayTooltip: true,
+  secretService: "locked",
+  secretServicePrompt: false,
+  portalVersions: { FileChooser: 4 },
+  cookieEncryption: "basic",
+};
+
+/** The `unsupported` error a call rejects with. */
+async function unsupportedOf(p: Promise<unknown>) {
+  try {
+    await p;
+  } catch (err) {
+    const e = err as { code?: unknown; message?: unknown; data?: Record<string, unknown> };
+    return { code: e.code, message: String(e.message), data: e.data };
+  }
+  throw new Error("expected a rejection");
+}
+
+/** A window that records `show()`. */
+function hiddenWindow(visible = false) {
+  return Object.assign(new EventTarget(), {
+    shown: 0,
+    isVisible: () => visible,
+    show() {
+      this.shown++;
+    },
+  });
+}
+
+Deno.test("app: with the probe, a session with no tray host reports tray false with the runtime's reason", async () => {
+  FakeTray.made = [];
+  const cap = createAppController({
+    window: undefined,
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  const caps = await call(cap, "capabilities") as Record<string, unknown>;
+  assertEquals(
+    [caps.tray, caps.trayReason, caps.trayHost],
+    [false, NO_TRAY_HOST.trayReason, false],
+  );
+  assertEquals(
+    [caps.secretService, caps.sessionType, caps.cookieEncryption],
+    ["locked", "wayland", "basic"],
+  );
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.code, "unsupported");
+  assertEquals(err.data, { reason: NO_TRAY_HOST.trayReason, windowShown: false });
+  assert(err.message.includes("AppIndicator"), err.message);
+  assertEquals(FakeTray.made.length, 0, "no dead tray is created");
+});
+
+Deno.test("app: a tray-only app (window hidden) gets its window shown when no tray can be shown", async () => {
+  const win = hiddenWindow(false);
+  const cap = createAppController({
+    window: win,
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.data?.windowShown, true);
+  assertEquals(win.shown, 1);
+  // A visible window is left alone.
+  const shown = hiddenWindow(true);
+  const cap2 = createAppController({
+    window: shown,
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  assertEquals(
+    (await unsupportedOf(call(cap2, "createTray", { icon: PNG }))).data?.windowShown,
+    false,
+  );
+  assertEquals(shown.shown, 0);
+  // A window whose show() throws (closed) still yields the unsupported error.
+  const broken = Object.assign(new EventTarget(), {
+    isVisible: () => false,
+    show: () => {
+      throw new Error("gone");
+    },
+  });
+  const cap3 = createAppController({
+    window: broken,
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  assertEquals(
+    (await unsupportedOf(call(cap3, "createTray", { icon: PNG }))).data?.windowShown,
+    false,
+  );
+});
+
+/** A `Deno.Tray` whose constructor throws like the runtime with no tray host. */
+class NoHostTray extends FakeTray {
+  constructor() {
+    super();
+    const err = new Error(
+      "Tray icons are not available here: no StatusNotifierWatcher and no XEmbed tray",
+    );
+    err.name = "NotSupported";
+    throw err;
+  }
+}
+
+/** A `Deno.Tray` whose constructor fails some other way. */
+class BrokenTray extends FakeTray {
+  constructor() {
+    super();
+    throw new TypeError("boom");
+  }
+}
+
+Deno.test("app: the runtime's NotSupported from new Deno.Tray() becomes unsupported with its reason", async () => {
+  const win = hiddenWindow(false);
+  const cap = createAppController({
+    window: win,
+    // A host that left after the probe answered, or a runtime that only throws.
+    api: {
+      platformFeatures: () =>
+        Promise.resolve({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }),
+    },
+    emit: () => {},
+    Tray: NoHostTray,
+    os: "linux",
+  }).capability;
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.code, "unsupported");
+  assertEquals(err.data, {
+    reason: "no StatusNotifierWatcher and no XEmbed tray",
+    windowShown: true,
+  });
+  // A NotSupported with no reason in it still has one.
+  class Bare extends FakeTray {
+    constructor() {
+      super();
+      const e = new Error("");
+      e.name = "NotSupported";
+      throw e;
+    }
+  }
+  const bare = createAppController({ window: undefined, emit: () => {}, Tray: Bare, os: "linux" });
+  assertEquals((await unsupportedOf(call(bare.capability, "createTray", { icon: PNG }))).data, {
+    reason: "no tray host",
+    windowShown: false,
+  });
+  // Any other failure is not dressed up as unsupported.
+  const broken = createAppController({
+    window: undefined,
+    emit: () => {},
+    Tray: BrokenTray,
+    os: "linux",
+  });
+  await assertRejects(
+    () => call(broken.capability, "createTray", { icon: PNG }) as Promise<unknown>,
+    TypeError,
+    "boom",
+  );
+  // The failed attempts used no tray id: the next tray is "1".
+  const ok = createAppController({
+    window: undefined,
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  });
+  assertEquals(await call(ok.capability, "createTray", { icon: PNG }), { id: "1" });
+});
+
+Deno.test("app: without the probe (denext.9), a throwing or odd probe, every fact reads unknown", async () => {
+  for (
+    const platformFeatures of [
+      undefined,
+      () => Promise.resolve(null),
+      () => Promise.resolve("linux"),
+      () => Promise.reject(new Error("probe failed")),
+      () => {
+        throw new Error("probe failed before it started");
+      },
+      () =>
+        Promise.resolve({
+          trayHost: "yes",
+          secretService: "maybe",
+          sessionType: 7,
+          cookieEncryption: "aes",
+        }),
+    ]
+  ) {
+    const cap = createAppController({
+      window: undefined,
+      api: platformFeatures ? { platformFeatures } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    assertEquals(
+      [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+      [true, null, "unknown", "unknown", "unknown"],
+    );
+    assertEquals(caps.cookieEncryption, "unknown");
+  }
+  // macOS / the WebView backends: null session type and cookie store pass through as null.
+  const mac = createAppController({
+    window: undefined,
+    api: {
+      platformFeatures: () =>
+        Promise.resolve({
+          os: "macos",
+          sessionType: null,
+          trayHost: true,
+          trayReason: "ignored when there is a host",
+          secretService: "os",
+          cookieEncryption: null,
+        }),
+    },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "darwin",
+  }).capability;
+  const caps = await call(mac, "capabilities") as Record<string, unknown>;
+  assertEquals(
+    [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+    [true, null, true, "os", null],
+  );
+  assertEquals(caps.cookieEncryption, null);
+});
+
+Deno.test("app: where the badge shows follows the probe (runtime 2.9.7-denext.11)", async () => {
+  const capsWith = async (features: Record<string, unknown> | undefined) => {
+    const cap = createAppController({
+      window: undefined,
+      api: features ? { platformFeatures: () => Promise.resolve(features) } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    return [caps.badgeShows, caps.badgeReason];
+  };
+  // A dock reads launcher badges (Ubuntu's dock, Plasma's task manager).
+  assertEquals(
+    await capsWith({ ...NO_TRAY_HOST, badge: "launcher-entry", badgeReason: null }),
+    ["launcher-entry", null],
+  );
+  // None does: the title prefix, with the runtime's reason.
+  assertEquals(
+    await capsWith({ ...NO_TRAY_HOST, badge: "title", badgeReason: " no dock reads them " }),
+    ["title", "no dock reads them"],
+  );
+  // A reason only travels with "title"; an odd value, or denext.10 (no key), reads unknown.
+  assertEquals(await capsWith({ badge: "dock", badgeReason: "x" }), ["dock", null]);
+  assertEquals(await capsWith({ badge: "tile" }), ["unknown", null]);
+  assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null]);
+  assertEquals(await capsWith(undefined), ["unknown", null]);
+});
+
+Deno.test("app: no Deno.Tray, Deno.dock or app menu — unsupported carries a reason", async () => {
+  const cap = createAppController({ window: undefined, emit: () => {}, os: "linux" }).capability;
+  if ((Deno as unknown as { Tray?: unknown }).Tray === undefined) {
+    const tray = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+    assertEquals(tray.data?.reason, "this Deno Desktop runtime has no API for it");
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    assertEquals([caps.tray, caps.trayReason], [
+      false,
+      "this Deno Desktop runtime has no API for it",
+    ]);
+  }
+  assertEquals(
+    (await unsupportedOf(call(cap, "setAppMenu", { menu: [] }))).data?.reason,
+    "no app window",
+  );
+  const withWin = createAppController({ window: new EventTarget(), emit: () => {}, os: "linux" });
+  assertEquals(
+    (await unsupportedOf(call(withWin.capability, "setAppMenu", { menu: [] }))).data?.reason,
+    "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu",
+  );
+  assertEquals(
+    (await unsupportedOf(call(cap, "setBadge", { text: "1" }))).data?.reason,
+    "this Deno Desktop runtime has no Deno.dock",
+  );
+  const reason = (await unsupportedOf(call(cap, "bounce", {}))).data?.reason;
+  assertEquals(reason, "this Deno Desktop runtime has no Deno.dock");
+});
+
+Deno.test("globalShortcuts: not_supported carries the runtime's message as the reason", async () => {
+  const fail = (message: string) => {
+    const err = Object.assign(new Error(message), { code: "not_supported" });
+    return Promise.reject(err);
+  };
+  let message = "the GlobalShortcuts portal is not available";
+  const cap = shortcutsCapability({
+    api: {
+      shortcuts: {
+        register: () => fail(message),
+        unregister: () => false,
+        unregisterAll: () => {},
+        list: () => [],
+        canonicalize: (a: string) => a,
+        capabilities: () => ({ globalShortcuts: false, userBinds: false }),
+        addEventListener: () => {},
+      } as unknown as DesktopAppApi["shortcuts"],
+    },
+  });
+  const err = await unsupportedOf(call(cap, "register", { accelerator: "Ctrl+K" }));
+  assertEquals([err.code, err.data?.reason], ["unsupported", message]);
+  message = "";
+  const bare = await unsupportedOf(call(cap, "register", { accelerator: "Ctrl+J" }));
+  assertEquals(bare.data?.reason, "no global shortcuts in this session");
+});
+
+Deno.test("app: platformfeatureschanged asks the page to re-read the capabilities", async () => {
+  const api = Object.assign(new EventTarget(), {
+    platformFeatures: () => Promise.resolve({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }),
+  });
+  const events: string[] = [];
+  const ctl = createAppController({
+    window: undefined,
+    api,
+    emit: (cap, event) => events.push(`${cap}:${event}`),
+    Tray: FakeTray,
+    os: "linux",
+  });
+  api.dispatchEvent(new Event("platformfeatureschanged"));
+  assertEquals(events, [], "nothing before install");
+  ctl.install();
+  api.dispatchEvent(new Event("platformfeatureschanged"));
+  assertEquals(events, ["app:capabilities"]);
+  const caps = await call(ctl.capability, "capabilities") as Record<string, unknown>;
+  assertEquals([caps.tray, caps.trayHost], [true, true]);
 });

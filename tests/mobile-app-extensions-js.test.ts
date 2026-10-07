@@ -653,4 +653,15 @@ Deno.test("share receiver (Android) SECURITY: refuses this app's own provider an
   assert(java.includes('authority.startsWith(pkg + ".")'));
   // A hostile stream cannot fill the cache dir.
   assert(java.includes("total > MAX_SHARED_BYTES"));
+  // ...nor can a share of many streams: a stream count and a per-share byte budget.
+  assert(java.includes("MAX_SHARED_STREAMS = 32;"));
+  assert(java.includes("if (taken++ >= MAX_SHARED_STREAMS) {"));
+  assert(java.includes("MAX_SHARE_TOTAL_BYTES = 512L * 1024 * 1024;"));
+  assert(java.includes("long[] budget = { MAX_SHARE_TOTAL_BYTES };"));
+  assert(java.includes('if (total > budget[0]) throw new java.io.IOException("share too large");'));
+  assert(java.includes("budget[0] -= total;"));
+  // Earlier shares' copies do not pile up: older than a day, they go at the next share.
+  const item = java.slice(java.indexOf("private static JSObject item("));
+  assert(item.indexOf("pruneShareCache(context);") < item.indexOf("copy(context, uri"), item);
+  assert(java.includes("if (f.isFile() && f.lastModified() < cutoff) f.delete();"));
 });

@@ -8,7 +8,7 @@ import type { ModuleLoader } from "./types.ts";
 import type { Directive } from "../build/directives.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
-import { clientIdFor } from "../build/module-graph.ts";
+import { clientIdFor } from "../build/boundary-ids.ts";
 import { toFileUrl } from "@std/path";
 import type { AppConfig } from "./app-config.ts";
 
@@ -87,13 +87,15 @@ export async function resolveFlightLoader(
   route: PageRoute,
   manifest: RouteManifest,
 ): Promise<{ useFlight: boolean; pageLoad: ModuleLoader }> {
+  const scoped = config.flight ? await config.flightBoundary?.() : null;
+  const flightRoutes = scoped?.routes ?? config.flightRoutes;
+  const flightClients = scoped?.clients ?? config.flightClients;
+  const flightServers = scoped?.servers ?? config.flightServers;
   const useFlight = !!config.flight && !!config.appDir && (
-    config.flightRoutes
-      ? config.flightRoutes.has(route.routePath)
-      : routeUsesBoundary(route, manifest.directives)
+    flightRoutes ? flightRoutes.has(route.routePath) : routeUsesBoundary(route, manifest.directives)
   );
   if (!useFlight) return { useFlight, pageLoad: config.load };
-  if (!config.flightClients) {
+  if (!flightClients) {
     return {
       useFlight,
       pageLoad: taggingLoader(config.load, config.appDir!, manifest.directives!),
@@ -103,7 +105,8 @@ export async function resolveFlightLoader(
   // module instance is the same one a page transitively imports at render; else `load`.
   const tagVia = config.tagLoad ?? config.load;
   const load = (url: string) => tagVia(url.startsWith("file:") ? fromFileUrl(url) : url);
-  await timed("tagClientModules", () => tagClientModules(config.flightClients!, load));
-  if (config.flightServers) await tagServerModules(config.flightServers, load);
+  const scope = config.tagScope?.() ?? "";
+  await timed("tagClientModules", () => tagClientModules(flightClients, load, scope));
+  if (flightServers) await tagServerModules(flightServers, load);
   return { useFlight, pageLoad: config.load };
 }

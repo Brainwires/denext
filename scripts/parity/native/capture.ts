@@ -10,8 +10,9 @@
 import type { RealTarget } from "../extract-real.ts";
 import type { Surface } from "../types.ts";
 import { npmInstall, parseExtractorOutput } from "./shared.ts";
+import { fromFileUrl } from "@std/path";
 
-const RUNNER = new URL("./_real-runner.ts", import.meta.url).pathname;
+const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
 
 export interface Captured {
   versions: Record<string, string>;

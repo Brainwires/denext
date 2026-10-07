@@ -1,5 +1,6 @@
 // Production build, stage 1: app CSS + the client-module transforms (auto-memo compiler,
-// qrl handler extraction, AsyncContext instrumentation), merged into the bundler import map.
+// qrl handler extraction, AsyncContext instrumentation, feature folds), merged into the bundler
+// import map. `denext export` runs the same transforms (../export-pipeline/assets.ts).
 
 import { asyncContextEnabled, featureFlags, reactCompilerEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
@@ -64,10 +65,19 @@ function warnClobbered(asyncContextMap: RewriteMap, compilerMap: RewriteMap, qrl
  * config flags; qrl auto-wrap self-filters to modules
  * that opt into resumability, so it always runs and is inert for every other app.
  * On overlap the later spread wins: qrl over auto-memo (intended), async-context over both.
+ *
+ * `denext build` and `denext export` both call this, and every native client bundle either of
+ * them makes resolves through the result (./routes.ts, ../export-pipeline/context.ts).
+ *
+ * @param ctx The project and its config.
+ * @param outDir Where the transformed modules are written (default: the build's output dir).
+ * @returns Each transformed module's file URL → its transformed file's URL.
  */
-export async function clientTransforms(ctx: BuildContext): Promise<Record<string, string>> {
+export async function clientTransforms(
+  ctx: Pick<BuildContext, "projectDir" | "paths">,
+  outDir: string = ctx.paths.outDir,
+): Promise<Record<string, string>> {
   const { projectDir, paths } = ctx;
-  const outDir = paths.outDir;
   const sources = componentSourcesOnce(projectDir);
   let compilerMap: RewriteMap;
   if (reactCompilerEnabled(paths.config)) {

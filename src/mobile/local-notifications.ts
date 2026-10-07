@@ -134,17 +134,22 @@ export interface LocalNotification {
   readonly title?: string;
   /** The body. */
   readonly body?: string;
-  /** Your payload. */
+  /**
+   * The payload the tap carries back. Untrusted input, not proof that your app scheduled it: on
+   * Linux any process of the same user can forge a click (a D-Bus call on the app's name) with
+   * any `data`, and on Windows the user's own processes can forge a toast activation. Validate it
+   * before acting on it.
+   */
   readonly data: Readonly<Record<string, unknown>>;
 }
 
 /** A tap on (or an action of) a local notification. */
 export interface LocalNotificationTap {
-  /** The notification. */
+  /** The notification. Its `data`, like the rest of the tap, is untrusted input. */
   readonly notification: LocalNotification;
-  /** `"tap"` for the notification itself, else the action's id. */
+  /** `"tap"` for the notification itself, else the action's id (untrusted, as `data` is). */
   readonly actionId: string;
-  /** The text typed into a text-input action, if any. */
+  /** The text typed into a text-input action, if any (untrusted). */
   readonly inputValue?: string;
 }
 
@@ -635,6 +640,11 @@ export function onLocalNotificationReceived(
  * cold-started the app is kept by the shell (or the Deno Desktop runtime) for the first
  * listener, so subscribe early. In a Deno Desktop window it needs the `notifications`
  * capability. Elsewhere it does nothing.
+ *
+ * Treat a tap's `data` (and its action) as untrusted input: on Linux a click arrives as a D-Bus
+ * call on the app's name, which any process of the same user can make with any `data` (as a
+ * Windows toast activation can be forged by the user's own processes). Validate it before acting
+ * on it; the default navigation already applies the deep-link acceptance rules.
  *
  * @param callback Called with each tap.
  * @param options Which links to accept, and how to navigate.

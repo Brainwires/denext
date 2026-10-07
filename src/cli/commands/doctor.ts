@@ -6,6 +6,8 @@
 // same data — plus every route's conformance result and the last build's client
 // chunks — into one markdown (or, with `--json`, structured) health report.
 
+import { platformFilesReport } from "../../build/platform-extensions.ts";
+import type { DenextConfig } from "../../server/config.ts";
 import { join } from "@std/path";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { VERSION } from "../../../mod.ts";
@@ -188,6 +190,19 @@ export async function cssShimLeakCheck(configPath: string, outDir: string): Prom
   };
 }
 
+/**
+ * The platform-files check: modules (`BigButton.ios.tsx`, …) that some target's export cannot
+ * resolve, per target. Not critical — a module no route imports for that target is fine — but
+ * that target's build fails on the first one it reaches. Null when the app has none.
+ */
+export async function platformFilesCheck(
+  projectDir: string,
+  config: DenextConfig | null | undefined,
+): Promise<Check | null> {
+  const report = await platformFilesReport(projectDir, config);
+  return report ? { name: "platform files", ...report, critical: false } : null;
+}
+
 /** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
 async function readDenoJson(dir: string): Promise<Record<string, unknown> | null> {
   for (const name of ["deno.json", "deno.jsonc"]) {
@@ -349,6 +364,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
     checks.push(r.check);
     routes = r.report;
   }
+  const platformFiles = await platformFilesCheck(paths.projectDir, paths.config);
+  if (platformFiles) checks.push(platformFiles);
   const privacy = await privacyManifestCheck(dir);
   if (privacy) checks.push(privacy);
   const desktopOrigin = await desktopOriginCheck(dir, paths.config);

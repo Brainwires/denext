@@ -204,6 +204,42 @@ Deno.test("keychain: a biometric access control prompts on read; a refusal reads
   );
 });
 
+Deno.test("keychain: without a secret store an access-controlled set resolves false and stores nothing", async () => {
+  const g = globalThis as Any;
+  const saved = Object.getOwnPropertyDescriptor(g, "indexedDB");
+  let opened = 0;
+  g.indexedDB = {
+    open() {
+      opened++;
+      throw new Error("IndexedDB opened");
+    },
+  };
+  try {
+    for (
+      const set of [
+        () =>
+          Keychain.setGenericPassword("ada", "pw", {
+            accessControl: Keychain.ACCESS_CONTROL.BIOMETRY_ANY,
+          }),
+        () =>
+          Keychain.setInternetCredentials("x.dev", "u", "p", {
+            accessControl: Keychain.ACCESS_CONTROL.DEVICE_PASSCODE,
+          }),
+      ]
+    ) {
+      assertEquals(await set(), false);
+    }
+    assertEquals(opened, 0, "nothing reached the plaintext web store");
+    assertEquals(await Keychain.canImplyAuthentication(), false);
+    // An ungated set still uses the web fallback (which this Deno lacks: false, but it tried).
+    assertEquals(await Keychain.setGenericPassword("ada", "pw"), false);
+    assert(opened > 0);
+  } finally {
+    if (saved) Object.defineProperty(g, "indexedDB", saved);
+    else delete g.indexedDB;
+  }
+});
+
 // ---- react-native-haptic-feedback ----------------------------------------------------------
 
 const HAPTIC_METHODS = [

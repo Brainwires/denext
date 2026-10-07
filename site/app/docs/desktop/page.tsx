@@ -53,6 +53,12 @@ export default function Desktop() {
           <code>codesign</code> on macOS, Authenticode where <code>signtool</code>{" "}
           runs) and wrap the installers, into <code>dist/</code>.
         </li>
+        <li>
+          <code>denext desktop doctor</code>{" "}
+          — check the pinned runtime and, on Linux, what the session provides (tray host, keyring,
+          portals), with a fix for each gap (see{" "}
+          <a href="#desktop-linux-session">What the session provides</a>).
+        </li>
       </ul>
       <p>
         The scaffolded <code>deno task desktop</code> / <code>deno task desktop:package</code> (and
@@ -109,8 +115,9 @@ import { onDesktopEvent } from "denext/desktop/client";
 const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));`}
       </Code>
       <Callout kind="note">
-        <code>runDesktop</code> serves the static export (with a history-API fallback and{" "}
-        <code>no-store</code>{" "}
+        <code>runDesktop</code> serves the static export (<code>/about</code> →{" "}
+        <code>about/index.html</code> or <code>about.html</code>; any other path gets the root{" "}
+        <code>index.html</code> as a history-API fallback) with <code>no-store</code>{" "}
         caching so a repackaged app never serves a stale bundle), optionally reverse-proxies a
         backend (<a href="/docs/spa">
           <code>spa.proxy</code>
@@ -174,8 +181,7 @@ export default {
           <code>deno.json</code>, else <code>icons/app.icns</code> / <code>icons/app.ico</code> /
           {" "}
           <code>icons/app.png</code>, else the <code>desktop-icon.png</code>{" "}
-          an export composes. A configured icon that does not exist fails the build. The macOS
-          script picks this up with <code>denext desktop package --regenerate-scripts</code>.
+          an export composes. A configured icon that does not exist fails the build.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
@@ -184,9 +190,8 @@ export default {
         {" "}
         <code>desktop.denoFlags</code>. <code>denext desktop run</code>,{" "}
         <code>denext desktop dev</code>{" "}
-        and the package scripts pass them before the entry (the macOS script once{" "}
-        <code>denext desktop package --regenerate-scripts</code>{" "}
-        has rewritten it; the Linux and Windows builds read them through{" "}
+        and the package scripts pass them before the entry (the macOS script itself; the Linux and
+        Windows builds read them through{" "}
         <code>denext/desktop</code>). The usual case is a pnpm workspace (deno.json{" "}
         <code>nodeModulesDir: "manual"</code>), where <code>deno desktop</code>{" "}
         would otherwise type-check against the workspace&apos;s <code>node_modules</code>{" "}
@@ -447,6 +452,40 @@ desktop: {
         <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, only whether it is set.
       </p>
 
+      <h3 id="desktop-windows-cef">Windows apps on the CEF backend</h3>
+      <p>
+        On Windows the <code>cef</code>{" "}
+        backend runs web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.11), which CEF
+        provides only inside its bootstrap: <code>&lt;App&gt;.exe</code>{" "}
+        is CEF&apos;s bootstrap with your app&apos;s icon and version resources,{" "}
+        <code>&lt;App&gt;.dll</code> is laufey&apos;s CEF host and{" "}
+        <code>&lt;App&gt;.runtime.dll</code>{" "}
+        the runtime. The package script lays the bundle out and signs every PE file in it
+        (<a href="/docs/desktop-runtime#the-windows-cef-layout">
+          the layout
+        </a>). Three limits come with it:
+      </p>
+      <ul>
+        <li>
+          <strong>The app starts in its install folder</strong>{" "}
+          when it is started from a shell or a shortcut: the bootstrap moves it there, so it does
+          not keep the directory it was started from. <code>denext desktop run</code> /{" "}
+          <code>dev</code>, the runtime&apos;s forked workers and the updater keep theirs. Build
+          paths from <code>Deno.execPath()</code> or take absolute ones.
+        </li>
+        <li>
+          <strong>An untrusted signature stops the app.</strong>{" "}
+          A bootstrap signed with a certificate Windows doesn&apos;t trust refuses to start, so a
+          self-signed development certificate must be trusted (Trusted Root and Trusted Publishers)
+          before a build signed with it runs.
+        </li>
+        <li>
+          <strong>No update from denext 3.1.x.</strong>{" "}
+          A Windows CEF app packaged with denext 3.1.x or earlier (runtime denext.8) can&apos;t
+          update itself to the new layout: reinstall it.
+        </li>
+      </ul>
+
       <h2 id="notarization">Notarization</h2>
       <p>
         Notarization is a separate step: Apple scans the signed bundle and issues a ticket that you
@@ -502,6 +541,99 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         and the AppImage leave it to the machine. There is no code-signing/notarization step on
         Linux.
       </Callout>
+      <Callout kind="note">
+        A CEF app runs its web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.10). Where
+        unprivileged user namespaces are restricted (Ubuntu 23.10+), that needs the{" "}
+        <code>chrome-sandbox</code> helper installed root-owned and setuid: the <code>.deb</code>
+        {" "}
+        and <code>.rpm</code>{" "}
+        install it with mode 4755 and every other file without group / other write or special bits.
+        A <code>.tar.gz</code> or an AppImage can&apos;t (the user unpacks it, or it mounts{" "}
+        <code>nosuid</code>), so there the runtime turns the sandbox off with a warning when it has
+        no user namespaces.
+      </Callout>
+
+      <h3 id="desktop-linux-session">What the session provides</h3>
+      <p>
+        Linux desktops differ in what they run: a tray host, a Secret Service (and whether it is
+        unlocked), a notification server, the xdg-desktop-portal interfaces. The runtime probes the
+        session itself instead of guessing from the desktop&apos;s name (
+        <code>Deno.desktop.platformFeatures()</code>, runtime 2.9.7-denext.10 and later), and denext
+        passes the facts on: <code>appCapabilities()</code> reports <code>trayHost</code>,{" "}
+        <code>trayReason</code>, <code>secretService</code>, <code>sessionType</code> and{" "}
+        <code>cookieEncryption</code>, and <code>windowCapabilities()</code> reports{" "}
+        <code>sessionType</code> and{" "}
+        <code>cookieEncryption</code>. Under an older runtime each fact reads{" "}
+        <code>"unknown"</code>. A missing feature rejects <code>unsupported</code>{" "}
+        with the reason in <code>error.data.reason</code>, never silently.
+      </p>
+      <p>
+        With the login keyring locked and no one to answer the unlock prompt (a headless or ssh
+        session), or on KDE with the wallet not open, Chromium would wait forever for its cookie
+        key. The CEF backend checks first. A profile with no cookies encrypted with the OS key
+        starts with{" "}
+        <code>--password-store=basic</code>: the app works, its cookies are stored with a fixed key
+        (obfuscated, not protected by the OS), and <code>cookieEncryption</code> reads{" "}
+        <code>"basic"</code>; the profile moves to the OS key the first time a launch can reach it.
+        A profile that already holds such cookies is never switched, since Chromium would delete
+        them: the app starts, and requests that carry a cookie wait until someone unlocks the
+        keyring or opens the wallet.
+      </p>
+      <p>
+        Linux&apos;s <code>clipboard</code>{" "}
+        works whether or not the app has focus (on Wayland too), so an app in the background reads
+        it while the session is unlocked, as on macOS and Windows: read it in response to the user.
+        While the session is locked, reads are refused (text and HTML read empty,{" "}
+        <code>clipboardFormats()</code>{" "}
+        lists nothing; writes still work). That relies on the screen locker setting logind&apos;s
+        {" "}
+        <code>LockedHint</code>, which GNOME and KDE do and many wlroots lockers don&apos;t, and
+        where logind can&apos;t be asked reads are allowed. An image read takes{" "}
+        <code>image/png</code>, <code>image/jpeg</code>, <code>image/bmp</code> or{" "}
+        <code>image/gif</code>{" "}
+        (re-encoded as PNG); another app&apos;s other image formats read as no image.
+      </p>
+      <p>
+        On the Linux WebView backend a <code>fetch</code> response body is not a byte stream:{" "}
+        <code>{`response.body.getReader({ mode: "byob" })`}</code>{" "}
+        throws. The runtime turns off WebKitGTK&apos;s byte-stream fetch source, which held a
+        streamed body&apos;s tail back until more data came
+        (<a href="https://bugs.webkit.org/show_bug.cgi?id=322545">
+          WebKit bug 322545
+        </a>), until WebKitGTK ships the fix. Default readers, <code>text()</code>,{" "}
+        <code>arrayBuffer()</code> and <code>{`new ReadableStream({ type: "bytes" })`}</code>{" "}
+        are unaffected.
+      </p>
+      <p>
+        The probe&apos;s answer can change while the app runs: when a tray host starts or goes away
+        (the GNOME AppIndicator extension enabled, say), <code>onAppCapabilitiesChanged</code> from
+        {" "}
+        <code>denext/desktop/app</code>{" "}
+        calls its handler with fresh capabilities; create the tray icon again when <code>tray</code>
+        {" "}
+        turns <code>true</code>.
+      </p>
+      <p>
+        <code>denext desktop doctor</code>{" "}
+        checks a machine before you ship to it: the pinned runtime and whether <code>deno</code>
+        {" "}
+        matches it, and on Linux (or with{" "}
+        <code>--linux</code>) the session type, the D-Bus session bus, a tray host, the Secret
+        Service and its lock state,{" "}
+        <code>secret-tool</code>, a notification server and the portal interfaces with their
+        versions; with runtime 2.9.7-denext.11, also whether the portal can register the app's id
+        (so a click on a notification starts the app when it isn't running), a systemd user manager
+        (a scheduled notification is posted while the app is closed) and a dock that reads launcher
+        badges. It reads the session bus with <code>busctl</code> or <code>gdbus</code>{" "}
+        (never starting or unlocking the keyring), prints a fix for each missing piece (the
+        AppIndicator extension,{" "}
+        <code>libsecret-tools</code>, unlocking the keyring, a portal backend), and exits 1 on an
+        error. <code>--json</code> prints the report as data.
+      </p>
+      <Code lang="bash">
+        {`denext desktop doctor          # the runtime; on Linux the session too
+denext desktop doctor --json   # the same as JSON (CI)`}
+      </Code>
 
       <h2 id="desktop-installers">Installers</h2>
       <p>
@@ -566,7 +698,8 @@ denext desktop package --target-os windows --format msi,zip`}
           {" "}
           <code>desktop.app.identifier</code>, the same one{" "}
           <code>deno desktop</code>'s own MSI uses), and uninstalling removes all of it. It is
-          Authenticode-signed with the <code>.exe</code> when <code>DENEXT_WINDOWS_CERT</code>{" "}
+          Authenticode-signed with the same certificate as the app&apos;s executables when{" "}
+          <code>DENEXT_WINDOWS_CERT</code>{" "}
           is set. Without WiX 5 (an installed WiX 6 does not count), or when <code>wix build</code>
           {" "}
           fails, the default <code>.msi</code> falls back to the <code>.zip</code> with a warning.
@@ -590,10 +723,7 @@ denext desktop package --target-os windows --format msi,zip`}
         <code>desktop.app.identifier</code> the app is{" "}
         <code>com.deno.desktop.&lt;name&gt;</code>, which also derives the MSI UpgradeCode: set your
         own before the first release, because changing it later makes the next version install
-        beside the old one instead of upgrading it. A packaging script from before denext 3.1 (no
-        {" "}
-        <code>desktopRuntimeEnv</code>) is warned about too, and does not get <code>--format</code>
-        ; <code>denext desktop package --regenerate-scripts</code> updates it.
+        beside the old one instead of upgrading it.
       </p>
       <Callout kind="note">
         The installers wrap the bundle the script <em>finished</em>, not a second{" "}
@@ -862,11 +992,23 @@ export default {
           <code>exposeClerkBridge</code>'s shape: a <code>tokenCache</code> over{" "}
           <code>secureStore</code> (keys prefixed{" "}
           <code>clerk.</code>; in memory, with a warning, when <code>secure-store</code>{" "}
-          is off) and an <code>oauthTransport</code> with{" "}
+          is off or the OS store can&apos;t answer (<code>backend_unavailable</code> or{" "}
+          <code>timeout</code>, such as a locked Linux keyring), so the session then lasts until the
+          app quits) and an <code>oauthTransport</code> with{" "}
           <code>@clerk/electron</code>'s main-process semantics: the redirect is the page origin
           plus <code>/</code>{" "}
           (<code>myapp://app/</code>), one flow at a time, 3 minutes, resolved by a callback with
           that scheme, host and path — through the custom-scheme flow above, owner check included.
+        </li>
+        <li>
+          The transport opens only Clerk's own pages: the instance's Frontend API, a Clerk domain,
+          or the authorization page of a social provider Clerk offers (Google, GitHub, Apple,
+          Microsoft, Facebook, Discord, GitLab, LinkedIn, X and the rest), each with its{" "}
+          <code>redirect_uri</code> on Clerk's{" "}
+          <code>/v1/oauth_callback</code>. Anything else is refused with the host named, so page
+          script cannot show a lookalike sign-in page in the trusted auth sheet. A custom OIDC
+          provider is added by host:{" "}
+          <code>{'installClerkDesktopBridge({ oauthHosts: ["sso.example.com"] })'}</code>.
         </li>
         <li>
           When another app handles the scheme (an Electron build of the same app, say), macOS still
@@ -881,9 +1023,11 @@ export default {
         </li>
         <li>
           Add <code>myapp://app/</code>{" "}
-          to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications), and
-          the origin <code>myapp://app</code> to its allowed origins (<code>allowed_origins</code>
-          {" "}
+          to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications; on
+          Windows and Linux the redirect also carries{" "}
+          <code>?denext_nonce=…</code>, which a development instance accepts against that entry;
+          whether a production instance does is not yet verified), and the origin{" "}
+          <code>myapp://app</code> to its allowed origins (<code>allowed_origins</code>{" "}
           through the Backend API's{" "}
           <code>PATCH /v1/instance</code>). The second is required: the window sends the client JWT
           as <code>Authorization</code> and the WebView adds{" "}
@@ -911,8 +1055,14 @@ export default {
           <code>pkce: "not-applicable"</code>: clerk-js redeems the callback's{" "}
           <code>rotating_token_nonce</code> with{" "}
           <code>signIn.reload()</code>, a request signed by this client's own client JWT on this
-          client's sign-in. Whether Clerk's servers refuse that nonce from another client cannot be
-          read from the client code, so the custom scheme is used only when this app handles it.
+          client's sign-in. On Windows and Linux, where the callback comes back as a deep link that
+          any program of the same user could also send, <code>getRedirectUrl()</code>{" "}
+          adds a fresh 256-bit <code>denext_nonce</code>{" "}
+          to the redirect URL for each sign-in, and only a callback that carries it back completes
+          the sign-in: a forged one (no nonce, another nonce, or a replay of an earlier callback) is
+          dropped, whether or not Clerk binds its own nonce to the client. The custom scheme is
+          still used only when this app handles it, since the app that receives the real callback
+          sees the nonce too. macOS needs no nonce: the OS sheet catches its own callback.
         </li>
         <li>
           <code>window.__clerk_internal_electron_passkeys</code> runs ceremonies through the{" "}
@@ -1044,6 +1194,14 @@ try {
         default Unix time does that).
       </p>
       <p>
+        <strong>The export is for this OS.</strong> A manifest that names another target (
+        <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>) is refused
+        (<code>platform_mismatch</code>); the updater sends its OS (or the updater config&apos;s
+        {" "}
+        <code>platform</code>) as <code>x-denext-ota-platform</code>, so a{" "}
+        <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
+      </p>
+      <p>
         <strong>Rollback.</strong> An applied version starts{" "}
         <em>pending</em>. The next launch serves it once and arms a boot marker; the script{" "}
         <code>runDesktop</code>{" "}
@@ -1104,29 +1262,64 @@ if (found.available) {
         </code>{" "}
         with <code>--key ota.key</code> or{" "}
         <code>DENEXT_OTA_SIGNING_KEY</code>: it writes the archive and a signed{" "}
-        <code>app-update.json</code>, adding each platform of the same version to it. Upload both.
-        The version comes from deno.json, the identifier from{" "}
-        <code>desktop.app.identifier</code>, the platform key (<code>
+        <code>app-update.json</code>, adding each platform of the same version to it (an existing
+        manifest for that version must verify against the same key first, or it refuses rather than
+        re-sign entries nobody checked). Upload both. The version comes from deno.json, the
+        identifier from <code>desktop.app.identifier</code>, the platform key (<code>
           &lt;rust target&gt;-&lt;webview|cef&gt;
         </code>, <code>-appimage</code> for an AppImage) from the artifact;{" "}
         <code>--min-version</code> marks older versions as <code>required</code>,{" "}
-        <code>--notes</code> sets the release notes.
+        <code>--notes</code>{" "}
+        sets the release notes. The artifact must have been packaged as the version you publish: it
+        reads the version compiled into the app back and refuses a mismatch (<code>
+          version_mismatch
+        </code>) before it signs.
+      </p>
+      <p>
+        <strong>Every manifest expires: re-sign it before it does.</strong> The manifest carries
+        {" "}
+        <code>expiresAt</code> and <code>sequence</code>, both signed. Installed apps refuse it from
+        {" "}
+        <code>expiresAt</code>{" "}
+        on (<code>expired</code>), so an attacker who controls the update host can&apos;t keep
+        serving an old manifest to hide a newer release. Installed apps also refuse a{" "}
+        <code>sequence</code> lower than the highest they accepted (<code>replayed</code>).{" "}
+        <code>publish-update</code>{" "}
+        sets the expiry 30 days out (<code>--expires-in &lt;days&gt;</code> or{" "}
+        <code>--expires-at &lt;RFC 3339&gt;</code>) and the sequence to the Unix time in seconds (
+        <code>--sequence &lt;n&gt;</code>). The sequence is never lower than the existing
+        manifest&apos;s, and a new release&apos;s is higher. Before the expiry, run{" "}
+        <code>denext desktop publish-update --resign</code> with the same key (and{" "}
+        <code>--out</code>). It re-signs the published <code>app-update.json</code>{" "}
+        with a fresh expiry and needs no artifact. Then upload the new file, for example from a
+        scheduled CI job that runs more often than the expiry. A manifest that is allowed to expire
+        stops every installed app from updating until you re-sign it. When the manifest already in
+        {" "}
+        <code>--out</code>{" "}
+        (one that verifies against the key) expires within 7 days, or already has,{" "}
+        <code>publish-update</code> warns and points at <code>--resign</code>.
       </p>
       <p>
         <strong>What the runtime checks before it writes anything at the install.</strong>{" "}
         The manifest&apos;s ECDSA P-256 signature against the baked key (<code>signature</code>),
         the app identifier (<code>wrong_app</code>), a version strictly newer than the running one
         (<code>downgrade</code>; the same version is simply not available), not a version that was
-        rolled back (<code>rejected</code>), this platform&apos;s entry (<code>no_platform</code>),
-        an https URL (<code>insecure_url</code>), a download that stops at the declared size (
+        rolled back (<code>rejected</code>), a manifest that has not expired (<code>expired</code>)
+        and whose <code>sequence</code> is not below the one this install accepted (
+        <code>replayed</code>), this platform&apos;s entry (<code>no_platform</code>), an https URL
+        (<code>insecure_url</code>), a download that stops at the declared size (
         <code>size_exceeded</code>) and matches its SHA-256 (<code>integrity</code>), an archive
         without traversal, escaping links or special files (<code>unsafe_archive</code>) that holds
-        this app (<code>bundle_mismatch</code>), and the operating system&apos;s code signature
-        (<code>os_signature</code>): on macOS{" "}
+        this app (<code>bundle_mismatch</code>) built as the manifest&apos;s version (
+        <code>version_mismatch</code>), and the operating system&apos;s code signature (<code>
+          os_signature
+        </code>): on macOS{" "}
         <code>codesign --verify --deep --strict</code>, the same Team ID as the running app,
         Gatekeeper (<code>spctl --assess --type execute</code>) and the same signing identifier; on
-        Windows a trusted Authenticode signature with the same signer as the running executable.
-        Linux has no OS signature; the manifest signature and the hash are the whole check there.
+        Windows a trusted Authenticode signature with the same signer as the running executable, on
+        every PE file of the update (the scaffolded <code>scripts/package-windows.ts</code>{" "}
+        signs them all). Linux has no OS signature; the manifest signature and the hash are the
+        whole check there.
       </p>
       <p>
         <strong>On macOS the update must be notarized.</strong>{" "}
@@ -1169,7 +1362,9 @@ if (found.available) {
         yourself; it is a no-op when no update is pending, so it is safe on every launch.{" "}
         <code>appUpdateStatus()</code>{" "}
         reports the running version, whether updates can run here (and why not), the update phase, a
-        version on trial, the last one rolled back and where this launch came from (<code>
+        version on trial, the last one rolled back (<code>rejectedVersions</code>{" "}
+        lists all of them), the highest manifest <code>sequence</code>{" "}
+        accepted (<code>manifestSequence</code>) and where this launch came from (<code>
           null
         </code>{" "}
         outside the pinned runtime). A refusal throws an <code>AppUpdateError</code> whose{" "}
@@ -1185,6 +1380,19 @@ if (found.available) {
         <code>unsupported_layout</code>.
       </p>
 
+      <h2 id="desktop-platform-files">Platform-specific files</h2>
+      <p>
+        A component can have a desktop file of its own: <code>BigButton.desktop.tsx</code>{" "}
+        for every desktop OS, or <code>BigButton.macos.tsx</code> / <code>.windows.tsx</code> /{" "}
+        <code>.linux.tsx</code> for one. <code>denext desktop run</code>{" "}
+        exports for the OS it runs on, and <code>denext desktop package</code>{" "}
+        for the package's target OS (a Windows package built on a Mac gets the <code>.windows</code>
+        {" "}
+        files), probing the OS, then <code>.desktop</code>, then{" "}
+        <code>.web</code>, then the plain file. See{" "}
+        <a href="/docs/platform-files">platform-specific files</a>.
+      </p>
+
       <h2 id="desktop-capabilities">Native capabilities</h2>
       <p>
         A desktop app's native side is the Deno process <code>denext/desktop</code>{" "}
@@ -1198,6 +1406,19 @@ if (found.available) {
         {`denext desktop add secure-store fs context-menu   # writes desktop.capabilities
 denext desktop add --list                          # every capability, its trust level
 denext desktop add dialogs --dry-run               # the config diff + permissions, no write`}
+      </Code>
+      <p>
+        The OS the window runs on needs no capability: <code>desktopOs()</code> from{" "}
+        <code>denext/desktop/client</code> returns <code>"darwin"</code>, <code>"windows"</code>,
+        {" "}
+        <code>"linux"</code> (Deno&apos;s <code>Deno.build.os</code>), or <code>undefined</code>
+        {" "}
+        off desktop. Read it instead of the injected <code>__denext</code> global, which is private.
+      </p>
+      <Code lang="ts">
+        {`import { desktopOs } from "denext/desktop/client";
+
+const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
       </Code>
       <p>
         <code>denext desktop add</code> splices the capability into{" "}
@@ -1217,9 +1438,12 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>--allow-run</code> / <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad
         {" "}
         <code>--allow-write</code>{" "}
-        when a capability writes) that the enabled capabilities actually need. A project scaffolded
-        before 2.11 keeps its older scripts until you refresh them —{" "}
-        <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
+        when a capability writes) that the enabled capabilities actually need. The clipboard, global
+        shortcuts, launch at login and notifications capabilities, and any{" "}
+        <code>desktop.app.deepLinks</code>{" "}
+        scheme (claiming it back from another app), need an unscoped <code>--allow-sys</code>{" "}
+        under the pinned runtime. A list of names (<code>--allow-sys=osRelease</code>) does not
+        satisfy them. <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes.
@@ -1234,7 +1458,13 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         </a>{" "}
         turns each one on, calls it from the page and asserts the result, on Linux, macOS (arm64 and
         Intel) and Windows in CI (<code>.github/workflows/desktop-window.yml</code>); a check a
-        hosted runner can't run reports why it skipped.
+        hosted runner can't run reports why it skipped. On Windows the same test also signs: it
+        creates two throwaway self-signed code-signing certificates, packages builds with one
+        through{" "}
+        <code>scripts/package-windows.ts</code>, re-signs a copy with the other, and checks the
+        signer of every PE file. On an elevated runner (CI) it trusts both certificates for the run,
+        and a full-app update signed by the other certificate is refused (
+        <code>os_signature</code>) while the same signer's installs, is confirmed and stays.
       </Callout>
       <table class="table">
         <thead>
@@ -1334,7 +1564,8 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
             </td>
             <td>
               unscoped <code>--allow-read</code> /{" "}
-              <code>--allow-write</code>, plus osascript · PowerShell · zenity/kdialog
+              <code>--allow-write</code>, plus osascript · PowerShell (macOS / Windows without the
+              runtime&apos;s panels)
             </td>
             <td>full</td>
           </tr>
@@ -1351,8 +1582,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               (the OS&apos;s own notifications, scheduled and repeating; pinned runtime, the WebView
               Notification API otherwise)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1376,8 +1609,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               {" "}
               (text, HTML and PNG images; the WebView clipboard under the stock runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1399,8 +1634,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>registerShortcut</code>, <code>unregisterShortcut</code>,{" "}
               <code>listShortcuts</code> (<code>denext/desktop/app</code>; pinned runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1411,8 +1648,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               (<code>denext/desktop/app</code>; login item · <code>Run</code>{" "}
               value · XDG autostart; pinned runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1463,16 +1702,18 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Under denext&apos;s pinned runtime, <code>dialogs</code>{" "}
         shows the OS&apos;s own panels (<code>NSOpenPanel</code> as a sheet on the window,{" "}
-        <code>IFileOpenDialog</code>, <code>GtkFileChooserNative</code>{" "}
-        — the portal under Flatpak / Snap) with the page&apos;s MIME <code>types</code>{" "}
-        as file-type filters, and <code>clipboard</code>{" "}
+        <code>IFileOpenDialog</code>; on Linux the desktop&apos;s own dialog through
+        xdg-desktop-portal&apos;s FileChooser wherever the portal offers one, else GTK&apos;s
+        chooser, as <code>platformFeatures().fileChooser</code> reports) with the page&apos;s MIME
+        {" "}
+        <code>types</code> as file-type filters, and <code>clipboard</code>{" "}
         reads and writes the OS clipboard — text, HTML (<code>
           {`readClipboard({ format: "html" })`}
         </code>, <code>{`writeClipboard({ html, text })`}</code>) and PNG images (base64,{" "}
         <code>{`{ format: "image" }`}</code> / <code>{`{ image }`}</code>), with{" "}
         <code>clipboardFormats()</code> listing what it holds. Under the stock runtime{" "}
         <code>dialogs</code>{" "}
-        drives the OS dialog programs instead (osascript · PowerShell · zenity/kdialog) and{" "}
+        drives the OS dialog programs instead on macOS and Windows (osascript · PowerShell) and{" "}
         <code>clipboard</code> answers <code>unavailable</code> so the page keeps the WebView&apos;s
         {" "}
         <code>navigator.clipboard</code>. A handle from either dialog path has the same scope. Under
@@ -1482,9 +1723,27 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         answer <code>unavailable</code>{" "}
         and the page keeps the WebView Notification API (immediate only) and its in-page menu.{" "}
         <code>dialogs</code> answers <code>unavailable</code>{" "}
-        under the stock runtime on a headless Linux with no{" "}
-        <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
+        under the stock runtime on Linux (zenity and kdialog are separate installs that differ in
+        what they offer, so denext doesn&apos;t shell out to them), so the page&apos;s{" "}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
+      </Callout>
+      <Callout kind="note">
+        <strong>The secure store on Linux.</strong> Under runtime 2.9.7-denext.12{" "}
+        <code>secure-store</code>{" "}
+        is the runtime&apos;s own: the Secret Service through libsecret, which every desktop ships.
+        It needs a Secret Service provider: GNOME Keyring, or KWallet with its Secret Service
+        enabled. When there is none, or its keyring is locked, every call rejects with{" "}
+        <code>backend_unavailable</code>{" "}
+        and a reason naming the fix: &quot;install gnome-keyring&quot;, &quot;enable KWallet&apos;s
+        Secret Service&quot; (KWallet runs but doesn&apos;t serve it), no D-Bus session bus, or a
+        locked keyring — refused at once where no one can answer the unlock prompt, else after the
+        prompt goes unanswered for 20 seconds. Older runtimes run <code>secret-tool</code>{" "}
+        instead (<code>libsecret-tools</code> on Debian / Ubuntu, <code>libsecret</code>{" "}
+        on Fedora; the <code>.deb</code> / <code>.rpm</code>{" "}
+        installers depend on it), with the same errors. It never reads as a missing value:{" "}
+        <code>get</code> returns <code>null</code>{" "}
+        only for a key that is really not there, and there is never a plaintext fallback. Items are
+        the ones <code>secret-tool</code> writes, so values stored by either path stay readable.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
@@ -1623,8 +1882,24 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
           <code>showWindow</code> / <code>hideWindow</code> / <code>focusWindow</code>.{" "}
           <code>makeWindowDraggable(element)</code> turns a toolbar into a drag region: CSS{" "}
           <code>app-region: drag</code>{" "}
-          (native on CEF) and, on the system WebView backends, the window follows the pointer.
-          Buttons, links and inputs inside it keep working.
+          (native on CEF) and, on the system WebView backends, the window follows the pointer and a
+          double click does what a double click on a title bar does for this user (maximize /
+          restore, minimize, or nothing). Buttons, links and inputs inside it keep working.
+        </li>
+        <li>
+          <strong>Title bar preferences</strong> (runtime 2.9.7-denext.12):{" "}
+          <code>getTitleBarPreferences()</code> and <code>onTitleBarPreferencesChange</code>{" "}
+          report how the user set up title bars, for a page that hides the title bar and draws its
+          own: the window buttons on each side and their order (<code>side</code>: macOS{" "}
+          <code>"left"</code>, Windows{" "}
+          <code>"right"</code>, Linux the desktop&apos;s own layout — Plasma&apos;s button order,
+          GNOME&apos;s{" "}
+          <code>button-layout</code>, read from xdg-desktop-portal before GSettings), the
+          double-click action, the colour scheme and accent colour. Windows with the OS&apos;s frame
+          already follow these settings (the compositor&apos;s own frame on KWin, Sway and X11;
+          GTK&apos;s header bar on GNOME). An older runtime answers the OS&apos;s usual layout with
+          {" "}
+          <code>source: "unknown"</code>.
         </li>
         <li>
           <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}
@@ -1697,7 +1972,8 @@ exportRow.addEventListener("dragstart", (e) => {
         gives a notification its action buttons; and a click, on the notification or a button,
         reaches <code>onLocalNotificationTapped</code> with the same <code>data.path</code> /{" "}
         <code>data.url</code>{" "}
-        routing as on a phone, including the click that launched the app (macOS, Windows).{" "}
+        routing as on a phone, including the click that launched the app (macOS, Windows, and Linux
+        from a <code>.deb</code> / <code>.rpm</code>).{" "}
         <code>requestPermission("notifications")</code> and <code>requestPushPermission()</code>
         {" "}
         report the OS setting (a refusal reads{" "}
@@ -1729,9 +2005,28 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           for longer than those 16 occurrences stops showing it until it runs again.
         </li>
         <li>
-          Linux has no notification scheduler: the app delivers a scheduled notification while it
-          runs, and one whose time passed while it was closed shows at the next launch. A click on a
-          Linux notification after the app quit does not start it.
+          On Linux, an app installed from its <code>.deb</code> / <code>.rpm</code>{" "}
+          posts through the xdg-desktop-portal: a click on a notification after the app quit starts
+          it (and reaches <code>onLocalNotificationTapped</code>{" "}
+          as the launch), and a systemd user timer posts a scheduled notification while the app is
+          closed. An AppImage or a tarball, or a session without xdg-desktop-portal 1.19+ or a
+          systemd user manager, keeps the old behaviour: the app delivers a scheduled notification
+          while it runs, one whose time passed while it was closed shows at the next launch, and a
+          click after quit does not start it. The <code>notifications</code> capability reports{" "}
+          <code>coldStart</code> / <code>schedulePersists</code>{" "}
+          with the runtime&apos;s reasons, and <code>denext desktop doctor</code>{" "}
+          checks the session. The systemd timers end with the user&apos;s systemd manager (a reboot,
+          a logout without lingering) until the app runs again, which re-creates them. On the portal
+          path the portal reports no dismissals, so a web <code>Notification</code>&apos;s{" "}
+          <code>onclose</code> never fires there.
+        </li>
+        <li>
+          Treat a click&apos;s <code>data</code>{" "}
+          (and its action) as untrusted: on Linux the click reaches the app as a D-Bus call on its
+          name, which any process of the same user can make with any{" "}
+          <code>data</code>, as a Windows toast activation can be. Validate it before acting on it
+          (the default <code>data.path</code> / <code>data.url</code>{" "}
+          navigation already applies the deep-link acceptance rules).
         </li>
         <li>
           macOS asks the user once (from an app bundle; an unbundled process has no notifications),
@@ -1851,12 +2146,23 @@ await bounce({ critical: true }); // until the app is focused`}
           AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
           <code>getBounds</code> and <code>destroy</code>{" "}
           are on the handle. A page load removes the trays the previous page created (their handlers
-          went with it), so create them at startup.
+          went with it), so create them at startup. Where no icon can be shown (a Linux session with
+          no tray host, such as stock GNOME without the AppIndicator extension),{" "}
+          <code>appCapabilities()</code> reports <code>tray: false</code> with a{" "}
+          <code>trayReason</code>, and <code>createTray</code> rejects <code>unsupported</code>{" "}
+          with that reason in{" "}
+          <code>error.data.reason</code>. A tray-only app (its window hidden) gets its window shown
+          instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
         <li>
-          <code>setBadge</code>{" "}
-          badges the Dock icon (macOS) or the taskbar button (Windows), and prefixes the window
-          title on Linux. <code>bounce</code>{" "}
+          <code>setBadge</code> badges the Dock icon (macOS), and prefixes the window titles with
+          {" "}
+          <code>"(N) "</code>{" "}
+          on Windows and Linux; with runtime 2.9.7-denext.11, a count shows on the app&apos;s
+          launcher where a dock reads launcher badges (Ubuntu&apos;s dock, Dash to Dock,
+          Plasma&apos;s task manager), and <code>appCapabilities().badgeShows</code>{" "}
+          says which (<code>"dock"</code>, <code>"launcher-entry"</code> or{" "}
+          <code>"title"</code>, with <code>badgeReason</code>). <code>bounce</code>{" "}
           bounces the Dock icon, flashes the taskbar button or marks the window urgent.
         </li>
         <li>
@@ -2131,6 +2437,14 @@ export default defineDesktopExtension({
           in the cache). macOS apps package on a Mac (codesign).
         </li>
         <li>
+          <strong>No traffic of its own.</strong> The <code>cef</code>{" "}
+          backend makes no network requests of its own (runtime 2.9.7-denext.11), so the only
+          requests a CEF window makes are the app&apos;s
+          (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
+            what it turns off
+          </a>).
+        </li>
+        <li>
           <code>denext doctor</code>{" "}
           reports the pinned runtime version, whether it is cached and verified for this machine,
           and whether <code>deno</code> is the version it needs.
@@ -2143,12 +2457,10 @@ DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local run
                                                       # unverified (runtime development)`}
       </Code>
       <p>
-        An existing project adopts the runtime with{" "}
-        <code>denext desktop package --regenerate-scripts</code> (its scripts gain the{" "}
-        <code>desktopRuntimeEnv</code> call from <code>denext/desktop</code>). The baked{" "}
-        <code>--allow-*</code>{" "}
-        of the packaged app do not change: the download happens in the packaging script, not in the
-        app.
+        The packaging script downloads the runtime (the <code>desktopRuntimeEnv</code> call from
+        {" "}
+        <code>denext/desktop</code>), not the app, so the packaged app&apos;s baked{" "}
+        <code>--allow-*</code> do not change.
       </p>
 
       <h2 id="desktop-app-origin">A stable app origin</h2>
@@ -2190,27 +2502,37 @@ export default {
           (the origin and identifier), add it to <code>compile.include</code> in{" "}
           <code>deno.json</code> (keeping your other entries), and put a{" "}
           <code>laufey-launch.json</code> in the packaged app (<code>Contents/Resources</code>{" "}
-          on macOS, next to the executable on Windows and Linux) with the app id and the origin's
-          scheme. <code>denext desktop run</code> and <code>dev</code> write the same{" "}
-          <code>app.json</code>. Run <code>denext desktop package --regenerate-scripts</code>{" "}
-          to adopt this in an older project.
+          on macOS, next to the executable on Windows and Linux) with the app id, the origin's
+          scheme and <code>"bridgeOrigins"</code>: the native JS bridge (<code>bind()</code>{" "}
+          handlers) serves the app origin only. To let another document call a binding, such as an
+          identity provider page the window navigates to, list its origin in{" "}
+          <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
+          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
+          <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}
-          <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme: the page
-          dials the loopback relay in <code>DENO_DESKTOP_WS_ORIGIN</code>{" "}
-          (<code>ws://127.0.0.1:&lt;port&gt;</code>), which admits only requests whose{" "}
-          <code>Origin</code> is the app origin.
+          <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme, so the page
+          dials the loopback relay at <code>DENO_DESKTOP_WS_URL</code>{" "}
+          (<code>ws://127.0.0.1:&lt;port&gt;/.deno-desktop-relay/&lt;token&gt;</code>). The relay
+          admits only requests that carry its per-launch token and whose <code>Origin</code>{" "}
+          is the app origin. It strips the prefix, so the server sees{" "}
+          <code>GET /your/path</code>. Child processes do not inherit the variable.
         </li>
         <li>
-          The desktop runtime hands the relay to the page as{" "}
-          <code>__denext.wsOrigin</code>. denext&apos;s Live client (<code>&lt;Live&gt;</code>,{" "}
+          The desktop runtime hands the relay URL to the app&apos;s top-level page as{" "}
+          <code>__denext.wsUrl</code>, only where the per-launch token goes, because it carries the
+          relay's token. A frame whose request says so (<code>Sec-Fetch-Dest</code>) gets neither.
+          Where the engine omits that header, the <code>Origin</code>{" "}
+          check still holds, so only a same-origin frame (one showing the app&apos;s own pages)
+          could receive it. denext&apos;s Live client (<code>&lt;Live&gt;</code>,{" "}
           <code>useLive</code>,{" "}
-          <code>usePresence</code>, channels and subscriptions) dials it on its own; for your own
-          sockets, <code>desktopWebSocketUrl(path)</code> from <code>denext/desktop/client</code>
-          {" "}
-          returns the relay URL in such a window and <code>ws(s)://&lt;host&gt;</code>{" "}
-          everywhere else (<code>desktopWsOrigin()</code> returns just the relay origin):
+          <code>usePresence</code>, channels and subscriptions) dials it on its own. For your own
+          sockets, use <code>desktopWebSocketUrl(path)</code> from{" "}
+          <code>denext/desktop/client</code>. In such a window it returns the relay URL with{" "}
+          <code>path</code> appended (a <code>/path</code> or a bare <code>?query</code>), and{" "}
+          <code>ws(s)://&lt;host&gt;</code> everywhere else. <code>desktopWsUrl()</code>{" "}
+          returns the relay URL itself.
           <Code lang="ts">
             {`import { desktopWebSocketUrl } from "denext/desktop/client";
 
@@ -2278,8 +2600,9 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
           bundles it per session (restart the session after editing it).
         </li>
         <li>
-          It is not injected into an iframe, and not under the stock runtime (loopback). It needs
-          {" "}
+          It goes only where the per-launch token goes: not into a frame whose request says so (
+          <code>Sec-Fetch-Dest</code>; where the engine omits that header, only a same-origin frame
+          could get it), and not under the stock runtime (loopback). It needs{" "}
           <a href="#desktop-runtime">denext's pinned runtime</a>.
         </li>
         <li>
@@ -2362,8 +2685,8 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         <code>x-denext-desktop-token</code>, an <code>Origin</code> exactly equal to the window's,
         {" "}
         <code>content-type: application/json</code>{" "}
-        (a foreign page cannot send that cross-origin without a preflight, which the runtime
-        refuses), and <code>POST</code>{" "}
+        (a foreign page cannot send that cross-origin without a preflight, which denext&apos;s
+        bridge refuses with a 403 and no CORS grant), and <code>POST</code>{" "}
         for calls. Then the capability allowlist, then the method's input schema. There are no
         bridge endpoints outside the desktop runtime, and off desktop the page never requests one.
       </p>
@@ -2375,17 +2698,26 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           (as <code>Deno.serve</code>{" "}
           reports it, never from the URL, which a client can forge) and carries the token; an{" "}
           <code>Origin</code>, when present, must be the app origin exactly, and a request without
-          one is accepted only over the in-process transport. A WebSocket upgrade must carry the app
-          origin, checked by the runtime's relay and again by the app. The runtime is detected at
-          startup from{" "}
+          one is accepted only over the in-process transport. A WebSocket upgrade must carry the
+          relay's per-launch token and the app origin. The runtime's relay checks both, and the app
+          checks the origin again. The runtime marks a request from another origin's document (
+          <code>x-deno-desktop-cross-origin</code>, as far as the engine reports <code>Origin</code>
+          {" "}
+          / <code>Sec-Fetch-Site</code>), and no <code>/_denext/desktop/*</code>{" "}
+          endpoint serves a marked request. The window's native JS bridge serves only the app origin
+          (<code>desktop.app.bridgeOrigins</code>{" "}
+          adds others). The runtime is detected at startup from{" "}
           <code>DENO_DESKTOP_APP_ORIGIN</code>; without it the loopback rules above apply unchanged.
         </li>
         <li>
           <strong>The token and the page.</strong>{" "}
-          The runtime injects the token into the top-level document only (never into frames), behind
-          a hash-based CSP, and strips it before anything is proxied. It is per launch and never
-          leaves the machine. But any script running in the page can read it: an XSS in your UI can
-          use every capability you enabled. Keep the strict CSP, do not load remote scripts into the
+          denext injects the token into the top-level document. A frame whose request says so (
+          <code>Sec-Fetch-Dest</code>) gets none; where the engine omits that header, the{" "}
+          <code>Origin</code>{" "}
+          check still holds, so only a same-origin frame could get it. It is injected behind a
+          hash-based CSP and stripped before anything is proxied. It is per launch and never leaves
+          the machine. But any script running in the page can read it: an XSS in your UI can use
+          every capability you enabled. Keep the strict CSP, do not load remote scripts into the
           window, and enable only what you use.
         </li>
         <li>
@@ -2398,7 +2730,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>keep-awake</code>, <code>secure-store</code>, <code>dialogs</code> — whose{" "}
           <code>osascript</code> / <code>powershell.exe</code>{" "}
           are script interpreters — and your extensions) are full trust: that program or library can
-          do anything the user can.
+          do anything the user can. The clipboard, global shortcuts, launch at login, notifications
+          and deep-link capabilities need an unscoped <code>--allow-sys</code>{" "}
+          under the pinned runtime, which also lets the app read every system-information API.
         </li>
         <li>
           <strong>Errors carry codes, not internals.</strong>{" "}
@@ -2622,9 +2956,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>.pkg</code> (unsigned without it).
         </li>
         <li>
-          <code>DENEXT_WINDOWS_CERT</code> — a code-signing <code>.pfx</code> for Authenticode (the
-          {" "}
-          <code>.exe</code> and the <code>.msi</code>); unset, nothing is signed.{" "}
+          <code>DENEXT_WINDOWS_CERT</code> — a code-signing <code>.pfx</code>{" "}
+          for Authenticode: every PE file in the bundle (the <code>.exe</code>,{" "}
+          <code>&lt;App&gt;.dll</code>,{" "}
+          <code>WebView2Loader.dll</code>, the app-local VC++ runtime, CEF&apos;s DLLs and helpers,
+          any <code>.node</code>, found by their header, third-party ones included), then the{" "}
+          <code>.msi</code>. A full-app update of a signed app is refused unless every PE file in it
+          carries the running app&apos;s signature. Unset, nothing is signed.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
           an RFC 3161 timestamp server (default DigiCert&apos;s).

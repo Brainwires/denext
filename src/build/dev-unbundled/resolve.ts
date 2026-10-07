@@ -1,9 +1,9 @@
 // Unbundled dev: specifier resolution — first-party imports to absolute paths, and every
 // import to its dev URL (`@fs`, `@dep`, `@npm`, the empty shim, or pass-through).
 
-import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { frameworkImports, readAliasPrefixes } from "../bundle.ts";
+import { frameworkImports } from "../bundle.ts";
 import {
   DENEXT_RUNTIME_FILES,
   libraryReactFile,
@@ -25,6 +25,13 @@ import {
   versionOf,
 } from "./state.ts";
 import { inNodeModules } from "../path-segments.ts";
+import {
+  type ImportAliases,
+  type Platform,
+  probePlatformSource,
+  readImportAliases,
+  resolveImportAlias,
+} from "../platform-extensions.ts";
 
 /**
  * A merged deno config (framework deps + the app's import map, absolutized) so the
@@ -50,9 +57,12 @@ export async function ensureMergedConfig(st: UnbundledState): Promise<string> {
   return p;
 }
 
-/** App import-map PREFIX aliases (`~/` → absDir), loaded once from the project config. */
-async function ensureAliases(st: UnbundledState): Promise<Array<[string, string]>> {
-  return st.aliasPrefixes ??= await readAliasPrefixes(st.opts.configPath);
+/**
+ * The app's import-map aliases (`~/` → a folder, `#button` → a file), loaded once from the
+ * project config: the same table the build's resolvers read ({@linkcode readImportAliases}).
+ */
+async function ensureAliases(st: UnbundledState): Promise<ImportAliases> {
+  return st.aliasPrefixes ??= await readImportAliases(st.opts.projectDir);
 }
 
 /** Resolve an import specifier from `importerAbs` to an absolute first-party path, or null. */
@@ -60,17 +70,33 @@ export async function resolveFirstParty(
   st: UnbundledState,
   spec: string,
   importerAbs: string,
+  platform: Platform = "web",
 ): Promise<string | null> {
-  return resolveWith(await ensureAliases(st), spec, importerAbs, probeExtensions(st));
+  return resolveWith(
+    await ensureAliases(st),
+    spec,
+    importerAbs,
+    firstPartyProbe(st, platform),
+    st.opts.projectDir,
+  );
 }
 
+/** Probe an absolute first-party base path for its file (see {@linkcode firstPartyProbe}). */
+type Probe = (base: string) => string | null;
+
 /**
- * The extensions an extensionless first-party import probes: React Native mode's `.web.*`
- * ahead of the defaults (so `./button` finds `button.web.tsx` first), else the defaults.
+ * How a first-party import probes: the target's platform files first (`./button` finds
+ * `button.web.tsx`, and an explicit `./button.tsx` takes it too), else React Native mode's
+ * `.web.*` ahead of the defaults, else the defaults.
  */
-function probeExtensions(st: UnbundledState): readonly string[] | undefined {
+export function firstPartyProbe(st: UnbundledState, platform: Platform = "web"): Probe {
+  const resolution = st.opts.resolvePlatform?.(platform);
+  if (resolution) {
+    return (base) => probePlatformSource(base, resolution, probeSourceFile, SOURCE_EXTS);
+  }
   const web = st.opts.reactNative?.platformExtensions;
-  return web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
+  const exts = web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
+  return (base) => probeSourceFile(base, exts);
 }
 
 /**
@@ -85,31 +111,35 @@ function probeExtensions(st: UnbundledState): readonly string[] | undefined {
 export async function firstPartyResolver(
   st: UnbundledState,
   importerAbs: string,
+  platform: Platform = "web",
 ): Promise<(spec: string) => string | null> {
   const aliases = await ensureAliases(st);
-  const exts = probeExtensions(st);
-  return (spec) => resolveWith(aliases, spec, importerAbs, exts);
+  const probe = firstPartyProbe(st, platform);
+  return (spec) => resolveWith(aliases, spec, importerAbs, probe, st.opts.projectDir);
 }
 
 /** {@link resolveFirstParty} against an already loaded alias table. */
 function resolveWith(
-  aliases: Array<[string, string]>,
+  aliases: ImportAliases,
   spec: string,
   importerAbs: string,
-  exts?: readonly string[],
+  probe: Probe,
+  projectDir: string,
 ): string | null {
   let hit: string | null = null;
-  // A Vite asset query (`./click.mp3?url`) names the file before it.
-  spec = spec.replace(/[?#].*$/, "");
+  // A Vite asset query (`./click.mp3?url`) names the file before it (a `#` alias key keeps
+  // its leading `#`).
+  spec = spec.replace(/(?!^)[?#].*$/, "");
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
-    hit = probeSourceFile(resolve(dirname(importerAbs), spec), exts);
+    hit = probe(resolve(dirname(importerAbs), spec));
   } else {
-    for (const [key, absDir] of aliases) {
-      if (spec === key.slice(0, -1) || spec.startsWith(key)) {
-        hit = probeSourceFile(resolve(absDir, spec.slice(key.length)), exts);
-        break;
-      }
-    }
+    // The alias first, then the target's platform file for the file it names. A folder alias
+    // (`~/`) is the app's wherever it points; a file alias (`#button`) only inside the project
+    // (`denext` mapped to a checkout is the framework, served as a dependency).
+    const exact = aliases.some(([key]) => key === spec);
+    const url = resolveImportAlias(spec, aliases) ?? resolveImportAlias(spec + "/", aliases);
+    const path = url?.startsWith("file:") ? fromFileUrl(url).replace(/[\\/]$/, "") : null;
+    if (path && (!exact || path.startsWith(resolve(projectDir) + SEPARATOR))) hit = probe(path);
   }
   return hit ? norm(hit) : null;
 }
@@ -197,7 +227,8 @@ function appAssetUrl(
   firstParty: string,
   names?: Iterable<string>,
 ): string | undefined {
-  const query = spec.match(/[?#].*$/)?.[0] ?? "";
+  // A query or hash after the path (`./click.mp3?url`); a `#` alias key's own `#` is not one.
+  const query = spec.match(/(?!^)[?#].*$/)?.[0] ?? "";
   if (!query && CODE_FILE.test(firstParty)) return undefined;
   if (st.compat || st.opts.reactNative) {
     return `${NPM_PREFIX}${noteNpm(st, firstParty + query, names)}.js`;

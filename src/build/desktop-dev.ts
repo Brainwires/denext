@@ -16,6 +16,7 @@
 // dev server or a window. The verb needs no config editing (unlike `mobile dev` there is no
 // Capacitor config to point at the server), so this is much simpler than `mobile-dev.ts`.
 
+import { desktopPlatform, withDevPlatform } from "./platform-extensions.ts";
 import { isLoopbackHost, pickLanAddress } from "./dev-server/lan.ts";
 
 /** A `denext dev` server `desktop dev` started or attached to. */
@@ -48,6 +49,8 @@ export interface DesktopDevDeps {
   readonly waitForStop: () => Promise<void>;
   /** Progress output. */
   readonly log: (line: string) => void;
+  /** The OS the window runs on (`Deno.build.os` by default): its platform files are served. */
+  readonly os?: string;
 }
 
 /** Where `desktop dev` binds the dev server and the loopback URL the window proxies to. */
@@ -129,7 +132,9 @@ export async function runDesktopDev(deps: DesktopDevDeps): Promise<void> {
   const server = await deps.startServer();
   try {
     deps.log(desktopDevBanner(server));
-    const window = await deps.spawnWindow(server.url);
+    // The window names its OS, so the dev server serves `.macos` / `.desktop` files to it.
+    const target = desktopPlatform(deps.os ?? Deno.build.os);
+    const window = await deps.spawnWindow(withDevPlatform(server.url, target));
     try {
       await Promise.race([stopped, window.finished, server.finished]);
     } finally {

@@ -10,9 +10,21 @@ const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
 /**
  * A `jsr:@denext/denext` specifier, however the import map spells it: with a version (range
  * operator included), or without one — which `deno run` resolves to the latest published
- * version, so it is a pin too.
+ * version, so it is a pin too. The version is held to a semver-range charset (letters, digits,
+ * `. - ^ ~ * < > =`): no whitespace, quotes or `; | & $` — the pin ends up in commands.
  */
-const DENEXT_SPEC = /^jsr:@denext\/denext(?:@([^/]+))?(?:\/|$)/;
+const DENEXT_SPEC = /^jsr:@denext\/denext(?:@([\w.^~<>=*-]+))?(?:\/|$)/;
+
+/** Any `jsr:@denext/denext` specifier, whatever its version holds. */
+const DENEXT_SPEC_LOOSE = /^jsr:@denext\/denext(?:@|\/|$)/;
+
+/**
+ * A CLI specifier safe to splice into a `deno task` command line (`denext mcp init`): the
+ * version may not hold `<` / `>` (the task shell's redirections) or `*` (a glob) either.
+ */
+export const DENEXT_TASK_CLI_SPEC = /^jsr:@denext\/denext(?:@[\w.^~=-]+)?\/cli$/;
+
+let warnedUnsafePin = false;
 
 /** The import-map keys a project maps denext under. */
 const DENEXT_KEYS = ["denext", "denext/", "@denext/denext"] as const;
@@ -72,7 +84,15 @@ function denextImport(imports: unknown): string | null {
   if (typeof imports !== "object" || imports === null) return null;
   for (const key of DENEXT_KEYS) {
     const spec = (imports as Record<string, unknown>)[key];
-    if (typeof spec === "string" && DENEXT_SPEC.test(spec)) return spec;
+    if (typeof spec !== "string") continue;
+    if (DENEXT_SPEC.test(spec)) return spec;
+    if (DENEXT_SPEC_LOOSE.test(spec) && !warnedUnsafePin) {
+      warnedUnsafePin = true;
+      console.warn(
+        `denext: ignoring the denext import ${JSON.stringify(spec)}: its version is not a plain ` +
+          "semver range (only letters, digits and . - ^ ~ * < > =), so it is not the project's pin",
+      );
+    }
   }
   return null;
 }

@@ -2,6 +2,7 @@
 // react→denext SSR bundles (for the loader) + client entries (into the bundle caches),
 // coalesced so a burst of requests in one generation builds once.
 
+import { platformResolution } from "../platform-extensions.ts";
 import { fromFileUrl, join } from "@std/path";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { ensureDir } from "@std/fs";
@@ -41,6 +42,8 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     optimizePackageImports: optimizePackageImportsList(st.paths.config),
     useCache: resolveCacheComponents(st.paths.config),
     cssImportMap,
+    // The web target's platform files (`.web.tsx`), server and client bundles alike.
+    appPlatform: platformResolution(st.paths.config, "web"),
     assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
   };
 }
@@ -135,6 +138,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
   await buildNextCompatClientEntries({
     ...opts,
     clientDir: clientOut,
+    server: st.compatBoundary?.server,
     entries: clientRoutes.map((r) => ({
       id: routeId(r.routePath),
       source: generateRouteEntry(r, {

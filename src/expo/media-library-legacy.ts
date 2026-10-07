@@ -8,7 +8,7 @@
  * `getAssetsAsync` lists the newest photos and videos (iOS: `uri` is a thumbnail `data:` URL, and
  * there is one page: `first` items, `hasNextPage` false). Moving, deleting and favouriting
  * assets, asset details, moments and the change listener are not provided (they reject, or never
- * fire). `denext/expo/media-library` is SDK 57's class API over the same calls.
+ * fire). `denext/expo/media-library` is SDK 58's class API over the same calls.
  *
  * @example
  * ```ts

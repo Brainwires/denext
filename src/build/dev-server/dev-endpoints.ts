@@ -39,7 +39,11 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
   // cross-site subresource GET that could otherwise reach a state-changing endpoint.
   const secFetchSite = request.headers.get("sec-fetch-site");
   if (secFetchSite) return secFetchSite === "same-origin";
-  if (!origin) return true; // curl / tests / pre-Sec-Fetch browser — no cross-origin risk
+  // Reached by a LAN / bound address, a bare client (no Sec-Fetch-Site, no Origin) is another
+  // machine on the network, not the developer's browser: the Host alone is whatever it sent, so
+  // it proves nothing. Every browser that loads the dev app over the LAN stamps Sec-Fetch-Site.
+  if (!isLoopbackDevHost(url.hostname)) return false;
+  if (!origin) return true; // curl / tests on this machine — no cross-origin risk
   let host: string;
   try {
     const u = new URL(origin);
@@ -58,13 +62,17 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
  * origin; a custom-scheme entry names no `Host` the server answers).
  */
 function devHostAllowed(hostname: string, allowed: string[]): boolean {
+  if (isLoopbackDevHost(hostname)) return true;
   const h = hostname.replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" || h === "::1") {
-    return true;
-  }
   return allowed.some((a) =>
     a === h || (!isCustomSchemeEntry(a) && a.replace(/^https?:\/\//, "").split(":")[0] === h)
   );
+}
+
+/** A loopback `Host` name (`localhost`, `*.localhost`, `127.0.0.1`, `::1`). */
+function isLoopbackDevHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "");
+  return h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" || h === "::1";
 }
 
 /** An `allowedDevOrigins` entry with a scheme other than `http(s)` (`myapp://app`). */

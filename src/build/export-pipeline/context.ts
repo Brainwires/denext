@@ -5,8 +5,11 @@ import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import type { I18nConfig } from "../../server/i18n.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { AppCss } from "../css.ts";
+import type { BoundaryManifest } from "../module-graph.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { join } from "@std/path";
 import { routeId } from "../paths.ts";
+import type { Platform } from "../platform-extensions.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 
 export interface StaticExportResult {
@@ -23,6 +26,12 @@ export interface StaticExportOptions {
   outDir?: string;
   /** i18n config; when set, each page is emitted once per locale. */
   i18n?: I18nConfig;
+  /**
+   * The target whose platform files (`BigButton.ios.tsx`) the export resolves, client and
+   * server render alike (default `web`). `denext export --platform`, `denext mobile build` and
+   * `denext desktop package` set it.
+   */
+  platform?: Platform;
 }
 
 /** Everything the export stages share for one `denext export`. */
@@ -50,10 +59,54 @@ export interface ExportContext {
   compat: boolean;
   /** next-compat: source module → compat bundle (to redirect the Flight boundary refs). */
   compatModuleMap: Map<string, string> | null;
+  /** The target the export resolves platform files for. */
+  readonly platform: Platform;
+  /**
+   * The target's platform files as file-URL redirects (the native path's `deno bundle` import
+   * map and server loader; empty when the app has none).
+   */
+  readonly platformRedirects: Record<string, string>;
+  /**
+   * The client transforms (auto-memo, qrl, AsyncContext, feature folds) by module file URL, as
+   * `denext build` computes them (empty in next-compat mode, whose esbuild bundles fold flags).
+   */
+  transforms: Record<string, string>;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
   readonly skipped: string[];
+}
+
+/**
+ * Where the export keeps its own build intermediates (the next-compat server bundle and client
+ * runtime): `.denext/export/`, apart from the `denext build` output in `.denext/` that `denext
+ * start` serves, so an export (run by the desktop and mobile package scripts) leaves that build
+ * intact.
+ *
+ * @param paths The project paths.
+ * @returns The directory.
+ */
+export function exportBuildDir(paths: ProjectPaths): string {
+  return join(paths.outDir, "export");
+}
+
+/**
+ * How the native client bundles resolve the app's modules: the CSS shims, and the target's
+ * platform files, the client transforms and an action stub per `"use server"` module in `server`
+ * (./client-imports.ts, which also reaches the ones an import-map alias names), as the build's
+ * bundles do.
+ */
+export function exportClientResolution(
+  ctx: ExportContext,
+  server: BoundaryManifest["server"],
+) {
+  return {
+    importMap: { ...ctx.css?.importMap },
+    projectDir: ctx.projectDir,
+    redirects: ctx.platformRedirects,
+    rewritten: ctx.transforms,
+    server,
+  };
 }
 
 /** The hydration script for a route, or none for a static route. */

@@ -6,8 +6,10 @@
  * throws at import, so a screen that imports `@expo/ui/jetpack-compose` builds and loads; give it a web layout
  * of its own (a `.web.tsx` file beside it) for a real web UI.
  *
- * Generated from the export list of `@expo/ui` 57.0.20, a superset of the 57.0.14 that
- * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names.
+ * Generated from the export list of `@expo/ui` 57.0.20 and brought up to the 58.0.11 that
+ * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names. A data-driven
+ * list (`LazyItems` / `LazyColumn.Items` with `data`, `keyExtractor` and a render function as
+ * `children`) renders one row per item.
  *
  * @example
  * ```ts
@@ -331,15 +333,25 @@ export const VerticalDivider: (props: StubProps) => VNode = /* @__PURE__ */ stub
 /** Stand-in for Jetpack Compose's `Host`: its children in a column. */
 export const Host: (props: StubProps) => VNode = /* @__PURE__ */ stubView(PKG, "Host", "column");
 
-/** Stand-in for Jetpack Compose's `LazyColumn`: its children in a column. */
-export const LazyColumn: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
+/**
+ * Stand-in for Jetpack Compose's `LazyItems`: a row per `data` item, laid out by the
+ * `LazyColumn` / `LazyRow` around it.
+ */
+export const LazyItems: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
   PKG,
-  "LazyColumn",
-  "column",
+  "LazyItems",
+  "children",
 );
 
-/** Stand-in for Jetpack Compose's `LazyRow`: its children in a row. */
-export const LazyRow: (props: StubProps) => VNode = /* @__PURE__ */ stubView(PKG, "LazyRow", "row");
+/** Stand-in for Jetpack Compose's `LazyColumn` (and `LazyColumn.Items`): a column. */
+export const LazyColumn: ((props: StubProps) => VNode) & {
+  Items: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "LazyColumn", "column"), { Items: LazyItems });
+
+/** Stand-in for Jetpack Compose's `LazyRow` (and `LazyRow.Items`): its children in a row. */
+export const LazyRow: ((props: StubProps) => VNode) & {
+  Items: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "LazyRow", "row"), { Items: LazyItems });
 
 /** Stand-in for Jetpack Compose's `ListItem`: its children in a column. */
 export const ListItem: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
@@ -440,11 +452,13 @@ export const CircularWavyProgressIndicator: (props: StubProps) => VNode = /* @__
 );
 
 /** Stand-in for Jetpack Compose's `VerticalSlider`: its children only. */
-export const VerticalSlider: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
-  PKG,
-  "VerticalSlider",
-  "children",
-);
+export const VerticalSlider: ((props: StubProps) => VNode) & {
+  Thumb: (props: StubProps) => VNode;
+  Track: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "VerticalSlider", "children"), {
+  Thumb: stubView(PKG, "VerticalSlider.Thumb", "children"),
+  Track: stubView(PKG, "VerticalSlider.Track", "children"),
+});
 
 /** Stand-in for Jetpack Compose's `Slider`: its children only. */
 export const Slider: (props: StubProps) => VNode = /* @__PURE__ */ stubView(

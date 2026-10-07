@@ -889,7 +889,9 @@ const EXPORT_ROUTES_CALL = "DenextExportRoutes.class";
  * named and the page gets Capacitor's script injection as before. Every other request keeps
  * Capacitor's answer, so a single-page app's client routes still load `index.html`. Live reload
  * (`server.url`) is left to the dev server, and an app that installed its own `WebViewClient`
- * keeps it (logged). Fully qualified names, as above.
+ * keeps it (logged). Fully qualified names, as above. The candidate order mirrors
+ * `EXPORT_PAGE_SUFFIXES` (export-paths.ts); tests/export-routes-conformance.test.ts compiles
+ * `exportedPage` with javac (where it exists) and runs it over the shared vectors.
  */
 const EXPORT_ROUTES = `
     /**

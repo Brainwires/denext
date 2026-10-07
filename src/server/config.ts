@@ -419,6 +419,26 @@ export interface TasksConfig {
   historyMaxRuns?: number;
 }
 
+/** The object form of {@link DenextConfig.platformExtensions}. */
+export interface PlatformExtensionsConfig {
+  /**
+   * Probe React Native's `.native` suffix after the OS one on ios and android (`.ios` →
+   * `.native` → `.mobile` → `.web`).
+   *
+   * @default false
+   */
+  native?: boolean;
+  /**
+   * In React Native mode ({@link DenextConfig.reactNative}), also probe the app's own `.ios` /
+   * `.android` files for the ios and android targets. Off by default there: in a React Native app
+   * those files are native code, which a WebView cannot run (`.mobile`, `.desktop`, the desktop
+   * OS suffixes and `.web` still apply). Outside React Native mode they are always probed.
+   *
+   * @default false
+   */
+  osFiles?: boolean;
+}
+
 /** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
 export interface ReactNativeConfig {
   /**
@@ -818,6 +838,17 @@ export interface DesktopConfig {
      * `denext desktop run` / `dev` windows (a dev window must not hand itself to an installed copy).
      */
     singleInstance?: boolean;
+    /**
+     * Documents besides the app's own whose JavaScript may reach the window's native bridge
+     * (`BrowserWindow.bind` handlers in `desktop.ts`), e.g. an identity provider's page the window
+     * navigates to: each an origin (`"https://idp.example"`), `"<scheme>://*"` (every origin of a
+     * scheme) or `"*"` (every document). Default: none — the bridge serves only the app origin
+     * (`desktop.app.origin`, `app://localhost` when unset). Written, after the app origin, to the
+     * packaged app's `laufey-launch.json` `"bridgeOrigins"`; a binding still answers such a
+     * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's pinned
+     * runtime.
+     */
+    bridgeOrigins?: string[];
   };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
@@ -1457,6 +1488,22 @@ export interface DenextConfig {
    * @default true
    */
   momentumSafeScroll?: boolean;
+  /**
+   * Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to
+   * `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package,
+   * `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The
+   * probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`;
+   * android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` →
+   * `.web`. Applies to the app's own modules (packages in `node_modules` keep their own
+   * resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and
+   * android (off by default: `.native` files are usually native code, which a WebView cannot
+   * run). In React Native mode the app's `.ios` / `.android` files are native code too, so they
+   * are not probed unless `{ osFiles: true }`. `false` turns platform files off. See
+   * {@link https://denext.dev/docs/platform-files}.
+   *
+   * @default true
+   */
+  platformExtensions?: boolean | PlatformExtensionsConfig;
   /**
    * Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors
    * (per-flavor app id, name, server URL, icon and splash). See

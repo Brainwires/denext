@@ -20,6 +20,7 @@ import { getManifest } from "./dev-server/manifest.ts";
 import { createDevState, type DevServerOptions, type DevState } from "./dev-server/state.ts";
 import { watch } from "./dev-server/watch.ts";
 import { effectiveDevOrigins } from "./dev-server/lan.ts";
+import { devSessionToken, withDevTokenGate, withDevTokenParam } from "./dev-server/dev-token.ts";
 
 export type { DevServerOptions } from "./dev-server/state.ts";
 export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
@@ -39,16 +40,17 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
     signal: options.signal,
     strict: options.strictPort,
     onListen: (info) => {
-      writeDevInfo(paths.outDir, st.allowedDevOrigins, info);
+      writeDevInfo(paths.outDir, st.allowedDevOrigins, info, options.devToken);
       if (options.onListen) options.onListen(info);
       else {
-        console.log(
-          `\n  denext dev  ▸  http://${displayHost(info.hostname)}:${info.port}\n` +
-            `  watching ${paths.appDir}\n`,
+        const url = withDevTokenParam(
+          `http://${displayHost(info.hostname)}:${info.port}`,
+          options.devToken,
         );
+        console.log(`\n  denext dev  ▸  ${url}\n  watching ${paths.appDir}\n`);
       }
     },
-  }, handler);
+  }, withDevTokenGate(handler, options.devToken));
   // Restore console and drop the stale dev-info file. Runs on drain AND on an
   // `options.signal` abort (the usual Ctrl-C stop under a controller), so `.denext/dev.json`
   // doesn't linger pointing at a dead server. Idempotent — safe to run on both paths.
@@ -81,6 +83,8 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
       ],
       given.hostname,
     ),
+    // A non-loopback bind: every request from another machine must carry the session token.
+    devToken: given.devToken ?? devSessionToken(given.hostname),
   };
   // Configure the `<Image>` runtime from `images` config (see prod-server for details).
   setImageRuntimeConfig({
@@ -99,6 +103,7 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
       onListen: options.onListen,
       strictPort: options.strictPort,
       allowedDevOrigins: options.allowedDevOrigins,
+      devToken: options.devToken,
     });
   }
   // Mark this (dev) process as a dev build so server-side render passes emit the same

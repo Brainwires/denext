@@ -137,7 +137,11 @@ The flow, in the order it happens:
    redirects to an unregistered URI) and remembers the challenge and `state` in a signed,
    `__Host-` cookie for ten minutes.
 2. The user signs in in the sheet with any provider — OAuth, password, magic link, a second
-   factor if they have one. The sign-in lands on `GET /auth/native/complete`.
+   factor if they have one. The sign-in lands on `GET /auth/native/complete`. An OAuth provider
+   that still has a session in that browser may sign the user straight back in without showing
+   a page (the same account as last time). To make it ask, set the provider's
+   `authorizationParams` — `{ prompt: "login" }`, or `{ prompt: "select_account" }` on Google
+   and other OIDC providers; it applies to every sign-in with that provider.
 3. `/native/complete` mints a **one-time code** for that session and redirects to
    `com.example.app://auth/callback?code=…&state=…`. It does so only when the user signed
    in after step 1 began; a session already sitting in the browser answers
@@ -168,7 +172,11 @@ The flow, in the order it happens:
    never slides and never sets a cookie.
 6. Before the access token expires the app rotates the refresh token:
    `POST /auth/native/token { "grant_type": "refresh_token", "refresh_token": "nrt_…" }`
-   answers a new pair. The old refresh token is spent.
+   answers a new pair. The old refresh token is spent. A refresh does not run
+   `callbacks.session` again: the session (`user`, roles and whatever else the callback added)
+   is the one minted at the code exchange, for the family's whole life. After a change the
+   callback would reflect — a role granted or taken away — end the user's native sessions with
+   `revokeAllSessions(userId)` so the app signs in again with the new claims.
 7. Sign-out is `POST /auth/native/revoke` with the refresh token in the body (or the access
    token as the bearer). It always answers `200`.
 

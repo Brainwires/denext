@@ -1,6 +1,11 @@
 // SPA mode: bundle the single entry (native `deno bundle`, or the next-compat esbuild
 // react→denext rewrite) and extract its stylesheet. Shared by build, export and dev.
 
+import {
+  type Platform,
+  platformResolution,
+  projectPlatformRedirects,
+} from "../platform-extensions.ts";
 import { join, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
 import {
@@ -166,6 +171,7 @@ async function bundleCompatSpa(
   css: AppCss | null,
   minify: boolean,
   dev: boolean,
+  platform: Platform,
 ): Promise<void> {
   const config = paths.config!;
   const spa = config.spa!;
@@ -208,6 +214,8 @@ async function bundleCompatSpa(
       spaBundlePlugins(paths.projectDir, dev, paths.config),
     ),
     platformExtensions: rn?.platformExtensions,
+    // The target's platform files (`BigButton.ios.tsx`) for the app's own modules.
+    appPlatform: platformResolution(config, platform),
     jsxInJs: rn?.jsxInJs,
   });
   // Tear the esbuild service down only for a one-shot build/export. In dev this runs on
@@ -255,6 +263,7 @@ async function bundleNativeSpa(
   css: AppCss | null | undefined,
   minify: boolean,
   dev: boolean,
+  platform: Platform,
 ): Promise<void> {
   const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev);
   // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
@@ -264,7 +273,14 @@ async function bundleNativeSpa(
     const bundle = await bundleSourceFiles(fold.seed + entrySource, {
       configPath: paths.configPath,
       minify,
-      importMap: { ...css?.importMap, ...fold.importMap, ...refresh?.importMap },
+      importMap: { ...css?.importMap },
+      // `deno bundle` cannot probe: the target's platform files are file-URL redirects (with
+      // rewritten copies of the modules that reach one through an import-map alias), pointed
+      // at the feature-folded / refresh copy of the variant when there is one. A SPA has no
+      // server, so it has no action stubs: a `"use server"` module it reaches fails the bundle.
+      projectDir: paths.projectDir,
+      redirects: await projectPlatformRedirects(paths.projectDir, paths.config, platform),
+      rewritten: { ...fold.importMap, ...refresh?.importMap },
       dev,
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
@@ -287,6 +303,7 @@ export async function bundleSpaInto(
   clientDir: string,
   minify: boolean,
   dev = false,
+  platform: Platform = "web",
 ): Promise<{ hasStyles: boolean }> {
   const spa = paths.config!.spa!;
   const cssRoots = await spaCssRoots(paths, entryPath);
@@ -329,9 +346,9 @@ export async function bundleSpaInto(
     );
   }
   if (compat) {
-    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev);
+    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform);
   } else {
-    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev);
+    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
   }
   if (!css) return { hasStyles: false };
   const text = await extractRouteCss(cssRoots, css);

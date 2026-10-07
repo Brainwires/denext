@@ -6,8 +6,11 @@ keychain, files, SQLite, device facts, keep-awake, the clipboard (text, HTML, PN
 native dialogs, the window API, drag and drop, the OS's notifications and context menu, the
 application menu, a tray icon, the Dock / taskbar badge, global shortcuts, launch at login, the
 DevTools switch, deep links and opened files, a second instance, the preload, the stable app origin,
-a Node-API addon, the bridge's gate, custom-scheme auth sessions, passkeys, the Clerk bridge and the
-full-app updater (a real update installed, left unconfirmed and rolled back).
+a Node-API addon, the bridge's gate, custom-scheme auth sessions, passkeys, the Clerk bridge, links
+between the export's pages (soft navigations, back, and a full-page load that keeps the bridge), a
+platform-specific file (`components/PlatformBadge.desktop.tsx`, imported through the `@/` alias,
+rendered and hydrated instead of the plain web file) and the full-app updater (a real update
+installed, left unconfirmed and rolled back).
 
 CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
 (`.github/workflows/desktop-window.yml`): nightly, and on pushes that touch the desktop code.
@@ -56,7 +59,8 @@ person at the screen. Nothing in the panel runs until you click.
 
 - **macOS**: a logged-in session. The clipboard checks put your clipboard text back afterwards.
 - **Linux**: a window manager (maximize is a window-manager request on X11), an unlocked Secret
-  Service for `secureStore` (`secret-tool`, from libsecret-tools) and a notification server.
+  Service for `secureStore` (the runtime reaches it through libsecret; runtimes before
+  2.9.7-denext.12 run `secret-tool`, from libsecret-tools) and a notification server.
   `e2e/linux-session.sh deno task test:window` runs it headless (Xvfb, xfwm4, a private D-Bus
   session, gnome-keyring, dunst), with `XDG_DATA_HOME` / `XDG_CONFIG_HOME` pointed at a scratch
   folder so a fresh login keyring is created there and yours is never touched.
@@ -79,6 +83,7 @@ person at the screen. Nothing in the panel runs until you click.
 | `shell`          | `moveToTrash`, `openExternal`                           | an app file goes to the trash; what the config forbids is refused                                                                                                    |
 | `dialogs`        | `windowCapabilities().fileDialogs`                      | native dialogs exist; bad arguments are refused before a panel opens                                                                                                 |
 | Window           | `denext/desktop/window`                                 | state, screens, size, min/max clamp, maximize, backdrop, a guarded close                                                                                             |
+| Title bar        | `getTitleBarPreferences` (`denext/desktop/window`)      | the user's button side and order and double-click action (macOS left, Windows right, Linux the desktop's own)                                                        |
 | Drag and drop    | `onFileDrop`, `startFileDrag`                           | the plumbing: no drag without a held button, no path escapes                                                                                                         |
 | DevTools         | `desktop.inspectable` (unset)                           | off in the packaged app                                                                                                                                              |
 | App menu         | `setAppMenu`, `onAppMenuItem` (`denext/desktop/app`)    | accelerators + roles accepted; a (synthetic) OS menu click reaches the page                                                                                          |

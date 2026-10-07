@@ -266,7 +266,7 @@ Deno.test("createOtaHandler channels: CORS preflight allows the channel headers;
     assertEquals(pre?.status, 204);
     assertEquals(
       pre?.headers.get("access-control-allow-headers"),
-      "authorization, x-denext-ota-channel, x-denext-ota-install-id",
+      "authorization, x-denext-ota-channel, x-denext-ota-install-id, x-denext-ota-platform",
     );
     const res = await ota(
       new Request("http://host/index.html", { headers: { origin: "capacitor://localhost" } }),

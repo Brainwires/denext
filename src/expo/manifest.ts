@@ -1,6 +1,6 @@
 /**
  * The `denext/expo/*` shim manifest: which `expo-*` package each shim stands in for, the
- * version its API was matched against (T3 Code's `apps/mobile`, Expo SDK 57), how complete
+ * version its API was matched against (T3 Code's `apps/mobile`, Expo SDK 58), how complete
  * it is, and what it leaves out.
  *
  * React Native mode (`reactNative` in `denext.config.ts`) aliases every package listed here
@@ -47,7 +47,7 @@ export interface ExpoShim {
 export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo": {
     module: "./expo.ts",
-    pinned: "57.0.18",
+    pinned: "58.0.2",
     status: "partial",
     notes: "registerRootComponent mounts through react-native-web's AppRegistry, so the app's " +
       "own index.ts is the web entry. requireNativeModule / requireOptionalNativeModule " +
@@ -59,12 +59,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "does nothing), and requireOptionalNativeModule returns null. " +
       "requireNativeView is a denext/mobile native view slot (`denext mobile add " +
       "native-views`; the children render where the view type is not registered). " +
-      "installOnUIRuntime does nothing (no worklets UI runtime). " +
+      "installOnUIRuntime does nothing (no worklets UI runtime). Platform is Expo's web " +
+      "build's (OS \"web\"; React Native's own Platform reports the shell); uuid.v5 is " +
+      "synchronous, as Expo's; CodedError / UnavailabilityError, createSnapshotFriendlyRef and " +
+      "useReleasingSharedObject(WithLifecycle) behave as Expo's. " +
       "`expo/fetch` resolves here too (the platform fetch).",
   },
   "expo-apple-authentication": {
     module: "./apple-authentication.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.2",
     status: "partial",
     notes: "signInAsync over denext/mobile's signInWithApple (@capgo/capacitor-social-login, " +
       "`denext mobile add social-login`); iOS only, as in Expo. The nonce is sent to Apple as its " +
@@ -75,7 +78,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-application": {
     module: "./application.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.3",
     status: "partial",
     notes: "applicationName / applicationId / nativeApplicationVersion / nativeBuildVersion over " +
       "@capacitor/app's getInfo(); Expo reads them synchronously (JSI), so in the shell they start " +
@@ -88,14 +91,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-asset": {
     module: "./asset.ts",
-    pinned: "57.0.15",
+    pinned: "58.0.10",
     status: "partial",
     omitted: ["Asset.byHash", "Asset.byUri", "Asset.fromMetadata"],
     notes: "An asset is the bundled file's URL; numeric Metro asset ids are not supported.",
   },
   "expo-audio": {
     module: "./audio.ts",
-    pinned: "57.0.4",
+    pinned: "58.0.4",
     status: "partial",
     omitted: [
       "useAudioSampleListener",
@@ -112,13 +115,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "IOSOutputFormat",
     ],
     notes: "Playback over HTMLAudioElement, recording over MediaRecorder (WebM/MP4, metering " +
-      "from a Web Audio analyser). Audio-session calls resolve without effect. Playlists and " +
+      "from a Web Audio analyser; the recorder state's fileSize counts the bytes delivered; " +
+      "fileName is ignored). Audio-session calls resolve without effect. Playlists and " +
       "PCM streams are not provided: the AudioPlaylist and AudioStream classes (and the " +
       "NativeAudioModule type) are stand-ins that throw when constructed.",
   },
   "expo-auth-session": {
     module: "./auth-session.ts",
-    pinned: "57.0.10",
+    pinned: "58.0.7",
     status: "partial",
     notes: "AuthRequest (PKCE S256), useAuthRequest / useLoadedAuthRequest / " +
       "useAuthRequestResult, discovery, the token calls and their request classes " +
@@ -128,7 +132,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-auth-session/providers/facebook": {
     module: "./auth-session-facebook.ts",
-    pinned: "57.0.10",
+    pinned: "58.0.7",
     status: "full",
     notes: "useAuthRequest over denext/expo/auth-session (implicit token flow by default). The " +
       "client id is picked by the platform the page runs on (iosClientId / androidClientId in " +
@@ -138,7 +142,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-auth-session/providers/google": {
     module: "./auth-session-google.ts",
-    pinned: "57.0.10",
+    pinned: "58.0.7",
     status: "full",
     notes:
       "useAuthRequest and useIdTokenAuthRequest over denext/expo/auth-session with PKCE. The " +
@@ -151,20 +155,20 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-blur": {
     module: "./blur.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.3",
     status: "partial",
     notes: "A CSS backdrop-filter blur with a tint overlay; system material tints map to " +
       "light/dark/default.",
   },
   "expo-build-properties": {
     module: "./build-properties.ts",
-    pinned: "57.0.15",
+    pinned: "58.0.9",
     status: "stub",
     notes: "A config plugin for native prebuild; withBuildProperties returns the config unchanged.",
   },
   "expo-camera": {
     module: "./camera.ts",
-    pinned: "57.0.4",
+    pinned: "58.0.7",
     status: "partial",
     notes: "CameraView previews the camera over getUserMedia; its ref's takePictureAsync takes " +
       "a canvas frame (a data: URL; quality, base64, scale, imageType, mirror, pictureRef, and " +
@@ -173,7 +177,11 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "URL; maxDuration, maxFileSize, mute), with toggleRecordingAsync / stopRecording. With " +
       "onBarcodeScanned it opens denext's full-screen scanner (Capacitor barcode plugin / " +
       "BarcodeDetector) instead of a preview; CameraView.launchScanner does the same and " +
-      "reports to onModernBarcodeScanned (dismissScanner does nothing). The statics " +
+      "reports to onModernBarcodeScanned (dismissScanner does nothing). onRecordingProgress " +
+      "reports the recording's duration and size every progressUpdateInterval. There is no " +
+      "document scanner: isDocumentScannerAvailable is false and scanDocumentAsync resolves " +
+      "null, as Expo's web build. getAvailableLensesAsync lists the video inputs (deviceType " +
+      '"videoinput"). The statics ' +
       "(isAvailableAsync, getAvailableVideoCodecsAsync, isModernBarcodeScannerAvailable, " +
       "ConversionTables, defaultProps) are provided. Not provided: autofocus, white balance, " +
       "picture size, videoQuality, the codec choice and EXIF written into the file. The " +
@@ -182,14 +190,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-clipboard": {
     module: "./clipboard.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.3",
     status: "partial",
     omitted: ["getImageAsync", "setImageAsync", "ClipboardPasteButton"],
     notes: "Text only; the change listener is never called (neither platform reports changes).",
   },
   "expo-constants": {
     module: "./constants.ts",
-    pinned: "57.0.16",
+    pinned: "58.0.9",
     status: "partial",
     omitted: [
       "default.deviceName",
@@ -205,7 +213,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-crypto": {
     module: "./crypto.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.4",
     status: "partial",
     omitted: ["aesEncryptAsync", "aesDecryptAsync", "AESEncryptionKey", "AESSealedData"],
     notes: "WebCrypto: SHA-1/SHA-2 digests, random bytes and UUIDs. MD2/MD4/MD5 reject. " +
@@ -213,26 +221,26 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-dev-client": {
     module: "./dev-client.ts",
-    pinned: "57.0.16",
+    pinned: "58.0.10",
     status: "stub",
     notes: "Expo's native dev launcher; the dev-menu calls do nothing (use `denext dev`).",
   },
   "expo-device": {
     module: "./device.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.5",
     status: "partial",
     notes: "The constants are synchronous in Expo (JSI); here they come from the user agent, " +
       "read once. Facts a web view cannot learn (brand, memory, build ids) are null.",
   },
   "expo-document-picker": {
     module: "./document-picker.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.4",
     status: "partial",
     notes: "One document per pick (`multiple` picks one); on the web the uri is a data: URL.",
   },
   "expo-file-system": {
     module: "./file-system.ts",
-    pinned: "57.0.6",
+    pinned: "58.0.5",
     status: "partial",
     omitted: [
       "FileHandle",
@@ -245,19 +253,22 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "Paths.parse",
       "Paths.relative",
     ],
-    notes: "SDK 57's object API (File, Directory, Paths). Expo's API is synchronous (JSI); " +
+    notes: "SDK 58's object API (File, Directory, Paths). Expo's API is synchronous (JSI); " +
       "the Capacitor bridge and OPFS are not, so sync calls act on an index kept in " +
       "localStorage and reach the files in order in the background; async readers wait for " +
-      "them, and the *Sync readers answer only for files written or read this session. Not " +
+      "them, and the *Sync readers answer only for files written or read this session. " +
+      "File.write (async since SDK 58) settles once the write is on disk; writeSync is the " +
+      "immediate form. digest() hashes with WebCrypto (MD5 rejects); canPreview() is false " +
+      "and preview() rejects, as Expo's web build. Not " +
       "provided: open()/file handles, streams, watch(), upload/download tasks and pickers " +
       "(File.pickFileAsync, Directory.pickDirectoryAsync). The legacy top-level functions " +
-      "(readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 57's root and here " +
+      "(readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 58's root and here " +
       "alike: each warns and throws Expo's migration error. The legacy API itself " +
       "(expo-file-system/legacy) is its own shim, below.",
   },
   "expo-file-system/legacy": {
     module: "./file-system-legacy.ts",
-    pinned: "57.0.6",
+    pinned: "58.0.5",
     status: "partial",
     notes: "The pre-SDK-54 promise API (documentDirectory, cacheDirectory, getInfoAsync, " +
       "readAsStringAsync, writeAsStringAsync, deleteAsync, moveAsync, copyAsync, " +
@@ -272,49 +283,53 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-font": {
     module: "./font.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.5",
     status: "partial",
     omitted: ["renderToImageAsync"],
-    notes: "The CSS Font Loading API (FontFace + document.fonts).",
+    notes: "The CSS Font Loading API (FontFace + document.fonts). SDK 58's font families " +
+      "(loadAsync / useFonts with [{ fontFamily, fontDefinitions }]) register a FontFace per " +
+      "weight / style, checked as Expo checks them (ERR_FONT_API), and unloadAsync's weight / " +
+      "style / display options remove only the matching faces.",
   },
   "expo-glass-effect": {
     module: "./glass-effect.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.3",
     status: "partial",
     notes: "Liquid Glass is native iOS 26 only: isGlassEffectAPIAvailable() and " +
       "isLiquidGlassAvailable() are false, and GlassView is a CSS backdrop-filter frost.",
   },
   "expo-haptics": {
     module: "./haptics.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.4",
     status: "partial",
     notes: "Soft/Rigid play as light/heavy; Android haptic constants play the nearest kind.",
   },
   "expo-image": {
     module: "./image.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.10",
     status: "partial",
     notes: "react-native-web's Image (or <img> layers) with contentFit / contentPosition, " +
       "BlurHash / ThumbHash sources and placeholders (decoded in JS), a cross-dissolve " +
-      "transition, blurRadius and recyclingKey. cachePolicy is best effort: disk / memory-disk " +
+      "transition (skipOnCacheHit honoured), blurRadius, recyclingKey and " +
+      "accessibilityElementsHidden (aria-hidden). cachePolicy is best effort: disk / memory-disk " +
       "read what prefetch or writeToCacheAsync stored with the Cache API, memory what loaded " +
       "this session. The statics (prefetch, loadAsync, clearMemoryCache, clearDiskCache, " +
       "getCachePathAsync, write/readFromCacheAsync, configureCache, generateBlurhashAsync / " +
       "generateThumbhashAsync on a canvas, Image.Image) and useImage / ImageRef are provided; " +
-      "configureCache's limits are not enforced. tintColor is ignored; the ref's " +
+      "configureCache's limits are not enforced. tintColor and svgVariables are ignored; the ref's " +
       "startAnimating / stopAnimating / lockResourceAsync do nothing. ImageNativeModule is a " +
       "stand-in that throws when constructed.",
   },
   "expo-image-manipulator": {
     module: "./image-manipulator.ts",
-    pinned: "57.0.17",
+    pinned: "58.0.11",
     status: "partial",
     omitted: ["useImageManipulator", "ImageManipulator"],
     notes: "manipulateAsync on a canvas; the result uri is a blob: URL.",
   },
   "expo-image-picker": {
     module: "./image-picker.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.10",
     status: "partial",
     omitted: [
       "VideoExportPreset",
@@ -327,21 +342,22 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-keep-awake": {
     module: "./keep-awake.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.3",
     status: "partial",
     notes: "The release listener is never called: the web wake lock is re-acquired on its own.",
   },
   "expo-linking": {
     module: "./linking.ts",
-    pinned: "57.0.8",
+    pinned: "58.0.10",
     status: "partial",
     notes: "createURL builds <scheme>://… in the native shell and an origin URL on the web; " +
-      "openURL takes http(s)/mailto/tel only; openSettings opens the app's settings through " +
+      "openURL takes http(s)/mailto/tel only; unwrapDevLaunchURL is Expo's own pure function; " +
+      "openSettings opens the app's settings through " +
       "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent rejects.",
   },
   "expo-local-authentication": {
     module: "./local-authentication.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.2",
     status: "partial",
     notes: "Over denext/mobile's biometrics (@aparajita/capacitor-biometric-auth, `denext mobile " +
       "add biometrics`). No web biometrics: no hardware, and authenticateAsync fails with " +
@@ -351,7 +367,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-location": {
     module: "./location.ts",
-    pinned: "57.0.20",
+    pinned: "58.0.10",
     status: "partial",
     omitted: [
       "getHeadingAsync",
@@ -380,7 +396,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-maps": {
     module: "./maps.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.4",
     status: "partial",
     notes: "AppleMaps.View and GoogleMaps.View are denext/mobile's native map view (MapKit on " +
       "iOS, osmdroid on Android: `denext mobile add native-map`): cameraPosition, markers " +
@@ -394,21 +410,24 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-media-library": {
     module: "./media-library.ts",
-    pinned: "57.0.5",
+    pinned: "58.0.5",
     status: "partial",
-    notes: "SDK 57's class API over denext/mobile's media library (@capacitor-community/media, " +
+    notes: "SDK 58's class API over denext/mobile's media library (@capacitor-community/media, " +
       "`denext mobile add media-library`) and the photos permission: Asset.create saves into " +
       "the library (a browser downloads the file), Album.create / get / getAll list and make " +
       "albums, and a Query's limit / offset / album / MEDIA_TYPE filter lists the newest assets " +
       "on iOS, newest first (other filters and sort orders are ignored). An asset knows what " +
-      "the listing reported (getUri is a thumbnail data: URL, plus its size, media type, " +
-      "creation time and duration); its other getters, deleting, moving, favouriting, " +
+      "the listing reported (getUri is a thumbnail data: URL whatever the AssetUriVersion, plus " +
+      "its size, media type, " +
+      "creation time and duration); Album.getType, Album.getAlbumsMetadata and " +
+      "Album.getSmartAlbums read the plugin's album type (iOS smart albums; Android albums are " +
+      "regular); its other getters, deleting, moving, favouriting, " +
       "exeForMetadata and presentPermissionsPicker reject, and no media subtypes are reported. " +
       "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy.",
   },
   "expo-media-library/legacy": {
     module: "./media-library-legacy.ts",
-    pinned: "57.0.5",
+    pinned: "58.0.5",
     status: "partial",
     notes: "Expo's function API over the same calls: saveToLibraryAsync / createAssetAsync save " +
       "into the library (a browser downloads the file), getAlbumsAsync / getAlbumAsync / " +
@@ -419,7 +438,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-navigation-bar": {
     module: "./navigation-bar.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.4",
     status: "partial",
     notes: "Android's navigation bar over denext/mobile's setSystemBars (Capacitor 8's " +
       "SystemBars, `denext mobile add system-bars`): setStyle (the buttons' color; auto / " +
@@ -430,14 +449,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-network": {
     module: "./network.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.3",
     status: "partial",
     notes: "getIpAddressAsync is 0.0.0.0 and isAirplaneModeEnabledAsync false (not observable " +
       "from a web view).",
   },
   "expo-notifications": {
     module: "./notifications.ts",
-    pinned: "57.0.15",
+    pinned: "58.0.11",
     status: "partial",
     omitted: [
       "getNotificationChannelGroupsAsync",
@@ -458,7 +477,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "Remote push over @capacitor/push-notifications (APNs/FCM device tokens); local " +
       "scheduling, categories and channels over @capacitor/local-notifications (`denext mobile " +
-      "add local-notifications`). getExpoPushTokenAsync rejects with " +
+      "add local-notifications`); a content's threadIdentifier groups it (the plugin's group) " +
+      'and a trigger\'s delivery "alarmClock" schedules an exact alarm (allowWhileIdle). ' +
+      "getExpoPushTokenAsync rejects with " +
       "ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE (denext has no Expo push service): send through " +
       "APNs/FCM with getDevicePushTokenAsync's device token instead. Identifiers map to the plugin's 32-bit ids by " +
       "hash; getNextTriggerDateAsync is computed in JS; categories persist in localStorage (the " +
@@ -482,7 +503,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-screen-capture": {
     module: "./screen-capture.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.5",
     status: "partial",
     notes: "Over denext/mobile's setPrivacyScreen (@capacitor/privacy-screen, `denext mobile " +
       "add privacy-screen`): preventScreenCaptureAsync blocks screenshots and recording on " +
@@ -493,7 +514,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-screen-orientation": {
     module: "./screen-orientation.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.2",
     status: "partial",
     notes: "Over denext/mobile's lockOrientation / unlockOrientation / getOrientation / " +
       "onOrientationChange (@capacitor/screen-orientation, `denext mobile add " +
@@ -504,25 +525,26 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-secure-store": {
     module: "./secure-store.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.2",
     status: "partial",
     omitted: ["getItem", "setItem"],
     notes: "The sync getItem/setItem run over JSI in Expo; the Capacitor bridge is async. " +
-      "Keychain/Keystore natively; on the web an IndexedDB store that is NOT secret. " +
-      "requireAuthentication gates reads behind denext/mobile's authenticateBiometric (`denext " +
-      "mobile add biometrics`): enforced in denext's code, not by a Keychain access control " +
-      "(the plugin has none), and unreadable on the web. Accessibility options are ignored.",
+      "Keychain/Keystore natively (or the desktop keychain); on the web an IndexedDB store that " +
+      "is NOT secret, so isAvailableAsync() is false there. requireAuthentication gates reads " +
+      "behind denext/mobile's authenticateBiometric (`denext mobile add biometrics`): enforced " +
+      "in denext's code, not by a Keychain access control (the plugin has none); without a " +
+      "secret store it is refused, never stored. Accessibility options are ignored.",
   },
   "expo-sharing": {
     module: "./sharing.ts",
-    pinned: "57.0.17",
+    pinned: "58.0.13",
     status: "partial",
     notes: "shareAsync shares web links and (through the Web Share API) files; incoming " +
       "shares need a native share extension, so the payload lists are always empty.",
   },
   "expo-sqlite": {
     module: "./sqlite.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.8",
     status: "partial",
     omitted: [
       "openDatabaseSync",
@@ -542,18 +564,18 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "sqlite`), and on the web the app's own @sqlite.org/sqlite-wasm in a worker, persisted " +
       "to OPFS through the opfs-sahpool VFS (no cross-origin isolation needed; in memory " +
       "where OPFS is unavailable). The sync API runs over JSI in Expo and is not provided " +
-      "(the *Sync methods included), nor are sessions, extensions, serializeAsync, libSQL " +
-      "sync or the kv-store / localStorage entry points.",
+      "(the *Sync methods included, interruptSync too), nor are sessions, extensions, " +
+      "serializeAsync or the kv-store / localStorage entry points.",
   },
   "expo-splash-screen": {
     module: "./splash-screen.ts",
-    pinned: "57.0.8",
+    pinned: "58.0.4",
     status: "full",
     notes: "Hold the native splash with the Capacitor plugin's launchAutoHide: false.",
   },
   "expo-status-bar": {
     module: "./status-bar.ts",
-    pinned: "57.0.1",
+    pinned: "58.0.3",
     status: "full",
     notes: "Over React Native mode's StatusBar: Capacitor 8's SystemBars in the native shell " +
       '(denext mobile add system-bars); "auto" / "inverted" follow the page\'s color scheme. ' +
@@ -561,7 +583,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-store-review": {
     module: "./store-review.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.2",
     status: "full",
     notes: "requestReview over denext/mobile's requestReview (the in-app review sheet: `denext " +
       "mobile add app-review`); isAvailableAsync is true in the shell with the plugin. " +
@@ -570,7 +592,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-symbols": {
     module: "./symbols.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.3",
     status: "partial",
     notes: "SymbolView is denext/mobile's SystemIcon: the real SF Symbol in the iOS shell " +
       "(`denext mobile add system-icons`; weight, tintColor, type and palette colors apply), " +
@@ -581,7 +603,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-tracking-transparency": {
     module: "./tracking-transparency.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.2",
     status: "full",
     notes: "App Tracking Transparency over denext/mobile's getTrackingStatus / " +
       "requestTrackingPermission (`denext mobile add tracking`: " +
@@ -593,7 +615,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-updates": {
     module: "./updates.ts",
-    pinned: "57.0.19",
+    pinned: "58.0.13",
     status: "partial",
     omitted: [
       "setUpdateURLAndRequestHeadersOverride",
@@ -614,7 +636,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-video": {
     module: "./video.ts",
-    pinned: "57.0.3",
+    pinned: "58.0.6",
     status: "partial",
     omitted: ["VideoAirPlayButton"],
     notes: "Where denext/mobile's native video view is registered (`denext mobile add " +
@@ -628,15 +650,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "expo-web-browser": {
     module: "./web-browser.ts",
-    pinned: "57.0.2",
+    pinned: "58.0.4",
     status: "partial",
     notes: "openBrowserAsync → openExternal (reports opened, no dismissal); " +
-      "openAuthSessionAsync → openAuthSession; maybeCompleteAuthSession → completeAuthSession. " +
+      "openAuthSessionAsync → openAuthSession; maybeCompleteAuthSession → completeAuthSession, " +
+      "only in the auth-session popup and on the session's redirect URL (unless " +
+      "skipRedirectCheck), as Expo checks. " +
       "The Custom Tabs warm-up calls do nothing.",
   },
   "expo-widgets": {
     module: "./widgets.ts",
-    pinned: "57.0.15",
+    pinned: "58.0.11",
     status: "partial",
     notes: "Over denext/mobile's widgets and Live Activities (`denext mobile add widget` / " +
       '`live-activity`): the UI is the generated SwiftUI, not the "widget" layout function, ' +
@@ -646,11 +670,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "at once (getId() is empty until ActivityKit has started it); getInstances refreshes " +
       "from ActivityKit in the background; push and push-to-start token listeners are live. " +
       "The start url and stale dates are ignored, addUserInteractionListener never fires, and " +
-      "widgetsDirectory is empty. On the web the updates do nothing and start throws.",
+      "widgetsDirectory is empty. createWidget's initialProps are what getTimeline reports " +
+      "before the first update (not written natively, so a stored snapshot is kept); " +
+      "setConfigurationParameterEnum does nothing (a configurable widget's options are built " +
+      "into the extension). On the web the updates do nothing and start throws.",
   },
   "@expo/ui/community/datetime-picker": {
     module: "./ui-community-datetime-picker.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "partial",
     notes: "React Native mode's DateTimePicker (also @react-native-community/datetimepicker's): " +
       "an <input type=date|time|datetime-local> with onChange / onValueChange / onDismiss, " +
@@ -660,7 +687,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "@expo/ui/community/masked-view": {
     module: "./ui-community-masked-view.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "partial",
     notes: "React Native mode's MaskedView (also @react-native-masked-view/masked-view's): a " +
       "LinearGradient mask becomes a CSS mask-image and a Text mask over a LinearGradient " +
@@ -669,7 +696,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "@expo/ui/community/menu": {
     module: "./ui-community-menu.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "partial",
     notes: "React Native mode's MenuView (also @react-native-menu/menu's): the actions open " +
       "through denext/mobile's showContextMenu on a tap, or a long press / right click with " +
@@ -679,7 +706,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "@expo/ui/community/pager-view": {
     module: "./ui-community-pager-view.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "partial",
     notes: "React Native mode's PagerView (also react-native-pager-view's): a CSS scroll-snap " +
       "pager with its events and ref methods (@expo/ui's own web build throws when it " +
@@ -687,32 +714,36 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   },
   "@expo/ui/jetpack-compose": {
     module: "./ui-jetpack-compose.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "stub",
     notes: "Jetpack Compose views are native Android UI: every component renders its children " +
       "with web layout (Column / Row as flex boxes, Text as text, the buttons as a <button> " +
       "calling onPress) and warns once; importing never throws. useNativeState is a plain " +
       "holder, getMaterialColors / useMaterialColors return {}, isDynamicColorAvailable is " +
-      "false. Give the screen a .web.tsx layout for a real web UI.",
+      "false. A data-driven list (LazyItems / LazyColumn.Items with data, keyExtractor and a " +
+      "render function as children) renders a row per item. Give the screen a .web.tsx layout " +
+      "for a real web UI.",
   },
   "@expo/ui/jetpack-compose/modifiers": {
     module: "./ui-jetpack-compose-modifiers.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "stub",
     notes: "Each modifier returns an inert { $type, $args } config that nothing applies.",
   },
   "@expo/ui/swift-ui": {
     module: "./ui-swift-ui.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "stub",
     notes: "SwiftUI views are native iOS UI: every component renders its children with web " +
       "layout (VStack / HStack as flex boxes, Text as text, Button as a <button> calling " +
       "onPress) and warns once; importing never throws. withAnimation runs its body at once; " +
-      "useNativeState is a plain holder. Give the screen a .web.tsx layout for a real web UI.",
+      "useNativeState is a plain holder. A data-driven list (List.ForEach / ListForEach, " +
+      "LazyVStack.ForEach, LazyHStack.ForEach with data, keyExtractor and a render function as " +
+      "children) renders a row per item. Give the screen a .web.tsx layout for a real web UI.",
   },
   "@expo/ui/swift-ui/modifiers": {
     module: "./ui-swift-ui-modifiers.ts",
-    pinned: "57.0.14",
+    pinned: "58.0.11",
     status: "stub",
     notes: "Each modifier returns an inert { $type, $args } config that nothing applies " +
       "(Animation presets included).",

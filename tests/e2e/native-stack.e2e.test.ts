@@ -8,8 +8,9 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { buildAndServe, launchBrowser, pollFor } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const FIXTURE = new URL("./fixtures/native-stack", import.meta.url).pathname;
+const FIXTURE = fromFileUrl(new URL("./fixtures/native-stack", import.meta.url));
 
 /** Fire a touch-type pointer event on the stack container. */
 const pointer = (type: string, x: number, y: number) =>

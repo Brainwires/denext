@@ -23,6 +23,7 @@ export const SPEC_REWRITE: Record<string, string> = {
   "react-dom/server": "denext/react-dom/server",
   "react/jsx-runtime": "denext/jsx-runtime",
   "react/jsx-dev-runtime": "denext/jsx-dev-runtime",
+  "react/compiler-runtime": "denext/compiler-runtime",
   "react-is": "denext/react-is",
   // next/navigation's whole surface (redirect/notFound + the client hooks) is on
   // the denext main entry.
@@ -499,7 +500,8 @@ async function collectSources(dir: string): Promise<string[]> {
     for (const e of entries) {
       if (e.isDirectory) {
         if (!SKIP_DIRS.has(e.name)) await walk(join(d, e.name));
-      } else if (SOURCE_EXT.test(e.name)) {
+      } else if (e.isFile && SOURCE_EXT.test(e.name)) {
+        // A symlink is not followed: it could point at (and get rewritten) a file outside.
         out.push(join(d, e.name));
       }
     }

@@ -14,6 +14,7 @@
 
 import { join } from "@std/path";
 import { readJson, setJsonValue } from "./json-edit.ts";
+import { DENEXT_TASK_CLI_SPEC } from "../cli/self-exec.ts";
 
 /** The MCP clients a project-level config can be written for. */
 export const MCP_CLIENTS = ["claude", "vscode", "cursor", "gemini", "codex"] as const;
@@ -213,6 +214,13 @@ export async function addMcp(
   cli: string,
   options: AddMcpOptions = {},
 ): Promise<AddMcpResult> {
+  // The specifier is spliced into a `deno task` command line: never anything but denext's CLI.
+  if (!DENEXT_TASK_CLI_SPEC.test(cli)) {
+    throw new Error(
+      `refusing the MCP task's CLI ${JSON.stringify(cli)}: expected ` +
+        "jsr:@denext/denext[@<version or ^ / ~ range>]/cli",
+    );
+  }
   const result: AddMcpResult = { written: [], skipped: [], errors: [], warnings: [] };
   const denoConfig = await denoJsonName(dir);
   const taskOk = await addMcpTask(

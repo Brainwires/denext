@@ -365,15 +365,33 @@ Deno.test("completeAuthSession: posts this URL to the opener for this origin onl
     },
     location: { origin: ORIGIN, href: CALLBACK },
     close: () => void closed++,
+    name: "denext-auth-session",
   }, () => {
     assert(completeAuthSession());
     assertEquals(posted, [[{ type: "denext:auth-callback", url: CALLBACK }, ORIGIN]]);
     assertEquals(closed, 1);
   });
+  // Any other window this page loads in (another popup, a tab some page opened) hands nothing
+  // to its opener: the URL carries the authorization code.
+  for (const name of ["", "other", undefined]) {
+    await withGlobals({
+      opener: {
+        postMessage: (message: unknown, target: string) => void posted.push([message, target]),
+      },
+      location: { origin: ORIGIN, href: CALLBACK },
+      close: () => void closed++,
+      name,
+    }, () => {
+      assertEquals(completeAuthSession(), false, String(name));
+    });
+  }
+  assertEquals(posted.length, 1, "nothing posted outside the auth-session popup");
+  assertEquals(closed, 1);
   await withGlobals({
     opener: null,
     location: { origin: ORIGIN, href: CALLBACK },
     close: () => void closed++,
+    name: "denext-auth-session",
   }, () => {
     assertEquals(completeAuthSession(), false);
     assertEquals(closed, 1);

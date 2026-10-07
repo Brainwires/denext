@@ -11,8 +11,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { buildAndServe, launchBrowser, openClients, pollFor, waitForAll } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/live", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/live", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/live syncs count, presence, channel and subscription across tabs",

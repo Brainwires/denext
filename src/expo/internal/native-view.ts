@@ -64,7 +64,25 @@ function buttonLabel(props: StubProps): unknown {
 }
 
 /**
- * A stand-in for a native view: renders by `layout` and warns once on first render.
+ * The rows of a data-driven list (`ListForEach`, `LazyVStack.ForEach`, `LazyColumn.Items`, …):
+ * `children({ item, index })` for each of `data`, keyed by `keyExtractor`. Undefined when
+ * `props` is not one (no `data` array, or `children` is not a function).
+ */
+function dataRows(props: StubProps): VNode[] | undefined {
+  if (!Array.isArray(props.data) || typeof props.children !== "function") return undefined;
+  const render = props.children as (info: { item: unknown; index: number }) => unknown;
+  const keyOf = typeof props.keyExtractor === "function"
+    ? props.keyExtractor as (item: unknown, index: number) => string
+    : (_item: unknown, index: number) => String(index);
+  return props.data.map((item: unknown, index: number) =>
+    h(Fragment, { key: keyOf(item, index) }, render({ item, index }) as never)
+  );
+}
+
+/**
+ * A stand-in for a native view: renders by `layout` and warns once on first render. A
+ * data-driven list (`data` plus a render function as `children`, with `keyExtractor`) renders
+ * one row per item.
  *
  * @param pkg The package, for the warning.
  * @param name The view's export name.
@@ -78,7 +96,7 @@ export function stubView(
 ): (props: StubProps) => VNode {
   const Stub = (props: StubProps): VNode => {
     warnNativeView(pkg, name, "denext renders its children with web layout instead.");
-    const children = props.children as never;
+    const children = (dataRows(props) ?? props.children) as never;
     if (layout === "text") return h("span", { style: props.style as never }, children);
     if (layout === "button") {
       const onPress = (props.onPress ?? props.onClick) as (() => void) | undefined;

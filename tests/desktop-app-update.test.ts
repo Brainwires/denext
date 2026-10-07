@@ -15,21 +15,32 @@ import {
 } from "@std/assert";
 import { join } from "@std/path";
 import {
+  APP_UPDATE_EXPIRY_WARNING_DAYS,
   APP_UPDATE_MANIFEST_FILE,
+  appUpdateExpiryWarning,
   type AppUpdatePayload,
   appUpdatePlatformKey,
   isAppUpdatePlatform,
   isAppUpdateVersion,
   macNotarizationWarning,
   type NotarizationCommandRunner,
+  parseRfc3339,
   publishAppUpdate,
+  resignAppUpdate,
+  resolveFreshness,
   signAppUpdatePayload,
   validateAppUpdatePayload,
   verifyAppUpdateEnvelope,
   writeAppUpdateArchive,
 } from "../src/build/app-update.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
-import { generateOtaKeyPair, importOtaSigningKey } from "../src/build/ota-signing.ts";
+import { checkArtifactVersion, readEmbeddedAppMetadata } from "../src/build/app-update-version.ts";
+import { buildAs, library, metadata } from "./_app-update-helpers.ts";
+import {
+  generateOtaKeyPair,
+  importOtaSigningKey,
+  otaPublicKeyOf,
+} from "../src/build/ota-signing.ts";
 import {
   DESKTOP_APP_CONFIG_FILE,
   syncDesktopAppConfigAt,
@@ -66,6 +77,8 @@ function payload(over: Partial<AppUpdatePayload> = {}): AppUpdatePayload {
       },
     },
     publishedAt: "2026-10-01T00:00:00Z",
+    expiresAt: "2026-10-15T00:00:00Z",
+    sequence: 1790812800,
     ...over,
   };
 }
@@ -181,6 +194,8 @@ Deno.test("manifest: the cross-language vector (also verified by the runtime's R
   const pub = await Deno.readTextFile(new URL("webcrypto_vector.pub", VECTOR));
   const p = await verifyAppUpdateEnvelope(env, pub);
   assertEquals(p.app, "com.example.vector");
+  assertEquals(p.expiresAt, "2026-10-15T00:00:00.000Z");
+  assertEquals(p.sequence, 1790812800);
   assertEquals(p.platforms["x86_64-unknown-linux-gnu-webview"].size, 4242);
 });
 
@@ -237,6 +252,15 @@ Deno.test("manifest: publishing refuses what every installed app would refuse", 
     ["minVersion 1.0 is not a semver", payload({ minVersion: "1.0" })],
     ["publishedAt is required", payload({ publishedAt: "" })],
     ["publishedAt is required", payload({ publishedAt: "x".repeat(65) })],
+    // The freshness fields every installed app requires (a manifest without them is malformed).
+    ["is not an RFC 3339 timestamp", payload({ expiresAt: undefined as unknown as string })],
+    ["is not an RFC 3339 timestamp", payload({ expiresAt: "2026-10-15" })],
+    ["is not an RFC 3339 timestamp", payload({ expiresAt: 1790812800 as unknown as string })],
+    ["sequence must be an integer", payload({ sequence: undefined as unknown as number })],
+    ["sequence must be an integer", payload({ sequence: -1 })],
+    ["sequence must be an integer", payload({ sequence: 1.5 })],
+    ["sequence must be an integer", payload({ sequence: 2 ** 53 })],
+    ["sequence must be an integer", payload({ sequence: "1" as unknown as number })],
     ['kind must be "bundle"', entry({ kind: "delta" as "bundle" })],
     ["bad size", entry({ size: 0 })],
     ["bad size", entry({ size: 1.5 })],
@@ -290,7 +314,7 @@ Deno.test("publishAppUpdate: signed manifest + archive; another platform of the 
   const { key, publicKey } = await keys();
   const dir = await Deno.makeTempDir();
   try {
-    const app = await fakeApp(dir, "App.app");
+    const app = await buildAs(await fakeApp(dir, "App.app"), "2.0.0");
     const out = join(dir, "updates");
     const common = {
       app: "com.example.app",
@@ -330,7 +354,10 @@ Deno.test("publishAppUpdate: signed manifest + archive; another platform of the 
     );
     assertEquals(p2.minVersion, "1.5.0");
     assertEquals(p2.releaseNotes, "notes");
+    // Re-signing the same release never lowers its sequence.
+    assert(p2.sequence >= p1.sequence);
     // A new release replaces the platform list.
+    await buildAs(app, "2.1.0");
     const c = await publishAppUpdate({
       ...common,
       artifact: app,
@@ -350,6 +377,86 @@ Deno.test("publishAppUpdate: signed manifest + archive; another platform of the 
         }),
       Error,
       "https",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("otaPublicKeyOf: the public half of an imported signing key", async () => {
+  const { key, publicKey } = await keys();
+  assertEquals(await otaPublicKeyOf(key), publicKey);
+});
+
+Deno.test("publishAppUpdate: an existing same-release manifest merges only when it verifies against the signing key", async () => {
+  const { key } = await keys();
+  const other = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const app = await buildAs(await fakeApp(dir, "App.app"), "2.0.0");
+    const out = join(dir, "updates");
+    const manifest = join(out, APP_UPDATE_MANIFEST_FILE);
+    await Deno.mkdir(out, { recursive: true });
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: out,
+      key,
+      artifact: app,
+      version: "2.0.0",
+      platform: "x86_64-apple-darwin-webview",
+    };
+    const evil = payload({
+      platforms: {
+        "aarch64-apple-darwin-webview": {
+          url: "https://evil.example.com/a.tar.gz",
+          sha256: "b".repeat(64),
+          size: 10,
+          kind: "bundle",
+        },
+      },
+    });
+    const refuses = async (text: string) => {
+      await Deno.writeTextFile(manifest, text);
+      await assertRejects(() => publishAppUpdate(common), Error, "refusing to merge");
+      assertEquals(await Deno.readTextFile(manifest), text, "the manifest was rewritten");
+    };
+    // Unsigned, signed with another key, and tampered after signing: all refused, file untouched.
+    await refuses(JSON.stringify({ signed: JSON.stringify(evil), signature: "" }));
+    await refuses(JSON.stringify(await signAppUpdatePayload(evil, other.key)));
+    const genuine = await signAppUpdatePayload(payload(), key);
+    await refuses(JSON.stringify({ ...genuine, signed: JSON.stringify(evil) }));
+    // Not a manifest at all.
+    await Deno.writeTextFile(manifest, "not json");
+    await assertRejects(() => publishAppUpdate(common), Error, "not an app-update manifest");
+    // A key that can't be exported can't verify, so it can't merge either.
+    const sealed = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"],
+    );
+    await Deno.writeTextFile(manifest, JSON.stringify(genuine));
+    await assertRejects(
+      () => publishAppUpdate({ ...common, key: sealed.privateKey }),
+      Error,
+      "not extractable",
+    );
+    // Another release signed with another key is replaced, nothing of it carried over.
+    await Deno.writeTextFile(
+      manifest,
+      JSON.stringify(await signAppUpdatePayload(payload({ version: "1.0.0" }), other.key)),
+    );
+    const replaced = await publishAppUpdate(common);
+    assertEquals(replaced.platforms, ["x86_64-apple-darwin-webview"]);
+    // The genuine same-release manifest merges.
+    await Deno.writeTextFile(manifest, JSON.stringify(genuine));
+    const merged = await publishAppUpdate(common);
+    assertEquals(
+      merged.platforms,
+      [
+        ...Object.keys(payload().platforms),
+        "x86_64-apple-darwin-webview",
+      ].sort(),
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -447,6 +554,10 @@ Deno.test("wrappers: runtime refusals surface as AppUpdateError with the runtime
       "size_exceeded",
       "os_signature",
       "install_not_writable",
+      // denext.9: an expired or replayed manifest, a staged app built as another version.
+      "expired",
+      "replayed",
+      "version_mismatch",
     ]
   ) {
     await withRuntime({
@@ -520,6 +631,8 @@ Deno.test("wrappers: download stages with the dev opt-out only when asked, and f
         releaseNotes: null,
         publishedAt: "t",
         size: 5,
+        sequence: 1790812800,
+        expiresAt: "2026-10-15T00:00:00Z",
       });
     },
     download: (...a) => {
@@ -544,6 +657,8 @@ Deno.test("wrappers: download stages with the dev opt-out only when asked, and f
     };
     const check = await checkForAppUpdate(config);
     assertEquals(check.required, true);
+    // The manifest's freshness fields ride along.
+    assertEquals([check.sequence, check.expiresAt], [1790812800, "2026-10-15T00:00:00Z"]);
     const staged = await downloadAppUpdate(config);
     assertEquals(staged, { version: "2.0.0", signatureMode: "team", signer: "TEAM1" });
     await downloadAppUpdate({ ...config, allowUnsignedDev: true });
@@ -581,6 +696,8 @@ Deno.test("wrappers: progress, signal and timeout are forwarded only when given"
   }, async () => {
     const check = await checkForAppUpdate({ manifestUrl: "https://x/a.json", timeoutMs: 0 });
     assertEquals(check.available, false);
+    // Nothing available (or a runtime without the fields): null, never undefined.
+    assertEquals([check.sequence, check.expiresAt], [null, null]);
     await downloadAppUpdate({ manifestUrl: "https://x/a.json" }, { onProgress, signal });
     // A refusing app reports quitting: false; without `force` the runtime gets no force flag.
     assertEquals(installAppUpdateAndRelaunch(), { quitting: false });
@@ -601,7 +718,14 @@ Deno.test("wrappers: install / confirm / stage failures rethrow as AppUpdateErro
       // Not an Error and no code: the message is the stringified value, the code `io`.
       throw "disk on fire";
     },
-    status: () => ({ configured: true, reason: null, version: "2.0.0", trial: true }),
+    status: () => ({
+      configured: true,
+      reason: null,
+      version: "2.0.0",
+      trial: true,
+      rejectedVersions: ["1.9.0", "1.9.1"],
+      manifestSequence: 1790812800,
+    }),
   }, async () => {
     const staged = await assertRejects(
       () => downloadAppUpdate({ manifestUrl: "https://x/a.json" }),
@@ -616,6 +740,8 @@ Deno.test("wrappers: install / confirm / stage failures rethrow as AppUpdateErro
     assertEquals(confirm.message, "disk on fire");
     assertEquals(appUpdateStatus()?.version, "2.0.0");
     assertEquals(appUpdateStatus()?.trial, true);
+    assertEquals(appUpdateStatus()?.rejectedVersions, ["1.9.0", "1.9.1"]);
+    assertEquals(appUpdateStatus()?.manifestSequence, 1790812800);
   });
   // A runtime whose status() answers nothing is reported as null, never undefined.
   await withRuntime({ status: () => undefined }, () => {
@@ -695,5 +821,353 @@ Deno.test("publish-update notarization: no spctl on this host is a softer warnin
     const s = stubSpctl({ success: false });
     assertEquals(await macNotarizationWarning(artifact, s.run), null);
     assertEquals(s.calls.length, 0);
+  }
+});
+
+Deno.test("parseRfc3339: the runtime's grammar (Z or ±HH:MM, a real date, 20..64 chars)", () => {
+  assertEquals(parseRfc3339("2026-10-01T00:00:00Z"), Date.UTC(2026, 9, 1));
+  assertEquals(parseRfc3339("2026-10-01T00:00:01.000Z"), Date.UTC(2026, 9, 1, 0, 0, 1));
+  assertEquals(parseRfc3339("2026-10-01T02:00:00+02:00"), Date.UTC(2026, 9, 1));
+  assertEquals(parseRfc3339("2026-09-30T22:00:00-02:00"), Date.UTC(2026, 9, 1));
+  assertEquals(parseRfc3339("2024-02-29T00:00:00Z"), Date.UTC(2024, 1, 29));
+  assertEquals(parseRfc3339(new Date(Date.UTC(2030, 0, 2)).toISOString()), Date.UTC(2030, 0, 2));
+  for (
+    const bad of [
+      "",
+      "2026-10-01",
+      "2026-10-01 00:00:00Z", // a space for T
+      "2026-10-01T00:00:00", // no zone
+      "2026-10-01T00:00:00z",
+      "2026-10-01T00:00:00.Z", // an empty fraction
+      "2026-10-01T00:00:00+0200",
+      "2026-10-01T00:00:00+24:00",
+      "2026-13-01T00:00:00Z",
+      "2026-02-29T00:00:00Z", // not a leap year
+      "2026-04-31T00:00:00Z",
+      "2026-10-01T24:00:00Z",
+      "2026-10-01T00:60:00Z",
+      "2026-10-01T00:00:61Z",
+      `2026-10-01T00:00:00.${"1".repeat(50)}Z`, // longer than 64
+    ]
+  ) {
+    assertEquals(parseRfc3339(bad), null, bad);
+  }
+});
+
+Deno.test("resolveFreshness: 30 days and the Unix seconds by default, never below the floor", () => {
+  const now = new Date(Date.UTC(2026, 9, 4, 12, 0, 0, 500));
+  const secs = Math.floor(now.getTime() / 1000);
+  assertEquals(resolveFreshness({ now }, null), {
+    expiresAt: "2026-11-03T12:00:00.500Z",
+    sequence: secs,
+  });
+  // The existing manifest's sequence is a floor (a clock that went back, an explicit higher one).
+  assertEquals(resolveFreshness({ now }, secs + 100).sequence, secs + 100);
+  assertEquals(resolveFreshness({ now }, 5).sequence, secs);
+  assertEquals(
+    resolveFreshness({ now, expiresInDays: 1 }, null).expiresAt,
+    "2026-10-05T12:00:00.500Z",
+  );
+  assertEquals(
+    resolveFreshness({ now, expiresAt: "2026-12-01T00:00:00Z", sequence: 7 }, 7),
+    { expiresAt: "2026-12-01T00:00:00Z", sequence: 7 },
+  );
+  const refuses: Array<[Parameters<typeof resolveFreshness>[0], number | null, string]> = [
+    [{ now, expiresAt: "2026-12-01", expiresInDays: 3 }, null, "not both"],
+    [{ now, expiresAt: "tomorrow" }, null, "not an RFC 3339 timestamp"],
+    [{ now, expiresAt: "2026-10-04T12:00:00Z" }, null, "not in the future"],
+    [{ now, expiresInDays: 0 }, null, "0 < days <= 3650"],
+    [{ now, expiresInDays: Number.NaN }, null, "0 < days <= 3650"],
+    [{ now, expiresInDays: 3651 }, null, "0 < days <= 3650"],
+    [{ now, sequence: -1 }, null, "sequence must be an integer"],
+    [{ now, sequence: 1.5 }, null, "sequence must be an integer"],
+    [{ now, sequence: 2 ** 53 }, null, "sequence must be an integer"],
+    [{ now, sequence: 9 }, 10, "below 10"],
+  ];
+  for (const [o, floor, message] of refuses) {
+    assertThrows(() => resolveFreshness(o, floor), Error, message);
+  }
+});
+
+Deno.test("publishAppUpdate: the sequence only grows across releases; an explicit lower one is refused", async () => {
+  const { key, publicKey } = await keys();
+  const other = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const app = await buildAs(await fakeApp(dir, "App.app"), "2.0.0");
+    const out = join(dir, "updates");
+    const manifest = join(out, APP_UPDATE_MANIFEST_FILE);
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: out,
+      key,
+      artifact: app,
+      platform: "x86_64-apple-darwin-webview",
+    };
+    const now = new Date(Date.UTC(2026, 9, 4));
+    const read = async () =>
+      await verifyAppUpdateEnvelope(JSON.parse(await Deno.readTextFile(manifest)), publicKey);
+    const first = await publishAppUpdate({ ...common, version: "2.0.0", now, sequence: 5e9 });
+    assertEquals(first.sequence, 5e9);
+    assertEquals(first.expiresAt, "2026-11-03T00:00:00.000Z");
+    assertEquals((await read()).sequence, 5e9);
+    // The next release is above the previous one even though the clock is lower.
+    await buildAs(app, "2.1.0");
+    const second = await publishAppUpdate({ ...common, version: "2.1.0", now });
+    assertEquals(second.sequence, 5e9 + 1);
+    // Another platform of the same release keeps (at least) its sequence.
+    const third = await publishAppUpdate({
+      ...common,
+      version: "2.1.0",
+      now,
+      platform: "aarch64-apple-darwin-webview",
+    });
+    assertEquals(third.sequence, 5e9 + 1);
+    // An explicit sequence below the published one would be refused by every install that saw it.
+    await buildAs(app, "2.2.0");
+    await assertRejects(
+      () => publishAppUpdate({ ...common, version: "2.2.0", now, sequence: 1 }),
+      Error,
+      "replayed",
+    );
+    assertEquals((await read()).version, "2.1.0", "nothing was written");
+    // A previous manifest that does not verify (another key) is replaced, its sequence ignored.
+    await Deno.writeTextFile(
+      manifest,
+      JSON.stringify(await signAppUpdatePayload(payload({ sequence: 9e15 }), other.key)),
+    );
+    const fresh = await publishAppUpdate({ ...common, version: "2.2.0", now });
+    assertEquals(fresh.sequence, Math.floor(now.getTime() / 1000));
+    // A custom expiry.
+    const custom = await publishAppUpdate({ ...common, version: "2.2.0", now, expiresInDays: 7 });
+    assertEquals(custom.expiresAt, "2026-10-11T00:00:00.000Z");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("publishAppUpdate: the artifact must have been built as the version published", async () => {
+  const { key } = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const app = await buildAs(await fakeApp(dir, "App.app"), "2.0.0");
+    const out = join(dir, "updates");
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: out,
+      key,
+      artifact: app,
+      platform: "x86_64-apple-darwin-webview",
+    };
+    await assertRejects(
+      () => publishAppUpdate({ ...common, version: "2.0.1" }),
+      Error,
+      "version_mismatch: ",
+    );
+    // Nothing was packed or signed.
+    await assertRejects(() => Deno.stat(out));
+    // Build metadata is not part of the version's precedence.
+    const ok = await publishAppUpdate({ ...common, version: "2.0.0+build.7" });
+    assertEquals(ok.platform, "x86_64-apple-darwin-webview");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("readEmbeddedAppMetadata: the data section, past the bare magic in code", () => {
+  assertEquals(readEmbeddedAppMetadata(library(metadata("1.2.3"))), { appVersion: "1.2.3" });
+  assertEquals(readEmbeddedAppMetadata(library(metadata(null), 0)), { appVersion: null });
+  // No section, a section that is not the metadata (missing keys), a truncated or absurd length.
+  assertEquals(readEmbeddedAppMetadata(new Uint8Array(1000)), null);
+  assertEquals(readEmbeddedAppMetadata(library({ app_version: "1.0.0" })), null);
+  const truncated = library(metadata("1.0.0"));
+  assertEquals(readEmbeddedAppMetadata(truncated.subarray(0, truncated.length - 80)), null);
+  const enc = new TextEncoder();
+  const huge = new Uint8Array([...enc.encode("d3n0l4nd"), 0, 0, 0, 0, 0, 0, 0, 0x7f, 0x7b]);
+  assertEquals(readEmbeddedAppMetadata(huge), null);
+  assertEquals(readEmbeddedAppMetadata(enc.encode("d3n0l4")), null);
+});
+
+Deno.test("checkArtifactVersion: each layout's runtime library, and Info.plist on macOS", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // macOS: <exe>.dylib, else libruntime.dylib in Frameworks / MacOS; plus the short version.
+    const app = await buildAs(await fakeApp(dir, "A.app"), "1.4.0-rc.2");
+    const mac = "x86_64-apple-darwin-webview";
+    await checkArtifactVersion(app, mac, "1.4.0-rc.2");
+    await assertRejects(
+      () => checkArtifactVersion(app, mac, "1.4.0"),
+      Error,
+      "built as 1.4.0-rc.2",
+    );
+    await buildAs(app, "1.4.0", "1.3");
+    await assertRejects(
+      () => checkArtifactVersion(app, mac, "1.4.0"),
+      Error,
+      "CFBundleShortVersionString is 1.3",
+    );
+    await buildAs(app, "1.4.0", "1.4");
+    await checkArtifactVersion(app, mac, "1.4.0"); // 1.4 is 1.4.0
+    await Deno.remove(join(app, "Contents", "MacOS", "app.dylib"));
+    await assertRejects(
+      () => checkArtifactVersion(app, mac, "1.4.0"),
+      Error,
+      "carries no compiled",
+    );
+    await Deno.writeFile(
+      join(app, "Contents", "Frameworks", "libruntime.dylib"),
+      library(metadata("1.4.0")),
+    );
+    await checkArtifactVersion(app, mac, "1.4.0");
+    await Deno.writeFile(
+      join(app, "Contents", "Frameworks", "libruntime.dylib"),
+      library(metadata(null)),
+    );
+    await assertRejects(
+      () => checkArtifactVersion(app, mac, "1.4.0"),
+      Error,
+      "built as no version",
+    );
+
+    // Windows: <App>.dll beside <App>.exe (another DLL is not the runtime).
+    const win = join(dir, "win");
+    await Deno.mkdir(win);
+    await Deno.writeFile(join(win, "My App.exe"), new Uint8Array(4));
+    await Deno.writeFile(join(win, "libcef.dll"), library(metadata("9.9.9")));
+    const winKey = "x86_64-pc-windows-msvc-cef";
+    await assertRejects(() => checkArtifactVersion(win, winKey, "3.0.0"), Error, "no compiled");
+    await Deno.writeFile(join(win, "My App.dll"), library(metadata("3.0.0")));
+    await checkArtifactVersion(win, winKey, "3.0.0");
+    await assertRejects(
+      () => checkArtifactVersion(win, winKey, "3.0.1"),
+      Error,
+      "version_mismatch",
+    );
+    // The CEF layout behind CEF's bootstrap: <App>.dll is the host (no metadata), the runtime is
+    // <App>.runtime.dll.
+    const cef = join(dir, "cef");
+    await Deno.mkdir(cef);
+    await Deno.writeFile(join(cef, "My App.exe"), new Uint8Array(4));
+    await Deno.writeFile(join(cef, "My App.dll"), new TextEncoder().encode("MZ the CEF host"));
+    await Deno.writeFile(join(cef, "My App.runtime.dll"), library(metadata("3.0.0")));
+    await checkArtifactVersion(cef, winKey, "3.0.0");
+    await assertRejects(
+      () => checkArtifactVersion(cef, winKey, "3.0.1"),
+      Error,
+      "built as 3.0.0",
+    );
+
+    // Linux: <App>.so beside <App>.
+    const linux = join(dir, "linux");
+    await Deno.mkdir(linux);
+    await Deno.writeFile(join(linux, "myapp"), new Uint8Array(4));
+    await Deno.writeFile(join(linux, "myapp.so"), library(metadata("3.0.0")));
+    await checkArtifactVersion(linux, "x86_64-unknown-linux-gnu-webview", "3.0.0");
+    await assertRejects(
+      () => checkArtifactVersion(linux, "x86_64-unknown-linux-gnu-webview", "4.0.0"),
+      Error,
+      "version_mismatch",
+    );
+    // An AppImage's runtime is inside its squashfs: not read (the runtime doesn't either).
+    await checkArtifactVersion(
+      join(dir, "x.AppImage"),
+      "x86_64-unknown-linux-gnu-webview-appimage",
+      "1.0.0",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("resignAppUpdate: a fresh expiry and a sequence at least the manifest's, nothing else", async () => {
+  const { key, publicKey } = await keys();
+  const other = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const manifest = join(dir, APP_UPDATE_MANIFEST_FILE);
+    await assertRejects(() => resignAppUpdate({ manifest, key }), Error, "no manifest");
+    const before = payload({ sequence: 4e9, releaseNotes: "n" });
+    await Deno.writeTextFile(manifest, JSON.stringify(await signAppUpdatePayload(before, key)));
+    const now = new Date(Date.UTC(2026, 9, 20));
+    const r = await resignAppUpdate({ manifest, key, now, expiresInDays: 14 });
+    assertEquals(r, {
+      app: "com.example.app",
+      version: "2.0.0",
+      expiresAt: "2026-11-03T00:00:00.000Z",
+      sequence: 4e9, // the clock (1.79e9 s) is below the manifest's own
+    });
+    const after = await verifyAppUpdateEnvelope(
+      JSON.parse(await Deno.readTextFile(manifest)),
+      publicKey,
+    );
+    assertEquals(after, { ...before, expiresAt: r.expiresAt, sequence: 4e9 });
+    // Only a manifest this key signed.
+    await Deno.writeTextFile(
+      manifest,
+      JSON.stringify(await signAppUpdatePayload(before, other.key)),
+    );
+    await assertRejects(
+      () => resignAppUpdate({ manifest, key, now }),
+      Error,
+      "refusing to re-sign",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUpdateExpiryWarning: within 7 days (or past) warns with --resign; later or garbage does not", () => {
+  const now = new Date("2026-10-05T00:00:00Z");
+  assertEquals(APP_UPDATE_EXPIRY_WARNING_DAYS, 7);
+  const soon = appUpdateExpiryWarning("2026-10-08T00:00:00Z", now);
+  assert(soon !== null);
+  assertStringIncludes(soon, "expires at 2026-10-08T00:00:00Z (in 3 day(s))");
+  assertStringIncludes(soon, "denext desktop publish-update --resign");
+  assertStringIncludes(appUpdateExpiryWarning("2026-10-12T00:00:00Z", now)!, "in 7 day(s)");
+  assertStringIncludes(appUpdateExpiryWarning("2026-10-01T00:00:00Z", now)!, "expired at");
+  assertEquals(appUpdateExpiryWarning("2026-10-12T00:00:01Z", now), null);
+  assertEquals(appUpdateExpiryWarning("2026-11-01T00:00:00Z", now), null);
+  assertEquals(appUpdateExpiryWarning("not a time", now), null);
+  // The window is configurable.
+  assertEquals(appUpdateExpiryWarning("2026-10-08T00:00:00Z", now, 2), null);
+  assert(appUpdateExpiryWarning("2026-11-01T00:00:00Z", now, 30) !== null);
+});
+
+Deno.test("publishAppUpdate: reports the verified previous manifest's expiry, never an unverified one", async () => {
+  const { key } = await keys();
+  const { key: otherKey } = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: join(dir, "updates"),
+      platform: "aarch64-apple-darwin-webview",
+    };
+    const v1 = await buildAs(await fakeApp(dir, "V1.app"), "1.0.0");
+    const first = await publishAppUpdate({
+      ...common,
+      artifact: v1,
+      version: "1.0.0",
+      key,
+      expiresAt: "2099-01-01T00:00:00Z",
+    });
+    assertEquals(first.previousExpiresAt, undefined);
+    const second = await publishAppUpdate({ ...common, artifact: v1, version: "1.0.0", key });
+    assertEquals(second.previousExpiresAt, "2099-01-01T00:00:00Z");
+    // Another release under another key: the old manifest does not verify, so its expiry is not
+    // read (it is replaced).
+    const v2 = await buildAs(await fakeApp(dir, "V2.app"), "2.0.0");
+    const third = await publishAppUpdate({
+      ...common,
+      artifact: v2,
+      version: "2.0.0",
+      key: otherKey,
+    });
+    assertEquals(third.previousExpiresAt, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

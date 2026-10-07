@@ -243,7 +243,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export, build into a temp dir and open the window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)",
+      "description": "  denext desktop run                     Export, build into a temp dir and open the window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)\n  denext desktop publish-update --resign Re-sign the published manifest before it expires\n  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n                                         Secret Service and portals, each with a fix (--json)",
       "flags": [
         {
           "name": "entry",
@@ -284,7 +284,7 @@
         {
           "name": "regenerate-scripts",
           "type": "boolean",
-          "description": "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), keeping a .bak of any file that differs; adopt the current scripts in an existing project"
+          "description": "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), keeping a .bak of any file that differs"
         },
         {
           "name": "verify-runtime",
@@ -359,6 +359,34 @@
           "type": "string",
           "valueName": "<dir>",
           "description": "publish-update: where the archive and app-update.json go (default: dist/updates)"
+        },
+        {
+          "name": "expires-in",
+          "type": "string",
+          "valueName": "<days>",
+          "description": "publish-update: days until installed apps refuse the manifest (default 30); re-sign before"
+        },
+        {
+          "name": "expires-at",
+          "type": "string",
+          "valueName": "<rfc3339>",
+          "description": "publish-update: an explicit expiry time instead of --expires-in"
+        },
+        {
+          "name": "sequence",
+          "type": "string",
+          "valueName": "<n>",
+          "description": "publish-update: the release counter (default: Unix seconds, never below the existing manifest's)"
+        },
+        {
+          "name": "resign",
+          "type": "boolean",
+          "description": "publish-update: re-sign the existing app-update.json in --out with a fresh expiry (no artifact)"
+        },
+        {
+          "name": "linux",
+          "type": "boolean",
+          "description": "doctor: run the Linux session checks (tray host, Secret Service, portals, …); the default on a Linux host"
         }
       ],
       "positionals": [
@@ -366,7 +394,7 @@
           "name": "action",
           "required": false,
           "variadic": false,
-          "description": "run | build | dev | package | add | publish-update (default: run)"
+          "description": "run | build | dev | package | add | publish-update | doctor (default: run)"
         },
         {
           "name": "dir",
@@ -380,7 +408,7 @@
       "name": "dev",
       "summary": "Start the dev server",
       "usage": "denext dev [dir] [options]",
-      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.\nThe dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\nexplicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\nbinds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
+      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.\nThe dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\nexplicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\nbinds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.\nA non-loopback bind (--lan, --host) prints its URL with a session token\n(?__denext_dev=…): other machines need it for every request; this one does not.",
       "flags": [
         {
           "name": "port",
@@ -452,6 +480,12 @@
           "type": "string",
           "valueName": "hidden",
           "description": "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "valueName": "<target>",
+          "description": "The target whose platform files (Button.ios.tsx, .android, .mobile, .macos/.windows/.linux, .desktop, .web) the export resolves: web (default), ios, android, macos, windows, linux (also DENEXT_PLATFORM)"
         }
       ],
       "positionals": [
@@ -750,6 +784,12 @@
           "type": "string",
           "valueName": "<file>",
           "description": "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures"
+        },
+        {
+          "name": "ota-origin",
+          "type": "string",
+          "valueName": "<origin>",
+          "description": "add-ota: pin an https origin the app takes UI updates from; the only one unsigned updates come from (repeatable, or comma-separated)"
         },
         {
           "name": "dir",
@@ -1057,7 +1097,7 @@
       "name": "ota",
       "summary": "Over-the-air UI manifest for Capacitor apps",
       "usage": "denext ota <action> [path] [options]",
-      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n  denext ota manifest out --required --notes \"Fixes sign-in\"\n                              Also mark the UI required and attach release notes\n  denext ota manifest out --sign ota.key\n                              Also sign it (or set DENEXT_OTA_SIGNING_KEY to the PEM);\n                              signing stamps --sequence (default: the Unix time) so apps\n                              refuse an older release, and --min-native <build> refuses\n                              app binaries older than that build number\n  denext ota manifest out --native-fingerprint auto --dir .\n                              Also stamp the native fingerprint of the Capacitor project at\n                              --dir; a binary embedding another one (`denext mobile\n                              fingerprint --write`) refuses it (code native_mismatch)\n  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n  denext ota channel beta releases/2026-09-27\n                              Point channel beta at an export (ota-channels.json, --file)\n  denext ota promote --channel beta --to production --percent 20\n                              Roll beta's release out to 20% of production's devices\n  denext ota promote --channel beta --to production\n                              Make it production's release (100%; ends the rollout)\n  denext ota promote --to production --halt\n                              Stop production's rollout; its stable release stays\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n  not part of the version, but the signature covers them. An app whose binary embeds the\n  public key (`denext mobile add-ota --public-key ota.key.pub`) refuses an unsigned or\n  wrongly signed manifest; one without a key refuses plain http beyond loopback. Signing\n  protects integrity only: over plain http the headers (bearer tokens) are visible on the\n  network. `keygen --force` rotates the key, which breaks OTA for every installed binary\n  that embeds the old public key.",
+      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n  denext ota manifest out --required --notes \"Fixes sign-in\"\n                              Also mark the UI required and attach release notes\n  denext ota manifest out --sign ota.key\n                              Also sign it (or set DENEXT_OTA_SIGNING_KEY to the PEM);\n                              signing stamps --sequence (default: the Unix time) so apps\n                              refuse an older release, and --min-native <build> refuses\n                              app binaries older than that build number\n  denext ota manifest out --native-fingerprint auto --dir .\n                              Also stamp the native fingerprint of the Capacitor project at\n                              --dir; a binary embedding another one (`denext mobile\n                              fingerprint --write`) refuses it (code native_mismatch)\n  denext ota manifest out --platform ios\n                              Name the target the export was built for (`denext export\n                              --platform ios` stamps it already); a shell of another target\n                              refuses it (code platform_mismatch)\n  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n  denext ota channel beta releases/2026-09-27\n                              Point channel beta at an export (ota-channels.json, --file)\n  denext ota promote --channel beta --to production --percent 20\n                              Roll beta's release out to 20% of production's devices\n  denext ota promote --channel beta --to production\n                              Make it production's release (100%; ends the rollout)\n  denext ota promote --to production --halt\n                              Stop production's rollout; its stable release stays\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n  not part of the version, but the signature covers them. An app whose binary embeds the\n  public key (`denext mobile add-ota --public-key ota.key.pub`) refuses an unsigned or\n  wrongly signed manifest; one without a key refuses plain http beyond loopback. Signing\n  protects integrity only: over plain http the headers (bearer tokens) are visible on the\n  network. `keygen --force` rotates the key, which breaks OTA for every installed binary\n  that embeds the old public key.",
       "flags": [
         {
           "name": "required",
@@ -1093,6 +1133,12 @@
           "type": "string",
           "valueName": "<fp|auto>",
           "description": "Stamp the native fingerprint this UI was built for (auto: compute it for --dir); binaries embedding another refuse it"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "valueName": "<target>",
+          "description": "manifest: the target the export was built for (ios, android, macos, windows, linux); shells of another target refuse it. web names no target (no stamp), as `denext export` does"
         },
         {
           "name": "dir",

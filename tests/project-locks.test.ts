@@ -45,9 +45,15 @@ held.release();
 console.log("released");
 `;
 
+/** How long {@linkcode Holder.waitFor} waits by default. */
+const HOLDER_WAIT_MS = 60_000;
+
 interface Holder {
-  /** Resolves with the next stdout line matching `text`. */
-  waitFor(text: string): Promise<void>;
+  /**
+   * Resolves once stdout has printed `text`; rejects when the holder exits first, or after `ms`
+   * (so a lock that never comes fails the test with what the holder said, not a hung CI job).
+   */
+  waitFor(text: string, ms?: number): Promise<void>;
   /** Whether stdout has printed `text` yet. */
   saw(text: string): boolean;
   /** Everything on stderr so far. */
@@ -112,10 +118,24 @@ function spawnHolder(script: string, spec: unknown): Holder {
     });
   const writer = child.stdin.getWriter();
   return {
-    async waitFor(text) {
+    async waitFor(text, ms = HOLDER_WAIT_MS) {
+      const deadline = Date.now() + ms;
       while (!out.includes(text)) {
         if (exited) throw new Error(`holder exited before "${text}":\n${err.join("\n")}`);
-        await new Promise<void>((r) => waiters.push(r));
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          throw new Error(
+            `timed out after ${ms} ms waiting for the holder to print "${text}" ` +
+              `(spec ${JSON.stringify(spec)}); stderr:\n${err.join("\n")}`,
+          );
+        }
+        await new Promise<void>((r) => {
+          const timer = setTimeout(r, left);
+          waiters.push(() => {
+            clearTimeout(timer);
+            r();
+          });
+        });
       }
     },
     saw: (text) => out.includes(text),
@@ -123,7 +143,11 @@ function spawnHolder(script: string, spec: unknown): Holder {
     async release() {
       await writer.close().catch(() => {});
     },
-    kill: () => child.kill("SIGKILL"),
+    kill: () => {
+      try {
+        child.kill("SIGKILL");
+      } catch { /* already exited */ }
+    },
     status: done.then(() => child.status),
   };
 }
@@ -225,20 +249,34 @@ Deno.test(
   SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
+    const holders: Holder[] = [];
     try {
       const script = await holderScript(dir);
       const reader = spawnHolder(script, { cache: dir, mode: "shared" });
+      holders.push(reader);
       await reader.waitFor("locked");
       const downloader = spawnHolder(script, { cache: dir, mode: "download" });
+      holders.push(downloader);
       await downloader.waitFor("locked");
       assertEquals(downloader.stderr(), "", "DownloadExclusive does not wait for Shared");
       const second = spawnHolder(script, { cache: dir, mode: "download" });
+      holders.push(second);
       await eventually(() => second.stderr().includes("Blocking"), "a second downloader waiting");
       const mutator = spawnHolder(script, { cache: dir, mode: "mutate" });
+      holders.push(mutator);
       await eventually(() => mutator.stderr().includes("Blocking"), "the mutator waiting");
-      await reader.release();
+      // One release at a time, so exactly one waiter can take each freed lock (the waiters poll:
+      // releasing the reader and the downloader together let the mutator take the download lock
+      // ahead of the second downloader, and this test then waited on a holder it never released).
+      // The downloader's lock goes to the second downloader: the mutator still waits on the reader.
       await downloader.release();
       await second.waitFor("locked");
+      assert(!mutator.saw("locked"), "a Shared reader keeps the mutator out");
+      // The reader leaves: the mutator takes the mutate lock, then waits on the download lock.
+      await reader.release();
+      await reader.status;
+      await new Promise((r) => setTimeout(r, 500));
+      assert(!mutator.saw("locked"), "a download in flight keeps the mutator out");
       await second.release();
       await mutator.waitFor("locked");
       await mutator.release();
@@ -246,6 +284,8 @@ Deno.test(
       await Deno.stat(join(dir, CACHE_MUTATE_LOCK));
       await Deno.stat(join(dir, CACHE_DOWNLOAD_LOCK));
     } finally {
+      for (const h of holders) h.kill();
+      await Promise.all(holders.map((h) => h.status));
       await Deno.remove(dir, { recursive: true });
     }
   },

@@ -9,7 +9,10 @@
 // (`runDesktopDev` / `runMobileDev`) take the results below through their `deps`, so tests still
 // never spawn a real server or process.
 
+import { join } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
+import { DEV_TOKEN_ENV, newDevToken, withDevTokenParam } from "../build/dev-server/dev-token.ts";
+import { isLoopbackHost } from "../utils/loopback.ts";
 import { cliInvocation } from "../ui/proc.ts";
 import { SHUTDOWN_SIGNALS } from "./shared.ts";
 
@@ -87,7 +90,8 @@ export function spawnDenoChild(
  *
  * @param project The project directory (the child's cwd, and the `denext dev` positional).
  * @param host The host to bind and proxy to.
- * @param url The full dev-server URL (its port is the `--port`).
+ * @param url The full dev-server URL (its port is the `--port`). For a non-loopback host the
+ *   returned handle's `url` also carries the session token (`?__denext_dev=…`).
  * @throws {Error} When the spawned server neither answers within 120s nor exits.
  */
 export async function startOrAttachDevServer(
@@ -96,12 +100,22 @@ export async function startOrAttachDevServer(
   url: string,
 ): Promise<DevServerHandle> {
   const port = new URL(url).port;
+  // A network bind needs the session token on every request from the device: the URL handed
+  // back carries it. Attached, it is the running server's (from its `.denext/dev.json`).
+  const network = !isLoopbackHost(new URL(url).hostname);
   if (await answersHttp(url)) {
-    return { url, attached: true, finished: new Promise(() => {}), stop: () => Promise.resolve() };
+    const token = network ? runningDevToken(project) : undefined;
+    return {
+      url: withDevTokenParam(url, token),
+      attached: true,
+      finished: new Promise(() => {}),
+      stop: () => Promise.resolve(),
+    };
   }
+  const token = network ? newDevToken() : undefined;
   const { finished, stop, hasExited } = spawnDenoChild(
     [...cliInvocation({ dir: project }), "dev", project, "--host", host, "--port", port],
-    { cwd: project, stdin: "null" },
+    { cwd: project, stdin: "null", ...(token ? { env: { [DEV_TOKEN_ENV]: token } } : {}) },
   );
   for (const deadline = Date.now() + 120_000; !(await answersHttp(url));) {
     if (hasExited() || Date.now() > deadline) {
@@ -110,7 +124,17 @@ export async function startOrAttachDevServer(
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  return { url, attached: false, finished, stop };
+  return { url: withDevTokenParam(url, token), attached: false, finished, stop };
+}
+
+/** The session token a running `denext dev` in `project` published, if any. */
+function runningDevToken(project: string): string | undefined {
+  try {
+    const info = JSON.parse(Deno.readTextFileSync(join(project, ".denext", "dev.json")));
+    return typeof info?.token === "string" ? info.token : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */

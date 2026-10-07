@@ -9,8 +9,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildAndServe } from "./harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const EXAMPLE = new URL("../../examples/instrumentation", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/instrumentation", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/instrumentation wires register() + onRequestError",

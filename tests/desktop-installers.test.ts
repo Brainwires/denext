@@ -10,23 +10,32 @@ import {
   assertThrows,
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
+import { inChild } from "./helpers/isolated.ts";
 import {
   arArchive,
   buildDesktopDeb,
   buildDesktopTarball,
   bundleFileMode,
+  CEF_SANDBOX_HELPER,
   debControl,
   debianPackageName,
+  debMaintainerScript,
   DEFAULT_DESKTOP_INSTALLERS,
   desktopInstallerPlan,
   desktopPackageMeta,
+  isDbusAppId,
+  linuxDbusService,
   linuxDesktopEntry,
   linuxPackageVersion,
+  linuxTimerAppPart,
+  linuxTimerCleanup,
+  linuxTimerGlob,
   msiProductVersion,
   msiUpgradeCode,
   packageMetaFrom,
   packageMetaWarnings,
   planDesktopInstallers,
+  rpmFiles,
   rpmSpec,
   splitFormatList,
   stageLinuxRoot,
@@ -35,8 +44,6 @@ import {
   wixSource,
 } from "../src/build/desktop-installers.ts";
 import {
-  desktopAppName,
-  desktopBundleCommand,
   desktopHasTool,
   desktopMsiProblem,
   desktopOptionalInstaller,
@@ -47,7 +54,7 @@ import {
   desktopToolGate,
   desktopVersionProblem,
   parseDesktopPackageArgs,
-  prepareDesktopPackage,
+  type prepareDesktopPackage,
 } from "../src/build/desktop-package-script.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -232,7 +239,9 @@ Deno.test("linux: the .desktop entry launches with the app id and claims the sch
   assert(exec.endsWith(" %u") && exec.indexOf("%") === exec.length - 2);
   assertStringIncludes(entry, "StartupWMClass=com.acme.myapp\n");
   assertStringIncludes(entry, "MimeType=x-scheme-handler/myapp;x-scheme-handler/myapp-dev;\n");
-  assertStringIncludes(entry, "Icon=my-app\n");
+  // The icon is installed under the app id, which the entry names.
+  assertStringIncludes(entry, "Icon=com.acme.myapp\n");
+  assert(!linuxDesktopEntry(META, false).includes("Icon="), "no icon installed: no Icon=");
   const plain = linuxDesktopEntry({ ...META, deepLinks: [], singleInstance: false, name: "A\nB" });
   assertStringIncludes(plain, "Exec=env LAUFEY_APP_ID=com.acme.myapp a-b\n");
   assert(!plain.includes("MimeType"));
@@ -287,6 +296,130 @@ Deno.test("linux: control and spec carry the version, arch, deps and owned paths
   assertStringIncludes(spec, "Requires: libwebkit2gtk-4.1.so.0()(64bit)\n");
   assertStringIncludes(spec, "cp -a '/tmp/it'\\''s'/. %{buildroot}/\n");
   assertStringIncludes(spec, "%files\n%defattr(-,root,root,-)\n/usr/lib/my-app\n/usr/bin/my-app\n");
+});
+
+Deno.test("linux: the .rpm scriptlets and .deb maintainer scripts refresh the databases", () => {
+  const spec = rpmSpec(META, "/tmp/s", []);
+  for (const section of ["%post", "%postun"]) {
+    const body = spec.split(`\n${section}\n`)[1].split("\n\n")[0];
+    assertStringIncludes(body, "update-desktop-database -q /usr/share/applications || :");
+    assertStringIncludes(body, "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :");
+  }
+  assert(spec.indexOf("%postun") < spec.indexOf("%files"), "scriptlets before %files");
+  const postinst = debMaintainerScript("postinst");
+  assert(postinst.startsWith("#!/bin/sh\nset -e\n"));
+  assertStringIncludes(postinst, "  configure)\n    command -v update-desktop-database");
+  assertStringIncludes(postinst, "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :");
+  assertStringIncludes(debMaintainerScript("postrm"), "  remove|purge)\n");
+  assert(postinst.endsWith("esac\nexit 0\n"));
+});
+
+Deno.test("linux: the D-Bus service file and the removal's timer cleanup (runtime denext.11)", () => {
+  assertEquals(
+    linuxDbusService({ ...META, singleInstance: false }),
+    "[D-BUS Service]\nName=com.acme.myapp\n" +
+      "Exec=/usr/bin/env LAUFEY_APP_ID=com.acme.myapp /usr/bin/my-app --laufey-dbus-activated\n",
+  );
+  // The same environment as the .desktop entry's Exec line.
+  assertStringIncludes(
+    linuxDbusService({ ...META, singleInstance: true })!,
+    "LAUFEY_APP_ID=com.acme.myapp LAUFEY_SINGLE_INSTANCE=1 /usr/bin/my-app",
+  );
+  // An app id D-Bus can't take as a name: no service file, no timers to clean.
+  const digits = { ...META, identifier: "com.acme.3d-viewer" };
+  assertEquals(linuxDbusService(digits), undefined);
+  assert(!rpmSpec(digits, "/tmp/s", []).includes("systemctl"));
+  for (
+    const [id, ok] of [
+      ["dev.denext.kitchen-sink", true],
+      ["org.example.App_2", true],
+      ["app", false],
+      ["dev..app", false],
+      ["dev.2app", false],
+      ["dev.a b", false],
+    ] as const
+  ) {
+    assertEquals(isDbusAppId(id), ok, id);
+  }
+  // .deb: the postrm stops the timers (remove / purge), the postinst doesn't.
+  const glob = linuxTimerGlob("com.acme.myapp");
+  assertEquals(glob, `laufey-com.acme.myapp-${"[0-9a-f]".repeat(16)}.timer`);
+  const postrm = debMaintainerScript("postrm", "com.acme.myapp");
+  assertStringIncludes(
+    postrm,
+    `      $laufey_timeout systemctl --user --machine="$user"@ --no-block stop '${glob}'` +
+      " >/dev/null 2>&1 || :\n",
+  );
+  assertStringIncludes(
+    postrm,
+    '    if command -v timeout >/dev/null 2>&1; then laufey_timeout="timeout 10"; fi\n',
+  );
+  assertStringIncludes(postrm, "loginctl list-users --no-legend");
+  assert(!debMaintainerScript("postinst", "com.acme.myapp").includes("systemctl"));
+  assert(!debMaintainerScript("postrm").includes("systemctl"));
+  // .rpm: an erase only ($1 = 0), not an upgrade's %postun.
+  const postun = rpmSpec(META, "/tmp/s", []).split("\n%postun\n")[1].split("\n\n")[0];
+  assertStringIncludes(postun, 'if [ "$1" = 0 ]; then\n');
+  assertStringIncludes(postun, `'${glob}'`);
+  assert(!rpmSpec(META, "/tmp/s", []).split("\n%post\n")[1].split("\n\n")[0].includes("systemctl"));
+});
+
+Deno.test("linux: the removal's timer glob matches the app's timers only", async () => {
+  // The runtime's unit names: laufey-<app part>-<16 hex digits of the tag's FNV-1a 64>.
+  const unit = (id: string, hex = "0123456789abcdef") =>
+    `laufey-${linuxTimerAppPart(id)}-${hex}.timer`;
+  const glob = linuxTimerGlob("com.acme.app");
+  // systemd matches unit names with fnmatch(3): ask the shell's `case`, the same matcher.
+  const matches = async (name: string) => {
+    if (Deno.build.os === "windows") return globToRegExp(glob).test(name);
+    const out = await new Deno.Command("/bin/sh", {
+      args: ["-c", `case "$1" in ${glob}) echo yes;; *) echo no;; esac`, "sh", name],
+    }).output();
+    return new TextDecoder().decode(out.stdout).trim() === "yes";
+  };
+  assert(await matches(unit("com.acme.app")));
+  assert(!(await matches(unit("com.acme.app-extra"))), "an app id this one prefixes");
+  assert(!(await matches(unit("com.acme.app.extra"))));
+  assert(!(await matches(unit("com.acme.app-0123456789abcdef"))));
+  assert(!(await matches(unit("com.acme.app", "0123456789ABCDEF"))));
+  assert(!(await matches(unit("com.acme.app").replace(".timer", ".service"))));
+  // A long app id is cut as the runtime cuts it: 191 bytes, "_", 8 hex digits of its hash.
+  const longId = `dev.${"x".repeat(240)}`;
+  const part = linuxTimerAppPart(longId);
+  assertEquals(part.length, 200);
+  // 7154d850: FNV-1a 64 of the id, as the runtime's NotificationTagId hashes it.
+  assertEquals(part, `dev.${"x".repeat(187)}_7154d850`);
+  assertEquals(part, linuxTimerAppPart(longId));
+  assert(part !== linuxTimerAppPart(`${longId}y`));
+  assertEquals(linuxTimerAppPart(`dev.${"x".repeat(196)}`), `dev.${"x".repeat(196)}`);
+  assertStringIncludes(linuxTimerCleanup(longId).join("\n"), `'laufey-${part}-[0-9a-f]`);
+});
+
+/** Bracket classes and literals, the only glob syntax the timer glob uses. */
+function globToRegExp(glob: string): RegExp {
+  const body = glob.replace(/\[[^\]]*\]|[.*+?^${}()|\\]/g, (m) => m.startsWith("[") ? m : `\\${m}`);
+  return new RegExp(`^${body}$`);
+}
+
+Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / libsecret)", () => {
+  assertEquals(META.secureStore, false);
+  assert(!debControl(META, "x86_64", 1).includes("libsecret"), "off: no dependency");
+  assert(!rpmSpec(META, "/tmp/s", []).includes("libsecret"));
+  for (const caps of [{ secureStore: true }, { "secure-store": true }]) {
+    const meta = packageMetaFrom(
+      {},
+      { desktop: { app: { name: "My App" }, capabilities: caps } },
+      "x",
+    );
+    assertEquals(meta.secureStore, true);
+    assertStringIncludes(
+      debControl(meta, "x86_64", 1),
+      "Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsecret-tools\n",
+    );
+    assertStringIncludes(rpmSpec(meta, "/tmp/s", []), "Requires: libsecret\n");
+  }
+  const off = packageMetaFrom({}, { desktop: { capabilities: { secureStore: false } } }, "x");
+  assertEquals(off.secureStore, false);
 });
 
 /** A fake finished Linux bundle: launcher, runtime library, launch config, a 64×64 icon. */
@@ -365,18 +498,29 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
     assertEquals(new TextDecoder().decode(members.get("debian-binary")), "2.0\n");
     const control = await readTarGz(members.get("control.tar.gz")!);
     assertStringIncludes(control.get("./control")![2], "Architecture: amd64\n");
+    for (const script of ["postinst", "postrm"] as const) {
+      assertEquals(control.get(`./${script}`), [
+        "0",
+        0o755,
+        debMaintainerScript(script, "com.acme.myapp"),
+      ]);
+    }
     const data = await readTarGz(members.get("data.tar.gz")!);
+    // The D-Bus service file: a click on a notification starts the app (runtime denext.11).
+    assertEquals(
+      data.get("./usr/share/dbus-1/services/com.acme.myapp.service")?.[2],
+      linuxDbusService(META),
+    );
     assertEquals(data.get("./usr/bin/my-app"), ["2", 0o777, "../lib/my-app/My-App-x64"]);
     assertEquals(data.get("./usr/lib/my-app/My-App-x64")?.slice(0, 2), ["0", 0o755]);
     assertEquals(data.get("./usr/lib/my-app/laufey-launch.json")?.[2], '{"inspectable":false}\n');
     assertEquals(data.get("./usr/lib/my-app/sub/data.txt")?.[2].length, 700);
     assertEquals(data.get("./usr/lib/my-app/sub/")?.[0], "5");
-    assertStringIncludes(
-      data.get("./usr/share/applications/com.acme.myapp.desktop")![2],
-      "MimeType=x-scheme-handler/myapp;",
-    );
-    assert(data.has("./usr/share/pixmaps/my-app.png"));
-    assert(data.has("./usr/share/icons/hicolor/64x64/apps/my-app.png"));
+    const entry = data.get("./usr/share/applications/com.acme.myapp.desktop")![2];
+    assertStringIncludes(entry, "MimeType=x-scheme-handler/myapp;");
+    assertStringIncludes(entry, "Icon=com.acme.myapp\n");
+    assert(data.has("./usr/share/pixmaps/com.acme.myapp.png"));
+    assert(data.has("./usr/share/icons/hicolor/64x64/apps/com.acme.myapp.png"));
     // dpkg itself agrees, where it is installed (the Linux CI legs).
     let dpkg: Deno.CommandOutput | null = null;
     try {
@@ -392,7 +536,56 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
   }
 });
 
-Deno.test("stage: owned paths, and a non-theme-size icon goes to pixmaps only", {
+Deno.test("deb + rpm: the CEF sandbox helper installs setuid root; nothing else is", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "My-App-x64");
+    await fakeLinuxBundle(bundle);
+    await Deno.writeTextFile(join(bundle, CEF_SANDBOX_HELPER), "\x7fELFsandbox");
+    await Deno.chmod(join(bundle, CEF_SANDBOX_HELPER), 0o755);
+    // A stray setgid, world-writable file: shipped masked.
+    await Deno.writeTextFile(join(bundle, "loose.bin"), "loose");
+    await Deno.chmod(join(bundle, "loose.bin"), 0o2777);
+    const out = join(dir, "my-app.deb");
+    await buildDesktopDeb({
+      meta: { ...META, backend: "cef" },
+      bundleDir: bundle,
+      exe: "My-App-x64",
+      arch: "x86_64",
+      out,
+    });
+    const data = await readTarGz(readAr(await Deno.readFile(out)).get("data.tar.gz")!);
+    assertEquals(data.get(`./usr/lib/my-app/${CEF_SANDBOX_HELPER}`)?.slice(0, 2), ["0", 0o4755]);
+    assertEquals(data.get("./usr/lib/my-app/loose.bin")?.[1], 0o755);
+    for (const [path, [type, mode]] of data) {
+      if (path.endsWith(`/${CEF_SANDBOX_HELPER}`)) continue;
+      assertEquals(mode & 0o7000, 0, `${path} must not be setuid / setgid / sticky`);
+      if (type !== "2") assertEquals(mode & 0o022, 0, `${path} must not be group/other-writable`);
+    }
+
+    // The .rpm: the app's directory listed entry by entry, the helper alone %attr(4755,root,root).
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    const files = await rpmFiles(root, "my-app", owned);
+    const spec = rpmSpec(META, root, files);
+    const list = spec.split("%defattr(-,root,root,-)\n")[1];
+    assertStringIncludes(list, "%dir /usr/lib/my-app\n");
+    assertStringIncludes(list, `%attr(4755,root,root) /usr/lib/my-app/${CEF_SANDBOX_HELPER}\n`);
+    assertStringIncludes(list, "\n/usr/lib/my-app/sub\n");
+    assertStringIncludes(list, "\n/usr/bin/my-app\n");
+    assertEquals(list.match(/%attr/g)?.length, 1);
+    assert(!list.includes("\n/usr/lib/my-app\n"), "the directory is not owned whole as well");
+    // Without the helper (the WebView backend) the directory is owned whole, as before.
+    await Deno.remove(join(root, "usr/lib/my-app", CEF_SANDBOX_HELPER));
+    assertEquals(await rpmFiles(root, "my-app", owned), owned.map((path) => ({ path })));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("stage: owned paths; a non-theme-size icon goes to the theme size below it", {
   ignore: Deno.build.os === "windows",
 }, async () => {
   const dir = await Deno.makeTempDir();
@@ -408,10 +601,61 @@ Deno.test("stage: owned paths, and a non-theme-size icon goes to pixmaps only", 
       "/usr/lib/my-app",
       "/usr/bin/my-app",
       "/usr/share/applications/com.acme.myapp.desktop",
-      "/usr/share/pixmaps/my-app.png",
+      "/usr/share/pixmaps/com.acme.myapp.png",
+      "/usr/share/icons/hicolor/512x512/apps/com.acme.myapp.png",
+      "/usr/share/dbus-1/services/com.acme.myapp.service",
     ]);
     const paths = (await walkBundle(join(dir, "root"))).map((e) => e.path);
     assert(paths.includes("usr/lib/my-app/sub/data.txt"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("stage: an SVG icon is scalable; a non-square PNG is pixmaps only", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "b");
+    await fakeLinuxBundle(bundle);
+    const png = await Deno.readFile(join(bundle, "AppIcon.png"));
+    new DataView(png.buffer).setUint32(20, 32); // 64x32
+    await Deno.writeFile(join(bundle, "AppIcon.png"), png);
+    await Deno.writeTextFile(join(bundle, "AppIcon.svg"), "<svg/>");
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    assertEquals(owned.slice(3), [
+      "/usr/share/pixmaps/com.acme.myapp.png",
+      "/usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg",
+      "/usr/share/dbus-1/services/com.acme.myapp.service",
+    ]);
+    assertEquals(
+      await Deno.readTextFile(
+        join(root, "usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg"),
+      ),
+      "<svg/>",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("stage: a bundle with no icon installs none, and the entry names none", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "b");
+    await fakeLinuxBundle(bundle);
+    await Deno.remove(join(bundle, "AppIcon.png"));
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    assertEquals(owned.length, 4, "the bundle, the link, the entry, the D-Bus service file");
+    const entry = await Deno.readTextFile(
+      join(root, "usr/share/applications/com.acme.myapp.desktop"),
+    );
+    assert(!entry.includes("Icon="), entry);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -632,20 +876,20 @@ Deno.test("meta warnings: a made-up version or identifier is warned about, a set
 Deno.test("tool probe: an executable on PATH is found without a shell, a plain file is not", async () => {
   if (Deno.build.os === "windows") return;
   const dir = await Deno.makeTempDir();
-  const prev = Deno.env.get("PATH");
   try {
     await Deno.writeTextFile(join(dir, "denext-fake-tool"), "#!/bin/sh\n");
     await Deno.chmod(join(dir, "denext-fake-tool"), 0o755);
     await Deno.writeTextFile(join(dir, "denext-not-exec"), "x");
     await Deno.mkdir(join(dir, "denext-a-dir"));
-    Deno.env.set("PATH", `:${dir}`);
-    assertEquals(await desktopHasTool("denext-fake-tool"), true);
-    assertEquals(await desktopHasTool("denext-not-exec"), false);
-    assertEquals(await desktopHasTool("denext-a-dir"), false);
-    assertEquals(await desktopHasTool("denext-missing"), false);
+    // Its own PATH, in its own process: every other test's subprocesses read this one's.
+    const { value } = await inChild<boolean[]>({
+      imports: `import { desktopHasTool } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await Promise.all(["denext-fake-tool", "denext-not-exec", "denext-a-dir", ` +
+        `"denext-missing"].map((t) => desktopHasTool(t)));`,
+      env: { PATH: `:${dir}` },
+    });
+    assertEquals(value, [true, false, false, false]);
   } finally {
-    if (prev === undefined) Deno.env.delete("PATH");
-    else Deno.env.set("PATH", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -656,29 +900,19 @@ Deno.test("prepare: the plan, the app.json sync and the metadata of a project", 
     await Deno.mkdir(join(dir, "scripts"));
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ version: "4.5.6" }));
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
-    const prev = Deno.env.get("DENEXT_APP_NAME");
-    Deno.env.set("DENEXT_APP_NAME", "Prepared App");
-    const cwd = Deno.cwd();
-    Deno.chdir(dir);
-    let prepared;
-    try {
-      const run = await warnings(() =>
-        prepareDesktopPackage(entry, "linux", {
-          formats: ["rpm"],
-          add: ["appimage"],
-          export: false,
-        })
-      );
-      prepared = run.value;
-      // deno.json has a version but no identifier: only the identifier is warned about.
-      assertEquals(run.lines.length, 1);
-      assertStringIncludes(run.lines[0], "no desktop.app.identifier");
-    } finally {
-      Deno.chdir(cwd);
-      if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");
-      else Deno.env.set("DENEXT_APP_NAME", prev);
-    }
-    const { name, plan, meta } = prepared;
+    // The name from the environment and `dist/` in the working directory: its own process.
+    const run = await inChild<Awaited<ReturnType<typeof prepareDesktopPackage>>>({
+      imports: `import { prepareDesktopPackage } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await prepareDesktopPackage(${JSON.stringify(entry)}, "linux", ` +
+        `{ formats: ["rpm"], add: ["appimage"], export: false });`,
+      env: { DENEXT_APP_NAME: "Prepared App" },
+      cwd: dir,
+    });
+    // deno.json has a version but no identifier: only the identifier is warned about.
+    const lines = run.stderr.split("\n").filter((l) => l.trim());
+    assertEquals(lines.length, 1, run.stderr);
+    assertStringIncludes(lines[0], "no desktop.app.identifier");
+    const { name, plan, meta } = run.value;
     assertEquals(name, "Prepared-App");
     assertEquals(plan, { formats: ["rpm", "appimage"], explicit: true });
     assert((await Deno.stat(join(dir, "dist"))).isDirectory);
@@ -690,17 +924,18 @@ Deno.test("prepare: the plan, the app.json sync and the metadata of a project", 
 
 Deno.test("bundle command: least-privilege deno desktop with the target and the first icon", async () => {
   const dir = await Deno.makeTempDir();
-  const cwd = Deno.cwd();
   try {
     await Deno.mkdir(join(dir, "scripts"));
     await Deno.mkdir(join(dir, "icons"));
     await Deno.writeTextFile(join(dir, "icons", "app.png"), "png");
-    Deno.chdir(dir);
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
-    const cmd = await desktopBundleCommand(entry, "linux", {
-      target: "x86_64-unknown-linux-gnu",
-      out: "dist/a-x64",
-      icons: ["icons/missing.png", "icons/app.png"],
+    // The icons resolve against the working directory: its own process.
+    const { value: cmd } = await inChild<string[]>({
+      imports: `import { desktopBundleCommand } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await desktopBundleCommand(${JSON.stringify(entry)}, "linux", ` +
+        `{ target: "x86_64-unknown-linux-gnu", out: "dist/a-x64", ` +
+        `icons: ["icons/missing.png", "icons/app.png"] });`,
+      cwd: dir,
     });
     assertEquals(cmd.slice(0, 3), ["deno", "desktop", "--no-prompt"]);
     assert(!cmd.includes("-A"));
@@ -708,7 +943,6 @@ Deno.test("bundle command: least-privilege deno desktop with the target and the 
     assertStringIncludes(cmd.join(" "), "--target x86_64-unknown-linux-gnu");
     assertStringIncludes(cmd.join(" "), "--icon icons/app.png --output dist/a-x64 desktop.ts");
   } finally {
-    Deno.chdir(cwd);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -716,14 +950,12 @@ Deno.test("bundle command: least-privilege deno desktop with the target and the 
 Deno.test("script helpers: the app name, its slug, and a failing command", async () => {
   assertEquals(desktopSlug("  My App! "), "My-App");
   assertEquals(desktopSlug("!!!"), "app");
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.set("DENEXT_APP_NAME", "From Env");
-  try {
-    assertEquals(await desktopAppName(), "From Env");
-  } finally {
-    if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");
-    else Deno.env.set("DENEXT_APP_NAME", prev);
-  }
+  const { value: fromEnv } = await inChild<string>({
+    imports: `import { desktopAppName } from "@repo/src/build/desktop-package-script.ts";`,
+    body: `return await desktopAppName();`,
+    env: { DENEXT_APP_NAME: "From Env" },
+  });
+  assertEquals(fromEnv, "From Env");
   await assertRejects(() => desktopRun([Deno.execPath(), "eval", "Deno.exit(3)"]), Error, "(3)");
   // A secret on the command line never reaches the failure message.
   const err = await assertRejects(
@@ -740,24 +972,29 @@ Deno.test("script helpers: the app name, its slug, and a failing command", async
 
 Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, else "app"', async () => {
   const dir = await Deno.makeTempDir();
-  const cwd = Deno.cwd();
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.delete("DENEXT_APP_NAME");
+  // The name with no DENEXT_APP_NAME, read from the working directory: its own process.
+  const name = async () =>
+    (await inChild<string>({
+      imports: `import { desktopAppName } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await desktopAppName();`,
+      env: { DENEXT_APP_NAME: undefined },
+      cwd: dir,
+    })).value;
   try {
-    Deno.chdir(dir);
-    assertEquals(await desktopAppName(), "app"); // no deno.json
-    await Deno.writeTextFile("deno.json", "{ not json");
-    assertEquals(await desktopAppName(), "app"); // an unreadable one
-    await Deno.writeTextFile("deno.json", JSON.stringify({ desktop: { app: { name: "   " } } }));
-    assertEquals(await desktopAppName(), "app"); // a blank name
+    assertEquals(await name(), "app"); // no deno.json
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ not json");
+    assertEquals(await name(), "app"); // an unreadable one
     await Deno.writeTextFile(
-      "deno.json",
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { app: { name: "   " } } }),
+    );
+    assertEquals(await name(), "app"); // a blank name
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
       JSON.stringify({ desktop: { app: { name: "  Named App " } } }),
     );
-    assertEquals(await desktopAppName(), "Named App");
+    assertEquals(await name(), "Named App");
   } finally {
-    Deno.chdir(cwd);
-    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });

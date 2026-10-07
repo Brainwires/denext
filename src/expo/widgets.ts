@@ -57,14 +57,24 @@ export interface WidgetTimelineEntry<T extends object = object> {
 
 /** What a widget layout receives besides its props (never rendered here). */
 export type WidgetEnvironment<T extends object | undefined = undefined> = {
-  /** The date of the timeline entry. */
-  date: Date;
-  /** The widget family. */
-  widgetFamily: string;
+  /** The date of the timeline entry (absent where the platform has none, as on Android). */
+  date?: Date;
+  /** The widget family (absent where the platform has none). */
+  widgetFamily?: string;
   /** The widget's configuration (a configurable widget's chosen values). */
   configuration: T;
   /** Other environment values. */
   [key: string]: unknown;
+};
+
+/** One runtime option of a configurable widget's enum parameter. */
+export type WidgetConfigurationEnum = {
+  /** The option's label. */
+  name: string;
+  /** Its value (what the configuration reports). */
+  value: string;
+  /** A second line under the label. */
+  subtitle?: string;
 };
 
 /** A Live Activity layout function (never rendered here). */
@@ -115,15 +125,24 @@ export class Widget<
   /** The widget's name (its kind: the `--name` it was added with). */
   readonly name: string;
   #timeline: WidgetTimelineEntry<PropsType>[] = [];
+  readonly #initialProps: PropsType | undefined;
 
   /**
    * Create it.
    *
    * @param name The widget's name.
    * @param _layout Its layout (never rendered: the native widget draws the snapshot).
+   * @param initialProps The props {@linkcode getTimeline} reports until the app sets a
+   * timeline or snapshot. They are not written to the native widget, so they never replace a
+   * snapshot an earlier launch stored.
    */
-  constructor(name: string, _layout: (props: PropsType, environment: never) => unknown) {
+  constructor(
+    name: string,
+    _layout: (props: PropsType, environment: never) => unknown,
+    initialProps?: PropsType,
+  ) {
     this.name = name;
+    this.#initialProps = initialProps;
   }
 
   /** Ask the OS to redraw the widget from its stored snapshot. */
@@ -162,8 +181,24 @@ export class Widget<
    * @returns The entries.
    */
   getTimeline(): Promise<WidgetTimelineEntry<PropsType>[]> {
+    if (this.#timeline.length === 0 && this.#initialProps !== undefined) {
+      return Promise.resolve([{ date: new Date(), props: this.#initialProps }]);
+    }
     return Promise.resolve([...this.#timeline]);
   }
+
+  /**
+   * Replace a configurable widget's options for an enum parameter at runtime: does nothing
+   * here. denext's configurable widgets (`denext mobile add widget --configurable
+   * <param:enum=a|b>`) build their options into the widget extension.
+   *
+   * @param _parameterName The parameter.
+   * @param _options The options (ignored).
+   */
+  setConfigurationParameterEnum(
+    _parameterName: string,
+    _options?: WidgetConfigurationEnum[],
+  ): void {}
 
   #store(props: PropsType): void {
     setWidgetData(this.name, props).catch((err) => report(`update of widget ${this.name}`, err));
@@ -358,6 +393,7 @@ export class LiveActivityFactory<T extends object = object> {
  *
  * @param name The widget's name (its `--name`).
  * @param widget Its layout (never rendered).
+ * @param initialProps The props its timeline reports before the first update.
  * @returns The widget.
  */
 export function createWidget<
@@ -366,8 +402,13 @@ export function createWidget<
 >(
   name: string,
   widget: (props: PropsType, context: WidgetEnvironment<ConfigurationType>) => unknown,
+  initialProps?: PropsType,
 ): Widget<PropsType, ConfigurationType> {
-  return new Widget(name, widget as (props: PropsType, environment: never) => unknown);
+  return new Widget(
+    name,
+    widget as (props: PropsType, environment: never) => unknown,
+    initialProps,
+  );
 }
 
 /**
