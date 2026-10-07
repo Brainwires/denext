@@ -20,6 +20,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/cli-desktop-coverage.test.ts",
   "tests/cli-desktop-publish-update.test.ts",
   "tests/cli-env-tier.test.ts",
+  "tests/cli-generate-ops.test.ts",
   "tests/config.test.ts",
   "tests/conformance.test.ts",
   "tests/deno-exec.test.ts",
