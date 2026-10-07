@@ -45,6 +45,7 @@ export async function desktopDoctor(
   }
   const report = await runDesktopDoctor({
     runtimeStatus: () => desktopRuntimeStatus({ projectDir: dir, deno: denoExecutable() }),
+    deno: denoExecutable(),
     ...seams,
     os,
     ...(linux ? { linux } : {}),

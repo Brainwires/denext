@@ -497,9 +497,11 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
 - **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
   on this machine, with a fix for each gap: the pinned runtime and its cache,
-  the `deno` version, and on Linux the session's tray host, Secret Service and
-  lock state, notification server, xdg-desktop-portal versions and systemd user
-  manager. — `src/build/desktop-doctor.ts`.
+  the `deno` version, and on Linux the session's tray host (a StatusNotifierWatcher,
+  or an XEmbed system tray on X11), Secret Service and lock state (and whether a
+  locked keyring needs a password), CEF's cookie store, notification server,
+  xdg-desktop-portal versions and systemd user manager. —
+  `src/build/desktop-doctor.ts`.
 - **The window and the app's chrome** — `denext/desktop/window`: maximize,
   minimize, fullscreen and their events, size, position and limits, the
   displays, title-bar styles, Mica / Acrylic / vibrancy backdrops, a cancelable

@@ -67,6 +67,7 @@ import {
   unmaximizeWindow,
   windowCapabilities,
 } from "denext/desktop/window";
+import { tiledReason } from "./geometry.ts";
 
 /** What `kitchen.setup` returns (see `desktop/kitchen.ts`). */
 export interface KitchenSetup {
@@ -188,25 +189,31 @@ async function sizes(): Promise<string> {
 }
 
 /**
- * Why a geometry check cannot pass here, when the compositor overrode the request: the window
- * stays unmaximized yet covers its screen's work area (a tiling window manager such as Sway tiles
- * every window to its slot), so `setWindowBounds` / `maximizeWindow` cannot change it. The runtime
- * reports no tiling fact (`windowCapabilities()` / the session probe), so this reads the outcome.
- * `null` when the window does not fill the screen: a real failure, reported as one.
+ * Why a geometry check cannot pass here, when the compositor overrode the request: a tiling window
+ * manager keeps every window in its slot, so `setWindowSize` / `maximizeWindow` /
+ * `unmaximizeWindow` cannot change it. Sway leaves the window unmaximized; i3 reports it maximized,
+ * so a maximized window is asked to unmaximize once, and one that stays maximized while filling
+ * the work area is tiled (a stacking window manager honours the request, and the failure stands).
+ * The runtime reports no tiling fact (`windowCapabilities()` / the session probe), so this reads
+ * the outcome (`tiledReason` in `geometry.ts`). `null`: a real failure, reported as one.
  */
 async function compositorOwnsGeometry(asked: string): Promise<string | null> {
-  const st = await getWindowState().catch(() => null);
-  const frame = st?.bounds ?? st?.contentBounds;
-  if (!st || !frame || st.maximized || st.fullscreen) return null;
+  let st = await getWindowState().catch(() => null);
+  if (!st) return null;
   const screen = st.screen ?? (await getScreens().catch(() => [])).find((s) => s.isPrimary);
   if (!screen) return null;
-  // 90% in both dimensions: a tiled window loses only the gaps and the bar to the screen.
-  const fills = (r: { width: number; height: number }) =>
-    frame.width >= r.width * 0.9 && frame.height >= r.height * 0.9;
-  if (!fills(screen.workArea) && !fills(screen.bounds)) return null;
-  return `the compositor controls this window's geometry (a tiling window manager): asked ` +
-    `${asked}, the window stays ${frame.width}x${frame.height}, unmaximized, filling the ` +
-    `${screen.workArea.width}x${screen.workArea.height} work area`;
+  let unmaximizeIgnored = false;
+  if (st.maximized && !st.fullscreen) {
+    await unmaximizeWindow().catch(() => {});
+    const end = Date.now() + 1500;
+    do {
+      await sleep(100);
+      st = await getWindowState().catch(() => null);
+    } while (st?.maximized && Date.now() < end);
+    if (!st) return null;
+    unmaximizeIgnored = st.maximized;
+  }
+  return tiledReason(asked, st, screen, { unmaximizeIgnored });
 }
 
 /** Run `step`; when it fails because the compositor owns the geometry, skip with that reason. */
@@ -574,19 +581,22 @@ const windowChecks: Check[] = [
     // clamps a window to the work area, so ask for a size that fits it and assert exactly that.
     const { width, height, why } = await fittingSize(900, 700);
     await setWindowSize(width, height);
-    await unlessTiled(`${width}x${height}`, () =>
-      waitFor(
+    // The window's own report too: under a tiling window manager CEF's page can show the asked
+    // size for a moment before the window manager puts the window back in its slot.
+    await unlessTiled(`${width}x${height}`, async () => {
+      await waitFor(
         () => near(innerWidth, width) && near(innerHeight, height),
         `${width}x${height}`,
         5000,
         sizes,
-      ));
-    const state = await getWindowState();
-    assert(state.contentBounds, "no contentBounds");
-    assert(
-      near(state.contentBounds.width, width),
-      `contentBounds.width ${state.contentBounds.width}`,
-    );
+      );
+      const state = await getWindowState();
+      assert(state.contentBounds, "no contentBounds");
+      assert(
+        near(state.contentBounds.width, width),
+        `contentBounds.width ${state.contentBounds.width}`,
+      );
+    });
     return `${innerWidth}x${innerHeight}${why}`;
   }],
   ["window: minimum / maximum size clamp", async () => {
@@ -629,9 +639,9 @@ const windowChecks: Check[] = [
       () => waitFor(async () => (await getWindowState()).maximized, "maximized"),
     );
     await unmaximizeWindow();
-    await waitFor(
-      async () => !(await getWindowState()).maximized,
+    await unlessTiled(
       "unmaximized",
+      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized"),
     );
     return "ok";
   }],

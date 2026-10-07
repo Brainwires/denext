@@ -163,7 +163,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndeno task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndeno task test:window        # package, launch and assert every check (exits 1 on a failure)\ndeno task test:window --no-package   # reuse the last builds in dist/ (and their update key)\ndeno task test:window --no-update    # skip the full-app update install / rollback launches",
+      "run": "deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndeno task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndeno task test:window        # package, launch and assert every check (exits 1 on a failure)\ndeno task drive start        # launch the last build in drive mode (the manual checks, scripted)",
       "runFrom": "example"
     },
     {

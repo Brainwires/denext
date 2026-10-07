@@ -121,7 +121,12 @@ Deno.test("desktop doctor: a complete Plasma session over busctl has no findings
     sandbox: { mode: "namespace", reason: "unprivileged user namespaces work" },
     sessionBus: true,
     trayHost: true,
+    xembedTray: null,
     secretService: "available",
+    keyringUnlock: null,
+    // KDE: Chromium keeps the cookie key in KWallet, whose state the doctor doesn't read.
+    cookieEncryption: "unknown",
+    cookieEncryptionReason: report.linux?.cookieEncryptionReason ?? "",
     notifications: true,
     notificationReason: null,
     portal: true,
@@ -806,4 +811,206 @@ Deno.test("desktop doctor: an activatable notification server that fails to star
   assertStringIncludes(byCheck["tray-host"].message, "XEmbed system tray");
   assertStringIncludes(byCheck["tray-host"].fix, "XEmbed");
   assertStringIncludes(formatDesktopDoctor(report), "an XEmbed tray is not visible from here");
+});
+
+/** The keyring files the locked-keyring check reads (gnome-keyring's own, never its secrets). */
+const KEYRINGS = "/home/u/.local/share/keyrings";
+/** gnome-keyring's encrypted file format starts with this magic; a keyring with no password is
+ * stored as plain text, starting with `[keyring]`. */
+const ENCRYPTED_KEYRING = "GnomeKeyring\n\r\0\n\0\0\0";
+const PLAIN_KEYRING = "[keyring]\ndispla";
+
+/** A Cinnamon session under GDM: gnome-keyring with gnome-shell-less gcr prompting. */
+const CINNAMON = {
+  [BUSCTL_LIST]: [
+    "org.freedesktop.secrets 901 gnome-keyring-d u :1.10 user@1000.service - -",
+    "org.gnome.keyring 901 gnome-keyring-d u :1.10 user@1000.service - -",
+    "org.gnome.keyring.SystemPrompter - - - (activatable) - -",
+    "org.kde.StatusNotifierWatcher 900 cinnamon u :1.9 session-2.scope 2 -",
+    "org.freedesktop.Notifications 902 cinnamon u :1.11 session-2.scope 2 -",
+    "org.freedesktop.portal.Desktop 903 xdg-desktop-por u :1.12 - 2 -",
+    "org.freedesktop.systemd1 1 systemd u :1.1 user@1000.service - -",
+    "com.canonical.Unity 1 a b - - - -",
+  ].join("\n"),
+  [REGISTRY]: REGISTRY_ANSWER,
+  [LOCKED]: "b true",
+  [portalProp("FileChooser")]: "u 4",
+  [portalProp("Settings")]: "u 2",
+  [LDCONFIG]: LIBSECRET,
+  [UNSHARE]: 0,
+  [`cat ${KEYRINGS}/default`]: "Login",
+};
+const CINNAMON_ENV = {
+  XDG_SESSION_TYPE: "x11",
+  DISPLAY: ":0",
+  XDG_CURRENT_DESKTOP: "X-Cinnamon",
+  HOME: "/home/u",
+};
+
+Deno.test("desktop doctor: a locked keyring with no password unlocks on first use, without a prompt", async () => {
+  const calls: string[] = [];
+  const report = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status({ backend: "cef" })),
+    os: "linux",
+    env: env(CINNAMON_ENV),
+    run: fakeRun({ ...CINNAMON, [`head -c 16 ${KEYRINGS}/Login.keyring`]: PLAIN_KEYRING }, calls),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assertEquals(report.linux?.secretService, "locked", "as the runtime's probe names it");
+  assertEquals(report.linux?.keyringUnlock, "no-password");
+  // The default keyring's file is named by `keyrings/default`, and only its header is read.
+  assert(calls.includes(`head -c 16 ${KEYRINGS}/Login.keyring`));
+  assertEquals(report.findings.map((f) => f.check), [], "no false alarm");
+  assertEquals(report.linux?.cookieEncryption, "os");
+  const text = formatDesktopDoctor(report);
+  assertStringIncludes(text, "locked (no password: it unlocks on first use, with no prompt)");
+  assertStringIncludes(text, "cookies   CEF: os");
+});
+
+Deno.test("desktop doctor: a locked keyring with a password still warns that reads prompt", async () => {
+  const report = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env({ ...CINNAMON_ENV, XDG_DATA_HOME: "/data" }),
+    run: fakeRun({
+      ...CINNAMON,
+      // XDG_DATA_HOME moves the keyrings; with no `default` file the default keyring is "login".
+      [`cat ${KEYRINGS}/default`]: 1,
+      [`head -c 16 /data/keyrings/login.keyring`]: ENCRYPTED_KEYRING,
+    }),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assertEquals(report.linux?.keyringUnlock, "password");
+  assertEquals(report.findings.map((f) => f.check), ["secret-service"]);
+  assertStringIncludes(report.findings[0].message, "prompt");
+  assertStringIncludes(formatDesktopDoctor(report), "locked (a password unlocks it: a prompt)");
+  // Another provider (KWallet, KeePassXC) or an unreadable file: unknown, still a warning.
+  const other = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env(CINNAMON_ENV),
+    run: fakeRun({
+      ...CINNAMON,
+      [BUSCTL_LIST]: CINNAMON[BUSCTL_LIST].split("\n").filter((l) => !l.includes("gnome.keyring"))
+        .join("\n"),
+      [`head -c 16 ${KEYRINGS}/Login.keyring`]: PLAIN_KEYRING,
+    }),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assertEquals(other.linux?.keyringUnlock, "unknown", "gnome-keyring's files say nothing here");
+  assertEquals(other.findings.map((f) => f.check), ["secret-service"]);
+});
+
+/** The doctor's XEmbed tray probe: `deno eval` of a small libX11 FFI script (argv only). */
+const XEMBED = "deno eval";
+const xembed = (owner: string | null, name: string | null = null) =>
+  JSON.stringify({ display: true, selection: "_NET_SYSTEM_TRAY_S0", owner, name });
+
+Deno.test("desktop doctor: an XEmbed system tray on X11 (i3bar) is a tray host", async () => {
+  const i3 = {
+    [BUSCTL_LIST]: [
+      "org.freedesktop.Notifications - - - (activatable) - -",
+      "org.freedesktop.secrets - - - (activatable) - -",
+      "org.freedesktop.systemd1 1 a b - - - -",
+      "com.canonical.Unity 1 a b - - - -",
+    ].join("\n"),
+    "busctl --user --timeout=5 call org.freedesktop.DBus": "u 1",
+    [LDCONFIG]: LIBSECRET,
+    [UNSHARE]: 0,
+  };
+  const calls: string[] = [];
+  const report = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "x11", DISPLAY: ":0", XDG_CURRENT_DESKTOP: "i3" }),
+    run: fakeRun({ ...i3, [XEMBED]: xembed("0x1600003", "i3bar") }, calls),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assert(calls.some((c) => c.startsWith(`${XEMBED} `)), "the X display was asked");
+  assertEquals(report.linux?.trayHost, false, "no StatusNotifierWatcher");
+  assertEquals(report.linux?.xembedTray, { owner: "0x1600003", name: "i3bar" });
+  assert(!report.findings.some((f) => f.check === "tray-host"), "the XEmbed tray is a host");
+  const text = formatDesktopDoctor(report);
+  assertStringIncludes(text, "tray      an XEmbed system tray (i3bar)");
+  assertStringIncludes(text, "✔ tray-host");
+  // No owner of the selection: no tray at all, said plainly.
+  const none = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "x11", DISPLAY: ":0" }),
+    run: fakeRun({ ...i3, [XEMBED]: xembed(null) }),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assertEquals(none.linux?.xembedTray, false);
+  const tray = none.findings.find((f) => f.check === "tray-host");
+  assertStringIncludes(tray!.message, "no XEmbed system tray");
+  assertStringIncludes(
+    formatDesktopDoctor(none),
+    "no StatusNotifierWatcher, no XEmbed system tray",
+  );
+  // Wayland: $DISPLAY is Xwayland's (connecting may start it), so the X display is never asked.
+  const waylandCalls: string[] = [];
+  const wayland = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "wayland", WAYLAND_SOCKET: "3", DISPLAY: ":0" }),
+    run: fakeRun({ ...i3, [XEMBED]: xembed("0x1") }, waylandCalls),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assert(!waylandCalls.some((c) => c.startsWith(XEMBED)));
+  assertEquals(wayland.linux?.xembedTray, null);
+});
+
+Deno.test("desktop doctor: the CEF cookie store (os / basic / unknown), with a fix for basic", async () => {
+  const cef = (vars: Record<string, string>, answers: Record<string, string | number>) =>
+    runDesktopDoctor({
+      runtimeStatus: () => Promise.resolve(status({ backend: "cef" })),
+      os: "linux",
+      env: env(vars),
+      run: fakeRun({ ...FULL, ...answers }),
+      pin: pin(47, "2.9.7-denext.12"),
+    });
+  const available = await cef({ XDG_SESSION_TYPE: "wayland", WAYLAND_SOCKET: "3" }, {});
+  assertEquals(available.linux?.cookieEncryption, "os");
+  // No Secret Service: Chromium falls back to its fixed key by itself.
+  const absent = await cef({ XDG_SESSION_TYPE: "wayland", WAYLAND_SOCKET: "3" }, {
+    [BUSCTL_LIST]: FULL[BUSCTL_LIST].split("\n").filter((l) => !l.includes("secrets")).join("\n"),
+  });
+  assertEquals(absent.linux?.cookieEncryption, "basic");
+  const finding = absent.findings.find((f) => f.check === "cookie-encryption");
+  assert(finding, "basic is a finding for a CEF app");
+  assertStringIncludes(finding.message, "--password-store=basic");
+  assertStringIncludes(finding.fix, "Secret Service");
+  assertStringIncludes(formatDesktopDoctor(absent), "cookies   CEF: basic");
+  // Locked where no one can answer the unlock prompt (a session with no display): basic.
+  const headless = await cef({ XDG_SESSION_TYPE: "x11" }, { [LOCKED]: "b true" });
+  assertEquals(headless.linux?.cookieEncryption, "basic");
+  assertStringIncludes(headless.linux!.cookieEncryptionReason!, "unlock prompt");
+  // gnome-keyring without gcr's prompter can't prompt either.
+  const noPrompter = await cef({ XDG_SESSION_TYPE: "x11", DISPLAY: ":0" }, {
+    [BUSCTL_LIST]: `${FULL[BUSCTL_LIST]}\norg.gnome.keyring 901 gnome-keyring-d u :1.10 - - -`,
+    [LOCKED]: "b true",
+  });
+  assertEquals(noPrompter.linux?.cookieEncryption, "basic");
+  // A KDE desktop: Chromium keeps the key in KWallet, whose state the doctor doesn't read.
+  const kde = await cef({
+    XDG_SESSION_TYPE: "wayland",
+    WAYLAND_SOCKET: "3",
+    XDG_CURRENT_DESKTOP: "KDE",
+  }, {});
+  assertEquals(kde.linux?.cookieEncryption, "unknown");
+  assert(!kde.findings.some((f) => f.check === "cookie-encryption"));
+  // The WebView backend keeps no CEF cookie store: the fact is listed, never a finding.
+  const webview = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status()),
+    os: "linux",
+    env: env({ XDG_SESSION_TYPE: "wayland", WAYLAND_SOCKET: "3" }),
+    run: fakeRun({
+      ...FULL,
+      [BUSCTL_LIST]: FULL[BUSCTL_LIST].split("\n").filter((l) => !l.includes("secrets")).join("\n"),
+    }),
+    pin: pin(47, "2.9.7-denext.12"),
+  });
+  assert(!webview.findings.some((f) => f.check === "cookie-encryption"));
+  assert(!webview.checks.includes("cookie-encryption"));
 });

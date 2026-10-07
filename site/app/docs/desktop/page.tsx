@@ -631,11 +631,15 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         matches it, and on Linux (or with{" "}
         <code>--linux</code>) the session type (as the runtime reads it: the display that is there,
         so a session labelled Wayland with only an X display is X11), the D-Bus session bus, a tray
-        host (on X11 a window manager&apos;s XEmbed tray works too, which only the app&apos;s{" "}
-        <code>appCapabilities().trayHost</code>{" "}
-        can see), the Secret Service and its lock state, libsecret, a notification server (one D-Bus
-        starts on demand is started as the runtime would, and a failure shows D-Bus&apos;s reason)
-        and the portal interfaces with their versions; whether the portal can register the
+        host (on X11 a window manager&apos;s XEmbed tray works too: the doctor asks the display who
+        owns <code>_NET_SYSTEM_TRAY_S&lt;n&gt;</code>{" "}
+        and names it, such as i3bar), the Secret Service and its lock state (a locked gnome-keyring
+        keyring with no password unlocks on first use without a prompt, which the doctor tells apart
+        from one that prompts), the cookie store a CEF window starts with (<code>os</code>, or{" "}
+        <code>basic</code>{" "}
+        where no one can hand Chromium the key, with the fix), libsecret, a notification server (one
+        D-Bus starts on demand is started as the runtime would, and a failure shows D-Bus&apos;s
+        reason) and the portal interfaces with their versions; whether the portal can register the
         app&apos;s id (so a click on a notification starts the app when it isn&apos;t running),
         telling a portal that is too old (before 1.19) from one that is installed but doesn&apos;t
         start; a systemd user manager (a scheduled notification is posted while the app is closed);

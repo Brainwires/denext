@@ -215,6 +215,22 @@ and this project adheres to
   MainActivity (5), `DenextSettings` (2) and `DenextContextMenu` (2); an unedited earlier file is
   upgraded by the next `denext mobile add`, then ship a new binary.
 
+- **`denext desktop doctor --linux` reports CEF's cookie store** (`cookies   CEF: os | basic |
+  unknown`) as the runtime picks it for a new profile, with a fix when a CEF app would start with
+  `--password-store=basic`, and sees an **XEmbed system tray** on X11 (`_NET_SYSTEM_TRAY_S<n>`'s
+  owner, named after its X client: `an XEmbed system tray (i3bar)`), which the runtime falls back
+  to when no StatusNotifierWatcher runs.
+- **The desktop kitchen sink's drive mode** (`examples/desktop-kitchen-sink`): the manual checks
+  (file dialogs, a notification click, the secure store, the tray, the title bar, the window
+  states, deep links) run from a command queue, `deno task drive <command>` or a file dropped in
+  its folder, with no one at the screen and no input injection; `native-dialog` closes the
+  runtime's own dialog through its `AbortSignal`. `test:window` takes `--backend webview|cef`,
+  `--runtime-dir`, `--stock-runtime`, `--results <file>` and `--json`, prints the session facts
+  (`platformFeatures()`, `appCapabilities()`, `windowCapabilities()`), and writes them with the
+  backend, the runtime and the counts to its results document. `e2e/wm-session.sh` runs it in a
+  nested session with the window manager you pick (i3, openbox, xfwm4 on Xvfb or Xephyr; weston
+  or sway on Wayland).
+
 ### Changed
 
 - **ISR pages send CDN cache headers by default.** The render that stores an ISR entry and
@@ -256,6 +272,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop doctor --linux` no longer warns about a locked keyring that unlocks by
+  itself.** gnome-keyring keeps a keyring with no password (an autologin's login keyring, as on
+  Cinnamon) unencrypted and reports it locked until first use, which unlocks it with no prompt; the
+  doctor reads the keyring file's header and says so instead (`locked (no password: it unlocks on
+  first use, with no prompt)`). A keyring with a password still warns that reads prompt.
+- **The desktop kitchen sink's geometry checks skip on i3** instead of failing: i3 reports a tiled
+  window as maximized and ignores an unmaximize, so a maximized window that stays maximized after
+  one, filling its work area, counts as tiled (as an unmaximized one filling it already did for
+  Sway), and the maximize / unmaximize check's unmaximize wait is covered too.
 - **The `notifications` capability measures its limits in UTF-8 bytes,** as the runtime does: a
   notification's data over 4 KiB (non-ASCII text counted by bytes, not UTF-16 units) and an action
   id over 1 KiB are refused with `validation` instead of being posted with a click the runtime

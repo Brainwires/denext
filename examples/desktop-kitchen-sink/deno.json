@@ -7,7 +7,8 @@
     "desktop": "deno run -A ../../cli.ts desktop run .",
     "desktop:scripts": "deno run -A ../../cli.ts desktop package --regenerate-scripts .",
     "desktop:package": "deno run -A ../../cli.ts desktop package --regenerate-scripts . && deno run -A ../../cli.ts desktop package .",
-    "test:window": "deno run -A e2e/window-test.ts"
+    "test:window": "deno run -A e2e/window-test.ts",
+    "drive": "deno run -A e2e/drive.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

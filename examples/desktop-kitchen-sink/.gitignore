@@ -4,6 +4,7 @@ out/
 dist/
 node_modules/
 e2e/.run/
+e2e/.drive/
 # Packaging scripts: written from the CURRENT scaffold template by `deno task desktop:package`
 # and the window test (`denext desktop package --regenerate-scripts`), never vendored.
 scripts/

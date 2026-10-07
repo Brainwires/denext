@@ -26,19 +26,33 @@
 // Exits non-zero on any failed or missing check, a skip without a reason, a timeout, or an app that
 // does not quit.
 //
-//   deno task test:window                 # from examples/desktop-kitchen-sink
-//   deno task test:window --no-package    # reuse the last dist/ builds (and their update key)
-//   deno task test:window --no-update     # skip the full-app update install / rollback phases
-//   deno task test:window --no-signing    # Windows: skip the signing and trusted-update phases
+//   deno task test:window                       # from examples/desktop-kitchen-sink
+//   deno task test:window --no-package          # reuse the last dist/ builds (and their update key)
+//   deno task test:window --no-update           # skip the full-app update install / rollback phases
+//   deno task test:window --no-signing          # Windows: skip the signing and trusted-update phases
+//   deno task test:window --backend cef         # package for this backend (webview | cef) instead of
+//                                               # deno.json's desktop.backend (restored afterwards)
+//   deno task test:window --runtime-dir <dir>   # package with a local runtime build
+//                                               # (DENEXT_DESKTOP_RUNTIME_DIR; unverified)
+//   deno task test:window --stock-runtime       # package with the stock runtime (DENEXT_DESKTOP_RUNTIME=stock)
+//   deno task test:window --results <file>      # also write the results document to <file>
+//   deno task test:window --json                # print only the results document on stdout (the
+//                                               # progress goes to stderr)
+//
+// The runtime is denext's pinned one (src/build/desktop-runtime-pin.json: its version is in the
+// output and the results) unless --runtime-dir or --stock-runtime says otherwise; an unknown flag
+// is an error.
 //
 // macOS: run it in a logged-in session (the window needs a screen). Linux: under a display, e.g.
 // `xvfb-run -a deno task test:window`. Windows: in the interactive desktop session (over SSH, start
 // it from an `/it` scheduled task). Env: KITCHEN_SINK_TIMEOUT_MS (default 240000).
 //
-// Results: `e2e/.run/results.json` (every check of every phase, per OS), and with
+// Results: `e2e/.run/results.json` (every check of every phase, per OS, plus the backend, the
+// runtime, the counts and the session facts the app reported: `platformFeatures()`,
+// `appCapabilities()`, `windowCapabilities()`, which the output also prints), and with
 // GITHUB_STEP_SUMMARY set a Markdown table of them, skips listed with their reasons.
 
-import { DELIMITER, dirname, fromFileUrl, join } from "@std/path";
+import { DELIMITER, dirname, fromFileUrl, join, resolve } from "@std/path";
 import {
   generateOtaKeyPair,
   importOtaSigningKey,
@@ -52,6 +66,7 @@ import {
   writeAppUpdateArchive,
 } from "../../../src/build/app-update.ts";
 import { desktopAppDirs } from "../../../src/desktop/app-dirs.ts";
+import { projectDesktopBackend } from "../../../src/build/desktop-runtime.ts";
 import {
   desktopPeFiles,
   desktopRun,
@@ -68,10 +83,12 @@ import {
   trustTestCerts,
   untrustTestCerts,
 } from "./windows-signing.ts";
+import pin from "../../../src/build/desktop-runtime-pin.json" with { type: "json" };
+import { parseFlags } from "./cli-args.ts";
 
-const ROOT = fromFileUrl(new URL("..", import.meta.url));
+export const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const SCRATCH = join(ROOT, "e2e", ".run");
-const APP_ID = "dev.denext.kitchen-sink";
+export const APP_ID = "dev.denext.kitchen-sink";
 const APP_NAME = "KitchenSink"; // DENEXT_APP_NAME: a predictable dist/ path without spaces
 const LINK_SCHEME = "kitchensink-link";
 const OS = Deno.build.os;
@@ -116,6 +133,84 @@ const BROWSER_OPENER: Record<string, string> = {
   windows: "rundll32.exe",
 };
 
+/** The flags `test:window` takes (anything else is an error). */
+const FLAGS = {
+  "no-package": "boolean",
+  "no-update": "boolean",
+  "no-signing": "boolean",
+  "stock-runtime": "boolean",
+  json: "boolean",
+  backend: "value",
+  "runtime-dir": "value",
+  results: "value",
+} as const;
+
+/** The parsed flags. */
+export interface WindowTestOptions {
+  readonly noPackage: boolean;
+  readonly noUpdate: boolean;
+  readonly noSigning: boolean;
+  /** `webview` / `cef`: the backend to package for (`null`: deno.json's). */
+  readonly backend: "webview" | "cef" | null;
+  /** DENEXT_DESKTOP_RUNTIME_DIR for packaging. */
+  readonly runtimeDir: string | null;
+  readonly stockRuntime: boolean;
+  /** Also write the results document here. */
+  readonly results: string | null;
+  /** The results document is stdout's only output. */
+  readonly json: boolean;
+}
+
+/** Parse `test:window`'s flags; throws on an unknown or malformed one. */
+export function parseWindowTestArgs(args: readonly string[]): WindowTestOptions {
+  // A boolean flag never takes the next argument as its value.
+  const split: string[] = [];
+  for (const a of args) {
+    const name = /^--([a-z-]+)$/.exec(a)?.[1];
+    split.push(a);
+    if (name && FLAGS[name as keyof typeof FLAGS] === "boolean") split.push("--");
+  }
+  const { positional, flags } = parseFlags(split);
+  const stray = positional.filter((p) => p !== "--");
+  if (stray.length) throw new Error(`unexpected argument ${stray[0]}`);
+  for (const [name, value] of Object.entries(flags)) {
+    const kind = FLAGS[name as keyof typeof FLAGS];
+    if (!kind) throw new Error(`unknown flag --${name} (${Object.keys(FLAGS).join(", ")})`);
+    if (kind === "value" && value === "") throw new Error(`--${name} needs a value`);
+  }
+  const backend = flags.backend ?? null;
+  if (backend !== null && backend !== "webview" && backend !== "cef") {
+    throw new Error(`--backend must be webview or cef (got ${backend})`);
+  }
+  if (flags["runtime-dir"] !== undefined && flags["stock-runtime"] !== undefined) {
+    throw new Error("--runtime-dir and --stock-runtime pick different runtimes: choose one");
+  }
+  return {
+    noPackage: "no-package" in flags,
+    noUpdate: "no-update" in flags,
+    noSigning: "no-signing" in flags,
+    backend,
+    runtimeDir: flags["runtime-dir"] ?? null,
+    stockRuntime: "stock-runtime" in flags,
+    results: flags.results ?? null,
+    json: "json" in flags,
+  };
+}
+
+/** The runtime packaging uses, as the results document names it. */
+export function runtimeOf(options: WindowTestOptions): {
+  mode: "pinned" | "local" | "stock";
+  version: string | null;
+  dir: string | null;
+} {
+  if (options.stockRuntime) return { mode: "stock", version: null, dir: null };
+  if (options.runtimeDir) return { mode: "local", version: null, dir: options.runtimeDir };
+  return { mode: "pinned", version: (pin as { version: string }).version, dir: null };
+}
+
+/** `--json`: progress on stderr, so stdout is the results document only. */
+let jsonOut = false;
+
 interface CheckResult {
   name: string;
   status: "pass" | "fail" | "skip";
@@ -128,6 +223,8 @@ interface Report {
   pid: number;
   results: CheckResult[];
   expected: string[];
+  /** The session facts the page read (the main phase's report only). */
+  facts?: unknown;
 }
 
 /** One check's outcome in the merged results (`results.json`). */
@@ -143,7 +240,7 @@ interface Launched {
 }
 
 function log(line: string): void {
-  console.log(`[window-test] ${line}`);
+  (jsonOut ? console.error : console.log)(`[window-test] ${line}`);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -155,13 +252,16 @@ async function exists(path: string): Promise<boolean> {
 /** Run a command in the example dir, streaming its output; throw on a non-zero exit. */
 async function run(cmd: string[], env: Record<string, string> = {}): Promise<void> {
   log(`$ ${cmd.join(" ")}`);
-  const { code } = await new Deno.Command(cmd[0], {
+  const child = new Deno.Command(cmd[0], {
     args: cmd.slice(1),
     cwd: ROOT,
     env,
-    stdout: "inherit",
+    stdout: jsonOut ? "piped" : "inherit",
     stderr: "inherit",
-  }).output();
+  }).spawn();
+  // --json: the child's output joins the progress on stderr.
+  if (jsonOut) await child.stdout.pipeTo(Deno.stderr.writable, { preventClose: true });
+  const { code } = await child.status;
   if (code !== 0) throw new Error(`exit ${code}: ${cmd.join(" ")}`);
 }
 
@@ -172,8 +272,11 @@ const quiet = (cmd: string, args: string[]) =>
 
 /** Where a build keeps the update key pair it was packaged with (the public half is baked in). */
 const KEY_FILE = join(ROOT, "dist", "kitchen-sink-update-key.json");
-/** Where the update build (99.0.0) is kept, beside the app build in dist/. */
-const UPDATE_DIST = join(ROOT, "dist", "update");
+/**
+ * Where the update build (99.0.0) for `backend` is kept, beside the app build in dist/: one per
+ * backend, so `--no-package` never offers a CEF app the WebView update (`no_platform`).
+ */
+const updateDist = (backend: "webview" | "cef") => join(ROOT, "dist", `update-${backend}`);
 
 /** The update key pair of the last build in dist/ (`--no-package`). */
 async function buildKey(): Promise<{ publicKey: string; privateKeyPem: string }> {
@@ -181,7 +284,7 @@ async function buildKey(): Promise<{ publicKey: string; privateKeyPem: string }>
 }
 
 /** The packaged app's bundle in `dist`: the `.app` (macOS) or the app directory. */
-function bundleIn(dist: string): string {
+export function bundleIn(dist: string): string {
   return OS === "darwin" ? join(dist, `${APP_NAME}.app`) : join(dist, `${APP_NAME}-${ARCH_LABEL}`);
 }
 
@@ -233,7 +336,28 @@ async function moveBundle(dist: string): Promise<string> {
 /** Package the update build: the same app as version 99.0.0 (deno.json's `version`, restored). */
 async function packageUpdateBuild(publicKey: string): Promise<void> {
   await withVersion(UPDATE_VERSION, () => runPackageScript(publicKey));
-  await moveBundle(UPDATE_DIST);
+  await moveBundle(updateDist(await projectDesktopBackend(ROOT)));
+}
+
+/**
+ * Run `build` with deno.json's `desktop.backend` set to `backend` (restored afterwards); `null`
+ * leaves deno.json as it is.
+ */
+async function withBackend(
+  backend: "webview" | "cef" | null,
+  build: () => Promise<void>,
+): Promise<void> {
+  if (backend === null) return await build();
+  const denoJson = join(ROOT, "deno.json");
+  const original = await Deno.readTextFile(denoJson);
+  const config = JSON.parse(original) as { desktop?: Record<string, unknown> };
+  config.desktop = { ...config.desktop, backend };
+  await Deno.writeTextFile(denoJson, `${JSON.stringify(config, null, 2)}\n`);
+  try {
+    await build();
+  } finally {
+    await Deno.writeTextFile(denoJson, original);
+  }
 }
 
 /** Write the packaging scripts from the current scaffold, then package the update build, the
@@ -491,7 +615,7 @@ async function linuxExecutable(dir: string): Promise<string> {
 }
 
 /** The packaged executable of a bundle (see {@link bundleIn}). */
-function executableOf(bundle: string): Promise<string> {
+export function executableOf(bundle: string): Promise<string> {
   if (OS === "darwin") return macExecutable(bundle);
   if (OS === "windows") return Promise.resolve(join(bundle, `${APP_NAME}-${ARCH_LABEL}.exe`));
   return linuxExecutable(bundle);
@@ -1200,7 +1324,9 @@ function judge(reports: Report[], extra: string[]): { results: RunResult[]; prob
     for (const r of report.results) {
       results.push({ phase: report.phase, ...r });
       const mark = { pass: "PASS", skip: "SKIP", fail: "FAIL" }[r.status];
-      console.log(`${mark}  [${report.phase}] ${r.name}  (${r.ms} ms)  ${r.detail}`);
+      (jsonOut ? console.error : console.log)(
+        `${mark}  [${report.phase}] ${r.name}  (${r.ms} ms)  ${r.detail}`,
+      );
       if (r.status === "fail") problems.push(`${r.name}: ${r.detail}`);
       if (r.status === "skip" && !r.detail.trim()) {
         problems.push(`${r.name}: skipped with no reason`);
@@ -1263,33 +1389,93 @@ function markdownSummary(results: RunResult[], problems: string[]): string {
   return lines.join("\n");
 }
 
-async function writeResults(results: RunResult[], problems: string[]): Promise<void> {
-  await Deno.writeTextFile(
-    join(SCRATCH, "results.json"),
-    JSON.stringify(
-      { os: OS, arch: Deno.build.arch, target: Deno.build.target, results, problems },
-      null,
-      2,
-    ),
-  );
+/** What the run was: the results document's header. */
+interface RunInfo {
+  readonly backend: "webview" | "cef" | null;
+  readonly runtime: ReturnType<typeof runtimeOf>;
+  readonly options: WindowTestOptions;
+  /** The session facts the main phase's page reported (`null` without a main report). */
+  readonly facts: unknown;
+}
+
+/**
+ * The results document (`results.json`, `--results`, `--json`): every check of every phase with
+ * its status and detail, the problems, the counts, and what ran: the OS, the backend, the runtime
+ * and the session facts. `results` / `problems` keep the shape the CI summary reads.
+ */
+export function resultsDocument(
+  info: RunInfo,
+  results: readonly RunResult[],
+  problems: readonly string[],
+): Record<string, unknown> {
+  const count = (s: string) => results.filter((r) => r.status === s).length;
+  return {
+    schema: 1,
+    os: OS,
+    arch: Deno.build.arch,
+    target: Deno.build.target,
+    backend: info.backend,
+    runtime: info.runtime,
+    flags: info.options,
+    ok: problems.length === 0,
+    summary: {
+      pass: count("pass"),
+      skip: count("skip"),
+      fail: count("fail"),
+      problems: problems.length,
+    },
+    facts: info.facts,
+    results,
+    problems,
+  };
+}
+
+async function writeResults(
+  info: RunInfo,
+  results: RunResult[],
+  problems: string[],
+): Promise<void> {
+  const text = JSON.stringify(resultsDocument(info, results, problems), null, 2);
+  await Deno.writeTextFile(join(SCRATCH, "results.json"), text);
+  if (info.options.results) await Deno.writeTextFile(info.options.results, text);
+  if (info.options.json) console.log(text);
   const summary = Deno.env.get("GITHUB_STEP_SUMMARY");
   if (summary) {
     await Deno.writeTextFile(summary, markdownSummary(results, problems), { append: true });
   }
 }
 
+/** Print the session facts the app reported, as the runtime and the page see them. */
+function printFacts(facts: unknown): void {
+  if (facts === null || facts === undefined) return log("the app reported no session facts");
+  log("session facts (platformFeatures / appCapabilities / windowCapabilities):");
+  for (const line of JSON.stringify(facts, null, 2).split("\n")) log(`  ${line}`);
+}
+
 // --- main --------------------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  const options = parseWindowTestArgs(Deno.args);
+  jsonOut = options.json;
+  const runtime = runtimeOf(options);
+  // The package scripts (and `denext desktop package`) read the runtime from the environment.
+  if (options.runtimeDir) Deno.env.set("DENEXT_DESKTOP_RUNTIME_DIR", resolve(options.runtimeDir));
+  if (options.stockRuntime) Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
   await Deno.remove(SCRATCH, { recursive: true }).catch(() => {});
   await Deno.mkdir(SCRATCH, { recursive: true });
   log(`${OS} ${Deno.build.arch}, deno ${Deno.version.deno}`);
-  const withUpdate = !Deno.args.includes("--no-update");
-  const noPackage = Deno.args.includes("--no-package");
+  log(
+    `runtime: ${runtime.mode}${runtime.version ? ` ${runtime.version}` : ""}` +
+      `${runtime.dir ? ` (${runtime.dir})` : ""}; backend: ${
+        options.backend ?? "deno.json's desktop.backend"
+      }`,
+  );
+  const withUpdate = !options.noUpdate;
+  const noPackage = options.noPackage;
   // Windows signing: why the phases cannot run here (`null`: they run while packaging).
   const signSkip = OS !== "windows"
     ? null
-    : Deno.args.includes("--no-signing")
+    : options.noSigning
     ? "--no-signing"
     : noPackage
     ? "--no-package: the sign phase packages and signs its own builds"
@@ -1301,7 +1487,10 @@ async function main(): Promise<void> {
     let keys: { publicKey: string; privateKeyPem: string };
     if (noPackage) keys = await buildKey();
     else {
-      const packaged = await packageApp(withUpdate, OS === "windows" && !signSkip);
+      let packaged!: Awaited<ReturnType<typeof packageApp>>;
+      await withBackend(options.backend, async () => {
+        packaged = await packageApp(withUpdate, OS === "windows" && !signSkip);
+      });
       keys = packaged.keys;
       signing ??= packaged.signed;
     }
@@ -1310,10 +1499,15 @@ async function main(): Promise<void> {
     const exe = await executableOf(bundle);
     log(`app: ${exe}`);
     appBackend = (await appUpdatePlatformKey(bundle)).includes("-cef") ? "cef" : "webview";
+    if (options.backend && appBackend !== options.backend) {
+      throw new Error(
+        `the build in dist/ is ${appBackend}, not ${options.backend} (package without --no-package)`,
+      );
+    }
     await warnIfScreenLocked();
-    const update = withUpdate ? bundleIn(UPDATE_DIST) : null;
+    const update = withUpdate ? bundleIn(updateDist(appBackend)) : null;
     if (update && !(await exists(update))) {
-      throw new Error(`no update build at ${update} (package without --no-package)`);
+      throw new Error(`no ${appBackend} update build at ${update} (package without --no-package)`);
     }
     const bin = await installBrowserStub();
     const signed = withUpdate ? signing?.builds ?? null : null;
@@ -1322,6 +1516,7 @@ async function main(): Promise<void> {
       const main = await mainPhase(exe, bin, updates.base);
       reports.push(main.report);
       extra.push(...main.problems);
+      printFacts(main.report.facts);
       const nav = await navigationPhase(exe, bin, updates.base);
       if (nav.report) reports.push(nav.report);
       extra.push(...nav.problems);
@@ -1351,7 +1546,8 @@ async function main(): Promise<void> {
     await cleanupSigning(currentSigning);
   }
   const { results, problems } = judge(reports, extra);
-  await writeResults(results, problems);
+  const facts = reports.find((r) => r.phase === "main")?.facts ?? null;
+  await writeResults({ backend: appBackend, runtime, options, facts }, results, problems);
   const count = (s: string) => results.filter((r) => r.status === s).length;
   log(`${count("pass")} passed, ${count("skip")} skipped, ${problems.length} problem(s)`);
   if (problems.length === 0) return;

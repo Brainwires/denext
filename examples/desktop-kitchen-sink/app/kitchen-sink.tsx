@@ -4,7 +4,9 @@
 // hands the results to the `kitchen` extension (which writes the runner's report) and quits; opened
 // by hand, it waits for the button and shows the manual release checks (`manual-checks.tsx`). On the window test's full-app update launches it runs only that
 // phase's checks, and the install phase hands over to the updater instead of quitting. On the
-// navigation launch it runs nothing: `navigation.tsx` drives that phase from the layout.
+// navigation launch it runs nothing: `navigation.tsx` drives that phase from the layout. In drive
+// mode (`e2e/drive.ts start` left `kitchen-sink-drive.json` in the app's data folder) it hands over
+// to the driven panel (`drive/page.tsx`), whose commands come from a queue instead of a person.
 
 import { useEffect, useRef, useState } from "denext";
 import { type DeepLinkEvent, onDeepLink, onOpenFile, type OpenedFile } from "denext/mobile";
@@ -17,6 +19,8 @@ import {
   type KitchenSetup,
   runChecks,
 } from "./checks.ts";
+import { DRIVE_PATH } from "./drive/protocol.ts";
+import { probeFacts } from "./facts.ts";
 import { ManualChecks } from "./manual-checks.tsx";
 import { NAVIGATION_PHASE } from "./navigation.tsx";
 
@@ -42,7 +46,12 @@ export function KitchenSink() {
     setState("done");
     const { autorun, phase } = ctx.current.setup;
     if (autorun) {
-      await kitchen.report({ results: all, expected: checksFor(phase).map(([name]) => name) });
+      await kitchen.report({
+        results: all,
+        expected: checksFor(phase).map(([name]) => name),
+        // The session facts, for the runner's output and results file (the main phase's only).
+        facts: phase === "main" ? await probeFacts() : null,
+      });
       // The install phase: swap in the staged update and relaunch it (the updater quits the app).
       const installs = phase === "update-install" || phase === "trusted-install";
       if (installs && all.every((r) => r.status === "pass")) {
@@ -60,8 +69,12 @@ export function KitchenSink() {
     const files: OpenedFile[] = [];
     const stopLinks = onDeepLink((link) => links.push(link), { route: false });
     const stopFiles = onOpenFile((file) => files.push(file));
-    kitchen.setup({}).then((setup: KitchenSetup) => {
+    kitchen.setup({}).then(async (setup: KitchenSetup) => {
       ctx.current = { setup, links, files };
+      // Drive mode (`e2e/drive.ts start`, never under the window test): the driven panel instead.
+      if (!setup.autorun && (await kitchen.driveSetup({}).catch(() => null))?.enabled) {
+        return location.assign(DRIVE_PATH);
+      }
       setState("idle");
       // The navigation phase is the layout's (`navigation.tsx`): it clicks away from this page.
       if (setup.autorun && setup.phase !== NAVIGATION_PHASE) void run();
