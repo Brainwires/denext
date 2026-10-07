@@ -5,6 +5,9 @@
  * encoding is `@std/encoding`, and the code comparison is `node:crypto`'s
  * `timingSafeEqual`.
  *
+ * {@linkcode totpQrSvg} renders the provisioning URI as a QR code (SVG) with denext's own
+ * ISO/IEC 18004 encoder, so an enrollment page needs no QR library.
+ *
  * These are pure functions over a secret. The replay guard (the adapter's atomic
  * `claimTotpStep`) and the per-user attempt limiter live one layer up, in the MFA flow —
  * which is why {@linkcode verifyTotp} returns the `step` a code matched.
@@ -14,6 +17,7 @@
 
 import { decodeBase32, encodeBase32 } from "@std/encoding/base32";
 import { timingSafeEqual } from "node:crypto";
+import { encodeQr, renderQrSvg } from "../../utils/qr-code.ts";
 
 /** The smallest secret {@linkcode generateTotpSecret} issues: 160 bits (RFC 4226 §4 R6). */
 const MIN_SECRET_BYTES = 20;
@@ -249,4 +253,68 @@ function checkPeriod(period: number): number {
     throw new RangeError(`TOTP period must be a positive integer of seconds (got ${period})`);
   }
   return period;
+}
+
+/** Options for {@linkcode totpQrSvg}. */
+export interface TotpQrSvgOptions {
+  /**
+   * The QR error-correction level (ISO/IEC 18004 §6.5.1): `"L"`, `"M"`, `"Q"` or `"H"`. Default
+   * `"M"` — a provisioning URI is shown on a screen, where little damage is expected and a
+   * smaller symbol scans faster.
+   */
+  ecc?: "L" | "M" | "Q" | "H";
+  /** Light modules around the symbol. Default 4, the quiet zone the standard requires (§6.3.8). */
+  margin?: number;
+  /** The rendered width and height in CSS pixels. Default: none — the SVG fills its box. */
+  size?: number;
+  /** The dark-module colour: a hex colour or a CSS colour keyword. Default `"#000"`. */
+  color?: string;
+  /** The light-module colour: a hex colour or a CSS colour keyword. Default `"#fff"`. */
+  background?: string;
+  /**
+   * The accessible name, rendered as the SVG's `<title>` (XML-escaped). Default
+   * `"Authenticator app setup code"`; `""` omits it.
+   */
+  title?: string;
+}
+
+/** The default accessible name of {@linkcode totpQrSvg}'s image. */
+const DEFAULT_QR_TITLE = "Authenticator app setup code";
+
+/**
+ * Render the `otpauth://` provisioning URI {@linkcode totpAuthUri} (or `enrollTotp`) returns as
+ * a QR code, as SVG markup — for an authenticator app to scan. Dependency-free: the symbol comes
+ * from denext's own ISO/IEC 18004 encoder (byte mode, Reed–Solomon error correction, the
+ * smallest version that fits, the lowest-penalty mask), and the markup is a single `<path>` with
+ * no script and no external reference, safe to inline under a strict CSP.
+ *
+ * The URI carries the TOTP secret: render it only on the page that enrolls the factor, never in
+ * a cached response, a log or a URL.
+ *
+ * @example
+ * ```tsx
+ * const enrollment = await enrollTotp(authConfig, session);
+ * if (enrollment.ok) {
+ *   return <div dangerouslySetInnerHTML={{ __html: totpQrSvg(enrollment.uri, { size: 200 }) }} />;
+ * }
+ * ```
+ *
+ * @param uri The `otpauth://` URI.
+ * @param options Error-correction level, quiet zone, size, colours and accessible name.
+ * @returns The SVG markup.
+ * @throws {TypeError} When `uri` is not an `otpauth://` URI, or a colour is not a hex colour or keyword.
+ * @throws {RangeError} When the URI is too long for a QR code, or `margin` / `size` is invalid.
+ */
+export function totpQrSvg(uri: string, options: TotpQrSvgOptions = {}): string {
+  if (typeof uri !== "string" || !/^otpauth:\/\//i.test(uri)) {
+    throw new TypeError("totpQrSvg: expected an otpauth:// URI (from totpAuthUri or enrollTotp)");
+  }
+  const title = options.title ?? DEFAULT_QR_TITLE;
+  return renderQrSvg(encodeQr(uri, { ecc: options.ecc ?? "M" }), {
+    margin: options.margin,
+    size: options.size,
+    color: options.color,
+    background: options.background,
+    title: title === "" ? undefined : title,
+  });
 }

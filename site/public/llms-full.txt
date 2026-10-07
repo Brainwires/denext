@@ -1617,6 +1617,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `totpAuthUri(options: TotpAuthUriOptions): string` — Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).
 - `interface TotpAuthUriOptions` — Options for totpAuthUri.
 - `interface TotpEnrollment` — A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.
+- `totpQrSvg(uri: string, options?: TotpQrSvgOptions): string` — Render the otpauth:// provisioning URI totpAuthUri (or enrollTotp) returns as a QR code, as SVG markup — for an authenticator app to scan. Dependency-free: the symbol comes from denext's own ISO/IEC 18004 encoder (byte mode, Reed–Solomon error correction, the smallest version that fits, the lowest-penalty mask), and the markup is a single <path> with no script and no external reference, safe to inline under a strict CSP.
+- `interface TotpQrSvgOptions` — Options for totpQrSvg.
 - `interface TotpVerifyOptions` — Options for verifyTotp.
 - `type TotpVerifyResult = object | object` — The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.

@@ -1,27 +1,62 @@
-// A dependency-free QR code encoder for the terminal (`denext dev --lan` prints the dev URL as
-// one so a phone can open it by pointing its camera at the screen).
+// A dependency-free QR code encoder (ISO/IEC 18004:2015, model 2). `denext dev --lan` prints the
+// dev URL as one for the terminal, and `totpQrSvg` (denext/server) renders an authenticator's
+// `otpauth://` provisioning URI as SVG.
 //
-// Scope is deliberately small: byte mode, error-correction level M, versions 1–10 (up to 213
-// bytes, far more than any URL this prints). The construction follows ISO/IEC 18004: data
-// codewords, Reed–Solomon error correction over GF(256) split into blocks and interleaved, the
-// function patterns (finders, separators, timing, alignment, format and version information),
-// the zigzag data placement, and the mask with the lowest penalty score.
+// Scope: byte mode (§7.4.5) — UTF-8 text, no ECI header — at any error-correction level
+// (L/M/Q/H, §6.5.1) in versions 1–40. The construction follows the standard step by step: the
+// data bit stream (§7.4) with its terminator and pad codewords (§7.4.9–7.4.10), Reed–Solomon
+// error correction over GF(2^8) split into the blocks Table 9 prescribes and interleaved
+// (§7.5–7.6), the function patterns (finders, separators, timing, alignment, §6.3), the
+// codeword placement (§7.7.3), data masking with the lowest-penalty mask (§7.8), and the format
+// (§7.9.1) and version (§7.10) information.
 
 /** A QR symbol: `modules[y][x]` is `true` for a dark module. */
 export type QrMatrix = boolean[][];
 
-/** EC level M: error-correction codewords per block, indexed by version (1–10). */
-const ECC_PER_BLOCK = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
-/** EC level M: number of error-correction blocks, indexed by version (1–10). */
-const BLOCKS = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
-/** The highest version this encoder builds. */
-const MAX_VERSION = 10;
-/** The format-information bits for EC level M (ISO/IEC 18004 table 12: M = 00). */
-const LEVEL_M_BITS = 0;
+/** An error-correction level (ISO/IEC 18004 §6.5.1): roughly 7, 15, 25 or 30 % recovery. */
+export type QrEcc = "L" | "M" | "Q" | "H";
 
-// --- GF(256) Reed–Solomon ---------------------------------------------------
+/** Options for {@linkcode encodeQr}. */
+export interface QrEncodeOptions {
+  /** The error-correction level. Default `"M"`. */
+  ecc?: QrEcc;
+  /** Force a version (1–40); default: the smallest that fits. */
+  version?: number;
+  /** Force a data mask (0–7); default: the one with the lowest penalty (§7.8.3). */
+  mask?: number;
+}
 
-/** Multiply two field elements modulo the QR polynomial x^8 + x^4 + x^3 + x^2 + 1. */
+/**
+ * ISO/IEC 18004 Table 9: error-correction codewords per block, indexed `[level][version - 1]`.
+ * Every version uses one block length per level (the blocks differ only in data length).
+ */
+// deno-fmt-ignore
+const ECC_PER_BLOCK: Record<QrEcc, readonly number[]> = {
+  L: [7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  M: [10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+  Q: [13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  H: [17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+};
+
+/** ISO/IEC 18004 Table 9: the number of error-correction blocks, indexed `[level][version - 1]`. */
+// deno-fmt-ignore
+const BLOCKS: Record<QrEcc, readonly number[]> = {
+  L: [1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+  M: [1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+  Q: [1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+  H: [1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],
+};
+
+/** The two error-correction-level bits of the format information (§7.9.1, Table 12). */
+const LEVEL_BITS: Record<QrEcc, number> = { L: 0b01, M: 0b00, Q: 0b11, H: 0b10 };
+
+/** The version range of a model 2 symbol. */
+const MIN_VERSION = 1;
+const MAX_VERSION = 40;
+
+// --- GF(256) Reed–Solomon (§7.5.2) -------------------------------------------
+
+/** Multiply two field elements modulo the QR polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11D). */
 function gfMultiply(x: number, y: number): number {
   let z = 0;
   for (let i = 7; i >= 0; i--) {
@@ -31,7 +66,10 @@ function gfMultiply(x: number, y: number): number {
   return z & 0xff;
 }
 
-/** The Reed–Solomon generator polynomial of `degree` (leading 1 omitted). */
+/**
+ * The Reed–Solomon generator polynomial of `degree`, (x − α^0)(x − α^1)…(x − α^(degree−1)) with
+ * α = 2 (§7.5.2, Annex A), as its coefficients from the highest power down, leading 1 omitted.
+ */
 function rsDivisor(degree: number): number[] {
   const result = new Array<number>(degree).fill(0);
   result[degree - 1] = 1;
@@ -46,7 +84,7 @@ function rsDivisor(degree: number): number[] {
   return result;
 }
 
-/** The error-correction codewords for `data` under `divisor`. */
+/** The error-correction codewords for `data`: the remainder of data·x^n divided by `divisor`. */
 function rsRemainder(data: readonly number[], divisor: readonly number[]): number[] {
   const result = new Array<number>(divisor.length).fill(0);
   for (const b of data) {
@@ -57,9 +95,9 @@ function rsRemainder(data: readonly number[], divisor: readonly number[]): numbe
   return result;
 }
 
-// --- capacity + codewords ---------------------------------------------------
+// --- capacity + codewords (§7.4, Tables 1, 3, 7, 9) ----------------------------
 
-/** The modules available for data + EC codewords (everything but function patterns). */
+/** The modules available for data + EC codewords: everything but the function patterns. */
 function rawDataModules(version: number): number {
   let result = (16 * version + 128) * version + 64;
   if (version >= 2) {
@@ -70,18 +108,36 @@ function rawDataModules(version: number): number {
   return result;
 }
 
-/** How many data codewords a version holds at level M. */
-function dataCodewords(version: number): number {
-  return Math.floor(rawDataModules(version) / 8) - ECC_PER_BLOCK[version] * BLOCKS[version];
+/** How many data codewords a version holds at `ecc` (Table 7). */
+function dataCodewords(version: number, ecc: QrEcc): number {
+  return Math.floor(rawDataModules(version) / 8) -
+    ECC_PER_BLOCK[ecc][version - 1] * BLOCKS[ecc][version - 1];
 }
 
-/** The smallest version whose capacity fits `byteLength` bytes in byte mode. */
-function pickVersion(byteLength: number): number {
-  for (let v = 1; v <= MAX_VERSION; v++) {
-    const countBits = v < 10 ? 8 : 16;
-    if (4 + countBits + byteLength * 8 <= dataCodewords(v) * 8) return v;
+/** Byte mode's character-count indicator length (Table 3): 8 bits below version 10, else 16. */
+function countBits(version: number): number {
+  return version < 10 ? 8 : 16;
+}
+
+/** Whether `byteLength` bytes fit `version` at `ecc` in one byte-mode segment. */
+function fits(byteLength: number, version: number, ecc: QrEcc): boolean {
+  return byteLength < 2 ** countBits(version) &&
+    4 + countBits(version) + byteLength * 8 <= dataCodewords(version, ecc) * 8;
+}
+
+/** The forced version when it fits, else the smallest version that does. */
+function pickVersion(byteLength: number, ecc: QrEcc, forced: number | undefined): number {
+  if (forced !== undefined) {
+    if (!Number.isInteger(forced) || forced < MIN_VERSION || forced > MAX_VERSION) {
+      throw new RangeError(`qr: version must be an integer 1–40 (got ${forced})`);
+    }
+    if (!fits(byteLength, forced, ecc)) {
+      throw new RangeError(`qr: ${byteLength} bytes do not fit version ${forced}-${ecc}`);
+    }
+    return forced;
   }
-  throw new RangeError(`qr: ${byteLength} bytes is too long (at most version ${MAX_VERSION})`);
+  for (let v = MIN_VERSION; v <= MAX_VERSION; v++) if (fits(byteLength, v, ecc)) return v;
+  throw new RangeError(`qr: ${byteLength} bytes is too long for a QR code at level ${ecc}`);
 }
 
 /** Append `length` low bits of `value` to `bits`, most significant first. */
@@ -89,12 +145,16 @@ function pushBits(bits: number[], value: number, length: number): void {
   for (let i = length - 1; i >= 0; i--) bits.push((value >>> i) & 1);
 }
 
-/** The data codewords: mode, count, bytes, terminator, then the 0xEC/0x11 padding. */
-function dataCodewordsFor(bytes: Uint8Array, version: number): number[] {
-  const capacity = dataCodewords(version) * 8;
+/**
+ * The data codewords: the byte-mode indicator `0100` and character count (§7.4.5), the bytes,
+ * up to four terminator zeros (§7.4.9), zero bits to the codeword boundary, then the pad
+ * codewords 0xEC / 0x11 alternately (§7.4.10).
+ */
+function dataCodewordsFor(bytes: Uint8Array, version: number, ecc: QrEcc): number[] {
+  const capacity = dataCodewords(version, ecc) * 8;
   const bits: number[] = [];
   pushBits(bits, 0b0100, 4);
-  pushBits(bits, bytes.length, version < 10 ? 8 : 16);
+  pushBits(bits, bytes.length, countBits(version));
   for (const b of bytes) pushBits(bits, b, 8);
   pushBits(bits, 0, Math.min(4, capacity - bits.length));
   pushBits(bits, 0, (8 - bits.length % 8) % 8);
@@ -106,10 +166,13 @@ function dataCodewordsFor(bytes: Uint8Array, version: number): number[] {
   return out;
 }
 
-/** Split the data into blocks, append each block's EC codewords, and interleave. */
-function interleave(data: readonly number[], version: number): number[] {
-  const numBlocks = BLOCKS[version];
-  const eccLen = ECC_PER_BLOCK[version];
+/**
+ * Split the data into Table 9's blocks (the short ones first), append each block's EC
+ * codewords, and interleave codeword by codeword (§7.6): data columns, then EC columns.
+ */
+function interleave(data: readonly number[], version: number, ecc: QrEcc): number[] {
+  const numBlocks = BLOCKS[ecc][version - 1];
+  const eccLen = ECC_PER_BLOCK[ecc][version - 1];
   const raw = Math.floor(rawDataModules(version) / 8);
   const shortBlocks = numBlocks - raw % numBlocks;
   const shortLen = Math.floor(raw / numBlocks);
@@ -118,9 +181,9 @@ function interleave(data: readonly number[], version: number): number[] {
   for (let i = 0, k = 0; i < numBlocks; i++) {
     const dat = data.slice(k, k + shortLen - eccLen + (i < shortBlocks ? 0 : 1));
     k += dat.length;
-    const ecc = rsRemainder(dat, divisor);
-    if (i < shortBlocks) dat.push(0); // placeholder, skipped below
-    blocks.push(dat.concat(ecc));
+    const ecCodewords = rsRemainder(dat, divisor);
+    if (i < shortBlocks) dat.push(0); // a placeholder column, skipped below
+    blocks.push(dat.concat(ecCodewords));
   }
   const out: number[] = [];
   for (let i = 0; i < blocks[0].length; i++) {
@@ -131,7 +194,7 @@ function interleave(data: readonly number[], version: number): number[] {
   return out;
 }
 
-// --- the symbol -------------------------------------------------------------
+// --- the symbol (§6.3, §7.7) ---------------------------------------------------
 
 /** A symbol under construction: its modules and which of them are function patterns. */
 interface Grid {
@@ -152,7 +215,7 @@ function setFunction(grid: Grid, x: number, y: number, dark: boolean): void {
   grid.reserved[y][x] = true;
 }
 
-/** A finder pattern plus its separator, centred on (x, y); clipped at the edges. */
+/** A finder pattern (§6.3.3) plus its separator (§6.3.4), centred on (x, y); clipped. */
 function drawFinder(grid: Grid, x: number, y: number): void {
   for (let dy = -4; dy <= 4; dy++) {
     for (let dx = -4; dx <= 4; dx++) {
@@ -164,7 +227,7 @@ function drawFinder(grid: Grid, x: number, y: number): void {
   }
 }
 
-/** A 5×5 alignment pattern centred on (x, y). */
+/** A 5×5 alignment pattern (§6.3.6) centred on (x, y). */
 function drawAlignment(grid: Grid, x: number, y: number): void {
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
@@ -173,23 +236,34 @@ function drawAlignment(grid: Grid, x: number, y: number): void {
   }
 }
 
-/** The alignment-pattern centre coordinates for a version. */
+/**
+ * The alignment-pattern centre coordinates for a version (Annex E, Table E.1): row/column 6,
+ * then evenly spaced (by an even step) up to `size - 7`. The step formula reproduces Table E.1
+ * for every version, version 32's irregular 26 included.
+ */
 function alignmentPositions(version: number): number[] {
   if (version === 1) return [];
   const count = Math.floor(version / 7) + 2;
-  const step = Math.ceil((version * 4 + 4) / (count * 2 - 2)) * 2;
+  const step = Math.floor((version * 8 + count * 3 + 5) / (count * 4 - 4)) * 2;
   const out = [6];
   for (let pos = version * 4 + 10; out.length < count; pos -= step) out.splice(1, 0, pos);
   return out;
 }
 
-/** Both copies of the 15-bit format information for `mask`, plus the dark module. */
-function drawFormat(grid: Grid, mask: number): void {
-  const data = (LEVEL_M_BITS << 3) | mask;
+/** The 15 format bits: level + mask, BCH(15,5) with generator 0x537, XOR 0x5412 (§7.9.1). */
+function formatBits(ecc: QrEcc, mask: number): number {
+  const data = (LEVEL_BITS[ecc] << 3) | mask;
   let rem = data;
   for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
-  const bits = ((data << 10) | rem) ^ 0x5412;
-  const bit = (i: number) => ((bits >>> i) & 1) === 1;
+  return ((data << 10) | rem) ^ 0x5412;
+}
+
+/**
+ * Both copies of the format information (§7.9.1, Figure 25) and the dark module at
+ * (8, size − 8). Without `bits` the areas are reserved light — what the mask evaluation sees.
+ */
+function drawFormat(grid: Grid, bits: number | undefined): void {
+  const bit = (i: number) => bits !== undefined && ((bits >>> i) & 1) === 1;
   const { size } = grid;
   for (let i = 0; i <= 5; i++) setFunction(grid, 8, i, bit(i));
   setFunction(grid, 8, 7, bit(6));
@@ -198,24 +272,27 @@ function drawFormat(grid: Grid, mask: number): void {
   for (let i = 9; i < 15; i++) setFunction(grid, 14 - i, 8, bit(i));
   for (let i = 0; i < 8; i++) setFunction(grid, size - 1 - i, 8, bit(i));
   for (let i = 8; i < 15; i++) setFunction(grid, 8, size - 15 + i, bit(i));
-  setFunction(grid, 8, size - 8, true);
+  setFunction(grid, 8, size - 8, bits !== undefined);
 }
 
-/** The two 18-bit version-information blocks (versions 7 and up). */
-function drawVersion(grid: Grid, version: number): void {
+/**
+ * The two 18-bit version-information blocks (§7.10, versions 7 and up): the version, BCH(18,6)
+ * with generator 0x1F25. Without `fill` they are reserved light.
+ */
+function drawVersion(grid: Grid, version: number, fill: boolean): void {
   if (version < 7) return;
   let rem = version;
   for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25);
   const bits = (version << 12) | rem;
   for (let i = 0; i < 18; i++) {
-    const dark = ((bits >>> i) & 1) === 1;
+    const dark = fill && ((bits >>> i) & 1) === 1;
     const a = grid.size - 11 + i % 3, b = Math.floor(i / 3);
     setFunction(grid, a, b, dark);
     setFunction(grid, b, a, dark);
   }
 }
 
-/** Every function pattern: timing, finders, alignment, and placeholder format/version bits. */
+/** Every function pattern: timing, finders, alignment, and the (light) format/version areas. */
 function drawFunctionPatterns(grid: Grid, version: number): void {
   const { size } = grid;
   for (let i = 0; i < size; i++) {
@@ -233,11 +310,11 @@ function drawFunctionPatterns(grid: Grid, version: number): void {
       if (!corner) drawAlignment(grid, ax, ay);
     })
   );
-  drawFormat(grid, 0); // reserved now, rewritten once the mask is chosen
-  drawVersion(grid, version);
+  drawFormat(grid, undefined);
+  drawVersion(grid, version, false);
 }
 
-/** Every module position in data-placement order: two-column strips, zigzagging up and down. */
+/** Every module position in placement order (§7.7.3): two-column strips zigzagging up and down. */
 function* zigzag(size: number): Generator<[number, number]> {
   for (let right = size - 1; right >= 1; right -= 2) {
     if (right === 6) right = 5; // the vertical timing column
@@ -250,7 +327,7 @@ function* zigzag(size: number): Generator<[number, number]> {
   }
 }
 
-/** Place the codewords along the zigzag, skipping reserved modules. */
+/** Place the codewords along the zigzag, skipping function modules; remainder bits stay 0. */
 function drawCodewords(grid: Grid, codewords: readonly number[]): void {
   const total = codewords.length * 8;
   let i = 0;
@@ -262,7 +339,7 @@ function drawCodewords(grid: Grid, codewords: readonly number[]): void {
   }
 }
 
-/** The eight data masks (ISO/IEC 18004 table 10), as "invert this module" predicates. */
+/** The eight data masks (§7.8.2, Table 10; i = row = y, j = column = x), as predicates. */
 const MASKS: ReadonlyArray<(x: number, y: number) => boolean> = [
   (x, y) => (x + y) % 2 === 0,
   (_x, y) => y % 2 === 0,
@@ -283,10 +360,10 @@ function applyMask(grid: Grid, m: number): void {
   }
 }
 
-// --- mask penalty (ISO/IEC 18004 §7.8.3) -------------------------------------
+// --- mask evaluation (§7.8.3.1, Table 11) ----------------------------------------
 
-/** Rules 1 and 3 over one line: runs of 5+ same-colour modules, and finder-like 1:1:3:1:1. */
-function linePenalty(line: readonly boolean[]): number {
+/** N1 (3) + (run − 5) for every run of ≥ 5 same-colour modules in one row or column. */
+function runPenalty(line: readonly boolean[]): number {
   let score = 0;
   let run = 1;
   for (let i = 1; i <= line.length; i++) {
@@ -297,21 +374,55 @@ function linePenalty(line: readonly boolean[]): number {
     if (run >= 5) score += run - 2;
     run = 1;
   }
-  const text = line.map((d) => (d ? "1" : "0")).join("");
-  for (const pattern of ["10111010000", "00001011101"]) {
-    for (let at = text.indexOf(pattern); at >= 0; at = text.indexOf(pattern, at + 1)) score += 40;
+  return score;
+}
+
+/** Whether `line[from, to)` is all light, modules beyond the symbol counting as light. */
+function lightSpan(line: readonly boolean[], from: number, to: number): boolean {
+  for (let i = Math.max(from, 0); i < Math.min(to, line.length); i++) if (line[i]) return false;
+  return true;
+}
+
+/** The 1:1:3:1:1 (dark:light:dark:light:dark) finder-like pattern. */
+const FINDER_LIKE = [true, false, true, true, true, false, true];
+
+/** Whether the finder-like pattern starts at `at`. */
+function finderLikeAt(line: readonly boolean[], at: number): boolean {
+  return FINDER_LIKE.every((dark, k) => line[at + k] === dark);
+}
+
+/**
+ * N3 (40) for every 1:1:3:1:1 pattern preceded or followed by a light area 4 modules wide —
+ * the quiet zone beyond the symbol's edge counting as light. A counted pattern resumes the
+ * scan after itself; an uncounted one at its middle dark run (where the next could start).
+ */
+function finderPenalty(line: readonly boolean[]): number {
+  let score = 0;
+  for (let at = 0; at + FINDER_LIKE.length <= line.length;) {
+    if (!finderLikeAt(line, at)) {
+      at++;
+      continue;
+    }
+    const counted = lightSpan(line, at - 4, at) || lightSpan(line, at + 7, at + 11);
+    if (counted) score += 40;
+    at += counted ? 7 : 4;
   }
   return score;
 }
 
-/** The total penalty of the current modules (lower scans more reliably). */
+/**
+ * The symbol's penalty under Table 11 — N1 runs, N2 (3) per 2×2 same-colour block, N3
+ * finder-like patterns, and N4 (10 per 5 % the dark proportion strays from 50 %) — evaluated,
+ * as §7.8 orders the steps, before the format and version information is placed.
+ */
 function penalty(grid: Grid): number {
   const { size, modules } = grid;
   let score = 0;
   let dark = 0;
   for (let y = 0; y < size; y++) {
-    score += linePenalty(modules[y]);
-    score += linePenalty(modules.map((row) => row[y]));
+    const column = modules.map((row) => row[y]);
+    score += runPenalty(modules[y]) + runPenalty(column);
+    score += finderPenalty(modules[y]) + finderPenalty(column);
     for (let x = 0; x < size; x++) {
       if (modules[y][x]) dark++;
       if (x === size - 1 || y === size - 1) continue;
@@ -322,16 +433,16 @@ function penalty(grid: Grid): number {
     }
   }
   const total = size * size;
-  return score + (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+  // k = ⌊|dark% − 50| / 5⌋, in integers: |20·dark − 10·total| / total.
+  return score + Math.floor(Math.abs(dark * 20 - total * 10) / total) * 10;
 }
 
-/** Try every mask and keep the one with the lowest penalty. */
+/** Try every mask and keep the first with the lowest penalty (§7.8.3: lowest score wins). */
 function chooseMask(grid: Grid): number {
   let best = 0;
   let bestScore = Infinity;
   for (let m = 0; m < MASKS.length; m++) {
     applyMask(grid, m);
-    drawFormat(grid, m);
     const score = penalty(grid);
     if (score < bestScore) {
       best = m;
@@ -345,22 +456,105 @@ function chooseMask(grid: Grid): number {
 // --- public API -------------------------------------------------------------
 
 /**
- * Encode `text` (UTF-8, byte mode, error-correction level M) as a QR symbol.
+ * Encode `text` (UTF-8, one byte-mode segment) as a QR symbol.
  *
  * @param text What the code carries — a URL, typically.
+ * @param options The error-correction level (default `"M"`), and optionally a fixed version or mask.
  * @returns The module matrix, `modules[y][x]` dark when `true`, without a quiet zone.
- * @throws {RangeError} When the text needs more than version 10 (213 bytes).
+ * @throws {RangeError} When the text doesn't fit (2331 bytes at most at level M, 2953 at L), or
+ * a forced version / mask is out of range or too small.
  */
-export function encodeQr(text: string): QrMatrix {
+export function encodeQr(text: string, options: QrEncodeOptions = {}): QrMatrix {
+  const ecc = options.ecc ?? "M";
+  if (!(ecc in LEVEL_BITS)) throw new RangeError(`qr: unknown error-correction level ${ecc}`);
+  const forcedMask = options.mask;
+  if (
+    forcedMask !== undefined &&
+    !(Number.isInteger(forcedMask) && forcedMask >= 0 && forcedMask <= 7)
+  ) {
+    throw new RangeError(`qr: mask must be an integer 0–7 (got ${forcedMask})`);
+  }
   const bytes = new TextEncoder().encode(text);
-  const version = pickVersion(bytes.length);
+  const version = pickVersion(bytes.length, ecc, options.version);
   const grid = newGrid(version);
   drawFunctionPatterns(grid, version);
-  drawCodewords(grid, interleave(dataCodewordsFor(bytes, version), version));
-  const mask = chooseMask(grid);
+  drawCodewords(grid, interleave(dataCodewordsFor(bytes, version, ecc), version, ecc));
+  const mask = forcedMask ?? chooseMask(grid);
   applyMask(grid, mask);
-  drawFormat(grid, mask);
+  drawFormat(grid, formatBits(ecc, mask));
+  drawVersion(grid, version, true);
   return grid.modules;
+}
+
+/** Options for {@linkcode renderQrSvg}. */
+export interface QrSvgOptions {
+  /** Light modules around the symbol. Default 4 — the quiet zone §6.3.8 requires. */
+  margin?: number;
+  /** The rendered width and height in CSS pixels; default: none (the SVG scales to its box). */
+  size?: number;
+  /** The dark-module colour. Default `"#000"`. */
+  color?: string;
+  /** The light-module colour (and the quiet zone). Default `"#fff"`. */
+  background?: string;
+  /** An accessible name (`<title>`), XML-escaped. Default: none. */
+  title?: string;
+}
+
+/** A hex colour or a CSS colour keyword — nothing that can break out of an attribute. */
+const SAFE_COLOR = /^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,32})$/;
+
+/** Escape text for an XML text node or attribute. */
+function escapeXml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** A colour option, validated. */
+function svgColor(value: string | undefined, fallback: string, name: string): string {
+  if (value === undefined) return fallback;
+  if (!SAFE_COLOR.test(value)) {
+    throw new TypeError(`qr: ${name} must be a hex colour or a colour keyword (got ${value})`);
+  }
+  return value;
+}
+
+/**
+ * Render a QR matrix as a standalone SVG document: one `<path>` of dark modules (each row's
+ * runs merged) on a light background, with `shape-rendering="crispEdges"` so the modules stay
+ * sharp at any size. No scripts, no external references — safe to inline.
+ *
+ * @param modules The symbol from {@linkcode encodeQr}.
+ * @param options Quiet zone, size, colours and accessible title.
+ * @returns The SVG markup.
+ * @throws {RangeError} When `margin` or `size` is not a non-negative integer / positive number.
+ * @throws {TypeError} When a colour is not a hex colour or a keyword.
+ */
+export function renderQrSvg(modules: QrMatrix, options: QrSvgOptions = {}): string {
+  const margin = options.margin ?? 4;
+  if (!Number.isInteger(margin) || margin < 0 || margin > 64) {
+    throw new RangeError(`qr: margin must be an integer 0–64 (got ${margin})`);
+  }
+  const size = options.size;
+  if (size !== undefined && !(Number.isFinite(size) && size > 0)) {
+    throw new RangeError(`qr: size must be a positive number (got ${size})`);
+  }
+  const color = svgColor(options.color, "#000", "color");
+  const background = svgColor(options.background, "#fff", "background");
+  const extent = modules.length + margin * 2;
+  let path = "";
+  modules.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      if (!row[x]) continue;
+      const start = x;
+      while (x + 1 < row.length && row[x + 1]) x++;
+      path += `M${start + margin} ${y + margin}h${x - start + 1}v1h${start - x - 1}z`;
+    }
+  });
+  const dims = size === undefined ? "" : ` width="${size}" height="${size}"`;
+  const title = options.title === undefined ? "" : `<title>${escapeXml(options.title)}</title>`;
+  const role = options.title === undefined ? "" : ' role="img"';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${extent} ${extent}"${dims}${role}` +
+    ` shape-rendering="crispEdges">${title}<rect width="${extent}" height="${extent}"` +
+    ` fill="${background}"/><path fill="${color}" d="${path}"/></svg>`;
 }
 
 /**

@@ -562,8 +562,13 @@ export type {
   SecondFactorResult,
   TotpEnrollment,
 } from "./auth/mfa.ts";
-export { generateTotpSecret, totpAuthUri, verifyTotp } from "./auth/totp.ts";
-export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./auth/totp.ts";
+export { generateTotpSecret, totpAuthUri, totpQrSvg, verifyTotp } from "./auth/totp.ts";
+export type {
+  TotpAuthUriOptions,
+  TotpQrSvgOptions,
+  TotpVerifyOptions,
+  TotpVerifyResult,
+} from "./auth/totp.ts";
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {

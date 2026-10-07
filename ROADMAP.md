@@ -88,7 +88,6 @@
   `openid`-only until then.
 - **An optional magic-link confirm page:** the GET renders a form that POSTs the token, closing
   link-scanner burns and login CSRF.
-- **`totpQrSvg()`:** a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` returns.
 - **Richer events:** API-token issue / revoke events, a typed `signInFailed.reason` union, and
   `ip` on the other events (only `signInFailed` carries it).
 

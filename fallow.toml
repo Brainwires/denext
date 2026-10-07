@@ -26,6 +26,7 @@ ignoreDependencies = [
   "@std/yaml", # deno.json: jsr:@std/yaml@^1.0.0 — compose round-trip parse (src/build/compose-edit.ts)
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
+  "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",

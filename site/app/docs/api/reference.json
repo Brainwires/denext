@@ -11295,6 +11295,41 @@
           "denextOnly": true
         },
         {
+          "name": "totpQrSvg",
+          "slug": "totpQrSvg",
+          "kind": "function",
+          "signature": "totpQrSvg(uri: string, options?: TotpQrSvgOptions): string",
+          "doc": "Render the otpauth:// provisioning URI totpAuthUri (or enrollTotp) returns as a QR code, as SVG markup — for an authenticator app to scan. Dependency-free: the symbol comes from denext's own ISO/IEC 18004 encoder (byte mode, Reed–Solomon error correction, the smallest version that fits, the lowest-penalty mask), and the markup is a single <path> with no script and no external reference, safe to inline under a strict CSP.",
+          "docFull": "Render the `otpauth://` provisioning URI {@linkcode totpAuthUri} (or `enrollTotp`) returns as\na QR code, as SVG markup — for an authenticator app to scan. Dependency-free: the symbol comes\nfrom denext's own ISO/IEC 18004 encoder (byte mode, Reed–Solomon error correction, the\nsmallest version that fits, the lowest-penalty mask), and the markup is a single `<path>` with\nno script and no external reference, safe to inline under a strict CSP.\n\nThe URI carries the TOTP secret: render it only on the page that enrolls the factor, never in\na cached response, a log or a URL.",
+          "params": [
+            {
+              "name": "uri",
+              "doc": "The otpauth:// URI."
+            },
+            {
+              "name": "options",
+              "doc": "Error-correction level, quiet zone, size, colours and accessible name."
+            }
+          ],
+          "returns": "The SVG markup.",
+          "examples": [
+            "```tsx\nconst enrollment = await enrollTotp(authConfig, session);\nif (enrollment.ok) {\n  return <div dangerouslySetInnerHTML={{ __html: totpQrSvg(enrollment.uri, { size: 200 }) }} />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpQrSvgOptions",
+          "slug": "TotpQrSvgOptions",
+          "kind": "interface",
+          "signature": "interface TotpQrSvgOptions",
+          "doc": "Options for totpQrSvg.",
+          "docFull": "Options for {@linkcode totpQrSvg}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TotpVerifyOptions",
           "slug": "TotpVerifyOptions",
           "kind": "interface",

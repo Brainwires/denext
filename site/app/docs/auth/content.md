@@ -772,7 +772,8 @@ Action:
 1. `POST {basePath}/mfa/enroll` / `enrollTotp(authConfig, session)` mints a 160-bit secret,
    stores it **unconfirmed**, and returns `{ ok: true, secret, uri }` — the base32 secret for manual
    entry and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is
-   the user's email, else their id) to render as a QR code. Enrolling again replaces an
+   the user's email, else their id) to render as a QR code — `totpQrSvg(uri)` does that
+   with no library (below). Enrolling again replaces an
    unconfirmed enrollment; a confirmed factor is a `409` (`error: "already_enrolled"` from the
    function) until it
    is disabled. From a complete session the route also needs a recent sign-in (`authTime`
@@ -809,6 +810,41 @@ Unlike the endpoints, the functions spend no attempt budget, so a Server Action 
 code spends one first with `spendMfaAttempt(authConfig, { userId })` — the same per-user budget
 the `/mfa*` endpoints spend (`rateLimit.mfa`), answering `{ ok: true }` or
 `{ ok: false, error: "rate_limited", retryAfter }`. `examples/auth` does exactly this.
+
+**The QR code.** `totpQrSvg(uri, options?)` renders the URI as SVG markup with denext's own
+ISO/IEC 18004 encoder — byte mode, Reed–Solomon error correction, the smallest version that
+fits, the lowest-penalty mask — and no dependency. The markup is one `<path>` on a light
+background with a 4-module quiet zone, no script and no external reference, so inlining it is
+safe under the strict CSP:
+
+```ts
+// app/settings/two-factor/actions.ts
+"use server";
+import { auth, enrollTotp, totpQrSvg } from "denext/server";
+import { authConfig } from "../../../lib/auth-config.ts";
+
+export async function startEnrollment() {
+  const session = await auth();
+  const enrollment = session ? await enrollTotp(authConfig, session) : null;
+  if (!enrollment?.ok) return null;
+  // The client renders `qr` with <div dangerouslySetInnerHTML={{ __html: qr }} />, and shows
+  // `secret` for an app that can't scan.
+  return { secret: enrollment.secret, qr: totpQrSvg(enrollment.uri, { size: 200 }) };
+}
+```
+
+| Option       | Default                          | What it sets                                                   |
+| ------------ | -------------------------------- | -------------------------------------------------------------- |
+| `ecc`        | `"M"`                            | Error correction: `"L"`, `"M"`, `"Q"` or `"H"` (7–30 % damage) |
+| `margin`     | `4`                              | The light quiet zone, in modules (the standard asks for 4)     |
+| `size`       | none (fills its box)             | `width` / `height` in CSS pixels                               |
+| `color`      | `"#000"`                         | Dark modules — a hex colour or a CSS colour keyword            |
+| `background` | `"#fff"`                         | Light modules and the quiet zone                               |
+| `title`      | `"Authenticator app setup code"` | The `<title>` accessible name; `""` omits it                   |
+
+It refuses anything but an `otpauth://` URI (`TypeError`) and a colour that isn't a hex value
+or a keyword. The URI carries the secret: render it only on the enrollment page, never in a
+cached response or a URL.
 
 **The step-up.** When a first factor succeeds for a user who owes a code, the session is
 minted **pending**: it lasts 15 minutes (never more than `maxAge`), is never slid forward,
@@ -874,7 +910,7 @@ For a settings page, `mfaStatus(authConfig, userId)` answers
 as in `mfa.required: "enrolled"`), and `verifySecondFactor(authConfig, { userId, code })`
 checks a code (claiming or spending it) and answers `{ ok: true, method: "totp" | "bcp" }` or
 `{ ok: false, error: "invalid_code" | "not_enrolled" }`. The RFC 6238 primitives underneath are exported too:
-`generateTotpSecret()`, `totpAuthUri({ secret, account, issuer })`,
+`generateTotpSecret()`, `totpAuthUri({ secret, account, issuer })`, `totpQrSvg(uri)`,
 `verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
 stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
 `backupCodeMatcher(hasher, code)`.
@@ -1508,8 +1544,6 @@ What the first-party auth layer still does not do — the full ledger is
 - **TOTP secrets are stored in plaintext in the adapter** — a verifier needs the secret, so
   protect the database; backup codes are hashed. `verifyTotp` is SHA-1 only, the algorithm
   every authenticator app supports.
-- **No QR renderer.** `enrollTotp` returns the `otpauth://` URI; render it with a library
-  of your choice or show the secret for manual entry (`totpQrSvg` is planned for 2.6).
 - **No `response_mode=form_post` callback**, so the web `apple()` provider is `openid`-only.
   A native app gets the email through the native sheet's `id_token` instead
   (`POST {basePath}/native/apple`).

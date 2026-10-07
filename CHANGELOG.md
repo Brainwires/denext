@@ -29,6 +29,15 @@ and this project adheres to
   requires an `x-csrf-token` header echoing a `denext-csrf` cookie the middleware issues.
   `ApiMiddlewareDocs` gains `errors`, so `csrf_failed` is listed on the endpoint in
   `@denext/openapi`.
+- **`totpQrSvg(uri, options?)` (`denext/server`) renders a TOTP provisioning URI as an SVG QR
+  code**, with no dependency: denext's own ISO/IEC 18004 encoder — byte mode, Reed–Solomon error
+  correction at level L, M (default), Q or H, versions 1–40, the lowest-penalty mask — checked
+  module for module against two independent encoders and decoded back by a third. The markup is
+  one `<path>` with a 4-module quiet zone and an accessible `<title>`, with no script or
+  external reference; colours accept only a hex value or a keyword, and anything but an
+  `otpauth://` URI is refused. The encoder behind `denext dev --lan`'s terminal QR code is the
+  same one, now beyond version 10, and picks its mask the way §7.8 orders it (before the format
+  information is drawn).
 - **`appCapabilities()` reports the Linux CEF sandbox and the Linux file chooser** (runtime
   2.9.7-denext.12): `sandbox` (`"namespace"`, `"setuid"`, `"chromium"` or `"off"`) with the
   runtime's `sandboxReason`, and `fileChooser` (`"portal"` or `"gtk"`) with `fileChooserReason`.
