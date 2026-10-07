@@ -236,7 +236,10 @@ async function openRecordSecret(
     options.logger.warn(
       "denextAuth: a stored TOTP secret could not be opened with any configured `secret` " +
         "(dropped from the rotation list, or the row was altered) — no TOTP code verifies for " +
-        "this user until they enroll again; backup codes still work.",
+        "this user. Backup codes (or a passkey with user verification) still sign in, and from " +
+        "that session `/mfa/disable` then a new enrollment restores TOTP; a user with neither " +
+        "needs an administrator to call `disableTotp(config, userId)`. Re-enrollment over the " +
+        "factor is refused on purpose: a password alone must never replace a second factor.",
       { userId: record.userId },
     );
   }
@@ -339,6 +342,13 @@ export async function verifySecondFactor(
 /**
  * Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.
  * Callers must have proved a fresh factor first — see the `/mfa/disable` endpoint.
+ *
+ * It is also the **administrator's recovery** for a factor no configured `secret` opens any
+ * more (a `secret` replaced rather than rotated, or an altered row): such a user can't pass a
+ * TOTP check, so without a backup code or a passkey with user verification they can't reach
+ * `/mfa/disable` themselves, and `enrollTotp` keeps answering `already_enrolled` — by design,
+ * since a pending (password-only) session may enroll and must not be able to replace a factor.
+ * Verify the user's identity out of band, call this, and they enroll again.
  *
  * @param config The app's auth config.
  * @param userId The user.

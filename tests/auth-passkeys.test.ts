@@ -18,7 +18,10 @@ import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { hashPassword } from "../src/server/auth/password.ts";
 import { confirmTotp, enrollTotp } from "../src/server/auth/mfa.ts";
-import { deletePasskey, listPasskeys } from "../src/server/auth/passkeys.ts";
+import { deletePasskey, listPasskeys, userHandleOf } from "../src/server/auth/passkeys.ts";
+import { WebAuthnError } from "../src/server/auth/webauthn.ts";
+import { resetPassword } from "../src/server/auth/email.ts";
+import { issueVerificationToken } from "../src/server/auth/verification.ts";
 import { readAuthSession } from "../src/server/auth/session.ts";
 import type { AuthAdapter, PasskeyRecord } from "../src/server/auth/adapter.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
@@ -97,7 +100,8 @@ class Authenticator {
   readonly credentialId = crypto.getRandomValues(new Uint8Array(16));
   constructor(
     private readonly keys: CryptoKeyPair,
-    private readonly cose: Uint8Array,
+    /** The COSE public key, as a registration stores it. */
+    readonly cose: Uint8Array,
     /** UV + BE flags it reports. */
     public flags = 0x05,
   ) {}
@@ -209,9 +213,16 @@ interface App {
 async function app(
   passkeys: AuthConfig["passkeys"] = true,
   adapter: AuthAdapter = inMemoryAuthAdapter(),
+  user: { verified?: boolean; id?: string } = {},
 ): Promise<App> {
-  const user = await adapter.createUser({ email: EMAIL, name: "Ada" });
-  await adapter.setCredential!(user.id, await hashPassword(PASSWORD));
+  const created = await adapter.createUser({
+    email: EMAIL,
+    name: "Ada",
+    ...(user.verified === false ? {} : { emailVerified: Math.floor(Date.now() / 1000) }),
+    ...(user.id ? { id: user.id } : {}),
+  });
+  const userId = created.id;
+  await adapter.setCredential!(userId, await hashPassword(PASSWORD));
   const failures: string[] = [];
   const config: AuthConfig = {
     secret: SECRET,
@@ -223,7 +234,7 @@ async function app(
     mfa: { window: 2 },
     events: { signInFailed: ({ reason }) => void failures.push(reason) },
   };
-  return { config, adapter, userId: user.id, failures };
+  return { config, adapter, userId, failures };
 }
 
 /** The same app (adapter, user, event log) under a changed config — options resolve per config. */
@@ -595,7 +606,7 @@ Deno.test("passkeys: a step-up refuses another user's passkey", async () => {
   const a = await app();
   const theirs = await Authenticator.create();
   // A second user registers a passkey.
-  const other = await a.adapter.createUser({ email: "eve@example.com" });
+  const other = await a.adapter.createUser({ email: "eve@example.com", emailVerified: 1 });
   await a.adapter.setCredential!(other.id, await hashPassword(PASSWORD));
   const eve = new Browser(a);
   await eve.send("POST", "/callback/credentials", { email: "eve@example.com", password: PASSWORD });
@@ -745,3 +756,184 @@ for (
     await adapter.close?.();
   });
 }
+
+// ---- pre-account hijacking -------------------------------------------------------------------
+
+/** Store `auth`'s credential for `userId` directly, as a registration would have. */
+async function plant(a: App, auth: Authenticator, userId = a.userId): Promise<void> {
+  const stored = await a.adapter.createPasskey!({
+    id: auth.id,
+    userId,
+    publicKey: b64u(auth.cose),
+    alg: -7,
+    signCount: 0,
+    backupEligible: (auth.flags & 0x08) !== 0,
+    backedUp: false,
+    createdAt: Math.floor(Date.now() / 1000),
+  });
+  assert(stored);
+}
+
+/** Prove the mailbox of `EMAIL` the way its owner would: a password reset. */
+async function victimVerifies(a: App): Promise<void> {
+  const { token } = await issueVerificationToken(a.config, {
+    identifier: EMAIL,
+    purpose: "reset",
+    ttl: 600,
+  });
+  const reset = await resetPassword(a.config, {
+    email: EMAIL,
+    token,
+    password: "the victim's own password",
+  });
+  assert(reset.ok);
+}
+
+Deno.test("pre-account hijacking: the victim's first proof of the mailbox removes the attacker's passkeys", async () => {
+  const a = withConfig(await app(true, inMemoryAuthAdapter(), { verified: false }), {
+    sendVerificationRequest: () => {},
+  });
+  // The attacker registered the victim's address with a password and signed in…
+  const attacker = new Browser(a);
+  assertEquals((await attacker.passwordSignIn()).status, 200);
+  // …and holds a passkey on the account. (Registration itself is now refused while the address
+  // is unverified — the next test — so the credential is stored the way a registration would.)
+  const auth = await Authenticator.create();
+  await plant(a, auth);
+  await victimVerifies(a);
+  assert((await a.adapter.getUser(a.userId))!.emailVerified, "the address is now verified");
+  // The attacker's passkey no longer signs in, usernameless or otherwise…
+  const b = new Browser(a);
+  const res = await b.send("POST", "/passkey/authenticate", {
+    credential: await auth.assert(await signInOptions(b), {
+      userHandle: b64u(new TextEncoder().encode(a.userId)),
+    }),
+  });
+  assertEquals(res.status, 401);
+  assertEquals(await b.session(), null);
+  // …and the account has no passkey left.
+  assertEquals(await listPasskeys(a.config, a.userId), []);
+  assertEquals(await a.adapter.getPasskey!(auth.id), undefined);
+});
+
+Deno.test("pre-account hijacking: an adapter holding passkeys it can't delete fails the verification closed", async () => {
+  const { deletePasskey: _d, ...lacking } = inMemoryAuthAdapter();
+  // Without `passkeys` configured the adapter needs no full group — but it still holds one.
+  const a = withConfig(
+    await app(undefined, lacking as AuthAdapter, { verified: false }),
+    { sendVerificationRequest: () => {} },
+  );
+  await plant(a, await Authenticator.create());
+  const { token } = await issueVerificationToken(a.config, {
+    identifier: EMAIL,
+    purpose: "reset",
+    ttl: 600,
+  });
+  let threw = false;
+  try {
+    await resetPassword(a.config, { email: EMAIL, token, password: "the victim's own password" });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "the flow refused instead of verifying with the passkey still in place");
+  assertEquals((await a.adapter.getUser(a.userId))!.emailVerified, undefined, "still unverified");
+});
+
+Deno.test("passkeys: registration is refused while the account's address is unverified", async () => {
+  const a = await app(true, inMemoryAuthAdapter(), { verified: false });
+  const auth = await Authenticator.create();
+  const b = new Browser(a);
+  assertEquals((await b.passwordSignIn()).status, 200);
+  const options = await b.send("POST", "/passkey/register/options", {});
+  assertEquals(options.status, 403);
+  assertEquals(await options.json(), { error: "email_unverified" });
+  const register = await b.send("POST", "/passkey/register", {
+    credential: await auth.register({
+      challenge: b64u(new Uint8Array(32)),
+      rp: { id: "app.test" },
+    }),
+  });
+  assertEquals(register.status, 403);
+  assertEquals(await register.json(), { error: "email_unverified" });
+  assertEquals(await a.adapter.listPasskeys!(a.userId), []);
+  // Once the address is verified, the same session may register.
+  await a.adapter.updateUser({ id: a.userId, emailVerified: Math.floor(Date.now() / 1000) });
+  assertEquals((await b.send("POST", "/passkey/register/options", {})).status, 200);
+});
+
+// ---- one passkey is one factor -------------------------------------------------------------------
+
+Deno.test("passkeys: a presence-only passkey sign-in can't pay its own step-up with a passkey", async () => {
+  const a = await app({ userVerification: "preferred" });
+  const auth = await Authenticator.create();
+  auth.flags = 0x01; // UP only, no UV
+  await registered(a, auth);
+  const now = Math.floor(Date.now() / 1000);
+  const enrolment = await enrollTotp(a.config, {
+    user: { id: a.userId, email: EMAIL },
+    provider: "credentials",
+    expiresAt: now + 3600,
+    authTime: now,
+  });
+  assert(enrolment.ok);
+  assert(
+    (await confirmTotp(a.config, {
+      user: { id: a.userId },
+      code: await totpAt(enrolment.secret),
+    })).ok,
+  );
+  const b = new Browser(a);
+  const signIn = await b.send("POST", "/passkey/authenticate", {
+    credential: await auth.assert(await signInOptions(b)),
+  });
+  assertEquals((await signIn.json()).mfa, "required");
+  assertEquals((await b.session())!.amr, ["hwk"]);
+  // The step-up offers no passkey: the same key can't be both factors.
+  const stepUp = await b.send("POST", "/passkey/authenticate/options", {});
+  assertEquals(stepUp.status, 403);
+  assertEquals(await stepUp.json(), { error: "code_required" });
+  const session = (await b.session())!;
+  assertEquals(session.mfaPending, true, "still owes a code");
+  assertEquals(session.amr, ["hwk"]);
+});
+
+// ---- user handles ----------------------------------------------------------------------------------
+
+Deno.test("passkeys: a user id too long for a WebAuthn user handle is a clean refusal, not a 500", async () => {
+  assertThrows(() => userHandleOf("u".repeat(65)), WebAuthnError);
+  assertThrows(() => userHandleOf(""), WebAuthnError);
+  const a = await app(true, inMemoryAuthAdapter(), { id: "u".repeat(70) });
+  const b = new Browser(a);
+  assertEquals((await b.passwordSignIn()).status, 200);
+  const options = await b.send("POST", "/passkey/register/options", {});
+  assertEquals(options.status, 400);
+  assertEquals((await options.json()).error, "invalid passkey");
+  // A credential stored for such a user (by other means) is refused at sign-in, not crashed on.
+  const auth = await Authenticator.create();
+  await plant(a, auth);
+  const anon = new Browser(a);
+  const res = await anon.send("POST", "/passkey/authenticate", {
+    credential: await auth.assert(await signInOptions(anon), {
+      userHandle: b64u(new Uint8Array(8)),
+    }),
+  });
+  assertEquals(res.status, 401);
+  assertEquals(await res.json(), { error: "invalid passkey" });
+});
+
+Deno.test("a password reset removes every passkey — a thief's key doesn't outlive the owner taking the account back", async () => {
+  const a = withConfig(await app(), { sendVerificationRequest: () => {} });
+  // A thief with a stolen, recent session registers a passkey of their own.
+  const stolen = await Authenticator.create();
+  await registered(a, stolen);
+  assertEquals((await listPasskeys(a.config, a.userId)).length, 1);
+  // The owner resets the password.
+  await victimVerifies(a);
+  const b = new Browser(a);
+  const res = await b.send("POST", "/passkey/authenticate", {
+    credential: await stolen.assert(await signInOptions(b)),
+  });
+  assertEquals(res.status, 401);
+  assertEquals(await b.session(), null);
+  assertEquals(await listPasskeys(a.config, a.userId), []);
+});

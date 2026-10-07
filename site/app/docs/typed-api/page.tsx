@@ -109,11 +109,15 @@ export const POST = cart.define({ body: CartItem }, ({ body, ctx }) => addToCart
         <code>Referer</code>, and neither is a refusal. A request with no cookie passes (there is no
         ambient credential to abuse; <code>checkCookieless: true</code> checks it too).{" "}
         <code>doubleSubmit: true</code> also requires an <code>x-csrf-token</code>{" "}
-        header equal to the <code>denext-csrf</code>{" "}
-        cookie, which the middleware issues (readable by script,{" "}
-        <code>SameSite=Strict</code>) to any request that lacks it. A refusal is a 403{" "}
-        <code>csrf_failed</code> envelope, and the code joins the endpoint's documented errors in
+        header equal to the token cookie, which the middleware issues (readable by script,{" "}
+        <code>SameSite=Strict</code>) to any request that lacks it: <code>__Host-denext-csrf</code>
         {" "}
+        on a secure request (https, or a trusted proxy's{" "}
+        <code>x-forwarded-proto</code>), so a sibling subdomain can't plant one, and{" "}
+        <code>denext-csrf</code>{" "}
+        over plain http. Either name is read, except that a secure request ignores the unprefixed
+        one. A refusal is a 403 <code>csrf_failed</code>{" "}
+        envelope, and the code joins the endpoint's documented errors in{" "}
         <code>@denext/openapi</code>. CORS only governs what a browser lets a page read, so a
         cookie-authenticated endpoint open to another origin wants both.
       </p>

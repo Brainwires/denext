@@ -26,6 +26,12 @@
  * unknown version, or anything that is neither sealed nor base32 opens to `{ ok: false }` —
  * never to the stored string. Nothing here logs or returns the secret except the opened value.
  *
+ * **What it does not cover.** Sealing protects a copied database, not a writable one: a plain
+ * base32 value always opens as a legacy row (there is no per-row marker that it was ever
+ * sealed), so whoever can write the MFA table can replace a sealed secret with a plaintext one
+ * they know. Someone with that access can equally rewrite password hashes or delete the MFA
+ * row; guard write access to the auth tables as you would the `secret`.
+ *
  * @module
  */
 

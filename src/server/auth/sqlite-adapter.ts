@@ -770,10 +770,12 @@ function apiTokenMethods(
       state.db().exec("UPDATE auth_api_tokens SET last_used_at = ? WHERE id = ?", [lastUsedAt, id]);
     },
     revokeApiToken(id) {
-      state.db().exec(
-        "UPDATE auth_api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+      const revoked = state.db().query(
+        "UPDATE auth_api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL " +
+          "RETURNING id",
         [state.now(), id],
       );
+      return revoked.length === 1;
     },
     listApiTokens: (userId) =>
       state.db()

@@ -7,6 +7,7 @@ import { assert, assertEquals } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { issueApiToken, revokeApiToken } from "../src/server/auth/api-token.ts";
 import { resetPassword } from "../src/server/auth/email.ts";
 import { issueVerificationToken } from "../src/server/auth/verification.ts";
@@ -24,8 +25,8 @@ type Log = Array<[string, Record<string, unknown>]>;
 
 async function app(
   verified = true,
+  adapter: AuthAdapter = inMemoryAuthAdapter(),
 ): Promise<{ config: AuthConfig; adapter: AuthAdapter; userId: string; log: Log }> {
-  const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({
     email: EMAIL,
     ...(verified ? { emailVerified: 1 } : {}),
@@ -83,6 +84,26 @@ Deno.test("events: revokeApiToken fires apiTokenRevoked (reason revoked), with t
     ["apiTokenRevoked", { tokenId: two.record.id, userId: a.userId, reason: "revoked" }],
   ]);
 });
+
+for (
+  const [name, make] of [
+    ["inMemoryAuthAdapter", () => inMemoryAuthAdapter()],
+    ["sqliteAuthAdapter", () => sqliteAuthAdapter({ path: ":memory:" })],
+  ] as const
+) {
+  Deno.test(`events: revoking an unknown or already-revoked token fires nothing (${name})`, async () => {
+    const a = await app(true, make());
+    const issued = await issueApiToken(a.config, { userId: a.userId });
+    a.log.length = 0;
+    const unknown = await revokeApiToken(a.config, "no-such-token");
+    assertEquals(a.log, [], "an unknown id revokes nothing");
+    const first = await revokeApiToken(a.config, issued.record.id);
+    const again = await revokeApiToken(a.config, issued.record.id);
+    assertEquals(a.log, [["apiTokenRevoked", { tokenId: issued.record.id, reason: "revoked" }]]);
+    assertEquals([unknown, first, again], [false, true, false]);
+    await a.adapter.close?.();
+  });
+}
 
 Deno.test("events: DELETE /tokens/:id fires apiTokenRevoked with the caller as owner", async () => {
   const a = await app();

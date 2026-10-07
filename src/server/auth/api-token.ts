@@ -204,24 +204,28 @@ export async function verifyApiToken(
 
 /**
  * Revoke a token by id — it stops authenticating immediately and can never be revived.
- * Revoking an unknown (or already revoked) id is a no-op, not an error. Fires
- * `apiTokenRevoked` (`reason: "revoked"`).
+ * Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing;
+ * an actual revocation fires `apiTokenRevoked` (`reason: "revoked"`).
  *
  * @param config The app's auth config.
  * @param id The {@link ApiTokenRecord.id} to revoke.
  * @param options The owner, when the caller knows it — carried on the event.
+ * @returns `true` when a live token was revoked, `false` for an unknown or already revoked id.
+ *   (An adapter whose `revokeApiToken` returns nothing reads as `true`.)
  */
 export async function revokeApiToken(
   config: AuthConfig,
   id: string,
   options: { userId?: string } = {},
-): Promise<void> {
-  await requireApiTokenAdapter(config, "revokeApiToken").revokeApiToken(id);
+): Promise<boolean> {
+  const revoked = await requireApiTokenAdapter(config, "revokeApiToken").revokeApiToken(id);
+  if (revoked === false) return false;
   await emitAuthEvent(resolveAuthOptions(config), "apiTokenRevoked", {
     tokenId: id,
     ...(options.userId !== undefined ? { userId: options.userId } : {}),
     reason: "revoked",
   });
+  return true;
 }
 
 /**

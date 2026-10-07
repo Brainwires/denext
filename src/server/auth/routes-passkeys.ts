@@ -6,12 +6,18 @@
  *   §5.4) for the signed-in user: a single-use challenge, the RP, the user handle, ES256 /
  *   RS256 / EdDSA, the user's existing credentials excluded, a discoverable credential
  *   required. Needs a complete session that signed in recently (as `/mfa/enroll` does), so a
- *   stolen session can't plant a passkey of its own.
+ *   stolen session can't plant a passkey of its own — and, for an account with an email
+ *   address, a verified one: `403 { error: "email_unverified" }` otherwise (both rows), so whoever
+ *   registered someone else's address can't leave a passkey behind for when its owner claims
+ *   it. A user id too long for a WebAuthn user handle (64 bytes) is a `400`.
  * - `POST /passkey/register` — `{ credential, name? }`: the `RegistrationResponseJSON`, verified
  *   (§7.1) and stored. `{ ok: true, passkey }`; a credential ID already registered is a `409`.
  * - `POST /passkey/authenticate/options` — `PublicKeyCredentialRequestOptionsJSON`. With a
- *   pending (second-factor-owed) session it is the step-up, offering that user's credentials;
- *   otherwise a usernameless sign-in (an empty `allowCredentials`: the authenticator offers its
+ *   pending (second-factor-owed) session it is the step-up, offering that user's credentials —
+ *   unless that session's first factor was itself a passkey (a sign-in without user
+ *   verification, `amr: ["hwk"]`): one key is one factor, so that step-up takes a TOTP or backup
+ *   code at `/mfa` only, and this answers `403 { error: "code_required" }`; otherwise a
+ *   usernameless sign-in (an empty `allowCredentials`: the authenticator offers its
  *   discoverable passkeys). Per-IP rate-limited like `/signin/*`.
  * - `POST /passkey/authenticate` — `{ credential, callbackUrl? }`: the assertion, verified
  *   (§7.2): signs the credential's owner in, or completes the pending step-up. Every failure is
@@ -28,7 +34,7 @@
 import { readCappedBody } from "../body.ts";
 import { emitAuthEvent } from "./events.ts";
 import { completeStepUp, recentlyAuthenticated } from "./mfa.ts";
-import { toAuthUser } from "./adapter-link.ts";
+import { isVerified, toAuthUser } from "./adapter-link.ts";
 import {
   type ChallengeData,
   issueChallenge,
@@ -180,19 +186,44 @@ async function recentSession(ctx: AuthRouteContext): Promise<AuthSession | Respo
   return session;
 }
 
+/**
+ * {@link recentSession}, plus the account's address verified when it has one. The stored user
+ * is read, not the session's copy: the pre-account-hijacking eviction ({@link ./email.ts}) keys
+ * on the stored `emailVerified`, and so does this — a passkey registered before the owner
+ * proves the mailbox would be the attacker's.
+ */
+async function registrationSession(pk: PasskeyContext): Promise<AuthSession | Response> {
+  const session = await recentSession(pk.ctx);
+  if (session instanceof Response) return session;
+  const stored = await pk.adapter.getUser(session.user.id);
+  if (!stored) return json({ error: "unauthorized" }, 401);
+  if (stored.email && !isVerified(stored.emailVerified)) {
+    return json({ error: "email_unverified" }, 403);
+  }
+  return session;
+}
+
 /** `POST /passkey/register/options`. */
 async function handleRegisterOptions(ctx: AuthRouteContext): Promise<Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  const session = await recentSession(ctx);
+  const session = await registrationSession(pk);
   if (session instanceof Response) return session;
   const user = session.user;
+  let handle: string;
+  try {
+    handle = userHandleOf(user.id);
+  } catch (error) {
+    if (!(error instanceof WebAuthnError)) throw error;
+    ctx.options.logger.warn("denextAuth: refused a passkey registration", { code: error.code });
+    return json({ error: "invalid passkey", code: error.code }, 400);
+  }
   const existing = await pk.adapter.listPasskeys(user.id);
   const challenge = await beginCeremony(pk, "register", user.id);
   return json({
     rp: { id: pk.rp.rpId, name: pk.rp.rpName },
     user: {
-      id: userHandleOf(user.id),
+      id: handle,
       name: user.email ?? user.id,
       displayName: user.name ?? user.email ?? user.id,
     },
@@ -237,7 +268,7 @@ function hex(bytes: Uint8Array): string {
 async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  const session = await recentSession(ctx);
+  const session = await registrationSession(pk);
   if (session instanceof Response) return session;
   const body = await readBody(ctx);
   try {
@@ -306,11 +337,21 @@ async function authenticationCaller(
   return { pk, pending: session?.mfaPending ? session : null };
 }
 
+/**
+ * Whether a pending session's first factor was a passkey (`amr` has `hwk`: a sign-in without
+ * user verification). Its step-up must be a code: offering — or accepting — a passkey there
+ * would let one key, presence alone, count as both factors.
+ */
+function passkeyWasFirstFactor(pending: AuthSession): boolean {
+  return pending.amr?.includes("hwk") ?? false;
+}
+
 /** `POST /passkey/authenticate/options`. */
 async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Response | null> {
   const caller = await authenticationCaller(ctx);
   if (!caller || caller instanceof Response) return caller;
   const { pk, pending: stepUp } = caller;
+  if (stepUp && passkeyWasFirstFactor(stepUp)) return json({ error: "code_required" }, 403);
   const allow = stepUp ? await pk.adapter.listPasskeys(stepUp.user.id) : [];
   const challenge = await beginCeremony(pk, stepUp ? "mfa" : "signin", stepUp?.user.id);
   return json({
@@ -449,6 +490,9 @@ async function handleAuthenticate(ctx: AuthRouteContext): Promise<Response | nul
   const caller = await authenticationCaller(ctx);
   if (!caller || caller instanceof Response) return caller;
   const { pk, pending } = caller;
+  if (pending && passkeyWasFirstFactor(pending)) {
+    return await refuse(ctx, "invalid_mfa_code", "passkey_was_first_factor");
+  }
   const limited = pending ? await spendStepUp(ctx, pending) : null;
   if (limited) return limited;
   const body = await readBody(ctx);

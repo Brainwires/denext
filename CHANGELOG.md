@@ -31,6 +31,28 @@ and this project adheres to
   is what a stolen, regularly used cookie needs; set a larger `maxLifetime` to keep sessions
   longer.
 
+- **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
+  session carries the email from the verified `id_token` and the name Apple posts on a user's
+  first authorization (the unsigned `user` field — used for the display name only). Asking for
+  the `name` / `email` scopes no longer throws. On upgrade: an Apple sign-in in flight during
+  the deploy (started on the old version, returning to the new one) fails and must be retried;
+  Apple now returns with a cross-site `POST` to `{basePath}/callback/apple`, so app middleware
+  or a proxy / WAF rule that blocks cross-site POSTs breaks Apple sign-in until it lets that
+  path through; and Apple users now carry an email (often a private relay address), so an app
+  that links accounts by email, or keys anything on it, sees Apple accounts take part.
+- **TOTP secrets are sealed at rest under the auth `secret`** (see Added): rotate it by listing,
+  never by replacing. A retired `secret` must stay in `secret: [current, …retired]` until every
+  TOTP factor sealed under it has been re-sealed, and a re-seal happens only when a TOTP or
+  backup-code check for that user passes — a user who only signs in by passkey with user
+  verification is never re-sealed, and an adapter without `replaceMfaSecret` never re-seals, so
+  there the retired secret must stay indefinitely. Replacing the secret (or dropping a retired
+  one too early) permanently breaks those users' TOTP: it fails closed, and only their backup
+  codes still sign in. Their recovery is `disableTotp(authConfig, userId)` by an administrator
+  (or `/mfa/disable` from a session a backup code or passkey reached), then a new enrollment;
+  `enrollTotp` does not let anyone enroll over the unopenable factor, since a password alone
+  could then replace a second factor. Rolling back to 3.2.x breaks every row already sealed as
+  `totp.v1.*`: 3.2 reads the stored value as the plaintext secret.
+
 ### Added
 
 - **TOTP secrets are encrypted at rest.** The MFA layer seals each secret before any adapter
@@ -80,7 +102,10 @@ and this project adheres to
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
   `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)
   and the pre-account-hijacking eviction (`"email_verified"`) — with the token id and owner,
-  never the token or its hash. `revokeApiToken(config, id, { userId })` carries the owner.
+  never the token or its hash. `revokeApiToken(config, id, { userId })` carries the owner and
+  resolves `true` for an actual revocation; an unknown or already revoked id resolves `false`
+  and fires nothing (the adapter's `revokeApiToken` may return that boolean, as both shipped
+  adapters do; one that returns nothing is taken to have revoked the token).
 - **`denext generate migration | seed | ci`**, scaffolded like `generate docker` (project-root
   files, the flavor auto-detected with an optional override, never overwriting a file).
   `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,
@@ -134,10 +159,18 @@ and this project adheres to
   or an `x5c` leaf checked against §8.2.1); origin, RP ID, `crossOrigin`, User Present / User
   Verified, backup-flag and signature-counter checks (a counter that goes backwards — a cloned
   authenticator — is refused); single-use challenges stored as hashes and bound to the browser
-  by a signed cookie. A passkey signs in usernameless (with user verification it satisfies MFA
-  on its own, `amr: ["hwk", "mfa"]`) or completes a pending second factor. The adapters gain a
+  by a signed cookie (one ceremony per browser at a time). A passkey signs in usernameless (with
+  user verification it satisfies MFA on its own, `amr: ["hwk", "mfa"]`) or completes a pending
+  second factor — but not the step-up of a presence-only passkey sign-in (`amr: ["hwk"]`), which
+  takes a code (`403 code_required`): one key is one factor. Registration needs a recent
+  sign-in and, for an account with an email address, a verified one (`403 email_unverified`);
+  the pre-account-hijacking eviction and a password reset delete every passkey of the account
+  (an adapter holding passkeys it can't delete fails them closed). A user id over the 64-byte
+  WebAuthn user-handle limit is a refused ceremony. The adapters gain a
   passkey group (`auth_passkeys`, `auth_passkey_challenges` in `sqliteAuthAdapter`);
-  `denext/client` gains `registerPasskey()`, `signInWithPasskey()` and `passkeysSupported()`;
+  `denext/client` gains `registerPasskey()`, `signInWithPasskey()` and `passkeysSupported()`
+  (every refusal a typed `{ ok: false, error }`, an authenticator's `InvalidStateError` included
+  as `"exists"`);
   `denext/server` gains `listPasskeys()` / `deletePasskey()`. Verified against the WebAuthn L3
   §16 test vectors.
 - **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
@@ -148,7 +181,10 @@ and this project adheres to
   app's policy for that method. `csrf()` refuses a cookie-carrying non-`GET`/`HEAD`/`OPTIONS`
   request from any origin but the app's own, `allowedOrigins` (config or option) or the Deno
   Desktop origin — the Server Actions rule — with a 403 `csrf_failed`; `doubleSubmit` also
-  requires an `x-csrf-token` header echoing a `denext-csrf` cookie the middleware issues.
+  requires an `x-csrf-token` header echoing a token cookie the middleware issues
+  (`__Host-denext-csrf` on a secure request — https, or a trusted proxy's `x-forwarded-proto` —
+  so a sibling subdomain can't plant one; `denext-csrf` over plain http, where either name is
+  read).
   `ApiMiddlewareDocs` gains `errors`, so `csrf_failed` is listed on the endpoint in
   `@denext/openapi`.
 - **`totpQrSvg(uri, options?)` (`denext/server`) renders a TOTP provisioning URI as an SVG QR
@@ -275,10 +311,6 @@ and this project adheres to
   `private, no-store`), or a response whose `Cache-Control` middleware or a `headers()` rule
   set. `cdnCacheHeaders: false` restores the old behavior.
 
-- **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
-  session carries the email from the verified `id_token` and the name Apple posts on a user's
-  first authorization (the unsigned `user` field — used for the display name only). Asking for
-  the `name` / `email` scopes no longer throws.
 - **denext pins Deno Desktop runtime 2.9.7-denext.12** (deno `cd310b28`, laufey `4f6f00f`, API
   47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
   xdg-desktop-portal's FileChooser and the runtime's own Linux secure store are now what every

@@ -19,6 +19,8 @@ export type PasskeyClientError =
   | "invalid"
   | "unauthorized"
   | "reauth_required"
+  | "email_unverified"
+  | "code_required"
   | "exists"
   | "rate_limited"
   | "network";
@@ -165,7 +167,10 @@ async function errorOf(res: Response | null): Promise<PasskeyClientError> {
   if (res.status === 429) return "rate_limited";
   if (res.status === 409) return "exists";
   const body = await res.json().catch(() => ({})) as { error?: string };
-  if (body.error === "reauth_required") return "reauth_required";
+  if (
+    body.error === "reauth_required" || body.error === "email_unverified" ||
+    body.error === "code_required"
+  ) return body.error;
   return res.status === 401 && body.error === "unauthorized" ? "unauthorized" : "invalid";
 }
 
@@ -180,13 +185,20 @@ async function ceremonyOptions(
   return { json: await res.json() };
 }
 
-/** Run a WebAuthn ceremony, mapping the user's cancel (or a timeout) to `"cancelled"`. */
-async function ceremony<T>(run: () => Promise<T | null>): Promise<T | "cancelled"> {
+/**
+ * Run a WebAuthn ceremony, mapping the user's cancel (or a timeout) to `"cancelled"` and an
+ * authenticator that already holds one of the excluded credentials (`InvalidStateError`,
+ * WebAuthn L3 §6.3.2 step 3) to `"exists"`.
+ */
+async function ceremony<T>(
+  run: () => Promise<T | null>,
+): Promise<T | "cancelled" | "exists"> {
   try {
     return (await run()) ?? "cancelled";
   } catch (error) {
     const name = (error as { name?: string })?.name;
     if (name === "NotAllowedError" || name === "AbortError") return "cancelled";
+    if (name === "InvalidStateError") return "exists";
     throw error;
   }
 }
@@ -209,7 +221,7 @@ export async function registerPasskey(
   const created = await ceremony(() =>
     navigator.credentials.create({ publicKey }) as Promise<PublicKeyCredential | null>
   );
-  if (created === "cancelled") return { ok: false, error: "cancelled" };
+  if (created === "cancelled" || created === "exists") return { ok: false, error: created };
   const res = await post(`${base}/passkey/register`, {
     credential: credentialJSON(created),
     name: options.name,
@@ -238,7 +250,7 @@ export async function signInWithPasskey(
   const asserted = await ceremony(() =>
     navigator.credentials.get({ publicKey }) as Promise<PublicKeyCredential | null>
   );
-  if (asserted === "cancelled") return { ok: false, error: "cancelled" };
+  if (asserted === "cancelled" || asserted === "exists") return { ok: false, error: asserted };
   const res = await post(`${base}/passkey/authenticate`, {
     credential: credentialJSON(asserted),
     callbackUrl: options.callbackUrl,

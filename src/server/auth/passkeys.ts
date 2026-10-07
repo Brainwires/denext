@@ -14,8 +14,15 @@
  * **Factors.** A passkey sign-in with user verification (the default policy) proves possession
  * and the user's PIN or biometric — it completes a sign-in even for a user with TOTP, with
  * `amr: ["hwk", "mfa"]`. Without UV (`userVerification: "preferred"`) it is one factor
- * (`amr: ["hwk"]`), and the usual step-up follows. A passkey also completes a pending session's
- * step-up, as `POST {basePath}/mfa` does with a code.
+ * (`amr: ["hwk"]`), and the usual step-up follows — with a TOTP or backup code only: the same
+ * passkey must not count twice. A passkey also completes the step-up of a pending session whose
+ * first factor was something else (a password, an email link, OAuth), as `POST {basePath}/mfa`
+ * does with a code.
+ *
+ * **Registration** needs a complete, recent session and — for an account with an email address —
+ * a verified address: a passkey planted on an unverified account would outlive the
+ * pre-account-hijacking eviction's purpose ({@link ./email.ts}), which also removes every passkey
+ * of the account when its owner first proves the mailbox.
  *
  * @module
  */
@@ -25,7 +32,7 @@ import { sha256Hex } from "./hash.ts";
 import { base64UrlEncode, randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthConfig, AuthPasskeyConfig } from "./types.ts";
-import { PASSKEY_ALGORITHMS, type PasskeyAlgorithm } from "./webauthn.ts";
+import { PASSKEY_ALGORITHMS, type PasskeyAlgorithm, WebAuthnError } from "./webauthn.ts";
 
 /** The adapter methods passkeys need, all present. */
 export type PasskeyAdapter =
@@ -216,12 +223,16 @@ export async function redeemChallenge(
  *
  * @param userId The adapter user id.
  * @returns The base64url handle.
- * @throws {Error} When the id is longer than the 64 bytes WebAuthn allows.
+ * @throws {WebAuthnError} (`"malformed"`) When the id is empty or longer than the 64 bytes
+ * WebAuthn allows — the passkey routes answer it as a refused ceremony, never a 500.
  */
 export function userHandleOf(userId: string): string {
   const bytes = new TextEncoder().encode(userId);
   if (bytes.length === 0 || bytes.length > MAX_USER_HANDLE) {
-    throw new Error("passkeys: a user id must be 1–64 bytes to serve as a WebAuthn user handle");
+    throw new WebAuthnError(
+      "malformed",
+      "passkeys: a user id must be 1–64 bytes to serve as a WebAuthn user handle",
+    );
   }
   return base64UrlEncode(bytes);
 }

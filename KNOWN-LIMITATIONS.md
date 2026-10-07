@@ -79,7 +79,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
-  one-time codes; rate limiters count per node without a shared `rateLimit.store`.
+  one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
+  under it are re-sealed — only when a TOTP or backup-code check passes, so never for a user who
+  signs in only by passkey with user verification, and never with an adapter lacking
+  `replaceMfaSecret` (there it stays for good); rate limiters count per node without a shared
+  `rateLimit.store`.
+- **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
+  passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
+  an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
 - **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
   Metadata Service), and ES256 / RS256 / Ed25519 keys only.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an

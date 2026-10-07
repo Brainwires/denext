@@ -6478,7 +6478,7 @@
           "kind": "function",
           "signature": "disableTotp(config: AuthConfig, userId: string): Promise<void>",
           "doc": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.",
-          "docFull": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.\nCallers must have proved a fresh factor first — see the `/mfa/disable` endpoint.",
+          "docFull": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.\nCallers must have proved a fresh factor first — see the `/mfa/disable` endpoint.\n\nIt is also the **administrator's recovery** for a factor no configured `secret` opens any\nmore (a `secret` replaced rather than rotated, or an altered row): such a user can't pass a\nTOTP check, so without a backup code or a passkey with user verification they can't reach\n`/mfa/disable` themselves, and `enrollTotp` keeps answering `already_enrolled` — by design,\nsince a pending (password-only) session may enroll and must not be able to replace a factor.\nVerify the user's identity out of band, call this, and they enroll again.",
           "params": [
             {
               "name": "config",
@@ -9918,8 +9918,8 @@
           "slug": "resetPassword",
           "kind": "function",
           "signature": "resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>",
-          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session and bearer API token of the user is revoked — a reset is how an owner takes an account back, so nothing a thief minted with a stolen session survives it. Fires passwordReset (after sessionRevoked).",
-          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, and every server-side session and bearer API token of\nthe user is revoked — a reset is how an owner takes an account back, so nothing a thief\nminted with a stolen session survives it. Fires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
+          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, every passkey of the user is removed, and every server-side session and bearer API token is revoked — a reset is how an owner takes an account back, so nothing a thief set up with a stolen session (a passkey registered from it included) survives it. Fires passwordReset (after sessionRevoked).",
+          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, every passkey of the user is removed, and every\nserver-side session and bearer API token is revoked — a reset is how an owner takes an\naccount back, so nothing a thief set up with a stolen session (a passkey registered from it\nincluded) survives it. Fires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
           "params": [
             {
               "name": "config",
@@ -9930,7 +9930,7 @@
               "doc": "The address, the presented token and the new password."
             }
           ],
-          "returns": "{ ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+          "returns": "{ ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential, or holds passkeys it can't delete.",
           "examples": [],
           "denextOnly": true
         },
@@ -10155,9 +10155,9 @@
           "name": "revokeApiToken",
           "slug": "revokeApiToken",
           "kind": "function",
-          "signature": "revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<void>",
-          "doc": "Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error. Fires apiTokenRevoked (reason: \"revoked\").",
-          "docFull": "Revoke a token by id — it stops authenticating immediately and can never be revived.\nRevoking an unknown (or already revoked) id is a no-op, not an error. Fires\n`apiTokenRevoked` (`reason: \"revoked\"`).",
+          "signature": "revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<boolean>",
+          "doc": "Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing; an actual revocation fires apiTokenRevoked (reason: \"revoked\").",
+          "docFull": "Revoke a token by id — it stops authenticating immediately and can never be revived.\nRevoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing;\nan actual revocation fires `apiTokenRevoked` (`reason: \"revoked\"`).",
           "params": [
             {
               "name": "config",
@@ -10172,7 +10172,7 @@
               "doc": "The owner, when the caller knows it — carried on the event."
             }
           ],
-          "returns": "",
+          "returns": "true when a live token was revoked, false for an unknown or already revoked id. (An adapter whose revokeApiToken returns nothing reads as true.)",
           "examples": [],
           "denextOnly": true
         },
@@ -13010,7 +13010,7 @@
           "name": "PasskeyClientError",
           "slug": "PasskeyClientError",
           "kind": "typeAlias",
-          "signature": "type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | exists | rate_limited | network",
+          "signature": "type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | email_unverified | code_required | exists | rate_limited | network",
           "doc": "Why a passkey call failed.",
           "docFull": "Why a passkey call failed.",
           "params": [],

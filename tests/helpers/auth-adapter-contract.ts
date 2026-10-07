@@ -315,10 +315,11 @@ const API_TOKEN_CASES: Record<string, Case> = {
     const user = await adapter.createUser({ email: "ada@x.test" });
     await create.call(adapter, apiToken("t1", user.id));
     await create.call(adapter, apiToken("t2", user.id));
-    await revoke.call(adapter, "t1");
+    assertEquals(await revoke.call(adapter, "t1"), true, "an actual revocation");
     assertEquals(await byHash.call(adapter, "hash-t1"), undefined);
     assertEquals((await list.call(adapter, user.id)).map((t) => t.id), ["t2"]);
-    await revoke.call(adapter, "unknown"); // no-op, no throw
+    assertEquals(await revoke.call(adapter, "t1"), false, "already revoked");
+    assertEquals(await revoke.call(adapter, "unknown"), false, "no-op, no throw");
   },
   "an expired token is invisible to both reads": async (adapter) => {
     const create = adapter.createApiToken;

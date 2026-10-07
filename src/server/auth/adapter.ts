@@ -398,8 +398,11 @@ export interface AuthAdapter {
    * Revoke a bearer token (optional).
    *
    * @param id The token id.
+   * @returns `true` when a token that wasn't revoked yet was revoked, `false` for an unknown or
+   *   already revoked id. (An adapter that returns nothing is taken to have revoked it, so
+   *   `apiTokenRevoked` fires for every call — return the boolean.)
    */
-  revokeApiToken?(id: string): MaybePromise<void>;
+  revokeApiToken?(id: string): MaybePromise<boolean | void>;
 
   /**
    * A user's bearer tokens (optional). Implementations never return the secret.

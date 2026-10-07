@@ -378,9 +378,10 @@ function apiTokenMethods(
     },
     revokeApiToken(id) {
       const token = state.apiTokens.get(id);
-      if (!token) return;
+      if (!token || token.revokedAt !== undefined) return false;
       token.revokedAt = state.now();
       state.apiTokenHashes.delete(token.tokenHash);
+      return true;
     },
     listApiTokens: (userId) =>
       [...state.apiTokens.rows.values()]

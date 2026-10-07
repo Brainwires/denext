@@ -187,18 +187,22 @@ Deno.test("csrf(): canonicalOrigin makes the own-origin check scheme-strict", as
   );
 });
 
-Deno.test("csrf({ doubleSubmit }): issues the token cookie and requires the header to echo it", async () => {
+Deno.test("csrf({ doubleSubmit }): issues the __Host- token cookie over https and requires the header to echo it", async () => {
   const handler = csrfApp({ doubleSubmit: true });
   const first = await handler(req("GET", { origin: "https://api.test" }));
   await first.body?.cancel();
-  const setCookie = first.headers.getSetCookie().find((c) => c.startsWith("denext-csrf="));
+  const setCookie = first.headers.getSetCookie().find((c) => c.startsWith("__Host-denext-csrf="));
   assert(setCookie, "a GET without the cookie is issued one");
   assert(/SameSite=Strict/i.test(setCookie));
   assert(!/HttpOnly/i.test(setCookie), "the page's script must be able to read it");
-  const token = setCookie.slice("denext-csrf=".length).split(";")[0];
+  assert(
+    /;\s*Secure/i.test(setCookie) && /Path=\//i.test(setCookie),
+    "__Host- needs Secure + Path=/",
+  );
+  const token = setCookie.slice("__Host-denext-csrf=".length).split(";")[0];
   assert(token.length >= 32);
 
-  const cookie = `session=abc; denext-csrf=${token}`;
+  const cookie = `session=abc; __Host-denext-csrf=${token}`;
   const origin = "https://api.test";
   assertEquals(
     await status(await handler(req("POST", { cookie, origin }))),
@@ -222,6 +226,63 @@ Deno.test("csrf({ doubleSubmit }): issues the token cookie and requires the head
   await ok.body?.cancel();
   const noToken = await handler(req("POST", { cookie: "session=abc", origin, "x-csrf-token": "" }));
   assertEquals((await status(noToken))[0], 403, "an empty cookie never matches an empty header");
+});
+
+function reqAt(url: string, method: string, headers: Record<string, string> = {}): Request {
+  return new Request(url, { method, headers: { host: "api.test", ...headers } });
+}
+
+/** The name of the double-submit cookie `res` issued, and the cookie line. */
+function issuedCsrf(res: Response): { name: string; line: string } | undefined {
+  const line = res.headers.getSetCookie().find((c) => /^(__Host-)?denext-csrf=/.test(c));
+  return line ? { name: line.slice(0, line.indexOf("=")), line } : undefined;
+}
+
+Deno.test("csrf({ doubleSubmit }): plain http gets `denext-csrf`; a trusted https proxy gets `__Host-denext-csrf`", async () => {
+  const handler = csrfApp({ doubleSubmit: true });
+  const plain = await handler(reqAt("http://api.test/api/thing", "GET"));
+  await plain.body?.cancel();
+  const issued = issuedCsrf(plain);
+  assertEquals(issued?.name, "denext-csrf");
+  assert(!/;\s*Secure/i.test(issued!.line));
+  // An x-forwarded-proto the app doesn't trust changes nothing…
+  const spoofed = await handler(
+    reqAt("http://api.test/api/thing", "GET", { "x-forwarded-proto": "https" }),
+  );
+  await spoofed.body?.cancel();
+  assertEquals(issuedCsrf(spoofed)?.name, "denext-csrf");
+  // …a trusted one makes the request secure.
+  const proxied = csrfApp({ doubleSubmit: true }, { trustForwardedHeaders: true });
+  const behind = await proxied(
+    reqAt("http://api.test/api/thing", "GET", { "x-forwarded-proto": "https" }),
+  );
+  await behind.body?.cancel();
+  assertEquals(issuedCsrf(behind)?.name, "__Host-denext-csrf");
+});
+
+Deno.test("csrf({ doubleSubmit }): either name is read — but a secure request ignores a tossable unprefixed cookie", async () => {
+  const handler = csrfApp({ doubleSubmit: true });
+  const headers = (cookie: string) => ({ cookie, "x-csrf-token": "tok123" });
+  // Plain http: both names verify.
+  for (const cookie of ["denext-csrf=tok123", "__Host-denext-csrf=tok123"]) {
+    const res = await handler(
+      reqAt("http://api.test/api/thing", "POST", { ...headers(cookie), origin: "http://api.test" }),
+    );
+    assertEquals(res.status, 200, cookie);
+    await res.body?.cancel();
+  }
+  // https: the __Host- cookie verifies; an unprefixed one (which a sibling subdomain could plant)
+  // does not, and the response issues the __Host- cookie instead.
+  const hosted = await handler(
+    reqAt(URL_, "POST", { ...headers("__Host-denext-csrf=tok123"), origin: "https://api.test" }),
+  );
+  assertEquals(hosted.status, 200);
+  await hosted.body?.cancel();
+  const tossed = await handler(
+    reqAt(URL_, "POST", { ...headers("denext-csrf=tok123"), origin: "https://api.test" }),
+  );
+  assertEquals(issuedCsrf(tossed)?.name, "__Host-denext-csrf");
+  assertEquals(await status(tossed), [403, "csrf_failed"]);
 });
 
 Deno.test("csrf({ doubleSubmit }): custom cookie and header names", async () => {

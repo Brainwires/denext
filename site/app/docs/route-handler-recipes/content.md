@@ -214,7 +214,7 @@ never refuses it), echoes only an exactly-listed origin, never pairs `*` with
 credentials, and adds `Vary: Origin`. `csrf()` refuses a cookie-carrying write
 from any other origin with a 403 `csrf_failed`, the same rule Server Actions
 apply; `doubleSubmit: true` adds a token cookie the page echoes in
-`x-csrf-token`. See [Typed API](/docs/typed-api#cors-and-csrf--cors-and-csrf).
+`x-csrf-token` (`__Host-denext-csrf` over https, `denext-csrf` over plain http). See [Typed API](/docs/typed-api#cors-and-csrf--cors-and-csrf).
 
 A plain handler that wants the headers itself can still export `OPTIONS`: it is
 a routable method when no policy covers the route.

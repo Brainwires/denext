@@ -19,6 +19,7 @@ import { cookies, currentContext } from "./request-context.ts";
 import { randomToken } from "./auth/oauth.ts";
 import { constantTimeEqualHex } from "./auth/hash.ts";
 import { getCookies } from "@std/http/cookie";
+import { requestOrigin } from "./absolute-url.ts";
 
 /** Options for {@link requireSession}. */
 export interface RequireSessionOptions {
@@ -151,7 +152,13 @@ const DEFAULT_CSRF_HEADER = "x-csrf-token";
 
 /** The double-submit half of {@link CsrfOptions}. */
 export interface CsrfDoubleSubmitOptions {
-  /** The token cookie (default `denext-csrf`; readable by the page's script, `SameSite=Strict`). */
+  /**
+   * The token cookie (readable by the page's script, `SameSite=Strict`). Default
+   * `__Host-denext-csrf` on a secure request (https, or a trusted proxy's `x-forwarded-proto`)
+   * — the prefix stops a sibling subdomain from planting a token of its own — and
+   * `denext-csrf` over plain http. Either name is read; a secure request ignores the
+   * unprefixed one. A name set here is used as given.
+   */
   cookie?: string;
   /** The request header that must echo it (default `x-csrf-token`). */
   header?: string;
@@ -195,7 +202,7 @@ export interface CsrfOptions {
  */
 export function csrf(options: CsrfOptions = {}): ApiMiddleware<object> {
   const double = options.doubleSubmit === true ? {} : options.doubleSubmit || null;
-  const cookieName = double?.cookie ?? DEFAULT_CSRF_COOKIE;
+  const cookieName = double?.cookie;
   const headerName = double?.header ?? DEFAULT_CSRF_HEADER;
   const refuse = (): never => {
     throw new ApiError(403, "csrf_failed", {
@@ -225,15 +232,59 @@ function csrfOriginOptions(extra: string[] = []) {
   };
 }
 
+/** The `__Host-`-prefixed default token cookie a secure request uses. */
+const HOST_CSRF_COOKIE = `__Host-${DEFAULT_CSRF_COOKIE}`;
+
+/**
+ * Whether the client's connection is https: the request URL, or the first hop of
+ * `x-forwarded-proto` when the app trusts its proxy (an untrusted one could be spoofed).
+ */
+function isSecureRequest(request: Request): boolean {
+  const trustForwardedHeaders = currentContext()?.trustForwardedHeaders ?? false;
+  return requestOrigin(request, { trustForwardedHeaders }).toLowerCase().startsWith("https://");
+}
+
+/** Which double-submit cookie names a request reads, which one it is issued, and `Secure`. */
+interface CsrfCookie {
+  read: string[];
+  issue: string;
+  secure: boolean;
+}
+
+/**
+ * The double-submit cookie for `request`. A custom name is used as given. With the default, a
+ * secure request reads and issues `__Host-denext-csrf` only — an unprefixed cookie is what a
+ * sibling subdomain could plant — and plain http reads either name and issues `denext-csrf`
+ * (a browser won't store a `__Host-` cookie without `Secure`).
+ */
+function csrfCookie(request: Request, custom: string | undefined): CsrfCookie {
+  if (custom !== undefined) return { read: [custom], issue: custom, secure: false };
+  if (isSecureRequest(request)) {
+    return { read: [HOST_CSRF_COOKIE], issue: HOST_CSRF_COOKIE, secure: true };
+  }
+  return {
+    read: [HOST_CSRF_COOKIE, DEFAULT_CSRF_COOKIE],
+    issue: DEFAULT_CSRF_COOKIE,
+    secure: false,
+  };
+}
+
 /**
  * The request's double-submit token (`""` when it sent none), issuing a fresh token cookie
- * when it is missing so the page can echo it on its next write.
+ * when it is missing so the page can echo it on its next write ({@link csrfCookie} names it).
  */
-function ensureCsrfToken(request: Request, name: string): string {
-  const sent = getCookies(request.headers)[name];
+function ensureCsrfToken(request: Request, custom: string | undefined): string {
+  const cookie = csrfCookie(request, custom);
+  const jar = getCookies(request.headers);
+  const sent = cookie.read.map((name) => jar[name]).find(Boolean);
   if (sent) return sent;
   if (currentContext()) {
-    cookies().set(name, randomToken(), { httpOnly: false, sameSite: "Strict", path: "/" });
+    cookies().set(cookie.issue, randomToken(), {
+      httpOnly: false,
+      sameSite: "Strict",
+      path: "/",
+      ...(cookie.secure ? { secure: true } : {}),
+    });
   }
   return "";
 }

@@ -63,7 +63,8 @@ export default {
 `secret` must be at least 32 characters (shorter warns in development and **throws in
 production**) and accepts an array to rotate — every secret verifies, the first one
 signs. The same list seals TOTP secrets at rest ([Secrets at rest](#secrets-at-rest)), so
-keep a retired secret in it until the factors sealed under it have been re-sealed. `canonicalOrigin` warns in development and throws in production: without it the
+keep a retired secret in it until the factors sealed under it have been re-sealed — list
+the new secret first, never replace the old one (see [Secrets at rest](#secrets-at-rest)). `canonicalOrigin` warns in development and throws in production: without it the
 OAuth `redirect_uri` and the same-origin checks derive from the attacker-controllable
 `Host` header. An OAuth provider whose `clientId` / `clientSecret` is empty — or the
 literal string `"undefined"`, which a missing `Deno.env.get("…")!` produces — is refused
@@ -312,7 +313,7 @@ denextAuth({
     strategy: "cookie", // or "database"
     maxAge: 60 * 60 * 24 * 7, // 7 days (the default)
     updateAge: 60 * 60, // slide the expiry once a session is an hour old; 0 = never
-    maxLifetime: 60 * 60 * 24 * 30, // never past 30 days from sign-in (the default)
+    maxLifetime: 60 * 60 * 24 * 30, // never past 30 days from sign-in (default: 30 days, or maxAge if longer)
   },
 });
 ```
@@ -676,8 +677,10 @@ export default function Reset({ searchParams }: PageProps) {
 ```
 
 The confirm — or `resetPassword(authConfig, { email, token, password })` — hashes the new
-password with the configured `hasher`, stores it with `setCredential`, **revokes every
-server-side session** of the user (`sessionRevoked`), fires `passwordReset`, and lands on
+password with the configured `hasher`, stores it with `setCredential`, **removes every
+passkey** of the user, **revokes every server-side session** (`sessionRevoked`) and bearer API
+token — a reset signs out every device and removes passkeys, so nothing a thief set up with a
+stolen session survives the owner taking the account back — fires `passwordReset`, and lands on
 `pages.signIn` with `?reset=1`. The password must be 8–1024 characters and is checked
 **before** the token is touched: a refused one (`invalid_password`) is sent back to
 `resetPath` with its link intact, while a bad token (`invalid_token`) goes to `pages.error`.
@@ -782,8 +785,12 @@ someone who never proved the mailbox — possibly an attacker who registered the
 address with a password and is waiting for the victim to sign in by email. So before a
 first email sign-in marks that address verified, everything set up without the proof is
 retired: the password (deleted, or — with an adapter that has no `deleteCredential` — replaced
-with the hash of a random secret), any TOTP factor and its backup codes, every bearer API token and every
-server-side session (`sessionRevoked`); then `emailVerified` fires. If any step fails, the
+with the hash of a random secret), any TOTP factor and its backup codes, every passkey, every
+bearer API token and every server-side session (`sessionRevoked`); then `emailVerified` fires.
+(A password reset into such an account does the same.) An adapter that holds passkeys it can't
+delete — or `passkeys` configured over an adapter without `listPasskeys` — fails the step
+closed. Passkey registration is refused (`403 email_unverified`) while an account's address is
+unverified, so a passkey can't be planted ahead of the owner in the first place. If any step fails, the
 address stays unverified and the redeem gets the generic failure. An account that was
 already verified keeps all of it. A stateless cookie session can't be revoked and lives
 until it expires — another reason to run a `sessionStore` in production.
@@ -995,13 +1002,28 @@ opens it only to check a code:
 - The stored value carries its version, nonce and ciphertext together:
   `totp.v1.<nonce>.<ciphertext>`. Store it as an opaque string.
 - **Rotation.** With `secret: [current, previous]`, a factor sealed under `previous` still
-  opens, and is re-sealed under `current` the next time it is checked. Keep a retired secret
-  in the list until every enrolled user has signed in once; a factor that no configured secret
-  opens **fails closed** — no TOTP code verifies, the user still owes a second factor, a
-  backup code still works, and the logger warns with the user id (never the secret).
+  opens, and is re-sealed under `current` **only when a TOTP or backup-code check for that
+  user passes** — through the adapter's `replaceMfaSecret`. Keep a retired secret in the list
+  until every factor sealed under it has been re-sealed that way: a user who only ever signs in
+  with a passkey under user verification is never checked, so never re-sealed, and with an
+  adapter that has no `replaceMfaSecret` nothing is ever re-sealed, so there the old secret
+  must stay for good. **Replacing** the secret instead of listing both bricks every factor
+  sealed under the old one: it **fails closed** — no TOTP code verifies, the user still owes a
+  second factor, a backup code still works, and the logger warns with the user id (never the
+  secret).
+- **Recovery.** A user with a backup code (or a passkey with user verification) signs in,
+  disables the factor at `/mfa/disable` and enrolls again. A user with neither is locked out of
+  TOTP until an administrator verifies them out of band and calls `disableTotp(authConfig,
+  userId)`. `enrollTotp` keeps answering `already_enrolled` over such a factor on purpose: a
+  pending session — a password alone — may enroll, and must never be able to replace a second
+  factor.
 - **Existing rows.** A secret stored in plaintext by an earlier denext keeps verifying and is
   re-sealed on that read. A tampered row, an unknown version or anything that is neither
   sealed nor base32 is refused, never used as a plaintext secret.
+- **A writable database is out of scope.** A plain base32 value always opens as a legacy row
+  (no per-row marker says it was ever sealed), so whoever can write the MFA table can swap a
+  sealed secret for a plaintext one they know. That access could equally rewrite a password
+  hash or delete the factor; sealing protects a copied database, not a writable one.
 
 The re-seal on read goes through the adapter's optional `replaceMfaSecret(userId, expected,
 next)`: a compare-and-swap of that one column, so it can't undo a concurrent `claimTotpStep`
@@ -1023,13 +1045,22 @@ denextAuth({
 });
 ```
 
-| Key                | Default                  | What it sets                                                                                                  |
-| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
-| `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
-| `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
-| `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
-| `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
+| Key       | Default                  | What it sets                                                                                                  |
+| --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `rpId`    | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
+| `rpName`  | the RP ID                | The name an authenticator may show                                                                            |
+| `origins` | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+
+`origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
+origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) and binds its ceremony
+with a cookie, so each listed origin must serve the auth routes itself — an app answering on
+several hosts under one RP ID (no `canonicalOrigin`, so the request's `Host` decides; with one,
+only that origin is same-origin). A page on another origin can't run a ceremony against these
+endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
+signed client data, but the routes need a same-origin browser request carrying the ceremony
+cookie) — such a client needs endpoints of your own.
+| `userVerification` | `"required"` | `"preferred"` accepts a presence-only assertion — one factor instead of two |
+| `timeout` | `300` | Seconds a ceremony's challenge lives (`30–900`) |
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
@@ -1051,7 +1082,9 @@ await registerPasskey({ name: "MacBook" }); // { ok: true, passkey } | { ok: fal
 
 `passkeysSupported()` says whether the browser has WebAuthn at all. A refused call resolves
 `{ ok: false, error }` — `"cancelled"`, `"invalid"`, `"unauthorized"`, `"reauth_required"`,
-`"exists"`, `"rate_limited"`, `"network"` or `"unsupported"` — and never throws.
+`"email_unverified"`, `"code_required"`, `"exists"` (the server already has the credential,
+or the authenticator holds one it was told to exclude), `"rate_limited"`, `"network"` or
+`"unsupported"` — and never throws.
 
 **What the server checks** (WebAuthn Level 3): the client data's type, challenge, origin
 and `crossOrigin` (a call from a cross-origin iframe is refused); the authenticator data's
@@ -1065,17 +1098,24 @@ A counter that doesn't increase means a cloned authenticator: the sign-in is ref
 
 Every challenge is 32 random bytes, stored only as its SHA-256 through the adapter's atomic
 `usePasskeyChallenge`, and bound to the browser that asked for it by a short-lived signed
-cookie: a replayed response, or one relayed to another browser, is refused. Registration
-needs a complete session that signed in within `mfa.freshness` (five minutes at least), like
-`/mfa/enroll`, so a stolen session can't plant a passkey of its own.
+cookie: a replayed response, or one relayed to another browser, is refused. That cookie is one
+per browser, so starting a second ceremony (another tab, a retry) supersedes the first: finish
+one before starting the next. Registration needs a complete session that signed in within
+`mfa.freshness` (five minutes at least), like `/mfa/enroll`, so a stolen session can't plant a
+passkey of its own — and an account with an email address needs it verified (`403
+email_unverified`), so nobody can leave a passkey on an account whose mailbox they never
+proved. A password reset removes every passkey of the account.
 
 **Factors.** Under `userVerification: "required"` a passkey proves possession and the user's
 PIN or biometric, so it **completes a sign-in on its own** — a user with TOTP isn't asked for a
 code — with `amr: ["hwk", "mfa"]`. Under `"preferred"` a presence-only assertion is one factor
-(`amr: ["hwk"]`) and the usual step-up follows. A pending session can also **step up with a
-passkey**: `signInWithPasskey()` while `pendingMfaSession()` is set offers that user's
-passkeys and, on success, mints a fresh complete session (`amr` gains `hwk` and `mfa`), the way
-`POST {basePath}/mfa` does with a code. It spends the same per-user MFA budget.
+(`amr: ["hwk"]`) and the usual step-up follows — **with a code**: one key is one factor, so a
+session whose first factor was a passkey is never offered a passkey step-up
+(`403 code_required`, and an assertion is refused). Any other pending session (a password, an
+email link, OAuth) can also **step up with a passkey**: `signInWithPasskey()` while
+`pendingMfaSession()` is set offers that user's passkeys and, on success, mints a fresh
+complete session (`amr` gains `hwk` and `mfa`), the way `POST {basePath}/mfa` does with a
+code. It spends the same per-user MFA budget.
 
 For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, createdAt,
 lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
@@ -1674,10 +1714,11 @@ client migration, or electing a single leader tab for a shared connection.
   nothing, and sliding expiry never extends it. It lasts 15 minutes; the step-up replaces
   it with a fresh session rather than upgrading it (no fixation); and the `/mfa*` endpoints
   read only the cookie, so a bearer token can neither step up nor enroll.
-- **Pre-account hijacking.** A first magic-link or code sign-in into an account whose
-  address was never verified retires everything set up without that proof — the password,
-  any TOTP factor and backup codes, bearer tokens, server-side sessions and native app
-  sessions — before marking it verified.
+- **Pre-account hijacking.** A first magic-link or code sign-in (or a password reset) into an
+  account whose address was never verified retires everything set up without that proof —
+  the password, any TOTP factor and backup codes, passkeys, bearer tokens, server-side
+  sessions and native app sessions — before marking it verified, and no passkey can be
+  registered on it until then.
 - **Native sessions.** The one-time code is hashed at rest, bound to the registered
   redirect URI and a PKCE `S256` challenge, lives 60 seconds (`codeTtl`) and gets one try; it is
   minted only for a sign-in made after `/native/authorize` began, so a lingering browser
@@ -1731,7 +1772,11 @@ What the first-party auth layer still does not do — the full ledger is
 - **By default a GET spends a magic link**, so a mail gateway that pre-fetches links can burn
   one — use `magicLink({ confirm: true })`, or `emailOtp()`.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
-  current (first) secret, and live for minutes.
+  current (first) secret, and live for minutes. A retired secret must stay in the list until
+  the TOTP factors sealed under it are re-sealed, which happens only when a TOTP or backup-code
+  check passes (never for a passkey-only user, never without `replaceMfaSecret`).
+- **One passkey ceremony per browser at a time**: the ceremony cookie is per browser, so a
+  second ceremony supersedes the first.
 - **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking
   eviction — until they expire. Run a `sessionStore` (or `session.strategy: "database"`) so
   either one signs out every device. A pending second-factor session in a cookie can't be

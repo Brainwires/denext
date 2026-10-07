@@ -484,7 +484,14 @@ async function revokeUserSessions(
  */
 type ProvenMailboxAdapter = Pick<
   AuthAdapter,
-  "updateUser" | "getCredential" | "setCredential" | "getMfa" | "listApiTokens" | "revokeApiToken"
+  | "updateUser"
+  | "getCredential"
+  | "setCredential"
+  | "getMfa"
+  | "listApiTokens"
+  | "revokeApiToken"
+  | "listPasskeys"
+  | "deletePasskey"
 >;
 
 /**
@@ -546,9 +553,42 @@ async function revokeApiTokens(
 ): Promise<void> {
   if (!adapter.listApiTokens || !adapter.revokeApiToken) return;
   for (const token of await adapter.listApiTokens(userId)) {
-    await adapter.revokeApiToken(token.id);
+    // A concurrent revocation got there first: it fired its own event.
+    if ((await adapter.revokeApiToken(token.id)) === false) continue;
     await emitAuthEvent(options, "apiTokenRevoked", { tokenId: token.id, userId, reason });
   }
+}
+
+/**
+ * Delete every passkey of an account whose address was never verified. A passkey registered
+ * before the mailbox was proven belongs to whoever set it up — possibly an attacker, whose key
+ * would otherwise keep signing in (usernameless, and with user verification as a complete
+ * multi-factor session) after the victim claims the account. Without the passkey group there is
+ * nothing to delete — unless `passkeys` is configured (then the group must be whole) or the
+ * adapter lists passkeys it can't delete: either fails the flow closed.
+ */
+async function deletePasskeys(
+  config: AuthConfig,
+  adapter: ProvenMailboxAdapter,
+  userId: string,
+): Promise<void> {
+  const list = adapter.listPasskeys;
+  if (!list) {
+    if (!config.passkeys) return;
+    throw new Error(
+      "denextAuth: `passkeys` is configured but the adapter has no `listPasskeys`, so the " +
+        "passkeys of an unverified account can't be removed before its address is verified.",
+    );
+  }
+  const passkeys = await list.call(adapter, userId);
+  if (passkeys.length === 0) return;
+  if (!adapter.deletePasskey) {
+    throw new Error(
+      "denextAuth: the adapter implements `listPasskeys` but not `deletePasskey`, so the " +
+        "passkeys of an unverified account can't be removed before its address is verified.",
+    );
+  }
+  for (const passkey of passkeys) await adapter.deletePasskey(passkey.id);
 }
 
 /**
@@ -556,9 +596,10 @@ async function revokeApiTokens(
  * unset was set up by someone who never proved the mailbox — possibly an attacker who
  * registered the victim's address with a password and is waiting for the victim to make
  * the account theirs (a first email sign-in, or a password reset) while that password (and
- * any session or bearer token it earned, or TOTP factor it enrolled) still works. So the
- * first proof of ownership retires everything set up without it: the password, the second
- * factor, every bearer API token, and every server-side session (`sessionRevoked`). A
+ * any session or bearer token it earned, or TOTP factor or passkey it enrolled) still works.
+ * So the first proof of ownership retires everything set up without it: the password, the
+ * second factor, every passkey, every bearer API token, and every server-side session
+ * (`sessionRevoked`). A
  * stateless cookie session can't be revoked — it lives until it expires, which is warned
  * once. A throw leaves the address unverified: fail closed.
  */
@@ -570,6 +611,7 @@ async function evictUnprovenAccess(
 ): Promise<void> {
   await retirePassword(options, adapter, userId);
   await retireSecondFactor(config, adapter, userId);
+  await deletePasskeys(config, adapter, userId);
   await revokeApiTokens(options, adapter, userId, "email_verified");
   await revokeUserSessions(config, options, userId);
 }
@@ -601,9 +643,10 @@ export async function markVerified(
 
 /**
  * Redeem a password-reset token and set a new password: the configured `hasher` hashes it,
- * `adapter.setCredential` stores it, and every server-side session and bearer API token of
- * the user is revoked — a reset is how an owner takes an account back, so nothing a thief
- * minted with a stolen session survives it. Fires `passwordReset` (after `sessionRevoked`).
+ * `adapter.setCredential` stores it, every passkey of the user is removed, and every
+ * server-side session and bearer API token is revoked — a reset is how an owner takes an
+ * account back, so nothing a thief set up with a stolen session (a passkey registered from it
+ * included) survives it. Fires `passwordReset` (after `sessionRevoked`).
  *
  * The password is checked (8–1024 characters) **before** the token is touched, so a
  * refused password leaves the link usable.
@@ -611,7 +654,7 @@ export async function markVerified(
  * @param config The app's auth config.
  * @param input The address, the presented token and the new password.
  * @returns `{ ok: true, user }`, or `{ ok: false, error }`. Throws only when the adapter
- * lacks the verification-token group or `setCredential`.
+ * lacks the verification-token group or `setCredential`, or holds passkeys it can't delete.
  */
 export async function resetPassword(
   config: AuthConfig,
@@ -632,6 +675,8 @@ export async function resetPassword(
   // verified, exactly as a first email sign-in would.
   const wasVerified = isVerified(user.emailVerified);
   const owner = await markVerified(config, options, adapter, user);
+  // (An unverified account's passkeys went with the eviction above.)
+  if (wasVerified) await deletePasskeys(config, adapter, user.id);
   await adapter.setCredential!(user.id, await options.hasher.hash(input.password));
   if (wasVerified) {
     await revokeUserSessions(config, options, user.id);

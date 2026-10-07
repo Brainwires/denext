@@ -226,6 +226,35 @@ Deno.test("passkey helpers: cancel, refusal, re-auth and a missing API are typed
         error: "rate_limited",
       }),
   );
+  // An authenticator that already holds an excluded credential throws InvalidStateError.
+  await withBrowser(
+    {
+      "/auth/passkey/register/options": [200, {
+        challenge: "AAAA",
+        rp: { id: "app.test", name: "app.test" },
+        user: { id: "AQ", name: "ada", displayName: "Ada" },
+        pubKeyCredParams: [],
+        excludeCredentials: [{ type: "public-key", id: "AQ" }],
+      }],
+    },
+    {
+      create: () => {
+        throw Object.assign(new Error("excluded"), { name: "InvalidStateError" });
+      },
+    },
+    async () => assertEquals(await registerPasskey(), { ok: false, error: "exists" }),
+  );
+  // The server's typed refusals: an unverified address, a step-up that needs a code.
+  await withBrowser(
+    { "/auth/passkey/register/options": [403, { error: "email_unverified" }] },
+    {},
+    async () => assertEquals(await registerPasskey(), { ok: false, error: "email_unverified" }),
+  );
+  await withBrowser(
+    { "/auth/passkey/authenticate/options": [403, { error: "code_required" }] },
+    {},
+    async () => assertEquals(await signInWithPasskey(), { ok: false, error: "code_required" }),
+  );
   // No WebAuthn at all (a server, an old WebView).
   assert(!passkeysSupported());
   assertEquals(await registerPasskey(), { ok: false, error: "unsupported" });
