@@ -409,7 +409,9 @@ export default {
 ## Build & optimization
 
 Build-time switches. All off by default except `nodeResolve`,
-`momentumSafeScroll` and the `optimizePackageImports` defaults.
+`momentumSafeScroll` and the `optimizePackageImports` defaults. The client transforms among them
+(`reactCompiler`, `asyncContext`, `features`) apply to `denext build` and `denext export` alike,
+every `--platform` target included.
 
 - **`reactCompiler`** — `boolean`. The build-time auto-memoization compiler (a
   React-Compiler-style pass; Next.js's key). Conservative by construction —

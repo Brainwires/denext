@@ -14,6 +14,7 @@ import {
   bundleExportRoutes,
   classifyRoutes,
   emitExportCss,
+  exportClientTransforms,
   selfHostExportFonts,
   setupCompat,
 } from "./export-pipeline/assets.ts";
@@ -39,6 +40,8 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   await classifyRoutes(ctx);
   await emitExportCss(ctx);
   await setupCompat(ctx);
+  // The client transforms `denext build` applies (one shared path), before any client bundle.
+  await exportClientTransforms(ctx);
   await bundleExportRoutes(ctx);
   await bundleExportFlight(ctx);
   await selfHostExportFonts(ctx);

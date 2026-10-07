@@ -11,6 +11,7 @@ import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import { platformResolution } from "../src/build/platform-extensions.ts";
+import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -375,6 +376,79 @@ Deno.test("denext dev: a stylesheet only a platform file imports reaches that se
     const web = await css({});
     assertStringIncludes(web, ".plain-only");
     assert(!web.includes(".ios-only"), "the web route CSS keeps the plain file's sheet");
+  } finally {
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/**
+ * A content edit outside `app/` (an island in `components/`, imported by the page): the
+ * project-wide watcher reports it like an edit inside `app/` — a new generation and a live-reload
+ * frame, and the page's module for it is the edited one. An edit to a file the app never imports
+ * sends nothing.
+ */
+Deno.test("denext dev: an edit to a component outside app/ updates the page", async () => {
+  const pill = (label: string) =>
+    `"use client"\nimport { useState } from "denext";\n` +
+    `export function Pill(){ const [n] = useState(0); return <i>${label}{n}</i>; }\n`;
+  const dir = await project({
+    "app/page.tsx": `import { Pill } from "../components/Pill.tsx";\n` +
+      `export default function Page(){ return <main><Pill/></main>; }\n`,
+    "components/Pill.tsx": pill("PILL_ONE"),
+    "scripts/tool.ts": `export const tool = 1;\n`,
+  });
+  // The crawls cache one graph per name for the process: start from this project's alone.
+  resetModuleGraphCache();
+  const controller = new AbortController();
+  try {
+    const paths = await resolveProject(dir);
+    const port = await new Promise<number>((resolve) => {
+      startDevServer({
+        paths,
+        port: 0,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: ({ port }) => resolve(port),
+      });
+    });
+    const origin = `http://127.0.0.1:${port}`;
+    const module = () =>
+      fetch(`${origin}/_denext/@fs${join(dir, "components", "Pill.tsx")}`).then((r) => r.text());
+    const eventually = async (what: string, check: () => Promise<boolean>) => {
+      for (let i = 0; i < 100; i++) {
+        if (await check()) return;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error(`timed out: ${what}`);
+    };
+    assertStringIncludes(await (await fetch(`${origin}/`)).text(), "PILL_ONE");
+    assertStringIncludes(await module(), "PILL_ONE");
+    // A page listening for live-reload frames.
+    const events = await fetch(`${origin}/_denext/reload`);
+    const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let frames = "";
+    const reading = (async () => {
+      for (;;) {
+        const { value, done } = await reader.read().catch(() => ({ value: "", done: true }));
+        if (done) return;
+        frames += value;
+      }
+    })();
+    const sent = () => /data: (reload|refresh|update)/.test(frames);
+    // A file outside the app's module graph: no frame.
+    await Deno.writeTextFile(join(dir, "scripts", "tool.ts"), `export const tool = 2;\n`);
+    await new Promise((r) => setTimeout(r, 1000));
+    assert(!sent(), `an edit outside the module graph sent ${frames}`);
+    await Deno.writeTextFile(join(dir, "components", "Pill.tsx"), pill("PILL_TWO"));
+    await eventually("a live-reload frame was sent", () => Promise.resolve(sent()));
+    await eventually("the page's module is the edited one", async () => {
+      const text = await module();
+      return text.includes("PILL_TWO") && !text.includes("PILL_ONE");
+    });
+    await reader.cancel().catch(() => {});
+    await reading;
   } finally {
     controller.abort();
     await new Promise((r) => setTimeout(r, 100));

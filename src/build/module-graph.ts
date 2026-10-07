@@ -316,6 +316,32 @@ export function resetModuleGraphCache(): void {
   npmBoundaryCache.clear();
 }
 
+/**
+ * Whether a cached crawl of the project at `projectDir` (one whose entries lie in it) reached the
+ * module at `path` (an absolute path, as given or through its real path): `true` / `false`, or
+ * `null` when no crawl of that project is cached (the dev watcher then cannot tell, and treats an
+ * edit as one to the app).
+ *
+ * @param path The file.
+ * @param projectDir The project root.
+ */
+export function cachedGraphHas(path: string, projectDir: string): boolean | null {
+  const roots = new Set([toFileUrl(resolve(projectDir)).href + "/"]);
+  const urls = new Set([toFileUrl(path).href]);
+  try {
+    roots.add(toFileUrl(Deno.realPathSync(projectDir)).href + "/");
+    urls.add(toFileUrl(Deno.realPathSync(path)).href);
+  } catch { /* removed: its logical path is all there is */ }
+  const ours = (url: string) => [...roots].some((r) => url.startsWith(r));
+  let known = false;
+  for (const cache of graphCaches.values()) {
+    if (![...cache.entries].some(ours)) continue;
+    known = true;
+    if (cache.info.modules.some((m) => urls.has(m.specifier))) return true;
+  }
+  return known ? false : null;
+}
+
 /** How many `deno info` processes the graph layer has spawned (test/diagnostics seam). */
 export function moduleGraphSpawnCount(): number {
   return graphSpawns;

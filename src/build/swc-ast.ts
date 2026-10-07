@@ -280,12 +280,60 @@ export function isRelativeSpecifier(spec: string): boolean {
   return spec.startsWith("./") || spec.startsWith("../");
 }
 
+/** An `import()` call's specifier argument, or null (no argument, or a spread). */
+function dynamicImportArg(n: Node): Node | null {
+  if (n.type !== "CallExpression" || n.callee?.type !== "Import") return null;
+  const arg = n.arguments?.[0];
+  return arg && !arg.spread ? arg.expression : null;
+}
+
+/** A specifier written as a literal: a string, or a template literal with no substitutions. */
+function literalValue(n: Node): string | null {
+  if (n?.type === "StringLiteral") return n.value as string;
+  if (n?.type === "TemplateLiteral" && (n.expressions?.length ?? 0) === 0) {
+    const cooked = n.quasis?.[0]?.cooked;
+    return typeof cooked === "string" ? cooked : null;
+  }
+  return null;
+}
+
+/** A module specifier written as a literal: its node (to replace) and its value. */
+export interface LiteralSpecifier {
+  readonly node: Node;
+  readonly value: string;
+}
+
 /**
- * Rewrite the module's relative import/export specifiers to absolute URLs (mapped through
- * `resolve`), as edits — a transformed module lives in a temp dir, so relative paths would
- * otherwise break. A bare specifier (an import-map alias) keeps resolving from the copy, so it
- * is rewritten only when `bare` returns a replacement for it. Returns whether any specifier was
- * rewritten.
+ * Every specifier `body` names as a literal: each static `import` / `export … from` source, and
+ * the specifier of each `import()` written as a string (or a template literal with no
+ * substitutions), wherever the call sits. A non-literal `import(expr)` is not listed (see
+ * {@linkcode pinImportMeta}'s `dynamicImports`).
+ *
+ * @param body The module's top-level items.
+ */
+export function literalSpecifiers(body: Node[]): LiteralSpecifier[] {
+  const out: LiteralSpecifier[] = [];
+  for (const item of body) {
+    if (item.source?.type === "StringLiteral") {
+      out.push({ node: item.source, value: item.source.value });
+    }
+  }
+  for (const item of body) {
+    walkAst(item, (n) => {
+      const arg = dynamicImportArg(n);
+      const value = arg ? literalValue(arg) : null;
+      if (value !== null) out.push({ node: arg, value });
+    });
+  }
+  return out;
+}
+
+/**
+ * Rewrite the module's relative import/export specifiers — static, and each `import()` written
+ * as a literal ({@linkcode literalSpecifiers}) — to absolute URLs (mapped through `resolve`), as
+ * edits: a transformed module lives in a temp dir, so relative paths would otherwise break. A
+ * bare specifier (an import-map alias) keeps resolving from the copy, so it is rewritten only
+ * when `bare` returns a replacement for it. Returns whether any specifier was rewritten.
  */
 export function absolutizeSpecifiers(
   ctx: Ctx,
@@ -296,10 +344,7 @@ export function absolutizeSpecifiers(
   bare?: (spec: string) => string | null,
 ): boolean {
   let any = false;
-  for (const item of body) {
-    const src = item.source;
-    if (src?.type !== "StringLiteral") continue;
-    const spec = src.value as string;
+  for (const { node: src, value: spec } of literalSpecifiers(body)) {
     const text = isRelativeSpecifier(spec)
       ? resolve(new URL(spec, moduleUrl).href)
       : bare?.(spec) ?? null;
@@ -365,19 +410,32 @@ const PINNED_META = new Set(["url", "filename", "dirname", "resolve"]);
  * relative specifier resolved against it: `new URL("./data.txt", import.meta.url)` in a copy keeps
  * reaching the file beside the original. A bare `import.meta` (destructured, passed on) becomes
  * an object with those members pinned. The source is returned as is when it names no
- * `import.meta` or does not parse.
+ * `import.meta` (nor, with `dynamicImports`, an `import(`) or does not parse.
+ *
+ * With `dynamicImports` (a copy Deno loads from disk: the server render's), an `import(expr)`
+ * whose specifier is not a literal resolves a relative value against the original too (a literal
+ * one is the absolutizing pass's, {@linkcode absolutizeSpecifiers}); any other value is imported
+ * as is. A client bundle's copy leaves such a call alone: the bundler does not follow it, and the
+ * browser resolves it against the chunk, exactly as for the module it stands in for.
  *
  * @param source The copy's code.
  * @param originalUrl The `file:` URL of the module the copy stands in for.
+ * @param opts `dynamicImports`: also re-root non-literal `import()` specifiers.
  */
-export async function pinImportMeta(source: string, originalUrl: string): Promise<string> {
-  if (!source.includes("import.meta")) return source;
+export async function pinImportMeta(
+  source: string,
+  originalUrl: string,
+  opts: { dynamicImports?: boolean } = {},
+): Promise<string> {
+  const dynamic = opts.dynamicImports === true && source.includes("import(");
+  if (!source.includes("import.meta") && !dynamic) return source;
   const parsed = await parseModule(source);
   if (!parsed) return source;
   const path = fromFileUrl(originalUrl);
   const url = JSON.stringify(originalUrl);
   const resolve =
     `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : import.meta.resolve(s))`;
+  const relativeTo = `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : s)`;
   const literal: Record<string, string> = {
     url,
     filename: JSON.stringify(path),
@@ -387,6 +445,15 @@ export async function pinImportMeta(source: string, originalUrl: string): Promis
   const edits: Edit[] = [];
   const members = new Set<Node>();
   const visit = (n: Node) => {
+    const arg = dynamic ? dynamicImportArg(n) : null;
+    if (arg && literalValue(arg) === null) {
+      edits.push({
+        start: startOf(parsed.ctx, arg),
+        end: startOf(parsed.ctx, arg),
+        text: `${relativeTo}(`,
+      });
+      edits.push({ start: endOf(parsed.ctx, arg), end: endOf(parsed.ctx, arg), text: ")" });
+    }
     if (n.type === "MemberExpression" && n.object?.type === "MetaProperty") {
       members.add(n.object); // `import.meta.main` and the like stay as written
       const name = n.property?.type === "Identifier" ? n.property.value : null;

@@ -32,17 +32,28 @@ export async function devPlatformRedirects(
 /**
  * Start watching which project files exist (../platform-watch.ts): a created, removed or
  * renamed platform file (or the plain file of a module that has them) forgets the scan and
- * calls `onChange`, so the next request resolves the new set.
+ * calls `onChange`, so the next request resolves the new set. The same project-wide watch
+ * reports every changed path (content edits included, the skipped folders left out) to `onEdit`.
  *
  * @param st The dev state.
  * @param onChange Called after the scan was forgotten.
+ * @param onEdit Called with each burst of changed paths.
  */
-export function watchPlatformFiles(st: DevState, onChange: () => void): void {
+export function watchPlatformFiles(
+  st: DevState,
+  onChange: () => void,
+  onEdit?: (paths: string[]) => void,
+): void {
   // Every other caller for this project (the alias-import pass) shares the session's scan.
   keepPlatformScanner(st.platformScanner, st.options.signal);
-  watchProjectStructure(st.paths.projectDir, (paths) => {
-    if (st.platformScanner.invalidate(paths)) onChange();
-  }, st.options.signal);
+  watchProjectStructure(
+    st.paths.projectDir,
+    (paths) => {
+      if (st.platformScanner.invalidate(paths)) onChange();
+    },
+    st.options.signal,
+    onEdit,
+  );
 }
 
 /**

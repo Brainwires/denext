@@ -66,6 +66,11 @@ export interface ExportContext {
    * map and server loader; empty when the app has none).
    */
   readonly platformRedirects: Record<string, string>;
+  /**
+   * The client transforms (auto-memo, qrl, AsyncContext, feature folds) by module file URL, as
+   * `denext build` computes them (empty in next-compat mode, whose esbuild bundles fold flags).
+   */
+  transforms: Record<string, string>;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
@@ -87,8 +92,9 @@ export function exportBuildDir(paths: ProjectPaths): string {
 
 /**
  * How the native client bundles resolve the app's modules: the CSS shims, and the target's
- * platform files and an action stub per `"use server"` module in `server` (./client-imports.ts,
- * which also reaches the ones an import-map alias names).
+ * platform files, the client transforms and an action stub per `"use server"` module in `server`
+ * (./client-imports.ts, which also reaches the ones an import-map alias names), as the build's
+ * bundles do.
  */
 export function exportClientResolution(
   ctx: ExportContext,
@@ -98,6 +104,7 @@ export function exportClientResolution(
     importMap: { ...ctx.css?.importMap },
     projectDir: ctx.projectDir,
     redirects: ctx.platformRedirects,
+    rewritten: ctx.transforms,
     server,
   };
 }

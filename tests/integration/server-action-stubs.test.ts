@@ -402,3 +402,51 @@ Deno.test({ name: "SPA dev: the action module is served as its stub", ...opts },
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * An action whose module imports a module with a `.web` variant (relatively, so the server render
+ * loads a COPY of the action module that reaches the variant): the server registers the copy the
+ * render uses, so the action runs the variant, in `start` and in `dev` alike. (A static export has
+ * no server to call.)
+ */
+async function variantApp(): Promise<string> {
+  const dir = await app("alias");
+  await Deno.writeTextFile(
+    join(dir, "app/actions.ts"),
+    ACTION.replace(`const SECRET`, `import { fmt } from "./fmt.ts";\nconst SECRET`)
+      .replace(`return SECRET.length + ":" + x;`, `return fmt(SECRET.length + ":" + x);`),
+  );
+  await Deno.writeTextFile(
+    join(dir, "app/fmt.ts"),
+    `export const fmt = (s: string) => "plain:" + s;\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "app/fmt.web.ts"),
+    `export const fmt = (s: string) => "web:" + s;\n`,
+  );
+  return dir;
+}
+
+for (const verb of ["start", "dev"] as const) {
+  Deno.test({
+    name: `denext ${verb}: an action whose module reaches a .web variant runs the variant`,
+    ...opts,
+  }, async () => {
+    const dir = await variantApp();
+    try {
+      if (verb === "start") {
+        const built = await cli(dir, ["build"]);
+        assertEquals(built.code, 0, built.output);
+      }
+      const srv = await server(dir, verb);
+      try {
+        // The page renders first (the render loads the action module's copy), then the call.
+        assertEquals(await callAction(srv.origin, await actionId(dir)), `web:${RESULT}`);
+      } finally {
+        await srv.stop();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}

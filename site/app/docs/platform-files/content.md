@@ -73,6 +73,13 @@ server render's module copies (the importers rewritten to reach each `.web` file
 they are: it scans nothing and writes nothing, and a read-only `.denext` serves the same files
 as the client bundles.
 
+A copy stands in for its module completely: its `import.meta` names the original, its dynamic
+imports resolve like its static ones (`import("./Panel.tsx")` and `import("@/lib/x.ts")` reach the
+target's files; a computed `import(name)` resolves a relative name against the original module on
+the server), a `"use server"` module's actions run the copy the page renders (so they call the
+target's files), and a platform export applies the same client transforms (`reactCompiler`,
+`features`, …) as `denext build`.
+
 An app with no platform files builds exactly as before, and one export serves every shell.
 
 ## In `denext dev`
@@ -97,7 +104,8 @@ per edit, built for `web`, so in `denext dev` every shell gets the `web` files, 
 included. Its platform exports take each target's files.
 
 The dev server scans the project for platform files once and keeps the result: editing a file
-never rescans. Creating, removing or renaming a platform file anywhere in the project (not only
+never rescans, but an edit to any source file the app imports (in `components/` or `lib/` as much
+as in `app/`) hot-updates or reloads the page. Creating, removing or renaming a platform file anywhere in the project (not only
 under `app/`), or the plain file of a module that has them, rescans and reloads the page. The
 scan skips `node_modules`, every dot-folder (`.git`, `.next`, `.turbo`, …) and build or native
 output at any depth (`out/`, `dist/`, `www/`, `coverage/`, `ios/`, `android/`).

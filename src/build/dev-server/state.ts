@@ -220,8 +220,12 @@ export interface DevState {
 
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
-  /** Per target (its platform files ride the same copy loader), rebuilt per generation. */
-  readonly ucLoads: Map<Platform, { gen: number; load: ModuleLoader }>;
+  /**
+   * Per target (its platform files ride the same copy loader), rebuilt per generation: the
+   * render's cache-busting loader and the query-less one that tags the Flight boundary, over one
+   * set of copies.
+   */
+  readonly ucLoads: Map<Platform, { gen: number; load: ModuleLoader; tag: ModuleLoader }>;
 
   /**
    * Client bundle cache keyed by route path (cleared on change). Entry code only; split

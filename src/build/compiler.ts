@@ -26,7 +26,6 @@ import {
   type Edit,
   endOf,
   forEachChild,
-  isRelativeSpecifier,
   type Node,
   parseModule,
   prologueEnd,
@@ -462,26 +461,6 @@ function memoizeComponent(ctx: Ctx, fn: Node, moduleNames: Set<string>, edits: E
 }
 
 /**
- * A dynamic `import("./rel")` specifier needs the same absolutizing as a static one (its
- * argument is a call arg, not a top-level `.source`, so walk for it). This is why the
- * transform no longer bails a module just for using `import(…)`.
- */
-function absolutizeDynamicImports(ctx: Ctx, body: Node[], moduleUrl: string, edits: Edit[]): void {
-  for (const item of body) {
-    walkAst(item, (n) => {
-      if (n.type !== "CallExpression" || n.callee?.type !== "Import") return;
-      const arg = n.arguments?.[0]?.expression;
-      if (arg?.type !== "StringLiteral" || !isRelativeSpecifier(arg.value as string)) return;
-      edits.push({
-        start: startOf(ctx, arg),
-        end: endOf(ctx, arg),
-        text: JSON.stringify(new URL(arg.value as string, moduleUrl).href),
-      });
-    });
-  }
-}
-
-/**
  * Transform one module's source, memoizing component elements. Returns the new
  * code and whether anything changed (unchanged ⇒ the caller keeps the original).
  *
@@ -509,8 +488,8 @@ export async function transformModule(
   // become absolute. An in-place esbuild `onLoad` (the SPA path) keeps the module's original
   // path as the resolve base, so it opts out (`absolutize: false`) and leaves imports as-is.
   if (opts.absolutize ?? true) {
+    // Literal `import()` specifiers too (../swc-ast.ts), so a module using one still compiles.
     absolutizeSpecifiers(ctx, body, moduleUrl, edits);
-    absolutizeDynamicImports(ctx, body, moduleUrl, edits);
   }
   // Inject the runtime import after any leading directive prologue.
   const importAt = prologueEnd(ctx, body);

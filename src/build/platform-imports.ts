@@ -25,6 +25,7 @@ import {
   absolutizeSpecifiers,
   applyEdits,
   type Edit,
+  literalSpecifiers,
   parseModule,
   pinImportMeta,
 } from "./swc-ast.ts";
@@ -53,16 +54,18 @@ function stemOf(url: string): string | null {
   return ext ? url.slice(0, -ext.length) : null;
 }
 
-/** `source`'s alias imports (specifier and the file URL each names), or none. */
+/**
+ * `source`'s alias imports (specifier and the file URL each names), static and literal `import()`
+ * alike ({@linkcode literalSpecifiers}), or none.
+ */
 async function aliasImportsOf(
   source: string,
   aliases: ImportAliases,
 ): Promise<Array<{ spec: string; url: string }>> {
   const parsed = await parseModule(source);
   const out: Array<{ spec: string; url: string }> = [];
-  for (const item of parsed?.body ?? []) {
-    const spec = item.source?.value;
-    if (typeof spec !== "string" || spec.startsWith(".")) continue;
+  for (const { value: spec } of literalSpecifiers(parsed?.body ?? [])) {
+    if (spec.startsWith(".")) continue;
     const url = resolveImportAlias(spec, aliases);
     if (url?.startsWith("file:")) out.push({ spec, url });
   }

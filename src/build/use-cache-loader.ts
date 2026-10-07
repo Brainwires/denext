@@ -25,9 +25,9 @@ import {
   absolutizeSpecifiers,
   applyEdits,
   type Edit,
+  literalSpecifiers,
   parseModule,
   pinImportMeta,
-  swcParse,
 } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import {
@@ -82,11 +82,11 @@ interface LocalImport {
 }
 
 /**
- * Parse `source` and return its import/export specifiers that name local files: relative ones,
- * and bare ones the project's import map aliases to a file (`@/components/Button.tsx`), each
- * resolved by {@linkcode resolvePlatformImport} (the platform variant applied). Packages
- * (`npm:`, `jsr:`, `@std/…`) are skipped. Returns `[]` on a parse error (the module is then
- * treated as a leaf).
+ * Parse `source` and return its import/export specifiers — static, and each `import()` written
+ * as a literal ({@linkcode literalSpecifiers}) — that name local files: relative ones, and bare
+ * ones the project's import map aliases to a file (`@/components/Button.tsx`), each resolved by
+ * {@linkcode resolvePlatformImport} (the platform variant applied). Packages (`npm:`, `jsr:`,
+ * `@std/…`) are skipped. Returns `[]` on a parse error (the module is then treated as a leaf).
  */
 async function localImports(
   source: string,
@@ -94,17 +94,10 @@ async function localImports(
   aliases: ImportAliases,
   redirects: Readonly<Record<string, string>>,
 ): Promise<LocalImport[]> {
-  let ast;
-  try {
-    const parse = await swcParse();
-    ast = await parse("0;\n" + source);
-  } catch {
-    return [];
-  }
+  const parsed = await parseModule(source);
+  if (!parsed) return [];
   const out: LocalImport[] = [];
-  for (const item of ast.body ?? []) {
-    const spec = item?.source?.value;
-    if (typeof spec !== "string") continue;
+  for (const { value: spec } of literalSpecifiers(parsed.body)) {
     const hit = resolvePlatformImport(spec, moduleUrl, aliases, redirects);
     if (hit) out.push({ spec, ...hit });
   }
@@ -285,9 +278,10 @@ class UseCacheCompiler {
         alwaysRewriteImports: true,
       });
     await (this.#dir ??= Deno.mkdir(this.opts.cacheDir, { recursive: true }));
-    // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for.
+    // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,
+    // and a non-literal `import()` resolves a relative specifier against that module too.
     const copy = fromFileUrl(this.#copyUrl(moduleUrl));
-    await Deno.writeTextFile(copy, await pinImportMeta(code, moduleUrl));
+    await Deno.writeTextFile(copy, await pinImportMeta(code, moduleUrl, { dynamicImports: true }));
   }
 
   /** The effective import URL for `moduleUrl` (original, or a transformed copy). */
@@ -347,9 +341,25 @@ export function createUseCacheLoader(
   base: ModuleLoader,
   opts: UseCacheLoaderOptions,
 ): ModuleLoader {
+  return createUseCacheLoaders([base], opts)[0];
+}
+
+/**
+ * {@linkcode createUseCacheLoader} over several base loaders that share ONE compiler (one walk,
+ * one set of copies): the dev server renders through a cache-busting base and tags the Flight
+ * boundary through a query-less one, and both must load the same copies.
+ *
+ * @param bases The underlying loaders.
+ * @param opts Project root and the (generation-scoped) copy cache dir.
+ * @returns One wrapping loader per base, in order.
+ */
+export function createUseCacheLoaders(
+  bases: readonly ModuleLoader[],
+  opts: UseCacheLoaderOptions,
+): ModuleLoader[] {
   const compiler = new UseCacheCompiler(opts);
   const canonical = projectSpelling(opts.projectDir);
-  return async (filePath: string): Promise<unknown> => {
+  return bases.map((base) => async (filePath: string): Promise<unknown> => {
     const url = canonical(toUrl(filePath));
     let eff: string;
     try {
@@ -359,7 +369,7 @@ export function createUseCacheLoader(
       eff = url; // any transform failure → load the original (never break loading)
     }
     return base(eff);
-  };
+  });
 }
 
 /**

@@ -195,6 +195,7 @@ export async function prepareExport(
     css: null,
     compat: false,
     compatModuleMap: null,
+    transforms: {},
     pages: 0,
     skipped: [],
   };

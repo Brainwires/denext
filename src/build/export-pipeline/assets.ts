@@ -2,12 +2,13 @@
 // next-compat SSR bundles, the route + Flight client bundles, and self-hosted fonts.
 
 import { join } from "@std/path";
-import { momentumSafeScrollEnabled } from "../../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import { clientTransforms } from "../build-pipeline/transforms.ts";
 import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "../bundle.ts";
 import { buildAppCss, extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
@@ -130,6 +131,16 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   ctx.compatModuleMap = moduleMap;
 }
 
+/**
+ * The client transforms (auto-memo, qrl, AsyncContext, feature folds), computed by the same
+ * function `denext build` runs, into the export's own build dir. A next-compat export bundles
+ * with esbuild, which folds flags itself and reads none of them (as in the build).
+ */
+export async function exportClientTransforms(ctx: ExportContext): Promise<void> {
+  if (ctx.compat) return;
+  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths));
+}
+
 /** Client bundles (minified): a whole-tree bundle per isomorphic (non-Flight, non-static) route. */
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
@@ -176,6 +187,9 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
       ...exportClientResolution(ctx, boundary.server),
+      // Seed the feature-flag map on the native client, as the build does, so an un-folded
+      // feature() call agrees with the server render.
+      features: featureFlags(ctx.paths.config),
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);

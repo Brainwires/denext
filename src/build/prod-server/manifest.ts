@@ -2,13 +2,9 @@
 // complete-build check.
 
 import { join } from "@std/path";
-import { defaultLoader } from "../../server/mod.ts";
+import type { ModuleLoader } from "../../server/types.ts";
 import { timed } from "../../runtime/timing.ts";
-import {
-  boundaryRefLoader,
-  compatModuleMapFromManifest,
-  createNextCompatServerLoader,
-} from "../next-compat-loader.ts";
+import { boundaryRefLoader, compatModuleMapFromManifest } from "../next-compat-loader.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
@@ -103,15 +99,23 @@ export interface FlightBoundary {
  * URL. Every discovered "use server" module is registered up front so its exports
  * serialize as action references and dispatch on ANY route.
  *
- * next-compat: the SSR renderer must tag (and render for first paint) the SAME
- * island/action instances the page's react→denext server bundle references — the ones
- * in the shared runtime chunk, NOT the raw npm-React source — so each boundary ref's URL
- * is redirected to its compat server bundle before tagging.
+ * The refs are tagged through the render's own loader (`load`, from `prodLoader`), so the tagged
+ * island and action instances are the ones the render imports: a module the render loads as a
+ * copy (one that reaches a platform variant or a `"use cache"` module) is tagged and registered
+ * as that copy, and an action then runs the variant its copy imports. In next-compat mode that
+ * loader redirects each boundary ref to its module in the react→denext server bundle — the
+ * instance the page bundles reference, NOT the raw npm-React source.
+ *
+ * @param paths The project paths.
+ * @param manifest The scanned routes.
+ * @param info The build manifest.
+ * @param load The server render's module loader.
  */
 export async function resolveFlightBoundary(
   paths: ProjectPaths,
   manifest: RouteManifest,
   info: BuildInfo,
+  load: ModuleLoader,
 ): Promise<FlightBoundary> {
   // The build already crawled the import graph; reuse its answer when the manifest has it
   // (a large app's crawl is 30 s of startup), else compute it (no/old build manifest).
@@ -123,19 +127,15 @@ export async function resolveFlightBoundary(
     "appBoundaryManifest",
     () => appBoundaryManifest(paths.appDir, manifest.pages),
   );
-  // Tag through the app's loader: in compat mode that resolves each ref to its module inside
-  // the single keyed server bundle — the same instances the page bundles reference — so the
-  // whole app's islands cost one module load, not one import per island.
-  const load = boundaryRefLoader(
-    info.nextCompat && info.compatModuleMap.size > 0
-      ? createNextCompatServerLoader(defaultLoader, { moduleMap: info.compatModuleMap })
-      : defaultLoader,
-  );
-  await timed("tagServerModules", () => tagServerModules(boundary.server, load));
+  // Tag through the render's loader: its copies, and in compat mode each ref's module inside
+  // the single keyed server bundle (the whole app's islands cost one module load, not one
+  // import per island).
+  const tagLoad = boundaryRefLoader(load);
+  await timed("tagServerModules", () => tagServerModules(boundary.server, tagLoad));
   // Import + tag the islands now, before the server listens, so the FIRST request doesn't
   // pay for it.
   if (flightRoutes.size > 0) {
-    await timed("tagClientModules", () => tagClientModules(boundary.client, load));
+    await timed("tagClientModules", () => tagClientModules(boundary.client, tagLoad));
   }
   return { flightRoutes, boundary };
 }

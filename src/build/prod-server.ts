@@ -78,7 +78,7 @@ async function buildHandler(
   load: ModuleLoader,
 ) {
   const manifest = await scanRoutes(paths.appDir);
-  const flight = await resolveFlightBoundary(paths, manifest, info);
+  const flight = await resolveFlightBoundary(paths, manifest, info, load);
   await assertBuildComplete(clientDir, manifest, flight.flightRoutes, info.staticRoutes);
   const assets = await assetResolvers(
     paths,

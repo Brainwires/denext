@@ -22,7 +22,8 @@ import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
 import { ensureCompatBuilt, isCompat } from "./compat.ts";
-import { baseLoaderFor } from "./loaders.ts";
+import { createDevLoader } from "./loaders.ts";
+import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 import type { NpmBoundaryFinder } from "../module-graph.ts";
@@ -132,6 +133,15 @@ async function compatNpmFinder(st: DevState): Promise<NpmBoundaryFinder | undefi
   return await isCompat(st) ? npmBoundaryByImporter : undefined;
 }
 
+/**
+ * The loader `platform`'s Flight boundary is tagged through: the render's own copies (a module
+ * that reaches a variant or a `"use cache"` module renders as a copy), query-less as the render
+ * imports them, so an action registers as the instance the page renders and runs what it imports.
+ */
+function tagLoaderFor(st: DevState, platform: Platform): ModuleLoader {
+  return createDevLoader(st, () => getManifest(st), () => isCompat(st), { bust: false, platform });
+}
+
 /** Recompute the Flight boundary for this generation (routes, client refs, server refs). */
 async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   if (st.boundaryGen === st.generation) return;
@@ -155,7 +165,10 @@ async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
     // SAME island instances the page bundle references (through the compat loader).
     await ensureCompatBuilt(st, m);
   }
-  await tagServerModules(boundary.server, boundaryRefLoader(st.compatLoad ?? baseLoaderFor(st)));
+  await tagServerModules(
+    boundary.server,
+    boundaryRefLoader(st.compatLoad ?? tagLoaderFor(st, "web")),
+  );
   st.boundaryGen = st.generation;
 }
 
@@ -182,6 +195,7 @@ function webBoundary(st: DevState): DevBoundary {
 async function scanPlatformBoundary(
   st: DevState,
   m: RouteManifest,
+  platform: Platform,
   imports: GraphImportMap,
 ): Promise<DevBoundary> {
   return await withModuleGraphRedirects(st.paths.configPath, imports, async () => {
@@ -189,7 +203,7 @@ async function scanPlatformBoundary(
     const manifest = await buildBoundaryManifest(st.paths.appDir, [
       ...new Set(m.pages.flatMap(routeEntryFiles)),
     ], { exportsOf: importFunctionExports });
-    await tagServerModules(manifest.server, boundaryRefLoader(baseLoaderFor(st)));
+    await tagServerModules(manifest.server, boundaryRefLoader(tagLoaderFor(st, platform)));
     return { routes, clients: manifest.client, servers: manifest.server, manifest };
   });
 }
@@ -213,7 +227,7 @@ export async function devBoundaryFor(st: DevState, platform: Platform): Promise<
   if (cached?.gen === st.generation) return await cached.boundary;
   const entry: { gen: number; boundary: Promise<DevBoundary>; value?: DevBoundary } = {
     gen: st.generation,
-    boundary: scanPlatformBoundary(st, m, await devPlatformImports(st, platform)),
+    boundary: scanPlatformBoundary(st, m, platform, await devPlatformImports(st, platform)),
   };
   st.platformBoundaries.set(platform, entry);
   entry.boundary.then((value) => entry.value = value, () => st.platformBoundaries.delete(platform));

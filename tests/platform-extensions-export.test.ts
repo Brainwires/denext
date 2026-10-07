@@ -157,9 +157,13 @@ for (
  * (from a source checkout the CLI re-execs with the app's config merged in, which a manual
  * `node_modules` asks for; a JSR install gets it from `deno task`).
  */
-async function cliExport(platform: Platform, files: Record<string, string>) {
+async function cliExport(
+  platform: Platform,
+  files: Record<string, string>,
+  imports: Record<string, string> = ALIAS_IMPORTS,
+) {
   const dir = await Deno.makeTempDir({ prefix: `denext_platform_cli_${platform}_` });
-  await scaffoldApp(dir, files, ALIAS_IMPORTS);
+  await scaffoldApp(dir, files, imports);
   const config = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
   await Deno.writeTextFile(
     join(dir, "deno.json"),
@@ -437,6 +441,97 @@ Deno.test("denext build: a module reaching a variant through an alias keeps the 
     const island = js.slice(js.lastIndexOf("function", js.indexOf("FOLDED_ON")));
     assert(/\{let [\w$]+=[\w$]+\(\d+\),/.test(island), "the copy is not the compiled module");
     assert(/\([\w$]+,0,\(\)=>/.test(island), "the <Child> element is not memoized");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/**
+ * The export runs the client transforms `denext build` does (one shared path), through the CLI
+ * (the server render needs the app's import map for `denext/feature`): the React
+ * Compiler's memo cache and `feature()` folding reach the export's client JS, in a module bundled
+ * as written (`Plain.tsx`) and in one copied because its alias import reaches a variant
+ * (`Island.tsx`, which must be copied from its transformed source).
+ */
+for (const platform of ["web", "ios"] as const) {
+  Deno.test(`staticExport --platform ${platform}: the client transforms reach the export`, async () => {
+    const root = new URL("../", import.meta.url).href;
+    const island = (name: string, flag: string) =>
+      `"use client"\nimport { useState } from "denext";\n` +
+      `import { feature } from "denext/feature";\nimport { v } from "@/lib/v.ts";\n` +
+      `function Child({ t }: { t: string }) { return <i>{t}</i>; }\n` +
+      `export function ${name}(){ const [n, setN] = useState(0); const t = v + n;\n` +
+      `  return <b onClick={() => setN(n + 1)}><Child t={t} />` +
+      `{feature("FLAG_ON") ? "${flag}_ON" : "${flag}_OFF"}</b>; }\n`;
+    const got = await cliExport(platform, {
+      "denext.config.ts": `export default { reactCompiler: true, features: { FLAG_ON: true } };\n`,
+      "app/page.tsx": `import { Island } from "@/components/Island.tsx";\n` +
+        `import { Plain } from "../components/Plain.tsx";\n` +
+        `export default function Page(){ return <main><Island/><Plain/></main>; }\n`,
+      "components/Island.tsx": island("Island", "ISLAND"),
+      "components/Plain.tsx": island("Plain", "PLAIN").replace(`"@/lib/v.ts"`, `"../lib/w.ts"`)
+        .replace("{ v }", "{ w as v }"),
+      "lib/w.ts": `export const w = "W";\n`,
+      "lib/v.ts": `export const v = "PLAIN_V";\n`,
+      "lib/v.web.ts": `export const v = "WEB_V";\n`,
+      "lib/v.ios.ts": `export const v = "IOS_V";\n`,
+    }, { "@/": "./", "denext/feature": `${root}src/feature.ts` });
+    try {
+      const js = got.js;
+      assertStringIncludes(js, platform === "web" ? "WEB_V" : "IOS_V");
+      assert(!js.includes("PLAIN_V"), "the plain file was bundled");
+      for (const name of ["ISLAND", "PLAIN"]) {
+        assertStringIncludes(js, `${name}_ON`);
+        assert(!js.includes(`${name}_OFF`), `feature() was not folded in ${name}`);
+        // The compiler's memo cache: the component allocates its cache slots, and the <Child>
+        // element is memoized in slot 0.
+        const at = js.indexOf(`${name}_ON`);
+        const fn = js.slice(js.lastIndexOf("function", at), at);
+        assert(/\{let [\w$]+=[\w$]+\(\d+\),/.test(fn), `${name} is not the compiled module`);
+        assert(/\([\w$]+,0,\(\)=>/.test(fn), `${name}'s <Child> element is not memoized`);
+      }
+    } finally {
+      await Deno.remove(got.dir, { recursive: true });
+    }
+  });
+}
+
+/**
+ * A client copy (an island copied because its alias import reaches a variant) keeps its dynamic
+ * imports: a literal `import()` — relative or through an alias — is resolved as a static import
+ * would be (the variant applied), instead of from the copy's own folder.
+ */
+Deno.test("denext build: a copied island's dynamic imports reach the variant", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_platform_dynamic_" });
+  try {
+    await scaffoldApp(dir, {
+      "app/page.tsx": `import { Island } from "@/components/Island.tsx";\n` +
+        `export default function Page(){ return <main><Island/></main>; }\n`,
+      "components/Island.tsx": `"use client"\nimport { useState } from "denext";\n` +
+        `import { v } from "@/lib/v.ts";\n` +
+        `export function Island(){ const [t, setT] = useState(v);\n` +
+        `  const go = async () => setT((await import("../lib/lazy.ts")).lazy +\n` +
+        `    (await import("@/lib/more.ts")).more);\n` +
+        `  return <b onClick={go}>{t}</b>; }\n`,
+      "lib/v.ts": `export const v = "PLAIN_V";\n`,
+      "lib/v.web.ts": `export const v = "WEB_V";\n`,
+      "lib/lazy.ts": `export const lazy = "PLAIN_LAZY";\n`,
+      "lib/lazy.web.ts": `export const lazy = "WEB_LAZY";\n`,
+      "lib/more.ts": `export const more = "PLAIN_MORE";\n`,
+      "lib/more.web.ts": `export const more = "WEB_MORE";\n`,
+    }, { "@/": "./" });
+    await build(dir);
+    const clientDir = join(dir, ".denext", "client");
+    let js = "";
+    for await (const e of Deno.readDir(clientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        js += await Deno.readTextFile(join(clientDir, e.name));
+      }
+    }
+    for (const want of ["WEB_V", "WEB_LAZY", "WEB_MORE"]) assertStringIncludes(js, want);
+    for (const plain of ["PLAIN_V", "PLAIN_LAZY", "PLAIN_MORE"]) {
+      assert(!js.includes(plain), `${plain} was bundled`);
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

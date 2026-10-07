@@ -309,6 +309,34 @@ Each item is described in full under Changed, Fixed or Security below.
 - **The macOS `.dmg` step sizes its image explicitly.** `hdiutil create -srcfolder` underestimated
   the image on newer macOS runner images ("No space left on device"); the package script now passes
   `-size` (the bundle plus 25% and 64 MiB). The final UDZO image is still compressed.
+- **`denext export` applies the client transforms `denext build` does.** An App Router export
+  (plain web and every `--platform` target, so every Capacitor and Deno Desktop app) shipped its
+  client modules without `reactCompiler`'s auto-memo, the qrl split, `asyncContext` and
+  `feature()` folding: the untaken branch of a flag stayed in the bundle. The export now runs the
+  build's own transform pass (one shared function) before its bundles, a copied module (one that
+  reaches a platform file through an import-map alias) included, and seeds the flags on the client
+  as the build does. Export time is unchanged on the desktop kitchen sink (about 5 s either way).
+- **A server action runs the module the page renders.** The production server and `denext dev`
+  registered each `"use server"` module (and tagged each `"use client"` island) from its original
+  file while the server render loaded a copy whenever the module reached a platform file or a
+  `"use cache"` module, so an action whose module imports `./fmt.ts` beside `fmt.web.ts` ran the
+  plain `fmt.ts`. The boundary is now tagged through the render's own loader, so the action runs,
+  and the island renders, as the copy the page uses.
+- **Dynamic imports in module copies resolve from the original module.** The server render's
+  copies (platform files, `"use cache"`), the client bundles' alias copies and the client
+  transforms' output rewrote only static `import` / `export` specifiers, so a relative
+  `import("./x.ts")` inside one resolved from the copy's folder and failed. A literal `import()`
+  (a string, a template literal with no substitutions, or an import-map alias) is now rewritten the
+  way a static import is, the target's platform file applied; in a server copy a non-literal
+  `import(expr)` resolves a relative specifier against the original module (a client copy leaves it
+  to the browser, as for the module it stands in for).
+- **`denext dev` (App Router) reloads on edits outside `app/`.** Only `app/`, `public/`, the config
+  files and the middleware were watched for content edits, so editing `components/X.tsx` changed
+  nothing until another edit. The project-wide watch the platform-file scan already keeps (with its
+  skip rules: dot-folders, `node_modules`, build and native output) now also reports content edits,
+  and an edit to a source file the app's module graph reaches takes the same HMR / refresh /
+  reload path as one under `app/`; a file the app never imports is ignored (once the dev server
+  has crawled the app).
 - **`denext start` scans and writes nothing for platform files or `"use cache"`.** `denext build`
   compiles the server render's module copies into `.denext/server-copies/` and records them, with
   the web target's redirects, in `manifest.json`. A start on a read-only `.denext` rendered the

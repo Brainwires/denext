@@ -127,3 +127,69 @@ Deno.test("copy loader: a `use cache` copy's import.meta names the original modu
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * A copy's dynamic imports resolve like its static ones: a literal `import()` (relative, a
+ * template literal with no substitutions, or an import-map alias) is rewritten to the module the
+ * target loads — the variant, or its copy — and a non-literal one resolves a relative specifier
+ * against the original module.
+ */
+const DYNAMIC_IMPORTS = `export const lazy = () => import("./lazy.ts").then((m) => m.v);\n` +
+  "export const tpl = () => import(`./other.ts`).then((m) => m.o);\n" +
+  `export const aliased = () => import("@/lazy.ts").then((m) => m.v);\n` +
+  `export const byName = (n: string) => import("./" + n).then((m) => m.o);\n`;
+
+const DYNAMIC_FILES = {
+  "deno.json": JSON.stringify({ imports: { "@/": "./" } }),
+  "lazy.ts": `export const v = "plain";\n`,
+  "lazy.web.ts": `export const v = "web";\n`,
+  "other.ts": `export const o = "other";\n`,
+};
+
+type Dynamic = {
+  lazy: () => Promise<string>;
+  tpl: () => Promise<string>;
+  aliased: () => Promise<string>;
+  byName: (n: string) => Promise<string>;
+};
+
+Deno.test("copy loader: a platform copy's dynamic imports resolve from the original", async () => {
+  const dir = await tree({
+    ...DYNAMIC_FILES,
+    // The variant import makes the page a copy.
+    "page.tsx": `import { Btn } from "./btn.tsx";\nexport const btn = Btn;\n` + DYNAMIC_IMPORTS,
+    "btn.tsx": `export const Btn = "plain";\n`,
+    "btn.web.tsx": `export const Btn = "web";\n`,
+  });
+  try {
+    const mod = await (await webLoader(dir))(join(dir, "page.tsx")) as Dynamic & { btn: string };
+    assertEquals(mod.btn, "web");
+    assertEquals(await mod.lazy(), "web");
+    assertEquals(await mod.tpl(), "other");
+    assertEquals(await mod.aliased(), "web");
+    assertEquals(await mod.byName("other.ts"), "other");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("copy loader: a `use cache` copy's dynamic imports resolve from the original", async () => {
+  const dir = await tree({
+    ...DYNAMIC_FILES,
+    "page.ts": `export async function cached() { "use cache";\n` +
+      `  return (await import("./other.ts")).o + ":" + (await import("./" + "other.ts")).o; }\n` +
+      DYNAMIC_IMPORTS,
+  });
+  try {
+    const mod = await (await webLoader(dir, true))(join(dir, "page.ts")) as Dynamic & {
+      cached: () => Promise<string>;
+    };
+    assertEquals(await mod.cached(), "other:other");
+    assertEquals(await mod.lazy(), "web");
+    assertEquals(await mod.tpl(), "other");
+    assertEquals(await mod.aliased(), "web");
+    assertEquals(await mod.byName("other.ts"), "other");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
