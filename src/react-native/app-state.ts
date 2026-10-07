@@ -1,19 +1,28 @@
 /**
  * React Native's `AppState` for React Native mode: the page's visibility in a browser, and
  * `@capacitor/app`'s `appStateChange` / `pause` / `resume` inside the Capacitor shell (which
- * add iOS's `inactive`). react-native-web's `AppState` reads only `visibilitychange`, and its
- * `addEventListener` returns nothing where that is unavailable.
+ * add iOS's `inactive`), plus the OS's low-memory warning in the shell. react-native-web's
+ * `AppState` reads only `visibilitychange`, and its `addEventListener` returns nothing where that
+ * is unavailable.
  *
  * @module
  */
 
-import { nativePlatform } from "../mobile/bridge.ts";
+import { isNativeShell, nativePlatform } from "../mobile/bridge.ts";
 import { listenAll } from "../mobile/safe-area.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "../mobile/plugin.ts";
 import { type EmitterSubscription, type Listeners, listeners } from "./internal.ts";
 
 /** React Native's app states. */
 export type AppStateStatus = "active" | "background" | "inactive" | "unknown" | "extension";
+
+/**
+ * The window event the Capacitor shell's bridge fires when the OS is low on memory: iOS's
+ * `UIApplication.didReceiveMemoryWarningNotification`, Android's `onTrimMemory` / `onLowMemory`
+ * (the bridge view controller and the MainActivity every denext native feature composes; see
+ * src/build/bridge-memory-warning-native-template.ts).
+ */
+export const MEMORY_WARNING_EVENT = "denext:memorywarning";
 
 /** The events `AppState.addEventListener` accepts. */
 export type AppStateEvent = "change" | "memoryWarning" | "focus" | "blur";
@@ -67,6 +76,14 @@ function startSources(h: AppStateHub): () => void {
     listenAll(globalThis, ["focus"], () => h.listeners.emit("focus", h.state)),
     listenAll(globalThis, ["blur"], () => h.listeners.emit("blur", h.state)),
   ];
+  // Only the shell's bridge fires it; in a browser or a Deno Desktop window nothing does, and a
+  // page's own event of that name is not the OS's.
+  if (isNativeShell()) {
+    stops.push(listenAll(globalThis, [MEMORY_WARNING_EVENT], () => {
+      // React Native's memoryWarning listeners receive no argument.
+      h.listeners.emit("memoryWarning", undefined as unknown as AppStateStatus);
+    }));
+  }
   const app = nativePlugin<AppPlugin>("App", ["addListener"]);
   if (app) {
     // iOS resigns active (the app switcher, Control Center) before it backgrounds: React
@@ -118,7 +135,12 @@ export function resetAppStateForTesting(): void {
  *   `denext mobile add deep-links` or `back`): `"inactive"` when iOS resigns active (the app
  *   switcher, Control Center), `"background"` on `pause`, `"active"` on `resume`.
  * - `addEventListener("change", fn)`: each state change. `"focus"` / `"blur"`: the window's
- *   focus. `"memoryWarning"`: accepted, never emitted (a web view gets no such signal).
+ *   focus. `"memoryWarning"`: the OS's low-memory warning inside the Capacitor shell (iOS's
+ *   `didReceiveMemoryWarningNotification`, Android's `onLowMemory` and `onTrimMemory` from
+ *   `TRIM_MEMORY_RUNNING_LOW`), forwarded by the bridge every denext native feature installs
+ *   (any `denext mobile add` capability with a denext plugin, or `denext mobile add
+ *   export-routes`); the listener receives no argument, as in React Native. A browser and a Deno
+ *   Desktop window have no such signal: it never fires there.
  *
  * @example
  * ```ts

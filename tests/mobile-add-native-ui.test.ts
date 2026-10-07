@@ -115,7 +115,7 @@ Deno.test("mobile add context-menu: no package; the plugin on iOS + Android, reg
       assert(report.written.includes(path), path);
     }
     const ios = await read(dir, IOS_MENU);
-    assert(ios.startsWith("// denext-context-menu-template: 1 sha256="));
+    assert(ios.startsWith("// denext-context-menu-template: 2 sha256="));
     for (
       const text of [
         'jsName = "DenextContextMenu"',

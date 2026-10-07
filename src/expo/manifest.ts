@@ -353,7 +353,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "createURL builds <scheme>://… in the native shell and an origin URL on the web; " +
       "openURL takes http(s)/mailto/tel only; unwrapDevLaunchURL is Expo's own pure function; " +
       "openSettings opens the app's settings through " +
-      "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent rejects.",
+      "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent starts the intent in the Android shell " +
+      "through the same plugin and rejects elsewhere.",
   },
   "expo-local-authentication": {
     module: "./local-authentication.ts",

@@ -772,8 +772,10 @@ const MAIN_ACTIVITY_FAMILY = "main-activity";
  * rewriting it away. The registrations above it are unchanged.
  * Generation 4 added {@linkcode EXPORT_ROUTES} to every combination (an exported multi-page app's
  * routes load their own pages); the bump keeps an older denext from rewriting it away.
+ * Generation 5 added {@linkcode MEMORY_WARNING} to every combination (the OS's low-memory signal
+ * reaches the page); the bump keeps an older denext from rewriting it away.
  */
-const MAIN_ACTIVITY_TEMPLATE_VERSION = 4;
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 5;
 
 /**
  * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
@@ -857,6 +859,50 @@ const RENDERER_RECOVERY = `        super.onCreate(savedInstanceState);
             if (!activity.isFinishing()) activity.recreate();
             return true;
         }
+    }
+`;
+
+/**
+ * What every composed MainActivity from generation 5 adds after {@linkcode RENDERER_RECOVERY}:
+ * the OS's low-memory signal, forwarded to the page as the `denext:memorywarning` window event
+ * (Capacitor's `triggerWindowJSEvent`), which React Native mode's `AppState` emits as React
+ * Native's `memoryWarning` (src/react-native/app-state.ts). iOS's counterpart is in every bridge
+ * view controller (bridge-memory-warning-native-template.ts).
+ *
+ * `onLowMemory`, and `onTrimMemory` at `TRIM_MEMORY_RUNNING_LOW` (10) and above except
+ * `TRIM_MEMORY_UI_HIDDEN` (20): that one says the UI left the screen, not that memory is short,
+ * and `TRIM_MEMORY_RUNNING_MODERATE` (5) is the mildest hint. Android 14+ delivers only the
+ * background levels (40 and up), which still count. tests/react-native-memory-warning.test.ts
+ * compiles `isMemoryWarning` with javac (where it exists) and runs it over every level. Fully
+ * qualified names, as above.
+ */
+const MEMORY_WARNING = `
+    /**
+     * denext: the OS is low on memory. The page receives the "denext:memorywarning" window
+     * event, which React Native mode's AppState emits as "memoryWarning".
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (isMemoryWarning(level)) memoryWarning();
+    }
+
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        memoryWarning();
+    }
+
+    /**
+     * Whether onTrimMemory's level is a shortage worth telling the page about: TRIM_MEMORY_RUNNING_LOW
+     * (10) and above, except TRIM_MEMORY_UI_HIDDEN (20). Literals: API 34 deprecates the constants.
+     */
+    static boolean isMemoryWarning(int level) {
+        return level >= 10 && level != 20;
+    }
+
+    private void memoryWarning() {
+        if (bridge != null) bridge.triggerWindowJSEvent("denext:memorywarning");
     }
 `;
 
@@ -1015,8 +1061,9 @@ function normalizedPackage(text: string): string {
 /**
  * A `MainActivity` that registers `features` before the bridge is built (OTA first in onCreate,
  * so its `prepare` still runs first thing), serves an exported multi-page app's routes
- * ({@linkcode EXPORT_ROUTES}) and recovers from a dead WebView renderer
- * ({@linkcode RENDERER_RECOVERY}), under a `// denext-main-activity-template:` marker line, so a
+ * ({@linkcode EXPORT_ROUTES}), recovers from a dead WebView renderer
+ * ({@linkcode RENDERER_RECOVERY}) and forwards the OS's low-memory signal to the page
+ * ({@linkcode MEMORY_WARNING}), under a `// denext-main-activity-template:` marker line, so a
  * later release still recognises it as unedited after the text changes.
  *
  * @param pkg The activity's Java package.
@@ -1042,7 +1089,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-${lines}${EXPORT_ROUTES_REGISTRATION}${RENDERER_RECOVERY}${EXPORT_ROUTES}`,
+${lines}${EXPORT_ROUTES_REGISTRATION}${RENDERER_RECOVERY}${MEMORY_WARNING}${EXPORT_ROUTES}`,
   );
 }
 

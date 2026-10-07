@@ -147,7 +147,7 @@ Deno.test("mobile add permissions: no package; DenextSettings on iOS + Android, 
       assert(report.written.includes(path), path);
     }
     const ios = await read(dir, IOS_SETTINGS);
-    assert(ios.startsWith("// denext-settings-template: 1 sha256="));
+    assert(ios.startsWith("// denext-settings-template: 2 sha256="));
     assertEquals(await markedTemplateIntact("settings", ios), true);
     assertStringIncludes(ios, "UIApplication.openSettingsURLString");
     assertStringIncludes(await read(dir, ANDROID_SETTINGS), "ACTION_APPLICATION_DETAILS_SETTINGS");

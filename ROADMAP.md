@@ -60,9 +60,6 @@
   0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
   `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
   Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
-- **The parity ledger's React Native gaps:** `AppState`'s `memoryWarning`,
-  `Linking.sendIntent()` and `ActionSheetIOS.dismissActionSheet()`. The core and lists ledgers
-  (`known-gaps.json`, `lists.known-gaps.json`) are empty.
 - **A build-time `platform` constant** (`import { platform } from "denext/platform"`, folded to
   the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
   export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the

@@ -81,11 +81,18 @@ export default function Mobile() {
         from <code>about/index.html</code> (or{" "}
         <code>about.html</code>); an app with no denext native plugin gets them from{" "}
         <code>denext mobile add export-routes</code> (<code>denext mobile doctor</code>{" "}
-        flags a shell without them). An iOS bridge written before 3.2.0 lacks the router&apos;s path
-        guard (a request could read files outside the web directory):{" "}
-        <code>denext mobile doctor --store</code> / <code>--release</code> report it as an{" "}
-        <code>export-routes</code> error. Run <code>denext mobile add export-routes</code>{" "}
-        (<code>--force</code> for an edited bridge) and ship a new binary.
+        flags a shell without them). The same native files forward the OS&apos;s low-memory warning
+        to the page (iOS&apos;s <code>didReceiveMemoryWarningNotification</code>, Android&apos;s
+        {" "}
+        <code>onTrimMemory</code> / <code>onLowMemory</code>) as the{" "}
+        <code>denext:memorywarning</code> window event, which React Native mode&apos;s{" "}
+        <code>AppState</code> emits as{" "}
+        <code>memoryWarning</code>; a browser and a Deno Desktop window have no such signal. An iOS
+        bridge written before 3.2.0 lacks the router&apos;s path guard (a request could read files
+        outside the web directory): <code>denext mobile doctor --store</code> /{" "}
+        <code>--release</code> report it as an <code>export-routes</code> error. Run{" "}
+        <code>denext mobile add export-routes</code> (<code>--force</code>{" "}
+        for an edited bridge) and ship a new binary.
       </p>
       <p>
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
@@ -577,8 +584,10 @@ denext mobile add haptics share network secure-store`}
         as the system toast on Android) and <code>action-sheet</code>{" "}
         (<code>@capacitor/action-sheet</code> ^8.1.1:{" "}
         <code>ActionSheetIOS.showActionSheetWithOptions</code>{" "}
-        as a native sheet). None needs a usage string, a permission or a privacy-manifest entry. A
-        new plugin is native code: ship a new app binary afterwards.
+        as a native sheet; it also installs denext&apos;s <code>DenextContextMenu</code>{" "}
+        plugin, whose <code>dismiss</code> closes that sheet for{" "}
+        <code>ActionSheetIOS.dismissActionSheet()</code>). None needs a usage string, a permission
+        or a privacy-manifest entry. A new plugin is native code: ship a new app binary afterwards.
       </p>
 
       <h2 id="keyboard-back-system-bars">Keyboard, back, system bars and safe areas</h2>
@@ -1103,7 +1112,9 @@ public class ChartViewFactory implements DenextNativeViewFactory {
           opens a menu from code and resolves the chosen <code>id</code> (<code>null</code>{" "}
           when dismissed): a <code>UIMenu</code>{" "}
           at the point on iOS 16+ (the edit-menu presentation; an action sheet on iOS 15), the{" "}
-          <code>PopupMenu</code> on Android, the popover elsewhere.
+          <code>PopupMenu</code> on Android, the popover elsewhere. Its <code>signal</code>{" "}
+          option (an <code>AbortSignal</code>) closes the menu, which then resolves{" "}
+          <code>null</code> (a Deno Desktop OS menu is modal and stays).
         </li>
       </ul>
       <p>
@@ -1499,7 +1510,12 @@ if (!result.ok && result.error === "invalid-token") await db.devices.delete(devi
         {" "}
         <code>biometrics</code> and <code>geolocation</code>). On iOS without the plugin it hands
         {" "}
-        <code>app-settings:</code> to the OS; on Android without it, and on the web, it rejects.
+        <code>app-settings:</code>{" "}
+        to the OS; on Android without it, and on the web, it rejects. The Android plugin also starts
+        React Native mode&apos;s <code>Linking.sendIntent(action, extras)</code> (and{" "}
+        <code>expo-linking</code>&apos;s{" "}
+        <code>sendIntent</code>): an activity for any intent action, with React Native&apos;s{" "}
+        <code>{"{ key, value }"}</code> extras.
       </p>
       <ul>
         <li>

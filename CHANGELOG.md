@@ -173,6 +173,25 @@ and this project adheres to
   `sendAccessibilityEvent` and the native-renderer members. `VirtualList` props gain
   `persistentScrollbar` (accepted). Against `react-native@0.88.0-rc.4`, the core and lists diffs
   report no gaps; the lists capture reads 0.88's generated types.
+- **React Native's last three parity gaps: `AppState` `memoryWarning`, `Linking.sendIntent()` and
+  `ActionSheetIOS.dismissActionSheet()`.** In the Capacitor shell the bridge every denext native
+  plugin installs forwards the OS's low-memory warning (iOS's
+  `didReceiveMemoryWarningNotification`, Android's `onLowMemory` and `onTrimMemory` from
+  `TRIM_MEMORY_RUNNING_LOW`, `TRIM_MEMORY_UI_HIDDEN` excepted) as the `denext:memorywarning`
+  window event, which `AppState` emits to its `memoryWarning` listeners (no argument, as React
+  Native); a browser and a Deno Desktop window never fire it. `Linking.sendIntent(action,
+  extras?)` starts an Android intent through denext's `DenextSettings` plugin (`denext mobile add
+  permissions`) with React Native's `{ key, value }` extras (a number is put as a double), and
+  rejects with `Error("Unsupported")` on iOS, the web and the desktop, as React Native does;
+  `expo-linking`'s `sendIntent` follows it (`UnavailabilityError` off Android).
+  `ActionSheetIOS.dismissActionSheet()` closes the topmost open sheet without calling its
+  callback (React Native's behaviour), a no-op with none open: the in-page dialog or menu, the
+  shell's native menu, and `@capacitor/action-sheet`'s system sheet through `DenextContextMenu`'s
+  new `dismiss`, which `denext mobile add action-sheet` now installs. `showContextMenu` and the
+  dialog `Alert` uses take an `AbortSignal` (`signal`) that closes them. Native template
+  generations: the bridge view controller (OTA 8, auth-session 5, app-extension 5), the composed
+  MainActivity (5), `DenextSettings` (2) and `DenextContextMenu` (2); an unedited earlier file is
+  upgraded by the next `denext mobile add`, then ship a new binary.
 
 ### Changed
 

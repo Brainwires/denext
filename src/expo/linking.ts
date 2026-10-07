@@ -7,7 +7,7 @@
  * `scheme` option or the Expo config's `scheme`, see `denext/expo/constants`) and a URL on
  * the page's origin on the web, as Expo's web build does. `openSettings` opens the app's system
  * settings in the shell (`denext mobile add permissions`) and rejects on the web; `sendIntent`
- * is not available to a web view and rejects.
+ * starts an Android intent in the Android shell (the same plugin) and rejects elsewhere.
  *
  * @example
  * ```ts
@@ -25,7 +25,13 @@ import { nativePlatform, openExternal } from "../mobile/bridge.ts";
 import { onDeepLink } from "../mobile/deep-link.ts";
 import { openAppSettings } from "../mobile/permissions.ts";
 import { nativePlugin } from "../mobile/plugin.ts";
-import { expoConfigGlobal, type Subscription, subscription } from "./internal/common.ts";
+import { Linking as RNLinking } from "../react-native/linking.ts";
+import {
+  expoConfigGlobal,
+  type Subscription,
+  subscription,
+  UnavailabilityError,
+} from "./internal/common.ts";
 
 export type { Subscription };
 
@@ -65,7 +71,7 @@ export interface EventType {
 /** A URL listener. */
 export type URLListener = (event: EventType) => void;
 
-/** An Android intent extra (intents are not available here). */
+/** An Android intent extra (`sendIntent`, Android only). */
 export interface SendIntentExtras {
   /** The extra's key. */
   key: string;
@@ -311,14 +317,18 @@ export function openSettings(): Promise<void> {
 }
 
 /**
- * Send an Android intent: not available to a web view.
+ * Send an Android intent, as Expo does through React Native's `Linking.sendIntent`: inside the
+ * Android shell, denext's `DenextSettings` plugin (`denext mobile add permissions`) starts an
+ * activity for `action` with `extras`. Elsewhere it rejects with an `UnavailabilityError`
+ * (`ERR_UNAVAILABLE`), as Expo does off Android.
  *
- * @param _action The intent action.
- * @param _extras Intent extras.
- * @returns A promise that rejects.
+ * @param action The intent action (`"android.settings.WIFI_SETTINGS"`).
+ * @param extras Intent extras: a string, number (put as a double) or boolean value per key.
+ * @returns A promise that settles once the activity was started.
  */
-export function sendIntent(_action: string, _extras?: SendIntentExtras[]): Promise<void> {
-  return Promise.reject(new Error("sendIntent is not supported here (Android intents only)"));
+export async function sendIntent(action: string, extras?: SendIntentExtras[]): Promise<void> {
+  if (nativePlatform() !== "android") throw new UnavailabilityError("Linking", "sendIntent");
+  await RNLinking.sendIntent(action, extras);
 }
 
 /**

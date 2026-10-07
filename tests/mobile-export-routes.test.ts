@@ -111,7 +111,7 @@ Deno.test("export routes: every MainActivity registers DenextExportRoutes before
   for (const set of sets) {
     const label = set.join("+") || "(none)";
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 4 "), label);
+    assert(text.startsWith("// denext-main-activity-template: 5 "), label);
     const registration = text.indexOf(ROUTES_REGISTRATION);
     const superCall = text.indexOf("super.onCreate(savedInstanceState);");
     assert(registration > 0 && registration < superCall, label);

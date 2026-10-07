@@ -188,3 +188,12 @@ jobs:
           set -o pipefail
           deno test -A --unstable-kv tests/export-routes-conformance.test.ts 2>&1 | tee "$RUNNER_TEMP/export-routes.txt"
           grep -E 'the iOS router \(compiled\) serves every vector \.\.\. ok' "$RUNNER_TEMP/export-routes.txt"
+
+      - name: Native snippets (type-checked against the iOS SDK and a Capacitor stub)
+        env:
+          NO_COLOR: "1"
+        run: |
+          set -o pipefail
+          deno test -A --unstable-kv tests/react-native-memory-warning.test.ts tests/react-native-dismiss-action-sheet.test.ts 2>&1 | tee "$RUNNER_TEMP/native-snippets.txt"
+          grep -E 'the forwarder type-checks against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/native-snippets.txt"
+          grep -E 'the plugin type-checks against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/native-snippets.txt"

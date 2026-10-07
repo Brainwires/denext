@@ -3126,8 +3126,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `parseInitialURLAsync(): Promise<ParsedURL>` — The parts of getInitialURL.
 - `type QueryParams = Record<string, undefined | string | string[]>` — A URL's query parameters.
 - `resolveScheme(options: object): string` — The scheme to build links with: options.scheme, else the Expo config's first scheme.
-- `sendIntent(_action: string, _extras?: SendIntentExtras[]): Promise<void>` — Send an Android intent: not available to a web view.
-- `interface SendIntentExtras` — An Android intent extra (intents are not available here).
+- `sendIntent(action: string, extras?: SendIntentExtras[]): Promise<void>` — Send an Android intent, as Expo does through React Native's Linking.sendIntent: inside the Android shell, denext's DenextSettings plugin (denext mobile add permissions) starts an activity for action with extras. Elsewhere it rejects with an UnavailabilityError (ERR_UNAVAILABLE), as Expo does off Android.
+- `interface SendIntentExtras` — An Android intent extra (sendIntent, Android only).
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `unwrapDevLaunchURL(url: string): string` — The URL the app should handle for a launch URL that may carry Expo's development launcher commands: the target named by __expo_url (or, on the legacy expo-development-client host, url), else url without its reserved __expo_* parameters. A URL that does not parse, or carries no command, comes back unchanged; a legacy launch URL without a target is "". The same pure function as Expo's.
 - `type URLListener = (event: EventType) => void` — A URL listener.

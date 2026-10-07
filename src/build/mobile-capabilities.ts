@@ -46,6 +46,7 @@ import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
 import { EXPORT_ROUTES_INSTALL } from "./mobile-export-routes-install.ts";
 import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
+import { CONTEXT_MENU_INSTALL } from "./mobile-context-menu-install.ts";
 import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
@@ -807,7 +808,9 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     version: "^8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "React Native mode's ActionSheetIOS.showActionSheetWithOptions as a native action " +
-      "sheet (else a dialog or an in-page menu)",
+      "sheet (else a dialog or an in-page menu); denext's DenextContextMenu plugin closes it " +
+      "for dismissActionSheet() and draws the sheets with disabled options",
+    configure: () => ({ install: CONTEXT_MENU_INSTALL }),
   },
   permissions: {
     capacitorMajor: CAPACITOR_MAJOR,

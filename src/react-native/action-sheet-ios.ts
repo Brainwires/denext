@@ -86,7 +86,7 @@ export interface ActionSheetIOSStatic {
     failureCallback: (error: ShareActionSheetError) => void,
     successCallback: (success: boolean, method: string | null | undefined) => void,
   ): void;
-  /** Accepted and does nothing: an open sheet cannot be closed from the page here. */
+  /** Close the topmost open action sheet (its callback is not called); a no-op without one. */
   dismissActionSheet(): void;
 }
 
@@ -99,6 +99,18 @@ interface ActionSheetPlugin {
     cancelable?: boolean;
   }): Promise<{ index: number; canceled?: boolean }>;
 }
+
+/** denext's `DenextContextMenu` plugin's `dismiss` (generation 2, `denext mobile add action-sheet`). */
+interface SheetDismisser {
+  dismiss(options: { target: "menu" | "sheet" }): Promise<unknown>;
+}
+
+/**
+ * The sheets `showActionSheetWithOptions` opened that have not answered, oldest first: each one's
+ * controller closes it. `dismissActionSheet()` closes the last, as React Native closes the
+ * topmost.
+ */
+const openSheets: AbortController[] = [];
 
 /** The destructive indices, as a set. */
 function destructiveSet(options: ActionSheetIOSOptions): ReadonlySet<number> {
@@ -115,8 +127,15 @@ function dismissedIndex(options: ActionSheetIOSOptions): number {
 async function showNative(
   plugin: ActionSheetPlugin,
   options: ActionSheetIOSOptions,
+  signal: AbortSignal,
 ): Promise<number> {
   const destructive = destructiveSet(options);
+  // @capacitor/action-sheet has no dismiss: denext's DenextContextMenu closes its sheet, whose
+  // call then never answers (the callback is not called, as in React Native).
+  signal.addEventListener("abort", () => {
+    const dismisser = nativePlugin<SheetDismisser>("DenextContextMenu", ["dismiss"]);
+    dismisser?.dismiss({ target: "sheet" }).catch(() => {});
+  });
   const result = await plugin.showActions({
     ...(options.title ? { title: options.title } : {}),
     ...(options.message ? { message: options.message } : {}),
@@ -136,7 +155,7 @@ async function showNative(
 }
 
 /** The sheet as `denext/mobile`'s context menu, which can show disabled options. */
-async function showMenu(options: ActionSheetIOSOptions): Promise<number> {
+async function showMenu(options: ActionSheetIOSOptions, signal: AbortSignal): Promise<number> {
   const destructive = destructiveSet(options);
   const disabled = new Set(options.disabledButtonIndices ?? []);
   const view = globalThis as { innerWidth?: number; innerHeight?: number };
@@ -151,13 +170,14 @@ async function showMenu(options: ActionSheetIOSOptions): Promise<number> {
       ...(options.title ? { title: options.title } : {}),
       x: Math.max(0, Math.round((view.innerWidth ?? 0) / 2 - 120)),
       y: Math.max(0, Math.round((view.innerHeight ?? 0) / 3)),
+      signal,
     },
   );
   return chosen === null ? dismissedIndex(options) : Number(chosen);
 }
 
 /** The sheet as denext's in-page dialog (the system dialog for two options or fewer). */
-async function showAsDialog(options: ActionSheetIOSOptions): Promise<number> {
+async function showAsDialog(options: ActionSheetIOSOptions, signal: AbortSignal): Promise<number> {
   const destructive = destructiveSet(options);
   const buttons: DialogButton[] = options.options.map((text, i) => ({
     text,
@@ -172,17 +192,23 @@ async function showAsDialog(options: ActionSheetIOSOptions): Promise<number> {
     ...(options.message ? { message: options.message } : {}),
     buttons,
     cancelable: true,
+    signal,
   });
   return result.index ?? dismissedIndex(options);
 }
 
 /** Show `options` the best way available here; resolves the chosen index. */
-function showSheet(options: ActionSheetIOSOptions): Promise<number> {
+function showSheet(options: ActionSheetIOSOptions, signal: AbortSignal): Promise<number> {
   const plugin = nativePlatform() === "web"
     ? undefined
     : nativePlugin<ActionSheetPlugin>("ActionSheet", ["showActions"]);
-  if ((options.disabledButtonIndices?.length ?? 0) > 0) return showMenu(options);
-  return plugin ? showNative(plugin, options) : showAsDialog(options);
+  if ((options.disabledButtonIndices?.length ?? 0) > 0) return showMenu(options, signal);
+  return plugin ? showNative(plugin, options, signal) : showAsDialog(options, signal);
+}
+
+/** Test hook: forget every open sheet (closing each). */
+export function resetActionSheetIOSForTesting(): void {
+  for (const sheet of openSheets.splice(0)) sheet.abort();
 }
 
 /**
@@ -200,7 +226,11 @@ function showSheet(options: ActionSheetIOSOptions): Promise<number> {
  *   `Share.share` (the system share sheet in the shell, `navigator.share` or a copy in a
  *   browser); `success(true, activityType)` once shared, `success(false, null)` when
  *   dismissed, `failure(error)` when it cannot share.
- * - `dismissActionSheet()`: accepted; a sheet the page opened cannot be closed from JS here.
+ * - `dismissActionSheet()`: closes the topmost sheet still open, without calling its callback
+ *   (as React Native): the in-page dialog or menu, the shell's `DenextContextMenu` menu, and the
+ *   system sheet of `@capacitor/action-sheet` through denext's `DenextContextMenu` plugin (which
+ *   `denext mobile add action-sheet` installs). A no-op when none is open. A system dialog
+ *   (`@capacitor/dialog`, the shell without `action-sheet`) cannot be closed from the page.
  *
  * The tint colours and `userInterfaceStyle` are accepted and not applied.
  *
@@ -222,7 +252,16 @@ export const ActionSheetIOS: ActionSheetIOSStatic = {
     if (typeof callback !== "function") {
       throw new TypeError("ActionSheetIOS.showActionSheetWithOptions: a callback is required");
     }
-    showSheet(options).then(callback, () => callback(dismissedIndex(options)));
+    const sheet = new AbortController();
+    openSheets.push(sheet);
+    const answer = (index: number) => {
+      const at = openSheets.indexOf(sheet);
+      // Dismissed by dismissActionSheet(): React Native never calls the callback then.
+      if (at < 0) return;
+      openSheets.splice(at, 1);
+      callback(index);
+    };
+    showSheet(options, sheet.signal).then(answer, () => answer(dismissedIndex(options)));
   },
   showShareActionSheetWithOptions(options, failureCallback, successCallback) {
     Share.share({
@@ -242,5 +281,7 @@ export const ActionSheetIOS: ActionSheetIOSStatic = {
         }),
     );
   },
-  dismissActionSheet() {},
+  dismissActionSheet() {
+    openSheets.pop()?.abort();
+  },
 };

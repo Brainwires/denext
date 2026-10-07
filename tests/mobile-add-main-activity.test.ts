@@ -103,7 +103,7 @@ async function assertUpgrades(
       label,
     );
     // Only a file already at this release's generation is not an upgrade.
-    const current = text.startsWith("// denext-main-activity-template: 4 ");
+    const current = text.startsWith("// denext-main-activity-template: 5 ");
     assertEquals(report.upgraded, current ? [] : [path], label);
   });
 }
@@ -111,7 +111,7 @@ async function assertUpgrades(
 Deno.test("MainActivity: written under an intact marker line, package on the next line", async () => {
   for (const set of combinations()) {
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 4 sha256="), set.join("+"));
+    assert(text.startsWith("// denext-main-activity-template: 5 sha256="), set.join("+"));
     assertEquals(await markedTemplateIntact("main-activity", text), true);
     assert(unmarked(text).startsWith("package com.example.app;\n"));
   }
