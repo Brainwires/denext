@@ -223,6 +223,18 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
   return { wont, review };
 }
 
+/** A desktop proxy whose prefixes migrate could not read (built in code in vite.config). */
+function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
+  const file = r.spa?.proxyUnresolved;
+  if (!file) return [];
+  return [{
+    item: `${file}: server.proxy`,
+    reason: "built in code, so its prefixes could not be read; spa.proxy falls back to " +
+      `${r.spa?.proxy?.prefixes.join(",") ?? "/api"}. Pass every backend prefix with --proxy ` +
+      "(e.g. --proxy /api,/ws), or the desktop app cannot reach the rest",
+  }];
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
@@ -234,7 +246,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...next.wont,
       ...expo.wont,
     ],
-    review: [...next.review, ...transformFindings(r), ...expo.review],
+    review: [...next.review, ...spaProxyFindings(r), ...transformFindings(r), ...expo.review],
   };
 }
 

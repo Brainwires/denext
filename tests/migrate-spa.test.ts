@@ -187,6 +187,36 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
   }
 });
 
+Deno.test("migrate SPA (--desktop --backend): a computed Vite proxy is reported, --proxy wins", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_computed_proxy_" });
+  try {
+    await writeViteApp(dir, { pnpm: true });
+    // T3 Code's vite.config: the proxy map is built from a shared list, not a literal.
+    await Deno.writeTextFile(
+      join(dir, "vite.config.ts"),
+      `import { PREFIXES } from "./shared.ts";\n` +
+        `export default { server: { proxy: Object.fromEntries(\n` +
+        `  PREFIXES.map((p) => [p, { target: "http://localhost:3773", ws: true }]),\n` +
+        `) } };\n`,
+    );
+    const r = await migrateProject(dir, { desktop: true, backend: "http://127.0.0.1:3773" });
+    // The fallback is kept, but flagged so the user passes --proxy.
+    assertEquals(r.spa?.proxy?.prefixes, ["/api"]);
+    assertEquals(r.spa?.proxyUnresolved, "vite.config.ts");
+
+    // An explicit --proxy answers it: nothing left unresolved.
+    const again = await migrateProject(dir, {
+      desktop: true,
+      backend: "http://127.0.0.1:3773",
+      proxyPrefixes: ["/api", "/ws"],
+    });
+    assertEquals(again.spa?.proxy?.prefixes, ["/api", "/ws"]);
+    assertEquals(again.spa?.proxyUnresolved, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate SPA (no pnpm, no --desktop): nodeModulesDir auto + npm passthrough, no desktop.ts", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_auto_" });
   try {

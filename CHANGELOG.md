@@ -304,6 +304,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext migrate --desktop --backend` no longer drops a Vite proxy built in code without a
+  word.** A `vite.config` whose `server.proxy` is computed (T3 Code's
+  `Object.fromEntries(PREFIXES.map(…))`) has no literal prefixes to read, so `spa.proxy` fell back
+  to `/api` — and the desktop app never reached `/ws` — while `--check` said "ready". Migrate now
+  prints a warning, the result carries `spa.proxyUnresolved`, and `--check` lists it as a review
+  item; `--proxy` answers it. A literal proxy written on one line (`proxy: { "/api": … } }`) is
+  now read too (it used to fall back to `/api` as well).
 - **A macOS `secureStore.set` over an item an older denext wrote can no longer lose it.** In the
   login keychain the runtime's store refuses to store over that item, so it is deleted first; when
   the store then failed (the keychain locked, with prompts off) the old value was gone. The write

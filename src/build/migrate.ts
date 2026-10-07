@@ -304,6 +304,11 @@ export interface SpaMigrateInfo {
   /** The mount element id written to `spa.rootId` — only when the app does not render into `#root`. */
   rootId?: string;
   proxy?: { prefixes: string[]; target: string };
+  /**
+   * The vite.config whose dev proxy is built in code, so its prefixes could not be read and
+   * `proxy` fell back to `/api` (unset when `--proxy` was passed or the proxy is a literal).
+   */
+  proxyUnresolved?: string;
   /** `denext.config.ts` was written (false when one already existed). */
   configWritten: boolean;
   /** `desktop.ts` was written (false when `--desktop` off or one already existed). */
@@ -1782,22 +1787,38 @@ async function walkCode(
   }
 }
 
-/** Best-effort prefixes from a *literal* `proxy: { "/api": … }` in vite.config (else undefined). */
+/** The top-level `"/prefix":` keys of a literal `proxy: { … }` object (brace-matched). */
+function literalProxyKeys(text: string): string[] {
+  const m = /\bproxy\s*:\s*\{/.exec(text);
+  if (!m) return [];
+  let depth = 0;
+  let body = "";
+  for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) break;
+    // Keep only depth-1 text, so a nested `{ "/x": … }` is not read as a prefix.
+    else if (depth === 1) body += c;
+  }
+  return [...body.matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((x) => x[1]);
+}
+
+/**
+ * The vite.config's dev proxy: best-effort prefixes from a *literal* `proxy: { "/api": … }`,
+ * else `computed` naming the config file when it HAS a `proxy:` key whose prefixes are built
+ * in code (`Object.fromEntries(PREFIXES.map(…))`) and so cannot be read statically.
+ */
 async function parseViteProxyPrefixes(
   dir: string,
-): Promise<string[] | undefined> {
+): Promise<{ prefixes?: string[]; computed?: string }> {
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
     const t = await mfs.readTextFile(join(dir, f)).catch(() => null);
     if (!t) continue;
-    const block = t.match(/proxy\s*:\s*\{([\s\S]*?)\n\s*\}/);
-    if (block) {
-      const keys = [...block[1].matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((
-        x,
-      ) => x[1]);
-      if (keys.length) return keys;
-    }
+    const keys = literalProxyKeys(t);
+    if (keys.length) return { prefixes: keys };
+    if (/\bproxy\s*:/.test(t)) return { computed: f };
   }
-  return undefined;
+  return {};
 }
 
 /** Source text for the generated `denext.config.ts`. */
@@ -2226,10 +2247,17 @@ async function spaProxy(
   dir: string,
   options: MigrateOptions,
   source: SpaSource,
-): Promise<{ prefixes: string[]; target: string } | undefined> {
-  if (!options.desktop || !options.backend) return undefined;
-  const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : undefined;
-  return { prefixes: options.proxyPrefixes ?? parsed ?? ["/api"], target: options.backend };
+): Promise<{ proxy?: { prefixes: string[]; target: string }; proxyUnresolved?: string }> {
+  if (!options.desktop || !options.backend) return {};
+  const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : {};
+  const proxy = {
+    prefixes: options.proxyPrefixes ?? parsed.prefixes ?? ["/api"],
+    target: options.backend,
+  };
+  // A proxy built in code falls back to `/api`; report it unless --proxy answered it.
+  return options.proxyPrefixes || !parsed.computed
+    ? { proxy }
+    : { proxy, proxyUnresolved: parsed.computed };
 }
 
 /** Write `path` from `source()` when absent or previously migrate-generated; true if written. */
@@ -2330,6 +2358,7 @@ async function spaSourceFacts(
   envKeys: string[];
   tailwind: string | null;
   proxy: { prefixes: string[]; target: string } | undefined;
+  proxyUnresolved?: string;
   reactCompiler: boolean;
   head?: string;
   loading?: string;
@@ -2342,9 +2371,20 @@ async function spaSourceFacts(
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps)
     ? await findSpaTailwindInput(dir)
     : null;
-  const proxy = await spaProxy(dir, options, source);
+  const { proxy, proxyUnresolved } = await spaProxy(dir, options, source);
   const reactCompiler = await spaUsesReactCompiler(dir, source);
-  return { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading, rootId };
+  return {
+    entry,
+    title,
+    envKeys,
+    tailwind,
+    proxy,
+    proxyUnresolved,
+    reactCompiler,
+    head,
+    loading,
+    rootId,
+  };
 }
 
 /**

@@ -116,6 +116,12 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
   console.log(
     `    desktop: ${s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"} · ${proxyNote}`,
   );
+  if (s.proxyUnresolved) {
+    console.log(
+      `    ⚠ ${s.proxyUnresolved} builds its proxy in code, so its prefixes could not be read;` +
+        " re-run with --proxy listing every backend prefix (e.g. --proxy /api,/ws)",
+    );
+  }
   console.log(
     s.desktopIcon
       ? "    icon: auto-detected (--icon wired) — override via `spa.desktop.icon`" +

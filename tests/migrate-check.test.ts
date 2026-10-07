@@ -233,6 +233,30 @@ Deno.test("migrate --check: Vite SPA (with --desktop)", async () => {
   assertEquals(r.command, "denext migrate --desktop --backend http://127.0.0.1:3773");
 });
 
+Deno.test("migrate --check: a Vite proxy built in code is a review item, not a silent /api", async () => {
+  // T3 Code's shape: the proxy map is computed from a shared prefix list, so migrate can't
+  // read its keys and falls back to `/api`. The check must say so (verdict review), else the
+  // desktop app ships without `/ws` and never connects.
+  const r = await checkAndCompare({
+    "package.json": {
+      dependencies: { react: "19.1.0", "react-dom": "19.1.0" },
+      devDependencies: { vite: "6.0.0", "@vitejs/plugin-react": "4.3.0" },
+    },
+    "vite.config.ts": `const PREFIXES = ["/api", "/ws"];\n` +
+      `export default { server: { proxy: Object.fromEntries(\n` +
+      `  PREFIXES.map((p) => [p, { target: "http://localhost:3000", ws: true }]),\n` +
+      `) } };\n`,
+    "index.html":
+      `<!doctype html><html><head><title>Vite App</title></head><body><div id="root"></div>` +
+      `<script type="module" src="/src/main.tsx"></script></body></html>\n`,
+    "src/main.tsx": `document.getElementById("root");\n`,
+  }, { desktop: true, backend: "http://127.0.0.1:3773" });
+  assertEquals(r.verdict, "review");
+  const item = r.review.find((f) => f.item === "vite.config.ts: server.proxy");
+  assert(item, `review lists the computed proxy: ${JSON.stringify(r.review)}`);
+  assertStringIncludes(item.reason, "--proxy");
+});
+
 Deno.test("migrate --check: Create React App", async () => {
   const r = await checkAndCompare({
     "package.json": {
