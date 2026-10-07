@@ -50,12 +50,23 @@ import type {
   ListScrollProps,
   RNSlot,
   RNStyle,
+  ScrollComponentProps,
   ScrollResponder,
   ViewabilityConfig,
   ViewabilityPair,
   ViewableItemsInfo,
   VirtualizedListProps,
 } from "./lists/types.ts";
+
+export {
+  autoScroll,
+  type BenchmarkResult,
+  Cancellable,
+  JSFPSMonitor,
+  useBenchmark,
+  useDataMultiplier,
+  useFlatListBenchmark,
+} from "./flash-list-benchmark.ts";
 
 /** No items. */
 const EMPTY: readonly never[] = [];
@@ -207,6 +218,15 @@ export interface FlashListProps<T> extends Omit<ListScrollProps, "maintainVisibl
   readonly estimatedItemSize?: number;
   /** Development only: blank space the viewport showed after a scroll frame. */
   readonly onBlankArea?: (event: BlankAreaEvent) => void;
+  /**
+   * The scroll view the items render in: a component (rendered with the scroll-view props, the
+   * ref and the items) or a function of those props, as FlashList v2 takes it. Its scroll node
+   * becomes the list's scroller; see `VirtualizedList`'s `renderScrollComponent` for the props.
+   */
+  readonly renderScrollComponent?:
+    | VNodeType
+    | ((props: ScrollComponentProps) => VNode | null)
+    | null;
   /** denext extra: reuse cells within a type (off by default). */
   readonly recycleItems?: boolean;
   /** Receives the ref methods. */
@@ -327,7 +347,24 @@ function flashEngine<T>(
       : undefined,
     onScrollFrame,
     onMount: initialOffset(props, p),
+    scrollComponent: scrollComponentOf(props.renderScrollComponent),
   };
+}
+
+/**
+ * FlashList's `renderScrollComponent`: a plain function is called with the props (and the ref),
+ * a class or exotic component (`forwardRef`, `memo`) is rendered with them, as v2 does.
+ */
+function scrollComponentOf(
+  C: FlashListProps<unknown>["renderScrollComponent"],
+): EngineOptions["scrollComponent"] {
+  if (!C) return undefined;
+  const isClass = typeof C === "function" &&
+    (C as { prototype?: { isReactComponent?: unknown } }).prototype?.isReactComponent != null;
+  if (typeof C === "function" && !isClass) {
+    return (props) => (C as (p: ScrollComponentProps) => VNode | null)(props);
+  }
+  return (props) => h(C as VNodeType, props as unknown as Record<string, unknown>);
 }
 
 /** `initialScrollIndexParams.viewOffset`, applied after the first commit. */

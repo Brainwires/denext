@@ -29,13 +29,17 @@
 //     runs a command on the native view slot its tag (the element a ref holds) names. React
 //     Native internals a library may import (`CodegenTypes`, `DevMenu`,
 //     `NativeComponentRegistry`, `PushNotificationIOS`, `registerCallableModule`, `Systrace`)
-//     are load-safe no-ops; `Libraries/Image/resolveAssetSource` is the overlay's.
+//     are load-safe no-ops (`Systrace.trace(name, fn)` runs `fn`);
+//     `Libraries/Image/resolveAssetSource` is the overlay's.
 //   - The entry also gains the React Native APIs react-native-web has no module for, from the
 //     shell overlay (`PermissionsAndroid`, `ToastAndroid`, `ActionSheetIOS`, `DevSettings`,
-//     `PlatformColor`, `DynamicColorIOS`, `RootTagContext`, `DrawerLayoutAndroid`, `Settings`),
-//     `ProgressBarAndroid` as react-native-web's `ProgressBar`, the `useAnimatedValue` family
-//     over its own `Animated`, `InputAccessoryView` and `NativeAppEventEmitter` from its own
-//     modules, and `unstable_batchedUpdates` from `react-dom` (withNativeModuleExports).
+//     `PlatformColor`, `DynamicColorIOS`, `RootTagContext`, `DrawerLayoutAndroid`, `Settings`,
+//     `DeviceInfo`, `Networking`, `ReactNativeVersion`, `UTFSequence`, `VirtualViewMode`,
+//     `usePressability`), `ProgressBarAndroid` as react-native-web's `ProgressBar`, the
+//     `useAnimatedValue` family over its own `Animated`, `InputAccessoryView` and
+//     `NativeAppEventEmitter` from its own modules, `EventEmitter` and
+//     `VirtualizedSectionList` from its vendored React Native modules, `AssetRegistry` over its
+//     asset registry, and `unstable_batchedUpdates` from `react-dom` (withNativeModuleExports).
 //   - `.web.tsx` / `.web.ts` / `.web.jsx` / `.web.js` are probed first (the bundler's
 //     `platformExtensions`), for relative/alias imports and package subpaths.
 //   - `.js` parses as JSX (the bundler's `jsxInJs`).
@@ -132,7 +136,8 @@ const NATIVE_DEEP_IMPORTS: Readonly<Record<string, string>> = {
     "setRuntimeConfigProvider = R.setRuntimeConfigProvider, " +
     "unstable_hasStaticViewConfig = R.unstable_hasStaticViewConfig;\n",
   "Libraries/Performance/Systrace": `import { Systrace as S } from "${NATIVE_MODULES}";\n` +
-    "export var isEnabled = S.isEnabled, setEnabled = S.setEnabled, beginEvent = S.beginEvent, " +
+    "export var isEnabled = S.isEnabled, setEnabled = S.setEnabled, trace = S.trace, " +
+    "beginEvent = S.beginEvent, " +
     "endEvent = S.endEvent, beginAsyncEvent = S.beginAsyncEvent, " +
     "endAsyncEvent = S.endAsyncEvent, counterEvent = S.counterEvent;\n",
   "Libraries/Image/resolveAssetSource":
@@ -170,14 +175,37 @@ const NATIVE_ENTRY_EXPORTS = [
 export const OVERLAY_ENTRY_EXPORTS: readonly string[] = [
   "ActionSheetIOS",
   "DevSettings",
+  "DeviceInfo",
   "DrawerLayoutAndroid",
   "DynamicColorIOS",
+  "Networking",
   "PermissionsAndroid",
   "PlatformColor",
+  "ReactNativeVersion",
   "RootTagContext",
   "Settings",
   "ToastAndroid",
+  "UTFSequence",
+  "VirtualViewMode",
+  "usePressability",
 ];
+
+/**
+ * The names react-native-web's entry gains from the React Native modules it vendors (each
+ * one's default export, by its path under `dist/`): React Native's `EventEmitter` class, and
+ * `VirtualizedSectionList` (denext's adapter unless `reactNative: { lists: "library" }`, see
+ * react-native-lists.ts).
+ */
+const VENDOR_ENTRY_EXPORTS: Readonly<Record<string, string>> = {
+  EventEmitter: "vendor/react-native/vendor/emitter/EventEmitter",
+  VirtualizedSectionList: "vendor/react-native/VirtualizedSectionList",
+};
+
+/**
+ * react-native-web's asset registry (`registerAsset` / `getAssetByID`, the one its `Image`
+ * resolves numeric sources from), which the entry exposes as React Native's `AssetRegistry`.
+ */
+const ASSET_REGISTRY_MODULE = "modules/AssetRegistry";
 
 /**
  * The names react-native-web's entry gains from its own modules, which it ships but leaves out
@@ -460,6 +488,7 @@ var asyncCookie = 0;
 var Systrace = {
   isEnabled: function () { return false; },
   setEnabled: noop,
+  trace: function (_name, fn) { return fn(); },
   beginEvent: noop,
   endEvent: noop,
   beginAsyncEvent: function () { return ++asyncCookie; },
@@ -512,7 +541,11 @@ export interface EntrySources {
   readonly overlay?: boolean;
   /** `react-dom` resolves: add `unstable_batchedUpdates`. */
   readonly reactDom?: boolean;
-  /** The react-native-web `exports/<name>` modules present (for {@linkcode WEB_ENTRY_EXPORTS}). */
+  /**
+   * The react-native-web modules present: `exports/<name>` names (for
+   * {@linkcode WEB_ENTRY_EXPORTS}) and `dist/`-relative paths (for
+   * {@linkcode VENDOR_ENTRY_EXPORTS} and the asset registry).
+   */
   readonly webModules?: ReadonlySet<string>;
 }
 
@@ -595,6 +628,35 @@ function additionGroups(sources: EntrySources): AdditionGroup[] {
           .join(""),
     });
   }
+  // `VirtualizedSectionList` loads as the overlay's adapter (react-native-lists.ts): only with it.
+  const vendor = Object.keys(VENDOR_ENTRY_EXPORTS).filter((n) =>
+    sources.webModules?.has(VENDOR_ENTRY_EXPORTS[n]) &&
+    (sources.overlay || n !== "VirtualizedSectionList")
+  );
+  if (vendor.length > 0) {
+    groups.push({
+      names: vendor,
+      esm: (names) =>
+        names.map((n) => `export { default as ${n} } from "./${VENDOR_ENTRY_EXPORTS[n]}";\n`)
+          .join(""),
+      cjs: (names) =>
+        names.map((n) => `exports.${n} = ${cjsDefault(`./${VENDOR_ENTRY_EXPORTS[n]}`)};\n`)
+          .join(""),
+    });
+  }
+  if (sources.webModules?.has(ASSET_REGISTRY_MODULE)) {
+    const object = (ns: string) =>
+      `{ registerAsset: ${ns}.registerAsset, getAssetByID: ${ns}.getAssetByID }`;
+    groups.push({
+      names: ["AssetRegistry"],
+      esm: () =>
+        `import * as __denextAssets from "./${ASSET_REGISTRY_MODULE}";\n` +
+        `export var AssetRegistry = ${object("__denextAssets")};\n`,
+      cjs: () =>
+        `var __denextAssets = require("./${ASSET_REGISTRY_MODULE}");\n` +
+        `exports.AssetRegistry = ${object("__denextAssets")};\n`,
+    });
+  }
   if (sources.reactDom) {
     groups.push({
       names: REACT_DOM_ENTRY_EXPORTS,
@@ -614,7 +676,8 @@ function additionGroups(sources: EntrySources): AdditionGroup[] {
  * - when `denext/react-native` resolves, {@linkcode OVERLAY_ENTRY_EXPORTS} from the shell
  *   overlay, and (with react-native-web's `Animated`) {@linkcode ANIMATED_HOOK_EXPORTS} built
  *   by its `createAnimatedHook`;
- * - {@linkcode WEB_ENTRY_EXPORTS} whose react-native-web module exists;
+ * - {@linkcode WEB_ENTRY_EXPORTS} and {@linkcode VENDOR_ENTRY_EXPORTS} whose react-native-web
+ *   module exists, and `AssetRegistry` over its asset registry;
  * - when `react-dom` resolves (denext's, in React Native mode), `unstable_batchedUpdates`.
  *
  * A name the entry already exports is left to it. An ES entry gains `export … from` lines; a
@@ -648,13 +711,16 @@ async function entrySources(build: esbuild.PluginBuild, entry: string): Promise<
   const resolves = async (spec: string) =>
     (await build.resolve(spec, { kind: "import-statement", resolveDir })).errors.length === 0;
   const names = ["Animated", ...Object.values(WEB_ENTRY_EXPORTS)];
+  const paths = [...Object.values(VENDOR_ENTRY_EXPORTS), ASSET_REGISTRY_MODULE];
   const present = await Promise.all(
-    names.map(async (name) => (await probeWebFile(join(resolveDir, "exports", name))) !== null),
+    [...names.map((name) => join("exports", name)), ...paths].map(async (rel) =>
+      (await probeWebFile(join(resolveDir, rel))) !== null
+    ),
   );
   return {
     overlay: await resolves(RN_OVERLAY),
     reactDom: await resolves("react-dom"),
-    webModules: new Set(names.filter((_, i) => present[i])),
+    webModules: new Set([...names, ...paths].filter((_, i) => present[i])),
   };
 }
 

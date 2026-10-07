@@ -111,9 +111,12 @@ export interface VirtualListHandle {
   getScrollableNode(): Element | null;
   /**
    * Row `index`'s list offset and size in px (its line's, in a grid): measured, else
-   * estimated; `undefined` out of range. What React Native's `getLayout` / `getState` read.
+   * estimated (`measured` says which; an exact `getItemSize` counts as measured); `undefined`
+   * out of range. What React Native's `getLayout` / `getState` read.
    */
-  getItemLayout(index: number): { readonly offset: number; readonly size: number } | undefined;
+  getItemLayout(
+    index: number,
+  ): { readonly offset: number; readonly size: number; readonly measured: boolean } | undefined;
   /** The scroll position and extent, in list offsets (the value `scrollToOffset` takes). */
   getScrollMetrics(): VirtualListScrollMetrics;
 }
@@ -214,6 +217,15 @@ export interface VirtualListOptions<T> {
   readonly onStartReachedThreshold?: number;
   /** Called with the first and last visible rows whenever they change. */
   readonly onRangeChange?: (first: number, last: number) => void;
+  /**
+   * Called when a measurement is applied to a row: its first one, and every later one that
+   * changes its size along the scroll axis. `size` is the measured size and `previous` the one
+   * the list used before (an estimate, or an earlier measurement); `index` is the row's first
+   * item (a grid reports each line once). Rows with an exact `getItemSize` are not measured.
+   */
+  readonly onItemMeasured?: (
+    info: { readonly index: number; readonly size: number; readonly previous: number },
+  ) => void;
   /** What scrolls the list. Default `"self"`. */
   readonly scrollElement?: VirtualListScrollElement;
   /**

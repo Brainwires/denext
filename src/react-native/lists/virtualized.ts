@@ -40,12 +40,15 @@ import type {
   VirtualListProps,
   VirtualListScrollEvent,
 } from "../../client/virtual/types.ts";
+import { cloneElement } from "../../runtime/react-core.ts";
+import { useOverlap } from "../../mobile/keyboard-views.ts";
 import { Keyboard } from "../keyboard.ts";
 import { ensureHiddenScrollbarRule, HIDE_SCROLLBAR_CLASS, resolveStyle } from "./style.ts";
 import type {
   ListPrimitives,
   ListRenderItemInfo,
   RNSlot,
+  ScrollComponentProps,
   ScrollResponder,
   ScrollToIndexParams,
   Separators,
@@ -108,6 +111,17 @@ export interface EngineOptions {
   readonly viewportSize?: number;
   /** Scroll the page instead of the list's own element (LegendList's `useWindowScroll`). */
   readonly windowScroll?: boolean;
+  /**
+   * Renders the scroll view (FlashList's component form); without it, the list's own
+   * `renderScrollComponent` does.
+   */
+  readonly scrollComponent?: (props: ScrollComponentProps) => VNode | null;
+  /** Data rows whose cells are snap points, aligned to the start (LegendList's `snapToIndices`). */
+  readonly snapRows?: ReadonlySet<number>;
+  /** Px of room after the last item (LegendList's `anchoredEndSpace`). */
+  readonly endSpace?: number;
+  /** A data row was measured: its first measurement, or a new size (the engine's report). */
+  readonly onItemMeasured?: (info: { index: number; size: number; previous: number }) => void;
 }
 
 /** The core's ref: `VirtualizedList`'s methods plus what the adapters build on. */
@@ -201,6 +215,8 @@ interface CellCtx {
     | null;
   readonly Wrapper: VNodeType | null;
   readonly snap: string | null;
+  /** Data rows that snap to the start (besides `snap`, which applies to every cell). */
+  readonly snapRows: ReadonlySet<number> | undefined;
   readonly wrap: EngineOptions["wrapCell"];
   /** Cell key → its separator-props setter (for `separators.highlight()` on a neighbour). */
   readonly registry: Map<
@@ -270,7 +286,8 @@ function Cell(props: CellProps): VNode {
   let node: VNodeChild = ctx.Wrapper
     ? h(ctx.Wrapper, { cellKey: key, index, item }, ...parts)
     : h(Fragment, null, ...parts);
-  if (ctx.snap) node = h("div", { style: { scrollSnapAlign: ctx.snap } }, node);
+  const snap = ctx.snap ?? (ctx.snapRows?.has(index) ? "start" : null);
+  if (snap) node = h("div", { style: { scrollSnapAlign: snap } }, node);
   if (ctx.wrap) node = ctx.wrap(index, item, node);
   return node as VNode;
 }
@@ -323,6 +340,7 @@ function useCellCtx(
     separator: engine.separator ?? defaultSeparator(ItemSeparatorComponent, model.count),
     Wrapper: CellRendererComponent ?? null,
     snap,
+    snapRows: engine.snapRows,
     wrap: engine.wrapCell,
     registry,
   }), [
@@ -333,6 +351,7 @@ function useCellCtx(
     CellRendererComponent,
     engine.separator,
     engine.wrapCell,
+    engine.snapRows,
     snap,
     list.extraData,
     registry,
@@ -487,12 +506,11 @@ function classes(...names: (string | undefined | false)[]): string | undefined {
   return out === "" ? undefined : out;
 }
 
-/** The scroller's class and style (and the content container's), from React Native styles. */
-function containerProps(
+/** The scroller's own style: flex, `scrollEnabled`, hidden scrollbars, cell snapping. */
+function scrollerStyle(
   list: VirtualizedListProps<unknown>,
-  prim: ListPrimitives,
-  wrapped: boolean,
-): Partial<VirtualListProps<unknown>> {
+  engine: EngineOptions,
+): { own: Record<string, string | number>; hide: boolean } {
   const horizontal = !!list.horizontal;
   const own: Record<string, string | number> = {
     flexGrow: 1,
@@ -505,7 +523,20 @@ function containerProps(
     ? list.showsHorizontalScrollIndicator === false
     : list.showsVerticalScrollIndicator === false;
   if (hide) own.scrollbarWidth = "none";
-  if (list.pagingEnabled) own.scrollSnapType = `${horizontal ? "x" : "y"} mandatory`;
+  if (list.pagingEnabled || (engine.snapRows?.size ?? 0) > 0) {
+    own.scrollSnapType = `${horizontal ? "x" : "y"} mandatory`;
+  }
+  return { own, hide };
+}
+
+/** The scroller's class and style (and the content container's), from React Native styles. */
+function containerProps(
+  list: VirtualizedListProps<unknown>,
+  prim: ListPrimitives,
+  wrapped: boolean,
+  engine: EngineOptions,
+): Partial<VirtualListProps<unknown>> {
+  const { own, hide } = scrollerStyle(list, engine);
   const user = wrapped ? {} : resolveStyle(prim.StyleSheet, list.style);
   const content = resolveStyle(prim.StyleSheet, list.contentContainerStyle);
   const snap = list.pagingEnabled ? null : snapOptionsFromProps(list);
@@ -756,7 +787,7 @@ function sizingProps(
  */
 export function CoreList(props: CoreListProps): VNode {
   const { list, prim } = props;
-  const engine = withRNMvcp(list, props.engine ?? NO_ENGINE);
+  const engine = withRNMvcp(list, props.engine);
   const model = useModel(list);
   const vl = useRef<VirtualListHandle | null>(null);
   const state = useRef<HandleState>({ list, model, vl: null });
@@ -771,7 +802,10 @@ export function CoreList(props: CoreListProps): VNode {
   useMountCallback(engine, handle);
   useOnLayout(list, handle);
   useContentSizeChange(list, handle);
+  const host = useMemo(scrollHost, []);
+  const room = useEndRoom(list, engine, handle);
   const control = refreshElement(list, prim);
+  const renderScroll = scrollRenderer(list, engine);
   const engineRef = (h: VirtualListHandle | null): void => {
     vl.current = h;
     state.current.vl = h;
@@ -788,9 +822,186 @@ export function CoreList(props: CoreListProps): VNode {
     ...viewabilityProps(list, engine, model),
     ...scrollProps(list, engine, model.inverted),
     ...slotProps(list, engine, prim, model.inverted),
-    ...containerProps(list, prim, control !== null),
+    ...chromeProps(list, prim, engine, renderScroll, host, control),
+    keyboardInset: room,
   });
+  return outerList(renderScroll, list, control, host, scroller);
+}
+
+/** The app's scroll view renderer: the adapter's (FlashList's forms), else the list's prop. */
+function scrollRenderer(
+  list: VirtualizedListProps<unknown>,
+  engine: EngineOptions,
+): ((props: ScrollComponentProps) => VNode | null) | null {
+  return engine.scrollComponent ?? list.renderScrollComponent ?? null;
+}
+
+/** Hook: the room after the last item — the keyboard's overlap plus the adapter's end space. */
+function useEndRoom(
+  list: VirtualizedListProps<unknown>,
+  engine: EngineOptions,
+  handle: CoreHandle,
+): number {
+  return useKeyboardRoom(list, handle) + Math.max(0, engine.endSpace ?? 0);
+}
+
+/** The scroller's styling: the app's scroll view's (hosted), else the list's own. */
+function chromeProps(
+  list: VirtualizedListProps<unknown>,
+  prim: ListPrimitives,
+  engine: EngineOptions,
+  render: unknown,
+  host: ScrollHost,
+  control: VNode | null,
+): Partial<VirtualListProps<unknown>> {
+  return render
+    ? hostedProps(list, prim, host)
+    : containerProps(list, prim, control !== null, engine);
+}
+
+/** What wraps the scroller: the app's scroll view, a refresh control, or nothing. */
+function outerList(
+  render: ((props: ScrollComponentProps) => VNode | null) | null,
+  list: VirtualizedListProps<unknown>,
+  control: VNode | null,
+  host: ScrollHost,
+  scroller: VNode,
+): VNode {
+  if (render) return h(ScrollViewHost, { render, list, control, host, scroller });
   return control ? withRefresh(control, list, scroller) : scroller;
+}
+
+/** The custom scroll view's instance (its `ref`), and its scroll node as the engine reads it. */
+interface ScrollHost {
+  instance: unknown;
+  readonly ref: (instance: unknown) => void;
+  readonly current: Element | null;
+}
+
+/** A scroll host: `current` resolves the scroll node of whatever the ref received. */
+function scrollHost(): ScrollHost {
+  const host: ScrollHost = {
+    instance: null,
+    ref: (instance) => {
+      host.instance = instance;
+    },
+    get current() {
+      return scrollNodeOf(host.instance);
+    },
+  };
+  return host;
+}
+
+/**
+ * The scroll node of a scroll view instance: a `ScrollView`'s `getScrollableNode()` (React
+ * Native's and react-native-web's), or the element itself (react-native-web's ref is the node).
+ */
+function scrollNodeOf(instance: unknown): Element | null {
+  if (instance === null || typeof instance !== "object") return null;
+  const v = instance as { getScrollableNode?: () => unknown; nodeType?: unknown };
+  if (typeof v.getScrollableNode === "function") {
+    const node = v.getScrollableNode();
+    if (node && node !== instance) return scrollNodeOf(node);
+  }
+  return v.nodeType === 1 ? instance as Element : null;
+}
+
+/** Set a ref (a function or an object). */
+function setRef(ref: unknown, value: unknown): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object" && "current" in ref) {
+    (ref as { current: unknown }).current = value;
+  }
+}
+
+/**
+ * The list's props a custom scroll view receives: the list's own minus what the list handles
+ * itself (the scroll callbacks, `onLayout`, `onContentSizeChange`, sticky indices, the content
+ * container's style, the ref), plus the refresh element.
+ */
+function scrollViewProps(
+  list: VirtualizedListProps<unknown>,
+  control: VNode | null,
+  host: ScrollHost,
+  children: VNodeChild,
+): ScrollComponentProps {
+  const {
+    onScroll: _onScroll,
+    onScrollBeginDrag: _beginDrag,
+    onScrollEndDrag: _endDrag,
+    onMomentumScrollBegin: _momentumBegin,
+    onMomentumScrollEnd: _momentumEnd,
+    onLayout: _onLayout,
+    onContentSizeChange: _onContentSize,
+    stickyHeaderIndices: _sticky,
+    contentContainerStyle: _content,
+    renderScrollComponent: _render,
+    ref: _ref,
+    ...rest
+  } = list;
+  return { ...rest, refreshControl: control, ref: host.ref, children };
+}
+
+/** Props of {@linkcode ScrollViewHost}. */
+interface ScrollViewHostProps {
+  readonly render: (props: ScrollComponentProps) => VNode | null;
+  readonly list: VirtualizedListProps<unknown>;
+  readonly control: VNode | null;
+  readonly host: ScrollHost;
+  readonly scroller: VNode;
+}
+
+/**
+ * The list inside the app's scroll view (`renderScrollComponent`): the element it returns gets
+ * the list's ref (merged with its own) and the items as children, as React Native's
+ * `VirtualizedList` clones it. A component of its own, so a render function that uses hooks
+ * keeps them in one place (as LegendList's and FlashList's wrappers do).
+ */
+function ScrollViewHost(props: ScrollViewHostProps): VNode {
+  const { render, list, control, host, scroller } = props;
+  const el = render(scrollViewProps(list, control, host, scroller));
+  if (!el) return h(Fragment, null, scroller) as VNode;
+  const own = (el.props as { ref?: unknown }).ref;
+  const ref = own === host.ref || own === undefined ? host.ref : (instance: unknown) => {
+    setRef(own, instance);
+    host.ref(instance);
+  };
+  return cloneElement(el, { ref }, scroller);
+}
+
+/** The engine's props inside a custom scroll view: that view's node scrolls, it styles itself. */
+function hostedProps(
+  list: VirtualizedListProps<unknown>,
+  prim: ListPrimitives,
+  host: ScrollHost,
+): Partial<VirtualListProps<unknown>> {
+  const content = resolveStyle(prim.StyleSheet, list.contentContainerStyle);
+  return {
+    scrollElement: host,
+    contentContainerStyle: content.style ?? (content.class ? {} : undefined),
+    contentContainerClass: content.class,
+  };
+}
+
+/**
+ * Hook: `automaticallyAdjustKeyboardInsets` — the px of the list's frame the on-screen keyboard
+ * covers (React Native's inset: the keyboard frame's overlap with the scroll view's), 0 when off,
+ * horizontal or uncovered.
+ */
+function useKeyboardRoom(list: VirtualizedListProps<unknown>, handle: CoreHandle): number {
+  const wanted = list.automaticallyAdjustKeyboardInsets === true && !list.horizontal;
+  const covered = useOverlap(wanted).px;
+  if (!wanted || covered <= 0) return 0;
+  return frameOverlap(handle.getScrollableNode(), covered);
+}
+
+/** How much of `node`'s frame a keyboard covering the bottom `covered` px overlaps. */
+function frameOverlap(node: Element | null, covered: number): number {
+  const rect = (node as { getBoundingClientRect?: () => DOMRect } | null)
+    ?.getBoundingClientRect?.();
+  const height = (globalThis as { innerHeight?: number }).innerHeight ?? 0;
+  if (!rect || !(rect.height > 0) || !(height > 0)) return covered;
+  return Math.max(0, Math.min(covered, Math.round(rect.bottom - (height - covered))));
 }
 
 /** Hook: the data model, rebuilt when the data, `getItem`, the count or `inverted` change. */
@@ -936,7 +1147,18 @@ function layoutProps(
     keepMounted: engine.keepMounted,
     viewportSize: engine.viewportSize,
     scrollElement: engine.windowScroll ? "window" : undefined,
+    onItemMeasured: sizeReporter(engine, model),
   };
+}
+
+/** The engine's measurement reports in data rows (`EngineOptions.onItemMeasured`). */
+function sizeReporter(
+  engine: EngineOptions,
+  model: Model,
+): VirtualListProps<unknown>["onItemMeasured"] {
+  const cb = engine.onItemMeasured;
+  if (!cb) return undefined;
+  return (info) => cb({ index: model.flip(info.index), size: info.size, previous: info.previous });
 }
 
 const NO_ENGINE: EngineOptions = {};
@@ -949,7 +1171,10 @@ const NO_ENGINE: EngineOptions = {};
  * the view either way (the engine anchors size refinements always), so scrolling up into
  * unmeasured items does not jump. An adapter's own `mvcp` / `autoscrollStart` win.
  */
-function withRNMvcp(list: VirtualizedListProps<unknown>, engine: EngineOptions): EngineOptions {
+function withRNMvcp(
+  list: VirtualizedListProps<unknown>,
+  engine: EngineOptions = NO_ENGINE,
+): EngineOptions {
   if (engine.mvcp !== undefined) return engine;
   const mvcp = list.maintainVisibleContentPosition;
   const threshold = mvcp ? mvcp.autoscrollToTopThreshold ?? undefined : undefined;

@@ -582,7 +582,12 @@ export class VirtualController<T> {
         if (!(index >= 0 && index < this.itemCount())) return undefined;
         this.core.flushSeed();
         const line = this.lineOf(Math.floor(index));
-        return { offset: this.core.tree.offsetOf(line), size: this.core.tree.sizeOf(line) };
+        const tree = this.core.tree;
+        return {
+          offset: tree.offsetOf(line),
+          size: tree.sizeOf(line),
+          measured: tree.isMeasured(line),
+        };
       },
       getScrollMetrics: () => {
         const core = this.core;
@@ -1573,11 +1578,35 @@ export class VirtualController<T> {
     const { batch, metrics } = this.#rowSizes(entries);
     if (metrics) this.#readMetrics();
     if (batch.length > 0 && this.#learn(batch)) this.core.configure(this.#config(this.props));
+    const before = this.props.onItemMeasured ? this.#sizesOf(batch) : null;
     const changed = batch.length > 0 && this.core.measure(batch);
+    if (changed && before) this.#reportSizes(before);
     this.#afterChange();
     // Absolute layout: every row's offset is in the rendered props.
     if (changed && this.layout === "absolute") this.force();
   };
+
+  /** The measured lines' sizes before a measurement applies, and whether they were measured. */
+  #sizesOf(batch: readonly (readonly [number, number])[]): Map<number, [number, boolean]> {
+    const tree = this.core.tree;
+    const out = new Map<number, [number, boolean]>();
+    for (const [line] of batch) {
+      if (line < tree.count) out.set(line, [tree.sizeOf(line), tree.isMeasured(line)]);
+    }
+    return out;
+  }
+
+  /** `onItemMeasured` for every line measured for the first time or to a new size. */
+  #reportSizes(before: Map<number, [number, boolean]>): void {
+    const tree = this.core.tree;
+    const cb = this.props.onItemMeasured;
+    for (const [line, [previous, measured]] of before) {
+      if (line >= tree.count || !tree.isMeasured(line)) continue;
+      const size = tree.sizeOf(line);
+      if (measured && size === previous) continue;
+      cb?.({ index: this.itemsOf(line)[0], size, previous });
+    }
+  }
 
   /**
    * Split resize entries into row sizes (`[row, px]`) and whether any other observed element

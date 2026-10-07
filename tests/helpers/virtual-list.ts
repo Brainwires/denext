@@ -53,7 +53,12 @@ export async function measureAll(
   rounds = 12,
   attr = "data-index",
 ): Promise<void> {
-  const ro = FakeResizeObserver.instances[FakeResizeObserver.instances.length - 1];
+  // The list's shared observer: the newest one watching rows (a component may add its own,
+  // e.g. for `onLayout`, after the list's).
+  const instances = FakeResizeObserver.instances;
+  const ro =
+    instances.findLast((r) => [...r.targets].some((el) => el.getAttribute(attr) !== null)) ??
+      instances[instances.length - 1];
   for (let round = 0; round < rounds; round++) {
     const entries: unknown[] = [];
     for (const el of ro.targets) {

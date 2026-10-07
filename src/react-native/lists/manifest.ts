@@ -41,22 +41,22 @@ export const LIST_PACKAGES: Readonly<Record<string, ListPackage>> = {
     components: { FlashList: "createFlashList" },
     animated: { AnimatedFlashList: "FlashList" },
     reexports: [
+      "Cancellable",
+      "JSFPSMonitor",
       "LayoutCommitObserver",
       "RenderTargetOptions",
+      "autoScroll",
+      "useBenchmark",
+      "useDataMultiplier",
       "useFlashListContext",
+      "useFlatListBenchmark",
       "useLayoutState",
       "useMappingHelper",
       "useFlashRecyclingState as useRecyclingState",
     ],
-    omitted: [
-      "useBenchmark",
-      "useDataMultiplier",
-      "useFlatListBenchmark",
-      "JSFPSMonitor",
-      "autoScroll",
-    ],
-    notes: "The benchmark utilities are not provided (measure with `denext profile`). " +
-      "Recycling is off unless `recycleItems` is set; `useFlashListContext` returns undefined.",
+    omitted: [],
+    notes: "Recycling is off unless `recycleItems` is set; `useFlashListContext` returns " +
+      "undefined. The benchmark hooks run as on a device (JS frame rate while scrolling).",
   },
   "@legendapp/list": {
     specifiers: ["@legendapp/list", "@legendapp/list/react-native"],

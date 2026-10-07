@@ -86,6 +86,33 @@ and this project adheres to
   `DeviceEventEmitter.sharedSubscriber`, `LayoutAnimation.configChecker`,
   `View.forceTouchAvailable`), now waived with that reason. A parity waiver can name the
   `members` it covers, so a member that goes missing later still fails the gate.
+- **The list adapters' last React Native names.** `renderScrollComponent` (`FlatList`,
+  `SectionList`, `VirtualizedList`, FlashList, LegendList) renders a list inside the app's own
+  scroll view: the element gets the list's ref and the items, as React Native clones it, and its
+  scroll node becomes the list's scroller; the scroll callbacks, `onLayout` and
+  `onContentSizeChange` stay the list's, so none fires twice. FlashList takes a component or a
+  function. `automaticallyAdjustKeyboardInsets` adds room after the last item for the part of a
+  vertical list the keyboard covers. LegendList gains `anchoredEndSpace` (room that keeps an
+  anchor item at the viewport's start, with `onSizeChanged` / `onReady`), `onItemSizeChanged`,
+  `onMetricsChange` and `snapToIndices`. FlashList's benchmark exports (`useBenchmark`,
+  `useFlatListBenchmark`, `useDataMultiplier`, `JSFPSMonitor`, `autoScroll`, `Cancellable`) run
+  as on a device. `VirtualList` gains `onItemMeasured` (a row's first measurement and each size
+  change), and its handle's `getItemLayout()` says whether the size is `measured`. The lists
+  ledger (`scripts/parity/native/baselines/lists.known-gaps.json`) is empty; SectionList's
+  `data` / `getItem` / `getItemCount`, which its type inherits and React Native never reads, are
+  waived, and the lists gate takes documented waivers (`LIST_WAIVERS`).
+- **React Native 0.88's runtime names in React Native mode,** ahead of the 0.88 pin (each existed
+  in React Native's runtime; 0.88's generated types export them): `DeviceInfo`,
+  `ReactNativeVersion`, `UTFSequence`, `VirtualViewMode` (a Flow enum), `Networking` (React
+  Native's networking module over `fetch`, with its event tuples), `usePressability` (React
+  Native's press timing), `EventEmitter`, `AssetRegistry` (react-native-web's registry, the one
+  `Image` reads), `VirtualizedSectionList` (on denext's list engine, `getItem` / `getItemCount`
+  sections), `Platform.isDisableAnimations`, `Systrace.trace`, `LayoutAnimation.setEnabled`,
+  `LogBox`'s `isInstalled` / `clearAllLogs` / `addLog` / `addConsoleLog` / `addException`, and
+  `UIManager`'s `measureLayoutRelativeToParent`, `viewIsDescendantOf`, `findSubviewIn`,
+  `sendAccessibilityEvent` and the native-renderer members. `VirtualList` props gain
+  `persistentScrollbar` (accepted). Against `react-native@0.88.0-rc.4`, the core and lists diffs
+  report no gaps; the lists capture reads 0.88's generated types.
 
 ### Changed
 

@@ -91,6 +91,11 @@ export interface PlatformStatic {
   readonly isTV: boolean;
   /** Whether `NODE_ENV` is `"test"`. */
   readonly isTesting: boolean;
+  /**
+   * Whether animations are off: React Native's `constants.isDisableAnimations ?? isTesting`;
+   * the constant is always set here (the user's reduced-motion preference), so it decides.
+   */
+  readonly isDisableAnimations: boolean;
   /** The device's constants and `denextShell` (see {@linkcode PlatformConstants}). */
   readonly constants: PlatformConstants;
   /**
@@ -101,7 +106,7 @@ export interface PlatformStatic {
 }
 
 /** The React Native release React Native mode's surface is measured against. */
-const REACT_NATIVE_VERSION: ReactNativeVersion = {
+export const REACT_NATIVE_VERSION: ReactNativeVersion = {
   major: 0,
   minor: 86,
   patch: 3,
@@ -304,6 +309,9 @@ export const Platform: PlatformStatic = {
   isTV: false,
   get isTesting() {
     return isTestEnv();
+  },
+  get isDisableAnimations() {
+    return reducedMotion();
   },
   get constants() {
     return platformConstants();

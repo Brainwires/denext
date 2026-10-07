@@ -88,11 +88,52 @@ export const NATIVE_WAIVERS: Waiver[] = [
       "only; `Libraries/LayoutAnimation/LayoutAnimation.js` exports no such member.",
   },
   {
+    // React Native 0.88's generated types declare `VirtualizedList` as its class, statics
+    // included.
+    symbol: "VirtualizedList",
+    categories: ["MEMBER_MISSING"],
+    members: ["contextType", "getDerivedStateFromProps"],
+    reason: "`contextType` and `getDerivedStateFromProps` are React's class-component hooks on " +
+      "React Native's `VirtualizedList` class, read by React itself (apps never call them); " +
+      "React Native mode's `VirtualizedList` is a function component over denext's " +
+      "`VirtualList`, which React does not read them from.",
+  },
+  {
     symbol: "View",
     categories: ["MEMBER_MISSING"],
     members: ["forceTouchAvailable"],
     reason: "`View.forceTouchAvailable` is declared by React Native's legacy `.d.ts` only; the " +
       "runtime value is `Platform.constants.forceTouchAvailable` (iOS), which denext's " +
       "`Platform` provides.",
+  },
+];
+
+/** A documented waiver of names the lists target compares (see `lists.ts`). */
+export interface ListWaiver {
+  /** The target (`"react-native#SectionList"`, `"@shopify/flash-list"`, …). */
+  readonly target: string;
+  /** The kind of name. */
+  readonly kind: "prop" | "method" | "export";
+  /** The waived names (exact). */
+  readonly names: readonly string[];
+  /** Why. */
+  readonly reason: string;
+}
+
+/**
+ * Names the real lists' types declare that React Native's runtime never reads, so an adapter
+ * has nothing to honour. Each names exactly the names it covers: any other missing name still
+ * fails the lists gate.
+ */
+export const LIST_WAIVERS: readonly ListWaiver[] = [
+  {
+    target: "react-native#SectionList",
+    kind: "prop",
+    names: ["data", "getItem", "getItemCount"],
+    reason: "`SectionListProps` extends `VirtualizedListWithoutRenderItemProps`, so the .d.ts " +
+      "inherits `data` / `getItem` / `getItemCount`, but React Native's `SectionList` never " +
+      "reads them: `SectionList.js` passes its own `getItem` / `getItemCount` after the app's " +
+      "props, and `VirtualizedSectionList` passes `data={sections}` to `VirtualizedList`. The " +
+      "items come from `sections` (react-native-web 0.21's copy does the same).",
   },
 ];

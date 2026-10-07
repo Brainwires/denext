@@ -15,6 +15,9 @@
 //   - `AppRegistry` is passed through `withAppRegistry` (with react-native-web's `View`):
 //     sections, `getRunnable` / `getRegistry`, `setSurfaceProps`, `setRootViewStyleProvider`
 //     and the headless-task registry.
+//   - `LogBox` gains React Native's `isInstalled` / `clearAllLogs` / `addLog` /
+//     `addConsoleLog` / `addException` (`withLogBoxStatics`, its production behaviour) and
+//     `LayoutAnimation` its `setEnabled` (`withLayoutAnimationStatics`).
 //   - `StyleSheet` gains `setStyleAttributePreprocessor` (`withStyleSheetStatics`), and
 //     react-native-web's style `preprocess` step runs the registered processors first
 //     (`processStyleAttributes`), so they reach compiled and inline styles alike.
@@ -35,6 +38,8 @@ const OVERLAY = "denext/react-native";
 const WRAPPED: Readonly<Record<string, string>> = {
   AppRegistry: "withAppRegistry",
   Image: "withImageStatics",
+  LayoutAnimation: "withLayoutAnimationStatics",
+  LogBox: "withLogBoxStatics",
   ScrollView: "withScrollSnap",
   StyleSheet: "withStyleSheetStatics",
   Text: "withFontScaling",
@@ -73,7 +78,8 @@ export function wrapDefaultExport(
   withView = false,
 ): string {
   if (cjs) {
-    const m = /(exports\.default\s*=\s*)(?!void\b)([A-Za-z_$][\w$]*)\s*;/.exec(source);
+    const m = /(exports\.default\s*=\s*)(?!void\b)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*;/
+      .exec(source);
     if (!m) return source;
     const view = withView
       ? ', (function (m) { return m && m.__esModule ? m.default : m; })(require("../View"))'

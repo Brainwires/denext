@@ -43,17 +43,31 @@ import {
   useKeyOf,
   usePacking,
 } from "./lists/kit.ts";
+import {
+  type AnchoredEndSpaceConfig,
+  anchorRows,
+  type LegendListMetrics,
+  useAnchoredEndSpace,
+  useSlotMetrics,
+} from "./lists/legend-extras.ts";
 import type {
   ListPrimitives,
   ListRenderItemInfo as CoreRenderInfo,
   ListScrollProps,
   RNSlot,
   RNStyle,
+  ScrollComponentProps,
   ScrollResponder,
   ViewabilityConfig,
   ViewabilityPair,
   VirtualizedListProps,
 } from "./lists/types.ts";
+
+export type {
+  AnchoredEndSpaceConfig,
+  AnchoredEndSpaceReadyInfo,
+  LegendListMetrics,
+} from "./lists/legend-extras.ts";
 
 /** What LegendList's `renderItem` receives. */
 export interface LegendListRenderItemProps<T> {
@@ -93,6 +107,16 @@ export interface LegendListProps<T>
   readonly children?: VNodeChild | VNodeChild[];
   /** Bottom-align short content (a chat). */
   readonly alignItemsAtEnd?: boolean;
+  /**
+   * Keep item `anchorIndex` at the viewport's start (plus `anchorOffset`) by adding room after
+   * the last item while the items from the anchor on are shorter than the viewport: a sent chat
+   * message stays at the top while the reply streams in below it. The room is the viewport
+   * minus the anchor's and the following items' sizes (the anchor's capped at
+   * `anchorMaxSize`), the footer and the content's end padding; `onSizeChanged` reports it and
+   * `onReady` fires once every item from the anchor on has a known size. Those items stay
+   * rendered. One column only, as in LegendList.
+   */
+  readonly anchoredEndSpace?: AnchoredEndSpaceConfig;
   /** Items kept rendered while scrolled away. */
   readonly alwaysRender?: {
     top?: number;
@@ -166,8 +190,22 @@ export interface LegendListProps<T>
   readonly onEndReached?: ((info: { distanceFromEnd: number }) => void) | null;
   /** Share of the viewport from the end that fires `onEndReached`. Default 0.5. */
   readonly onEndReachedThreshold?: number | null;
+  /**
+   * Called when an item's measured size changes (its first measurement included, when it
+   * differs from the estimate): the new `size`, the `previous` one, and the item. In a grid an
+   * item reports its row's size.
+   */
+  readonly onItemSizeChanged?: (info: {
+    size: number;
+    previous: number;
+    index: number;
+    itemKey: string;
+    itemData: T;
+  }) => void;
   /** Called once the first items rendered. */
   readonly onLoad?: (info: { elapsedTimeInMs: number }) => void;
+  /** Called with the header's and footer's sizes on mount and whenever one changes. */
+  readonly onMetricsChange?: (metrics: LegendListMetrics) => void;
   /** Called once the list is laid out. */
   readonly onReady?: () => void;
   /** Called when the first visible item changes. */
@@ -198,6 +236,17 @@ export interface LegendListProps<T>
   readonly refScrollView?: Ref<ScrollResponder>;
   /** Whether a refresh is running. */
   readonly refreshing?: boolean;
+  /**
+   * Render the scroll view yourself: called with the scroll-view props (with the `ref` and the
+   * items as `children`); see `VirtualizedList`'s `renderScrollComponent`.
+   */
+  readonly renderScrollComponent?: (props: ScrollComponentProps) => VNode | null;
+  /**
+   * Items that are snap points: a fling comes to rest with one of them at the viewport's start
+   * (CSS scroll snap on the items, as LegendList turns them into `snapToOffsets`). The content's
+   * start and end snap too unless `snapToStart` / `snapToEnd` is `false`.
+   */
+  readonly snapToIndices?: number[];
   /** When items count as viewable. */
   readonly viewabilityConfig?: ViewabilityConfig;
   /** Several configs, each with its own callback. */
@@ -386,9 +435,9 @@ function keptRows(
   p: Packing,
   rowKey: (row: number) => string,
 ): string[] | undefined {
-  const a = props.alwaysRender;
+  const a = props.alwaysRender ?? (props.anchoredEndSpace ? {} : undefined);
   if (!a) return undefined;
-  const rows = new Set<number>();
+  const rows = new Set<number>(anchorRows(props.anchoredEndSpace, data.length, p));
   for (let i = 0; i < Math.min(a.top ?? 0, data.length); i++) rows.add(rowOfItem(p, i));
   for (let i = Math.max(0, data.length - (a.bottom ?? 0)); i < data.length; i++) {
     rows.add(rowOfItem(p, i));
@@ -752,18 +801,23 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
     const onScrollFrame = useScrollFrame(props, core, bus, data, packing, keyOf);
     const render = useLegendRender(props, data, packing, prim);
     const wrapCell = useWrapCell(bus, keyOf, data.length);
-    const engine = legendEngine(
-      props,
-      data,
-      packing,
-      keyOf,
-      packing.cols === 1 ? wrapCell : undefined,
-      onScrollFrame,
-    );
+    const extras = useLegendExtras(props, prim, core, latest, keyOf);
+    const engine: EngineOptions = {
+      ...legendEngine(
+        props,
+        data,
+        packing,
+        keyOf,
+        packing.cols === 1 ? wrapCell : undefined,
+        onScrollFrame,
+      ),
+      ...extras.engine,
+    };
     const extra = useMemo(() => ({}), [props.extraData, props.dataVersion, props.dataKey]);
     const list: VirtualizedListProps<unknown> = {
       ...(props as unknown as VirtualizedListProps<unknown>),
       ...packedCoreProps({ ...props, data }, initialIndexOf(props), packing, render, keyOf),
+      ...extras.list,
       extraData: extra,
       onViewableItemsChanged: undefined,
       ...legendViewability(props, bus, wanted, core, packing),
@@ -771,6 +825,113 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
     return h(CoreList, { list, prim, engine, coreRef: core });
   }
   return LegendList;
+}
+
+/** The latest render's inputs, as the list's ref and reports read them. */
+type LegendLatest = {
+  current: { data: readonly unknown[]; packing: Packing; props: LegendListProps<unknown> };
+};
+
+/**
+ * Hook: LegendList's layout reports and snap points (`onMetricsChange`, `anchoredEndSpace`,
+ * `onItemSizeChanged`, `snapToIndices`) as engine options and list props.
+ */
+function useLegendExtras(
+  props: LegendListProps<unknown>,
+  prim: ListPrimitives,
+  core: { current: CoreHandle | null },
+  latest: LegendLatest,
+  keyOf: (item: unknown, i: number) => string,
+): { engine: EngineOptions; list: Partial<VirtualizedListProps<unknown>> } {
+  const { data, packing } = latest.current;
+  const { metrics, slots } = useSlotMetrics(props, prim.View);
+  const anchor = useAnchoredEndSpace(core, {
+    props,
+    data,
+    packing,
+    keyOf,
+    footerSize: metrics.footerSize,
+  });
+  const snapRows = useMemo(
+    () => snapRowsOf(props.snapToIndices, data.length, packing),
+    [props.snapToIndices, data.length, packing],
+  );
+  const reports = props.onItemSizeChanged || props.anchoredEndSpace;
+  return {
+    engine: {
+      endSpace: anchor.size,
+      snapRows,
+      onItemMeasured: reports ? itemReporter(latest, keyOf, anchor.update) : undefined,
+    },
+    list: {
+      ...snapProps(props),
+      ...slots,
+      onLayout: props.anchoredEndSpace ? relayout(props.onLayout, anchor.update) : props.onLayout,
+    },
+  };
+}
+
+/** `snapToIndices` as the engine rows whose cells snap (`undefined` when there are none). */
+function snapRowsOf(
+  indices: readonly number[] | undefined,
+  count: number,
+  p: Packing,
+): ReadonlySet<number> | undefined {
+  if (!indices || indices.length === 0) return undefined;
+  const rows = new Set<number>();
+  for (const i of indices) if (i >= 0 && i < count) rows.add(rowOfItem(p, Math.floor(i)));
+  return rows.size > 0 ? rows : undefined;
+}
+
+/**
+ * With `snapToIndices`, LegendList hands the scroll view `snapToOffsets` (the items' offsets),
+ * which replace `snapToOffsets` / `snapToInterval`; the items snap through their cells here, and
+ * the content's start (`snapToStart`) and end (`snapToEnd`) through the engine's snap points: an
+ * offset of 0, or one past any content when only the end applies.
+ */
+function snapProps(props: LegendListProps<unknown>): Partial<VirtualizedListProps<unknown>> {
+  if (!props.snapToIndices || props.snapToIndices.length === 0) return {};
+  return {
+    snapToInterval: undefined,
+    snapToOffsets: props.snapToStart === false ? [Number.MAX_SAFE_INTEGER] : [0],
+  };
+}
+
+/** `onLayout` that also re-runs `update` (the viewport changed). */
+function relayout(
+  onLayout: LegendListProps<unknown>["onLayout"],
+  update: () => void,
+): NonNullable<LegendListProps<unknown>["onLayout"]> {
+  return (e) => {
+    onLayout?.(e);
+    update();
+  };
+}
+
+/**
+ * The engine's measurement reports: `anchoredEndSpace` recomputes, and `onItemSizeChanged`
+ * hears each item whose size changed (every item of a grid row).
+ */
+function itemReporter(
+  latest: LegendLatest,
+  keyOf: (item: unknown, i: number) => string,
+  update: () => void,
+): EngineOptions["onItemMeasured"] {
+  return (info) => {
+    update();
+    const { props, data, packing } = latest.current;
+    const cb = props.onItemSizeChanged;
+    if (!cb || info.size === info.previous || info.index >= packing.rows) return;
+    for (let i = packing.starts[info.index]; i < packing.starts[info.index + 1]; i++) {
+      cb({
+        size: info.size,
+        previous: info.previous,
+        index: i,
+        itemKey: keyOf(data[i], i),
+        itemData: data[i],
+      });
+    }
+  };
 }
 
 /** Hook: the list's bus, and whether a cell asked for viewability (then reported). */
