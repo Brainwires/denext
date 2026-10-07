@@ -321,7 +321,7 @@ Deno.test("native templates: Android registers and implements download/activate 
   assertStringIncludes(store, `KEY_STAGED = "staged"`);
   assertStringIncludes(body(store, "synchronized void beginTrial("), ".remove(KEY_STAGED)");
   assertStringIncludes(body(store, "synchronized void reset()"), ".remove(KEY_STAGED)");
-  assert(!body(store, "private File prepareLaunch()").includes("STAGED"));
+  assert(!body(store, "private String prepareLaunch()").includes("STAGED"));
   assert(!body(store, "synchronized File startDirectory()").includes("STAGED"));
 });
 
@@ -507,7 +507,8 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   const trust = init.indexOf("try DenextOtaStore.checkTrust(");
   assert(recompute > 0 && trust > recompute, init);
   assertStringIncludes(init, `code: "integrity"`);
-  assertStringIncludes(init, `signature: manifest["signature"] as? String`);
+  assertStringIncludes(init, `let signature = manifest["signature"] as? String`);
+  assertStringIncludes(init, "signature: signature\n            )");
   assertStringIncludes(store, "$0.path.utf16.lexicographicallyPrecedes($1.path.utf16)");
   assertStringIncludes(store, '.map { "\\($0.path)\\t\\($0.sha256)\\n" }');
   // The signed bytes: v1 without a sequence, v2 with one, v3 with a nativeFingerprint too (the
@@ -602,7 +603,7 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   );
   assertStringIncludes(
     parse,
-    "                minNative,\n                nativeFingerprint\n            ),",
+    "DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint)",
   );
   // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
   assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
@@ -1097,7 +1098,7 @@ Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
   // Trials: two attempts, a configurable boot timeout.
   assertStringIncludes(store, "static let maxTrialAttempts = 2");
   assertStringIncludes(
-    body(store, "func prepareLaunch()"),
+    body(store, "private func chooseLaunch()"),
     "trialAttempts < DenextOtaStore.maxTrialAttempts",
   );
   assertStringIncludes(body(store, "func beginTrial("), "trialAttempts = 1");
@@ -1182,7 +1183,7 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
   );
   // Trials and the plugin lifecycle.
   assertStringIncludes(
-    body(store, "private File prepareLaunch()"),
+    body(store, "private String prepareLaunch()"),
     "attempts < MAX_TRIAL_ATTEMPTS",
   );
   assertStringIncludes(store, `BOOT_TIMEOUT_META = "dev.denext.ota.BOOT_TIMEOUT"`);

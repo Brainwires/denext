@@ -6,6 +6,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   applyUiUpdate,
   checkForUiUpdate,
+  onOtaRejected,
   otaBooted,
   type OtaCheckResult,
   type OtaPrepareResult,
@@ -268,6 +269,7 @@ Deno.test("otaBooted / otaStatus / otaReset: native calls, no-ops on the web", a
       pending: null,
       rejected: null,
       staged: null,
+      tampered: null,
     });
     await otaReset();
     assertEquals(calls.reset, 1);
@@ -583,4 +585,50 @@ Deno.test("otaBooted: sends the page's own UI version, read once from its _denex
     if (savedLocation) Object.defineProperty(g, "location", savedLocation);
     else delete g.location;
   }
+});
+
+Deno.test("otaStatus reports a quarantined version as tampered", async () => {
+  const { plugin: p } = plugin({ current: null, bundled: BUNDLED, tampered: SERVER });
+  await withShell({ DenextOta: p }, async () => {
+    assertEquals((await otaStatus())?.tampered, SERVER);
+  });
+});
+
+Deno.test("onOtaRejected: hears the native otaRejected event; a no-op on the web and in an older shell", async () => {
+  // Web: nothing registered, nothing thrown.
+  onOtaRejected(() => {
+    throw new Error("must not fire on the web");
+  })();
+
+  // A shell whose plugin has no addListener (older than re-verification): a no-op.
+  await withShell({ DenextOta: plugin({}).plugin }, () => {
+    onOtaRejected(() => {
+      throw new Error("must not fire");
+    })();
+    return Promise.resolve();
+  });
+
+  const listeners: Array<{ name: string; fn: (event: Any) => void; removed: boolean }> = [];
+  const { plugin: p } = plugin({});
+  p.addListener = (name: string, fn: (event: Any) => void) => {
+    const entry = { name, fn, removed: false };
+    listeners.push(entry);
+    return Promise.resolve({ remove: () => void (entry.removed = true) });
+  };
+  await withShell({ DenextOta: p }, async () => {
+    const heard: unknown[] = [];
+    const stop = onOtaRejected((event) => heard.push(event));
+    assertEquals(listeners.map((l) => l.name), ["otaRejected"]);
+    listeners[0].fn({ version: SERVER, reason: "app.js does not match the signed manifest." });
+    // A malformed event (no version) is dropped; a missing reason reads as "".
+    listeners[0].fn({ reason: "x" });
+    listeners[0].fn({ version: SERVER });
+    assertEquals(heard, [
+      { version: SERVER, reason: "app.js does not match the signed manifest." },
+      { version: SERVER, reason: "" },
+    ]);
+    stop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert(listeners[0].removed);
+  });
 });

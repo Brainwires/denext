@@ -944,6 +944,15 @@ function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): bo
   return (meta ?? "").trim() !== "";
 }
 
+/** The platforms whose OTA store `denext mobile add-ota` wrote into the project. */
+async function otaPlatforms(p: MobileProject): Promise<(keyof typeof OTA_STORES)[]> {
+  const platforms: (keyof typeof OTA_STORES)[] = [];
+  for (const platform of ["iOS", "Android"] as const) {
+    if ((await readText(join(p.root, OTA_STORES[platform]))) !== null) platforms.push(platform);
+  }
+  return platforms;
+}
+
 /**
  * Over-the-air updates without a public key: a script in the page can call the OTA plugin, so an
  * unsigned UI is only as trustworthy as every origin it may come from. A release embeds the key.
@@ -951,13 +960,10 @@ function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): bo
 const otaSigning: Check = {
   id: "ota-signing",
   profiles: ["release"],
-  applies: async (p) =>
-    (await readText(join(p.root, OTA_STORES.iOS))) !== null ||
-    (await readText(join(p.root, OTA_STORES.Android))) !== null,
+  applies: async (p) => (await otaPlatforms(p)).length > 0,
   run: async (p) => {
     const findings: MobileDoctorFinding[] = [];
-    for (const platform of ["iOS", "Android"] as const) {
-      if ((await readText(join(p.root, OTA_STORES[platform]))) === null) continue;
+    for (const platform of await otaPlatforms(p)) {
       if (otaKeyEmbedded(p, platform)) continue;
       findings.push({
         check: "ota-signing",
@@ -967,6 +973,52 @@ const otaSigning: Check = {
           "that persists)",
         fix: "`denext ota keygen`, then `denext mobile add-ota --public-key <key>.pub`; sign " +
           "every manifest (`--sign` / DENEXT_OTA_SIGNING_KEY) and ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
+/**
+ * What marks an OTA plugin that re-verifies a downloaded UI whenever it serves it (generation 9),
+ * per platform: the file and the text it must contain. Each platform needs both: the store's
+ * launch check and the hook that checks each file as it is served.
+ */
+const OTA_REVERIFY_MARKERS = {
+  iOS: [
+    [OTA_STORES.iOS, "verifyInstalled"],
+    [BRIDGE_VIEW_CONTROLLER, "DenextOtaRouter()"],
+  ],
+  Android: [
+    [OTA_STORES.Android, "verifyInstalled"],
+    ["android/app/src/main/java/dev/denext/ota/DenextOta.java", "setRouteProcessor("],
+  ],
+} as const;
+
+/**
+ * An OTA plugin from before re-verification: it checks a downloaded UI once, when it arrives, so
+ * a file changed on the device afterwards (a rooted or jailbroken device, malware with storage
+ * access, corruption) is served at every launch.
+ */
+const otaReverify: Check = {
+  id: "ota-reverify",
+  profiles: ["store", "release"],
+  applies: async (p) => (await otaPlatforms(p)).length > 0,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const platform of await otaPlatforms(p)) {
+      let current = true;
+      for (const [file, marker] of OTA_REVERIFY_MARKERS[platform]) {
+        if (!(await readText(join(p.root, file)))?.includes(marker)) current = false;
+      }
+      if (current) continue;
+      findings.push({
+        check: "ota-reverify",
+        level: "error",
+        message: `${platform}: the over-the-air UI plugin predates re-verification: a downloaded ` +
+          "UI is checked only when it arrives, so a file changed on the device afterwards is served",
+        fix: "run `denext mobile add-ota` (an unedited plugin is upgraded; an edited one needs " +
+          "`--force` or the changes merged by hand); then ship a new binary",
       });
     }
     return findings;
@@ -997,6 +1049,7 @@ const CHECKS: readonly Check[] = [
   cssShimLeak,
   fastlane,
   otaSigning,
+  otaReverify,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

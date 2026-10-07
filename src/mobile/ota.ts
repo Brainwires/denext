@@ -22,6 +22,7 @@
  */
 
 import { runtimePlatform, shellPlugin } from "./bridge.ts";
+import { listenerDisposer, type ListenerHandle } from "./plugin.ts";
 import {
   isOtaManifest,
   OTA_MANIFEST_PATH,
@@ -112,6 +113,22 @@ export interface OtaStatus {
    * {@linkcode applyUiUpdate}, or `null`. It never becomes the running UI on its own.
    */
   readonly staged: string | null;
+  /**
+   * The last downloaded version that failed re-verification and was taken out of service (see
+   * {@linkcode onOtaRejected}), or `null`. Cleared by {@linkcode otaReset}; `null` from a shell
+   * older than that check.
+   */
+  readonly tampered: string | null;
+}
+
+/**
+ * What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification.
+ */
+export interface OtaRejectedEvent {
+  /** The version that was quarantined. */
+  readonly version: string;
+  /** The native side's reason, e.g. `"assets/app.js does not match the signed manifest."`. */
+  readonly reason: string;
 }
 
 /** The JS face of the native `DenextOta` plugin (Capacitor seeds a stub per method). */
@@ -133,6 +150,11 @@ interface DenextOtaPlugin {
   }): Promise<unknown>;
   /** Added with prepare/apply; a shell installed before that lacks them. */
   activate?(options: { version: string }): Promise<unknown>;
+  /** Capacitor's listener registration (the `otaRejected` event). */
+  addListener?(
+    eventName: "otaRejected",
+    listener: (event: Partial<OtaRejectedEvent> | undefined) => void,
+  ): ListenerHandle | Promise<ListenerHandle>;
 }
 
 /** A plugin whose shell also has the staged-update methods. */
@@ -808,7 +830,43 @@ export async function otaStatus(): Promise<OtaStatus | null> {
     pending: s.pending ?? null,
     rejected: s.rejected ?? null,
     staged: s.staged ?? null,
+    tampered: s.tampered ?? null,
   };
+}
+
+/**
+ * Call `listener` when the native side refuses a downloaded UI that no longer matches its signed
+ * manifest. The shell re-verifies a downloaded UI whenever it serves it: at every launch it
+ * checks the manifest stored with the files (its signature with the embedded key, and its
+ * version), and it hashes each file the first time it serves it. A file changed, added or
+ * removed on the device after the download (another app on a rooted or jailbroken device,
+ * malware with storage access, or corruption) is never served: the version is quarantined, the
+ * webview switches to the bundled UI (or the confirmed one), and this fires there. The event is
+ * kept until a listener is added, so register early (in the root layout); {@linkcode otaStatus}
+ * reports the same version as `tampered`. The version may be downloaded again.
+ *
+ * On the web, and in a shell whose `DenextOta` plugin predates this check, it never fires and
+ * the returned function does nothing.
+ *
+ * @param listener Called with the quarantined version and the reason.
+ * @returns A function that removes the listener.
+ * @example
+ * ```ts
+ * import { onOtaRejected } from "denext/mobile";
+ *
+ * onOtaRejected(({ version, reason }) => reportToServer("ota-tampered", { version, reason }));
+ * ```
+ */
+export function onOtaRejected(listener: (event: OtaRejectedEvent) => void): () => void {
+  const plugin = otaPlugin();
+  if (typeof plugin?.addListener !== "function") return () => {};
+  return listenerDisposer(plugin.addListener("otaRejected", (event) => {
+    if (typeof event?.version !== "string") return;
+    listener({
+      version: event.version,
+      reason: typeof event.reason === "string" ? event.reason : "",
+    });
+  }));
 }
 
 /**

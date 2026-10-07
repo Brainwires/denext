@@ -20483,6 +20483,25 @@
           "denextOnly": true
         },
         {
+          "name": "onOtaRejected",
+          "slug": "onOtaRejected",
+          "kind": "function",
+          "signature": "onOtaRejected(listener: (event: OtaRejectedEvent) => void): () => void",
+          "doc": "Call listener when the native side refuses a downloaded UI that no longer matches its signed manifest. The shell re-verifies a downloaded UI whenever it serves it: at every launch it checks the manifest stored with the files (its signature with the embedded key, and its version), and it hashes each file the first time it serves it. A file changed, added or removed on the device after the download (another app on a rooted or jailbroken device, malware with storage access, or corruption) is never served: the version is quarantined, the webview switches to the bundled UI (or the confirmed one), and this fires there. The event is kept until a listener is added, so register early (in the root layout); otaStatus reports the same version as tampered. The version may be downloaded again.",
+          "docFull": "Call `listener` when the native side refuses a downloaded UI that no longer matches its signed\nmanifest. The shell re-verifies a downloaded UI whenever it serves it: at every launch it\nchecks the manifest stored with the files (its signature with the embedded key, and its\nversion), and it hashes each file the first time it serves it. A file changed, added or\nremoved on the device after the download (another app on a rooted or jailbroken device,\nmalware with storage access, or corruption) is never served: the version is quarantined, the\nwebview switches to the bundled UI (or the confirmed one), and this fires there. The event is\nkept until a listener is added, so register early (in the root layout); {@linkcode otaStatus}\nreports the same version as `tampered`. The version may be downloaded again.\n\nOn the web, and in a shell whose `DenextOta` plugin predates this check, it never fires and\nthe returned function does nothing.",
+          "params": [
+            {
+              "name": "listener",
+              "doc": "Called with the quarantined version and the reason."
+            }
+          ],
+          "returns": "A function that removes the listener.",
+          "examples": [
+            "```ts\nimport { onOtaRejected } from \"denext/mobile\";\n\nonOtaRejected(({ version, reason }) => reportToServer(\"ota-tampered\", { version, reason }));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "onPushReceived",
           "slug": "onPushReceived",
           "kind": "function",
@@ -20898,6 +20917,18 @@
           "signature": "type OtaPrepareResult = object | object | object | object | object",
           "doc": "The outcome of prepareUiUpdate. It never throws; every failure is a value.",
           "docFull": "The outcome of {@linkcode prepareUiUpdate}. It never throws; every failure is a value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OtaRejectedEvent",
+          "slug": "OtaRejectedEvent",
+          "kind": "interface",
+          "signature": "interface OtaRejectedEvent",
+          "doc": "What onOtaRejected reports: a downloaded UI that failed re-verification.",
+          "docFull": "What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification.",
           "params": [],
           "returns": "",
           "examples": [],

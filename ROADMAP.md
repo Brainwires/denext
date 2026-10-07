@@ -36,7 +36,8 @@
 - **Android on a real device.** Every Android half (`denext/mobile`, the `denext mobile add`
   generators, React Native mode's shell-backed APIs, `mobile dev`, the storage plugin,
   `NativeViewSlot`'s `scrollPassthrough`) is compiled and unit-tested only, and the OTA plugin's
-  Android template is compiled by hand, not in CI. The emulator comparison has Capacitor missing
+  Android templates are compiled and run in CI against JDK stand-ins for Android and Capacitor
+  (`tests/ota-reverify.test.ts`), not built with Gradle there. The emulator comparison has Capacitor missing
   vsync on 67–70% of fling frames against React Native's 25–28%; run on a device (a device farm
   is an option), then profile the WebView list (layers, `content-visibility`) if the gap holds.
   No Android parity claim before that.

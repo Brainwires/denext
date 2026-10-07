@@ -53,6 +53,10 @@ and this project adheres to
   `denext mobile add text-to-speech` capability (`@capacitor-community/text-to-speech`, which
   the Android shell needs because its WebView has no `speechSynthesis`). `denext migrate --from
   expo` suggests both capabilities. Each shim's omissions are in `denext/expo/manifest`.
+- **`onOtaRejected` and `otaStatus().tampered`** (`denext/mobile`): the page hears a downloaded UI
+  the shell refused because it no longer matches its signed manifest (see Security), and
+  `otaStatus()` names that version until `otaReset()`. `denext mobile doctor` (`store` and
+  `release`) flags an OTA plugin from before re-verification (`ota-reverify`, an error).
 - **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
   `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)
@@ -322,6 +326,21 @@ and this project adheres to
   (Clerk's client JWT lives here); a write or delete removes the old item too. An older runtime
   keeps the `security` path. On macOS the `secure-store` capability now bakes an unscoped
   `--allow-sys` (the runtime's store) besides `--allow-run=security`.
+- **Over-the-air UIs are re-verified whenever the shell serves them, not only on arrival.** A
+  downloaded UI was checked once, when it was downloaded, so a file changed on the device
+  afterwards (another app on a rooted or jailbroken device, malware with storage access,
+  corruption) was served at every launch. The OTA plugin (template generation 9) now stores the
+  manifest's signed fields with the files and checks that manifest at every launch, before the
+  first page (the signature with the embedded key, and the version recomputed from the file
+  list), and checks each file's SHA-256 and size the first time it serves it in a process (iOS:
+  `DenextOtaRouter` in front of Capacitor's asset handler; Android: the `RouteProcessor`
+  `DenextOta.prepare` gives the bridge). Hashing on first serve rather than all at launch keeps a
+  large UI's launch cost to the files a page loads (T3 Code's UI is 2,424 files, 41 MB). A
+  mismatch, or a file the manifest does not list, quarantines the version (`quarantine/`), falls
+  back to the bundled UI (or the confirmed download, re-verified) and fires `otaRejected`.
+  Existing apps re-run `denext mobile add-ota` (an unedited plugin is upgraded in place) and ship
+  a new binary. The desktop updater already re-verified the overlay (signature and every file) at
+  every launch; it now has tests for an edited, unsigned or re-signed stored manifest.
 
 ## [3.2.0] - 2026-10-07
 

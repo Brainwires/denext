@@ -2866,17 +2866,45 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           version directory.
         </li>
       </ul>
+      <p>
+        <strong>Re-verification.</strong>{" "}
+        A downloaded UI is verified when it arrives and again whenever the app serves it. Every
+        launch checks the manifest stored with the files before the first page (its signature with
+        the embedded key, and its version recomputed from the file list), and the shell checks each
+        file's SHA-256 and size the first time it serves it in a process (iOS: the bridge's router;
+        Android: the bridge's route processor). Only the files a page actually loads are hashed, so
+        a large UI does not slow the launch. A file changed, added or removed on the device after
+        the download (another app on a rooted or jailbroken device, malware with storage access,
+        corruption) is never served: the version is moved to{" "}
+        <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
+        re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
+        reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}
+        <code>rejected</code>, so the app may download it again. Shells installed before denext 3.3
+        (OTA template generation 9) verify only on arrival: re-run{" "}
+        <code>denext mobile add-ota</code> and ship a new binary (
+        <code>denext mobile doctor</code> flags them as <code>ota-reverify</code>).
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useEffect } from "denext";
+import { onOtaRejected } from "denext/mobile";
+
+export function OtaWatch() {
+  // Register early (the root layout): the event waits for its first listener.
+  useEffect(() => onOtaRejected(({ version, reason }) => report("ota-tampered", { version, reason })), []);
+  return null;
+}`}
+      </Code>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
         Downgrade protection covers sequenced (v2) releases: a device that never accepted a
         sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
         is the only thing standing between the app and a hostile UI. Rotating the key takes an app
-        release, and a leaked key is valid until then. Downloaded files are verified once, when they
-        arrive: tampering with the app's data directory afterwards (which needs a jailbroken or
-        rooted device, or a debug build) is not detected at the next launch. On iOS, a web content
-        process that dies during a trial is reloaded by Capacitor itself; if that leaves the page
-        blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and the
-        next launch counts it as a failed trial attempt.
+        release, and a leaked key is valid until then. A file already verified in a process is not
+        hashed again until the next launch, so a change made while the app runs is caught then. On
+        iOS, a web content process that dies during a trial is reloaded by Capacitor itself; if that
+        leaves the page blank, the watchdog rolls it back. On Android, a renderer crash takes the
+        app down, and the next launch counts it as a failed trial attempt.
       </Callout>
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}

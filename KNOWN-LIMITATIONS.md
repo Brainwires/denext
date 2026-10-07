@@ -157,9 +157,9 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   not applied; an `"over"` view hides while covered; controls inside an iOS `"embed"` view
   don't complete a tap (use `"under"`); a slot a list unmounts destroys its view.
 - **OTA updates can't change what the app is** (Apple DPLA 3.3.1(B)); the signing key is in the
-  binary, so rotating it takes a store release; downloaded files are verified once, on arrival;
-  the fingerprint gate can't see native code pulled in from outside `ios/`, `android/` and the
-  declared plugins; an iOS web-content crash during a trial is reloaded by Capacitor, not the plugin.
+  binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
+  in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
+  trial is reloaded by Capacitor, not the plugin.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).

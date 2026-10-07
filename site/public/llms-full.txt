@@ -2296,6 +2296,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onNativeEvent<D>(name: string, event: string, handler: (data: D) => void): () => void` — Call handler with each event the native plugin name emits. Does nothing (and returns a no-op) where nativeModule would return null.
 - `onOpenFile(callback: (file: OpenedFile) => void): () => void` — Call callback for every file the OS opens with the app (Deno Desktop).
 - `onOrientationChange(cb: (orientation: Orientation) => void): () => void` — Call cb with the new orientation each time the screen rotates.
+- `onOtaRejected(listener: (event: OtaRejectedEvent) => void): () => void` — Call listener when the native side refuses a downloaded UI that no longer matches its signed manifest. The shell re-verifies a downloaded UI whenever it serves it: at every launch it checks the manifest stored with the files (its signature with the embedded key, and its version), and it hashes each file the first time it serves it. A file changed, added or removed on the device after the download (another app on a rooted or jailbroken device, malware with storage access, or corruption) is never served: the version is quarantined, the webview switches to the bundled UI (or the confirmed one), and this fires there. The event is kept until a listener is added, so register early (in the root layout); otaStatus reports the same version as tampered. The version may be downloaded again.
 - `onPushReceived(callback: (notification: PushNotification) => void): () => void` — Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing.
 - `onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void` — Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions).
 - `onQuickAction(callback: (id: string) => void): () => void` — Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.
@@ -2322,6 +2323,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
+- `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
 - `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
@@ -2723,6 +2725,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useAuthRequest(config?: Partial<GoogleAuthRequestConfig>, redirectUriOptions?: Partial<AuthSessionRedirectUriOptions>): GoogleAuthRequestHook` — A Google authorization request, its latest response, and the prompt. Inside the shell the code is exchanged for tokens once the prompt succeeds (see the module docs).
 - `useIdTokenAuthRequest(config: Partial<GoogleAuthRequestConfig>, redirectUriOptions?: Partial<AuthSessionRedirectUriOptions>): GoogleAuthRequestHook` — A Google request for an ID token (for Firebase and your own backend): on the web it asks for id_token directly; in the shell it runs the code flow and the exchange returns it. Read it from response.params.id_token.
 
+### `denext/expo/battery`
+
+- `addBatteryLevelListener(listener: (event: BatteryLevelEvent) => void): Subscription` — Call listener when the level changes.
+- `addBatteryStateListener(listener: (event: BatteryStateEvent) => void): Subscription` — Call listener when the charging state changes.
+- `addLowPowerModeListener(listener: (event: PowerModeEvent) => void): Subscription` — Call listener when Low Power Mode changes: never, since it is not observable here.
+- `BATTERY_POLL_MS: 30000` — How often the shell's battery is polled while a listener is subscribed (ms).
+- `interface BatteryLevelEvent` — What a level listener receives.
+- `enum BatteryState` — The battery's charging state.
+- `interface BatteryStateEvent` — What a state listener receives.
+- `getBatteryLevelAsync(): Promise<number>` — The battery level.
+- `getBatteryStateAsync(): Promise<BatteryState>` — The charging state.
+- `getPowerStateAsync(): Promise<PowerState>` — The level, state and Low Power Mode together.
+- `isAvailableAsync(): Promise<boolean>` — Whether the battery can be read: the shell with @capacitor/device, or a browser with the Battery Status API.
+- `isBatteryOptimizationEnabledAsync(): Promise<boolean>` — Whether Android's battery optimisation applies to the app: not observable here.
+- `isLowPowerModeEnabledAsync(): Promise<boolean>` — Whether Low Power Mode is on: not observable here.
+- `interface PowerModeEvent` — What a Low Power Mode listener receives.
+- `interface PowerState` — The battery's level, state and Low Power Mode together.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `useBatteryLevel(): number` — Hook form: the level, -1 until it is read.
+- `useBatteryState(): BatteryState` — Hook form: the charging state, UNKNOWN until it is read.
+- `useLowPowerMode(): boolean` — Hook form: whether Low Power Mode is on (always false here).
+- `usePowerState(): PowerState` — Hook form of getPowerStateAsync, updated on every change.
+
 ### `denext/expo/blur`
 
 - `BlurTargetView(props: BlurTargetViewProps): VNode` — Android's blur target: a plain view here.
@@ -2774,6 +2799,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useCameraPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the camera permission: [response, request, get].
 - `useMicrophonePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the microphone permission: [response, request, get].
 - `type VideoCodec = avc1 | hvc1 | jpeg | apcn | ap4h` — A video codec, by Expo's name.
+
+### `denext/expo/cellular`
+
+- `enum CellularGeneration` — The cellular generation.
+- `getCarrierNameAsync(): Promise<string | null>` — The carrier's name: not readable here.
+- `getCellularGenerationAsync(): Promise<CellularGeneration>` — The connection's generation, from the Network Information API (its effectiveType is the connection's measured speed class, which is what Expo's web build reports too).
+- `getIsoCountryCodeAsync(): Promise<string | null>` — The carrier's ISO country code: not readable here.
+- `getMobileCountryCodeAsync(): Promise<string | null>` — The carrier's mobile country code: not readable here.
+- `getMobileNetworkCodeAsync(): Promise<string | null>` — The carrier's mobile network code: not readable here.
+- `getPermissionsAsync(): Promise<PermissionResponse>` — The phone-state permission: none is needed here.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the phone-state permission: none is needed here.
+- `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+
+### `denext/expo/checkbox`
+
+- `Checkbox(props: CheckboxProps): VNode` — A checkbox.
+- `interface CheckboxEvent` — What onChange receives in nativeEvent.
+- `interface CheckboxProps` — Checkbox props (plus any view prop).
+- `default(props: CheckboxProps): VNode` — A checkbox.
 
 ### `denext/expo/clipboard`
 
@@ -3010,6 +3058,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type UnloadFontOptions = Pick<FontResource, display | weight | style>` — Options for unloadAsync: which faces of the family to remove.
 - `useFonts(map: FontMap): tuple` — Load fonts for a component: [loaded, error].
 
+### `denext/expo/gl`
+
+- `type ComponentOrHandle = null | number | Record<string, any>` — A component, a native handle, or nothing (what Expo's camera texture takes).
+- `interface ExpoWebGLRenderingContext` — The context onContextCreate receives: WebGL plus Expo's additions.
+- `getWorkletContext(contextId: number): ExpoWebGLRenderingContext | undefined` — The context of a worklet runtime: there is none here (GL runs on the page's thread).
+- `enum GLLoggingOption` — What Expo's GL logging can show (logging is not available here).
+- `interface GLSnapshot` — A snapshot.
+- `GLView(props: GLViewProps): VNode` — A view that draws with WebGL.
+- `interface GLViewHandle` — What the ref exposes.
+- `interface GLViewProps` — GLView props (plus any view prop).
+- `interface SnapshotOptions` — Options for a snapshot.
+- `interface SurfaceCreateEvent` — What the native view reports when its surface exists.
+- `interface WebGLObject` — A GL object (destroyObjectAsync).
+
 ### `denext/expo/glass-effect`
 
 - `type GlassColorScheme = auto | light | dark` — The glass colour scheme.
@@ -3107,6 +3169,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `useKeepAwake(tag?: string, _options?: KeepAwakeOptions): void` — Keep the screen on while the component is mounted.
 
+### `denext/expo/linear-gradient`
+
+- `LinearGradient(props: LinearGradientProps): VNode` — A view whose background is a linear gradient.
+- `type LinearGradientPoint = object | NativeLinearGradientPoint` — A point in the view's unit square: { x, y } or [x, y] ({ x: 0, y: 0 } is the top left).
+- `interface LinearGradientProps` — LinearGradient props (plus any view prop).
+- `type NativeLinearGradientPoint = tuple` — A point as a tuple: [x, y], each 0–1.
+
 ### `denext/expo/linking`
 
 - `addEventListener(_type: url, handler: URLListener): Subscription` — Call handler for each link that opens the app while it runs (the launch link comes from getInitialURL). The link is not routed: that stays the handler's job.
@@ -3149,6 +3218,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type LocalAuthenticationResult = object | object` — What authenticateAsync resolves.
 - `enum SecurityLevel` — How the device is secured.
 - `supportedAuthenticationTypesAsync(): Promise<AuthenticationType[]>` — The biometric sensor kinds the device has.
+
+### `denext/expo/localization`
+
+- `interface Calendar` — The user's calendar preferences.
+- `enum CalendarIdentifier` — The Unicode calendar types.
+- `getCalendars(): tuple` — The user's calendar preferences (one entry).
+- `getLocales(): tuple` — The user's locales, most preferred first; always at least one.
+- `interface Locale` — One of the user's locales.
+- `useCalendars(): tuple` — Hook form of getCalendars: re-renders when the user's languages change.
+- `useLocales(): tuple` — Hook form of getLocales: re-renders when the user's languages change.
+- `enum Weekday` — Days of the week as firstWeekday numbers them (Sunday = 1).
 
 ### `denext/expo/location`
 
@@ -3199,6 +3279,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useBackgroundPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the background permission (always denied).
 - `useForegroundPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the foreground permission: [response, request, get].
 - `watchPositionAsync(options: LocationOptions, callback: LocationCallback, errorHandler?: LocationErrorCallback): Promise<LocationSubscription>` — Watch the position; callback runs for each fix at least distanceInterval metres from the last one delivered.
+
+### `denext/expo/mail-composer`
+
+- `composeAsync(options: MailComposerOptions): Promise<MailComposerResult>` — Open the mail app with a message filled in.
+- `getClients(): MailClient[]` — The mail apps installed: not observable from a page, so none (as Expo's web build).
+- `isAvailableAsync(): Promise<boolean>` — Whether a mail app can be opened: wherever there is a page to open it from.
+- `interface MailClient` — A mail app (getClients).
+- `interface MailComposerOptions` — What to put in the message.
+- `interface MailComposerResult` — The result of composeAsync.
+- `enum MailComposerStatus` — What happened to the message.
 
 ### `denext/expo/manifest`
 
@@ -3316,6 +3406,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SortByValue = tuple | SortByKey` — A sort key, optionally with its direction.
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+
+### `denext/expo/mesh-gradient`
+
+- `MeshGradientView(props: MeshGradientViewProps): VNode` — A view filled with a mesh gradient.
+- `interface MeshGradientViewProps` — MeshGradientView props (plus any view prop).
 
 ### `denext/expo/navigation-bar`
 
@@ -3497,6 +3592,36 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `WHEN_UNLOCKED: KeychainAccessibilityConstant` — Only while the device is unlocked.
 - `WHEN_UNLOCKED_THIS_DEVICE_ONLY: KeychainAccessibilityConstant` — As WHEN_UNLOCKED, on this device.
 
+### `denext/expo/sensors`
+
+- `Accelerometer: DeviceSensor<AccelerometerMeasurement>` — The accelerometer: accelerationIncludingGravity in g.
+- `type AccelerometerMeasurement = Vector3Measurement` — An accelerometer reading.
+- `Barometer: DeviceSensor<BarometerMeasurement>` — The barometer: no web API, so unavailable.
+- `interface BarometerMeasurement` — A barometer reading.
+- `DeviceMotion: DeviceMotionSensor` — Device motion: acceleration, rotation and rotation rate together.
+- `interface DeviceMotionMeasurement` — A device-motion reading.
+- `enum DeviceMotionOrientation` — The screen's orientation, as DeviceMotion reports it.
+- `class DeviceMotionSensor` — Device motion.
+- `class DeviceSensor<Measurement>` — The base of every sensor: listeners, the update interval and the permission calls. Its first argument is the reading source (Expo's: the native module).
+- `Gyroscope: DeviceSensor<GyroscopeMeasurement>` — The gyroscope: rotationRate in rad/s.
+- `type GyroscopeMeasurement = Vector3Measurement` — A gyroscope reading (rad/s).
+- `LightSensor: DeviceSensor<LightSensorMeasurement>` — The ambient light sensor: the Generic Sensor API's AmbientLightSensor, where present.
+- `interface LightSensorMeasurement` — A light sensor reading.
+- `type Listener<E> = (event: E) => void` — A sensor listener.
+- `Magnetometer: DeviceSensor<MagnetometerMeasurement>` — The magnetometer: the Generic Sensor API's Magnetometer, where the browser has it.
+- `type MagnetometerMeasurement = Vector3Measurement` — A magnetometer reading (µT).
+- `MagnetometerUncalibrated: DeviceSensor<MagnetometerUncalibratedMeasurement>` — The uncalibrated magnetometer: the Generic Sensor API's UncalibratedMagnetometer.
+- `type MagnetometerUncalibratedMeasurement = Vector3Measurement` — An uncalibrated magnetometer reading (µT).
+- `Pedometer: object` — The pedometer: no web API, so unavailable (isAvailableAsync() is false, a watch never fires, a count rejects with ERR_UNAVAILABLE).
+- `interface PedometerResult` — A step count.
+- `type PedometerUpdateCallback = (result: PedometerResult) => void` — Called with step counts.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `interface SensorSource<M>` — A source of readings: whether it exists, and how to start it. start returns the stop. Expo's sensor classes take their native module first; here it is this.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `interface Vector3Measurement` — A three-axis reading (and its time in seconds).
+
 ### `denext/expo/sharing`
 
 - `clearSharedPayloads(): void` — Forget the items shared into the app (there are none here).
@@ -3511,6 +3636,31 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SharingOptions` — Options for shareAsync.
 - `useIncomingShare(): UseIncomingShareResult` — Hook form of the incoming-share API: always empty here.
 - `interface UseIncomingShareResult` — What useIncomingShare returns.
+
+### `denext/expo/sms`
+
+- `isAvailableAsync(): Promise<boolean>` — Whether messages can be sent: in the iOS / Android shell.
+- `sendSMSAsync(addresses: string | string[], message: string, options?: SMSOptions): Promise<SMSResponse>` — Open the Messages app with a message to addresses filled in.
+- `interface SMSAttachment` — A file to attach (not supported here).
+- `interface SMSOptions` — Options for sendSMSAsync.
+- `interface SMSResponse` — What happened to the message (unknown here: the Messages app reports nothing).
+
+### `denext/expo/speech`
+
+- `getAvailableVoicesAsync(): Promise<Voice[]>` — The voices the engine has.
+- `isSpeakingAsync(): Promise<boolean>` — Whether it is speaking.
+- `maxSpeechInputLength: number` — The longest text one speak takes (the Web Speech API's limit; Expo's web value).
+- `interface NativeBoundaryEvent` — What onBoundary receives from the native engine.
+- `type NativeBoundaryEventCallback = (ev: NativeBoundaryEvent) => void` — A native boundary callback.
+- `pause(): Promise<void>` — Pause (the Web Speech API only).
+- `resume(): Promise<void>` — Resume after pause (the Web Speech API only).
+- `speak(text: string, options?: SpeechOptions): void` — Speak text, after anything already queued.
+- `type SpeechEventCallback = (this: SpeechSynthesisUtterance, ev: SpeechSynthesisEvent) => any` — A web speech event callback (this is the utterance).
+- `interface SpeechOptions` — How to speak, and what to call back.
+- `stop(): Promise<void>` — Stop speaking and drop the queue; each dropped utterance's onStopped is called.
+- `interface Voice` — A voice.
+- `enum VoiceQuality` — A voice's quality.
+- `type WebVoice = Voice & object` — A voice as the Web Speech API (and the plugin) describes it.
 
 ### `denext/expo/splash-screen`
 
@@ -3564,6 +3714,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `SymbolView(props: SymbolViewProps): VNode` — A system symbol: the SF Symbol in the iOS shell, the Material Symbol (or fallback) elsewhere.
 - `interface SymbolViewProps` — SymbolView props.
 - `unstable_getMaterialSymbolSourceAsync(_symbol: AndroidSymbol | null, _size: number, _color: string): Promise<null>` — The image source of a Material Symbol: not available here.
+
+### `denext/expo/system-ui`
+
+- `type ColorValue = string | number` — A colour: a CSS colour string, or a processColor number (0xAARRGGBB).
+- `getBackgroundColorAsync(): Promise<ColorValue | null>` — The root view's background colour: the one last set (#RRGGBB for a hex colour or a number), or null when none was.
+- `setBackgroundColorAsync(color: ColorValue | null): Promise<void>` — Set the root view's background colour: the page's (<html> and <body>). null clears it, back to the stylesheet's colour.
 
 ### `denext/expo/tracking-transparency`
 
@@ -4085,6 +4241,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type VideoSource = string | object | null` — A video source: a URL, { uri }, or null.
 - `VideoView(props: VideoViewProps): VNode` — Shows a player's video: in the native video view where it is registered, else in the player's <video>.
 - `interface VideoViewProps` — VideoView props.
+
+### `denext/expo/video-thumbnails`
+
+- `getThumbnailAsync(sourceFilename: string, options?: VideoThumbnailsOptions): Promise<VideoThumbnailsResult>` — A frame of the video at sourceFilename as a JPEG.
+- `interface VideoThumbnailsOptions` — Options for getThumbnailAsync.
+- `interface VideoThumbnailsResult` — The thumbnail.
 
 ### `denext/expo/web-browser`
 
