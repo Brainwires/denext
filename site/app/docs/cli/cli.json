@@ -725,6 +725,11 @@
           "description": "Force source: next | remix | vite | cra | generic | expo"
         },
         {
+          "name": "check",
+          "type": "boolean",
+          "description": "Report what migrate would change and what won't migrate; writes nothing (read permission is enough; add --json for the machine-readable report)"
+        },
+        {
           "name": "desktop",
           "type": "boolean",
           "description": "Also scaffold a desktop entry"

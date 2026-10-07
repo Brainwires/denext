@@ -1,11 +1,12 @@
 // Small filesystem probes shared by the migration paths (Next / SPA / Remix).
 
 import { join } from "@std/path";
+import { mfs } from "./migrate-io.ts";
 
 /** Whether `p` exists (file or directory). */
 export async function exists(p: string): Promise<boolean> {
   try {
-    await Deno.stat(p);
+    await mfs.stat(p);
     return true;
   } catch {
     return false;

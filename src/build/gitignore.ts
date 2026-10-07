@@ -1,6 +1,7 @@
 // Shared `.gitignore` appender for the migrate / prisma-migrate build steps.
 
 import { join } from "@std/path";
+import { mfs } from "./migrate-io.ts";
 
 /**
  * Append `entries` to `dir`'s `.gitignore` under the denext marker, idempotently:
@@ -18,7 +19,7 @@ export async function appendGitignore(dir: string, entries: string[]): Promise<s
   const path = join(dir, ".gitignore");
   let current = "";
   try {
-    current = await Deno.readTextFile(path);
+    current = await mfs.readTextFile(path);
   } catch { /* no .gitignore yet — create one */ }
   const have = new Set(current.split(/\r?\n/).map((l) => l.trim()));
   const missing = entries.filter((e) => !have.has(e));
@@ -27,7 +28,7 @@ export async function appendGitignore(dir: string, entries: string[]): Promise<s
   const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
   // Separate from existing content with a blank line; finish a dangling last line first.
   const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, current + lead + block);
+  await mfs.remove(path).catch(() => {});
+  await mfs.writeTextFile(path, current + lead + block);
   return path;
 }

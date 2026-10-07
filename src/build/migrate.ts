@@ -15,6 +15,7 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { mfs } from "./migrate-io.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
@@ -346,6 +347,37 @@ export interface MigrateResult {
   prisma?: PrismaMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
+  /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
+  nextConfig?: NextConfigReport;
+}
+
+/** How the app's `next.config.*` translated into `denext.config.ts`. */
+export interface NextConfigReport {
+  /** The config file that was read (`next.config.ts`, …). */
+  file: string;
+  /** The config was evaluated; false means every key must be ported by hand. */
+  evaluated: boolean;
+  /** Why evaluation failed, when it did. */
+  reason?: string;
+  /** Keys copied into `denext.config.ts` (literal fields and inlined rule functions). */
+  carried: string[];
+  /** Keys denext does not copy, each with its denext equivalent (empty when none is needed). */
+  dropped: Array<{ key: string; note: string }>;
+}
+
+/** The {@link NextConfigReport} for a translation, or undefined when the app has no next.config. */
+function nextConfigReport(next: NextConfigTranslation | null): NextConfigReport | undefined {
+  if (!next?.file) return undefined;
+  return {
+    file: next.file,
+    evaluated: !next.raw,
+    ...(next.raw && next.rawReason ? { reason: next.rawReason } : {}),
+    carried: [...Object.keys(next.fields), ...Object.keys(next.rules)],
+    dropped: next.dropped.map((key) => ({
+      key,
+      note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
+    })),
+  };
 }
 
 /** What `denext migrate --from expo` found and wrote, beyond the SPA facts. */
@@ -384,7 +416,7 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
     // parser — a naive `//`-stripper corrupts `//` inside string values (e.g. the
     // `"$schema": "https://…"` URL the official Next.js example tsconfigs carry),
     // which silently drops every `paths` alias.
-    return parseJsonc(await Deno.readTextFile(path)) as Record<string, unknown>;
+    return parseJsonc(await mfs.readTextFile(path)) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -718,13 +750,13 @@ async function writeDenoJsonUnlessAuthored(
 ): Promise<boolean> {
   const denoJsonPath = join(dir, "deno.json");
   if (!(await writable(denoJsonPath))) return true;
-  await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+  await mfs.writeTextFile(denoJsonPath, denoJsonText(denoJson));
   written.unshift(denoJsonPath);
   return false;
 }
 
 async function writable(path: string): Promise<boolean> {
-  const cur = await Deno.readTextFile(path).catch(() => null);
+  const cur = await mfs.readTextFile(path).catch(() => null);
   return cur === null || cur.includes(GEN_SENTINEL);
 }
 
@@ -745,6 +777,8 @@ interface NextConfigTranslation {
   file: string | null;
   /** True when the config couldn't be evaluated → emit a hand-port note instead. */
   raw: boolean;
+  /** Why the evaluation failed (when {@link raw}). */
+  rawReason?: string;
   /**
    * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
    * remark/rehype/recma lists). `createMDX` hides those options inside a webpack-loader
@@ -869,7 +903,7 @@ async function readNextConfig(
  */
 async function hasMdxPluginWiring(configFile: string): Promise<boolean> {
   try {
-    const src = await Deno.readTextFile(configFile);
+    const src = await mfs.readTextFile(configFile);
     return /\b(remark|rehype|recma)Plugins\b/.test(src) ||
       (/@next\/mdx|createMDX/.test(src) && /codehike|remark-|rehype-|recma-/.test(src));
   } catch {
@@ -895,7 +929,7 @@ async function evalNextConfig(
     program: NEXT_EVAL_PROGRAM,
     marker: NEXT_EVAL_MARKER,
   });
-  if (!result.ok) return { ...base, raw: true };
+  if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
   return {
     ...base,
     ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
@@ -985,7 +1019,7 @@ async function writePagesRouterConfig(
     pluginImports.push(`import { effect } from "@denext/effect";`);
     pluginCalls.push("effect()");
   }
-  await Deno.writeTextFile(
+  await mfs.writeTextFile(
     configPath,
     GEN_MARKER + "\n" +
       pluginImports.join("\n") + "\n\n" +
@@ -1022,7 +1056,7 @@ export async function findTailwindInput(
   for (const rel of candidates) {
     let css: string;
     try {
-      css = await Deno.readTextFile(join(dir, rel));
+      css = await mfs.readTextFile(join(dir, rel));
     } catch {
       continue;
     }
@@ -1061,7 +1095,7 @@ export async function findSpaTailwindInput(dir: string): Promise<string | null> 
   const known = await findTailwindInput(dir, SPA_TAILWIND_INPUT_CANDIDATES);
   if (known) return known;
   for (const rel of await cssFilesUnder(join(dir, "src"), "src", 3)) {
-    const css = await Deno.readTextFile(join(dir, rel)).catch(() => "");
+    const css = await mfs.readTextFile(join(dir, rel)).catch(() => "");
     if (TAILWIND_DIRECTIVE.test(css)) return "./" + rel;
   }
   return null;
@@ -1073,7 +1107,7 @@ async function cssFilesUnder(abs: string, rel: string, depth: number): Promise<s
   const files: string[] = [];
   const dirs: string[] = [];
   try {
-    for await (const e of Deno.readDir(abs)) {
+    for await (const e of mfs.readDir(abs)) {
       if (e.isFile && e.name.endsWith(".css")) files.push(`${rel}/${e.name}`);
       else if (e.isDirectory && e.name !== "node_modules") dirs.push(e.name);
     }
@@ -1101,20 +1135,20 @@ async function writeAppRouterConfig(
   imports: Record<string, string>,
   hasEffect: boolean,
   written: string[],
-): Promise<boolean> {
+): Promise<{ exists: boolean; next: NextConfigTranslation | null }> {
   const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps)
     ? await findTailwindInput(dir)
     : null;
   const publicEnv = await collectNextPublicEnvKeys(dir);
   const next = await readNextConfig(dir);
   if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
-  if (!(await writable(configPath))) return true;
-  await Deno.writeTextFile(
+  if (!(await writable(configPath))) return { exists: true, next };
+  await mfs.writeTextFile(
     configPath,
     nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
   );
   written.push(configPath);
-  return false;
+  return { exists: false, next };
 }
 
 /**
@@ -1138,7 +1172,7 @@ export async function migrateProject(
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
   const written: string[] = [];
-  const { pagesConfigWritten, pagesConfigExists } = await writeMigratedConfig(
+  const { pagesConfigWritten, pagesConfigExists, next } = await writeMigratedConfig(
     dir,
     pagesRouter,
     { R, jsr, deps, imports, hasEffect },
@@ -1169,6 +1203,7 @@ export async function migrateProject(
     pagesConfigExists,
     denoJsonExists,
     prisma,
+    nextConfig: nextConfigReport(next),
   };
 }
 
@@ -1225,13 +1260,19 @@ async function writeMigratedConfig(
     hasEffect: boolean;
   },
   written: string[],
-): Promise<{ pagesConfigWritten: boolean; pagesConfigExists: boolean }> {
+): Promise<
+  {
+    pagesConfigWritten: boolean;
+    pagesConfigExists: boolean;
+    next: NextConfigTranslation | null;
+  }
+> {
   const configPath = join(dir, "denext.config.ts");
   if (pagesRouter) {
     const r = await writePagesRouterConfig(configPath, app.R, app.imports, app.hasEffect, written);
-    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists };
+    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists, next: null };
   }
-  const pagesConfigExists = await writeAppRouterConfig(
+  const { exists: pagesConfigExists, next } = await writeAppRouterConfig(
     dir,
     configPath,
     app.deps,
@@ -1240,7 +1281,7 @@ async function writeMigratedConfig(
     app.hasEffect,
     written,
   );
-  return { pagesConfigWritten: false, pagesConfigExists };
+  return { pagesConfigWritten: false, pagesConfigExists, next };
 }
 
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
@@ -1480,7 +1521,7 @@ async function isGenericSpa(
 async function readCraIndex(
   dir: string,
 ): Promise<{ entry: string; title: string }> {
-  const html = await Deno.readTextFile(join(dir, "public", "index.html")).catch(
+  const html = await mfs.readTextFile(join(dir, "public", "index.html")).catch(
     () => null,
   );
   let title = "app";
@@ -1590,7 +1631,7 @@ function pnpUnsupported(dir: string): Error {
 async function readIndexHtml(
   dir: string,
 ): Promise<{ entry: string; title: string; head?: string; loading?: string; rootId?: string }> {
-  const html = await Deno.readTextFile(join(dir, "index.html")).catch(() => null);
+  const html = await mfs.readTextFile(join(dir, "index.html")).catch(() => null);
   if (!html) return { entry: "./src/main.tsx", title: "app" };
   const { entry, title } = parseEntryAndTitle(html);
   const rootId = await mountElementId(dir, entry, html);
@@ -1611,7 +1652,7 @@ async function readIndexHtml(
  * blank page with no error — `createRoot(null)` throws before the first paint.
  */
 async function mountElementId(dir: string, entry: string, html: string): Promise<string> {
-  const source = await Deno.readTextFile(join(dir, entry)).catch(() => "");
+  const source = await mfs.readTextFile(join(dir, entry)).catch(() => "");
   // The lookup passed to `createRoot`/`hydrateRoot`/`render` first — an entry that removes a
   // `#splash` before mounting `#app` has two lookups and only the mount one counts — then any
   // lookup at all.
@@ -1711,7 +1752,7 @@ async function collectSpaEnvKeys(dir: string): Promise<string[]> {
     }
   };
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
-    const t = await Deno.readTextFile(join(dir, f)).catch(() => null);
+    const t = await mfs.readTextFile(join(dir, f)).catch(() => null);
     if (t) scan(t);
   }
   await walkCode(join(dir, "src"), scan);
@@ -1726,14 +1767,14 @@ async function walkCode(
   // `Deno.readDir` is lazy — a missing/again-unreadable dir throws while iterating, not at
   // the call — so the guard must wrap the whole loop (App Router apps have no `src/`).
   try {
-    for await (const e of Deno.readDir(root)) {
+    for await (const e of mfs.readDir(root)) {
       if (e.isDirectory) {
         if (
           e.name === "node_modules" || e.name === "dist" || e.name === ".denext"
         ) continue;
         await walkCode(join(root, e.name), scan);
       } else if (/\.(tsx?|jsx?|mts|mjs)$/.test(e.name)) {
-        const t = await Deno.readTextFile(join(root, e.name)).catch(() => null);
+        const t = await mfs.readTextFile(join(root, e.name)).catch(() => null);
         if (t) scan(t);
       }
     }
@@ -1747,7 +1788,7 @@ async function parseViteProxyPrefixes(
   dir: string,
 ): Promise<string[] | undefined> {
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
-    const t = await Deno.readTextFile(join(dir, f)).catch(() => null);
+    const t = await mfs.readTextFile(join(dir, f)).catch(() => null);
     if (!t) continue;
     const block = t.match(/proxy\s*:\s*\{([\s\S]*?)\n\s*\}/);
     if (block) {
@@ -2199,7 +2240,7 @@ async function writeIfWritable(
   written: string[],
 ): Promise<boolean> {
   if (!(await writable(path))) return false;
-  await Deno.writeTextFile(path, source());
+  await mfs.writeTextFile(path, source());
   written.push(path);
   return true;
 }
@@ -2318,7 +2359,7 @@ async function spaUsesReactCompiler(dir: string, source: SpaSource): Promise<boo
   if (source !== "vite") return false;
   for (const name of ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"]) {
     try {
-      const src = await Deno.readTextFile(join(dir, name));
+      const src = await mfs.readTextFile(join(dir, name));
       if (/react-compiler|reactCompilerPreset|babel-plugin-react-compiler/.test(src)) return true;
     } catch { /* not present — try the next candidate */ }
   }
