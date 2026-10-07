@@ -228,6 +228,21 @@ Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/n
   assertEquals(scaffolded, example);
 });
 
+Deno.test("scaffoldFiles: the macOS script sizes the .dmg image explicitly (hdiutil's estimate runs short)", () => {
+  const src = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-macos.ts")!.content;
+  const m = src.match(/function dmgSizeMb\(bytes: number\): number \{\n([\s\S]*?)\n\}\n/);
+  assert(m, "dmgSizeMb helper present");
+  const dmgSizeMb = new Function("bytes", m[1]) as (bytes: number) => number;
+  const MiB = 1024 * 1024;
+  assertEquals(dmgSizeMb(0), 64);
+  assertEquals(dmgSizeMb(800 * MiB), 1000 + 64); // 25% headroom + 64 MiB
+  assertEquals(dmgSizeMb(1), 65); // rounds up
+  assertEquals(dmgSizeMb(MiB * 0.8 + 1), 66);
+  assertStringIncludes(src, '"-size",');
+  assertStringIncludes(src, "dmgSizeMb(await treeBytes(app))");
+});
+
 Deno.test("scaffoldFiles: scaffolded Windows package script matches the examples/native copy", async () => {
   const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
     .find((f) => f.path === "scripts/package-windows.ts")!.content;

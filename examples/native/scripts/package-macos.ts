@@ -266,6 +266,22 @@ async function notarize(app: string, profile: string): Promise<void> {
   }
 }
 
+/** Image size in MiB for a .dmg of `bytes` of content: 25% headroom plus 64 MiB. hdiutil's own
+ * estimate for `-srcfolder` runs short on some macOS images ("No space left on device"); with
+ * UDZO the final image is still compressed, so the headroom only sizes the temporary image. */
+function dmgSizeMb(bytes: number): number {
+  return Math.ceil((bytes * 1.25) / (1024 * 1024)) + 64;
+}
+
+/** Total bytes under `path`; a symlink counts as the link itself, never its target. */
+async function treeBytes(path: string): Promise<number> {
+  const info = await Deno.lstat(path);
+  if (!info.isDirectory) return info.size;
+  let total = 0;
+  for await (const e of Deno.readDir(path)) total += await treeBytes(`${path}/${e.name}`);
+  return total;
+}
+
 async function makeDmg(app: string): Promise<string> {
   const dmg = app.replace(/\.app$/, ".dmg");
   await Deno.remove(dmg).catch(() => {});
@@ -276,6 +292,8 @@ async function makeDmg(app: string): Promise<string> {
     app.split("/").pop()!.replace(/\.app$/, ""),
     "-srcfolder",
     app,
+    "-size",
+    `${dmgSizeMb(await treeBytes(app))}m`,
     "-ov",
     "-format",
     "UDZO",

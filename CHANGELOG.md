@@ -290,6 +290,10 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **The macOS `.dmg` step sizes its image explicitly.** `hdiutil create -srcfolder` underestimated
+  the image on newer macOS runner images ("No space left on device"); the package script now passes
+  `-size` (the bundle plus 25% and 64 MiB). The final UDZO image is still compressed.
+
 - **A `"use cache"` function imported through an import-map alias is cached.** The server loader
   followed only relative imports, so `import { getPosts } from "@/lib/data.ts"` loaded the
   module untransformed and ran it on every request.
