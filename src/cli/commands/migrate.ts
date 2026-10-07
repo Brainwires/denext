@@ -450,6 +450,10 @@ function printCheck(report: MigrateCheckReport): void {
   console.log(`  Nothing was written. To migrate: ${report.command}\n`);
 }
 
+/** Why a Remix app's `--check --codemod` plan names files at their pre-migration paths. */
+const REMIX_CODEMOD_NOTE = "the codemod plan lists files at their current paths; migrate " +
+  "first moves the Remix route modules, and the real run rewrites them at their new paths";
+
 /**
  * `migrate --check`: run the migration as a dry run and report it. Exits 1 when the migration
  * would fail. With `--codemod`, the source-import rewrite plan is reported too (dry run).
@@ -462,17 +466,37 @@ async function runCheck(
 ): Promise<void> {
   const report = await checkMigration(target, options);
   const plan = codemod && report.verdict !== "blocked" ? await runCodemod(target) : undefined;
-  if (json) {
-    console.log(JSON.stringify(plan ? { ...report, codemod: plan } : report, null, 2));
-  } else {
+  // The codemod plan reads the tree as it is now; a Remix migration first moves and rewrites
+  // the route modules, so its paths are the pre-migration ones (the real run rewrites the moved
+  // files at their new paths).
+  const codemodNote = plan && report.source === "remix" ? REMIX_CODEMOD_NOTE : undefined;
+  if (json) console.log(JSON.stringify(checkJson(report, plan, codemodNote), null, 2));
+  else {
     printCheck(report);
-    if (plan) {
-      console.log("  With --codemod, these source imports would be rewritten:\n");
-      printCodemodPlan(plan);
-      console.log("");
-    }
+    if (plan) printCheckCodemod(plan, codemodNote);
   }
   if (report.verdict === "blocked") Deno.exit(1);
+}
+
+/** The `--check --json` document: the report, plus the codemod plan (and note) with --codemod. */
+function checkJson(
+  report: MigrateCheckReport,
+  plan: Awaited<ReturnType<typeof runCodemod>> | undefined,
+  note: string | undefined,
+): unknown {
+  if (!plan) return report;
+  return { ...report, codemod: plan, ...(note ? { codemodNote: note } : {}) };
+}
+
+/** The `--check --codemod` plan in the human report, with the Remix note when there is one. */
+function printCheckCodemod(
+  plan: Awaited<ReturnType<typeof runCodemod>>,
+  note: string | undefined,
+): void {
+  console.log("  With --codemod, these source imports would be rewritten:\n");
+  printCodemodPlan(plan);
+  if (note) console.log(`\n  Note: ${note}`);
+  console.log("");
 }
 
 export const migrateCommand: CommandSpec = {
@@ -490,7 +514,8 @@ export const migrateCommand: CommandSpec = {
       name: "check",
       type: "boolean",
       help: "Report what migrate would change and what won't migrate; writes nothing " +
-        "(read permission is enough; add --json for the machine-readable report)",
+        "(needs read access, plus --allow-run to evaluate next.config; add --json for the " +
+        "machine-readable report)",
     },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
     {

@@ -213,30 +213,33 @@ export const mfs = {
   },
 };
 
+/** The change one overlay entry stands for, or null when the disk already matches it. */
+async function plannedChange(
+  path: string,
+  e: Entry,
+  rel: (p: string) => string,
+): Promise<PlannedChange | null> {
+  if (e.kind === "moved") return { path: rel(path), action: "move", from: rel(e.from) };
+  if (e.kind === "deleted") {
+    // A move's source is reported with the move; a planned-then-dropped file never existed.
+    const gone = e.movedTo || (await diskKind(path)) === "none";
+    return gone ? null : { path: rel(path), action: "delete" };
+  }
+  const current = await Deno.readTextFile(path).catch(() => null);
+  if (current === e.text) return null;
+  return { path: rel(path), action: current === null ? "create" : "modify", content: e.text };
+}
+
 /** Compare the overlay with the disk: the changes a real run would make, sorted by path. */
 async function plannedChanges(o: Overlay, root: string): Promise<PlannedChange[]> {
-  const rel = (p: string) => {
-    const r = p.startsWith(root + SEPARATOR) ? p.slice(root.length + 1) : p;
-    return r.replace(/\\/g, "/");
-  };
+  // A filesystem root (`/`, `C:\`) already ends in the separator.
+  const prefix = root.endsWith(SEPARATOR) ? root : root + SEPARATOR;
+  const rel = (p: string) =>
+    (p.startsWith(prefix) ? p.slice(prefix.length) : p).replace(/\\/g, "/");
   const out: PlannedChange[] = [];
   for (const [path, e] of o.files) {
-    if (e.kind === "moved") {
-      out.push({ path: rel(path), action: "move", from: rel(e.from) });
-    } else if (e.kind === "deleted") {
-      // A move's source is reported with the move; a planned-then-dropped file never existed.
-      if (!e.movedTo && (await diskKind(path)) !== "none") {
-        out.push({ path: rel(path), action: "delete" });
-      }
-    } else {
-      const current = await Deno.readTextFile(path).catch(() => null);
-      if (current === e.text) continue;
-      out.push({
-        path: rel(path),
-        action: current === null ? "create" : "modify",
-        content: e.text,
-      });
-    }
+    const change = await plannedChange(path, e, rel);
+    if (change) out.push(change);
   }
   return out.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }

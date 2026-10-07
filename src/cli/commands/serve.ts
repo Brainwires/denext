@@ -17,6 +17,7 @@ import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
 import { devSessionToken, withDevTokenParam } from "../../build/dev-server/dev-token.ts";
 import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
+import { abortTaskRuns } from "../../server/tasks.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -145,6 +146,8 @@ export const devCommand: CommandSpec = {
     markDevelopment();
     const controller = new AbortController();
     installShutdown(controller);
+    // Shutdown aborts every task run's signal, `runTask()` calls that passed none included.
+    controller.signal.addEventListener("abort", abortTaskRuns, { once: true });
     const port = portOf(ctx);
     startDevServer({
       paths,
@@ -284,6 +287,8 @@ export const startCommand: CommandSpec = {
     await applyPatchesAtBoot(dir);
     const controller = new AbortController();
     installShutdown(controller);
+    // Shutdown aborts every task run's signal, `runTask()` calls that passed none included.
+    controller.signal.addEventListener("abort", abortTaskRuns, { once: true });
     const port = portOf(ctx);
     await startProdServer({
       projectDir: dir,

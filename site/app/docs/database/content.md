@@ -232,8 +232,9 @@ here and is enough for most SQLite apps.
 
 ### Plain SQL files on `node:sqlite` (verified)
 
-`migrations/NNN_name.sql`, applied in filename order, each inside a transaction,
-each recorded once in a `_migrations` table. The runner is a task, so it is
+`migrations/NNN_name.sql`, applied in filename order, each inside a transaction
+(a file with its own `BEGIN;` … `COMMIT;` runs as written, since SQLite can't nest
+transactions), each recorded once in a `_migrations` table. The runner is a task, so it is
 `denext task migrate` from a shell or a deploy step and `runTask("migrate")`
 from app code.
 

@@ -3,12 +3,15 @@
 // The check runs the real migrate planners (`migrateProject`) inside a dry run
 // (`migrate-io.ts`), so the report can't drift from the migration itself: the changes listed
 // are the files the real run would create, modify, move or delete, and the findings come from
-// the same result object the real run prints. Nothing is written, so read permission is
-// enough (`deno run --allow-read --allow-env …/cli migrate --check`).
+// the same result object the real run prints. Nothing is written, so it needs read access plus
+// run access for the `next.config.*` evaluator, which is a `deno` subprocess
+// (`deno run --allow-read --allow-env --allow-run …/cli migrate --check`). Without
+// `--allow-run` the config is reported as not evaluated, not as unportable.
 
 import { VERSION } from "../../mod.ts";
 import { type MigrateOptions, migrateProject, type MigrateResult } from "./migrate.ts";
 import { dryRunMigration, type PlannedChange } from "./migrate-io.ts";
+import { NEXT_CONFIG_NEEDS_RUN } from "./next-config-eval.ts";
 
 /** The source framework a check detected. */
 export type MigrateSource =
@@ -83,6 +86,10 @@ function migrateCommandLine(options: MigrateOptions): string {
   if (options.desktop) parts.push("--desktop");
   if (options.backend) parts.push(`--backend ${options.backend}`);
   if (options.proxyPrefixes?.length) parts.push(`--proxy ${options.proxyPrefixes.join(",")}`);
+  if (options.denextLocalPath) {
+    const path = options.denextLocalPath;
+    parts.push(`--denext-local-path ${/[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path}`);
+  }
   return parts.join(" ");
 }
 
@@ -126,6 +133,17 @@ function nextConfigFindings(
 ): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const n = r.nextConfig;
   if (!n) return { wont: [], review: [] };
+  if (!n.evaluated && n.reason === NEXT_CONFIG_NEEDS_RUN) {
+    // The check itself lacked run permission: the config may port fine, so say so.
+    return {
+      wont: [],
+      review: [{
+        item: n.file,
+        reason: `${NEXT_CONFIG_NEEDS_RUN}; re-run the check with --allow-run to see which ` +
+          "keys carry over (`denext migrate` itself evaluates it)",
+      }],
+    };
+  }
   if (!n.evaluated) {
     return {
       wont: [{

@@ -15,7 +15,7 @@ import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 import { checkMigration, type MigrateCheckReport } from "../src/build/migrate-check.ts";
-import { dryRunMigration, type PlannedChange } from "../src/build/migrate-io.ts";
+import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
@@ -309,6 +309,47 @@ Deno.test("migrate --check: Remix colocated modules are planned as moves", async
   );
 });
 
+Deno.test("migrate --check --codemod: a Remix plan says it reads the pre-migration tree", async () => {
+  const dir = await tempDir();
+  try {
+    await copy(REMIX_FIXTURE, dir, { overwrite: true });
+    const out = capture();
+    try {
+      await migrateCommand.run(
+        makeCtx({ positionals: [dir], flags: { check: true, codemod: true } }),
+      );
+    } finally {
+      out.restore();
+    }
+    assertStringIncludes(
+      out.logs.join("\n"),
+      "the codemod plan lists files at their current paths",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate --check: the suggested command keeps --denext-local-path", async () => {
+  const dir = await tempDir();
+  try {
+    await writeTree(dir, NEXT_APP);
+    const r = await checkMigration(dir, { denextLocalPath: REPO_ROOT, from: "next" });
+    assertStringIncludes(r.command, "--from next");
+    assertStringIncludes(r.command, `--denext-local-path ${REPO_ROOT}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate --check: a project at a filesystem root gets clean relative paths", async () => {
+  // `/` (or `C:\\`) already ends in the separator; appending another made every path absolute.
+  const root = Deno.build.os === "windows" ? "C:\\" : "/";
+  const target = join(root, `denext-root-check-${crypto.randomUUID()}.txt`);
+  const { changes } = await dryRunMigration(root, () => mfs.writeTextFile(target, "x"));
+  assertEquals(changes.map((c) => c.path), [target.slice(root.length)]);
+});
+
 Deno.test("migrate --check: React Router v7 framework mode", async () => {
   const r = await checkAndCompare({
     "package.json": {
@@ -512,9 +553,48 @@ Deno.test({
       const json = JSON.parse(new TextDecoder().decode(out.stdout));
       assertReportShape(json);
       assertEquals(json.source, "next-app-router");
-      // Without --allow-run the next.config can't be evaluated; the report says so.
-      const cfg = json.wontMigrate.find((f: { item: string }) => f.item === "next.config.js");
-      assertStringIncludes(cfg.reason, "could not be evaluated");
+      // Without --allow-run the next.config can't be evaluated; the report says that, and does
+      // not claim its keys (basePath here) won't migrate.
+      const item = (f: { item: string }) => f.item.startsWith("next.config.js");
+      assertEquals(json.wontMigrate.filter(item), []);
+      const cfg = json.review.find(item);
+      assertStringIncludes(cfg.reason, "couldn't evaluate next.config (needs --allow-run)");
+      assertEquals(await snapshot(dir), before);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "migrate --check: with --allow-run the next.config is evaluated (basePath carries)",
+  async fn() {
+    const dir = await tempDir();
+    try {
+      await writeTree(dir, NEXT_APP);
+      const before = await snapshot(dir);
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--no-prompt",
+          "--allow-read",
+          "--allow-env",
+          "--allow-run",
+          join(REPO_ROOT, "cli.ts"),
+          "migrate",
+          "--check",
+          "--json",
+          dir,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(out.stderr);
+      assertEquals(out.code, 0, stderr);
+      const json = JSON.parse(new TextDecoder().decode(out.stdout));
+      const items = [...json.wontMigrate, ...json.review].map((f: { item: string }) => f.item);
+      assert(!items.includes("next.config.js"), `next.config.js was not evaluated: ${items}`);
+      assert(!items.includes("next.config.js: basePath"), "basePath is carried over");
       assertEquals(await snapshot(dir), before);
     } finally {
       await Deno.remove(dir, { recursive: true });

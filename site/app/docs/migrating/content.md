@@ -48,12 +48,13 @@ address (see §7).
 
 `denext migrate --check` runs the migration as a dry run and writes nothing: it lists the files
 `denext migrate` would create, modify, move or delete, what won't migrate and why, and a verdict
-(`ready`, `review` or `blocked`). It needs read access to the project only (plus jsr.io when
-run from JSR); add `--json` for a machine-readable report and `--allow-run` to let it evaluate
-your `next.config.*`:
+(`ready`, `review` or `blocked`). It needs read access to the project, run access to evaluate
+your `next.config.*` (in a `deno` subprocess that can only read the project) and jsr.io when run
+from JSR; add `--json` for a machine-readable report. Without `--allow-run` the report says the
+config couldn't be evaluated, instead of listing its keys as not migrating:
 
 ```sh
-deno run --allow-read --allow-env --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
+deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
 
 [Fixed in denext](/docs/fixed) lists problems on Next.js, React, Vite and React Native stacks

@@ -109,19 +109,23 @@ export class DevCopies {
   }
 
   /**
-   * Write `copy` (the copy of `moduleUrl` in `dir`) once per process through `write`, and drop
-   * the module's copies older than its previous one.
+   * Write `copy` (the copy of `moduleUrl` in `dir`) once per process through `write`, and keep
+   * only the module's two most recently used copies. A copy used again (an edit reverted to
+   * content an earlier copy has) becomes the newest, so it is not the next one dropped.
    */
   write(dir: string, moduleUrl: string, copy: string, write: () => Promise<void>): Promise<void> {
-    let done = this.#written.get(copy);
-    if (done) return done;
-    done = write();
-    this.#written.set(copy, done);
-    done.catch(() => this.#written.delete(copy));
     const key = `${dir}\0${moduleUrl}`;
     const kept = this.#byModule.get(key) ?? [];
+    const at = kept.indexOf(copy);
+    if (at !== -1) kept.splice(at, 1);
     kept.push(copy);
     this.#byModule.set(key, kept);
+    let done = this.#written.get(copy);
+    if (!done) {
+      done = write();
+      this.#written.set(copy, done);
+      done.catch(() => this.#written.delete(copy));
+    }
     while (kept.length > 2) {
       const old = kept.shift()!;
       this.#written.delete(old);

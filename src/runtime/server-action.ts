@@ -163,6 +163,9 @@ export function clientActionStub<A extends unknown[], R>(id: string): ServerActi
 
 // Server module ids already imported + tagged this process (per scope).
 const taggedServers = new Set<string>();
+// Bumped by forgetTaggedServers: a tagging pass that started before the bump must not mark its
+// (possibly pre-edit) module tagged after the set was cleared.
+let serverTagGeneration = 0;
 
 /**
  * Import each `"use server"` module and auto-register its exports as server
@@ -180,14 +183,21 @@ export async function tagServerModules(
   scope = "",
 ): Promise<void> {
   const key = (moduleId: string) => scope ? `${scope}\0${moduleId}` : moduleId;
-  await Promise.all(
+  const generation = serverTagGeneration;
+  // Every module is tagged even when another fails to load: one broken module must not leave
+  // the rest unregistered. The first failure is rethrown once all have settled.
+  const results = await Promise.allSettled(
     [...servers].map(async ([moduleId, ref]) => {
       if (taggedServers.has(key(moduleId))) return;
       const mod = load ? await load(ref.url) : await import(ref.url);
       tagServerExports(mod as Record<string, unknown>, moduleId, scope);
-      taggedServers.add(key(moduleId));
+      // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
+      // instance, so leave it untagged and let the next pass load the current one.
+      if (generation === serverTagGeneration) taggedServers.add(key(moduleId));
     }),
   );
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 /**
@@ -196,6 +206,7 @@ export async function tagServerModules(
  * instance and registers the same functions).
  */
 export function forgetTaggedServers(): void {
+  serverTagGeneration++;
   taggedServers.clear();
 }
 

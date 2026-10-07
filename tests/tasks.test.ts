@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
+  abortTaskRuns,
   clearTasks,
   collectSchedules,
   defineTask,
@@ -586,6 +587,70 @@ Deno.test("retry: an abort during the backoff stops retrying with the last error
   controller.abort();
   await assertRejects(() => done, Error, "attempt 1");
   assertEquals(attempts, 1);
+});
+
+Deno.test("retry: an abort during the backoff records the failed attempt as final, not retrying", async () => {
+  reset();
+  registerTask(
+    "aborted",
+    defineTask({
+      retry: { attempts: 5, backoff: 60_000 },
+      handler: () => {
+        throw new Error("x");
+      },
+    }),
+  );
+  const controller = new AbortController();
+  const seen = await recording(async () => {
+    const done = runTask("aborted", undefined, { signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 0)); // the first attempt failed; the wait is pending
+    controller.abort();
+    await done.catch(() => {});
+  });
+  assertEquals(seen.map((r) => [r.attempt, r.willRetry]), [[1, false]]);
+});
+
+Deno.test("retry: a backoff past setTimeout's 2^31-1 ms limit waits, it doesn't retry at once", async () => {
+  for (const backoff of [2 ** 32, { delayMs: 2 ** 32, maxDelayMs: 2 ** 33 }]) {
+    reset();
+    let attempts = 0;
+    registerTask(
+      "long",
+      defineTask({
+        retry: { attempts: 1, backoff },
+        handler: () => {
+          attempts++;
+          throw new Error(`attempt ${attempts}`);
+        },
+      }),
+    );
+    const controller = new AbortController();
+    const done = runTask("long", undefined, { signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 50)); // an overflowed timer fires after ~1 ms
+    controller.abort();
+    await assertRejects(() => done, Error, "attempt 1");
+    assertEquals(attempts, 1, `backoff ${JSON.stringify(backoff)} retried at once`);
+  }
+});
+
+Deno.test("runTask with no signal of its own is still aborted on shutdown", async () => {
+  reset();
+  registerTask(
+    "waits",
+    defineTask({
+      handler: ({ signal }) =>
+        new Promise<string>((resolve) => {
+          if (signal.aborted) resolve("aborted");
+          signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+        }),
+    }),
+  );
+  const run = runTask("waits");
+  abortTaskRuns(); // the server's shutdown
+  assertEquals(await run, "aborted");
+  // Runs that start after a shutdown (a dev re-boot) get a live signal again.
+  registerTask("live", defineTask({ handler: ({ signal }) => signal.aborted }));
+  assertEquals(await runTask("live"), false);
 });
 
 Deno.test("retry: the userland overlap guard treats a retrying run as still running", async () => {

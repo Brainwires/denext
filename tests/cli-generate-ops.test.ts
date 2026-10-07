@@ -97,6 +97,65 @@ Deno.test("the generated migrate and seed tasks run on node:sqlite, once each mi
   }
 });
 
+Deno.test("the generated migrate task: a file with its own transaction, and a name with # ? %", async () => {
+  const dir = await project();
+  const before = Deno.env.get("DB_PATH");
+  Deno.env.set("DB_PATH", join(dir, "app.db"));
+  try {
+    await generateArtifact(dir, "migration", "create example");
+    // Its own BEGIN/COMMIT: wrapped in ours it failed ("cannot start a transaction within a
+    // transaction"). The trigger's BEGIN … END; body is not a transaction statement.
+    await Deno.writeTextFile(
+      join(dir, "migrations", "20990101000000_own_tx.sql"),
+      "BEGIN;\nCREATE TABLE own (x INTEGER);\n" +
+        "CREATE TRIGGER own_t AFTER INSERT ON own BEGIN\n  UPDATE own SET x = x;\nEND;\nCOMMIT;\n",
+    );
+    // `#`, `?` and `%` are part of the name, not URL syntax.
+    await Deno.writeTextFile(
+      join(dir, "migrations", "20990101000001_odd#name?50%.sql"),
+      "CREATE TABLE odd (x INTEGER);\n",
+    );
+    const migrate = join(dir, "tasks", "migrate.ts");
+    const applied = String(await runGeneratedTask(migrate));
+    assert(applied.includes("20990101000000_own_tx.sql"), applied);
+    assert(applied.includes("20990101000001_odd#name?50%.sql"), applied);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(join(dir, "app.db"));
+    try {
+      assertEquals(db.prepare("SELECT COUNT(*) AS n FROM _migrations").get()?.n, 3);
+      db.prepare("SELECT x FROM own").all();
+      db.prepare("SELECT x FROM odd").all();
+    } finally {
+      db.close();
+    }
+  } finally {
+    if (before === undefined) Deno.env.delete("DB_PATH");
+    else Deno.env.set("DB_PATH", before);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate ci: tasks are read from the parsed deno.json(c), not up to the first }", async () => {
+  const dir = await project({
+    "deno.json": `{
+  // a comment, and an object-form task before the ones that matter
+  "tasks": {
+    "dev": { "command": "denext dev .", "dependencies": [] },
+    "check": "deno fmt --check",
+    "build": "denext build ."
+  }
+}`,
+  });
+  try {
+    const { written } = await generateArtifact(dir, "ci", "");
+    const text = await Deno.readTextFile(written[0]);
+    assert(text.includes("run: deno task check"), text);
+    assert(text.includes("run: deno task build"), text);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("generate seed: Prisma flavor detected or forced; an unknown flavor throws", async () => {
   const dir = await project({ "prisma/schema.prisma": "datasource db {}" });
   try {

@@ -153,7 +153,7 @@ export function createDevApp(st: DevState): RequestHandler {
     // Each target's island instances (its platform files) are tagged on its first render.
     tagScope: renderPlatform,
     // An action runs the requesting target's own (and, after an edit, current) implementation.
-    actionScope: (request) => devActionScope(st, devPlatformOf(request)),
+    actionScope: (request) => devActionScope(st, devPlatformOf(request), request),
     flightRoutes: st.flightRoutes,
     // A platform session's own boundary (its platform files may reach other islands).
     flightBoundary: async () => {

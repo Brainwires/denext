@@ -141,20 +141,123 @@ Deno.test("plan: --to with no compatible package version is an error, never a sk
   assert(!none.ok && none.reason.includes("no versioned"));
 });
 
-Deno.test("plan: a package that imports no denext takes its newest version; up to date is a no-op", async () => {
+Deno.test("plan: a package that imports no denext keeps its major unless --allow-major; up to date is a no-op", async () => {
   const lookups = registry({
     "@denext/denext": { "3.0.0": null },
-    "@denext/myplug": { "0.2.0": null, "0.9.0": null },
+    "@denext/myplug": { "0.2.0": null, "0.2.5": null, "0.9.0": null },
   });
   const plan = await planUpgrade(CONFIG, {}, lookups);
   assert(plan.ok);
-  assertEquals(plan.steps.map((s) => s.to), ["3.0.0", "0.9.0"]);
+  // ^0.2.0 admits 0.2.x only: 0.9.0 is a breaking release nothing ties to denext's version.
+  assertEquals(plan.steps.map((s) => s.to), ["3.0.0", "0.2.5"]);
+  const major = await planUpgrade(CONFIG, { allowMajor: true }, lookups);
+  assert(major.ok);
+  assertEquals(major.steps.map((s) => s.to), ["3.0.0", "0.9.0"]);
   const current = await planUpgrade(
     CONFIG,
     {},
     registry({ "@denext/denext": { "3.0.0": null }, "@denext/myplug": { "0.2.0": "^3.0.0" } }),
   );
   assert(current.ok && !current.changed);
+});
+
+Deno.test("plan: the whole version history is searched, newest first, for a compatible set", async () => {
+  // Ten newer myplug releases need a denext that doesn't exist; 0.3.0 is the one that fits.
+  const myplug: Record<string, string | null> = { "0.2.0": "^3.0.0", "0.3.0": "^3.0.0" };
+  for (let minor = 4; minor < 14; minor++) myplug[`0.${minor}.0`] = "^9.0.0";
+  const plan = await planUpgrade(
+    CONFIG,
+    {},
+    registry({ "@denext/denext": { "3.0.0": null }, "@denext/myplug": myplug }),
+  );
+  assert(plan.ok, JSON.stringify(plan));
+  assertEquals(plan.steps.map((s) => s.to), ["3.0.0", "0.3.0"]);
+  // And denext targets: only the oldest of ten newer denext releases fits the plugin.
+  const denext: Record<string, null> = {};
+  for (let minor = 0; minor < 10; minor++) denext[`3.${minor}.0`] = null;
+  const older = await planUpgrade(
+    CONFIG,
+    {},
+    registry({ "@denext/denext": denext, "@denext/myplug": { "0.2.0": "~3.1.0" } }),
+  );
+  assert(older.ok, JSON.stringify(older));
+  assertEquals(older.steps.map((s) => s.to), ["3.1.0", "0.2.0"]);
+});
+
+Deno.test("plan: a JSR read that fails is an error, never an incompatible version", async () => {
+  const lookups = registry({
+    "@denext/denext": { "3.0.0": null, "3.2.0": null },
+    // 0.3.0's deno.json can't be read (`undefined`): the plan must not quietly settle on 0.2.0.
+    "@denext/myplug": { "0.2.0": "^3.0.0", "0.3.0": undefined as unknown as null },
+  });
+  const plan = await planUpgrade(CONFIG, {}, lookups);
+  assert(!plan.ok, JSON.stringify(plan));
+  assert(
+    plan.reason.includes("couldn't reach JSR") && plan.reason.includes("@denext/myplug@0.3.0"),
+  );
+  const noVersions = await planUpgrade(
+    CONFIG,
+    {},
+    registry({ "@denext/denext": { "3.0.0": null } }),
+  );
+  assert(
+    !noVersions.ok && noVersions.reason.includes("couldn't reach JSR"),
+    JSON.stringify(noVersions),
+  );
+});
+
+Deno.test("plan: --to an older denext is refused unless --allow-downgrade", async () => {
+  const config = '{"imports":{"denext":"jsr:@denext/denext@^3.2.0"}}';
+  const lookups = registry({ "@denext/denext": { "3.0.0": null, "3.2.0": null } });
+  const back = await planUpgrade(config, { to: "3.0.0" }, lookups);
+  assert(!back.ok && back.reason.includes("--allow-downgrade"), JSON.stringify(back));
+  const allowed = await planUpgrade(config, { to: "3.0.0", allowDowngrade: true }, lookups);
+  assert(allowed.ok);
+  assertEquals(allowed.steps[0], { name: "@denext/denext", from: "3.2.0", to: "3.0.0" });
+});
+
+Deno.test("findPins / applyUpgrade: the jsr:/@denext/denext@…/ import-map prefix form", () => {
+  const text = '{"imports":{"denext/":"jsr:/@denext/denext@^3.0.0/"}}';
+  assertEquals(findPins(text), [{ name: "@denext/denext", version: "3.0.0" }]);
+  assertEquals(
+    applyUpgrade(text, [{ name: "@denext/denext", from: "3.0.0", to: "3.2.0" }]),
+    '{"imports":{"denext/":"jsr:/@denext/denext@^3.2.0/"}}',
+  );
+});
+
+Deno.test("denext upgrade: workspace members' deno.json move with the root; a missing one is reported", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_upgrade_ws_" });
+  const member = '{"imports":{"denext":"jsr:@denext/denext@^3.0.0"}}\n';
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    '{"workspace":["./apps/*","./gone"],"imports":{"denext":"jsr:@denext/denext@^3.0.0"}}\n',
+  );
+  await Deno.mkdir(join(dir, "apps/web"), { recursive: true });
+  await Deno.writeTextFile(join(dir, "apps/web/deno.json"), member);
+  const printed: string[] = [];
+  const [log, err] = [console.log, console.error];
+  console.log = (...a: unknown[]) => void printed.push(a.map(String).join(" "));
+  console.error = console.log;
+  try {
+    const code = await runUpgrade(
+      {
+        positionals: [dir],
+        flags: {},
+        global: { json: false, verbose: false, quiet: false },
+        rest: [],
+      } as CommandContext,
+      registry({ "@denext/denext": { "3.0.0": null, "3.2.0": null } }),
+    );
+    assertEquals(code, 0, printed.join("\n"));
+    assertEquals(
+      await Deno.readTextFile(join(dir, "apps/web/deno.json")),
+      member.replace("^3.0.0", "^3.2.0"),
+    );
+    assert(printed.join("\n").includes("workspace member ./gone"), printed.join("\n"));
+  } finally {
+    [console.log, console.error] = [log, err];
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("plan: a catalogued version's range comes from src/plugin/catalog.json, not the network", async () => {

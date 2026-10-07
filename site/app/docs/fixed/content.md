@@ -27,15 +27,15 @@ first. Search this page for the error text you are seeing.
 ## Try it on your project
 
 `denext migrate --check` reports what `denext migrate` would change in your project, what will
-not migrate and why, and an overall verdict. It writes nothing, so it only needs read access
-to the project (plus network access to jsr.io, to fetch denext itself):
+not migrate and why, and an overall verdict. It writes nothing: it needs read access to the
+project, run access to evaluate a `next.config.*` (in a subprocess that can only read the
+project) and network access to jsr.io, to fetch denext itself:
 
 ```sh
-deno run --allow-read --allow-env --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
+deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
 
-Add `--json` for a machine-readable report, and `--allow-run` to let it evaluate a
-`next.config.*` (in a subprocess that can only read the project). See
+Add `--json` for a machine-readable report. See
 [Migrating from Next.js](/docs/migrating) for the migration itself.
 
 ## Index

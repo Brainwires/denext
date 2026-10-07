@@ -12,6 +12,15 @@
 //   newest denext is chosen for which EVERY pinned first-party package has a version whose range
 //   admits it; a package is never moved backwards. `--to <version>` names the denext version
 //   instead, and a package with no compatible version is then an error, not a silent skew.
+//   `--to` an older denext than the pin is refused unless `--allow-downgrade` says so.
+// - **The whole history is searched.** Candidates are scanned newest first until one fits, over
+//   every published version (bounded by {@link MAX_LOOKUPS} registry reads per run), so an old
+//   but compatible plugin release is found.
+// - **A package that doesn't import denext keeps its major.** Nothing ties its version to
+//   denext's, so it moves only within its own caret range (`^0.2.0` admits `0.2.x`) unless
+//   `--allow-major` opts in.
+// - **An unreachable registry is an error.** A version whose config JSR didn't serve is never
+//   taken as "incompatible": the plan fails with the reason instead.
 // - **The edit is textual.** Only the version inside each matched specifier changes, so the
 //   file keeps its comments, order and formatting (a `deno.jsonc` included).
 //
@@ -21,12 +30,19 @@
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { fetchJsrConfig, fetchJsrVersions, type JsrRequestOptions } from "../ui/jsr.ts";
 
-/** A first-party package specifier with a version: `jsr:@denext/<name>@<op><version>`. */
-const PIN_RE = /jsr:@denext\/([a-z0-9-]+)@([~^]?)(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g;
-/** How many candidate versions of one package are inspected (newest first). */
-const MAX_CANDIDATES = 8;
-/** How many denext versions are tried, newest first, before giving up on a common set. */
-const MAX_TARGETS = 6;
+/**
+ * A first-party package specifier with a version: `jsr:@denext/<name>@<op><version>`, or the
+ * `jsr:/@denext/<name>@<op><version>/` form an import-map prefix entry uses.
+ */
+const PIN_RE = /jsr:(\/?)@denext\/([a-z0-9-]+)@([~^]?)(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g;
+/**
+ * How many package-config reads (one per candidate version) one plan may make before it gives
+ * up. Each is a JSR request; ranges are memoized, so this bounds the whole search.
+ */
+const MAX_LOOKUPS = 200;
+
+/** A registry read failed or the search ran out of budget: the plan fails with this reason. */
+class LookupError extends Error {}
 
 // ── semver (the subset JSR versions and denext ranges use) ───────────────────
 
@@ -139,6 +155,16 @@ export interface UpgradeLookups {
   denextRange(name: string, version: string): Promise<string | null | undefined>;
 }
 
+/** What {@link planUpgrade} may do beyond the default. */
+export interface UpgradeOptions {
+  /** The denext version to move to (default: the newest every pinned package supports). */
+  readonly to?: string;
+  /** Let `to` name an older denext than the current pin. */
+  readonly allowDowngrade?: boolean;
+  /** Let a package that doesn't import denext move past its own caret range. */
+  readonly allowMajor?: boolean;
+}
+
 /** The outcome of planning. */
 export type UpgradePlan =
   | { readonly ok: true; readonly steps: readonly UpgradeStep[]; readonly changed: boolean }
@@ -153,7 +179,7 @@ export type UpgradePlan =
  */
 export function findPins(text: string): UpgradePin[] {
   const newest = new Map<string, string>();
-  for (const [, pkg, , version] of text.matchAll(PIN_RE)) {
+  for (const [, , pkg, , version] of text.matchAll(PIN_RE)) {
     const name = `@denext/${pkg}`;
     const seen = newest.get(name);
     if (!seen || compareVersions(version, seen) > 0) newest.set(name, version);
@@ -176,41 +202,64 @@ function catalogRange(name: string, version: string): string | null | undefined 
   return entry ? entry.denext ?? null : undefined;
 }
 
-/** Memoize the lookups for one run (a version's range is asked for once per denext target). */
-function cached(lookups: UpgradeLookups): UpgradeLookups {
+/**
+ * Memoize the lookups for one run (a version's range is asked for once per denext target), turn
+ * an unreadable answer into a {@link LookupError}, and stop after {@link MAX_LOOKUPS} reads.
+ */
+function cached(lookups: UpgradeLookups) {
   const versions = new Map<string, ReturnType<UpgradeLookups["versions"]>>();
-  const ranges = new Map<string, ReturnType<UpgradeLookups["denextRange"]>>();
+  const ranges = new Map<string, Promise<string | null>>();
+  let reads = 0;
+  const read = async (name: string, version: string): Promise<string | null> => {
+    if (++reads > MAX_LOOKUPS) {
+      throw new LookupError(
+        `gave up after ${MAX_LOOKUPS} JSR lookups without a compatible set; name the denext ` +
+          "version with --to",
+      );
+    }
+    const range = await lookups.denextRange(name, version);
+    if (range === undefined) {
+      throw new LookupError(`couldn't reach JSR to read ${name}@${version}'s deno.json`);
+    }
+    return range;
+  };
   return {
-    versions(name) {
+    versions(name: string) {
       if (!versions.has(name)) versions.set(name, lookups.versions(name));
       return versions.get(name)!;
     },
-    denextRange(name, version) {
+    denextRange(name: string, version: string): Promise<string | null> {
       const key = `${name}@${version}`;
       if (!ranges.has(key)) {
         const known = catalogRange(name, version);
-        ranges.set(
-          key,
-          known !== undefined ? Promise.resolve(known) : lookups.denextRange(name, version),
-        );
+        ranges.set(key, known !== undefined ? Promise.resolve(known) : read(name, version));
       }
       return ranges.get(key)!;
     },
   };
 }
 
-/** The newest version of `pin` (not older than it) whose denext range admits `target`. */
+type CachedLookups = ReturnType<typeof cached>;
+
+/**
+ * The newest version of `pin` (not older than it) whose denext range admits `target`. A version
+ * that imports no denext fits any target, but stays within the pin's caret range unless
+ * `allowMajor`.
+ */
 async function compatibleVersion(
   pin: UpgradePin,
   target: string,
-  lookups: UpgradeLookups,
+  lookups: CachedLookups,
+  allowMajor: boolean,
 ): Promise<string | null> {
   const published = await lookups.versions(pin.name);
+  if (!published) throw new LookupError(`couldn't reach JSR to read ${pin.name}'s versions`);
   const pre = (parseVersion(pin.version)?.pre.length ?? 0) > 0;
-  const list = published ? candidates(published.versions, pin.version, pre) : [pin.version];
-  for (const version of list.slice(0, MAX_CANDIDATES)) {
+  for (const version of candidates(published.versions, pin.version, pre)) {
     const range = await lookups.denextRange(pin.name, version);
-    if (range === null || (range !== undefined && satisfies(target, range))) return version;
+    if (range === null) {
+      if (allowMajor || satisfies(version, `^${pin.version}`)) return version;
+    } else if (satisfies(target, range)) return version;
   }
   return null;
 }
@@ -219,11 +268,12 @@ async function compatibleVersion(
 async function resolveAll(
   pins: readonly UpgradePin[],
   target: string,
-  lookups: UpgradeLookups,
+  lookups: CachedLookups,
+  allowMajor: boolean,
 ): Promise<{ steps: UpgradeStep[] } | { misfit: string }> {
   const steps: UpgradeStep[] = [];
   for (const pin of pins) {
-    const to = await compatibleVersion(pin, target, lookups);
+    const to = await compatibleVersion(pin, target, lookups, allowMajor);
     if (to === null) return { misfit: pin.name };
     steps.push({ name: pin.name, from: pin.version, to });
   }
@@ -233,48 +283,91 @@ async function resolveAll(
 /**
  * Plan an upgrade of the pins in `text`.
  *
- * @param text The config text.
+ * @param text The config text (a workspace's configs joined: every pin in them moves together).
  * @param options `to`: the denext version to move to (default: the newest that every pinned
- *   first-party package supports, never older than the current pin).
+ *   first-party package supports, never older than the current pin); `allowDowngrade`,
+ *   `allowMajor`: see {@link UpgradeOptions}.
  * @param lookups The registry lookups.
- * @returns The steps (denext first), or why no consistent set exists.
+ * @returns The steps (denext first), or why no consistent set exists — including a JSR read
+ *   that failed, which is never taken for an incompatible version.
  */
 export async function planUpgrade(
   text: string,
-  options: { to?: string },
+  options: UpgradeOptions,
   lookups: UpgradeLookups,
+): Promise<UpgradePlan> {
+  try {
+    return await planWith(text, options, cached(lookups));
+  } catch (err) {
+    if (err instanceof LookupError) return { ok: false, reason: err.message };
+    throw err;
+  }
+}
+
+/** Why `options.to` can't be planned (unpublished, or older than the pin without opt-in). */
+function refuseTarget(
+  options: UpgradeOptions,
+  pinned: string,
+  published: readonly string[],
+): string | null {
+  const to = options.to;
+  if (to === undefined) return null;
+  if (!published.includes(to)) return `@denext/denext ${to} is not a published version`;
+  if (!options.allowDowngrade && compareVersions(to, pinned) < 0) {
+    return `--to ${to} is older than the pinned @denext/denext ${pinned}; pass ` +
+      "--allow-downgrade to move it back";
+  }
+  return null;
+}
+
+/** {@link planUpgrade} over memoized lookups; a failed read throws a {@link LookupError}. */
+async function planWith(
+  text: string,
+  options: UpgradeOptions,
+  look: CachedLookups,
 ): Promise<UpgradePlan> {
   const pins = findPins(text);
   const denext = pins.find((p) => p.name === "@denext/denext");
   if (!denext) {
     return { ok: false, reason: "no versioned jsr:@denext/denext pin in this config" };
   }
-  const look = cached(lookups);
   const others = pins.filter((p) => p !== denext);
   const published = await look.versions(denext.name);
-  if (!published) return { ok: false, reason: "could not read @denext/denext's versions from JSR" };
-  if (options.to !== undefined && !published.versions.includes(options.to)) {
-    return { ok: false, reason: `@denext/denext ${options.to} is not a published version` };
+  if (!published) {
+    return { ok: false, reason: "couldn't reach JSR to read @denext/denext's versions" };
   }
+  const refused = refuseTarget(options, denext.version, published.versions);
+  if (refused) return { ok: false, reason: refused };
   const pre = (parseVersion(denext.version)?.pre.length ?? 0) > 0;
   const targets = options.to !== undefined
     ? [options.to]
-    : candidates(published.versions, denext.version, pre).slice(0, MAX_TARGETS);
+    : candidates(published.versions, denext.version, pre);
+  const fit = await firstFit(others, targets, look, options.allowMajor === true);
+  if ("misfit" in fit) {
+    return {
+      ok: false,
+      reason: `no published version of ${fit.misfit} supports @denext/denext ${targets[0] ?? "?"}` +
+        (options.to === undefined ? ` (or any older denext down to ${denext.version})` : ""),
+    };
+  }
+  const steps = [{ name: denext.name, from: denext.version, to: fit.target }, ...fit.steps];
+  return { ok: true, steps, changed: steps.some((s) => s.from !== s.to) };
+}
+
+/** The first denext target (in order) every other pin has a version for, or the last misfit. */
+async function firstFit(
+  others: readonly UpgradePin[],
+  targets: readonly string[],
+  look: CachedLookups,
+  allowMajor: boolean,
+): Promise<{ target: string; steps: UpgradeStep[] } | { misfit: string }> {
   let misfit = "";
   for (const target of targets) {
-    const resolved = await resolveAll(others, target, look);
-    if ("misfit" in resolved) {
-      misfit = resolved.misfit;
-      continue;
-    }
-    const steps = [{ name: denext.name, from: denext.version, to: target }, ...resolved.steps];
-    return { ok: true, steps, changed: steps.some((s) => s.from !== s.to) };
+    const resolved = await resolveAll(others, target, look, allowMajor);
+    if (!("misfit" in resolved)) return { target, steps: resolved.steps };
+    misfit = resolved.misfit;
   }
-  return {
-    ok: false,
-    reason: `no published version of ${misfit} supports @denext/denext ${targets[0] ?? "?"}` +
-      (options.to === undefined ? " (or any newer denext that was tried)" : ""),
-  };
+  return { misfit };
 }
 
 /**
@@ -287,9 +380,9 @@ export async function planUpgrade(
  */
 export function applyUpgrade(text: string, steps: readonly UpgradeStep[]): string {
   const to = new Map(steps.map((s) => [s.name, s.to]));
-  return text.replace(PIN_RE, (whole, pkg: string, op: string) => {
+  return text.replace(PIN_RE, (whole, slash: string, pkg: string, op: string) => {
     const version = to.get(`@denext/${pkg}`);
-    return version === undefined ? whole : `jsr:@denext/${pkg}@${op}${version}`;
+    return version === undefined ? whole : `jsr:${slash}@denext/${pkg}@${op}${version}`;
   });
 }
 

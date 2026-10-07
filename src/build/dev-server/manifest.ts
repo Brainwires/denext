@@ -7,6 +7,7 @@ import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
 import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
+import { resolveAction } from "../../server/action-handler.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
 import { withBuildDirLock } from "../project-locks.ts";
 import {
@@ -257,13 +258,27 @@ export function flightRoutesFor(st: DevState, platform: Platform): Set<string> {
  * rendered since the edit), and name the registry its actions run from. Each target registers
  * the instances its own loader yields (its platform files), under its own scope.
  *
+ * A `"use server"` module that fails to load fails only the actions it defines: the others are
+ * still registered, so a request for one of them runs (the broken module's error is logged);
+ * a request for an action that is not registered gets the load error.
+ *
  * @param st The dev state.
  * @param platform The action request's target.
+ * @param request The action request (to tell whether its action loaded despite a failure).
  * @returns The registry scope for `getServerAction`.
  */
-export async function devActionScope(st: DevState, platform: Platform): Promise<string> {
+export async function devActionScope(
+  st: DevState,
+  platform: Platform,
+  request?: Request,
+): Promise<string> {
   const boundary = await devBoundaryFor(st, platform);
   const load = st.compatLoad ?? tagLoaderFor(st, platform);
-  await tagServerModules(boundary.servers, boundaryRefLoader(load), platform);
+  try {
+    await tagServerModules(boundary.servers, boundaryRefLoader(load), platform);
+  } catch (err) {
+    if (!request || !resolveAction(request, platform)) throw err;
+    console.error('[denext] a "use server" module failed to load:', err);
+  }
   return platform;
 }

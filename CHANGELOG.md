@@ -402,6 +402,45 @@ and this project adheres to
   target to register owned the action id. An edit now re-registers the module (before the next
   render or action call), and each target's session registers and dispatches its own instance
   (its platform files). Production keeps one registry.
+- **`deno task prisma:setup` runs again.** The setup script `denext migrate` writes for a Prisma
+  app (`scripts/denext-prisma-setup.ts`) called `mfs.stat`, a denext-internal helper that doesn't
+  exist in the app, so the script threw a ReferenceError before applying the schema. It calls
+  `Deno.stat` again, and a test type-checks the emitted script on its own.
+- **`denext migrate --check` says when it couldn't evaluate `next.config.*`.** The evaluator is a
+  `deno` subprocess, so the check needs `--allow-run` as well as read access; without it,
+  `basePath` and the other keys were reported as "won't migrate". The report now says
+  `couldn't evaluate next.config (needs --allow-run)` under review instead, and the documented
+  command (`deno run --allow-read --allow-env --allow-run …`) and the flag's help say so. The
+  suggested `denext migrate` command keeps `--denext-local-path`, a project at a filesystem root
+  (`/`, `C:\`) gets relative paths in the plan, and a Remix app's `--check --codemod` notes that
+  the codemod plan names files at their pre-migration paths.
+- **`denext upgrade` finds an older compatible plugin and stops on a JSR failure.** It looked at
+  only the newest 6 denext and 8 plugin versions, so an older release that fits was missed; it now
+  scans the whole history newest first (bounded at 200 JSR reads). A JSR request that fails is an
+  error ("couldn't reach JSR …"), no longer read as an incompatible version. A package that
+  imports no denext stays within its own caret range unless `--allow-major`; `--to` an older
+  denext than the pin is refused without `--allow-downgrade`; the `jsr:/@denext/denext@…/`
+  import-map prefix form is matched; and workspace members' `deno.json` files move with the root
+  (a member without one is reported).
+- **`denext dev` no longer loses an edit to a tagging pass that was still loading.** A pass over
+  the `"use server"` / `"use client"` modules that started before an edit could mark its module
+  tagged after the edit cleared the set, so later passes skipped it and the edit never registered.
+  A pass now marks a module tagged only if no edit came in while it loaded. One `"use server"`
+  module that fails to load no longer fails every dev action request: the other modules are still
+  registered, their actions run, and only a request for an action that didn't load gets the
+  error.
+- **Task retries and shutdown.** A backoff (or `maxDelayMs`) past 2^31-1 ms overflowed the timer
+  and retried at once; it is capped at that limit. A failed attempt whose backoff wait was cut
+  short by shutdown was recorded with `will_retry = 1`; whether it retries is now decided after
+  the wait. `runTask(name)` called with no signal now gets one that aborts on server shutdown.
+- **`denext dev` keeps an edited module's two most recently used copies.** Reverting an edit made
+  an older copy current again, but it stayed first in line for removal, so the next edit deleted
+  the copy in use.
+- **`denext generate ci` reads tasks from the parsed `deno.json(c)`.** A pattern match stopped at
+  the first `}`, so a task in the object form (`{ "command": … }`) hid the `check` / `build`
+  tasks after it. The generated `tasks/migrate.ts` runs a migration file that has its own
+  `BEGIN;` / `COMMIT;` as written (wrapped in the runner's transaction it failed), and encodes a
+  file name with `#`, `?` or `%` before building its URL.
 
 ### Security
 

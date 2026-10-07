@@ -113,6 +113,30 @@ Deno.test("dev copies: many edits keep at most two copies per module", async () 
   }
 });
 
+Deno.test("dev copies: the two MOST RECENTLY used copies are kept (a reverted edit's copy too)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_devcopies_lru_" });
+  try {
+    const dev = new DevCopies(dir);
+    const copy = (name: string) => join(dir, `${name}.ts`);
+    const write = (name: string) =>
+      dev.write(dir, "file:///m.ts", copy(name), () => Deno.writeTextFile(copy(name), name));
+    await write("a");
+    await write("b");
+    await write("a"); // the edit is reverted: copy `a` is current again
+    await write("c"); // a new edit: the oldest in use is `b`, not `a`
+    const exists = (name: string) => Deno.stat(copy(name)).then(() => true, () => false);
+    await new Promise((r) => setTimeout(r, 20)); // the eviction's remove is fire-and-forget
+    assertEquals(
+      [await exists("a"), await exists("b"), await exists("c")],
+      [true, false, true],
+      "the current copy `c` and the previous one `a` survive",
+    );
+    assertEquals(dev.size, 2);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("dev copies: an import cycle through an edited module copies consistently", async () => {
   const dir = await project({
     "app/a.ts": `import { b } from "./b.ts";\nexport const a = () => "A" + b();\n`,

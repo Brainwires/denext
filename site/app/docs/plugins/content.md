@@ -377,7 +377,11 @@ README (`deno task gen:plugin-catalog`; a drift test fails if it goes stale), al
 `@denext/denext` range each package's own import map declares (`denext`). `denext migrate`
 takes its plugin pins from it, `denext ui` lists it, and `denext upgrade` reads the ranges
 to move denext and the plugins to versions that agree (a version the catalog doesn't know is
-looked up in its published `deno.json` on JSR).
+looked up in its published `deno.json` on JSR). It searches each package's whole version
+history, newest first, and a JSR request that fails stops the upgrade with the reason rather
+than counting as an incompatible version. A package that imports no denext stays within its own
+caret range unless `--allow-major`; `--to` an older denext needs `--allow-downgrade`; and the
+`deno.json` of each workspace member moves with the root's (a member without one is reported).
 
 What a package cannot state about itself it declares in its `deno.json`, under
 `denext.catalog`:

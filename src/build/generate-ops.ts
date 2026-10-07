@@ -16,6 +16,7 @@
 //
 // Build-time only; never imported by a shipped bundle.
 
+import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { detectDockerMode } from "./docker-template.ts";
 
@@ -79,7 +80,8 @@ function migrationStamp(now: Date): string {
 /** The SQL file one migration starts as. */
 function migrationSql(slug: string): string {
   return `${sentinel("migration", "--")} — applied in file-name order by \`denext task migrate\`.
--- Write forward-only SQL; each file runs once, inside a transaction.
+-- Write forward-only SQL; each file runs once, inside a transaction (one that begins and commits
+-- its own transaction runs as written).
 
 -- ${slug}
 CREATE TABLE IF NOT EXISTS example (
@@ -93,12 +95,16 @@ CREATE TABLE IF NOT EXISTS example (
 const MIGRATE_TASK = `${sentinel("migration", "//")} — run it with \`denext task migrate\`.
 //
 // Applies every \`migrations/*.sql\` not yet recorded in the \`_migrations\` table, in file-name
-// order, each inside its own transaction, on Deno's built-in SQLite (no npm). DB_PATH picks the
-// database file (default app.db) — the same one lib/db.ts opens.
+// order, each inside its own transaction, on Deno's built-in SQLite (no npm). A file that manages
+// its own transaction (a \`BEGIN;\` / \`COMMIT;\` statement) runs as written: SQLite can't nest
+// one inside ours. DB_PATH picks the database file (default app.db) — the same one lib/db.ts opens.
 import { DatabaseSync } from "node:sqlite";
 import { defineTask } from "denext/server";
 
 const DIR = new URL("../migrations/", import.meta.url);
+// A transaction statement of the file's own (a trigger's BEGIN … END; body is not one).
+const OWN_TRANSACTION =
+  /^\\s*(?:BEGIN(?:\\s+(?:DEFERRED|IMMEDIATE|EXCLUSIVE))?(?:\\s+TRANSACTION)?|COMMIT(?:\\s+TRANSACTION)?|END\\s+TRANSACTION)\\s*;/im;
 
 export default defineTask({
   description: "Apply pending SQL migrations",
@@ -117,15 +123,19 @@ export default defineTask({
       }
       const pending = files.sort().filter((name) => !done.has(name));
       for (const name of pending) {
-        const sql = await Deno.readTextFile(new URL(name, DIR));
-        db.exec("BEGIN");
+        // Encoded: a \`#\`, \`?\` or \`%\` in a file name is part of the name, not URL syntax.
+        const sql = await Deno.readTextFile(new URL(encodeURIComponent(name), DIR));
+        const own = OWN_TRANSACTION.test(sql);
+        if (!own) db.exec("BEGIN");
         try {
           db.exec(sql);
           db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)")
             .run(name, new Date().toISOString());
-          db.exec("COMMIT");
+          if (!own) db.exec("COMMIT");
         } catch (err) {
-          db.exec("ROLLBACK");
+          try {
+            db.exec("ROLLBACK");
+          } catch { /* the file's own transaction already ended */ }
           throw new Error(\`migration \${name} failed: \${(err as Error).message}\`);
         }
       }
@@ -249,11 +259,20 @@ export async function seedPlan(projectDir: string, override?: string): Promise<O
 /** The project's `deno.json` / `deno.jsonc` task names (empty when there is none). */
 async function taskNames(projectDir: string): Promise<Set<string>> {
   for (const file of ["deno.json", "deno.jsonc"]) {
+    let text: string;
     try {
-      const text = await Deno.readTextFile(join(projectDir, file));
-      const tasks = /"tasks"\s*:\s*\{([^}]*)\}/.exec(text)?.[1] ?? "";
-      return new Set([...tasks.matchAll(/"([^"]+)"\s*:/g)].map((m) => m[1]));
-    } catch { /* try the next */ }
+      text = await Deno.readTextFile(join(projectDir, file));
+    } catch {
+      continue; // try the next
+    }
+    try {
+      // Parsed, not pattern-matched: a task written as `{ "command": …, "dependencies": … }`
+      // (or any `}` in a command) would end a regex's match early and hide the tasks after it.
+      const tasks = (parseJsonc(text) as { tasks?: unknown } | null)?.tasks;
+      return new Set(tasks && typeof tasks === "object" ? Object.keys(tasks) : []);
+    } catch {
+      return new Set(); // unparseable: no tasks known
+    }
   }
   return new Set();
 }

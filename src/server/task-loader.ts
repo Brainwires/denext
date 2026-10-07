@@ -6,7 +6,14 @@
 
 import { walk } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { collectSchedules, isTask, registerTask, scheduleTasks, setTaskRecorder } from "./tasks.ts";
+import {
+  abortTaskRuns,
+  collectSchedules,
+  isTask,
+  registerTask,
+  scheduleTasks,
+  setTaskRecorder,
+} from "./tasks.ts";
 import { TASK_HISTORY_DB, taskHistoryRecorder } from "./task-history.ts";
 
 /**
@@ -79,6 +86,7 @@ export async function bootScheduledTasks(
   );
   return () => {
     dispose();
+    abortTaskRuns(); // on-demand runs (`runTask` from a route handler) stop with the scheduler
     stopRecording();
   };
 }

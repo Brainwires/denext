@@ -158,6 +158,23 @@ Deno.test("prisma migrate: emits the links patch package + setup script", async 
   await Deno.remove(dir, { recursive: true });
 });
 
+Deno.test("prisma migrate: the emitted setup script type-checks on its own", async () => {
+  // The script runs as `deno task prisma:setup` in the APP, with no denext module in scope: a
+  // reference to a denext-internal helper (the migrate fs seam `mfs`) is a ReferenceError there.
+  const dir = await scaffoldPrismaApp();
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const script = join(dir, "scripts/denext-prisma-setup.ts");
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: ["check", "--no-config", "--quiet", script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const err = new TextDecoder().decode(out.stderr);
+  assert(out.success, `deno check failed on the emitted setup script:\n${err}`);
+  assert(!(await read(dir, "scripts/denext-prisma-setup.ts")).includes("mfs."));
+  await Deno.remove(dir, { recursive: true });
+});
+
 Deno.test("prisma migrate: idempotent re-run leaves schema + db module stable", async () => {
   const dir = await scaffoldPrismaApp();
   await migrateProject(dir, { denextLocalPath: REPO_ROOT });

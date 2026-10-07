@@ -161,7 +161,10 @@ function controlSignalResponse(err: unknown, isXhr: boolean): Response | null {
  * The registered handler named by the request path, or null. A malformed percent-escape
  * (e.g. `%ZZ`, a bare `%`) can't name any action — a miss (404), not an unhandled URIError.
  */
-function resolveAction(request: Request, scope?: string): ReturnType<typeof getServerAction> {
+export function resolveAction(
+  request: Request,
+  scope?: string,
+): ReturnType<typeof getServerAction> {
   const pathname = new URL(request.url).pathname;
   try {
     return getServerAction(decodeURIComponent(pathname.slice(ACTION_PREFIX.length)), scope);

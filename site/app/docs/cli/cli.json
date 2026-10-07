@@ -727,7 +727,7 @@
         {
           "name": "check",
           "type": "boolean",
-          "description": "Report what migrate would change and what won't migrate; writes nothing (read permission is enough; add --json for the machine-readable report)"
+          "description": "Report what migrate would change and what won't migrate; writes nothing (needs read access, plus --allow-run to evaluate next.config; add --json for the machine-readable report)"
         },
         {
           "name": "desktop",
@@ -1512,7 +1512,7 @@
       "name": "upgrade",
       "summary": "Bump denext, its CLI tasks and the first-party @denext/* packages together",
       "usage": "denext upgrade [dir] [options]",
-      "description": "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\nrun the CLI) and moves them to the newest versions that work together: the newest denext\nevery pinned first-party package has a compatible version for (each package's own\n@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\nNothing moves backwards; each pin keeps its ^ / ~ / exact operator. --to picks the denext\nversion; --dry-run prints the plan; --check exits 1 when anything is out of date.",
+      "description": "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\nrun the CLI) and moves them to the newest versions that work together: the newest denext\nevery pinned first-party package has a compatible version for (each package's own\n@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\nNothing moves backwards; each pin keeps its ^ / ~ / exact operator. A package that imports\nno denext stays within its own caret range unless --allow-major. Workspace members'\ndeno.json files move with the root. A JSR request that fails is an error, never read as\nincompatible. --to picks the denext version (an older one needs --allow-downgrade);\n--dry-run prints the plan; --check exits 1 when anything is out of date.",
       "flags": [
         {
           "name": "dry-run",
@@ -1529,6 +1529,16 @@
           "type": "string",
           "valueName": "<version>",
           "description": "The denext version to move to (default: the newest every package supports)"
+        },
+        {
+          "name": "allow-downgrade",
+          "type": "boolean",
+          "description": "Let --to name a denext version older than the current pin"
+        },
+        {
+          "name": "allow-major",
+          "type": "boolean",
+          "description": "Let a package that imports no denext move to a new major (breaking) version"
         }
       ],
       "positionals": [

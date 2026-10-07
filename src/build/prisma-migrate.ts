@@ -351,7 +351,7 @@ await run("prisma generate", ["run", "-A", "--no-config", "npm:prisma@${PRISMA_V
 });
 // An app with SQL migrations (\`prisma/migrations/\`) gets them APPLIED — they often carry
 // seed rows (the Epic Stack's roles/permissions) that \`db push\` (schema only) would skip.
-const HAS_MIGRATIONS = await mfs.stat("prisma/migrations").then(() => true, () => false);
+const HAS_MIGRATIONS = await Deno.stat("prisma/migrations").then(() => true, () => false);
 await run(HAS_MIGRATIONS ? "prisma migrate deploy" : "prisma db push", [
   "run", "-A", "--no-config", "npm:prisma@${PRISMA_VERSION}",
   ...(HAS_MIGRATIONS ? ["migrate", "deploy"] : ["db", "push", "--skip-generate", "--accept-data-loss"]),
