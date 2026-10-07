@@ -372,6 +372,13 @@ function cliBackend(os: Exclude<Os, "linux">, service: string, run: SecureRunner
   };
 }
 
+/**
+ * How long putting a legacy item back may take (`security -i add` plus the read-back): its own
+ * deadline, well inside the bridge's 30 s per-method budget, since the caller's signal may already
+ * be aborted by then.
+ */
+const RESTORE_TIMEOUT_MS = 10_000;
+
 /** `kSecAttrCreator` of the items the runtime's macOS store writes, as `security` prints it. */
 const RUNTIME_ITEM_CREATOR = '"crtr"<uint32>="Lfy1"';
 
@@ -473,7 +480,12 @@ function migratingBackend(
     }
     settled.add(key);
   };
-  /** Store `b64` where the legacy item was; on a failure put `kept` back, then throw. */
+  /**
+   * Store `b64` where the legacy item was; on a failure put `kept` back, then throw the store's
+   * error. The put-back runs under its own deadline ({@linkcode RESTORE_TIMEOUT_MS}), not the
+   * caller's `signal`: when the store failed because that signal aborted (the bridge's per-method
+   * timeout), it is already aborted, and `security` would be killed before it put the value back.
+   */
   const storeOrRestore = async (
     key: string,
     b64: string,
@@ -483,7 +495,9 @@ function migratingBackend(
     try {
       await runtime.set(key, b64, signal);
     } catch (err) {
-      if (kept !== null) await legacy.set(key, kept, signal).catch(() => {});
+      if (kept !== null) {
+        await legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {});
+      }
       throw err;
     }
   };

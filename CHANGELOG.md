@@ -311,7 +311,9 @@ and this project adheres to
   before touching anything (a locked keychain fails the write with the item intact), and puts the
   item back with its old value if the store fails after the delete, returning the store's error.
   Each key's secure-store operations now also run one at a time, so a first-read move can't undo a
-  concurrent write of the same key.
+  concurrent write of the same key. The put-back runs under its own 10 s deadline, not the call's
+  signal: when the store failed because the bridge's per-method timeout aborted that signal, the
+  put-back was killed at once and the item lost.
 - **`denext desktop doctor --linux` no longer warns about a locked keyring that unlocks by
   itself.** gnome-keyring keeps a keyring with no password (an autologin's login keyring, as on
   Cinnamon) unencrypted and reports it locked until first use, which unlocks it with no prompt; the

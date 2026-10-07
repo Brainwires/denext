@@ -262,6 +262,51 @@ Deno.test("secureStore (macOS, runtime store): a write whose store fails after t
   assertEquals(mac.violations, []);
 });
 
+for (const method of ["set", "get"] as const) {
+  Deno.test(`secureStore (macOS, runtime store): a ${method} whose store times out the call still puts the legacy item back`, async () => {
+    // The store hangs until the bridge's per-method timeout aborts the call's signal, then fails.
+    // The put-back must not run under that (already aborted) signal: `security` would be killed
+    // at once and the legacy item, deleted to make room, lost.
+    const caller = new AbortController();
+    const mac = fakeMac("login");
+    mac.login.set("tok", { value: b64("signed-in token"), owner: "security" });
+    const store = mac.api.secureStore;
+    const realSet = store.set.bind(store);
+    store.set = (...a: Parameters<typeof realSet>) => {
+      // The first try (the legacy item in the way) is refused as usual; the store after the
+      // delete hangs until the timeout.
+      if (mac.login.has("tok")) return realSet(...a);
+      caller.abort(new DOMException("the call timed out", "TimeoutError"));
+      const err = new Error("the keychain did not answer");
+      err.name = "SecureStoreUnavailable";
+      return Promise.reject(err);
+    };
+    const cap = secureStoreCapability({
+      service: "com.example.app",
+      os: "darwin",
+      api: mac.api,
+      // Deno kills a child whose signal is aborted: the command never runs.
+      run: (cmd, args, stdin, signal) =>
+        signal?.aborted
+          ? Promise.reject(new DOMException("aborted", "AbortError"))
+          : mac.run(cmd, args, stdin, signal),
+    });
+    const args = method === "set" ? { key: "tok", value: "new" } : { key: "tok" };
+    const result = Promise.resolve(
+      cap.methods[method].handler(args, { ...ctx, signal: caller.signal }),
+    );
+    if (method === "set") {
+      const err = await assertRejects(() => result, DesktopCapError);
+      assertEquals(err.code, "backend_unavailable");
+      assertStringIncludes(err.message, "did not answer");
+    } else {
+      assertEquals(await result, "signed-in token");
+    }
+    assertEquals(mac.login.get("tok"), { value: b64("signed-in token"), owner: "security" });
+    assertEquals(mac.violations, []);
+  });
+}
+
 Deno.test("secureStore (macOS, runtime store): a write while the keychain is locked fails before the legacy item is touched", async () => {
   const mac = fakeMac("login", { runtimeFails: () => true });
   mac.login.set("tok", { value: b64("signed-in token"), owner: "security" });
