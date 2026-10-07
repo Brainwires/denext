@@ -104,7 +104,9 @@ jobs:
           restore-keys: ${{ runner.os }}-deno-
 
       - name: Shared-chunk budget (production build of examples/hello)
-        run: deno test -A --unstable-kv --filter "build smoke: examples/hello" tests/integration/build-smoke.test.ts
+        run: >-
+          deno test -A --unstable-kv --filter "build smoke: examples/hello"
+          tests/integration/build-smoke.test.ts
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
