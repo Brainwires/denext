@@ -18,6 +18,16 @@ and this project adheres to
 
 ### Added
 
+- **`denext generate migration | seed | ci`**, scaffolded like `generate docker` (project-root
+  files, the flavor auto-detected with an optional override, never overwriting a file).
+  `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,
+  `tasks/migrate.ts` — a task that applies pending files in order on `node:sqlite`, each in a
+  transaction and recorded once in `_migrations` (`denext task migrate`); a Prisma or Drizzle
+  project is pointed at `prisma migrate dev` / `drizzle-kit generate`. `seed` writes an
+  idempotent `tasks/seed.ts` (`node:sqlite`, or `PrismaClient` in a Prisma project). `ci`
+  writes `.github/workflows/ci.yml` with Deno pinned, the project's `check` task (else fmt,
+  lint, test) and its `build` (a SPA's `export`). The `denext ui` Generate panel and the MCP
+  `denext_generate` tool offer all three.
 - **`denext upgrade`** moves the project's `jsr:@denext/denext` pin, the `deno task`s pinned to
   the CLI and every first-party `@denext/*` package together, to the newest denext each pinned
   package has a compatible version for (a package's `@denext/denext` range, from

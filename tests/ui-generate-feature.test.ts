@@ -93,7 +93,7 @@ Deno.test("the panel offers every generate kind, with the CSRF field and both su
     const res = await get(h, "/generate");
     assertEquals(res.status, 200);
     const body = await res.text();
-    assertEquals(GENERATE_KINDS.length, 13);
+    assertEquals(GENERATE_KINDS.length, 16);
     for (const kind of GENERATE_KINDS) {
       assertStringIncludes(body, `<option value="${kind}"`, kind);
     }

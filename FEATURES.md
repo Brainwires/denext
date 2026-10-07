@@ -789,9 +789,11 @@ cache uses Deno's built-in `node:sqlite`.)
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
-  (`--template default|minimal`), `generate` (thirteen kinds: `page`, `route`,
+  (`--template default|minimal`), `generate` (sixteen kinds: `page`, `route`,
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-  `middleware`, `task`, `test`, `docker`; the engine takes `force`/`dryRun`),
+  `middleware`, `task`, `test`, `docker`, `migration` (a timestamped SQL file + a
+  `node:sqlite` runner task), `seed`, `ci` (a GitHub Actions workflow); the engine takes
+  `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
   `routes` (the app's pages and API routes with methods, params and files, as a table or
   `--json`; no route module is imported), `upgrade` (denext, its CLI tasks and the

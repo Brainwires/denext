@@ -239,7 +239,11 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         kind: { type: "string", enum: [...GENERATE_KINDS], description: GENERATE_KIND_LIST },
-        name: { type: "string", description: "Route/component/action name (optional for docker)." },
+        name: {
+          type: "string",
+          description: "Route/component/action/migration name (optional for docker, seed and " +
+            "ci, where it overrides the detected flavor).",
+        },
         dir: { type: "string", description: "Project directory (default: current directory)." },
         force: { type: "boolean", description: "Overwrite files that already exist." },
         dryRun: { type: "boolean", description: "Plan only: print what would be written." },

@@ -235,7 +235,16 @@ here and is enough for most SQLite apps.
 `migrations/NNN_name.sql`, applied in filename order, each inside a transaction,
 each recorded once in a `_migrations` table. The runner is a task, so it is
 `denext task migrate` from a shell or a deploy step and `runTask("migrate")`
-from app code:
+from app code.
+
+**`denext generate migration <name>` writes it for you:** the next
+`migrations/<UTC timestamp>_<name>.sql` (timestamps sort in creation order and
+never collide between branches the way `NNN` does) and, the first time,
+`tasks/migrate.ts` — the runner below. `denext generate seed` writes
+`tasks/seed.ts`, an idempotent `INSERT OR IGNORE` seed for `denext task seed`
+(a `PrismaClient` upsert in a Prisma project). In a Prisma or Drizzle project
+`generate migration` points at `prisma migrate dev` / `drizzle-kit generate`
+instead, since those own the migration history. The runner by hand:
 
 ```ts
 // tasks/migrate.ts — apply migrations/NNN_name.sql in order, once each, on node:sqlite.

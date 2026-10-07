@@ -5,20 +5,12 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../../build/generate.ts";
-
-/**
- * Kinds whose second positional is not a required name — `docker` and
- * `middleware` are single root files; the App Router boundaries (`loading`/
- * `error`/`not-found`) default to the root segment when no path is given.
- */
-const NO_NAME: ReadonlySet<GenerateKind> = new Set([
-  "docker",
-  "middleware",
-  "loading",
-  "error",
-  "not-found",
-]);
+import {
+  GENERATE_KINDS,
+  generateArtifact,
+  type GenerateKind,
+  OPTIONAL_NAME_KINDS,
+} from "../../build/generate.ts";
 
 /** Project dir for `generate <kind> <name> [dir]` (positional[2]). */
 function generateDir(ctx: CommandContext): string {
@@ -39,7 +31,7 @@ function generateTarget(
     );
     Deno.exit(1);
   }
-  if (!name && !NO_NAME.has(kind)) {
+  if (!name && !OPTIONAL_NAME_KINDS.has(kind)) {
     console.error(
       `denext generate: missing name.\n  denext generate ${kind} <name>`,
     );
@@ -51,7 +43,7 @@ function generateTarget(
 export const generateCommand: CommandSpec = {
   name: "generate",
   summary:
-    "Scaffold a route, boundary, component, API route, action, middleware, task, test or Docker setup into an app",
+    "Scaffold a route, boundary, component, API route, action, middleware, task, test, Docker setup, migration, seed or CI workflow",
   aliases: ["g"],
   loadsModules: false, // pure codegen — no user-module load / re-exec needed
   usage: "  denext generate page dashboard/settings\n" +
@@ -66,12 +58,16 @@ export const generateCommand: CommandSpec = {
     "  denext generate task cleanup      # tasks/cleanup.ts (defineTask)\n" +
     "  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n" +
     "  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n" +
-    "  denext generate docker spa        # force the static/SPA image (else auto-detected)",
+    "  denext generate docker spa        # force the static/SPA image (else auto-detected)\n" +
+    "  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ tasks/migrate.ts)\n" +
+    "  denext generate seed              # tasks/seed.ts (node:sqlite, or Prisma when detected)\n" +
+    "  denext generate ci                # .github/workflows/ci.yml (check + build)",
   positionals: [
     { name: "kind", help: GENERATE_KINDS.join(" | "), required: true },
     {
       name: "name",
-      help: "Route/component/action name (docker: optional server|spa)",
+      help: "Route/component/action/migration name (docker: server|spa; seed: sqlite|prisma; " +
+        "ci: github — each optional)",
     },
     { name: "dir", help: "Project directory (default: .)" },
   ],

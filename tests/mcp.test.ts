@@ -167,7 +167,7 @@ Deno.test("denext_generate advertises every kind the generator supports", () => 
   const tool = TOOLS.find((t) => t.name === "denext_generate")!;
   const kind = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).kind;
   assertEquals(kind.enum, [...GENERATE_KINDS]);
-  assertEquals(GENERATE_KINDS.length, 13);
+  assertEquals(GENERATE_KINDS.length, 16);
   for (const k of GENERATE_KINDS) assertStringIncludes(tool.description, k);
 });
 
