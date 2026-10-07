@@ -10,8 +10,6 @@ and this project adheres to
 
 ### Breaking
 
-Each item is described in full under Changed, Fixed or Security below.
-
 - **Deno Desktop needs runtime 2.9.7-denext.9.** An app packaged with an older runtime loses its
   page's WebSockets and full-app updates (denext warns at startup); repackage with the runtime
   denext pins.
@@ -52,13 +50,19 @@ Each item is described in full under Changed, Fixed or Security below.
   errors are `CodedError`s.
 - **Regenerate the desktop package scripts** (`denext desktop package --regenerate-scripts`) so
   Windows signs every PE file of the bundle, and so the macOS script exports for the `macos`
-  target (an older one packages the `web` platform files) and mirrors `desktop.app.identifier`
-  into `deno.json` after the export (an older one syncs before it, and the bundle can carry a
-  stale `CFBundleIdentifier` that no longer matches its provisioning profile).
+  target (an older one packages the `web` platform files; Linux and Windows export for their own
+  target through `denext/desktop`), mirrors `desktop.app.identifier` into `deno.json` after the
+  export (an older one syncs before it, and the bundle can carry a stale `CFBundleIdentifier`
+  that no longer matches its provisioning profile) and refuses to embed the profile in a bundle
+  whose identifier differs.
 - **The desktop `fs` capability's cache folder moved** to a `denext` sub-folder on macOS and Linux;
   files a page stored with `directory: "cache"` before are not found there.
-- **Windows CEF apps packaged on runtime 2.9.7-denext.9 can't update themselves** to the layout of
-  CEF's bootstrap (runtime 2.9.7-denext.11): reinstall them.
+- **A Windows CEF app packaged with denext 3.1.x or earlier (runtime denext.8) can't take a
+  full-app update published with 3.2.0**, which has the layout of CEF's bootstrap (runtime
+  2.9.7-denext.11): reinstall it.
+- **`createTray` rejects `unsupported` where no tray can be shown** (no tray host, or
+  `new Deno.Tray()` throws `NotSupported`) instead of returning an icon that never appears; check
+  `appCapabilities().tray` or catch it.
 - **A client bundle that would ship a `"use server"` module's source fails the build**, and a SPA
   that imports a `"use server"` module (it has no server to call) no longer builds. A page that
   hydrates as a whole now calls the actions it imports on the server instead of running them in
@@ -73,14 +77,18 @@ Each item is described in full under Changed, Fixed or Security below.
   2.9.7-denext.12 reads from xdg-desktop-portal before GSettings and follows live), the
   double-click action, the colour scheme and the accent colour. `makeWindowDraggable` now does
   the user's double-click action (maximize / restore, minimize, or nothing) on the system WebView
-  backends. An older runtime answers the OS's usual layout (`source: "unknown"`).
-- **Linux `secureStore` through the runtime's own libsecret store** (runtime 2.9.7-denext.12,
-  `Deno.desktop.secureStore`): no `secret-tool` to install. A missing provider says what to do
+  backends. The preferences take effect with Deno Desktop runtime 2.9.7-denext.12, which a later
+  denext release pins; under 3.2.0's pin (denext.11) `getTitleBarPreferences()` answers the OS's
+  usual layout (buttons on the left on macOS, on the right elsewhere, a double click maximizes,
+  `source: "unknown"`).
+- **Linux `secureStore` through the runtime's own libsecret store** (`Deno.desktop.secureStore`):
+  no `secret-tool` to install. It takes effect with Deno Desktop runtime 2.9.7-denext.12, which a
+  later denext release pins; under 3.2.0's pin (denext.11) `secureStore` keeps using
+  `secret-tool`. A missing provider says what to do
   ("install gnome-keyring", or "enable KWallet's Secret Service" where KWallet runs without
   serving it); a locked keyring no one can unlock is refused at once, and an unlock prompt nobody
   answers after the timeout. Items are the ones `secret-tool` writes, so stored values stay
-  readable. Older runtimes keep the `secret-tool` path.
-
+  readable.
 - **Platform-specific files: `BigButton.ios.tsx`, `.android`, `.mobile`, `.macos` / `.windows` /
   `.linux`, `.desktop` and `.web`.** React Native's platform extensions, for every denext app (App
   Router native and next-compat, SPA mode, React Native mode). Each target probes its own files
@@ -133,19 +141,10 @@ Each item is described in full under Changed, Fixed or Security below.
   (`schedulePersistsReason`). An older runtime reads `"unknown"` with no reasons.
   `denext desktop doctor --linux` checks the portal's host app registry (xdg-desktop-portal
   1.19+), a systemd user manager and a dock that reads launcher badges, each with a fix, and says
-  when the pinned runtime predates them. The kitchen sink's window test checks the cold start and
-  posting while closed (or skips with the runtime's reason) and reports where the badge showed.
+  when the pinned runtime predates them.
 - **`desktopOs()` from `denext/desktop/client`.** It returns the OS a Deno Desktop window runs on
   (`"darwin"`, `"windows"`, `"linux"`, …, Deno's `Deno.build.os`), or `undefined` off desktop, so
   apps stop reading the private `__denext.os` global. It needs no capability.
-- **The desktop window test covers Windows Authenticode signing.** On every Windows host it
-  creates two throwaway self-signed code-signing certificates, packages 1.0.0 and 99.0.0 with one
-  through the package script, re-signs a copy with the other through `desktopSignWindows`, and
-  checks the signer of every PE file (removing the certificates afterwards). On an elevated runner
-  that sets `KITCHEN_SINK_TRUST_TEST_ROOT=1` (GitHub's hosted Windows runner in
-  `desktop-window.yml`) it trusts both for the run: a full-app update signed by the other
-  certificate is refused (`os_signature`), the same signer's stages as `authenticode`, installs,
-  is confirmed and is still running after a relaunch. Elsewhere those checks skip with the reason.
 - **`denext desktop doctor [--linux] [--json]`.** It reports the pinned Deno Desktop runtime
   (version, cache, whether `deno` matches it, whether it has the session probe) and, on Linux, what
   the session provides, read over D-Bus with `busctl` or `gdbus`: the session type, a tray host,
@@ -167,36 +166,85 @@ Each item is described in full under Changed, Fixed or Security below.
   activation. Validate `data` before acting on it.
 - **Linux file dialogs are only the runtime's.** `pickDocument` / `saveFile` / `pickFolder` no
   longer shell out to zenity or kdialog (separate installs a desktop may not ship, which differ in
-  what they offer): without denext's pinned runtime's dialogs they answer `unavailable` and the page
-  keeps `<input type="file">`. Runtime 2.9.7-denext.12 shows the desktop's own dialog through
-  xdg-desktop-portal's FileChooser wherever the portal offers one (GTK's chooser otherwise), and
-  `platformFeatures().fileChooser` says which. The `dialogs` capability no longer bakes
-  `--allow-run=zenity,kdialog` on Linux.
+  what they offer). Under the runtime 3.2.0 pins (denext.11) they show GTK's file chooser
+  (`GtkFileChooserNative`); without the runtime's dialogs (the stock runtime) they answer
+  `unavailable` and the page keeps `<input type="file">`. The `dialogs` capability no longer bakes
+  `--allow-run=zenity,kdialog` on Linux. With Deno Desktop runtime 2.9.7-denext.12, which a later
+  denext release pins, they show the desktop's own dialog through xdg-desktop-portal's FileChooser
+  wherever the portal offers one (GTK's chooser otherwise), and `platformFeatures().fileChooser`
+  says which.
+- **Deep-link scheme registration on Linux will rebuild KDE's service cache.** With Deno Desktop
+  runtime 2.9.7-denext.12, which a later denext release pins, the runtime runs `kbuildsycoca6` /
+  `kbuildsycoca5` where installed after `xdg-mime`, so the first link on Plasma reaches the app
+  without a re-login. Under 3.2.0's pin (denext.11) Plasma may need a re-login first.
 
-- **denext pins Deno Desktop runtime 2.9.7-denext.11** (laufey `00f2128`, API 45): Chromium's
-  sandbox for CEF on Windows (the bootstrap layout below: `<App>.exe` is CEF's bootstrap,
-  `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime); Linux notifications through the
-  xdg-desktop-portal, with D-Bus activation so a click starts an app that quit, systemd transient
-  user timers that post a scheduled notification while the app is closed, and launcher badges
-  (`com.canonical.Unity.LauncherEntry`); the runtime no longer rewrites the process's argv in
-  place, so a D-Bus-activated app no longer crashes, and `Deno.args` leaves out the runtime's own
-  switches; FFI libraries load from paths relative to the app; large Linux clipboard transfers
-  (XCB INCR); and the webview `.deb`'s dependencies, the AppImage icon and a tray created after
-  the window.
-- **The CEF backend makes no network requests of its own** (runtime 2.9.7-denext.11). Chromium
-  contacted Google from a CEF window even with background networking off: the network time
-  tracker, an AI Mode eligibility check, preconnects to the search engine, an account list at
-  profile start, the component updater a minute after launch and, on Linux, Hunspell dictionary
-  downloads. The runtime turns each of them off (a feature or switch the app's own command line
-  sets still wins), so the only requests a CEF window makes are the ones the app makes. On Linux
-  that leaves spellcheck off unless the app ships its dictionaries (Known limitations).
-- **denext pins Deno Desktop runtime 2.9.7-denext.10** (laufey `611abcd`, API 45): Linux's session
-  probe (`Deno.desktop.platformFeatures()`) with a live tray host, a CEF cookie store that neither
-  hangs on a keyring no one can unlock nor deletes cookies encrypted with the OS key, Chromium's
-  sandbox for CEF on macOS and Linux, Wayland clipboard / shortcut / sizing / exit fixes, streamed
-  `fetch` bodies on WebKitGTK that arrive as each write does, and `.deb` / `.rpm` icons, scriptlets
-  and a conditional `secret-tool` dependency. The probe is now async in the runtime; the `app`,
-  `window` and `notifications` capabilities await it.
+- **denext pins Deno Desktop runtime 2.9.7-denext.11 (3.1.0 pinned denext.8) and requires at
+  least 2.9.7-denext.9.** `src/build/desktop-runtime-pin.json` points at the
+  `denext-runtime-v2.9.7-denext.11` release (laufey `00f2128`, API 45), so `denext desktop` and the
+  package scripts download it; see the
+  [runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases). The contract that
+  begins with denext.9 (the first six items) does not work with an older runtime:
+  - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
+    `DENO_DESKTOP_WS_URL` (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`) and refuses an
+    upgrade without the token (403). denext injects it into the app's top-level page as
+    `__denext.wsUrl`, together with the per-launch token: a frame whose request says so
+    (`Sec-Fetch-Dest`) gets neither, and where the engine omits that header, the `Origin` check
+    still holds, so only a same-origin frame could get it. `desktopWebSocketUrl(path)` and the
+    Live client append the page's path, and `Deno.serve` sees `GET <path>`; a bare query
+    (`"?room=1"`) is now accepted too. `desktopWsOrigin()` is replaced by `desktopWsUrl()`, the
+    relay URL with the token (`DESKTOP_WS_ORIGIN_ENV` → `DESKTOP_WS_URL_ENV`).
+  - **Capabilities that need it bake an unscoped `--allow-sys`.** The runtime refuses reading or
+    watching the clipboard, global shortcuts, `setLaunchAtLogin`, OS notifications (scheduled or
+    `new Notification()`) and forcing a deep-link scheme back (`registerScheme({ force })`)
+    without it, and a partial `--allow-sys=<names>` does not satisfy it. So `clipboard`,
+    `global-shortcuts`, `launch-at-login` and `notifications`, and any `desktop.app.deepLinks`
+    scheme, add `--allow-sys` to the package flags. `denext desktop add` reports these
+    capabilities as BROAD trust.
+  - **Full-app update manifests carry `expiresAt` and `sequence`.** The runtime refuses a manifest
+    without them (`invalid_manifest`), one past its `expiresAt` (`expired`), and one with a lower
+    `sequence` than the install accepted before (`replayed`). `denext desktop publish-update` signs
+    both: an expiry 30 days out (`--expires-in <days>`, or `--expires-at <RFC 3339>`) and the Unix
+    time in seconds (`--sequence <n>`). The sequence is never below the existing manifest's, and
+    a new release's is above it. **A published manifest must be re-signed before it expires**:
+    `denext desktop publish-update --resign` re-signs the one in `--out` without the artifact.
+    When the verified manifest already in `--out` expires within 7 days (or already has),
+    `publish-update` warns and points at `--resign`.
+  - **The publisher checks the version the artifact was built as.** The runtime refuses to stage
+    an update whose compiled deno.json `version` (and, on macOS, `CFBundleShortVersionString`) is
+    not the manifest's (`version_mismatch`). `publish-update` reads the version back from the
+    artifact and refuses before it signs anything.
+  - **`denext/desktop/updater` follows the runtime's updater.** It adds the codes `expired`,
+    `replayed` and `version_mismatch`. `checkForAppUpdate()` returns the manifest's `sequence` and
+    `expiresAt`. `appUpdateStatus()` returns `rejectedVersions` (every version rolled back, none
+    offered again) and `manifestSequence`. `confirmAppUpdate()` returns without waiting for the
+    previous app to be deleted.
+  - **A runtime older than denext.9 is reported at startup.** An app at its custom origin whose
+    runtime publishes no `DENO_DESKTOP_WS_URL` (a `denext.7` or `denext.8` runtime) prints one
+    warning naming the skew: the page's WebSockets and full-app updates won't work there, and the
+    fix is to repackage with the runtime denext pins.
+  - **The CEF backend makes no network requests of its own.** Chromium contacted Google from a
+    CEF window even with background networking off: the network time tracker, an AI Mode
+    eligibility check, preconnects to the search engine, an account list at profile start, the
+    component updater a minute after launch and, on Linux, Hunspell dictionary downloads. The
+    runtime turns each of them off (a feature or switch the app's own command line sets still
+    wins), so the only requests a CEF window makes are the ones the app makes. On Linux that
+    leaves spellcheck off unless the app ships its dictionaries (Known limitations).
+  - **Chromium's sandbox for CEF on every OS:** macOS and Linux, and Windows through CEF's
+    bootstrap layout (below: `<App>.exe` is CEF's bootstrap, `<App>.dll` the laufey host,
+    `<App>.runtime.dll` the runtime).
+  - **Linux notifications through the xdg-desktop-portal**, with D-Bus activation so a click
+    starts an app that quit, systemd transient user timers that post a scheduled notification
+    while the app is closed, and launcher badges (`com.canonical.Unity.LauncherEntry`).
+  - **Linux's session probe** (`Deno.desktop.platformFeatures()`) with a live tray host. The probe
+    is async in the runtime; the `app`, `window` and `notifications` capabilities await it.
+  - **Fixes:** a CEF cookie store that neither hangs on a keyring no one can unlock nor deletes
+    cookies encrypted with the OS key; the runtime no longer rewrites the process's argv in place,
+    so a D-Bus-activated app no longer crashes, and `Deno.args` leaves out the runtime's own
+    switches; the single-instance helper and worker launches run headless; FFI libraries load from
+    paths relative to the app; Wayland clipboard / shortcut / sizing / exit fixes and large Linux
+    clipboard transfers (XCB INCR); streamed `fetch` bodies on WebKitGTK arrive as each write
+    does; and `.deb` / `.rpm` icons, scriptlets and a conditional `secret-tool` dependency, the
+    webview `.deb`'s dependencies, the AppImage icon and a tray created after the window.
 - **A CEF app's `.deb` and `.rpm` install `chrome-sandbox` root-owned with mode 4755**, so web
   content runs in Chromium's sandbox where unprivileged user namespaces are restricted (Ubuntu
   23.10+). The `.rpm` lists the app's directory entry by entry so the helper alone carries
@@ -232,53 +280,6 @@ Each item is described in full under Changed, Fixed or Security below.
 - **Every `unsupported` from the `app`, `window` and `globalShortcuts` capabilities carries a
   reason** in `error.data.reason` (and in the message): which runtime API is missing, or what the
   session lacks.
-- **The desktop kitchen sink's tray and badge checks pass, or skip with the runtime's reason**
-  (the CI's Linux session has no tray host).
-
-- **Deno Desktop: denext pins runtime 2.9.7-denext.9 and adopts its contract.**
-  `src/build/desktop-runtime-pin.json` points at the `denext-runtime-v2.9.7-denext.9` release
-  (laufey `1d1ae22`, API 44), so `denext desktop` and the package scripts download it. Its
-  single-instance helper and worker launches run headless, so the host and runtime classifiers
-  agree. The [runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) table
-  marks it the current pin. What follows needs that runtime and does not work with an older one:
-  - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
-    `DENO_DESKTOP_WS_URL` (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`) and refuses an
-    upgrade without the token (403). denext injects it into the app's top-level page as
-    `__denext.wsUrl`, together with the per-launch token: a frame whose request says so
-    (`Sec-Fetch-Dest`) gets neither, and where the engine omits that header, the `Origin` check
-    still holds, so only a same-origin frame could get it. `desktopWebSocketUrl(path)` and the Live client append
-    the page's path, and `Deno.serve` sees `GET <path>`; a bare query (`"?room=1"`) is now accepted
-    too. `desktopWsOrigin()` is replaced by `desktopWsUrl()`, the relay URL with the token
-    (`DESKTOP_WS_ORIGIN_ENV` → `DESKTOP_WS_URL_ENV`).
-  - **Capabilities that need it bake an unscoped `--allow-sys`.** The runtime refuses reading or
-    watching the clipboard, global shortcuts, `setLaunchAtLogin`, OS notifications (scheduled or
-    `new Notification()`) and forcing a deep-link scheme back (`registerScheme({ force })`)
-    without it, and a partial `--allow-sys=<names>` does not satisfy it. So `clipboard`,
-    `global-shortcuts`, `launch-at-login` and `notifications`, and any `desktop.app.deepLinks`
-    scheme, add `--allow-sys` to the package flags. `denext desktop add` reports these
-    capabilities as BROAD trust.
-  - **Full-app update manifests carry `expiresAt` and `sequence`.** The runtime refuses a manifest
-    without them (`invalid_manifest`), one past its `expiresAt` (`expired`), and one with a lower
-    `sequence` than the install accepted before (`replayed`). `denext desktop publish-update` signs
-    both: an expiry 30 days out (`--expires-in <days>`, or `--expires-at <RFC 3339>`) and the Unix
-    time in seconds (`--sequence <n>`). The sequence is never below the existing manifest's, and
-    a new release's is above it. **A published manifest must be re-signed before it expires**:
-    `denext desktop publish-update --resign` re-signs the one in `--out` without the artifact, and
-    `resignAppUpdate()` is the API for it. When the verified manifest already in `--out` expires
-    within 7 days (or already has), `publish-update` warns and points at `--resign`.
-  - **The publisher checks the version the artifact was built as.** The runtime refuses to stage
-    an update whose compiled deno.json `version` (and, on macOS, `CFBundleShortVersionString`) is
-    not the manifest's (`version_mismatch`). `publish-update` reads the version back from the
-    artifact and refuses before it signs anything.
-  - **`denext/desktop/updater` follows the runtime's updater.** It adds the codes `expired`,
-    `replayed` and `version_mismatch`. `checkForAppUpdate()` returns the manifest's `sequence` and
-    `expiresAt`. `appUpdateStatus()` returns `rejectedVersions` (every version rolled back, none
-    offered again) and `manifestSequence`. `confirmAppUpdate()` returns without waiting for the
-    previous app to be deleted.
-  - **A runtime older than denext.9 is reported at startup.** An app at its custom origin whose
-    runtime publishes no `DENO_DESKTOP_WS_URL` (a `denext.7` or `denext.8` runtime) prints one
-    warning naming the skew: the page's WebSockets and full-app updates won't work there, and the
-    fix is to repackage with the runtime denext pins.
 
 - **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
   against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
@@ -384,6 +385,19 @@ Each item is described in full under Changed, Fixed or Security below.
   capability: it warns once and keeps the token in memory for the rest of the launch. Clerk loads
   and the user can sign in; the session lasts until the app quits. The prompt can still appear.
   Other keychain errors still reach Clerk.
+- **The packaged desktop bundle takes `desktop.app.name` and `identifier` from `denext.config`.**
+  The package scripts mirrored them into `deno.json` (what `deno desktop` reads) before
+  `deno task export`, whose CLI then restored its backup of `deno.json`, so the bundle carried
+  the old `CFBundleIdentifier` (and signing identifier) while the provisioning-profile check had
+  passed against the config's. The scripts now sync after the export, and the macOS script refuses
+  to embed a profile in a bundle whose identifier differs. Regenerate the macOS script
+  (`denext desktop package --regenerate-scripts`); Linux and Windows get the fix from
+  `denext/desktop`.
+- **`denext export` of a next-compat app no longer breaks `denext start`.** The export rebuilt the
+  compat server bundle into `.denext/server/`, over the one `denext build` left for `denext start`,
+  so after any export (the desktop and mobile package scripts run one) `start` failed with
+  `has no module export "m<i>"` until the next build. The export's intermediates now go to
+  `.denext/export/`.
 - **A compat-mode app inside a denext checkout builds on Windows.** The SSR bundle kept any
   `file://` URL under the framework root external. On Windows every absolute path is re-resolved
   as its `file://` URL, so for an app that lives in the checkout (`examples/*`) the build's own
@@ -497,18 +511,18 @@ Each item is described in full under Changed, Fixed or Security below.
   credential in it — in `.denext/client/*.js` / `out/_denext/client/`, served publicly (`denext
   build` and `denext export`, **0.5.0 through 3.1.0**). A page that hydrates as a whole (a hook
   and no `"use client"`) shipped an action it imported however it was spelled (**0.5.0 through
-  3.1.0**), the unbundled dev server served every `"use server"` module as written at
-  `/_denext/@fs/…` (**2.0.0-rc.5 through 3.1.0**, dev only), and the platform files' rewritten
-  copies (unreleased) bypassed the stub too. Now every client bundle resolves the app's modules
-  one way (`src/build/client-imports.ts`): each action module is a redirect to its stub, as a
+  3.1.0**), and the unbundled dev server served every `"use server"` module as written at
+  `/_denext/@fs/…` (**2.0.0-rc.5 through 3.1.0**, dev only). Now every client bundle resolves the
+  app's modules one way (`src/build/client-imports.ts`): each action module is a redirect to its stub, as a
   platform file is a redirect to its variant, and every app module that names one through an
   alias is copied with that import rewritten, so every spelling reaches the stub; whole-route
   bundles and the next-compat client entries get the stubs too, and the dev server serves the
   stub. Behind that, the build fails closed: a client bundle that still ships a module whose
   directive prologue says `"use server"` (whatever produced it) is refused, naming the module,
   the import chain that reached it and the fix. A SPA has no server to call, so a SPA that
-  imports a `"use server"` module now fails to build. **Rebuild and redeploy**, and rotate any
-  secret an action module held: it was readable by anyone who loaded the page.
+  imports a `"use server"` module now fails to build. **Rebuild, redeploy, and rotate any secret
+  an action module held**: it was readable by anyone who loaded the page. Advisory:
+  [GHSA-p39w-qfr7-h26v](https://github.com/Brainwires/denext/security/advisories/GHSA-p39w-qfr7-h26v).
 - **The iOS shell's export router no longer serves files outside the web directory.**
   `DenextExportRouter` (every generated `DenextBridgeViewController`) checked `basePath + path`
   with the decoded request path, so `/%2e%2e%2fsecret` reached it as `/../secret` and could
@@ -521,7 +535,7 @@ Each item is described in full under Changed, Fixed or Security below.
   `denext mobile add export-routes` (or any `denext mobile add …` they use) to upgrade an unedited
   file in place; an edited one is kept and reported (re-run with `--force`, or copy the router's
   `staysInside` check by hand). The bridge templates' generations are bumped (auth-session 4,
-  app-extension 4; the unreleased OTA generation 7 carries it) so an older denext never rewrites
+  app-extension 4; OTA generation 7 carries it) so an older denext never rewrites
   the check away. `denext mobile doctor` (`store` and `release`) now flags a bridge whose router
   lacks the `staysInside` guard (`export-routes`, an error), so an app still on the 3.1.0 router
   is caught before it ships.
@@ -608,7 +622,8 @@ Each item is described in full under Changed, Fixed or Security below.
 - **Desktop hardening.** The script that hands `desktop.preload` its key now removes its own
   element, so page code cannot read the key back from `document.scripts`; `denext/desktop/clerk`'s
   OAuth transport opens only a Clerk OAuth URL (one whose `redirect_uri` is the Frontend API's
-  `/v1/oauth_callback`, on the instance's host or Clerk's own domains) on the Frontend API, a
+  `/v1/oauth_callback`, on the instance's host or Clerk's own domains, a development instance's
+  shared-credentials host `clerk.shared.lcl.dev` included) on the Frontend API, a
   Clerk domain or a known social provider's authorization page (3.1.0 opened any `https` URL in
   the OS auth sheet, so page script could show a phishing page there); another provider is added
   with `installClerkDesktopBridge({ oauthHosts })`, and a refusal names the host; `shell.openExternal` and
