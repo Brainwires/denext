@@ -193,9 +193,10 @@ internal design choice with no observable difference lives in
   `platformExtensions: { native: true }`. `.ios` / `.android` / `.mobile` / `.web` resolve as in
   Metro (see [platform-specific files](https://denext.dev/docs/platform-files)).
 - **Platform files are resolved per target build, not per device.** Metro bundles per platform
-  too; denext's `denext build` / `start` / `dev` and a plain `denext export` are the `web` target,
-  and an iOS, Android or desktop file is used only in that target's export (`denext export
-  --platform`, `denext mobile build`, `denext desktop package`). Packages in `node_modules` keep
+  too; denext's `denext build`, `start` and a plain `denext export` are the `web` target, and
+  `denext dev` serves `web` unless a shell names its target (`mobile dev`, `desktop dev`). An iOS,
+  Android or desktop file is used only in that target's export (`denext export --platform`,
+  `denext mobile build`, `denext desktop build` / `package`). Packages in `node_modules` keep
   their own resolution: their `.ios.js` files are not picked, since they call native modules.
 
 ## Security posture — safe defaults

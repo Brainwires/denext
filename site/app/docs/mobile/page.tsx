@@ -81,7 +81,11 @@ export default function Mobile() {
         from <code>about/index.html</code> (or{" "}
         <code>about.html</code>); an app with no denext native plugin gets them from{" "}
         <code>denext mobile add export-routes</code> (<code>denext mobile doctor</code>{" "}
-        flags a shell without them).
+        flags a shell without them). An iOS bridge written before 3.2.0 lacks the router&apos;s path
+        guard (a request could read files outside the web directory):{" "}
+        <code>denext mobile doctor --store</code> / <code>--release</code> report it as an{" "}
+        <code>export-routes</code> error. Run <code>denext mobile add export-routes</code>{" "}
+        (<code>--force</code> for an edited bridge) and ship a new binary.
       </p>
       <p>
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}

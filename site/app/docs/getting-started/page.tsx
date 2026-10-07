@@ -1,4 +1,8 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
+import { DOCS_VERSION } from "../../layout.tsx";
+
+/** The release these docs describe, without a prerelease tag (`3.2.0` from `3.2.0-rc.1`). */
+const RELEASE = DOCS_VERSION.replace(/-.*$/, "");
 
 export const metadata = {
   title: "Getting started",
@@ -28,7 +32,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
         that project pins in <code>deno.json</code> (a <code>deno run</code>{" "}
         child, so it needs a Deno), so it never silently swaps your app's framework version. Pin a
-        version — <code>jsr:@denext/denext@^3.1.0</code>, as <code>denext create</code>{" "}
+        version — <code>jsr:@denext/denext@^{RELEASE}</code>, as <code>denext create</code>{" "}
         writes — and that is what the binary defers to; an unversioned{" "}
         <code>jsr:@denext/denext</code>{" "}
         means "the latest published version", which is reproducible only until the next release.
@@ -45,7 +49,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
-        <code>DENEXT_VERSION=v3.1.0-rc.1</code>{" "}
+        <code>DENEXT_VERSION=v{RELEASE}-rc.1</code>{" "}
         if you want it. The latest-version lookup uses GitHub's API, which allows 60 anonymous
         requests an hour per IP: with <code>GITHUB_TOKEN</code> (or{" "}
         <code>GH_TOKEN</code>) set, both installers send it on that one <code>api.github.com</code>
@@ -90,12 +94,12 @@ deno task dev`}
       <Code lang="jsonc">
         {`{
   "tasks": {
-    "dev": "deno run -A jsr:@denext/denext@^3.1.0/cli dev .",
-    "build": "deno run -A jsr:@denext/denext@^3.1.0/cli build .",
-    "start": "deno run -A jsr:@denext/denext@^3.1.0/cli start ."
+    "dev": "deno run -A jsr:@denext/denext@^${RELEASE}/cli dev .",
+    "build": "deno run -A jsr:@denext/denext@^${RELEASE}/cli build .",
+    "start": "deno run -A jsr:@denext/denext@^${RELEASE}/cli start ."
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
-  "imports": { "denext": "jsr:@denext/denext@^3.1.0" }
+  "imports": { "denext": "jsr:@denext/denext@^${RELEASE}" }
 }`}
       </Code>
       <p>

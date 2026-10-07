@@ -115,8 +115,9 @@ import { onDesktopEvent } from "denext/desktop/client";
 const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));`}
       </Code>
       <Callout kind="note">
-        <code>runDesktop</code> serves the static export (with a history-API fallback and{" "}
-        <code>no-store</code>{" "}
+        <code>runDesktop</code> serves the static export (<code>/about</code> →{" "}
+        <code>about/index.html</code> or <code>about.html</code>; any other path gets the root{" "}
+        <code>index.html</code> as a history-API fallback) with <code>no-store</code>{" "}
         caching so a repackaged app never serves a stale bundle), optionally reverse-proxies a
         backend (<a href="/docs/spa">
           <code>spa.proxy</code>
@@ -479,9 +480,9 @@ desktop: {
           before a build signed with it runs.
         </li>
         <li>
-          <strong>No update from runtime 2.9.7-denext.9.</strong>{" "}
-          A Windows CEF app packaged on denext.9 can&apos;t update itself to this layout: reinstall
-          it.
+          <strong>No update from denext 3.1.x.</strong>{" "}
+          A Windows CEF app packaged with denext 3.1.x or earlier (runtime denext.8) can&apos;t
+          update itself to the new layout: reinstall it.
         </li>
       </ul>
 
@@ -991,7 +992,9 @@ export default {
           <code>exposeClerkBridge</code>'s shape: a <code>tokenCache</code> over{" "}
           <code>secureStore</code> (keys prefixed{" "}
           <code>clerk.</code>; in memory, with a warning, when <code>secure-store</code>{" "}
-          is off) and an <code>oauthTransport</code> with{" "}
+          is off or the OS store can&apos;t answer (<code>backend_unavailable</code> or{" "}
+          <code>timeout</code>, such as a locked Linux keyring), so the session then lasts until the
+          app quits) and an <code>oauthTransport</code> with{" "}
           <code>@clerk/electron</code>'s main-process semantics: the redirect is the page origin
           plus <code>/</code>{" "}
           (<code>myapp://app/</code>), one flow at a time, 3 minutes, resolved by a callback with
@@ -1183,7 +1186,8 @@ try {
       <p>
         <strong>The export is for this OS.</strong> A manifest that names another target (
         <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>) is refused
-        (<code>platform_mismatch</code>); the updater sends its OS (or the config's{" "}
+        (<code>platform_mismatch</code>); the updater sends its OS (or the updater config&apos;s
+        {" "}
         <code>platform</code>) as <code>x-denext-ota-platform</code>, so a{" "}
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
@@ -2421,6 +2425,14 @@ export default defineDesktopExtension({
             &lt;target&gt;-&lt;backend&gt;.cross-host
           </code>
           in the cache). macOS apps package on a Mac (codesign).
+        </li>
+        <li>
+          <strong>No traffic of its own.</strong> The <code>cef</code>{" "}
+          backend makes no network requests of its own (runtime 2.9.7-denext.11), so the only
+          requests a CEF window makes are the app&apos;s
+          (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
+            what it turns off
+          </a>).
         </li>
         <li>
           <code>denext doctor</code>{" "}

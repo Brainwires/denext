@@ -270,8 +270,8 @@ Per-request observability is code, not config: export `onRequest(info)` from
   [Live reload on a device](/docs/mobile#live-reload-on-a-device)), and off
   loopback a request must carry the browser's `Sec-Fetch-Site: same-origin`;
   cross-site pages are refused (`Sec-Fetch-Site` / `Origin`). `/_denext/@fs` never serves a dotfile or dot-directory (`.env*`,
-  `.git/`, `.denext/`), a key store (`*.pem`, `*.key`, `*.p12`, …) or a file
-  that is not a JS / TS / JSON module outside the app's own module graph. See
+  `.git/`, `.denext/`), a key store (`*.pem`, `*.key`, `*.p12`, …) or any file
+  that is neither a JS / TS / JSON module under the project nor in the app's module graph. See
   [Live reload on a device](/docs/mobile#live-reload-on-a-device). An entry may
   also be a Deno Desktop app's custom-scheme origin (`"myapp://app"`, validated
   as [`desktop.app.origin`](/docs/desktop#desktop-app-origin) is): it admits a

@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.1.1** is in progress on `development`: Deno Desktop at Electron parity through a
+> denext **3.2** is in progress on `development`: Deno Desktop at Electron parity through a
 > pinned runtime built from public forks ([Brainwires/deno](https://github.com/Brainwires/deno),
 > [Brainwires/laufey](https://github.com/Brainwires/laufey)).
 
@@ -19,9 +19,6 @@
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
   too (an exact match would fail the sign-in closed).
-- **The Chromium sandbox for the CEF backend:** CEF runs with `no_sandbox` on every OS, so a
-  renderer exploit runs as the user (the WebView backends sandbox their content processes). Each
-  OS needs its own build, packaging and signing work (laufey `docs/backends.md`).
 - **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
   origin opens in the system browser instead.
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
@@ -75,6 +72,9 @@
 - **A next-compat app's platform files in `denext dev`.** Its dev server render is one esbuild
   bundle per edit, built for `web`, so every shell gets the `web` files in dev (its platform
   exports take each target's); a shell's own target needs those server bundles built per target.
+- **Platform files through tsconfig `paths`:** an import through a tsconfig `paths` alias does
+  not take a variant (only `deno.json` and import-map aliases do); `denext migrate` converts
+  `paths` to the import map.
 - **Importer-sensitive aliases in config,** so uniwind works without the `denext patch` recipe.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.

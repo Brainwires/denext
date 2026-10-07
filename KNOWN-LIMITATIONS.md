@@ -205,52 +205,24 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
-- **Notifications:** on Linux a click starts a quit app, and a scheduled notification is posted
-  while the app is closed, only for an app installed from its `.deb` / `.rpm` (its desktop entry
-  and D-Bus service file) on a session with xdg-desktop-portal 1.19+ and a systemd user manager
-  (GNOME, Plasma). An AppImage or a tarball keeps the old behaviour (no click after quit; a
-  schedule fires while the app runs, or at its next launch), and the scheduling timers end with
-  the user's systemd manager (a reboot) until the app runs again. The portal reports no
-  dismissals, and a notification server without actions shows no buttons and reports no clicks;
-  the `notifications` capability gives the reasons. On the portal path a web `Notification`'s
-  `onclose` never fires. A click's `data` is untrusted: on Linux any process of the same user can
-  send the app a click (a D-Bus call on its name) with any `data`, as on Windows. macOS shows them
-  only from a signed bundle; a repeat is scheduled 16 ahead; buttons carry a title only; `data` is
-  capped at 4 KiB.
-- **Linux sessions differ in what they provide.** With no tray host (stock GNOME without the
-  AppIndicator extension, a bare X server) `createTray` rejects `unsupported` with the reason and
-  a tray-only app shows its window instead. With the login keyring locked and no one to answer the
-  unlock prompt (a headless or ssh session, a missing prompter), or on KDE with the wallet not
-  open, the CEF backend starts with `--password-store=basic` when the profile holds no cookies
-  encrypted with the OS key: its cookies are stored with a fixed key (obfuscated, not protected
-  by the OS), and `appCapabilities().cookieEncryption` reads `"basic"`. A profile that does hold
-  such cookies is never switched (Chromium would delete them): the app starts, but every request
-  that carries a cookie waits until someone unlocks the keyring or opens the wallet. All of this
-  comes from the runtime's session probe (runtime 2.9.7-denext.10); `denext desktop doctor
-  --linux` lists what the session lacks, with fixes.
-- **The Linux clipboard** (runtime 2.9.7-denext.10): an app in the background reads it while the
-  session is unlocked, as on macOS and Windows, so read it in response to the user. While the
-  session is locked every read is refused (text and HTML read empty, `clipboardFormats()` lists
-  nothing; writes still work), but only where the screen locker sets logind's `LockedHint`:
-  GNOME and KDE do, many wlroots lockers (swaylock started directly) don't, and where logind
-  can't be asked reads are allowed. An image read takes `image/png`, `image/jpeg`, `image/bmp` or
-  `image/gif` (re-encoded as PNG); another app's other image formats read as no image.
-- **WebKitGTK `fetch` bodies aren't byte streams** (runtime 2.9.7-denext.10): the runtime turns
-  off WebKitGTK's byte-stream fetch source, which held a streamed body's tail back
-  ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)), so on Linux's WebView
-  backend `response.body.getReader({ mode: "byob" })` throws until WebKitGTK ships the fix.
-  Default readers, `text()`, `arrayBuffer()` and `new ReadableStream({ type: "bytes" })` are
-  unaffected.
+- **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
+  while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
+  user manager; macOS shows them only from a signed bundle. A click's `data` is untrusted (any
+  process of the same user can send one). [Details](https://denext.dev/docs/desktop#desktop-notifications).
+- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
+  keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
+  (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
+  ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **The Linux clipboard** is readable by an app in the background while the session is unlocked,
+  as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
+  `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
+  on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
-- **Windows CEF apps run behind CEF's bootstrap** (Chromium's sandbox, runtime 2.9.7-denext.11),
-  which brings three limits. Started from a shell or a shortcut, the app starts in its install
-  folder, not the directory it was started from (the bootstrap moves it there; `denext desktop
-  run` / `dev` and the runtime's own launches, its forked workers and the updater, keep theirs):
-  build paths from `Deno.execPath()` or take absolute ones. A bootstrap signed with a certificate
-  Windows doesn't trust refuses to start, so a self-signed development certificate must be trusted
-  (Trusted Root and Trusted Publishers) before a build signed with it runs. And an app packaged on
-  runtime 2.9.7-denext.9 can't update itself to the new layout: reinstall it.
+- **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
+  needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
+  doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
 - **A CEF window on Windows can wait for slow proxy auto-detection.** On a network where WPAD / PAC
   discovery is slow, Chromium waits for the proxy configuration before it applies its loopback
   bypass, so the page's Live WebSocket (through the runtime's loopback relay) can take 10 s or more

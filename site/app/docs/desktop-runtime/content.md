@@ -121,6 +121,8 @@ ours is open yet.
 | [Menus, accelerators and close events](#menus-accelerators-and-close-events)                 | laufey, Deno, denext | planned                                                                      |
 | [Notifications](#notifications)                                                              | laufey, Deno, denext | planned                                                                      |
 | [Node-API addons on Windows](#node-api-addons-on-windows)                                    | Deno runtime         | planned (Linux half upstream in deno#36718)                                  |
+| [Chromium's sandbox on Windows (CEF)](#chromiums-sandbox-on-windows-cef)                     | laufey, Deno, denext | planned                                                                      |
+| [No network requests from the CEF backend](#no-network-requests-from-the-cef-backend)        | laufey               | planned                                                                      |
 | [Signed full-app self-updates](#signed-full-app-self-updates)                                | Deno runtime, denext | builds on deno#36421; ours planned                                           |
 | [Reliability fixes](#reliability-fixes)                                                      | laufey               | planned                                                                      |
 | [Build fixes](#build-fixes)                                                                  | laufey               | [laufey#85](https://github.com/littledivy/laufey/pull/85)                    |
@@ -476,9 +478,19 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   or a shortcut does not keep the directory it was started from (denext's launchers, the forked
   workers and the updater pass theirs in `LAUFEY_CWD`, which the host changes back to); a
   bootstrap signed with a certificate Windows doesn't trust refuses to start (trust a self-signed
-  development certificate first); and an app packaged on runtime 2.9.7-denext.9 can't update
-  itself to the new layout: reinstall it.
+  development certificate first); and an app packaged with denext 3.1.x or earlier (runtime
+  denext.8) can't update itself to the new layout: reinstall it.
 - **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
+### No network requests from the CEF backend
+
+- **What:** the CEF host makes no network requests of its own (runtime 2.9.7-denext.11): no
+  network time, component updater, account or search-engine traffic, and on Linux no Hunspell
+  dictionary downloads. A feature or switch the app's own command line sets still wins.
+- **Why:** Chromium contacted Google from a CEF window even with background networking off, so a
+  window's traffic was not only the app's.
+- **Layer:** laufey.
 - **Upstream:** planned.
 
 ### Signed full-app self-updates

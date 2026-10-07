@@ -30,14 +30,14 @@ denext app: the App Router (native and next-compat), SPA mode and
 
 Each target probes its suffixes, most specific first, and then the plain file:
 
-| Target    | Built by                                                           | Probe order                              |
-| --------- | ------------------------------------------------------------------ | ---------------------------------------- |
-| `web`     | `denext build`, `start`, `dev`, `export`                           | `.web` → plain                           |
-| `ios`     | `denext mobile build ios`, `denext export --platform ios`          | `.ios` → `.mobile` → `.web` → plain      |
-| `android` | `denext mobile build android`, `denext export --platform android`  | `.android` → `.mobile` → `.web` → plain  |
-| `macos`   | `denext desktop package` / `run` on macOS, `--platform macos`      | `.macos` → `.desktop` → `.web` → plain   |
-| `windows` | `denext desktop package --target-os windows`, `--platform windows` | `.windows` → `.desktop` → `.web` → plain |
-| `linux`   | `denext desktop package --target-os linux`, `--platform linux`     | `.linux` → `.desktop` → `.web` → plain   |
+| Target    | Built by                                                                                       | Probe order                              |
+| --------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `web`     | `denext build`, `start`, a plain `export`; `denext dev` unless a shell names its target        | `.web` → plain                           |
+| `ios`     | `denext mobile build ios`, `denext export --platform ios`                                      | `.ios` → `.mobile` → `.web` → plain      |
+| `android` | `denext mobile build android`, `denext export --platform android`                              | `.android` → `.mobile` → `.web` → plain  |
+| `macos`   | `denext desktop build` / `run` / `package` on macOS, `--platform macos`                        | `.macos` → `.desktop` → `.web` → plain   |
+| `windows` | `denext desktop build` / `run` on Windows, `package --target-os windows`, `--platform windows` | `.windows` → `.desktop` → `.web` → plain |
+| `linux`   | `denext desktop build` / `run` on Linux, `package --target-os linux`, `--platform linux`       | `.linux` → `.desktop` → `.web` → plain   |
 
 For each suffix the extensions are tried in the order `.tsx`, `.ts`, `.jsx`, `.js`, `.mjs`, and
 a folder import finds `index.ios.tsx` the same way. `.mobile` means any phone and `.desktop` any
@@ -59,10 +59,11 @@ denext builds one export per target, and only where a target is chosen:
   Capacitor shell's `webDir` holds that platform's export. The scaffolded `deno task mobile:sync`
   copies one web export into both shells; with `.ios` / `.android` / `.mobile` files, sync each
   shell from its own export instead: `DENEXT_PLATFORM=ios deno task export && npx cap sync ios`.
-- `denext desktop run` exports for the OS it runs on; `denext desktop package` exports for the
-  package's target OS, so a Windows package built on a Mac gets the `.windows` files.
-- Everything else is the `web` target: `denext build`, `denext start`, `denext dev` and a plain
-  `denext export`.
+- `denext desktop build` and `denext desktop run` export for the OS they run on; `denext desktop
+  package` exports for the package's target OS, so a Windows package built on a Mac gets the
+  `.windows` files.
+- `denext build`, `denext start` and a plain `denext export` are the `web` target. `denext dev`
+  serves `web` unless a shell names its target (`mobile dev`, `desktop dev`; see below).
 
 The server render of a platform export (prerendering, a Server Component, the first paint of a
 client component) resolves the same files as its client bundle, so hydration sees the markup it
@@ -167,4 +168,4 @@ code through a third module instead.
 An import through the app's import map takes a variant like a relative one: the alias resolves
 first (`@/components/BigButton`, or an exact key like `#button`, from `deno.json` or the import
 map file it names), then the target's file for the module it names. The server render and the
-client bundle apply the same rule.
+client bundle apply the same rule. A tsconfig `paths` alias is not followed: `denext migrate` converts `paths` to the import map.
