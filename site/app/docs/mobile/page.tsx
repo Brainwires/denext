@@ -2151,6 +2151,15 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         <code>speechSynthesis</code>, so the Android shell needs it; elsewhere the shim uses the Web
         Speech API.
       </p>
+      <p>
+        <code>app-config</code>{" "}
+        installs nothing: it writes the native config of a migrated Expo app into the shell, read
+        statically from <code>app.json</code> / <code>app.config.*</code>: usage strings into{" "}
+        <code>Info.plist</code>, <code>android.permissions</code> into the manifest, and the{" "}
+        <code>expo-build-properties</code> deployment target and SDK levels (only ever raised). See
+        {" "}
+        <a href="/docs/react-native#migrating-an-expo-app">Migrating an Expo app</a>.
+      </p>
 
       <h2 id="background-tasks">Background tasks</h2>
       <p>

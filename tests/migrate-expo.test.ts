@@ -6,14 +6,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
-import {
-  expoApiUsage,
-  expoDependencyReport,
-  expoMobilePlan,
-  readExpoAppConfig,
-  readStaticAppConfig,
-} from "../src/build/expo-migrate.ts";
+import { expoApiUsage, expoDependencyReport, expoMobilePlan } from "../src/build/expo-migrate.ts";
+import { readExpoAppConfig, readStaticAppConfig } from "../src/build/expo-app-config.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
+import {
+  addExpoAppConfigToProject,
+  withDeploymentTargetAtLeast,
+  withGradleSdkAtLeast,
+} from "../src/build/mobile-expo-app-config.ts";
 import { EXPO_SHIMS } from "../src/expo/manifest.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 
@@ -205,13 +205,23 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
 
     // The mobile plan: packages, plugins (both branches), usage strings and permissions.
     const caps = e.mobile.capabilities.map((c) => c.capability);
-    assertEquals(caps, ["haptics", "secure-store", "deep-links", "camera", "barcode", "sqlite"]);
+    assertEquals(caps, [
+      "haptics",
+      "secure-store",
+      "deep-links",
+      "camera",
+      "barcode",
+      "sqlite",
+      "app-config",
+    ]);
     assertEquals(e.mobile.domains, ["links.acme.dev"]);
     assertEquals(
       e.mobile.command,
-      "denext mobile add haptics secure-store deep-links camera barcode sqlite " +
+      "denext mobile add haptics secure-store deep-links camera barcode sqlite app-config " +
         "--domain links.acme.dev",
     );
+    // The local plugin carries nothing; the rest are mapped (capability, usage strings).
+    assertEquals(e.mobile.unmappedPlugins.map((p) => p.plugin), ["./plugins/withThing.cjs"]);
     assertEquals(e.mobile.manualPlist, {
       NSCameraUsageDescription: "Scan codes",
       NSMicrophoneUsageDescription: "Voice for Acme",
@@ -333,7 +343,7 @@ Deno.test("migrate --from expo: app.json, Expo's default App entry, schemes and 
     assertEquals(r.spa!.nodeModulesDir, "auto", "no lockfile");
     assertEquals(
       e.mobile.command,
-      "denext mobile add haptics deep-links --scheme simple --scheme simple-alt " +
+      "denext mobile add haptics deep-links app-config --scheme simple --scheme simple-alt " +
         "--domain simple.dev",
     );
     assertEquals(e.mobile.manualPlist, { NSFaceIDUsageDescription: "Unlock" });
@@ -523,8 +533,9 @@ Deno.test("expo app config: config-plugin permission options become usage string
     const plan = expoMobilePlan({ expo: "1", "expo-auth-session": "1" }, config);
     assertEquals(
       plan.command,
-      "denext mobile add secure-store auth-session camera barcode geolocation --scheme <scheme>",
-      "auth-session with no scheme in the config gets a placeholder",
+      "denext mobile add secure-store auth-session camera barcode geolocation app-config " +
+        "--scheme <scheme>",
+      "auth-session with no scheme in the config gets a placeholder; app-config writes the strings",
     );
   });
 });
@@ -687,4 +698,143 @@ Deno.test("expoMobilePlan: every package that suggests a capability has a shim i
     const pkg = c.because.split(" ")[0];
     assert(pkg in EXPO_SHIMS, `${c.capability} suggested for ${pkg}, which has no shim`);
   }
+});
+
+Deno.test("readExpoAppConfig: expo-build-properties and the config plugins' usage strings", async () => {
+  await withApp({
+    "app.json": {
+      expo: {
+        name: "Props",
+        plugins: [
+          ["expo-build-properties", {
+            ios: { deploymentTarget: "16.4", useFrameworks: "static" },
+            android: { minSdkVersion: 26, targetSdkVersion: 36, usesCleartextTraffic: true },
+          }],
+          ["expo-sensors", { motionPermission: "Count steps" }],
+          ["expo-tracking-transparency", { userTrackingPermission: false }],
+          "react-native-ble-plx",
+        ],
+      },
+    },
+  }, async (dir) => {
+    const config = await readExpoAppConfig(dir);
+    assertEquals(config.buildProperties, {
+      iosDeploymentTarget: "16.4",
+      androidMinSdk: 26,
+      androidCompileSdk: undefined,
+      androidTargetSdk: 36,
+      usesCleartextTraffic: true,
+      unmapped: ["ios.useFrameworks"],
+    });
+    assertEquals(config.infoPlist, { NSMotionUsageDescription: "Count steps" });
+    const plan = expoMobilePlan({ expo: "1" }, config);
+    assertEquals(plan.command, "denext mobile add tracking app-config");
+    assertEquals(
+      plan.capabilities[1].because,
+      "app config: iOS usage strings, expo-build-properties",
+    );
+    assertEquals(plan.unmappedPlugins.map((p) => p.plugin), ["react-native-ble-plx"]);
+  });
+});
+
+/** Capacitor 8's android/variables.gradle (the part read here). */
+const VARIABLES_GRADLE = `ext {
+    minSdkVersion = 24
+    compileSdkVersion = 36
+    targetSdkVersion = 36
+}
+`;
+
+/** A Capacitor 8 Info.plist with one usage string the app already has. */
+const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>App</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Already here</string>
+</dict>
+</plist>
+`;
+
+/** A Capacitor 8 AndroidManifest.xml. */
+const ANDROID_MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name">
+    </application>
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
+`;
+
+Deno.test("mobile add app-config: usage strings, permissions and build properties, idempotent", async () => {
+  const pbxproj = await Deno.readTextFile(
+    new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
+  );
+  await withApp({
+    "app.json": {
+      expo: {
+        name: "Carry",
+        ios: {
+          infoPlist: {
+            NSCameraUsageDescription: "Scan receipts",
+            NSContactsUsageDescription: "Find friends",
+          },
+        },
+        android: { permissions: ["READ_CONTACTS", "INTERNET"] },
+        plugins: [
+          ["expo-calendar", { calendarPermission: "Add events" }],
+          ["expo-build-properties", {
+            ios: { deploymentTarget: "16.0" },
+            android: { minSdkVersion: 23, compileSdkVersion: 36, targetSdkVersion: 35 },
+          }],
+        ],
+      },
+    },
+    "ios/App/App/Info.plist": INFO_PLIST,
+    "ios/App/App.xcodeproj/project.pbxproj": pbxproj,
+    "android/app/src/main/AndroidManifest.xml": ANDROID_MANIFEST,
+    "android/variables.gradle": VARIABLES_GRADLE,
+  }, async (dir) => {
+    const first = await addExpoAppConfigToProject({ dir });
+    assertEquals(first.written.sort(), [
+      "android/app/src/main/AndroidManifest.xml",
+      "ios/App/App.xcodeproj/project.pbxproj",
+      "ios/App/App/Info.plist",
+    ]);
+    assertEquals(first.unchanged, ["android/variables.gradle"], "SDK levels only rise");
+    const plist = await Deno.readTextFile(join(dir, "ios/App/App/Info.plist"));
+    assertStringIncludes(plist, "<string>Already here</string>", "an existing key keeps its text");
+    assertStringIncludes(plist, "<key>NSContactsUsageDescription</key>\n\t<string>Find friends");
+    assertStringIncludes(plist, "<key>NSCalendarsUsageDescription</key>\n\t<string>Add events");
+    const manifest = await Deno.readTextFile(join(dir, "android/app/src/main/AndroidManifest.xml"));
+    assertStringIncludes(manifest, "android.permission.READ_CONTACTS");
+    assertEquals(manifest.match(/permission\.INTERNET/g)?.length, 1);
+    const project = await Deno.readTextFile(join(dir, "ios/App/App.xcodeproj/project.pbxproj"));
+    assert(!project.includes("IPHONEOS_DEPLOYMENT_TARGET = 15.0;"), "raised everywhere");
+    assertStringIncludes(project, "IPHONEOS_DEPLOYMENT_TARGET = 16.0;");
+    const again = await addExpoAppConfigToProject({ dir });
+    assertEquals(again.written, [], "a second run changes nothing");
+    assertEquals(again.manual, []);
+  });
+  // No native projects yet: each platform is skipped with the step to take.
+  await withApp({ "app.json": { expo: { android: { permissions: ["CAMERA"] } } } }, async (dir) => {
+    const report = await addExpoAppConfigToProject({ dir });
+    assertEquals(report.written, []);
+    assertStringIncludes(report.skipped.join("\n"), "npx cap add android");
+  });
+});
+
+Deno.test("withGradleSdkAtLeast / withDeploymentTargetAtLeast: only ever raise", () => {
+  assertEquals(withGradleSdkAtLeast(VARIABLES_GRADLE, "minSdkVersion", 26)?.includes("= 26"), true);
+  assertEquals(withGradleSdkAtLeast(VARIABLES_GRADLE, "compileSdkVersion", 35), VARIABLES_GRADLE);
+  assertEquals(withGradleSdkAtLeast("ext {}", "minSdkVersion", 26), null);
+  const pbx = "IPHONEOS_DEPLOYMENT_TARGET = 15.0;\nIPHONEOS_DEPLOYMENT_TARGET = 17.2;\n";
+  assertEquals(
+    withDeploymentTargetAtLeast(pbx, "16.4"),
+    "IPHONEOS_DEPLOYMENT_TARGET = 16.4;\nIPHONEOS_DEPLOYMENT_TARGET = 17.2;\n",
+  );
+  assertEquals(withDeploymentTargetAtLeast("nothing", "16.4"), null);
 });

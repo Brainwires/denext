@@ -57,6 +57,14 @@ and this project adheres to
   the shell refused because it no longer matches its signed manifest (see Security), and
   `otaStatus()` names that version until `otaReset()`. `denext mobile doctor` (`store` and
   `release`) flags an OTA plugin from before re-verification (`ota-reverify`, an error).
+- **`denext mobile add app-config`** carries an Expo app's native config into its Capacitor
+  shell, as Expo's prebuild would: `ios.infoPlist` usage strings and the ones config plugins set
+  from their options into `Info.plist` (only when absent), `android.permissions` into
+  `AndroidManifest.xml`, and `expo-build-properties`' deployment target, Android SDK levels (only
+  raised) and `usesCleartextTraffic`. `denext migrate --from expo` puts it in the suggested
+  command when there is something to carry, reads more plugins' usage strings
+  (`expo-sensors`, `expo-tracking-transparency`, `expo-secure-store`, `expo-calendar`'s
+  reminders, …), and names the config plugins whose native settings nothing carries over.
 - **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
   `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)

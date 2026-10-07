@@ -299,6 +299,8 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   }],
   // @capacitor/app's getInfo() reads the bundle; @capacitor/device is `device` above.
   application: [],
+  // Build-time edits only: nothing of it runs in the app.
+  "app-config": [],
   // AVSpeechSynthesizer and its voices are not required-reason APIs.
   "text-to-speech": [],
   // AVPlayer, MapKit and the view layering use no required-reason API.

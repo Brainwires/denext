@@ -30,7 +30,6 @@ import {
   capacitorIdentity,
   capacitorTasks,
   expoApiUsage,
-  type ExpoAppConfig,
   expoConfigScript,
   type ExpoDependencyReport,
   expoDependencyReport,
@@ -39,9 +38,9 @@ import {
   type MetroResolution,
   type MobilePlan,
   prebuildFolders,
-  readExpoAppConfig,
   readMetroResolution,
 } from "./expo-migrate.ts";
+import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
 import { findReactNativeWeb } from "./react-native.ts";
 import { findSqliteWasm } from "./sqlite-wasm.ts";
 import {

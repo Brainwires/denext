@@ -854,6 +854,13 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
     "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +
     "  engine; the Android WebView has no speechSynthesis).\n" +
+    "  app-config has no npm package: it writes an Expo app's own native config, read\n" +
+    "  statically from app.json / app.config.* as `migrate --from expo` does, into the shell:\n" +
+    "  ios.infoPlist usage strings and the ones its config plugins set (Info.plist, each only\n" +
+    "  when absent), android.permissions (AndroidManifest.xml), and expo-build-properties'\n" +
+    "  ios.deploymentTarget (project.pbxproj), android min / compile / target SDK\n" +
+    "  (variables.gradle; each only raised) and usesCleartextTraffic. Run it with the other\n" +
+    "  capabilities so the app's usage strings win over their defaults.\n" +
     "\n" +
     "  context-menu has no npm package: it writes denext's DenextContextMenu plugin (the\n" +
     "  UIContextMenuInteraction long-press menu with its lifted preview and UIMenu on iOS, a\n" +

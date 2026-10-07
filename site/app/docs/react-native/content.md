@@ -98,7 +98,17 @@ The report then lists:
   `expo-sqlite`);
 - the `denext mobile add …` command for the Capacitor shell, derived from the `expo-*` packages,
   config plugins, iOS usage strings, Android permissions, `scheme` (`--scheme`) and
-  `ios.associatedDomains` (`--domain`); and the usage strings and permissions to copy by hand;
+  `ios.associatedDomains` (`--domain`). When the app config has native settings, the command
+  includes `app-config`, which writes them into the shell once `npx cap add` has created it:
+  `ios.infoPlist` usage strings and the ones config plugins set from their options
+  (`["expo-camera", { cameraPermission: "…" }]`, `expo-location`, `expo-contacts`,
+  `expo-calendar`, `expo-sensors`, `expo-tracking-transparency`, …) into `Info.plist`,
+  `android.permissions` into `AndroidManifest.xml`, and `expo-build-properties`'
+  `ios.deploymentTarget`, `android.minSdkVersion` / `compileSdkVersion` / `targetSdkVersion`
+  (only ever raised) and `android.usesCleartextTraffic`. The report names the config plugins
+  whose native settings nothing carries over (a local `./plugins/with….js`, a third-party
+  plugin), and the `expo-build-properties` options with no Capacitor counterpart
+  (`ios.useFrameworks`, …);
 - a Tailwind input (`global.css`) for uniwind / NativeWind, which needs [the recipe](#recipe-uniwind-and-tailwind).
 
 On T3 Code's `apps/mobile`, the migrated app's build failed on exactly the three modules the

@@ -331,8 +331,8 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
   const plist = Object.entries(e.mobile.manualPlist);
   if (plist.length) {
     console.log(
-      "    the app's iOS usage strings — copy them into ios/App/App/Info.plist (mobile add " +
-        "writes only defaults, and only when a key is absent):",
+      "    the app's iOS usage strings — `mobile add app-config` writes them into " +
+        "ios/App/App/Info.plist (each only when the key is absent; a computed one by hand):",
     );
     for (const [k, v] of plist) {
       console.log(`      ${k} = ${v === null ? "(computed in code)" : JSON.stringify(v)}`);
@@ -340,9 +340,12 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
   }
   if (e.mobile.manualPermissions.length) {
     console.log(
-      "    declare in android/app/src/main/AndroidManifest.xml by hand: " +
+      "    Android permissions `mobile add app-config` declares in AndroidManifest.xml: " +
         e.mobile.manualPermissions.join(", "),
     );
+  }
+  for (const { plugin, note } of e.mobile.unmappedPlugins) {
+    console.log(`    config plugin ${plugin}: ${note}`);
   }
   if (e.tailwindInput) {
     console.log(
