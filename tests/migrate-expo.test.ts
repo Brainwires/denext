@@ -51,7 +51,7 @@ const T3_LIKE: Record<string, unknown> = {
       "expo-secure-store": "~57.0.2",
       "expo-sqlite": "~57.0.2",
       "expo-camera": "~57.0.4",
-      "expo-contacts": "~57.0.1",
+      "expo-av": "~16.0.1",
       react: "19.2.3",
       "react-native": "0.86.3",
       "react-native-nitro-markdown": "^0.5.0",
@@ -233,7 +233,7 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
     const status = Object.fromEntries(e.deps.expo.map((p) => [p.name, p.status]));
     assertEquals(status["expo-sqlite"], "partial");
     assertEquals(status["expo-haptics"], "partial"); // approximated styles are a documented difference
-    assertEquals(status["expo-contacts"], "none");
+    assertEquals(status["expo-av"], "none");
     assertEquals(e.deps.nativeOnly, [
       { name: "@acme/terminal-native", kind: "Expo native module" },
       {
@@ -491,7 +491,7 @@ Deno.test("migrate CLI: the Expo report", async () => {
     assertStringIncludes(out, "expo-sqlite              partial (9 export(s) not provided: ");
     assertStringIncludes(out, `${EXPO_SHIMS["expo-sqlite"].omitted![0]}, `);
     assertStringIncludes(out, ", +3 more)");
-    assertStringIncludes(out, "expo-contacts            no shim");
+    assertStringIncludes(out, "expo-av                  no shim");
     assertStringIncludes(out, "react-native-nitro-markdown — Nitro module (JSI)");
     assertStringIncludes(out, "install react-native-web @sqlite.org/sqlite-wasm");
     assertStringIncludes(out, "denext mobile add haptics secure-store deep-links");
@@ -689,7 +689,7 @@ Deno.test("expoMobilePlan: every package that suggests a capability has a shim i
   // Every expo-* dependency at once: each suggested capability names a package the manifest
   // shims (the plan's "because" is the package for a dependency-driven capability).
   const deps = Object.fromEntries(
-    [...Object.keys(EXPO_SHIMS), "expo-task-manager", "expo-background-fetch", "expo-contacts"]
+    [...Object.keys(EXPO_SHIMS), "expo-task-manager", "expo-background-fetch", "expo-av"]
       .map((n) => [n, "1"]),
   );
   const plan = expoMobilePlan(deps, NO_CONFIG);

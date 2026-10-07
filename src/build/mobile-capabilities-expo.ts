@@ -35,4 +35,49 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     notes: "expo-speech's speak / stop / getAvailableVoicesAsync on the OS speech engine " +
       "(AVSpeechSynthesizer / Android TextToSpeech; the Android WebView has no speechSynthesis)",
   },
+  brightness: {
+    npm: "@capacitor-community/screen-brightness",
+    version: "^8.0.0",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "expo-brightness's get / set / restore (the screen's level on iOS, the app window's " +
+      "on Android)",
+  },
+  print: {
+    npm: "@capgo/capacitor-printer",
+    version: "^8.1.4",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "expo-print's printAsync (HTML or a file through the system print dialog; a " +
+      "WebView cannot print by itself)",
+  },
+  "intent-launcher": {
+    npm: "@capgo/capacitor-intent-launcher",
+    version: "^8.3.33",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes:
+      "expo-intent-launcher's startActivityAsync / openApplication / getApplicationIconAsync " +
+      "(Android intents; Android only)",
+  },
+  contacts: {
+    npm: "@capgo/capacitor-contacts",
+    version: "^8.1.4",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSContactsUsageDescription: "Find and save your contacts." },
+    androidPermissions: ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"],
+    notes: "expo-contacts' address book (read, add, update, remove, the picker and the system " +
+      "contact forms)",
+  },
+  calendar: {
+    npm: "@ebarooni/capacitor-calendar",
+    version: "^8.7.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: {
+      NSCalendarsFullAccessUsageDescription: "Add and show your events.",
+      NSCalendarsWriteOnlyAccessUsageDescription: "Add events to your calendar.",
+      NSCalendarsUsageDescription: "Add and show your events.",
+      NSRemindersFullAccessUsageDescription: "Add and show your reminders.",
+      NSRemindersUsageDescription: "Add and show your reminders.",
+    },
+    androidPermissions: ["android.permission.READ_CALENDAR", "android.permission.WRITE_CALENDAR"],
+    notes: "expo-calendar's calendars, events and (iOS) reminders, and the native event editor",
+  },
 };

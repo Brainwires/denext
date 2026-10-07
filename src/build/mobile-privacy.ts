@@ -303,6 +303,13 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   "app-config": [],
   // AVSpeechSynthesizer and its voices are not required-reason APIs.
   "text-to-speech": [],
+  // UIScreen.brightness, UIPrintInteractionController and Android intents: no required-reason API.
+  brightness: [],
+  print: [],
+  "intent-launcher": [],
+  // Contacts and EventKit (EKEvent.creationDate is event metadata, not a file timestamp API).
+  contacts: [],
+  calendar: [],
   // AVPlayer, MapKit and the view layering use no required-reason API.
   "native-views": [],
   "native-map": [],

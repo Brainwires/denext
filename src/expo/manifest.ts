@@ -170,11 +170,51 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "A CSS backdrop-filter blur with a tint overlay; system material tints map to " +
       "light/dark/default.",
   },
+  "expo-brightness": {
+    module: "./brightness.ts",
+    pinned: "58.0.2",
+    status: "partial",
+    notes: "get/setBrightnessAsync over @capacitor-community/screen-brightness (`denext mobile " +
+      "add brightness`): the screen's level on iOS, the app window's on Android (-1 there until " +
+      "the app sets one). restoreSystemBrightnessAsync restores the level from before the app's " +
+      "first change (iOS) or lets the window follow the system (Android). The system calls are " +
+      "the screen's on iOS; Android's system setting and the brightness mode reject with " +
+      "ERR_UNAVAILABLE (no WRITE_SETTINGS), and addBrightnessListener never fires. Outside the " +
+      "shell isAvailableAsync() is false and the calls reject, as Expo's web build.",
+  },
   "expo-build-properties": {
     module: "./build-properties.ts",
     pinned: "58.0.9",
     status: "stub",
     notes: "A config plugin for native prebuild; withBuildProperties returns the config unchanged.",
+  },
+  "expo-calendar": {
+    module: "./calendar.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "getDefaultCalendarSync",
+      "getSourcesSync",
+      "ExpoCalendarAttendee",
+      "ExpoCalendarEvent.get",
+      "ExpoCalendarEvent.getOccurrenceSync",
+      "ExpoCalendarEvent.openInCalendar",
+      "ExpoCalendarEvent.getAttendees",
+      "ExpoCalendarEvent.createAttendee",
+    ],
+    notes: "Calendars, events and (iOS) reminders over @ebarooni/capacitor-calendar (`denext " +
+      "mobile add calendar`), in the object API (getCalendars \u2192 ExpoCalendar, listEvents, " +
+      "presentPicker, ExpoCalendarEvent / ExpoCalendarReminder) and the legacy function API " +
+      "(working from the main entry, where Expo 58's throw); dates come back as ISO strings. " +
+      "The plugin has no attendee calls, cannot open an event in the calendar app, cannot " +
+      "look an event up by id (getEventAsync needs recurringEventOptions.instanceStartDate) " +
+      "and cannot change a single occurrence: those reject with ERR_UNAVAILABLE. An event's " +
+      "recurrence rule is not reported (recurrenceRule reads null), its time zone cannot be " +
+      "set, and only relative alarms are passed on. createEventInCalendarAsync / " +
+      "addEventWithForm show the native editor: iOS reports saved (with the id) or canceled, " +
+      "Android done. The synchronous getDefaultCalendarSync, getSourcesSync and " +
+      "getOccurrenceSync are omitted (no JSI); off the shell every data call rejects with " +
+      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build.",
   },
   "expo-camera": {
     module: "./camera.ts",
@@ -237,6 +277,92 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "expoConfig comes from globalThis.__DENEXT_EXPO_CONFIG__ (set it before the bundle " +
       "runs); manifest/manifest2 are null; appOwnership null, executionEnvironment standalone.",
+  },
+  "expo-contacts": {
+    module: "./contacts.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "Container",
+      "shareContactAsync",
+      "writeContactToFileAsync",
+      "presentAccessPickerAsync",
+      "addExistingGroupToContainerAsync",
+      "updateGroupNameAsync",
+      "addExistingContactToGroupAsync",
+      "removeContactFromGroupAsync",
+      "Contact.presentAccessPicker",
+      "Contact.update",
+      "Contact.editWithForm",
+      "Contact.addEmail",
+      "Contact.deleteEmail",
+      "Contact.updateEmail",
+      "Contact.addPhone",
+      "Contact.deletePhone",
+      "Contact.updatePhone",
+      "Contact.addDate",
+      "Contact.getDates",
+      "Contact.deleteDate",
+      "Contact.updateDate",
+      "Contact.addExtraName",
+      "Contact.getExtraNames",
+      "Contact.deleteExtraName",
+      "Contact.updateExtraName",
+      "Contact.addAddress",
+      "Contact.deleteAddress",
+      "Contact.updateAddress",
+      "Contact.addRelation",
+      "Contact.getRelations",
+      "Contact.deleteRelation",
+      "Contact.updateRelation",
+      "Contact.addUrlAddress",
+      "Contact.deleteUrlAddress",
+      "Contact.updateUrlAddress",
+      "Contact.addSocialProfile",
+      "Contact.getSocialProfiles",
+      "Contact.deleteSocialProfile",
+      "Contact.updateSocialProfile",
+      "Contact.addImAddress",
+      "Contact.getImAddresses",
+      "Contact.deleteImAddress",
+      "Contact.updateImAddress",
+      "Contact.getIsFavourite",
+      "Contact.setIsFavourite",
+      "Contact.getMaidenName",
+      "Contact.setMaidenName",
+      "Contact.getNickname",
+      "Contact.setNickname",
+      "Contact.getPhoneticGivenName",
+      "Contact.setPhoneticGivenName",
+      "Contact.getPhoneticMiddleName",
+      "Contact.setPhoneticMiddleName",
+      "Contact.getPhoneticFamilyName",
+      "Contact.setPhoneticFamilyName",
+      "Contact.getDepartment",
+      "Contact.setDepartment",
+      "Contact.getPhoneticCompanyName",
+      "Contact.setPhoneticCompanyName",
+      "Contact.setImage",
+      "Contact.getThumbnail",
+      "Contact.getNonGregorianBirthday",
+      "Contact.setNonGregorianBirthday",
+      "Group.setName",
+      "Group.addContact",
+      "Group.removeContact",
+    ],
+    notes: "The address book over @capgo/capacitor-contacts (`denext mobile add contacts`): the " +
+      "legacy function API in Expo's legacy shapes (0-based birthday month) and the Contact / " +
+      "Group classes for the fields the plugin has: names, company, job title, note, " +
+      "birthday, emails, phones, postal addresses, URLs and the photo (a data: URI); other " +
+      "fields read as empty and item ids are positional. Name / id / group filters and name " +
+      "sorts read the whole list and page in JS; otherwise the plugin pages. Partial writes " +
+      "(updateContactAsync, patch, the setters) read, merge and write the whole record back; " +
+      "on Android the plugin keeps only names, company, job title, note, emails and phones on " +
+      "update. No containers (getDefaultContainerIdAsync / getContainersAsync reject " +
+      "ERR_UNAVAILABLE), no change events (the listener never fires), no iOS 18 access button " +
+      "(ContactAccessButton renders nothing). The legacy functions work from the main entry " +
+      "(Expo 58's throw there). Off the shell every call rejects with ERR_UNAVAILABLE except " +
+      "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false).",
   },
   "expo-crypto": {
     module: "./crypto.ts",
@@ -381,6 +507,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "One image per pick, no crop editor, no video. The picker asks for access itself, " +
       "so the permission calls report granted.",
+  },
+  "expo-intent-launcher": {
+    module: "./intent-launcher.ts",
+    pinned: "58.0.3",
+    status: "full",
+    notes: "startActivityAsync / openApplication / getApplicationIconAsync over " +
+      "@capgo/capacitor-intent-launcher (`denext mobile add intent-launcher`), which takes " +
+      "Expo's parameters and returns its result; every ActivityAction value. Android only, as in " +
+      "Expo: in the iOS shell and on the web the calls throw / reject with ERR_UNAVAILABLE.",
   },
   "expo-keep-awake": {
     module: "./keep-awake.ts",
@@ -576,6 +711,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "0.1.15",
     status: "partial",
     notes: "onPaste from the DOM paste event (text, or images as blob: URLs).",
+  },
+  "expo-print": {
+    module: "./print.ts",
+    pinned: "58.0.5",
+    status: "partial",
+    notes: "printAsync through @capgo/capacitor-printer in the shell (`denext mobile add print`; " +
+      "a WebView cannot print by itself): html, or a uri (data:, http(s) fetched first, or a file " +
+      "path). In a browser, html / uri print from a hidden iframe and otherwise the page " +
+      "(Expo's web behaviour). Page size, margins, orientation and printerUrl are left to the " +
+      "dialog. printToFileAsync (HTML to PDF) and selectPrinterAsync reject with " +
+      "ERR_UNAVAILABLE: neither the plugin nor a browser renders a PDF or lists printers.",
   },
   "expo-quick-actions": {
     module: "./quick-actions.ts",

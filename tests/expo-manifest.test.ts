@@ -74,7 +74,7 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   }
   assertEquals(expoShimName("expo-haptics"), "haptics");
   assertEquals(expoShimName("expo-file-system/legacy"), "file-system/legacy");
-  assertEquals(expoShimName("expo-contacts"), null);
+  assertEquals(expoShimName("expo-task-manager"), null);
   assertEquals(expoShimSpecifier("expo-file-system/legacy"), "denext/expo/file-system/legacy");
   assertEquals(files["denext/expo/file-system/legacy"], "expo-file-system-legacy.js");
   assertEquals(expoShimSpecifier("expo-file-system/next"), null);
@@ -162,6 +162,11 @@ const BEYOND_T3: Readonly<Record<string, string>> = {
   "expo-cellular": "58.0.2",
   "expo-checkbox": "58.0.2",
   "expo-gl": "58.0.3",
+  "expo-brightness": "58.0.2",
+  "expo-intent-launcher": "58.0.3",
+  "expo-print": "58.0.5",
+  "expo-calendar": "58.0.6",
+  "expo-contacts": "58.0.6",
   "expo-linear-gradient": "58.0.3",
   "expo-localization": "58.0.3",
   "expo-mail-composer": "58.0.3",

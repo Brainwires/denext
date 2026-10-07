@@ -65,6 +65,17 @@ and this project adheres to
   command when there is something to carry, reads more plugins' usage strings
   (`expo-sensors`, `expo-tracking-transparency`, `expo-secure-store`, `expo-calendar`'s
   reminders, …), and names the config plugins whose native settings nothing carries over.
+- **Five Expo SDK shims over pinned Capacitor 8 plugins**, each with its `denext mobile add`
+  capability: `expo-contacts` (`contacts`, `@capgo/capacitor-contacts`: the legacy function API
+  and the `Contact` / `Group` classes for the fields the plugin has), `expo-calendar`
+  (`calendar`, `@ebarooni/capacitor-calendar`: calendars, events, iOS reminders, the native event
+  editor, in the object and legacy APIs), `expo-print` (`print`, `@capgo/capacitor-printer`: HTML
+  or a file through the system print dialog, which a WebView cannot open by itself),
+  `expo-brightness` (`brightness`, `@capacitor-community/screen-brightness`) and
+  `expo-intent-launcher` (`intent-launcher`, `@capgo/capacitor-intent-launcher`, Android). Off
+  the shell they answer as Expo's web builds; what a plugin cannot do (attendees, contact
+  containers, HTML to PDF, Android's system brightness setting) rejects with `ERR_UNAVAILABLE`
+  and is listed in the manifest. `denext migrate --from expo` suggests the capabilities.
 - **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
   `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)

@@ -227,6 +227,29 @@ export function createPermissionHook<P extends PermissionResponse, Options exten
   };
 }
 
+/**
+ * A permission nothing here needs: getting and requesting it answer `granted`, and its hook
+ * reads that (the shims whose calls need no OS permission in a WebView).
+ */
+export const NOT_NEEDED_PERMISSION: {
+  get: () => Promise<PermissionResponse>;
+  request: () => Promise<PermissionResponse>;
+  hook: (
+    options?: PermissionHookOptions<object>,
+  ) => [
+    PermissionResponse | null,
+    () => Promise<PermissionResponse>,
+    () => Promise<PermissionResponse>,
+  ];
+} = (() => {
+  const granted = () => Promise.resolve(permissionResponse(PermissionStatus.GRANTED));
+  return {
+    get: granted,
+    request: granted,
+    hook: createPermissionHook({ getMethod: granted, requestMethod: granted }),
+  };
+})();
+
 /** A set of listeners, called in subscription order. */
 export interface Emitter<T> {
   /** Call every listener with `value`; a throwing listener does not stop the others. */

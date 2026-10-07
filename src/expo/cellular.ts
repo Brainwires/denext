@@ -17,11 +17,10 @@
  */
 
 import {
-  createPermissionHook,
+  NOT_NEEDED_PERMISSION,
   type PermissionExpiration,
   type PermissionHookOptions,
   type PermissionResponse,
-  permissionResponse,
   PermissionStatus,
 } from "./internal/common.ts";
 
@@ -103,23 +102,12 @@ export function getMobileNetworkCodeAsync(): Promise<string | null> {
   return Promise.resolve(null);
 }
 
-/**
- * The phone-state permission: none is needed here.
- *
- * @returns `granted`.
- */
-export function getPermissionsAsync(): Promise<PermissionResponse> {
-  return Promise.resolve(permissionResponse(PermissionStatus.GRANTED));
-}
+/** The phone-state permission: none is needed here, so `granted`. */
+export const getPermissionsAsync: () => Promise<PermissionResponse> = NOT_NEEDED_PERMISSION.get;
 
-/**
- * Ask for the phone-state permission: none is needed here.
- *
- * @returns `granted`.
- */
-export function requestPermissionsAsync(): Promise<PermissionResponse> {
-  return Promise.resolve(permissionResponse(PermissionStatus.GRANTED));
-}
+/** Ask for the phone-state permission: none is needed here, so `granted`. */
+export const requestPermissionsAsync: () => Promise<PermissionResponse> =
+  NOT_NEEDED_PERMISSION.request;
 
 /** Hook form of the permission: `[response, request, get]`. */
 export const usePermissions: (
@@ -128,7 +116,4 @@ export const usePermissions: (
   PermissionResponse | null,
   () => Promise<PermissionResponse>,
   () => Promise<PermissionResponse>,
-] = /* @__PURE__ */ createPermissionHook({
-  getMethod: getPermissionsAsync,
-  requestMethod: requestPermissionsAsync,
-});
+] = NOT_NEEDED_PERMISSION.hook;

@@ -2152,6 +2152,18 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         Speech API.
       </p>
       <p>
+        The same goes for <code>contacts</code> (<code>@capgo/capacitor-contacts</code>, behind{" "}
+        <code>expo-contacts</code>), <code>calendar</code>{" "}
+        (<code>@ebarooni/capacitor-calendar</code>,{" "}
+        <code>expo-calendar</code>; both write their usage strings and Android permissions),{" "}
+        <code>print</code> (<code>@capgo/capacitor-printer</code>,{" "}
+        <code>expo-print</code>: a WebView cannot open the print dialog by itself),{" "}
+        <code>brightness</code> (<code>@capacitor-community/screen-brightness</code>,{" "}
+        <code>expo-brightness</code>) and <code>intent-launcher</code>{" "}
+        (<code>@capgo/capacitor-intent-launcher</code>,{" "}
+        <code>expo-intent-launcher</code>, Android only).
+      </p>
+      <p>
         <code>app-config</code>{" "}
         installs nothing: it writes the native config of a migrated Expo app into the shell, read
         statically from <code>app.json</code> / <code>app.config.*</code>: usage strings into{" "}

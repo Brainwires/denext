@@ -168,6 +168,11 @@ const PACKAGE_CAPABILITIES: Readonly<Record<string, string | readonly string[]>>
   "expo-navigation-bar": "system-bars",
   "expo-battery": "device",
   "expo-speech": "text-to-speech",
+  "expo-brightness": "brightness",
+  "expo-print": "print",
+  "expo-intent-launcher": "intent-launcher",
+  "expo-contacts": "contacts",
+  "expo-calendar": "calendar",
 };
 
 /** Why a package's capability was chosen, when the package name alone does not say. */
