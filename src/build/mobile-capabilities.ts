@@ -50,6 +50,7 @@ import { CONTEXT_MENU_INSTALL } from "./mobile-context-menu-install.ts";
 import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
+import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -891,6 +892,8 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
   // background, restore: ./mobile-capabilities-platform.ts.
   ...PLATFORM_CAPABILITIES,
+  // text-to-speech, …: the Expo SDK shims' plugins (./mobile-capabilities-expo.ts).
+  ...EXPO_SDK_CAPABILITIES,
   "native-module": NATIVE_MODULE_CAPABILITY,
   ...NATIVE_VIEW_CAPABILITIES,
   // Release tooling, not a plugin: fastlane lanes over `denext mobile build`.

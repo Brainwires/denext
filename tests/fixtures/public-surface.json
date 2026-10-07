@@ -2084,6 +2084,28 @@
     "useAuthRequest:function",
     "useIdTokenAuthRequest:function"
   ],
+  "denext/expo/battery": [
+    "BATTERY_POLL_MS:variable",
+    "BatteryLevelEvent:interface",
+    "BatteryState:enum",
+    "BatteryStateEvent:interface",
+    "PowerModeEvent:interface",
+    "PowerState:interface",
+    "Subscription:interface",
+    "addBatteryLevelListener:function",
+    "addBatteryStateListener:function",
+    "addLowPowerModeListener:function",
+    "getBatteryLevelAsync:function",
+    "getBatteryStateAsync:function",
+    "getPowerStateAsync:function",
+    "isAvailableAsync:function",
+    "isBatteryOptimizationEnabledAsync:function",
+    "isLowPowerModeEnabledAsync:function",
+    "useBatteryLevel:function",
+    "useBatteryState:function",
+    "useLowPowerMode:function",
+    "usePowerState:function"
+  ],
   "denext/expo/blur": [
     "BlurTargetView:function",
     "BlurTargetViewProps:interface",
@@ -2132,6 +2154,27 @@
     "scanFromURLAsync:function",
     "useCameraPermissions:variable",
     "useMicrophonePermissions:variable"
+  ],
+  "denext/expo/cellular": [
+    "CellularGeneration:enum",
+    "PermissionExpiration:typeAlias",
+    "PermissionHookOptions:typeAlias",
+    "PermissionResponse:interface",
+    "PermissionStatus:enum",
+    "getCarrierNameAsync:function",
+    "getCellularGenerationAsync:function",
+    "getIsoCountryCodeAsync:function",
+    "getMobileCountryCodeAsync:function",
+    "getMobileNetworkCodeAsync:function",
+    "getPermissionsAsync:function",
+    "requestPermissionsAsync:function",
+    "usePermissions:variable"
+  ],
+  "denext/expo/checkbox": [
+    "Checkbox:function",
+    "CheckboxEvent:interface",
+    "CheckboxProps:interface",
+    "default:function"
   ],
   "denext/expo/clipboard": [
     "ClipboardEvent:interface",
@@ -2359,6 +2402,19 @@
     "unloadAsync:function",
     "useFonts:function"
   ],
+  "denext/expo/gl": [
+    "ComponentOrHandle:typeAlias",
+    "ExpoWebGLRenderingContext:interface",
+    "GLLoggingOption:enum",
+    "GLSnapshot:interface",
+    "GLView:function",
+    "GLViewHandle:interface",
+    "GLViewProps:interface",
+    "SnapshotOptions:interface",
+    "SurfaceCreateEvent:interface",
+    "WebGLObject:interface",
+    "getWorkletContext:function"
+  ],
   "denext/expo/glass-effect": [
     "GlassColorScheme:typeAlias",
     "GlassContainer:function",
@@ -2450,6 +2506,12 @@
     "isAvailableAsync:function",
     "useKeepAwake:function"
   ],
+  "denext/expo/linear-gradient": [
+    "LinearGradient:function",
+    "LinearGradientPoint:typeAlias",
+    "LinearGradientProps:interface",
+    "NativeLinearGradientPoint:typeAlias"
+  ],
   "denext/expo/linking": [
     "CreateURLOptions:interface",
     "EventType:interface",
@@ -2490,6 +2552,16 @@
     "hasHardwareAsync:function",
     "isEnrolledAsync:function",
     "supportedAuthenticationTypesAsync:function"
+  ],
+  "denext/expo/localization": [
+    "Calendar:interface",
+    "CalendarIdentifier:enum",
+    "Locale:interface",
+    "Weekday:enum",
+    "getCalendars:function",
+    "getLocales:function",
+    "useCalendars:function",
+    "useLocales:function"
   ],
   "denext/expo/location": [
     "Accuracy:enum",
@@ -2539,6 +2611,15 @@
     "useBackgroundPermissions:variable",
     "useForegroundPermissions:variable",
     "watchPositionAsync:function"
+  ],
+  "denext/expo/mail-composer": [
+    "MailClient:interface",
+    "MailComposerOptions:interface",
+    "MailComposerResult:interface",
+    "MailComposerStatus:enum",
+    "composeAsync:function",
+    "getClients:function",
+    "isAvailableAsync:function"
   ],
   "denext/expo/manifest": [
     "EXPO_SHIMS:variable",
@@ -2652,6 +2733,10 @@
     "saveToLibraryAsync:function",
     "setAssetFavoriteAsync:function",
     "usePermissions:variable"
+  ],
+  "denext/expo/mesh-gradient": [
+    "MeshGradientView:function",
+    "MeshGradientViewProps:interface"
   ],
   "denext/expo/navigation-bar": [
     "NavigationBar:variable",
@@ -2825,6 +2910,35 @@
     "isAvailableAsync:function",
     "setItemAsync:function"
   ],
+  "denext/expo/sensors": [
+    "Accelerometer:variable",
+    "AccelerometerMeasurement:typeAlias",
+    "Barometer:variable",
+    "BarometerMeasurement:interface",
+    "DeviceMotion:variable",
+    "DeviceMotionMeasurement:interface",
+    "DeviceMotionOrientation:enum",
+    "DeviceMotionSensor:class",
+    "DeviceSensor:class",
+    "Gyroscope:variable",
+    "GyroscopeMeasurement:typeAlias",
+    "LightSensor:variable",
+    "LightSensorMeasurement:interface",
+    "Listener:typeAlias",
+    "Magnetometer:variable",
+    "MagnetometerMeasurement:typeAlias",
+    "MagnetometerUncalibrated:variable",
+    "MagnetometerUncalibratedMeasurement:typeAlias",
+    "Pedometer:variable",
+    "PedometerResult:interface",
+    "PedometerUpdateCallback:typeAlias",
+    "PermissionExpiration:typeAlias",
+    "PermissionResponse:interface",
+    "PermissionStatus:enum",
+    "SensorSource:interface",
+    "Subscription:interface",
+    "Vector3Measurement:interface"
+  ],
   "denext/expo/sharing": [
     "ContentType:typeAlias",
     "ResolvedSharePayload:typeAlias",
@@ -2838,6 +2952,29 @@
     "isAvailableAsync:function",
     "shareAsync:function",
     "useIncomingShare:function"
+  ],
+  "denext/expo/sms": [
+    "SMSAttachment:interface",
+    "SMSOptions:interface",
+    "SMSResponse:interface",
+    "isAvailableAsync:function",
+    "sendSMSAsync:function"
+  ],
+  "denext/expo/speech": [
+    "NativeBoundaryEvent:interface",
+    "NativeBoundaryEventCallback:typeAlias",
+    "SpeechEventCallback:typeAlias",
+    "SpeechOptions:interface",
+    "Voice:interface",
+    "VoiceQuality:enum",
+    "WebVoice:typeAlias",
+    "getAvailableVoicesAsync:function",
+    "isSpeakingAsync:function",
+    "maxSpeechInputLength:variable",
+    "pause:function",
+    "resume:function",
+    "speak:function",
+    "stop:function"
   ],
   "denext/expo/splash-screen": [
     "SplashScreenOptions:interface",
@@ -2887,6 +3024,11 @@
     "SymbolView:function",
     "SymbolViewProps:interface",
     "unstable_getMaterialSymbolSourceAsync:function"
+  ],
+  "denext/expo/system-ui": [
+    "ColorValue:typeAlias",
+    "getBackgroundColorAsync:function",
+    "setBackgroundColorAsync:function"
   ],
   "denext/expo/tracking-transparency": [
     "PermissionExpiration:typeAlias",
@@ -3397,6 +3539,11 @@
     "isPictureInPictureSupported:function",
     "setVideoCacheSizeAsync:function",
     "useVideoPlayer:function"
+  ],
+  "denext/expo/video-thumbnails": [
+    "VideoThumbnailsOptions:interface",
+    "VideoThumbnailsResult:interface",
+    "getThumbnailAsync:function"
   ],
   "denext/expo/web-browser": [
     "AuthSessionOpenOptions:typeAlias",

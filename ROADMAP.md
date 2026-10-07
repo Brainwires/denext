@@ -48,8 +48,8 @@
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
 - **Accessibility:** move focus to the new screen on navigation; read bold text and grayscale
   from the OS (both read `false` today).
-- **The remaining Expo shims:** `expo-battery`, `expo-sms`, `expo-intent-launcher`,
-  `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
+- **The remaining Expo shims:** `expo-intent-launcher`, and the native-plugin ones
+  (`expo-contacts`, `expo-calendar`, `expo-print`, `expo-brightness`).
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).

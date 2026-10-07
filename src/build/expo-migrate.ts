@@ -653,6 +653,8 @@ const PACKAGE_CAPABILITIES: Readonly<Record<string, string | readonly string[]>>
   "expo-screen-capture": "privacy-screen",
   "expo-status-bar": "system-bars",
   "expo-navigation-bar": "system-bars",
+  "expo-battery": "device",
+  "expo-speech": "text-to-speech",
 };
 
 /** Why a package's capability was chosen, when the package name alone does not say. */

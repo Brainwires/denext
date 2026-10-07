@@ -614,6 +614,7 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "system-icons",
     "background-location",
     "application",
+    "text-to-speech",
     "native-module",
     "native-views",
     "native-map",

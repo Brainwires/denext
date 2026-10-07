@@ -852,6 +852,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  (not ACCESS_BACKGROUND_LOCATION), and prints the App Store and Play review steps.\n" +
     "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
+    "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +
+    "  engine; the Android WebView has no speechSynthesis).\n" +
     "\n" +
     "  context-menu has no npm package: it writes denext's DenextContextMenu plugin (the\n" +
     "  UIContextMenuInteraction long-press menu with its lifted preview and UIMenu on iOS, a\n" +

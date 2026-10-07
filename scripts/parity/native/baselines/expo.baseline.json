@@ -6,9 +6,12 @@
     "expo-asset": "58.0.10",
     "expo-audio": "58.0.4",
     "expo-auth-session": "58.0.7",
+    "expo-battery": "58.0.3",
     "expo-blur": "58.0.3",
     "expo-build-properties": "58.0.9",
     "expo-camera": "58.0.7",
+    "expo-cellular": "58.0.2",
+    "expo-checkbox": "58.0.2",
     "expo-clipboard": "58.0.3",
     "expo-constants": "58.0.9",
     "expo-crypto": "58.0.4",
@@ -23,11 +26,15 @@
     "expo-image-manipulator": "58.0.11",
     "expo-image-picker": "58.0.10",
     "expo-keep-awake": "58.0.3",
+    "expo-linear-gradient": "58.0.3",
     "expo-linking": "58.0.10",
     "expo-local-authentication": "58.0.2",
+    "expo-localization": "58.0.3",
     "expo-location": "58.0.10",
+    "expo-mail-composer": "58.0.3",
     "expo-maps": "58.0.4",
     "expo-media-library": "58.0.5",
+    "expo-mesh-gradient": "58.0.3",
     "expo-navigation-bar": "58.0.4",
     "expo-network": "58.0.3",
     "expo-notifications": "58.0.11",
@@ -36,20 +43,25 @@
     "expo-screen-capture": "58.0.5",
     "expo-screen-orientation": "58.0.2",
     "expo-secure-store": "58.0.2",
+    "expo-sensors": "58.0.2",
     "expo-sharing": "58.0.13",
+    "expo-sms": "58.0.2",
+    "expo-speech": "58.0.3",
     "expo-sqlite": "58.0.8",
     "expo-splash-screen": "58.0.4",
     "expo-status-bar": "58.0.3",
     "expo-store-review": "58.0.2",
     "expo-symbols": "58.0.3",
+    "expo-system-ui": "58.0.5",
     "expo-tracking-transparency": "58.0.2",
     "expo-updates": "58.0.13",
     "expo-video": "58.0.6",
+    "expo-video-thumbnails": "58.0.2",
     "expo-web-browser": "58.0.4",
     "expo-widgets": "58.0.11",
     "@expo/ui": "58.0.11"
   },
-  "capturedAt": "2026-10-04T01:19:49.642Z",
+  "capturedAt": "2026-10-07T16:27:19.776Z",
   "surfaces": [
     {
       "specifier": "expo",
@@ -1923,6 +1935,207 @@
       }
     },
     {
+      "specifier": "expo-battery",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getBatteryLevelAsync": {
+          "name": "getBatteryLevelAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getBatteryStateAsync": {
+          "name": "getBatteryStateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isLowPowerModeEnabledAsync": {
+          "name": "isLowPowerModeEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isBatteryOptimizationEnabledAsync": {
+          "name": "isBatteryOptimizationEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPowerStateAsync": {
+          "name": "getPowerStateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addBatteryLevelListener": {
+          "name": "addBatteryLevelListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addBatteryStateListener": {
+          "name": "addBatteryStateListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addLowPowerModeListener": {
+          "name": "addLowPowerModeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useBatteryLevel": {
+          "name": "useBatteryLevel",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useBatteryState": {
+          "name": "useBatteryState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLowPowerMode": {
+          "name": "useLowPowerMode",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "usePowerState": {
+          "name": "usePowerState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "BatteryState": {
+          "name": "BatteryState",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CHARGING",
+            "FULL",
+            "NOT_CHARGING",
+            "UNKNOWN",
+            "UNPLUGGED"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-blur",
       "resolved": true,
       "symbols": {
@@ -2091,6 +2304,171 @@
           "members": [
             "prototype"
           ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-cellular",
+      "resolved": true,
+      "symbols": {
+        "getCellularGenerationAsync": {
+          "name": "getCellularGenerationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getIsoCountryCodeAsync": {
+          "name": "getIsoCountryCodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCarrierNameAsync": {
+          "name": "getCarrierNameAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMobileCountryCodeAsync": {
+          "name": "getMobileCountryCodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMobileNetworkCodeAsync": {
+          "name": "getMobileNetworkCodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "CellularGeneration": {
+          "name": "CellularGeneration",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CELLULAR_2G",
+            "CELLULAR_3G",
+            "CELLULAR_4G",
+            "CELLULAR_5G",
+            "UNKNOWN"
+          ]
+        },
+        "usePermissions": {
+          "name": "usePermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-checkbox",
+      "resolved": true,
+      "symbols": {
+        "Checkbox": {
+          "name": "Checkbox",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },
@@ -5252,6 +5630,21 @@
       }
     },
     {
+      "specifier": "expo-linear-gradient",
+      "resolved": true,
+      "symbols": {
+        "LinearGradient": {
+          "name": "LinearGradient",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-linking",
       "resolved": true,
       "symbols": {
@@ -5619,6 +6012,110 @@
             "BIOMETRIC_WEAK",
             "NONE",
             "SECRET"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-localization",
+      "resolved": true,
+      "symbols": {
+        "useLocales": {
+          "name": "useLocales",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useCalendars": {
+          "name": "useCalendars",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLocales": {
+          "name": "getLocales",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCalendars": {
+          "name": "getCalendars",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Weekday": {
+          "name": "Weekday",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "FRIDAY",
+            "MONDAY",
+            "SATURDAY",
+            "SUNDAY",
+            "THURSDAY",
+            "TUESDAY",
+            "WEDNESDAY"
+          ]
+        },
+        "CalendarIdentifier": {
+          "name": "CalendarIdentifier",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BUDDHIST",
+            "CHINESE",
+            "COPTIC",
+            "DANGI",
+            "ETHIOAA",
+            "ETHIOPIC",
+            "GREGORIAN",
+            "GREGORY",
+            "HEBREW",
+            "INDIAN",
+            "ISLAMIC",
+            "ISLAMIC_CIVIL",
+            "ISLAMIC_RGSA",
+            "ISLAMIC_TBLA",
+            "ISLAMIC_UMALQURA",
+            "ISO8601",
+            "JAPANESE",
+            "PERSIAN",
+            "ROC"
           ]
         }
       }
@@ -6183,6 +6680,66 @@
             "Stationary",
             "Unknown",
             "Walking"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-mail-composer",
+      "resolved": true,
+      "symbols": {
+        "getClients": {
+          "name": "getClients",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "composeAsync": {
+          "name": "composeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "MailComposerStatus": {
+          "name": "MailComposerStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CANCELLED",
+            "SAVED",
+            "SENT",
+            "UNDETERMINED"
           ]
         }
       }
@@ -7101,6 +7658,26 @@
             {
               "arity": 1,
               "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-mesh-gradient",
+      "resolved": true,
+      "symbols": {
+        "MeshGradientView": {
+          "name": "MeshGradientView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
               "restParam": false
             }
           ],
@@ -8801,6 +9378,181 @@
       }
     },
     {
+      "specifier": "expo-sensors",
+      "resolved": true,
+      "symbols": {
+        "Accelerometer": {
+          "name": "Accelerometer",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "Barometer": {
+          "name": "Barometer",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "DeviceMotion": {
+          "name": "DeviceMotion",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "Gravity",
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "DeviceMotionOrientation": {
+          "name": "DeviceMotionOrientation",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "LeftLandscape",
+            "Portrait",
+            "RightLandscape",
+            "UpsideDown"
+          ]
+        },
+        "DeviceSensor": {
+          "name": "DeviceSensor",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "Gyroscope": {
+          "name": "Gyroscope",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "Magnetometer": {
+          "name": "Magnetometer",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "MagnetometerUncalibrated": {
+          "name": "MagnetometerUncalibrated",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "LightSensor": {
+          "name": "LightSensor",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "_nativeEventName",
+            "_nativeModule",
+            "addListener",
+            "getListenerCount",
+            "getPermissionsAsync",
+            "hasListeners",
+            "isAvailableAsync",
+            "removeAllListeners",
+            "removeSubscription",
+            "requestPermissionsAsync",
+            "setUpdateInterval"
+          ]
+        },
+        "Pedometer": {
+          "name": "Pedometer",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "PermissionStatus",
+            "getPermissionsAsync",
+            "getStepCountAsync",
+            "isAvailableAsync",
+            "requestPermissionsAsync",
+            "watchStepCount"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-sharing",
       "resolved": true,
       "symbols": {
@@ -8887,6 +9639,154 @@
             }
           ],
           "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-sms",
+      "resolved": true,
+      "symbols": {
+        "sendSMSAsync": {
+          "name": "sendSMSAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-speech",
+      "resolved": true,
+      "symbols": {
+        "speak": {
+          "name": "speak",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAvailableVoicesAsync": {
+          "name": "getAvailableVoicesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isSpeakingAsync": {
+          "name": "isSpeakingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "stop": {
+          "name": "stop",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "pause": {
+          "name": "pause",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "resume": {
+          "name": "resume",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VoiceQuality": {
+          "name": "VoiceQuality",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Default",
+            "Enhanced"
+          ]
+        },
+        "maxSpeechInputLength": {
+          "name": "maxSpeechInputLength",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
         }
       }
     },
@@ -9317,6 +10217,40 @@
             {
               "arity": 1,
               "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-system-ui",
+      "resolved": true,
+      "symbols": {
+        "setBackgroundColorAsync": {
+          "name": "setBackgroundColorAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getBackgroundColorAsync": {
+          "name": "getBackgroundColorAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
               "restParam": false
             }
           ],
@@ -10259,6 +11193,26 @@
           "members": [
             "prototype"
           ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-video-thumbnails",
+      "resolved": true,
+      "symbols": {
+        "getThumbnailAsync": {
+          "name": "getThumbnailAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },

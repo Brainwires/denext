@@ -182,6 +182,11 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
+- **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
+  (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):
+  `GLView` is the page's WebGL 2. Barometer and pedometer readings, the carrier facts of
+  `expo-cellular`, Low Power Mode, and attachments on `expo-sms` / `expo-mail-composer` (an
+  `sms:` / `mailto:` URL cannot carry them) are not available.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web

@@ -26244,6 +26244,266 @@
       ]
     },
     {
+      "module": "denext/expo/battery",
+      "symbols": [
+        {
+          "name": "addBatteryLevelListener",
+          "slug": "addBatteryLevelListener",
+          "kind": "function",
+          "signature": "addBatteryLevelListener(listener: (event: BatteryLevelEvent) => void): Subscription",
+          "doc": "Call listener when the level changes.",
+          "docFull": "Call `listener` when the level changes.",
+          "params": [
+            {
+              "name": "listener",
+              "doc": "Called with the new level."
+            }
+          ],
+          "returns": "A subscription to remove.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "addBatteryStateListener",
+          "slug": "addBatteryStateListener",
+          "kind": "function",
+          "signature": "addBatteryStateListener(listener: (event: BatteryStateEvent) => void): Subscription",
+          "doc": "Call listener when the charging state changes.",
+          "docFull": "Call `listener` when the charging state changes.",
+          "params": [
+            {
+              "name": "listener",
+              "doc": "Called with the new state."
+            }
+          ],
+          "returns": "A subscription to remove.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "addLowPowerModeListener",
+          "slug": "addLowPowerModeListener",
+          "kind": "function",
+          "signature": "addLowPowerModeListener(listener: (event: PowerModeEvent) => void): Subscription",
+          "doc": "Call listener when Low Power Mode changes: never, since it is not observable here.",
+          "docFull": "Call `listener` when Low Power Mode changes: never, since it is not observable here.",
+          "params": [
+            {
+              "name": "listener",
+              "doc": "The listener."
+            }
+          ],
+          "returns": "A subscription to remove.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "BATTERY_POLL_MS",
+          "slug": "BATTERY_POLL_MS",
+          "kind": "variable",
+          "signature": "BATTERY_POLL_MS: 30000",
+          "doc": "How often the shell's battery is polled while a listener is subscribed (ms).",
+          "docFull": "How often the shell's battery is polled while a listener is subscribed (ms).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "BatteryLevelEvent",
+          "slug": "BatteryLevelEvent",
+          "kind": "interface",
+          "signature": "interface BatteryLevelEvent",
+          "doc": "What a level listener receives.",
+          "docFull": "What a level listener receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "BatteryState",
+          "slug": "BatteryState",
+          "kind": "enum",
+          "signature": "enum BatteryState",
+          "doc": "The battery's charging state.",
+          "docFull": "The battery's charging state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "BatteryStateEvent",
+          "slug": "BatteryStateEvent",
+          "kind": "interface",
+          "signature": "interface BatteryStateEvent",
+          "doc": "What a state listener receives.",
+          "docFull": "What a state listener receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getBatteryLevelAsync",
+          "slug": "getBatteryLevelAsync",
+          "kind": "function",
+          "signature": "getBatteryLevelAsync(): Promise<number>",
+          "doc": "The battery level.",
+          "docFull": "The battery level.",
+          "params": [],
+          "returns": "0–1, or -1 when it cannot be read.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getBatteryStateAsync",
+          "slug": "getBatteryStateAsync",
+          "kind": "function",
+          "signature": "getBatteryStateAsync(): Promise<BatteryState>",
+          "doc": "The charging state.",
+          "docFull": "The charging state.",
+          "params": [],
+          "returns": "The state (UNKNOWN when it cannot be read).",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getPowerStateAsync",
+          "slug": "getPowerStateAsync",
+          "kind": "function",
+          "signature": "getPowerStateAsync(): Promise<PowerState>",
+          "doc": "The level, state and Low Power Mode together.",
+          "docFull": "The level, state and Low Power Mode together.",
+          "params": [],
+          "returns": "The power state.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isAvailableAsync",
+          "slug": "isAvailableAsync",
+          "kind": "function",
+          "signature": "isAvailableAsync(): Promise<boolean>",
+          "doc": "Whether the battery can be read: the shell with @capacitor/device, or a browser with the Battery Status API.",
+          "docFull": "Whether the battery can be read: the shell with `@capacitor/device`, or a browser with the\nBattery Status API.",
+          "params": [],
+          "returns": "Whether it is available.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isBatteryOptimizationEnabledAsync",
+          "slug": "isBatteryOptimizationEnabledAsync",
+          "kind": "function",
+          "signature": "isBatteryOptimizationEnabledAsync(): Promise<boolean>",
+          "doc": "Whether Android's battery optimisation applies to the app: not observable here.",
+          "docFull": "Whether Android's battery optimisation applies to the app: not observable here.",
+          "params": [],
+          "returns": "false.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isLowPowerModeEnabledAsync",
+          "slug": "isLowPowerModeEnabledAsync",
+          "kind": "function",
+          "signature": "isLowPowerModeEnabledAsync(): Promise<boolean>",
+          "doc": "Whether Low Power Mode is on: not observable here.",
+          "docFull": "Whether Low Power Mode is on: not observable here.",
+          "params": [],
+          "returns": "false.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PowerModeEvent",
+          "slug": "PowerModeEvent",
+          "kind": "interface",
+          "signature": "interface PowerModeEvent",
+          "doc": "What a Low Power Mode listener receives.",
+          "docFull": "What a Low Power Mode listener receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PowerState",
+          "slug": "PowerState",
+          "kind": "interface",
+          "signature": "interface PowerState",
+          "doc": "The battery's level, state and Low Power Mode together.",
+          "docFull": "The battery's level, state and Low Power Mode together.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Subscription",
+          "slug": "Subscription",
+          "kind": "interface",
+          "signature": "interface Subscription",
+          "doc": "What Expo's add…Listener functions return.",
+          "docFull": "What Expo's `add…Listener` functions return.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useBatteryLevel",
+          "slug": "useBatteryLevel",
+          "kind": "function",
+          "signature": "useBatteryLevel(): number",
+          "doc": "Hook form: the level, -1 until it is read.",
+          "docFull": "Hook form: the level, -1 until it is read.",
+          "params": [],
+          "returns": "The level.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useBatteryState",
+          "slug": "useBatteryState",
+          "kind": "function",
+          "signature": "useBatteryState(): BatteryState",
+          "doc": "Hook form: the charging state, UNKNOWN until it is read.",
+          "docFull": "Hook form: the charging state, `UNKNOWN` until it is read.",
+          "params": [],
+          "returns": "The state.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useLowPowerMode",
+          "slug": "useLowPowerMode",
+          "kind": "function",
+          "signature": "useLowPowerMode(): boolean",
+          "doc": "Hook form: whether Low Power Mode is on (always false here).",
+          "docFull": "Hook form: whether Low Power Mode is on (always `false` here).",
+          "params": [],
+          "returns": "false.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "usePowerState",
+          "slug": "usePowerState",
+          "kind": "function",
+          "signature": "usePowerState(): PowerState",
+          "doc": "Hook form of getPowerStateAsync, updated on every change.",
+          "docFull": "Hook form of {@linkcode getPowerStateAsync}, updated on every change.",
+          "params": [],
+          "returns": "The power state.",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
       "module": "denext/expo/blur",
       "symbols": [
         {
@@ -26811,6 +27071,230 @@
           "docFull": "A video codec, by Expo's name.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/cellular",
+      "symbols": [
+        {
+          "name": "CellularGeneration",
+          "slug": "CellularGeneration",
+          "kind": "enum",
+          "signature": "enum CellularGeneration",
+          "doc": "The cellular generation.",
+          "docFull": "The cellular generation.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getCarrierNameAsync",
+          "slug": "getCarrierNameAsync",
+          "kind": "function",
+          "signature": "getCarrierNameAsync(): Promise<string | null>",
+          "doc": "The carrier's name: not readable here.",
+          "docFull": "The carrier's name: not readable here.",
+          "params": [],
+          "returns": "null.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getCellularGenerationAsync",
+          "slug": "getCellularGenerationAsync",
+          "kind": "function",
+          "signature": "getCellularGenerationAsync(): Promise<CellularGeneration>",
+          "doc": "The connection's generation, from the Network Information API (its effectiveType is the connection's measured speed class, which is what Expo's web build reports too).",
+          "docFull": "The connection's generation, from the Network Information API (its `effectiveType` is the\nconnection's measured speed class, which is what Expo's web build reports too).",
+          "params": [],
+          "returns": "The generation, or UNKNOWN.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getIsoCountryCodeAsync",
+          "slug": "getIsoCountryCodeAsync",
+          "kind": "function",
+          "signature": "getIsoCountryCodeAsync(): Promise<string | null>",
+          "doc": "The carrier's ISO country code: not readable here.",
+          "docFull": "The carrier's ISO country code: not readable here.",
+          "params": [],
+          "returns": "null.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getMobileCountryCodeAsync",
+          "slug": "getMobileCountryCodeAsync",
+          "kind": "function",
+          "signature": "getMobileCountryCodeAsync(): Promise<string | null>",
+          "doc": "The carrier's mobile country code: not readable here.",
+          "docFull": "The carrier's mobile country code: not readable here.",
+          "params": [],
+          "returns": "null.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getMobileNetworkCodeAsync",
+          "slug": "getMobileNetworkCodeAsync",
+          "kind": "function",
+          "signature": "getMobileNetworkCodeAsync(): Promise<string | null>",
+          "doc": "The carrier's mobile network code: not readable here.",
+          "docFull": "The carrier's mobile network code: not readable here.",
+          "params": [],
+          "returns": "null.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getPermissionsAsync",
+          "slug": "getPermissionsAsync",
+          "kind": "function",
+          "signature": "getPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "The phone-state permission: none is needed here.",
+          "docFull": "The phone-state permission: none is needed here.",
+          "params": [],
+          "returns": "granted.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionExpiration",
+          "slug": "PermissionExpiration",
+          "kind": "typeAlias",
+          "signature": "type PermissionExpiration = never | number",
+          "doc": "When a permission expires: \"never\", or a timestamp.",
+          "docFull": "When a permission expires: `\"never\"`, or a timestamp.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionHookOptions",
+          "slug": "PermissionHookOptions",
+          "kind": "typeAlias",
+          "signature": "type PermissionHookOptions<Options> = Options & object",
+          "doc": "Options for a permission hook (createPermissionHook).",
+          "docFull": "Options for a permission hook ({@linkcode createPermissionHook}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionResponse",
+          "slug": "PermissionResponse",
+          "kind": "interface",
+          "signature": "interface PermissionResponse",
+          "doc": "A permission answer, as every Expo permission API returns it.",
+          "docFull": "A permission answer, as every Expo permission API returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionStatus",
+          "slug": "PermissionStatus",
+          "kind": "enum",
+          "signature": "enum PermissionStatus",
+          "doc": "A permission's state, as expo-modules-core reports it.",
+          "docFull": "A permission's state, as `expo-modules-core` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "requestPermissionsAsync",
+          "slug": "requestPermissionsAsync",
+          "kind": "function",
+          "signature": "requestPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "Ask for the phone-state permission: none is needed here.",
+          "docFull": "Ask for the phone-state permission: none is needed here.",
+          "params": [],
+          "returns": "granted.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "usePermissions",
+          "slug": "usePermissions",
+          "kind": "variable",
+          "signature": "usePermissions: (options?: PermissionHookOptions<object>) => tuple",
+          "doc": "Hook form of the permission: [response, request, get].",
+          "docFull": "Hook form of the permission: `[response, request, get]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/checkbox",
+      "symbols": [
+        {
+          "name": "Checkbox",
+          "slug": "Checkbox",
+          "kind": "function",
+          "signature": "Checkbox(props: CheckboxProps): VNode",
+          "doc": "A checkbox.",
+          "docFull": "A checkbox.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The value, colour, handlers and view props."
+            }
+          ],
+          "returns": "The checkbox.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CheckboxEvent",
+          "slug": "CheckboxEvent",
+          "kind": "interface",
+          "signature": "interface CheckboxEvent",
+          "doc": "What onChange receives in nativeEvent.",
+          "docFull": "What `onChange` receives in `nativeEvent`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CheckboxProps",
+          "slug": "CheckboxProps",
+          "kind": "interface",
+          "signature": "interface CheckboxProps",
+          "doc": "Checkbox props (plus any view prop).",
+          "docFull": "`Checkbox` props (plus any view prop).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "default",
+          "slug": "default",
+          "kind": "function",
+          "signature": "default(props: CheckboxProps): VNode",
+          "doc": "A checkbox.",
+          "docFull": "A checkbox.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The value, colour, handlers and view props."
+            }
+          ],
+          "returns": "The checkbox.",
           "examples": [],
           "denextOnly": false
         }
@@ -29813,6 +30297,153 @@
       ]
     },
     {
+      "module": "denext/expo/gl",
+      "symbols": [
+        {
+          "name": "ComponentOrHandle",
+          "slug": "ComponentOrHandle",
+          "kind": "typeAlias",
+          "signature": "type ComponentOrHandle = null | number | Record<string, any>",
+          "doc": "A component, a native handle, or nothing (what Expo's camera texture takes).",
+          "docFull": "A component, a native handle, or nothing (what Expo's camera texture takes).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ExpoWebGLRenderingContext",
+          "slug": "ExpoWebGLRenderingContext",
+          "kind": "interface",
+          "signature": "interface ExpoWebGLRenderingContext",
+          "doc": "The context onContextCreate receives: WebGL plus Expo's additions.",
+          "docFull": "The context `onContextCreate` receives: WebGL plus Expo's additions.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getWorkletContext",
+          "slug": "getWorkletContext",
+          "kind": "function",
+          "signature": "getWorkletContext(contextId: number): ExpoWebGLRenderingContext | undefined",
+          "doc": "The context of a worklet runtime: there is none here (GL runs on the page's thread).",
+          "docFull": "The context of a worklet runtime: there is none here (GL runs on the page's thread).",
+          "params": [
+            {
+              "name": "contextId",
+              "doc": "The context id."
+            }
+          ],
+          "returns": "undefined.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GLLoggingOption",
+          "slug": "GLLoggingOption",
+          "kind": "enum",
+          "signature": "enum GLLoggingOption",
+          "doc": "What Expo's GL logging can show (logging is not available here).",
+          "docFull": "What Expo's GL logging can show (logging is not available here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GLSnapshot",
+          "slug": "GLSnapshot",
+          "kind": "interface",
+          "signature": "interface GLSnapshot",
+          "doc": "A snapshot.",
+          "docFull": "A snapshot.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GLView",
+          "slug": "GLView",
+          "kind": "function",
+          "signature": "GLView(props: GLViewProps): VNode",
+          "doc": "A view that draws with WebGL.",
+          "docFull": "A view that draws with WebGL.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "onContextCreate, the context options, style and view props."
+            }
+          ],
+          "returns": "The view.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GLViewHandle",
+          "slug": "GLViewHandle",
+          "kind": "interface",
+          "signature": "interface GLViewHandle",
+          "doc": "What the ref exposes.",
+          "docFull": "What the ref exposes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GLViewProps",
+          "slug": "GLViewProps",
+          "kind": "interface",
+          "signature": "interface GLViewProps",
+          "doc": "GLView props (plus any view prop).",
+          "docFull": "`GLView` props (plus any view prop).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SnapshotOptions",
+          "slug": "SnapshotOptions",
+          "kind": "interface",
+          "signature": "interface SnapshotOptions",
+          "doc": "Options for a snapshot.",
+          "docFull": "Options for a snapshot.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SurfaceCreateEvent",
+          "slug": "SurfaceCreateEvent",
+          "kind": "interface",
+          "signature": "interface SurfaceCreateEvent",
+          "doc": "What the native view reports when its surface exists.",
+          "docFull": "What the native view reports when its surface exists.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "WebGLObject",
+          "slug": "WebGLObject",
+          "kind": "interface",
+          "signature": "interface WebGLObject",
+          "doc": "A GL object (destroyObjectAsync).",
+          "docFull": "A GL object (`destroyObjectAsync`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
       "module": "denext/expo/glass-effect",
       "symbols": [
         {
@@ -30905,6 +31536,64 @@
       ]
     },
     {
+      "module": "denext/expo/linear-gradient",
+      "symbols": [
+        {
+          "name": "LinearGradient",
+          "slug": "LinearGradient",
+          "kind": "function",
+          "signature": "LinearGradient(props: LinearGradientProps): VNode",
+          "doc": "A view whose background is a linear gradient.",
+          "docFull": "A view whose background is a linear gradient.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The colours, geometry, style and children."
+            }
+          ],
+          "returns": "The view.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LinearGradientPoint",
+          "slug": "LinearGradientPoint",
+          "kind": "typeAlias",
+          "signature": "type LinearGradientPoint = object | NativeLinearGradientPoint",
+          "doc": "A point in the view's unit square: { x, y } or [x, y] ({ x: 0, y: 0 } is the top left).",
+          "docFull": "A point in the view's unit square: `{ x, y }` or `[x, y]` (`{ x: 0, y: 0 }` is the top left).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LinearGradientProps",
+          "slug": "LinearGradientProps",
+          "kind": "interface",
+          "signature": "interface LinearGradientProps",
+          "doc": "LinearGradient props (plus any view prop).",
+          "docFull": "`LinearGradient` props (plus any view prop).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "NativeLinearGradientPoint",
+          "slug": "NativeLinearGradientPoint",
+          "kind": "typeAlias",
+          "signature": "type NativeLinearGradientPoint = tuple",
+          "doc": "A point as a tuple: [x, y], each 0–1.",
+          "docFull": "A point as a tuple: `[x, y]`, each 0–1.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
       "module": "denext/expo/linking",
       "symbols": [
         {
@@ -31410,6 +32099,107 @@
           "docFull": "The biometric sensor kinds the device has.",
           "params": [],
           "returns": "The kinds (none on the web).",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/localization",
+      "symbols": [
+        {
+          "name": "Calendar",
+          "slug": "Calendar",
+          "kind": "interface",
+          "signature": "interface Calendar",
+          "doc": "The user's calendar preferences.",
+          "docFull": "The user's calendar preferences.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarIdentifier",
+          "slug": "CalendarIdentifier",
+          "kind": "enum",
+          "signature": "enum CalendarIdentifier",
+          "doc": "The Unicode calendar types.",
+          "docFull": "The Unicode calendar types.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getCalendars",
+          "slug": "getCalendars",
+          "kind": "function",
+          "signature": "getCalendars(): tuple",
+          "doc": "The user's calendar preferences (one entry).",
+          "docFull": "The user's calendar preferences (one entry).",
+          "params": [],
+          "returns": "The calendars.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getLocales",
+          "slug": "getLocales",
+          "kind": "function",
+          "signature": "getLocales(): tuple",
+          "doc": "The user's locales, most preferred first; always at least one.",
+          "docFull": "The user's locales, most preferred first; always at least one.",
+          "params": [],
+          "returns": "The locales.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Locale",
+          "slug": "Locale",
+          "kind": "interface",
+          "signature": "interface Locale",
+          "doc": "One of the user's locales.",
+          "docFull": "One of the user's locales.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useCalendars",
+          "slug": "useCalendars",
+          "kind": "function",
+          "signature": "useCalendars(): tuple",
+          "doc": "Hook form of getCalendars: re-renders when the user's languages change.",
+          "docFull": "Hook form of {@linkcode getCalendars}: re-renders when the user's languages change.",
+          "params": [],
+          "returns": "The calendars.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useLocales",
+          "slug": "useLocales",
+          "kind": "function",
+          "signature": "useLocales(): tuple",
+          "doc": "Hook form of getLocales: re-renders when the user's languages change.",
+          "docFull": "Hook form of {@linkcode getLocales}: re-renders when the user's languages change.",
+          "params": [],
+          "returns": "The locales.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Weekday",
+          "slug": "Weekday",
+          "kind": "enum",
+          "signature": "enum Weekday",
+          "doc": "Days of the week as firstWeekday numbers them (Sunday = 1).",
+          "docFull": "Days of the week as `firstWeekday` numbers them (Sunday = 1).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": false
         }
@@ -32019,6 +32809,100 @@
             }
           ],
           "returns": "A subscription to remove.",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/mail-composer",
+      "symbols": [
+        {
+          "name": "composeAsync",
+          "slug": "composeAsync",
+          "kind": "function",
+          "signature": "composeAsync(options: MailComposerOptions): Promise<MailComposerResult>",
+          "doc": "Open the mail app with a message filled in.",
+          "docFull": "Open the mail app with a message filled in.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The message."
+            }
+          ],
+          "returns": "{ status: \"undetermined\" } once the mail app was asked to open.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getClients",
+          "slug": "getClients",
+          "kind": "function",
+          "signature": "getClients(): MailClient[]",
+          "doc": "The mail apps installed: not observable from a page, so none (as Expo's web build).",
+          "docFull": "The mail apps installed: not observable from a page, so none (as Expo's web build).",
+          "params": [],
+          "returns": "An empty list.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isAvailableAsync",
+          "slug": "isAvailableAsync",
+          "kind": "function",
+          "signature": "isAvailableAsync(): Promise<boolean>",
+          "doc": "Whether a mail app can be opened: wherever there is a page to open it from.",
+          "docFull": "Whether a mail app can be opened: wherever there is a page to open it from.",
+          "params": [],
+          "returns": "Whether composeAsync can run.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MailClient",
+          "slug": "MailClient",
+          "kind": "interface",
+          "signature": "interface MailClient",
+          "doc": "A mail app (getClients).",
+          "docFull": "A mail app (`getClients`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MailComposerOptions",
+          "slug": "MailComposerOptions",
+          "kind": "interface",
+          "signature": "interface MailComposerOptions",
+          "doc": "What to put in the message.",
+          "docFull": "What to put in the message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MailComposerResult",
+          "slug": "MailComposerResult",
+          "kind": "interface",
+          "signature": "interface MailComposerResult",
+          "doc": "The result of composeAsync.",
+          "docFull": "The result of {@linkcode composeAsync}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MailComposerStatus",
+          "slug": "MailComposerStatus",
+          "kind": "enum",
+          "signature": "enum MailComposerStatus",
+          "doc": "What happened to the message.",
+          "docFull": "What happened to the message.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": false
         }
@@ -33460,6 +34344,40 @@
           "signature": "usePermissions: (options?: PermissionHookOptions<object>) => tuple",
           "doc": "Hook form of the permission: [response, request, get].",
           "docFull": "Hook form of the permission: `[response, request, get]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/mesh-gradient",
+      "symbols": [
+        {
+          "name": "MeshGradientView",
+          "slug": "MeshGradientView",
+          "kind": "function",
+          "signature": "MeshGradientView(props: MeshGradientViewProps): VNode",
+          "doc": "A view filled with a mesh gradient.",
+          "docFull": "A view filled with a mesh gradient.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The mesh, style and children."
+            }
+          ],
+          "returns": "The view.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MeshGradientViewProps",
+          "slug": "MeshGradientViewProps",
+          "kind": "interface",
+          "signature": "interface MeshGradientViewProps",
+          "doc": "MeshGradientView props (plus any view prop).",
+          "docFull": "`MeshGradientView` props (plus any view prop).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -35612,6 +36530,335 @@
       ]
     },
     {
+      "module": "denext/expo/sensors",
+      "symbols": [
+        {
+          "name": "Accelerometer",
+          "slug": "Accelerometer",
+          "kind": "variable",
+          "signature": "Accelerometer: DeviceSensor<AccelerometerMeasurement>",
+          "doc": "The accelerometer: accelerationIncludingGravity in g.",
+          "docFull": "The accelerometer: `accelerationIncludingGravity` in g.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AccelerometerMeasurement",
+          "slug": "AccelerometerMeasurement",
+          "kind": "typeAlias",
+          "signature": "type AccelerometerMeasurement = Vector3Measurement",
+          "doc": "An accelerometer reading.",
+          "docFull": "An accelerometer reading.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Barometer",
+          "slug": "Barometer",
+          "kind": "variable",
+          "signature": "Barometer: DeviceSensor<BarometerMeasurement>",
+          "doc": "The barometer: no web API, so unavailable.",
+          "docFull": "The barometer: no web API, so unavailable.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "BarometerMeasurement",
+          "slug": "BarometerMeasurement",
+          "kind": "interface",
+          "signature": "interface BarometerMeasurement",
+          "doc": "A barometer reading.",
+          "docFull": "A barometer reading.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DeviceMotion",
+          "slug": "DeviceMotion",
+          "kind": "variable",
+          "signature": "DeviceMotion: DeviceMotionSensor",
+          "doc": "Device motion: acceleration, rotation and rotation rate together.",
+          "docFull": "Device motion: acceleration, rotation and rotation rate together.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DeviceMotionMeasurement",
+          "slug": "DeviceMotionMeasurement",
+          "kind": "interface",
+          "signature": "interface DeviceMotionMeasurement",
+          "doc": "A device-motion reading.",
+          "docFull": "A device-motion reading.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DeviceMotionOrientation",
+          "slug": "DeviceMotionOrientation",
+          "kind": "enum",
+          "signature": "enum DeviceMotionOrientation",
+          "doc": "The screen's orientation, as DeviceMotion reports it.",
+          "docFull": "The screen's orientation, as `DeviceMotion` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DeviceMotionSensor",
+          "slug": "DeviceMotionSensor",
+          "kind": "class",
+          "signature": "class DeviceMotionSensor",
+          "doc": "Device motion.",
+          "docFull": "Device motion.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DeviceSensor",
+          "slug": "DeviceSensor",
+          "kind": "class",
+          "signature": "class DeviceSensor<Measurement>",
+          "doc": "The base of every sensor: listeners, the update interval and the permission calls. Its first argument is the reading source (Expo's: the native module).",
+          "docFull": "The base of every sensor: listeners, the update interval and the permission calls. Its\nfirst argument is the reading source (Expo's: the native module).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Gyroscope",
+          "slug": "Gyroscope",
+          "kind": "variable",
+          "signature": "Gyroscope: DeviceSensor<GyroscopeMeasurement>",
+          "doc": "The gyroscope: rotationRate in rad/s.",
+          "docFull": "The gyroscope: `rotationRate` in rad/s.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GyroscopeMeasurement",
+          "slug": "GyroscopeMeasurement",
+          "kind": "typeAlias",
+          "signature": "type GyroscopeMeasurement = Vector3Measurement",
+          "doc": "A gyroscope reading (rad/s).",
+          "docFull": "A gyroscope reading (rad/s).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LightSensor",
+          "slug": "LightSensor",
+          "kind": "variable",
+          "signature": "LightSensor: DeviceSensor<LightSensorMeasurement>",
+          "doc": "The ambient light sensor: the Generic Sensor API's AmbientLightSensor, where present.",
+          "docFull": "The ambient light sensor: the Generic Sensor API's `AmbientLightSensor`, where present.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LightSensorMeasurement",
+          "slug": "LightSensorMeasurement",
+          "kind": "interface",
+          "signature": "interface LightSensorMeasurement",
+          "doc": "A light sensor reading.",
+          "docFull": "A light sensor reading.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Listener",
+          "slug": "Listener",
+          "kind": "typeAlias",
+          "signature": "type Listener<E> = (event: E) => void",
+          "doc": "A sensor listener.",
+          "docFull": "A sensor listener.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Magnetometer",
+          "slug": "Magnetometer",
+          "kind": "variable",
+          "signature": "Magnetometer: DeviceSensor<MagnetometerMeasurement>",
+          "doc": "The magnetometer: the Generic Sensor API's Magnetometer, where the browser has it.",
+          "docFull": "The magnetometer: the Generic Sensor API's `Magnetometer`, where the browser has it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MagnetometerMeasurement",
+          "slug": "MagnetometerMeasurement",
+          "kind": "typeAlias",
+          "signature": "type MagnetometerMeasurement = Vector3Measurement",
+          "doc": "A magnetometer reading (µT).",
+          "docFull": "A magnetometer reading (µT).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MagnetometerUncalibrated",
+          "slug": "MagnetometerUncalibrated",
+          "kind": "variable",
+          "signature": "MagnetometerUncalibrated: DeviceSensor<MagnetometerUncalibratedMeasurement>",
+          "doc": "The uncalibrated magnetometer: the Generic Sensor API's UncalibratedMagnetometer.",
+          "docFull": "The uncalibrated magnetometer: the Generic Sensor API's `UncalibratedMagnetometer`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MagnetometerUncalibratedMeasurement",
+          "slug": "MagnetometerUncalibratedMeasurement",
+          "kind": "typeAlias",
+          "signature": "type MagnetometerUncalibratedMeasurement = Vector3Measurement",
+          "doc": "An uncalibrated magnetometer reading (µT).",
+          "docFull": "An uncalibrated magnetometer reading (µT).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Pedometer",
+          "slug": "Pedometer",
+          "kind": "variable",
+          "signature": "Pedometer: object",
+          "doc": "The pedometer: no web API, so unavailable (isAvailableAsync() is false, a watch never fires, a count rejects with ERR_UNAVAILABLE).",
+          "docFull": "The pedometer: no web API, so unavailable (`isAvailableAsync()` is `false`, a watch never\nfires, a count rejects with `ERR_UNAVAILABLE`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PedometerResult",
+          "slug": "PedometerResult",
+          "kind": "interface",
+          "signature": "interface PedometerResult",
+          "doc": "A step count.",
+          "docFull": "A step count.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PedometerUpdateCallback",
+          "slug": "PedometerUpdateCallback",
+          "kind": "typeAlias",
+          "signature": "type PedometerUpdateCallback = (result: PedometerResult) => void",
+          "doc": "Called with step counts.",
+          "docFull": "Called with step counts.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionExpiration",
+          "slug": "PermissionExpiration",
+          "kind": "typeAlias",
+          "signature": "type PermissionExpiration = never | number",
+          "doc": "When a permission expires: \"never\", or a timestamp.",
+          "docFull": "When a permission expires: `\"never\"`, or a timestamp.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionResponse",
+          "slug": "PermissionResponse",
+          "kind": "interface",
+          "signature": "interface PermissionResponse",
+          "doc": "A permission answer, as every Expo permission API returns it.",
+          "docFull": "A permission answer, as every Expo permission API returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionStatus",
+          "slug": "PermissionStatus",
+          "kind": "enum",
+          "signature": "enum PermissionStatus",
+          "doc": "A permission's state, as expo-modules-core reports it.",
+          "docFull": "A permission's state, as `expo-modules-core` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SensorSource",
+          "slug": "SensorSource",
+          "kind": "interface",
+          "signature": "interface SensorSource<M>",
+          "doc": "A source of readings: whether it exists, and how to start it. start returns the stop. Expo's sensor classes take their native module first; here it is this.",
+          "docFull": "A source of readings: whether it exists, and how to start it. `start` returns the stop.\nExpo's sensor classes take their native module first; here it is this.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Subscription",
+          "slug": "Subscription",
+          "kind": "interface",
+          "signature": "interface Subscription",
+          "doc": "What Expo's add…Listener functions return.",
+          "docFull": "What Expo's `add…Listener` functions return.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Vector3Measurement",
+          "slug": "Vector3Measurement",
+          "kind": "interface",
+          "signature": "interface Vector3Measurement",
+          "doc": "A three-axis reading (and its time in seconds).",
+          "docFull": "A three-axis reading (and its time in seconds).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
       "module": "denext/expo/sharing",
       "symbols": [
         {
@@ -35762,6 +37009,266 @@
           "signature": "interface UseIncomingShareResult",
           "doc": "What useIncomingShare returns.",
           "docFull": "What {@linkcode useIncomingShare} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/sms",
+      "symbols": [
+        {
+          "name": "isAvailableAsync",
+          "slug": "isAvailableAsync",
+          "kind": "function",
+          "signature": "isAvailableAsync(): Promise<boolean>",
+          "doc": "Whether messages can be sent: in the iOS / Android shell.",
+          "docFull": "Whether messages can be sent: in the iOS / Android shell.",
+          "params": [],
+          "returns": "Whether sendSMSAsync can open the Messages app.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "sendSMSAsync",
+          "slug": "sendSMSAsync",
+          "kind": "function",
+          "signature": "sendSMSAsync(addresses: string | string[], message: string, options?: SMSOptions): Promise<SMSResponse>",
+          "doc": "Open the Messages app with a message to addresses filled in.",
+          "docFull": "Open the Messages app with a message to `addresses` filled in.",
+          "params": [
+            {
+              "name": "addresses",
+              "doc": "One phone number or several."
+            },
+            {
+              "name": "message",
+              "doc": "The text."
+            },
+            {
+              "name": "options",
+              "doc": "Attachments (not supported)."
+            }
+          ],
+          "returns": "{ result: \"unknown\" } once the Messages app was asked to open.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SMSAttachment",
+          "slug": "SMSAttachment",
+          "kind": "interface",
+          "signature": "interface SMSAttachment",
+          "doc": "A file to attach (not supported here).",
+          "docFull": "A file to attach (not supported here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SMSOptions",
+          "slug": "SMSOptions",
+          "kind": "interface",
+          "signature": "interface SMSOptions",
+          "doc": "Options for sendSMSAsync.",
+          "docFull": "Options for {@linkcode sendSMSAsync}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SMSResponse",
+          "slug": "SMSResponse",
+          "kind": "interface",
+          "signature": "interface SMSResponse",
+          "doc": "What happened to the message (unknown here: the Messages app reports nothing).",
+          "docFull": "What happened to the message (`unknown` here: the Messages app reports nothing).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/speech",
+      "symbols": [
+        {
+          "name": "getAvailableVoicesAsync",
+          "slug": "getAvailableVoicesAsync",
+          "kind": "function",
+          "signature": "getAvailableVoicesAsync(): Promise<Voice[]>",
+          "doc": "The voices the engine has.",
+          "docFull": "The voices the engine has.",
+          "params": [],
+          "returns": "The voices (none where there is no engine).",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isSpeakingAsync",
+          "slug": "isSpeakingAsync",
+          "kind": "function",
+          "signature": "isSpeakingAsync(): Promise<boolean>",
+          "doc": "Whether it is speaking.",
+          "docFull": "Whether it is speaking.",
+          "params": [],
+          "returns": "Whether an utterance is being spoken (or queued, natively).",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "maxSpeechInputLength",
+          "slug": "maxSpeechInputLength",
+          "kind": "variable",
+          "signature": "maxSpeechInputLength: number",
+          "doc": "The longest text one speak takes (the Web Speech API's limit; Expo's web value).",
+          "docFull": "The longest text one `speak` takes (the Web Speech API's limit; Expo's web value).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "NativeBoundaryEvent",
+          "slug": "NativeBoundaryEvent",
+          "kind": "interface",
+          "signature": "interface NativeBoundaryEvent",
+          "doc": "What onBoundary receives from the native engine.",
+          "docFull": "What `onBoundary` receives from the native engine.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "NativeBoundaryEventCallback",
+          "slug": "NativeBoundaryEventCallback",
+          "kind": "typeAlias",
+          "signature": "type NativeBoundaryEventCallback = (ev: NativeBoundaryEvent) => void",
+          "doc": "A native boundary callback.",
+          "docFull": "A native boundary callback.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "pause",
+          "slug": "pause",
+          "kind": "function",
+          "signature": "pause(): Promise<void>",
+          "doc": "Pause (the Web Speech API only).",
+          "docFull": "Pause (the Web Speech API only).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "resume",
+          "slug": "resume",
+          "kind": "function",
+          "signature": "resume(): Promise<void>",
+          "doc": "Resume after pause (the Web Speech API only).",
+          "docFull": "Resume after {@linkcode pause} (the Web Speech API only).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "speak",
+          "slug": "speak",
+          "kind": "function",
+          "signature": "speak(text: string, options?: SpeechOptions): void",
+          "doc": "Speak text, after anything already queued.",
+          "docFull": "Speak `text`, after anything already queued.",
+          "params": [
+            {
+              "name": "text",
+              "doc": "What to say (at most maxSpeechInputLength characters)."
+            },
+            {
+              "name": "options",
+              "doc": "The voice, language, rate, pitch, volume and callbacks."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SpeechEventCallback",
+          "slug": "SpeechEventCallback",
+          "kind": "typeAlias",
+          "signature": "type SpeechEventCallback = (this: SpeechSynthesisUtterance, ev: SpeechSynthesisEvent) => any",
+          "doc": "A web speech event callback (this is the utterance).",
+          "docFull": "A web speech event callback (`this` is the utterance).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SpeechOptions",
+          "slug": "SpeechOptions",
+          "kind": "interface",
+          "signature": "interface SpeechOptions",
+          "doc": "How to speak, and what to call back.",
+          "docFull": "How to speak, and what to call back.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "stop",
+          "slug": "stop",
+          "kind": "function",
+          "signature": "stop(): Promise<void>",
+          "doc": "Stop speaking and drop the queue; each dropped utterance's onStopped is called.",
+          "docFull": "Stop speaking and drop the queue; each dropped utterance's `onStopped` is called.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Voice",
+          "slug": "Voice",
+          "kind": "interface",
+          "signature": "interface Voice",
+          "doc": "A voice.",
+          "docFull": "A voice.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "VoiceQuality",
+          "slug": "VoiceQuality",
+          "kind": "enum",
+          "signature": "enum VoiceQuality",
+          "doc": "A voice's quality.",
+          "docFull": "A voice's quality.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "WebVoice",
+          "slug": "WebVoice",
+          "kind": "typeAlias",
+          "signature": "type WebVoice = Voice & object",
+          "doc": "A voice as the Web Speech API (and the plugin) describes it.",
+          "docFull": "A voice as the Web Speech API (and the plugin) describes it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36322,6 +37829,52 @@
             }
           ],
           "returns": "null.",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/system-ui",
+      "symbols": [
+        {
+          "name": "ColorValue",
+          "slug": "ColorValue",
+          "kind": "typeAlias",
+          "signature": "type ColorValue = string | number",
+          "doc": "A colour: a CSS colour string, or a processColor number (0xAARRGGBB).",
+          "docFull": "A colour: a CSS colour string, or a `processColor` number (`0xAARRGGBB`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getBackgroundColorAsync",
+          "slug": "getBackgroundColorAsync",
+          "kind": "function",
+          "signature": "getBackgroundColorAsync(): Promise<ColorValue | null>",
+          "doc": "The root view's background colour: the one last set (#RRGGBB for a hex colour or a number), or null when none was.",
+          "docFull": "The root view's background colour: the one last set (`#RRGGBB` for a hex colour or a\nnumber), or null when none was.",
+          "params": [],
+          "returns": "The colour, or null.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "setBackgroundColorAsync",
+          "slug": "setBackgroundColorAsync",
+          "kind": "function",
+          "signature": "setBackgroundColorAsync(color: ColorValue | null): Promise<void>",
+          "doc": "Set the root view's background colour: the page's (<html> and <body>). null clears it, back to the stylesheet's colour.",
+          "docFull": "Set the root view's background colour: the page's (`<html>` and `<body>`). `null` clears\nit, back to the stylesheet's colour.",
+          "params": [
+            {
+              "name": "color",
+              "doc": "A CSS colour, a processColor number, or null."
+            }
+          ],
+          "returns": "",
           "examples": [],
           "denextOnly": false
         }
@@ -42408,6 +43961,56 @@
           "signature": "interface VideoViewProps",
           "doc": "VideoView props.",
           "docFull": "`VideoView` props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/video-thumbnails",
+      "symbols": [
+        {
+          "name": "getThumbnailAsync",
+          "slug": "getThumbnailAsync",
+          "kind": "function",
+          "signature": "getThumbnailAsync(sourceFilename: string, options?: VideoThumbnailsOptions): Promise<VideoThumbnailsResult>",
+          "doc": "A frame of the video at sourceFilename as a JPEG.",
+          "docFull": "A frame of the video at `sourceFilename` as a JPEG.",
+          "params": [
+            {
+              "name": "sourceFilename",
+              "doc": "The video's URL."
+            },
+            {
+              "name": "options",
+              "doc": "The frame's time, the JPEG quality and request headers."
+            }
+          ],
+          "returns": "The thumbnail's blob: URL and size.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "VideoThumbnailsOptions",
+          "slug": "VideoThumbnailsOptions",
+          "kind": "interface",
+          "signature": "interface VideoThumbnailsOptions",
+          "doc": "Options for getThumbnailAsync.",
+          "docFull": "Options for {@linkcode getThumbnailAsync}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "VideoThumbnailsResult",
+          "slug": "VideoThumbnailsResult",
+          "kind": "interface",
+          "signature": "interface VideoThumbnailsResult",
+          "doc": "The thumbnail.",
+          "docFull": "The thumbnail.",
           "params": [],
           "returns": "",
           "examples": [],

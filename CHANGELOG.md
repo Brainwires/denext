@@ -43,7 +43,16 @@ and this project adheres to
   enrolled, backup codes still work). The re-seal goes through the new optional adapter method
   `replaceMfaSecret(userId, expected, next)`, a compare-and-swap of that one field, which both
   shipped adapters implement.
-
+- **Thirteen more Expo SDK shims** for React Native mode, each in the expo parity gate:
+  `expo-system-ui`, `expo-linear-gradient`, `expo-localization`, `expo-speech`, `expo-sensors`,
+  `expo-video-thumbnails`, `expo-battery`, `expo-gl`, `expo-mail-composer`, `expo-checkbox`,
+  `expo-sms`, `expo-mesh-gradient` and `expo-cellular`. They run on web APIs: CSS gradients,
+  `Intl`, the Web Speech API, motion events converted to Expo's units (g, rad/s), a `<video>`
+  frame drawn on a `<canvas>`, WebGL 2 for `GLView`, `mailto:` / `sms:` URLs. In the Capacitor
+  shell `expo-battery` reads `@capacitor/device`, and `expo-speech` uses the new
+  `denext mobile add text-to-speech` capability (`@capacitor-community/text-to-speech`, which
+  the Android shell needs because its WebView has no `speechSynthesis`). `denext migrate --from
+  expo` suggests both capabilities. Each shim's omissions are in `denext/expo/manifest`.
 - **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
   retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
   `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)

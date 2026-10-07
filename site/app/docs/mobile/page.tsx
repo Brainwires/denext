@@ -2141,6 +2141,17 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         </li>
       </ul>
 
+      <h2 id="expo-sdk-capabilities">Plugins for the Expo SDK shims</h2>
+      <p>
+        Some <a href="/docs/react-native#expo-apis">Expo SDK shims</a>{" "}
+        call a pinned Capacitor 8 plugin directly, with no <code>denext/mobile</code>{" "}
+        function in between. <code>text-to-speech</code>{" "}
+        (<code>@capacitor-community/text-to-speech</code>) is the OS speech engine behind{" "}
+        <code>expo-speech</code>: the Android WebView has no{" "}
+        <code>speechSynthesis</code>, so the Android shell needs it; elsewhere the shim uses the Web
+        Speech API.
+      </p>
+
       <h2 id="background-tasks">Background tasks</h2>
       <p>
         <code>denext mobile add background</code> installs Capacitor’s official{" "}

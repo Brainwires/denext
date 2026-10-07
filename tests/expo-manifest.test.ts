@@ -158,6 +158,19 @@ const BEYOND_T3: Readonly<Record<string, string>> = {
   "expo-screen-capture": "58.0.5",
   "expo-screen-orientation": "58.0.2",
   "expo-store-review": "58.0.2",
+  "expo-battery": "58.0.3",
+  "expo-cellular": "58.0.2",
+  "expo-checkbox": "58.0.2",
+  "expo-gl": "58.0.3",
+  "expo-linear-gradient": "58.0.3",
+  "expo-localization": "58.0.3",
+  "expo-mail-composer": "58.0.3",
+  "expo-mesh-gradient": "58.0.3",
+  "expo-sensors": "58.0.2",
+  "expo-sms": "58.0.2",
+  "expo-speech": "58.0.3",
+  "expo-system-ui": "58.0.5",
+  "expo-video-thumbnails": "58.0.2",
 };
 
 let t3Present = false;
