@@ -1608,9 +1608,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
 - `interface Task<R>` — A task descriptor. Returned by defineTask; the shape a tasks/ file default-exports.
+- `type TaskBackoff = number | object` — How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default "exponential": delayMs, then twice that, … capped at maxDelayMs).
 - `interface TaskContext` — Context passed to a task's handler.
 - `interface TaskDefinition<R>` — A task definition passed to defineTask.
 - `taskNames(): string[]` — Every registered task name, sorted.
+- `interface TaskRetry` — A task's retry policy (TaskDefinition.retry).
 - `interface TasksConfig` — Scheduled/background task behaviour (DenextConfig.tasks).
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.

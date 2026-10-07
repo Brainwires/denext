@@ -860,3 +860,23 @@ Deno.test("the editor row explains a valid expression and refuses a broken one",
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("the history table shows each task's retries", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const path = join(dir, ".denext", "tasks.db");
+  const store = taskHistoryRecorder({ path });
+  const now = Date.now();
+  const base = { name: "cleanup", trigger: "schedule" as const, durationMs: 5 };
+  store.record({ ...base, startedAt: now - 2, ok: false, attempt: 1, willRetry: true });
+  store.record({ ...base, startedAt: now - 1, ok: true, attempt: 2, willRetry: false });
+  store.close();
+  try {
+    const body = await (await call(dir)).text();
+    assertStringIncludes(body, "<th>Retries</th>");
+    const row = body.slice(body.indexOf("<th>Retries</th>"));
+    // Succeeded 1, Failed 0 (the retried attempt is not a failure), Retries 1.
+    assertStringIncludes(row, "<td>1</td><td>0</td><td>1</td>");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

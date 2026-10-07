@@ -18,6 +18,14 @@ and this project adheres to
 
 ### Added
 
+- **Task retries:** `defineTask({ retry: { attempts, backoff } })` runs a failed task again up to
+  `attempts` more times (`backoff`: a fixed delay in ms, or `{ strategy: "fixed" |
+  "exponential", delayMs, maxDelayMs }`; default exponential from 1 s, capped at 5 min) and
+  settles with the last attempt's outcome. The handler's context gains `attempt`. A retrying
+  scheduled run still holds the overlap guard, and shutdown ends its wait. With
+  `tasks.history`, every attempt is a row (`attempt`, `willRetry`; the store migrates an older
+  `tasks.db` in place), a retried failure no longer counts as a failure, and the `denext ui`
+  Cron page shows each task's retries.
 - **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
   `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
   credentials), is validated at import, and scopes the policy to the method it guards: the

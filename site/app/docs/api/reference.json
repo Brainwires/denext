@@ -11182,6 +11182,18 @@
           "denextOnly": true
         },
         {
+          "name": "TaskBackoff",
+          "slug": "TaskBackoff",
+          "kind": "typeAlias",
+          "signature": "type TaskBackoff = number | object",
+          "doc": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default \"exponential\": delayMs, then twice that, … capped at maxDelayMs).",
+          "docFull": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a\nstrategy (default `\"exponential\"`: `delayMs`, then twice that, … capped at `maxDelayMs`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TaskContext",
           "slug": "TaskContext",
           "kind": "interface",
@@ -11212,6 +11224,18 @@
           "signature": "taskNames(): string[]",
           "doc": "Every registered task name, sorted.",
           "docFull": "Every registered task name, sorted.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskRetry",
+          "slug": "TaskRetry",
+          "kind": "interface",
+          "signature": "interface TaskRetry",
+          "doc": "A task's retry policy (TaskDefinition.retry).",
+          "docFull": "A task's retry policy ({@linkcode TaskDefinition.retry}).",
           "params": [],
           "returns": "",
           "examples": [],

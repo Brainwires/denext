@@ -114,6 +114,32 @@ export default {
         </li>
       </ul>
 
+      <h2 id="retries">Retries</h2>
+      <Code lang="ts">
+        {`// tasks/sync.ts
+import { defineTask } from "denext/server";
+
+export default defineTask({
+  schedule: "*/15 * * * *",
+  retry: { attempts: 3, backoff: { delayMs: 2_000 } }, // 2 s, 4 s, 8 s
+  handler: async ({ attempt, signal }) => {
+    await pushToWarehouse({ signal }); // attempt is 1 on the first run, 2 on the first retry
+  },
+});`}
+      </Code>
+      <p>
+        A failed run is retried up to <code>attempts</code>{" "}
+        more times, and the run settles with the last attempt's outcome: <code>runTask</code>{" "}
+        resolves with the first success or rejects with the last error. <code>backoff</code>{" "}
+        is a fixed delay in ms (<code>backoff: 500</code>) or{" "}
+        <code>{"{ strategy, delayMs, maxDelayMs }"}</code>; the default is exponential from 1 s,
+        capped at five minutes. A scheduled run that is still retrying counts as running, so the
+        overlap rule holds: the next matching minute does not start a second copy. Shutdown aborts
+        the pending wait and the run ends with the last error. Each attempt is its own row in the
+        run history below, numbered, and a failed attempt that was retried does not count as a
+        failure.
+      </p>
+
       <h2 id="run-history">Run history</h2>
       <p>
         Off by default: denext records nothing and writes no file until you ask. With{" "}

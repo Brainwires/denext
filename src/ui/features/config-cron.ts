@@ -520,7 +520,7 @@ function History(
 /** The table of per-task standing. */
 function HistoryTable({ read }: { readonly read: ReturnType<typeof readTaskHistory> }): VNode {
   return h(Table, {
-    head: ["Task", "Last run (UTC)", "Last result", "Succeeded", "Failed"],
+    head: ["Task", "Last run (UTC)", "Last result", "Succeeded", "Failed", "Retries"],
     rows: read.tasks.map((row) =>
       h(
         "tr",
@@ -535,6 +535,7 @@ function HistoryTable({ read }: { readonly read: ReturnType<typeof readTaskHisto
         ),
         h("td", null, String(row.successes)),
         h("td", null, String(row.failures)),
+        h("td", null, String(row.retries)),
       )
     ),
   });

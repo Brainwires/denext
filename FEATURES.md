@@ -234,7 +234,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
   from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
   (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
-  otherwise. Zero cost when the app defines none.
+  otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
+  failed run (fixed or exponential backoff), each attempt recorded in the run history and the
+  overlap guard holding while a run retries.
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through

@@ -450,3 +450,197 @@ Deno.test("a handler that throws synchronously rejects — it does not throw", a
   assertEquals(seen[0].ok, false);
   assert(seen[0].detail?.includes("guard clause"), seen[0].detail ?? "(no detail)");
 });
+
+// ---- retries ---------------------------------------------------------------
+
+/** A handler that fails its first `failures` attempts, then returns the attempt number. */
+function flaky(failures: number) {
+  const seen: number[] = [];
+  const task = defineTask({
+    retry: { attempts: 5, backoff: 0 },
+    handler: ({ attempt }) => {
+      seen.push(attempt);
+      if (attempt <= failures) throw new Error(`attempt ${attempt} failed`);
+      return `done on ${attempt}`;
+    },
+  });
+  return { task, seen };
+}
+
+Deno.test("retry: a failed run is retried until it succeeds, each attempt numbered", async () => {
+  reset();
+  const { task, seen } = flaky(2);
+  registerTask("flaky", task);
+  assertEquals(await runTask("flaky"), "done on 3");
+  assertEquals(seen, [1, 2, 3]);
+});
+
+Deno.test("retry: when the retries run out the LAST error is thrown", async () => {
+  reset();
+  registerTask(
+    "never",
+    defineTask({
+      retry: { attempts: 2, backoff: 0 },
+      handler: ({ attempt }) => {
+        throw new Error(`attempt ${attempt}`);
+      },
+    }),
+  );
+  await assertRejects(() => runTask("never"), Error, "attempt 3");
+});
+
+Deno.test("retry: every attempt is recorded, with its number and whether it will retry", async () => {
+  reset();
+  const { task } = flaky(2);
+  registerTask("flaky", task);
+  registerTask("plain", defineTask({ handler: () => 1 }));
+  const seen = await recording(async () => {
+    await runTask("flaky");
+    await runTask("plain");
+  });
+  assertEquals(
+    seen.map((r) => [r.name, r.ok, r.attempt, r.willRetry]),
+    [
+      ["flaky", false, 1, true],
+      ["flaky", false, 2, true],
+      ["flaky", true, 3, false],
+      ["plain", true, undefined, undefined],
+    ],
+  );
+  const lastFail = await recording(() => runTask("flaky-out"));
+  assertEquals(lastFail, [], "unknown task: no attempts");
+  registerTask(
+    "out",
+    defineTask({
+      retry: { attempts: 1, backoff: 0 },
+      handler: () => {
+        throw new Error("x");
+      },
+    }),
+  );
+  const out = await recording(() => runTask("out"));
+  assertEquals(out.map((r) => [r.attempt, r.willRetry]), [[1, true], [2, false]]);
+});
+
+Deno.test("retry: the backoff waits between attempts (fixed and exponential, capped)", async () => {
+  reset();
+  const delays: number[] = [];
+  let last = 0;
+  registerTask(
+    "exp",
+    defineTask({
+      retry: { attempts: 4, backoff: { delayMs: 100, maxDelayMs: 300 } },
+      handler: ({ attempt }) => {
+        if (attempt > 1) delays.push(Date.now() - last);
+        last = Date.now();
+        throw new Error("x");
+      },
+    }),
+  );
+  await withFakeClock(async ({ tick }) => {
+    const done = runTask("exp").catch((e: Error) => e);
+    await tick(0); // the first attempt's rejection settles and its wait registers at t=0
+    for (let i = 0; i < 100; i++) await tick(10); // each tick lets the next wait register
+    assertEquals((await done as Error).message, "x");
+  });
+  assertEquals(delays, [100, 200, 300, 300]);
+
+  reset();
+  const fixed: number[] = [];
+  registerTask(
+    "fixed",
+    defineTask({
+      retry: { attempts: 2, backoff: { strategy: "fixed", delayMs: 50 } },
+      handler: ({ attempt }) => {
+        if (attempt > 1) fixed.push(Date.now() - last);
+        last = Date.now();
+        throw new Error("x");
+      },
+    }),
+  );
+  await withFakeClock(async ({ tick }) => {
+    const done = runTask("fixed").catch(() => {});
+    await tick(0);
+    for (let i = 0; i < 20; i++) await tick(10);
+    await done;
+  });
+  assertEquals(fixed, [50, 50]);
+});
+
+Deno.test("retry: an abort during the backoff stops retrying with the last error", async () => {
+  reset();
+  let attempts = 0;
+  registerTask(
+    "slow",
+    defineTask({
+      retry: { attempts: 5, backoff: 60_000 },
+      handler: () => {
+        attempts++;
+        throw new Error(`attempt ${attempts}`);
+      },
+    }),
+  );
+  const controller = new AbortController();
+  const done = runTask("slow", undefined, { signal: controller.signal });
+  await new Promise((r) => setTimeout(r, 0));
+  controller.abort();
+  await assertRejects(() => done, Error, "attempt 1");
+  assertEquals(attempts, 1);
+});
+
+Deno.test("retry: the userland overlap guard treats a retrying run as still running", async () => {
+  reset();
+  let starts = 0;
+  registerTask(
+    "job",
+    defineTask({
+      retry: { attempts: 3, backoff: 90_000 },
+      handler: ({ attempt }) => {
+        if (attempt === 1) starts++;
+        throw new Error("x");
+      },
+    }),
+  );
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    await withFakeClock(async ({ tick }) => {
+      const dispose = scheduleTasks([{ cron: "* * * * *", task: "job" }]);
+      const minutes = async (n: number) => {
+        for (let i = 0; i < n * 4; i++) await tick(15_000);
+      };
+      await minutes(1);
+      assertEquals(starts, 1);
+      // Three retries 90 s apart (270 s): the minutes that match meanwhile start nothing new.
+      await minutes(4);
+      assertEquals(starts, 1, "a retrying run is not overlapped");
+      await minutes(1);
+      assertEquals(starts, 2, "once its retries ran out, the next minute fires");
+      dispose();
+    });
+  } finally {
+    console.error = origError;
+  }
+});
+
+Deno.test("retry: defineTask validates the policy up front", () => {
+  for (
+    const bad of [
+      { attempts: -1 },
+      { attempts: 1.5 },
+      { attempts: 101 },
+      { attempts: 1, backoff: -5 },
+      { attempts: 1, backoff: { delayMs: Number.NaN } },
+      { attempts: 1, backoff: { strategy: "linear" } },
+      null,
+    ]
+  ) {
+    assertThrows(
+      () => defineTask({ retry: bad as never, handler: () => {} }),
+      Error,
+      "retry.",
+      JSON.stringify(bad),
+    );
+  }
+  defineTask({ retry: { attempts: 0 }, handler: () => {} });
+});

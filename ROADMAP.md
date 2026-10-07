@@ -101,8 +101,6 @@ Each is documented as a manual recipe today (the
 - **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
-- **Task retries:** `defineTask({ retry: { attempts, backoff } })`, recorded in run history, with
-  the overlap guard aware of a retrying run.
 - **`denext generate migration | seed | ci`,** scaffolded the way `generate docker` is.
 - **`denext upgrade`:** bump the `denext` pin, its CLI task and every first-party plugin together.
 - **`denext routes`:** the app's pages and API routes as a table / `--json`.
