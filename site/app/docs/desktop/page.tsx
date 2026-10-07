@@ -1868,8 +1868,24 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
           <code>showWindow</code> / <code>hideWindow</code> / <code>focusWindow</code>.{" "}
           <code>makeWindowDraggable(element)</code> turns a toolbar into a drag region: CSS{" "}
           <code>app-region: drag</code>{" "}
-          (native on CEF) and, on the system WebView backends, the window follows the pointer.
-          Buttons, links and inputs inside it keep working.
+          (native on CEF) and, on the system WebView backends, the window follows the pointer and a
+          double click does what a double click on a title bar does for this user (maximize /
+          restore, minimize, or nothing). Buttons, links and inputs inside it keep working.
+        </li>
+        <li>
+          <strong>Title bar preferences</strong> (runtime 2.9.7-denext.12):{" "}
+          <code>getTitleBarPreferences()</code> and <code>onTitleBarPreferencesChange</code>{" "}
+          report how the user set up title bars, for a page that hides the title bar and draws its
+          own: the window buttons on each side and their order (<code>side</code>: macOS{" "}
+          <code>"left"</code>, Windows{" "}
+          <code>"right"</code>, Linux the desktop&apos;s own layout — Plasma&apos;s button order,
+          GNOME&apos;s{" "}
+          <code>button-layout</code>, read from xdg-desktop-portal before GSettings), the
+          double-click action, the colour scheme and accent colour. Windows with the OS&apos;s frame
+          already follow these settings (the compositor&apos;s own frame on KWin, Sway and X11;
+          GTK&apos;s header bar on GNOME). An older runtime answers the OS&apos;s usual layout with
+          {" "}
+          <code>source: "unknown"</code>.
         </li>
         <li>
           <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}

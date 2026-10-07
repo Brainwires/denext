@@ -1,7 +1,8 @@
 /**
  * The page's control over its own Deno Desktop window (`denext/desktop/window`): maximize,
  * minimize, fullscreen and their events, size and size limits, the displays, the title bar and
- * backdrop, a cancelable close, quitting, and files dragged in ({@linkcode onFileDrop}) and out
+ * backdrop, the user's title bar preferences ({@linkcode getTitleBarPreferences}), a cancelable
+ * close, quitting, and files dragged in ({@linkcode onFileDrop}) and out
  * ({@linkcode startFileDrag}).
  *
  * Each call goes through the desktop runtime's `window` capability, which `runDesktop` registers
@@ -151,6 +152,44 @@ export interface WindowCapabilities {
 
 /** A title bar style: `"hidden"` draws the page under a transparent title bar. */
 export type TitleBarStyle = "default" | "hidden" | "hiddenInset";
+
+/** A window button, as GTK's decoration layout names them. */
+export type TitleBarButton = "close" | "minimize" | "maximize" | "appmenu" | "menu" | "icon";
+
+/**
+ * What a double click on a title bar does: `"maximize"` (toggle), `"minimize"`, `"shade"` (roll
+ * up), `"lower"`, `"menu"` (the window menu) or `"none"`.
+ */
+export type TitleBarDoubleClick = "maximize" | "minimize" | "shade" | "lower" | "menu" | "none";
+
+/**
+ * How the user set up title bars ({@linkcode getTitleBarPreferences}), for a page that hides the
+ * title bar and draws its own: put the window buttons where the user's other windows have them, and
+ * make a double click on the drag region do what a double click on a title bar does.
+ */
+export interface TitleBarPreferences {
+  /** The window buttons on each side of the title, in order. */
+  readonly buttons: {
+    readonly left: readonly TitleBarButton[];
+    readonly right: readonly TitleBarButton[];
+  };
+  /** Where the close button is: macOS `"left"`, Windows `"right"`, Linux per the user's layout. */
+  readonly side: "left" | "right";
+  /** What a double click on a title bar does. */
+  readonly doubleClick: TitleBarDoubleClick;
+  /** The colour scheme the user picked. */
+  readonly colorScheme: "light" | "dark" | "no-preference";
+  /** The accent colour (`"#rrggbb"`), or `null`. */
+  readonly accentColor: string | null;
+  /** The title bar font (Linux), or `null`. */
+  readonly font: string | null;
+  /**
+   * Where the answer came from: Linux reads xdg-desktop-portal's Settings first (`"portal"`), then
+   * GSettings (`"gsettings"`), else GTK's defaults (`"default"`); `"os"` on macOS and Windows;
+   * `"unknown"` before runtime 2.9.7-denext.12 (the OS's usual layout then).
+   */
+  readonly source: "portal" | "gsettings" | "default" | "os" | "unknown";
+}
 
 /**
  * A backdrop behind the page, showing where the page's background is transparent: Windows 11's
@@ -421,6 +460,43 @@ export async function setWindowBackdrop(
 }
 
 /**
+ * How the user set up title bars: the window buttons' side and order, the double-click action, the
+ * colour scheme and accent colour. For a page that hides the title bar (`desktop.titleBar:
+ * "hidden"`) and draws its own; windows with the OS's frame already follow these settings. On Linux
+ * it is the desktop's own setting (Plasma's button order, GNOME's `button-layout`), read by the
+ * runtime from xdg-desktop-portal; {@linkcode makeWindowDraggable} uses the double-click action.
+ *
+ * @returns The preferences.
+ * @example
+ * ```ts
+ * import { getTitleBarPreferences, onTitleBarPreferencesChange } from "denext/desktop/window";
+ *
+ * const place = (p: { side: "left" | "right" }) => document.body.dataset.buttons = p.side;
+ * place(await getTitleBarPreferences());
+ * onTitleBarPreferencesChange(place);
+ * ```
+ */
+export async function getTitleBarPreferences(): Promise<TitleBarPreferences> {
+  return await desktopRpc<TitleBarPreferences>(CAP, "titleBarPreferences", {});
+}
+
+/**
+ * Call `handler` with the new preferences whenever the user changes them (moves the window buttons,
+ * picks another double-click action, colour scheme or accent colour). Needs runtime
+ * 2.9.7-denext.12; earlier the handler is never called.
+ *
+ * @param handler Called with the current preferences.
+ * @returns A function that unsubscribes.
+ */
+export function onTitleBarPreferencesChange(
+  handler: (preferences: TitleBarPreferences) => void,
+): () => void {
+  return subscribeDesktopEvent(CAP, "titleBarPreferences", () => {
+    getTitleBarPreferences().then(handler, () => {});
+  });
+}
+
+/**
  * The connected displays, primary first.
  *
  * @returns The displays.
@@ -674,12 +750,15 @@ function legacyPositionScale(): number {
 
 /**
  * Make `element` a window drag region — what a page needs once the title bar is hidden
- * (`desktop.titleBar: "hidden"`): pressing and dragging it moves the window, like the OS title bar.
+ * (`desktop.titleBar: "hidden"`): pressing and dragging it moves the window, like the OS title bar,
+ * and a double click does what a double click on a title bar does for this user
+ * ({@linkcode TitleBarPreferences.doubleClick}: maximize / restore, minimize, or nothing).
  * Interactive children (buttons, links, inputs, `[data-no-window-drag]`) keep working.
  *
- * It sets CSS `app-region: drag` (the CEF backend moves the window natively) and, on the system
- * WebView backends, moves the window from the pointer through {@linkcode setWindowPosition}. Off
- * desktop it only sets the CSS (which browsers ignore).
+ * It sets CSS `app-region: drag` (the CEF backend moves the window natively, and handles the
+ * double click as the OS does) and, on the system WebView backends, moves the window from the
+ * pointer through {@linkcode setWindowPosition} and acts on a double click. Off desktop it only
+ * sets the CSS (which browsers ignore).
  *
  * @param element The region (a toolbar, a header).
  * @returns A function that turns it back into a normal element.
@@ -741,16 +820,40 @@ export function makeWindowDraggable(element: DraggableElement): () => void {
     element.releasePointerCapture?.(ev.pointerId);
     drag = undefined;
   };
+  const onDoubleClick = (e: Event) => {
+    const ev = e as MouseEvent;
+    const target = ev.target as { closest?: (s: string) => unknown } | null;
+    if (ev.button !== 0 || target?.closest?.(INTERACTIVE)) return;
+    void doubleClickAction().then(runDoubleClick, () => {});
+  };
   element.addEventListener("pointerdown", onDown);
   element.addEventListener("pointermove", onMove);
   element.addEventListener("pointerup", onUp);
   element.addEventListener("pointercancel", onUp);
+  element.addEventListener("dblclick", onDoubleClick);
   return () => {
     restoreCss();
     element.removeEventListener("pointerdown", onDown);
     element.removeEventListener("pointermove", onMove);
     element.removeEventListener("pointerup", onUp);
     element.removeEventListener("pointercancel", onUp);
+    element.removeEventListener("dblclick", onDoubleClick);
     drag = undefined;
   };
+}
+
+/**
+ * {@linkcode TitleBarPreferences.doubleClick}, read at each double click (the user may have changed
+ * it), or `"maximize"` when the runtime can't say.
+ */
+function doubleClickAction(): Promise<TitleBarDoubleClick> {
+  return getTitleBarPreferences().then((p) => p.doubleClick, () => "maximize");
+}
+
+/** Do what a double click on a title bar does (shade, lower and the window menu: nothing here). */
+async function runDoubleClick(action: TitleBarDoubleClick): Promise<void> {
+  if (action === "minimize") return await minimizeWindow();
+  if (action !== "maximize") return;
+  const state = await getWindowState();
+  await (state.maximized ? unmaximizeWindow() : maximizeWindow());
 }

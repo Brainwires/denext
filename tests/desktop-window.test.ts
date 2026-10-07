@@ -352,6 +352,78 @@ Deno.test("window: state and display events are emitted as signals", () => {
   ]);
 });
 
+Deno.test("window.titleBarPreferences: the runtime's answer, validated; followed live", async () => {
+  const answer = {
+    buttons: { left: ["close", "minimize", "bogus"], right: ["appmenu"] },
+    side: "left",
+    doubleClick: "minimize",
+    colorScheme: "dark",
+    accentColor: "#3daee9",
+    font: "Noto Sans Bold 10",
+    source: "portal",
+  };
+  const api = fakeApi({ titleBarPreferences: () => Promise.resolve(answer) });
+  const { call, ctl, emitted } = setup({ api, os: "linux" });
+  assertEquals(await call("titleBarPreferences"), {
+    ...answer,
+    // An item the page wouldn't know is dropped.
+    buttons: { left: ["close", "minimize"], right: ["appmenu"] },
+  });
+  // The runtime's change event becomes the page's signal.
+  ctl.install();
+  api.dispatchEvent(new Event("titlebarpreferenceschanged"));
+  assertEquals(emitted, [["window", "titleBarPreferences", null]]);
+  // Unexpected values take the OS's default for that field.
+  const odd = fakeApi({
+    titleBarPreferences: () =>
+      Promise.resolve({
+        buttons: "nope",
+        side: "top",
+        doubleClick: "explode",
+        colorScheme: 3,
+        accentColor: "red",
+        font: 7,
+        source: "magic",
+      }),
+  });
+  assertEquals(await setup({ api: odd, os: "windows" }).call("titleBarPreferences"), {
+    buttons: { left: [], right: [] },
+    side: "right",
+    doubleClick: "maximize",
+    colorScheme: "no-preference",
+    accentColor: null,
+    font: null,
+    source: "unknown",
+  });
+});
+
+Deno.test("window.titleBarPreferences: before runtime 2.9.7-denext.12, the OS's usual layout", async () => {
+  const mac = await setup({ os: "darwin" }).call("titleBarPreferences");
+  assertEquals(mac, {
+    buttons: { left: ["close", "minimize", "maximize"], right: [] },
+    side: "left",
+    doubleClick: "maximize",
+    colorScheme: "no-preference",
+    accentColor: null,
+    font: null,
+    source: "unknown",
+  });
+  const linux = await setup({ os: "linux" }).call("titleBarPreferences") as {
+    buttons: unknown;
+    side: string;
+  };
+  assertEquals(linux.buttons, { left: ["menu"], right: ["minimize", "maximize", "close"] });
+  assertEquals(linux.side, "right");
+  // A runtime whose call throws answers the same.
+  const throwing = fakeApi({ titleBarPreferences: () => Promise.reject(new Error("no portal")) });
+  assertEquals(
+    (await setup({ api: throwing, os: "windows" }).call("titleBarPreferences") as {
+      source: string;
+    }).source,
+    "unknown",
+  );
+});
+
 Deno.test("window close guard: off → the window closes; on → held, asked, answered", async () => {
   const { ctl, emitted, call, win, exits } = setup();
   const close = () => new Event("close", { cancelable: true });

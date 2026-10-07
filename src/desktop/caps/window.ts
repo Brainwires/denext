@@ -16,6 +16,8 @@
  * - `display`: displays were added, removed or rescaled — the page reads `screens`.
  * - `closeRequested` `{ id }`: the user asked to close the window while the page guards the close.
  * - `drop`: files were dropped on the window — the page takes them with `takeDrops`.
+ * - `titleBarPreferences`: the user changed their title bar settings — the page reads
+ *   `titleBarPreferences` (runtime 2.9.7-denext.12).
  *
  * Close guard. A close event must be answered synchronously, but the page is across the bridge:
  * with the guard on (`setCloseGuard`), a close is prevented and `closeRequested` is emitted; the
@@ -162,6 +164,8 @@ export interface WindowControllerOptions {
   readonly resolveDropped?: DroppedPathResolver;
   /** The clock (tests). */
   readonly now?: () => number;
+  /** The OS (tests; default the running one). */
+  readonly os?: string;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -308,6 +312,71 @@ async function capabilitiesOf(
   };
 }
 
+const TITLE_BAR_BUTTONS = new Set(["close", "minimize", "maximize", "appmenu", "menu", "icon"]);
+const DOUBLE_CLICKS = new Set(["maximize", "minimize", "shade", "lower", "menu", "none"]);
+const COLOR_SCHEMES = new Set(["light", "dark", "no-preference"]);
+const TITLE_BAR_SOURCES = new Set(["portal", "gsettings", "default", "os"]);
+
+/**
+ * The OS's usual title bar when the runtime can't say (before runtime 2.9.7-denext.12): the
+ * traffic lights on the left on macOS, the caption buttons on the right elsewhere (GTK's default
+ * layout on Linux), a double click maximizes.
+ */
+function defaultTitleBar(os: string): Record<string, unknown> {
+  const mac = os === "darwin";
+  return {
+    buttons: mac
+      ? { left: ["close", "minimize", "maximize"], right: [] }
+      : { left: os === "linux" ? ["menu"] : [], right: ["minimize", "maximize", "close"] },
+    side: mac ? "left" : "right",
+    doubleClick: "maximize",
+    colorScheme: "no-preference",
+    accentColor: null,
+    font: null,
+    source: "unknown",
+  };
+}
+
+/** A short string, or `null`. */
+function shortString(value: unknown, max: number): string | null {
+  return typeof value === "string" && value !== "" ? value.slice(0, max) : null;
+}
+
+/**
+ * The runtime's `titleBarPreferences()` answer, validated (an unexpected value takes the OS's
+ * default for that field); the OS's default when it has none.
+ */
+async function titleBarPreferencesOf(
+  api: DesktopAppApi | undefined,
+  os: string,
+): Promise<Record<string, unknown>> {
+  const fallback = defaultTitleBar(os);
+  let raw: unknown;
+  try {
+    raw = await api?.titleBarPreferences?.();
+  } catch {
+    raw = undefined;
+  }
+  if (typeof raw !== "object" || raw === null) return fallback;
+  const r = raw as Record<string, unknown>;
+  const side = (key: "left" | "right") => {
+    const list = (r.buttons as Record<string, unknown> | undefined)?.[key];
+    return Array.isArray(list) ? list.filter((b) => TITLE_BAR_BUTTONS.has(b as string)) : [];
+  };
+  const pick = (value: unknown, allowed: Set<string>, key: string) =>
+    allowed.has(value as string) ? value : fallback[key];
+  const accent = r.accentColor;
+  return {
+    buttons: { left: side("left"), right: side("right") },
+    side: r.side === "left" || r.side === "right" ? r.side : fallback.side,
+    doubleClick: pick(r.doubleClick, DOUBLE_CLICKS, "doubleClick"),
+    colorScheme: pick(r.colorScheme, COLOR_SCHEMES, "colorScheme"),
+    accentColor: typeof accent === "string" && /^#[0-9a-f]{6}$/i.test(accent) ? accent : null,
+    font: shortString(r.font, 128),
+    source: pick(r.source, TITLE_BAR_SOURCES, "source"),
+  };
+}
+
 /** Push onto a bounded queue (drop oldest). */
 function enqueue<T>(queue: T[], item: T, max: number): void {
   queue.push(item);
@@ -436,7 +505,7 @@ export function createWindowController(options: WindowControllerOptions): Window
 
   const capability: DesktopCapability = {
     name: "window",
-    events: ["state", "display", "closeRequested", "drop"],
+    events: ["state", "display", "closeRequested", "drop", "titleBarPreferences"],
     onPageLoad: () => {
       // The page that guarded the close, or that files were dropped on, is gone.
       guard = false;
@@ -445,6 +514,9 @@ export function createWindowController(options: WindowControllerOptions): Window
     },
     methods: {
       capabilities: { handler: () => capabilitiesOf(win, api) },
+      titleBarPreferences: {
+        handler: () => titleBarPreferencesOf(api, options.os ?? Deno.build.os),
+      },
       state: { handler: () => stateOf(need()) },
       screens: {
         handler: () => {
@@ -660,6 +732,11 @@ export function createWindowController(options: WindowControllerOptions): Window
       for (const type of STATE_EVENTS) win.addEventListener(type, () => emit("state", null));
       win.addEventListener("drop", (e) => void acceptDrop((e as CustomEvent).detail));
       api?.addEventListener?.("displaychanged", () => emit("display", null));
+      // The user's title bar settings changed (runtime 2.9.7-denext.12).
+      api?.addEventListener?.(
+        "titlebarpreferenceschanged",
+        () => emit("titleBarPreferences", null),
+      );
     },
   };
 }

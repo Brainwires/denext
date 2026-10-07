@@ -52,6 +52,7 @@ import {
 } from "denext/desktop/client";
 import {
   getScreens,
+  getTitleBarPreferences,
   getWindowState,
   maximizeWindow,
   onCloseRequested,
@@ -529,6 +530,20 @@ const windowChecks: Check[] = [
     assert(state.bounds && state.bounds.width > 0, "no window bounds");
     await setWindowTitle("denext kitchen sink — running checks");
     return `${state.bounds.width}x${state.bounds.height}`;
+  }],
+  ["window: the user's title bar preferences (for an app-drawn title bar)", async ({ setup }) => {
+    const p = await getTitleBarPreferences();
+    assert(
+      ["left", "right"].includes(p.side) && Array.isArray(p.buttons.left) &&
+        Array.isArray(p.buttons.right),
+      "no buttons / side",
+    );
+    // macOS: the traffic lights on the left; Windows: the caption buttons on the right; Linux:
+    // the desktop's own layout (xdg-desktop-portal, then GSettings, then GTK's defaults), or the
+    // usual layout before runtime 2.9.7-denext.12 (source "unknown").
+    if (setup.os === "darwin") eq(p.side, "left", "the macOS buttons' side");
+    if (setup.os === "windows") eq(p.side, "right", "the Windows buttons' side");
+    return `${p.side} ${JSON.stringify(p.buttons)} double-click ${p.doubleClick} (${p.source})`;
   }],
   ["window: file drop (onFileDrop fires)", async ({ setup }) => {
     const caps = await windowCapabilities();

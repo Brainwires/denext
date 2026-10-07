@@ -8,6 +8,7 @@ import {
   closeWindow,
   focusWindow,
   getScreens,
+  getTitleBarPreferences,
   getWindowState,
   hideWindow,
   makeWindowDraggable,
@@ -16,6 +17,7 @@ import {
   onCloseRequested,
   onDisplayChanged,
   onFileDrop,
+  onTitleBarPreferencesChange,
   onWindowStateChange,
   quitApp,
   restoreWindow,
@@ -33,6 +35,7 @@ import {
   setWindowTitle,
   showWindow,
   startFileDrag,
+  type TitleBarPreferences,
   unmaximizeWindow,
   windowCapabilities,
 } from "../src/desktop/window.ts";
@@ -345,6 +348,93 @@ Deno.test("makeWindowDraggable: CSS app-region always; the WebKit path moves the
       const el = fakeElement();
       makeWindowDraggable(el);
       assertEquals(el.listeners.size, 0);
+    });
+  });
+});
+
+const PREFS: TitleBarPreferences = {
+  buttons: { left: ["close"], right: [] },
+  side: "left",
+  doubleClick: "maximize",
+  colorScheme: "dark",
+  accentColor: null,
+  font: null,
+  source: "portal",
+};
+
+Deno.test("window client: title bar preferences, and their change signal re-reads them", async () => {
+  await inDesktop({ window: { titleBarPreferences: () => PREFS } }, async (rt) => {
+    assertEquals(await getTitleBarPreferences(), PREFS);
+    const seen: unknown[] = [];
+    const stop = onTitleBarPreferencesChange((p) => seen.push(p));
+    rt.emit("window", "titleBarPreferences", null);
+    await until(() => seen.length === 1);
+    assertEquals(seen[0], PREFS);
+    stop();
+  });
+});
+
+Deno.test("makeWindowDraggable: a double click does the user's title bar action (WebKit)", async () => {
+  let action = "maximize";
+  let maximized = false;
+  await inDesktop({
+    window: {
+      titleBarPreferences: () => ({ ...PREFS, doubleClick: action }),
+      state: () => ({ ...STATE, maximized }),
+      maximize: () => {
+        maximized = true;
+        return null;
+      },
+      unmaximize: () => {
+        maximized = false;
+        return null;
+      },
+      minimize: () => null,
+    },
+  }, async (rt) => {
+    await withGlobals({ navigator: { userAgent: "AppleWebKit/605.1.15" } }, async () => {
+      const el = fakeElement();
+      const undo = makeWindowDraggable(el);
+      const actions = () => calls(rt).filter((c) => /maximize|minimize/.test(c));
+      // Maximize toggles: maximize, then restore.
+      el.fire("dblclick", { button: 0 });
+      await until(() => actions().length === 1);
+      el.fire("dblclick", { button: 0 });
+      await until(() => actions().length === 2);
+      assertEquals(actions(), ["window.maximize", "window.unmaximize"]);
+      // The user switched to minimize: read again at the next double click.
+      action = "minimize";
+      el.fire("dblclick", { button: 0 });
+      await until(() => actions().length === 3);
+      assertEquals(actions()[2], "window.minimize");
+      // "none" (and shade / lower / menu): nothing; nor on an interactive child.
+      action = "none";
+      const reads = () => calls(rt).filter((c) => c === "window.titleBarPreferences").length;
+      el.fire("dblclick", { button: 0 });
+      await until(() => reads() === 4);
+      await new Promise((r) => setTimeout(r, 10));
+      action = "maximize";
+      el.fire("dblclick", { button: 0, target: { closest: () => ({}) } });
+      await new Promise((r) => setTimeout(r, 30));
+      assertEquals(actions().length, 3);
+      undo();
+      assertEquals(el.listeners.size, 0);
+    });
+  });
+});
+
+Deno.test("makeWindowDraggable: a runtime without preferences maximizes on a double click", async () => {
+  await inDesktop({
+    window: {
+      state: () => ({ ...STATE, maximized: false }),
+      maximize: () => null,
+    },
+  }, async (rt) => {
+    await withGlobals({ navigator: { userAgent: "AppleWebKit/605.1.15" } }, async () => {
+      const el = fakeElement();
+      makeWindowDraggable(el);
+      el.fire("dblclick", { button: 0 });
+      await until(() => calls(rt).includes("window.maximize"));
     });
   });
 });

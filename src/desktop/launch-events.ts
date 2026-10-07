@@ -253,6 +253,12 @@ export interface DesktopAppApi {
    */
   platformFeatures?(): Promise<unknown>;
   /**
+   * How the user set up title bars (runtime 2.9.7-denext.12 and later): the buttons on each side,
+   * the double-click action, the colour scheme. `"titlebarpreferenceschanged"` says it changed.
+   * Read through `caps/window.ts`, which validates it.
+   */
+  titleBarPreferences?(): Promise<unknown>;
+  /**
    * The OS's secret store in the runtime (2.9.7-denext.12 and later; the Secret Service on Linux,
    * `supported` false elsewhere). A store that can't answer rejects with an error named
    * `"SecureStoreUnavailable"`.

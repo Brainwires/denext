@@ -57,6 +57,14 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Added
 
+- **Title bar preferences for an app-drawn title bar.** `getTitleBarPreferences()` and
+  `onTitleBarPreferencesChange` (`denext/desktop/window`) report how the user set up title bars:
+  the window buttons on each side and their order (`side`: macOS left, Windows right, Linux the
+  desktop's own layout — Plasma's button order, GNOME's `button-layout` — which runtime
+  2.9.7-denext.12 reads from xdg-desktop-portal before GSettings and follows live), the
+  double-click action, the colour scheme and the accent colour. `makeWindowDraggable` now does
+  the user's double-click action (maximize / restore, minimize, or nothing) on the system WebView
+  backends. An older runtime answers the OS's usual layout (`source: "unknown"`).
 - **Linux `secureStore` through the runtime's own libsecret store** (runtime 2.9.7-denext.12,
   `Deno.desktop.secureStore`): no `secret-tool` to install. A missing provider says what to do
   ("install gnome-keyring", or "enable KWallet's Secret Service" where KWallet runs without

@@ -305,6 +305,22 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   Moriuchi) and [littledivy/laufey#81](https://github.com/littledivy/laufey/pull/81) (Sasivarnan R),
   all open and cherry-picked with their authorship. Ours is planned.
 
+### Title bar preferences
+
+- **What:** `Deno.desktop.titleBarPreferences()` and its `titlebarpreferenceschanged` event (runtime
+  2.9.7-denext.12): how the user set up title bars — the window buttons on each side and their
+  order, the double-click action, the colour scheme, the accent colour, the title bar font. On
+  Linux it reads xdg-desktop-portal's Settings first (Plasma's portal reports KWin's button order;
+  GNOME's, `button-layout`), then GSettings, then GTK's defaults, and follows `SettingChanged`
+  live; macOS reports the traffic lights on the left and `AppleActionOnDoubleClick`; Windows the
+  caption buttons on the right.
+- **Why:** windows with a frame already look like the rest of the desktop (the compositor draws
+  it on KWin, Sway and X11; GTK's own header bar on GNOME), but a page that hides its title bar
+  and draws its own had nothing to match. `denext/desktop/window`'s `getTitleBarPreferences()`
+  and `makeWindowDraggable` (its double click) use it.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
 ### Device-independent sizing on Windows
 
 - **What:** window sizes, positions and size limits are the page area in device-independent
