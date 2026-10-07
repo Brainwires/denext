@@ -4957,8 +4957,8 @@
           "slug": "apple",
           "kind": "function",
           "signature": "apple(options: OAuthClientOptions): OAuthProvider",
-          "doc": "Sign in with Apple (OIDC). Ships **openid only**: Apple returns name / email just once, and only over response_mode=form_post — a POST callback the auth router does not accept — so requesting them would break the login rather than enrich it. Requesting either scope throws; the session therefore carries Apple's sub and no email.",
-          "docFull": "Sign in with Apple (OIDC). Ships **`openid` only**: Apple returns `name` / `email` just\nonce, and only over `response_mode=form_post` — a POST callback the auth router does not\naccept — so requesting them would break the login rather than enrich it. Requesting\neither scope throws; the session therefore carries Apple's `sub` and no email.\n\n`clientSecret` must be the ES256 client-secret **JWT** you mint from your Apple key\n(max 6 months); denext passes it through to the token endpoint verbatim.",
+          "doc": "Sign in with Apple (OIDC) over response_mode=form_post, requesting openid name email: Apple POSTs the authorization response to {basePath}/callback/apple, and returns the name (in a user form field) and email (in the id_token) only that way. The email comes from the verified id_token — often a private relay address; the name from the user field, which Apple sends on a user's FIRST sign-in only, so persist it (an adapter does).",
+          "docFull": "Sign in with Apple (OIDC) over `response_mode=form_post`, requesting `openid name email`:\nApple POSTs the authorization response to `{basePath}/callback/apple`, and returns the name\n(in a `user` form field) and email (in the `id_token`) only that way. The email comes from\nthe verified `id_token` — often a private relay address; the name from the `user` field,\nwhich Apple sends on a user's FIRST sign-in only, so persist it (an adapter does).\n\n`clientSecret` must be the ES256 client-secret **JWT** you mint from your Apple key\n(max 6 months); denext passes it through to the token endpoint verbatim.",
           "params": [
             {
               "name": "options",

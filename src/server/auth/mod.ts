@@ -44,7 +44,7 @@ import { currentContext, headers } from "../request-context.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
-import type { AuthConfig, AuthSession } from "./types.ts";
+import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
 // The active config, captured when `denextAuth(config)` runs (at `denext.config`
 // import). `auth()` reads it so a Server Component / middleware needs no handle.
@@ -126,7 +126,32 @@ function validateProviders(providers: AuthConfig["providers"]): void {
   for (const p of providers) {
     if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
     seen.add(p.id);
-    if (isOAuthProvider(p)) assertOAuthCredentials(p);
+    if (isOAuthProvider(p)) {
+      assertOAuthCredentials(p);
+      assertResponseMode(p);
+    }
+  }
+}
+
+/**
+ * `responseMode` must be one the callback answers, and `response_mode` must not ride in
+ * `authorizationParams` instead: the provider would POST to a callback that expects a GET (or
+ * the reverse), and the transaction cookie would have the wrong `SameSite`.
+ */
+function assertResponseMode(p: OAuthProvider): void {
+  const mode: unknown = p.responseMode;
+  if (mode !== undefined && mode !== "query" && mode !== "form_post") {
+    throw new Error(
+      `denextAuth: provider "${p.id}" has an unsupported responseMode ${JSON.stringify(mode)} — ` +
+        'use "query" (the default) or "form_post".',
+    );
+  }
+  if (p.authorizationParams && "response_mode" in p.authorizationParams) {
+    throw new Error(
+      `denextAuth: provider "${p.id}" sets response_mode in authorizationParams — set ` +
+        '`responseMode: "form_post"` on the provider instead, so the callback and the ' +
+        "transaction cookie follow it.",
+    );
   }
 }
 

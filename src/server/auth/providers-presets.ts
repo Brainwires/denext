@@ -87,6 +87,8 @@ export interface OAuthPresetSpec {
   profile?: (input: ProfileInput) => AuthUser;
   /** Extra authorization-request query params. */
   authorizationParams?: Record<string, string>;
+  /** How the authorization response comes back (see {@link OAuthProvider.responseMode}). */
+  responseMode?: "query" | "form_post";
 }
 
 /**
@@ -119,6 +121,7 @@ export function oauthPreset(spec: OAuthPresetSpec, options: OAuthClientOptions):
     clientSecret: options.clientSecret,
     profile: spec.profile ?? oidcClaimProfile,
     authorizationParams: spec.authorizationParams,
+    ...(spec.responseMode ? { responseMode: spec.responseMode } : {}),
   };
 }
 
@@ -212,14 +215,53 @@ export function microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider {
   }, options);
 }
 
-/** Scopes Apple only grants with `response_mode=form_post`, which denext cannot receive. */
-const APPLE_FORM_POST_SCOPES = new Set(["name", "email"]);
+/** The longest name part taken from Apple's posted `user` field. */
+const APPLE_NAME_PART_MAX = 100;
 
 /**
- * Sign in with Apple (OIDC). Ships **`openid` only**: Apple returns `name` / `email` just
- * once, and only over `response_mode=form_post` — a POST callback the auth router does not
- * accept — so requesting them would break the login rather than enrich it. Requesting
- * either scope throws; the session therefore carries Apple's `sub` and no email.
+ * The display name from Apple's form_post `user` field — JSON Apple posts on a user's FIRST
+ * authorization only: `{"name":{"firstName":"…","lastName":"…"},"email":"…"}`. It is not
+ * signed (the browser posted it), so only the name is read; the email comes from the verified
+ * `id_token`. Anything malformed reads as no name.
+ *
+ * @param raw The posted `user` value, if any.
+ * @returns `"First Last"`, or `undefined`.
+ */
+function appleUserName(raw: string | undefined): string | undefined {
+  if (!raw || raw.length > 4096) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const name = (parsed as { name?: unknown } | null)?.name as Record<string, unknown> | undefined;
+  if (!name || typeof name !== "object") return undefined;
+  const part = (v: unknown) =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, APPLE_NAME_PART_MAX) : undefined;
+  const full = [part(name.firstName), part(name.lastName)].filter(Boolean).join(" ");
+  return full || undefined;
+}
+
+/**
+ * Map Sign in with Apple: `sub`, and the email (with Apple's string-or-boolean
+ * `email_verified`) from the verified `id_token` claims; the name from the posted `user` field.
+ *
+ * @param input The flow's profile bundle.
+ * @returns The normalized {@link AuthUser}.
+ */
+function appleProfile(input: ProfileInput): AuthUser {
+  const user = oidcClaimProfile({ tokens: input.tokens, claims: input.claims });
+  const name = appleUserName(input.callbackParams?.user);
+  return name ? { ...user, name } : user;
+}
+
+/**
+ * Sign in with Apple (OIDC) over `response_mode=form_post`, requesting `openid name email`:
+ * Apple POSTs the authorization response to `{basePath}/callback/apple`, and returns the name
+ * (in a `user` form field) and email (in the `id_token`) only that way. The email comes from
+ * the verified `id_token` — often a private relay address; the name from the `user` field,
+ * which Apple sends on a user's FIRST sign-in only, so persist it (an adapter does).
  *
  * `clientSecret` must be the ES256 client-secret **JWT** you mint from your Apple key
  * (max 6 months); denext passes it through to the token endpoint verbatim.
@@ -228,13 +270,6 @@ const APPLE_FORM_POST_SCOPES = new Set(["name", "email"]);
  * @returns The configured Apple provider (`id: "apple"`).
  */
 export function apple(options: OAuthClientOptions): OAuthProvider {
-  const requested = options.scopes ?? [];
-  if (requested.some((s) => APPLE_FORM_POST_SCOPES.has(s))) {
-    throw new TypeError(
-      "auth: apple() cannot request the name/email scopes — Apple only returns them via " +
-        "response_mode=form_post, which the denext auth callback does not accept",
-    );
-  }
   return oauthPreset({
     id: "apple",
     type: "oidc",
@@ -243,7 +278,9 @@ export function apple(options: OAuthClientOptions): OAuthProvider {
     tokenUrl: "https://appleid.apple.com/auth/token",
     jwksUrl: "https://appleid.apple.com/auth/keys",
     discovery: true,
-    scopes: ["openid"],
+    scopes: ["openid", "name", "email"],
+    responseMode: "form_post",
+    profile: appleProfile,
   }, options);
 }
 

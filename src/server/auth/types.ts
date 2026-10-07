@@ -101,6 +101,14 @@ export interface ProfileInput {
   /** The verified OIDC `id_token` claims, if present. */
   claims?: Record<string, unknown>;
   /**
+   * The authorization response's other fields, for a provider that answers by
+   * `response_mode=form_post` ({@link OAuthProvider.responseMode}) — everything the provider
+   * POSTed besides `code`, `state`, `error`, `iss` and `id_token`. Sign in with Apple puts its
+   * one-time `user` JSON (the name) here. **Unauthenticated**: the browser posted it, so a
+   * mapper may take a display name from it, never an email or an id.
+   */
+  callbackParams?: Record<string, string>;
+  /**
    * The provider's email list, if a {@link OAuthProvider.userEmailsUrl} is configured
    * and fetched (e.g. GitHub `/user/emails`). Lets a synchronous mapper expose only a
    * verified address — the OAuth-provider analogue of the OIDC `email_verified` claim.
@@ -141,6 +149,16 @@ export interface OAuthProvider {
   profile: (input: ProfileInput) => AuthUser;
   /** Extra authorization-request query params (e.g. `{ access_type: "offline" }`). */
   authorizationParams?: Record<string, string>;
+  /**
+   * How the provider returns the authorization response (OAuth 2.0 Multiple Response Type
+   * Encoding Practices §2.1). `"query"` (the default) redirects back with `?code=…&state=…`,
+   * answered by `GET {basePath}/callback/:id`. `"form_post"` (OAuth 2.0 Form Post Response
+   * Mode §2) has the browser POST them as a form to the same URL, which Sign in with Apple
+   * requires to hand over a user's name and email. A form_post flow's transaction cookie is
+   * `SameSite=None; Secure` — the provider's cross-site POST must carry it — and its callback
+   * accepts only the POST: a GET carrying a code is refused.
+   */
+  responseMode?: "query" | "form_post";
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
    * from the configured endpoints when omitted.

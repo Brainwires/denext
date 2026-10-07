@@ -82,9 +82,6 @@
 - **Passkeys / WebAuthn** over the adapter's credential tables.
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
 - **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
-- **OAuth `response_mode=form_post`:** a POST callback plus a `SameSite=None` transaction cookie.
-  Apple needs it to hand over a user's name and email; the web `apple()` provider is
-  `openid`-only until then.
 - **An optional magic-link confirm page:** the GET renders a form that POSTs the token, closing
   link-scanner burns and login CSRF.
 - **Richer events:** API-token issue / revoke events, a typed `signInFailed.reason` union, and

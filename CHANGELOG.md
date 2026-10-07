@@ -30,6 +30,15 @@ and this project adheres to
   `tasks.history`, every attempt is a row (`attempt`, `willRetry`; the store migrates an older
   `tasks.db` in place), a retried failure no longer counts as a failure, and the `denext ui`
   Cron page shows each task's retries.
+- **OAuth `response_mode=form_post`** (OAuth 2.0 Form Post Response Mode): `responseMode:
+  "form_post"` on any OAuth / OIDC provider (`oidc({ responseMode })`) asks for it, makes the
+  flow's `__Host-` transaction cookie `SameSite=None; Secure`, and has
+  `POST {basePath}/callback/:provider` complete the flow from the urlencoded body with the same
+  single-use `state`, PKCE and `nonce` checks the GET runs. A GET carrying a code for such a
+  provider is refused (`invalid_request`), a POST to a query-mode one is a `405`, and
+  `response_mode` in `authorizationParams` is a config error. Profile mappers see the posted
+  extras as `callbackParams`. `getSession()` now always sets `Secure` on a `SameSite=None`
+  cookie.
 - **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
   `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
   credentials), is validated at import, and scopes the policy to the method it guards: the
@@ -120,6 +129,10 @@ and this project adheres to
 
 ### Changed
 
+- **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
+  session carries the email from the verified `id_token` and the name Apple posts on a user's
+  first authorization (the unsigned `user` field — used for the display name only). Asking for
+  the `name` / `email` scopes no longer throws.
 - **denext pins Deno Desktop runtime 2.9.7-denext.12** (deno `cd310b28`, laufey `4f6f00f`, API
   47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
   xdg-desktop-portal's FileChooser and the runtime's own Linux secure store are now what every

@@ -175,7 +175,7 @@ to them.
 | Google          | `google()`         | —                                      | OIDC. Endpoints pinned (they live on a sibling host), so no discovery.                                     |
 | GitHub          | `github()`         | —                                      | OAuth. Reads `/user` + `/user/emails`; only a _verified_ address reaches the session.                      |
 | Microsoft Entra | `microsoftEntra()` | `tenant` (required)                    | OIDC v2.0. Single-tenant only — see the note below.                                                        |
-| Apple           | `apple()`          | —                                      | OIDC, `openid` scope only — see the note below.                                                            |
+| Apple           | `apple()`          | —                                      | OIDC over `response_mode=form_post`, with name and email — see the section below.                          |
 | Discord         | `discord()`        | —                                      | OAuth. An unverified address is dropped like `email_verified: false`.                                      |
 | GitLab          | `gitlab()`         | `baseUrl` (default `gitlab.com`)       | OIDC. Self-managed must be `https:` at the host root.                                                      |
 | Slack           | `slack()`          | —                                      | OIDC ("Sign in with Slack").                                                                               |
@@ -216,13 +216,41 @@ Passing _some_ of `authorizationUrl` / `tokenUrl` / `jwksUrl` throws: it would s
 mix a hand-written endpoint with a discovered one. `id` defaults to `"oidc"` — set it
 when you configure more than one.
 
+### `response_mode=form_post`
+
+Some providers return the authorization response as a form the browser POSTs back instead of
+a redirect with a query (OAuth 2.0 Form Post Response Mode). Sign in with Apple requires it
+for the `name` and `email` scopes. `apple()` uses it by default; any OAuth / OIDC provider
+opts in with `responseMode: "form_post"` (`oidc({ …, responseMode: "form_post" })`):
+
+- `GET {basePath}/signin/:provider` adds `response_mode=form_post` to the authorization
+  request, and its transaction cookie (state, PKCE verifier, nonce) is
+  `SameSite=None; Secure` — still `__Host-`, `HttpOnly`, signed and 10 minutes long — because
+  the provider's POST is cross-site and a `Lax` cookie would not ride it.
+- `POST {basePath}/callback/:provider` reads `code`, `state` and `error` from the
+  `application/x-www-form-urlencoded` body (16 KiB at most) and runs exactly the GET
+  callback's checks: the transaction is single-use, must name this provider and carry the
+  posted `state`, the code is redeemed with its PKCE verifier, and an `id_token` must carry
+  its `nonce`. It has no same-origin gate — the POST is cross-site by design — so those checks
+  are what authenticate it. Anything but a urlencoded form is `?error=invalid_request`.
+- A GET carrying a code for such a provider is refused (`?error=invalid_request`), so the
+  flow can't be downgraded to a code in a URL. A POST to a query-mode provider is a `405`.
+- `response_mode` in `authorizationParams` is a config error — use `responseMode`, so the
+  callback and the cookie follow it.
+
+`apple()` requests `openid name email`. The email comes from the verified `id_token` (often
+a private relay address, with Apple's `email_verified`); the name comes from the `user` field
+Apple posts on a user's **first** authorization only — it is not signed, so it is used for the
+display name and nothing else, and a profile mapper sees it as `callbackParams.user`. Keep it:
+with an adapter the first sign-in stores it on the user. `clientSecret` must be the ES256
+client-secret **JWT** you mint from your Apple key.
+
+A session cookie set with `SameSite=Strict` is not sent on the redirect that follows the
+cross-site POST, so the user lands signed out until the next navigation; keep the session
+cookie at its default `Lax`.
+
 > [!NOTE]
-> Two presets have limits worth knowing before you wire them up. **Apple** requests
-> `openid` only: Apple returns `name` / `email` just once and only over
-> `response_mode=form_post`, a POST callback the auth router does not accept, so asking
-> for either scope throws rather than shipping a login that breaks. An Apple session
-> therefore carries the `sub` and no email, and `clientSecret` must be the ES256
-> client-secret **JWT** you mint from your Apple key. **Microsoft Entra** requires a
+> **Microsoft Entra** requires a
 > specific `tenant` (a GUID or a verified domain): the multi-tenant aliases `common`,
 > `organizations` and `consumers` are refused, because their discovery document declares
 > the template issuer `https://login.microsoftonline.com/{tenantid}/v2.0` while the
@@ -1063,7 +1091,9 @@ must be a valid cookie token: letters, digits, or any of the RFC 6265 punctuatio
 forces `Secure` + `Path=/` + no `Domain`, which is what stops a sibling subdomain reading
 or shadowing the cookie. `sameSite` defaults to `"Lax"` (the OAuth callback is a
 top-level GET) and `path` to `"/"`, which `__Host-` forces anyway. `Secure` is pinned
-even behind a proxy that omits `x-forwarded-proto`.
+even behind a proxy that omits `x-forwarded-proto`, and on any `SameSite=None` cookie. A
+`responseMode: "form_post"` provider's transaction cookie is always `SameSite=None`, whatever
+`cookies.transaction.sameSite` says — its callback is a cross-site POST.
 
 > [!WARNING]
 > Changing a cookie name — or turning `hostPrefix` off — renames the cookie, which logs
@@ -1544,9 +1574,8 @@ What the first-party auth layer still does not do — the full ledger is
 - **TOTP secrets are stored in plaintext in the adapter** — a verifier needs the secret, so
   protect the database; backup codes are hashed. `verifyTotp` is SHA-1 only, the algorithm
   every authenticator app supports.
-- **No `response_mode=form_post` callback**, so the web `apple()` provider is `openid`-only.
-  A native app gets the email through the native sheet's `id_token` instead
-  (`POST {basePath}/native/apple`).
+- **Apple's name arrives once.** Apple posts the user's name on their first authorization
+  only; without an adapter to store it, later sessions carry no name.
 - **Deleting an account can't end stateless cookie sessions on other devices** — they
   reference a user that no longer exists until they expire. Run a `sessionStore`.
 - **A GET spends a magic link**, so a mail gateway that pre-fetches links can burn one —

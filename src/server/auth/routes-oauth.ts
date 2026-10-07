@@ -17,6 +17,13 @@
  * id and roles. With no adapter that step is a pass-through and nothing is persisted —
  * byte-for-byte the flow denext shipped before 2.5.
  *
+ * A provider configured with `responseMode: "form_post"` (Sign in with Apple) answers the
+ * same callback by a cross-site form POST instead (OAuth 2.0 Form Post Response Mode §2):
+ * `POST {basePath}/callback/:provider` reads `code` / `state` / `error` from the
+ * `application/x-www-form-urlencoded` body and runs the identical gates. Its transaction
+ * cookie is `SameSite=None` so that POST carries it; the GET refuses a code for such a
+ * provider, so the flow can't be downgraded to the query mode.
+ *
  * Failures are *observable*: each one redirects to the sign-in page with a stable
  * `?error=` code, fires the `signInFailed` event, and — where the cause is an exception —
  * hands the exception to `logger.error`. Nothing vanishes silently any more, and nothing
@@ -25,6 +32,7 @@
  * @module
  */
 
+import { readCappedBody, STALLED } from "../body.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { accountNotLinkedCode, type ResolvedSignIn, resolveSignInUser } from "./adapter-link.ts";
 import type { AdapterAccount } from "./adapter.ts";
@@ -146,7 +154,10 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
     const returnTo = rawReturn
       ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/")
       : undefined;
-    await setTx(ctx, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo });
+    const formPost = provider.responseMode === "form_post";
+    await setTx(ctx, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo }, {
+      crossSite: formPost,
+    });
 
     return redirect(buildAuthorizationUrl({
       authorizationUrl: endpoints.authorizationUrl,
@@ -157,6 +168,7 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
       codeChallenge: pkce.challenge,
       nonce,
       extra: provider.authorizationParams,
+      responseMode: formPost ? "form_post" : undefined,
     }));
   } catch (error) {
     // A misconfigured provider (a malformed authorizationUrl, an unreachable or
@@ -171,12 +183,16 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
 }
 
 /**
- * `GET {basePath}/callback/:provider` — complete the OAuth/OIDC flow: verify the
- * transaction-bound `state`, exchange the code, map the profile, resolve it through the
+ * `GET {basePath}/callback/:provider` — complete the OAuth/OIDC flow from the query: verify
+ * the transaction-bound `state`, exchange the code, map the profile, resolve it through the
  * adapter (when one is configured), then issue a session. Every failure degrades to the
  * sign-in page with an `?error=` code — a refused account link included, which answers
  * `?error=account_not_linked` rather than a `500`; none of them leak the provider's
  * response or the client secret.
+ *
+ * A `form_post` provider's response arrives by POST ({@linkcode handleOAuthFormPost}); a GET
+ * for one is refused with `invalid_request` before the transaction is read, so a code in a
+ * URL — logged, cached, leaked through `Referer` — is never redeemed.
  *
  * @param ctx The route context.
  * @param provider The OAuth/OIDC provider the callback belongs to.
@@ -186,22 +202,97 @@ export async function handleOAuthCallback(
   ctx: AuthRouteContext,
   provider: OAuthProvider,
 ): Promise<Response> {
-  const providerError = ctx.url.searchParams.get("error");
+  if (provider.responseMode === "form_post") {
+    return await refuse(ctx, provider.id, "invalid_request");
+  }
+  return await completeCallback(ctx, provider, ctx.url.searchParams);
+}
+
+/** The most a form_post callback body may carry (code, state, id_token, Apple's `user`). */
+const MAX_FORM_POST_BYTES = 16 * 1024;
+
+/** The authorization-response fields the callback itself reads (never handed to a mapper). */
+const RESPONSE_FIELDS = new Set([
+  "code",
+  "state",
+  "error",
+  "error_description",
+  "error_uri",
+  "iss",
+  "id_token",
+]);
+
+/**
+ * `POST {basePath}/callback/:provider` for a `responseMode: "form_post"` provider — the
+ * provider's cross-site form POST (OAuth 2.0 Form Post Response Mode §2: the response
+ * parameters as `application/x-www-form-urlencoded` fields). There is no same-origin gate —
+ * the POST is cross-site by design — so it is authenticated exactly as the GET is: the
+ * single-use, signed transaction cookie must name this provider and carry the posted
+ * `state`, the code is redeemed with that transaction's PKCE verifier, and an OIDC
+ * `id_token` must carry its `nonce`. A provider in the query mode answers `405`; a body
+ * that isn't a urlencoded form (or exceeds 16 KiB, or stalls) is `invalid_request`.
+ *
+ * @param ctx The route context.
+ * @param provider The OAuth/OIDC provider the callback belongs to.
+ * @returns A redirect — to the post-sign-in target, or to the sign-in page with an error.
+ */
+export async function handleOAuthFormPost(
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+): Promise<Response> {
+  if (provider.responseMode !== "form_post") return json({ error: "method not allowed" }, 405);
+  const params = await readFormPost(ctx);
+  if (!params) return await refuse(ctx, provider.id, "invalid_request");
+  return await completeCallback(ctx, provider, params);
+}
+
+/** The form_post body's fields, or `null` for anything but a bounded urlencoded form. */
+async function readFormPost(ctx: AuthRouteContext): Promise<URLSearchParams | null> {
+  const type = (ctx.request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (type !== "application/x-www-form-urlencoded") return null;
+  const bytes = await readCappedBody(ctx.request, MAX_FORM_POST_BYTES).catch(() => STALLED);
+  if (typeof bytes === "symbol") return null; // TOO_LARGE, or STALLED / aborted
+  return new URLSearchParams(new TextDecoder().decode(bytes));
+}
+
+/**
+ * The callback's gates over the authorization response's parameters — the query for a GET,
+ * the form for a form_post POST: the provider's own `error`, then the single-use transaction
+ * (cleared before it is judged) whose provider and `state` must match, then the code
+ * exchange and the sign-in.
+ *
+ * @param ctx The route context.
+ * @param provider The OAuth/OIDC provider the callback belongs to.
+ * @param params The authorization response's parameters.
+ * @returns A redirect — to the post-sign-in target, or to the sign-in page with an error.
+ */
+async function completeCallback(
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+  params: URLSearchParams,
+): Promise<Response> {
+  const providerError = params.get("error");
   if (providerError) {
     return await refuse(ctx, provider.id, providerErrorCode(ctx, provider.id, providerError));
   }
 
   const tx = await readTx(ctx);
   await clearTx(ctx);
-  const code = ctx.url.searchParams.get("code");
-  const state = ctx.url.searchParams.get("state");
+  const code = params.get("code");
+  const state = params.get("state");
   if (!tx || tx.provider !== provider.id || !code || !state || tx.state !== state) {
     return await refuse(ctx, provider.id, "invalid_state");
   }
 
   try {
     const redirectUri = callbackUri(ctx, provider.id);
-    const result = await fetchOAuthProfile(ctx, provider, { code, tx, redirectUri });
+    const callbackParams = provider.responseMode === "form_post" ? extraParams(params) : undefined;
+    const result = await fetchOAuthProfile(ctx, provider, {
+      code,
+      tx,
+      redirectUri,
+      callbackParams,
+    });
     if (!result.profile.id) throw new Error("provider profile had no id");
     return await completeSignIn(ctx, provider, result, tx.returnTo);
   } catch (error) {
@@ -219,6 +310,13 @@ export async function handleOAuthCallback(
       error instanceof DiscoveryError ? "config" : "oauth_failed",
     );
   }
+}
+
+/** The posted fields besides the response parameters the callback reads itself. */
+function extraParams(params: URLSearchParams): Record<string, string> {
+  const extra: Record<string, string> = {};
+  for (const [key, value] of params) if (!RESPONSE_FIELDS.has(key)) extra[key] = value;
+  return extra;
 }
 
 /** Whether the strict-audience escape hatch has already been named this process. */
@@ -422,7 +520,12 @@ interface OAuthProfileResult {
 async function fetchOAuthProfile(
   ctx: AuthRouteContext,
   provider: OAuthProvider,
-  params: { code: string; tx: Transaction; redirectUri: string },
+  params: {
+    code: string;
+    tx: Transaction;
+    redirectUri: string;
+    callbackParams?: Record<string, string>;
+  },
 ): Promise<OAuthProfileResult> {
   const endpoints = await endpointsFor(ctx, provider);
   // Pin the fetch to the provider's own hosts PLUS whatever discovery resolved — a
@@ -459,7 +562,11 @@ async function fetchOAuthProfile(
   const emails = provider.userEmailsUrl && tokens.access_token
     ? await fetchUserEmails(provider, tokens.access_token, doFetch)
     : undefined;
-  return { profile: provider.profile({ tokens, userinfo, claims, emails }), tokens };
+  const input = { tokens, userinfo, claims, emails };
+  const profile = provider.profile(
+    params.callbackParams ? { ...input, callbackParams: params.callbackParams } : input,
+  );
+  return { profile, tokens };
 }
 
 /**

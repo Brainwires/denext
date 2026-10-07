@@ -1146,7 +1146,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ApiValidationSource = params | query | body` — Which part of the request a validation failure came from.
 - `interface ApnsConfig` — Token-based APNs credentials (a .p8 key from the Apple Developer portal).
 - `interface AppConfig` — Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.
-- `apple(options: OAuthClientOptions): OAuthProvider` — Sign in with Apple (OIDC). Ships **openid only**: Apple returns name / email just once, and only over response_mode=form_post — a POST callback the auth router does not accept — so requesting them would break the login rather than enrich it. Requesting either scope throws; the session therefore carries Apple's sub and no email.
+- `apple(options: OAuthClientOptions): OAuthProvider` — Sign in with Apple (OIDC) over response_mode=form_post, requesting openid name email: Apple POSTs the authorization response to {basePath}/callback/apple, and returns the name (in a user form field) and email (in the id_token) only that way. The email comes from the verified id_token — often a private relay address; the name from the user field, which Apple sends on a user's FIRST sign-in only, so persist it (an adapter does).
 - `interface AppleAppLinks` — The iOS side of AppLinksConfig.
 - `interface AppleWebAppMetadata` — appleWebApp metadata (apple-mobile-web-app-*).
 - `interface AppLinksConfig` — The domain-association files for the app's universal links / App Links (appLinks in denext.config.ts). Pair it with denext mobile add deep-links --domain <host>.
