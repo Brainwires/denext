@@ -175,14 +175,29 @@ async function server(dir: string, verb: "start" | "dev") {
   const child = new Deno.Command(Deno.execPath(), {
     args: cliArgs(dir, [verb, "--port", String(port)]),
     cwd: dir,
-    stdout: "null",
-    stderr: "null",
+    stdout: "piped",
+    stderr: "piped",
     env: { NO_COLOR: "1" },
   }).spawn();
+  // Keep what the server prints (drained, so a full pipe never stalls it) for a failure message.
+  let output = "";
+  const drain = async (stream: ReadableStream<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      output = (output + decoder.decode(chunk, { stream: true })).slice(-8000);
+    }
+  };
+  const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
+  const exited = child.status.then((s) => s);
+  let exitCode: number | null = null;
+  exited.then((s) => exitCode = s.code);
   const origin = `http://127.0.0.1:${port}`;
   // Generous: a loaded machine takes a while to start (and, in dev, to build) the server.
   let ready = false;
-  for (const deadline = Date.now() + 300_000; !ready && Date.now() < deadline;) {
+  for (
+    const deadline = Date.now() + 300_000;
+    !ready && exitCode === null && Date.now() < deadline;
+  ) {
     try {
       const res = await fetch(`${origin}/`);
       await res.body?.cancel();
@@ -190,18 +205,18 @@ async function server(dir: string, verb: "start" | "dev") {
     } catch { /* not listening yet */ }
     if (!ready) await new Promise((r) => setTimeout(r, 250));
   }
-  if (!ready) {
-    child.kill("SIGTERM");
-    await child.status;
-    throw new Error(`denext ${verb} did not answer / within 300 s`);
-  }
-  return {
-    origin,
-    async stop() {
-      child.kill("SIGTERM");
-      await child.status;
-    },
+  const stop = async () => {
+    if (exitCode === null) child.kill("SIGTERM");
+    await exited;
+    await drained;
   };
+  if (!ready) {
+    await stop();
+    throw new Error(
+      `denext ${verb} did not answer / (exit ${exitCode ?? "none, timed out"}):\n${output}`,
+    );
+  }
+  return { origin, stop };
 }
 
 /** Call the action the way its stub does (same-origin POST to its endpoint). */
