@@ -1567,6 +1567,13 @@ const id = await scheduleNotification({
 onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or an action id`}
       </Code>
       <p>
+        A tap&apos;s <code>data</code>{" "}
+        (and its action) is untrusted input, not proof that the app scheduled it: in a Deno Desktop
+        window on Linux any process of the same user can forge a click, and on Windows a toast
+        activation. Validate it before acting on it; the default <code>data.path</code> /{" "}
+        <code>data.url</code> navigation already applies the deep-link acceptance rules.
+      </p>
+      <p>
         Triggers: <code>date</code>, <code>interval</code> (<code>seconds</code>, optionally{" "}
         <code>repeats</code>, at least 60 s when repeating), <code>daily</code>,{" "}
         <code>weekly</code>, <code>monthly</code>, <code>yearly</code>, and <code>calendar</code>

@@ -442,7 +442,8 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   `capabilities()` and `requestPermission()`. A click on a notification from an earlier run, or
   the one that launched the app, arrives as `notificationresponse`, kept in
   `launchNotificationResponses` until the app listens. Windows toasts carry action buttons and
-  reach the app through its COM activator.
+  reach the app through its COM activator. A response's `data` and action are untrusted input: on Linux any
+  process of the same user can forge a click, and on Windows a toast activation.
 - **Why:** actions were folded into `click`, nothing could be scheduled, and the click that
   launched the app was lost, so a reminder couldn't open the item it was about.
 - **Layer:** laufey, Deno runtime, denext.

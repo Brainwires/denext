@@ -134,17 +134,22 @@ export interface LocalNotification {
   readonly title?: string;
   /** The body. */
   readonly body?: string;
-  /** Your payload. */
+  /**
+   * The payload the tap carries back. Untrusted input, not proof that your app scheduled it: on
+   * Linux any process of the same user can forge a click (a D-Bus call on the app's name) with
+   * any `data`, and on Windows the user's own processes can forge a toast activation. Validate it
+   * before acting on it.
+   */
   readonly data: Readonly<Record<string, unknown>>;
 }
 
 /** A tap on (or an action of) a local notification. */
 export interface LocalNotificationTap {
-  /** The notification. */
+  /** The notification. Its `data`, like the rest of the tap, is untrusted input. */
   readonly notification: LocalNotification;
-  /** `"tap"` for the notification itself, else the action's id. */
+  /** `"tap"` for the notification itself, else the action's id (untrusted, as `data` is). */
   readonly actionId: string;
-  /** The text typed into a text-input action, if any. */
+  /** The text typed into a text-input action, if any (untrusted). */
   readonly inputValue?: string;
 }
 

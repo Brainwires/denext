@@ -1138,7 +1138,7 @@
           "name": "platform",
           "type": "string",
           "valueName": "<target>",
-          "description": "manifest: the target the export was built for (ios, android, macos, windows, linux, web); shells of another target refuse it"
+          "description": "manifest: the target the export was built for (ios, android, macos, windows, linux); shells of another target refuse it. web names no target (no stamp), as `denext export` does"
         },
         {
           "name": "dir",

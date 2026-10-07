@@ -16,7 +16,10 @@
  *   `close` event on the replaced one, as in browsers.
  * - `close()` removes it from the OS and fires `close`.
  * - A click on it in the OS fires `click` (and `onclick`) on the object, through the capability's
- *   `webtap` signal and `webTake` queue. A click after the page reloaded reaches nothing.
+ *   `webtap` signal and `webTake` queue. A click after the page reloaded reaches nothing. A click
+ *   is untrusted input, as its `data` is: on Linux any process of the same user can forge one (a
+ *   D-Bus call on the app's name), and on Windows the user's own processes can forge a toast
+ *   activation.
  * - `Notification.permission` starts `"default"` and is the OS's answer once the first query
  *   returns (within the first tick or two); `requestPermission()` asks the OS (it prompts when
  *   undecided) and resolves `"granted"`, `"denied"` or `"default"`. An OS that has not answered
