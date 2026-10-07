@@ -989,6 +989,9 @@ interface PluginLabelled {
   isPrimary?: boolean;
 }
 
+/** A URL as the plugin reads and writes it (no primary flag). */
+type PluginUrl = Omit<PluginLabelled, "isPrimary">;
+
 /** A postal address as the plugin reads and writes it. */
 interface PluginAddress {
   street?: string;
@@ -1022,9 +1025,12 @@ interface PluginContact {
   emailAddresses?: PluginLabelled[] | null;
   phoneNumbers?: PluginLabelled[] | null;
   postalAddresses?: PluginAddress[] | null;
-  urlAddresses?: PluginLabelled[] | null;
+  urlAddresses?: PluginUrl[] | null;
   account?: unknown;
 }
+
+/** A contact as the plugin's writes take it (the id goes beside it, never in it). */
+type PluginContactInput = Omit<PluginContact, "id">;
 
 /** A permission state as the plugin reports it. */
 type PluginPermission = "granted" | "denied" | "prompt" | "prompt-with-rationale" | "limited";
@@ -1032,10 +1038,10 @@ type PluginPermission = "granted" | "denied" | "prompt" | "prompt-with-rationale
 /** The JS side of `@capgo/capacitor-contacts` (the calls used here). */
 interface ContactsPlugin {
   countContacts(): Promise<{ count: number }>;
-  createContact(o: { contact: PluginContact }): Promise<{ id: string }>;
+  createContact(o: { contact: PluginContactInput }): Promise<{ id: string }>;
   deleteContactById(o: { id: string }): Promise<void>;
   displayContactById(o: { id: string }): Promise<void>;
-  displayCreateContact(o?: { contact?: PluginContact }): Promise<{ id?: string }>;
+  displayCreateContact(o?: { contact?: PluginContactInput }): Promise<{ id?: string }>;
   displayUpdateContactById(o: { id: string }): Promise<void>;
   getContactById(o: { id: string; fields?: string[] }): Promise<{ contact: PluginContact | null }>;
   getContacts(
@@ -1045,7 +1051,7 @@ interface ContactsPlugin {
   createGroup(o: { group: { name: string } }): Promise<{ id: string }>;
   deleteGroupById(o: { id: string }): Promise<void>;
   pickContact(o?: { fields?: string[] }): Promise<{ contacts: PluginContact[] }>;
-  updateContactById(o: { id: string; contact: PluginContact }): Promise<void>;
+  updateContactById(o: { id: string; contact: PluginContactInput }): Promise<void>;
   isAvailable(): Promise<{ isAvailable: boolean }>;
   checkPermissions(): Promise<{ readContacts: PluginPermission; writeContacts: PluginPermission }>;
   requestPermissions(): Promise<

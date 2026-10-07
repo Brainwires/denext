@@ -343,6 +343,15 @@ and this project adheres to
   prints a warning, the result carries `spa.proxyUnresolved`, and `--check` lists it as a review
   item; `--proxy` answers it. A literal proxy written on one line (`proxy: { "/api": … } }`) is
   now read too (it used to fall back to `/api` as well).
+- **`llms-full.txt` and the MCP reference page are regenerated, and a test keeps them so.** They
+  lacked the `expo-brightness` / `-calendar` / `-contacts` / `-intent-launcher` / `-print` APIs,
+  the new `expo-cellular` signatures and `denext_generate`'s `migration` / `seed` / `ci` kinds;
+  `tests/docs-generated.test.ts` now fails when either drifts from its source.
+- **The Expo shims over pinned plugins are checked against the plugins' own types.** Their unit
+  tests ran against hand-written fakes; the pinned versions' `.d.ts` files are now vendored
+  (`deno task parity:native:plugins`) and every method, argument key and result field the shims
+  use is type-checked against them, offline. `expo-calendar`'s and `expo-contacts`' plugin
+  declarations were tightened to the shapes the plugins take.
 - **A macOS `secureStore.set` over an item an older denext wrote can no longer lose it.** In the
   login keychain the runtime's store refuses to store over that item, so it is deleted first; when
   the store then failed (the keychain locked, with prompts off) the old value was gone. The write

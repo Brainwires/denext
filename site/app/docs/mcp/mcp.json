@@ -26,18 +26,18 @@
     },
     {
       "name": "denext_generate",
-      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker. Existing files are never overwritten unless force is set; pass dryRun to see the planned files and their contents without writing anything.",
+      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker|migration|seed|ci. Existing files are never overwritten unless force is set; pass dryRun to see the planned files and their contents without writing anything.",
       "params": [
         {
           "name": "kind",
           "type": "string",
-          "description": "page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker",
+          "description": "page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker|migration|seed|ci",
           "required": true
         },
         {
           "name": "name",
           "type": "string",
-          "description": "Route/component/action name (optional for docker).",
+          "description": "Route/component/action/migration name (optional for docker, seed and ci, where it overrides the detected flavor).",
           "required": false
         },
         {

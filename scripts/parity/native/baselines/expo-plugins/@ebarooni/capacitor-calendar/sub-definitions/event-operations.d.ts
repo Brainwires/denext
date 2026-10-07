@@ -1,0 +1,132 @@
+import type { CreateEventOptions } from '../schemas/interfaces/create-event-options.d.ts';
+import type { CreateEventResult } from '../schemas/interfaces/create-event-result.d.ts';
+import type { CreateEventWithPromptOptions } from '../schemas/interfaces/create-event-with-prompt-options.d.ts';
+import type { CreateEventWithPromptResult } from '../schemas/interfaces/create-event-with-prompt-result.d.ts';
+import type { DeleteEventOptions } from '../schemas/interfaces/delete-event-options.d.ts';
+import type { DeleteEventWithPromptOptions } from '../schemas/interfaces/delete-event-with-prompt-options.d.ts';
+import type { DeleteEventsByIdOptions } from '../schemas/interfaces/delete-events-by-id-options.d.ts';
+import type { ListEventsInRangeOptions } from '../schemas/interfaces/list-events-in-range-options.d.ts';
+import type { ListEventsInRangeResult } from '../schemas/interfaces/list-events-in-range-result.d.ts';
+import type { ModifyEventOptions } from '../schemas/interfaces/modify-event-options.d.ts';
+import type { ModifyEventWithPromptOptions } from '../schemas/interfaces/modify-event-with-prompt-options.d.ts';
+import type { EventEditAction } from '../schemas/types/event-edit-action.d.ts';
+export interface EventOperations {
+    /**
+     * Opens a calendar UI to create an event.
+     * On Android and iOS, opens the system editor. On Android, `id` is always `null`.
+     * On Web, shows a confirm dialog, then builds an `.ics` `File` when the user confirms.
+     * See MCP `docs://web-behavior` for Web details.
+     *
+     * @example
+     * const options = {
+     *   title: 'Test event',
+     *   startDate: Date.now(),
+     * }
+     * await CapacitorCalendar.createEventWithPrompt(options)
+     *
+     * @platform Android, iOS, Web
+     * @since 0.1.0
+     */
+    createEventWithPrompt(options?: CreateEventWithPromptOptions): Promise<CreateEventWithPromptResult>;
+    /**
+     * Opens a system calendar interface to modify an event.
+     * On Android always returns `null`.
+     *
+     * @example
+     * const options = {
+     *   id: 'EVENT_ID',
+     *   title: 'New title',
+     * }
+     * await CapacitorCalendar.modifyEventWithPrompt(options);
+     *
+     * @platform Android, iOS
+     * @since 6.6.0
+     */
+    modifyEventWithPrompt(options: ModifyEventWithPromptOptions): Promise<{
+        result: EventEditAction | null;
+    }>;
+    /**
+     * Creates an event in the calendar.
+     * On Android and iOS, inserts into the system calendar and returns its `id`.
+     * On Web, builds an `.ics` `File` as `ics` (no calendar store). See MCP `docs://web-behavior`.
+     *
+     * @example
+     * const { id, ics } = await CapacitorCalendar.createEvent({
+     *   title: 'Team standup',
+     *   startDate: Date.now(),
+     *   icsFileName: 'team-standup.ics',
+     *   autoDownloadIcsFile: true,
+     * });
+     *
+     * @platform Android, iOS, Web
+     * @since 0.4.0
+     */
+    createEvent(options: CreateEventOptions): Promise<CreateEventResult>;
+    /**
+     * Modifies an event.
+     *
+     * @platform Android, iOS
+     * @since 6.6.0
+     */
+    modifyEvent(options: ModifyEventOptions): Promise<void>;
+    /**
+     * Deletes multiple events.
+     *
+     * @deprecated Use `deleteEvent(...)`.
+     * @platform Android, iOS
+     * @since 0.11.0
+     */
+    deleteEventsById(options: DeleteEventsByIdOptions): Promise<{
+        result: DeleteEventsByIdResult;
+    }>;
+    /**
+     * Deletes an event.
+     *
+     * @platform Android, iOS
+     * @since 7.1.0
+     */
+    deleteEvent(options: DeleteEventOptions): Promise<void>;
+    /**
+     * Opens a dialog to delete an event.
+     *
+     * @platform Android, iOS
+     * @since 7.1.0
+     */
+    deleteEventWithPrompt(options: DeleteEventWithPromptOptions): Promise<{
+        deleted: boolean;
+    }>;
+    /**
+     * Retrieves events that overlap a date range.
+     *
+     * An event is included when its time interval intersects `[from, to]`, including
+     * multi-day events that span the range without starting or ending inside it.
+     *
+     * @example
+     * const startOfDay = new Date();
+     * startOfDay.setHours(0, 0, 0, 0);
+     * const startOfNextDay = new Date(startOfDay);
+     * startOfNextDay.setDate(startOfNextDay.getDate() + 1);
+     *
+     * const { result } = await CapacitorCalendar.listEventsInRange({
+     *   from: startOfDay.getTime(),
+     *   to: startOfNextDay.getTime(),
+     * });
+     *
+     * @platform Android, iOS
+     * @since 0.10.0
+     */
+    listEventsInRange(options: ListEventsInRangeOptions): Promise<ListEventsInRangeResult>;
+}
+/**
+ * @since 7.1.0
+ */
+export interface DeleteEventsByIdResult {
+    /**
+     * @since 7.1.0
+     */
+    deleted: string[];
+    /**
+     * @since 7.1.0
+     */
+    failed: string[];
+}

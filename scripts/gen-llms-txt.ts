@@ -16,6 +16,10 @@ import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT_DIR = `${ROOT}site/public`;
+/** Where the concise index is committed (the static export serves it at /llms.txt). */
+export const LLMS_OUT = `${OUT_DIR}/llms.txt`;
+/** Where the full guide is committed (served at /llms-full.txt). */
+export const LLMS_FULL_OUT = `${OUT_DIR}/llms-full.txt`;
 const SITE = "https://denext.dev";
 const REPO = "https://github.com/Brainwires/denext";
 
@@ -113,7 +117,7 @@ export async function llmsFull(): Promise<string> {
 
 if (import.meta.main) {
   await Deno.mkdir(OUT_DIR, { recursive: true });
-  await Deno.writeTextFile(`${OUT_DIR}/llms.txt`, llmsIndex());
-  await Deno.writeTextFile(`${OUT_DIR}/llms-full.txt`, await llmsFull());
+  await Deno.writeTextFile(LLMS_OUT, llmsIndex());
+  await Deno.writeTextFile(LLMS_FULL_OUT, await llmsFull());
   console.log(`Wrote ${OUT_DIR}/llms.txt and llms-full.txt`);
 }

@@ -16,6 +16,7 @@ import {
 } from "../src/build/settings-native-templates.ts";
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import { fakePlugin, inShell, withGlobals } from "./helpers/mobile-fakes.ts";
+import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 const WIFI = "android.settings.WIFI_SETTINGS";
 
@@ -149,15 +150,6 @@ function javaPutExtras(): string {
   return java.slice(start, end);
 }
 
-const has = (tool: string): boolean => {
-  try {
-    return new Deno.Command(tool, { args: ["-version"], stdout: "null", stderr: "null" })
-      .outputSync().success;
-  } catch {
-    return false;
-  }
-};
-
 /** Minimal org.json and android.content.Intent: enough for putExtras, recording each put. */
 const STUBS: Record<string, string> = {
   "org/json/JSONObject.java": `package org.json;
@@ -195,8 +187,9 @@ public class Intent {
 
 Deno.test({
   name: "DenextSettings (Android): sendIntent's extras as React Native puts them (compiled)",
-  ignore: !has("javac") || !has("java"),
+  ignore: IGNORE_WITHOUT_JDK,
   async fn() {
+    requireJdk();
     const dir = await Deno.makeTempDir({ prefix: "denext_send_intent_java_" });
     try {
       for (const [path, text] of Object.entries(STUBS)) {

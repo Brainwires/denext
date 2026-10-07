@@ -17,6 +17,7 @@ import { wantsShell } from "../src/build/spa/shared.ts";
 import { startSpaProdServer } from "../src/build/spa.ts";
 import { EXPORT_ROUTER_SWIFT } from "../src/build/bridge-export-router-native-template.ts";
 import { mainActivitySource } from "../src/build/mobile-native-install.ts";
+import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 interface Vector {
   url: string;
@@ -270,8 +271,9 @@ async function javaExportedPage(): Promise<string> {
 
 Deno.test({
   name: "export routes: the Android router (compiled) serves every vector",
-  ignore: !has("javac") || !has("java"),
+  ignore: IGNORE_WITHOUT_JDK,
   async fn() {
+    requireJdk();
     const { root, out } = await fixtureExport();
     const src = join(root, "java");
     try {

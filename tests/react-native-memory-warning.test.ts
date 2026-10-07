@@ -29,6 +29,7 @@ import {
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import { addSettingsToProject } from "../src/build/mobile-settings-install.ts";
 import { inShell, withGlobals } from "./helpers/mobile-fakes.ts";
+import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 /** Fire the bridge's event, as Capacitor's `triggerWindowJSEvent` does. */
 const fire = () => globalThis.dispatchEvent(new Event(MEMORY_WARNING_EVENT));
@@ -253,8 +254,9 @@ async function javaIsMemoryWarning(): Promise<string> {
 
 Deno.test({
   name: "memoryWarning (Android): the trim levels that warn (compiled)",
-  ignore: !has("javac") || !has("java"),
+  ignore: IGNORE_WITHOUT_JDK,
   async fn() {
+    requireJdk();
     const dir = await Deno.makeTempDir({ prefix: "denext_memory_warning_java_" });
     try {
       await Deno.writeTextFile(

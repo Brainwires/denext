@@ -38,8 +38,9 @@ async function devServer(dir: string) {
   resetModuleGraphCache();
   const controller = new AbortController();
   const paths = await resolveProject(dir);
+  let server: Deno.HttpServer | undefined;
   const port = await new Promise<number>((resolve) => {
-    startDevServer({
+    server = startDevServer({
       paths,
       port: 0,
       hostname: "127.0.0.1",
@@ -68,7 +69,7 @@ async function devServer(dir: string) {
     },
     stop: async () => {
       controller.abort();
-      await new Promise((r) => setTimeout(r, 100));
+      await server?.finished;
     },
   };
 }

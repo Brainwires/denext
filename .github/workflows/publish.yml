@@ -68,6 +68,14 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac and run with java
+        # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Resolve package config from the tag
         id: pkg
         run: |

@@ -22,6 +22,8 @@ import {
 import { EXPORT_ROUTER_SWIFT } from "../src/build/bridge-export-router-native-template.ts";
 import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
+import { writtenOtaTemplatesAt } from "./_release-templates.ts";
+import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 
 const FIXTURES = new URL("./fixtures/ota-reverify/", import.meta.url);
 const fixture = (path: string) => new URL(path, FIXTURES).pathname;
@@ -152,51 +154,13 @@ async function project(): Promise<string> {
   return dir;
 }
 
-/** Whether this checkout has `tag` (a shallow CI clone may not). */
-function hasTag(tag: string): boolean {
-  try {
-    return new Deno.Command("git", { args: ["rev-parse", "-q", "--verify", `refs/tags/${tag}`] })
-      .outputSync().success;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The OTA files exactly as `add-ota` wrote them at `tag`: the module at that tag, its imports
- * pointed at this checkout's helper modules.
- */
-async function writtenAt(
-  tag: string,
-): Promise<{ generation: number; files: Record<string, string> }> {
-  const out = await new Deno.Command("git", {
-    args: ["show", `${tag}:src/build/ota-native-templates.ts`],
-  }).output();
-  assert(out.success);
-  const build = new URL("../src/build/", import.meta.url).href;
-  const source = new TextDecoder().decode(out.stdout).replaceAll(`from "./`, `from "${build}`);
-  const file = await Deno.makeTempFile({ suffix: ".ts" });
-  try {
-    await Deno.writeTextFile(file, source);
-    const mod = await import(`file://${file}`);
-    const files: Record<string, string> = {};
-    for (const [name, text] of Object.entries({ ...mod.OTA_IOS_FILES, ...mod.OTA_ANDROID_FILES })) {
-      files[name] = await mod.renderOtaTemplate(text as string);
-    }
-    return { generation: mod.OTA_TEMPLATE_VERSION, files };
-  } finally {
-    await Deno.remove(file);
-  }
-}
-
 const IOS_DIR = "ios/App/App";
 const ANDROID_DIR = "android/app/src/main/java/dev/denext/ota";
 
 Deno.test({
   name: "OTA re-verification: the doctor flags a 3.2.0 plugin, and add-ota upgrades it in place",
-  ignore: !hasTag("v3.2.0"),
   async fn() {
-    const { generation, files } = await writtenAt("v3.2.0");
+    const { generation, files } = writtenOtaTemplatesAt("v3.2.0");
     assert(generation < 9, `3.2.0 shipped generation ${generation}`);
     assert(!files["DenextOtaStore.swift"].includes("verifyInstalled"));
     const dir = await project();
@@ -345,8 +309,9 @@ function assertHarness(output: string, platform: string): void {
 
 Deno.test({
   name: "OTA re-verification (Android): the Java templates compile and refuse a tampered UI",
-  ignore: !has("javac") || !has("java"),
+  ignore: IGNORE_WITHOUT_JDK,
   async fn() {
+    requireJdk();
     const dir = await Deno.makeTempDir({ prefix: "denext_ota_reverify_java_" });
     try {
       const pkg = join(dir, "src", "dev", "denext", "ota");

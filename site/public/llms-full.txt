@@ -1516,7 +1516,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>` — Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead.
 - `interface RequireSessionOptions` — Options for requireSession.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
-- `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session and bearer API token of the user is revoked — a reset is how an owner takes an account back, so nothing a thief minted with a stolen session survives it. Fires passwordReset (after sessionRevoked).
+- `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, every passkey of the user is removed, and every server-side session and bearer API token is revoked — a reset is how an owner takes an account back, so nothing a thief set up with a stolen session (a passkey registered from it included) survives it. Fires passwordReset (after sessionRevoked).
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
@@ -1532,7 +1532,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class RevenueCatWebhookError` — A refused webhook: status is the HTTP status to answer with.
 - `interface RevenueCatWebhookEvent` — One webhook event (the fields RevenueCat documents; others are kept on the object).
 - `revokeAllSessions(userId: string): Promise<void>` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft — and every native app session family when the adapter has that group. Fires the sessionRevoked event. Requires denextAuth({ sessionStore }) or native sessions; throws when neither exists.
-- `revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<void>` — Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error. Fires apiTokenRevoked (reason: "revoked").
+- `revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<boolean>` — Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing; an actual revocation fires apiTokenRevoked (reason: "revoked").
 - `revokeSession(sessionId: string): Promise<void>` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
 - `rewrite(destination: string, init?: object): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
 - `REWRITE: typeOperator` — Internal marker symbol keying a RewriteCommand.
@@ -1746,7 +1746,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `interface PasskeyCallOptions` — Options shared by every passkey call.
-- `type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | exists | rate_limited | network` — Why a passkey call failed.
+- `type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | email_unverified | code_required | exists | rate_limited | network` — Why a passkey call failed.
 - `interface PasskeySignInOptions` — Options for signInWithPasskey.
 - `type PasskeySignInResult = object | object` — What signInWithPasskey resolves to.
 - `passkeysSupported(): boolean` — Whether this browser can run a WebAuthn ceremony at all.
@@ -2756,11 +2756,121 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `BlurView(props: BlurViewProps): VNode` — A view that blurs what is behind it.
 - `interface BlurViewProps` — BlurView props.
 
+### `denext/expo/brightness`
+
+- `addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription` — Call listener when the brightness changes: never, since the plugin reports no changes.
+- `interface BrightnessEvent` — What a brightness listener receives.
+- `enum BrightnessMode` — How the system sets the brightness (Android).
+- `getBrightnessAsync(): Promise<number>` — The current brightness: the screen's (iOS) or the app window's (Android; -1 while it follows the system).
+- `getPermissionsAsync: () => Promise<PermissionResponse>` — The system-settings permission: none is needed for what works here, so granted.
+- `getSystemBrightnessAsync(): Promise<number>` — The system brightness: the screen's on iOS (as Expo); not readable on Android.
+- `getSystemBrightnessModeAsync(): Promise<BrightnessMode>` — The system brightness mode: not readable here.
+- `isAvailableAsync(): Promise<boolean>` — Whether the brightness can be changed: the shell with the plugin.
+- `isUsingSystemBrightnessAsync(): Promise<boolean>` — Whether the system's brightness applies: on Android, the window has no level of its own; on iOS, the app has not changed it (or restored it).
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `requestPermissionsAsync: () => Promise<PermissionResponse>` — Ask for the system-settings permission: none is needed here, so granted.
+- `restoreSystemBrightnessAsync(): Promise<void>` — Undo the app's brightness: the level from before the app first set one (iOS), or the window following the system again (Android).
+- `setBrightnessAsync(brightnessValue: number): Promise<void>` — Set the brightness while the app runs.
+- `setSystemBrightnessAsync(brightnessValue: number): Promise<void>` — Set the system brightness: the screen's on iOS (as Expo); not writable on Android.
+- `setSystemBrightnessModeAsync(_brightnessMode: BrightnessMode): Promise<void>` — Set the system brightness mode: not writable here.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+
 ### `denext/expo/build-properties`
 
 - `default<T>(config: T, _props?: PluginConfigType): T` — The config plugin: returns config unchanged.
 - `interface PluginConfigType` — The plugin's options (accepted, not applied).
 - `withBuildProperties<T>(config: T, _props?: PluginConfigType): T` — The config plugin: returns config unchanged.
+
+### `denext/expo/calendar`
+
+- `interface AddEventWithFormOptions` — The event ExpoCalendar.addEventWithForm pre-fills.
+- `interface Alarm` — An alarm. Only relativeOffset (minutes from the start) reaches the plugin.
+- `interface AlarmLocation` — Where an alarm triggers.
+- `enum AlarmMethod` — How an alarm alerts (Android).
+- `interface Attendee` — An event attendee.
+- `enum AttendeeRole` — An attendee's role.
+- `enum AttendeeStatus` — An attendee's response.
+- `enum AttendeeType` — An attendee's kind.
+- `enum Availability` — An event's free/busy state.
+- `interface Calendar` — A calendar (or an iOS reminders list).
+- `enum CalendarAccessLevel` — The current user's access to a calendar (Android).
+- `interface CalendarDialogParams` — Which event a dialog shows.
+- `enum CalendarDialogResultActions` — How a calendar dialog ended.
+- `enum CalendarType` — A calendar's kind (iOS).
+- `createAttendeeAsync(_eventId: string, _details: Attendee): Promise<string>` — Add an attendee. Not supported by the plugin.
+- `createCalendar(details?: Partial<Calendar>): Promise<ExpoCalendar>` — Create a calendar (see createCalendarAsync).
+- `createCalendarAsync(details?: Partial<Calendar>): Promise<string>` — Create a calendar, or (iOS, entityType: "reminder") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.
+- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. timeZone, attendees and absolute or location alarms are not passed on.
+- `createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).
+- `createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>` — Create a reminder.
+- `enum DayOfTheWeek` — A weekday, as Expo numbers it (Sunday is 1).
+- `interface DaysOfTheWeek` — A weekday of a recurrence.
+- `deleteAttendeeAsync(_id: string): Promise<void>` — Remove an attendee. Not supported by the plugin.
+- `deleteCalendarAsync(id: string): Promise<void>` — Delete a calendar (or reminders list) and everything in it.
+- `deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>` — Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).
+- `deleteReminderAsync(id: string): Promise<void>` — Delete a reminder.
+- `interface DialogEventResult` — How an event dialog ended, and the event's id.
+- `editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event. Android does not report the outcome (done).
+- `enum EntityTypes` — What a calendar holds.
+- `interface Event` — An event.
+- `enum EventAccessLevel` — An event's visibility (Android).
+- `enum EventStatus` — An event's status.
+- `class ExpoCalendar` — A calendar, with methods (the new API).
+- `class ExpoCalendarEvent` — An event, with methods (the new API).
+- `class ExpoCalendarReminder` — A reminder, with methods (the new API, iOS).
+- `enum Frequency` — How often a recurrence repeats.
+- `getAttendeesForEventAsync(_id: string): Promise<Attendee[]>` — An event's attendees. The plugin does not read them by event id.
+- `getCalendarPermissions(writeOnly?: boolean): Promise<PermissionResponse>` — The calendar permission, without prompting (the new API).
+- `getCalendarPermissionsAsync(): Promise<PermissionResponse>` — The calendar permission, without prompting (legacy).
+- `getCalendars(entityType?: EntityTypes): Promise<ExpoCalendar[]>` — The calendars, as objects (see getCalendarsAsync).
+- `getCalendarsAsync(entityType?: string): Promise<Calendar[]>` — The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.
+- `getDefaultCalendarAsync(): Promise<Calendar>` — The default calendar for new events (isPrimary: true).
+- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).
+- `getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>` — The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).
+- `getReminderAsync(id: string): Promise<Reminder>` — One reminder.
+- `getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>` — The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).
+- `getRemindersPermissions(): Promise<PermissionResponse>` — The reminders permission (iOS), without prompting.
+- `getRemindersPermissionsAsync(): Promise<PermissionResponse>` — The reminders permission (legacy).
+- `getSourceAsync(id: string): Promise<Source>` — One calendar account.
+- `getSourcesAsync(): Promise<Source[]>` — The calendar accounts.
+- `isAvailableAsync(): Promise<boolean>` — Whether the calendar API works here: the shell with the plugin installed.
+- `listEvents(calendars: parenthesized[], startDate: Date, endDate: Date): Promise<ExpoCalendarEvent[]>` — The events overlapping [startDate, endDate] in the given calendars, as objects.
+- `type ModifiableCalendarProperties = Pick<Calendar, color | title>` — What ExpoCalendar.update changes.
+- `type ModifiableEventProperties = Pick<Event, title | location | timeZone | url | notes | alarms | recurrenceRule | availability | startDate | endDate | allDay>` — What ExpoCalendarEvent.update changes.
+- `type ModifiableReminderProperties = Pick<Reminder, title | location | timeZone | url | notes | alarms | recurrenceRule | startDate | dueDate | completed | completionDate>` — What ExpoCalendarReminder.update changes.
+- `enum MonthOfTheYear` — A month (January is 1).
+- `interface OpenEventDialogResult` — How an "open event" dialog ended.
+- `openEventInCalendar(_id: string): void` — Open an event in the Android calendar app. The plugin has no such call.
+- `openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event in the calendar app. The plugin has no such dialog.
+- `interface OpenEventPresentationOptions` — How to present an existing event.
+- `interface Organizer` — An event's organizer.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `interface PresentationOptions` — How to present a dialog (Android).
+- `presentPicker(): Promise<ExpoCalendar | null>` — The system calendar chooser (one calendar). Needs calendar access first.
+- `interface RecurrenceRule` — How an event or reminder repeats.
+- `interface RecurringEventOptions` — Which occurrence(s) of a recurring event a call means.
+- `interface Reminder` — A reminder (iOS).
+- `enum ReminderStatus` — A reminder's completion state.
+- `requestCalendarPermissions(writeOnly?: boolean): Promise<PermissionResponse>` — Ask for calendar access (the new API).
+- `requestCalendarPermissionsAsync(): Promise<PermissionResponse>` — Ask for full calendar access (legacy).
+- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for full calendar access (legacy, deprecated in Expo).
+- `requestRemindersPermissions(): Promise<PermissionResponse>` — Ask for reminders access (iOS).
+- `requestRemindersPermissionsAsync(): Promise<PermissionResponse>` — Ask for reminders access (legacy).
+- `interface Source` — A calendar account.
+- `enum SourceType` — A calendar source's kind (iOS).
+- `updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>` — Change an attendee. Not supported by the plugin.
+- `updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>` — Change a calendar's (or reminders list's) title and colour; other fields are ignored.
+- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event (with futureEvents, this and the following occurrences).
+- `updateReminderAsync(id: string, details?: Reminder): Promise<string>` — Change a reminder.
+- `useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the calendar permission: [response, request, get].
+- `useRemindersPermissions(options?: PermissionHookOptions<object>): tuple` — Hook form of the reminders permission (iOS): [response, request, get].
 
 ### `denext/expo/camera`
 
@@ -2808,12 +2918,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getIsoCountryCodeAsync(): Promise<string | null>` — The carrier's ISO country code: not readable here.
 - `getMobileCountryCodeAsync(): Promise<string | null>` — The carrier's mobile country code: not readable here.
 - `getMobileNetworkCodeAsync(): Promise<string | null>` — The carrier's mobile network code: not readable here.
-- `getPermissionsAsync(): Promise<PermissionResponse>` — The phone-state permission: none is needed here.
+- `getPermissionsAsync: () => Promise<PermissionResponse>` — The phone-state permission: none is needed here, so granted.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
-- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the phone-state permission: none is needed here.
+- `requestPermissionsAsync: () => Promise<PermissionResponse>` — Ask for the phone-state permission: none is needed here, so granted.
 - `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
 
 ### `denext/expo/checkbox`
@@ -2850,6 +2960,97 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum ExecutionEnvironment` — How the app is running.
 - `interface PlatformManifest` — Per-platform facts (Constants.platform).
 - `enum UserInterfaceIdiom` — The iOS interface idiom.
+
+### `denext/expo/contacts`
+
+- `addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>` — Add a contact to the default container.
+- `addContactsChangeListener(_listener: () => void): EventSubscription` — Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.
+- `type Address = object` — A legacy postal address.
+- `enum CalendarFormats` — Calendar formats of a legacy Date.
+- `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
+- `class Contact` — A contact of the address book, by id. Reads go through the plugin on each call; writes read the stored record, change it and write it back.
+- `ContactAccessButton: ContactAccessButtonComponent` — iOS 18's ContactAccessButton. The plugin does not provide it, so it renders nothing and isAvailable() is false, as on Android and the web in Expo.
+- `interface ContactAccessButtonComponent` — The ContactAccessButton component with its static check.
+- `type ContactAccessButtonProps = object` — Props of ContactAccessButton (iOS 18's limited-access button).
+- `type ContactDate = object` — A class-API date: month is 1–12.
+- `type ContactDetails = object` — Every detail of a contact, as the class API reads it.
+- `enum ContactField` — The class API's contact fields (contact.getDetails(fields)).
+- `type ContactFieldKey = mapped` — A ContactField's key in ContactDetails.
+- `type ContactPatch = object` — A partial change to a contact (contact.patch); null clears a text field.
+- `type ContactQuery = object` — A legacy contact query.
+- `type ContactQueryOptions = object` — Options of Contact.getAll.
+- `type ContactResponse = object` — A page of legacy contacts.
+- `type ContactSort = ${[0m[38;5;12mSortTypes[0m}` — A legacy sort order.
+- `type ContactsPermissionResponse = PermissionResponse & object` — A contacts permission answer, with how much of the address book is shared.
+- `enum ContactsSortOrder` — The class API's sort orders (ContactQueryOptions.sortOrder).
+- `type ContactType = ContactTypes | ${[0m[38;5;12mContactTypes[0m}` — A ContactTypes member or its string.
+- `enum ContactTypes` — Person or company.
+- `type ContainerQuery = object` — A legacy container query.
+- `type ContainerType = ContainerTypes | ${[0m[38;5;12mContainerTypes[0m}` — A ContainerTypes member or its string.
+- `enum ContainerTypes` — Kinds of contact container.
+- `type CreateContactRecord = object` — A new contact (Contact.create).
+- `type CreateFormOptions = object` — Options of Contact.presentCreateForm (ignored here).
+- `createGroupAsync(name?: string, _containerId?: string): Promise<string>` — Create a contact group.
+- `type Date = object` — A legacy date: month is 0-based, as JavaScript's Date.
+- `type Email = object` — A legacy email address.
+- `type EventSubscription = Subscription` — Expo's name for a listener subscription.
+- `type ExistingAddress = NewAddress & object` — A postal address of a contact.
+- `type ExistingContact = LegacyContact & object` — A legacy contact with its id.
+- `type ExistingDate = NewDate & object` — A date of a contact.
+- `type ExistingEmail = NewEmail & object` — An email address of a contact.
+- `type ExistingExtraName = NewExtraName & object` — An extra name of a contact.
+- `type ExistingImAddress = NewImAddress & object` — An IM address of a contact.
+- `type ExistingPhone = NewPhone & object` — A phone number of a contact.
+- `type ExistingRelation = NewRelation & object` — A relation of a contact.
+- `type ExistingSocialProfile = NewSocialProfile & object` — A social profile of a contact.
+- `type ExistingUrlAddress = NewUrlAddress & object` — A URL of a contact.
+- `enum Fields` — The legacy API's contact fields (ContactQuery.fields).
+- `type FieldType = Fields | ${[0m[38;5;12mFields[0m}` — A Fields member or its string.
+- `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
+- `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
+- `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
+- `getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>` — The contact groups, optionally only the one with groupId or the ones named groupName.
+- `getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — getContactsAsync, by its paging name.
+- `getPermissionsAsync(): Promise<ContactsPermissionResponse>` — The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: "limited").
+- `class Group` — A contact group, by id.
+- `type GroupQuery = object` — A legacy group query.
+- `hasContactsAsync(): Promise<boolean>` — Whether the address book has any contact.
+- `type Image = object` — A legacy contact photo.
+- `type InstantMessageAddress = object` — A legacy instant-message address (not read here).
+- `isAvailableAsync(): Promise<boolean>` — Whether the address book can be used: the plugin's answer in the shell.
+- `type LegacyContact = object` — A legacy contact (Expo's Contact type of the legacy API).
+- `type LegacyContainer = object` — A legacy container.
+- `type LegacyGroup = object` — A legacy group.
+- `type NewAddress = object` — A new postal address.
+- `type NewDate = object` — A new date.
+- `type NewEmail = object` — A new email address.
+- `type NewExtraName = object` — A new extra name.
+- `type NewImAddress = object` — A new IM address.
+- `type NewPhone = object` — A new phone number.
+- `type NewRelation = object` — A new relation.
+- `type NewSocialProfile = object` — A new social profile.
+- `type NewUrlAddress = object` — A new URL.
+- `type NonGregorianBirthday = object` — A non-Gregorian birthday.
+- `enum NonGregorianCalendar` — Calendars of a NonGregorianBirthday.
+- `type PartialContactDetails<T> = object & mapped` — The details getDetails(fields) returns: the id and the asked-for fields.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `type PhoneNumber = object` — A legacy phone number.
+- `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker.
+- `presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>` — Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.
+- `type Relationship = object` — A legacy relationship (not read here).
+- `removeAllContactsChangeListeners(): void` — Remove every change listener (they never fire here).
+- `removeContactAsync(contactId: string): Promise<void>` — Delete a contact.
+- `removeGroupAsync(groupId: string): Promise<void>` — Delete a contact group.
+- `requestPermissionsAsync(): Promise<ContactsPermissionResponse>` — Ask for the contacts permission (read and write).
+- `type SocialProfile = object` — A legacy social profile (not read here).
+- `enum SortTypes` — Legacy sort orders (ContactQuery.sort).
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `updateContactAsync(contact: object & Partial<ExistingContact>): Promise<string>` — Change a contact: the given fields replace the stored ones, the rest are kept.
+- `type UrlAddress = object` — A legacy URL.
 
 ### `denext/expo/crypto`
 
@@ -3153,6 +3354,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestMediaLibraryPermissionsAsync(writeOnly?: boolean): Promise<MediaLibraryPermissionResponse>` — Request the photo-library permission (the picker asks when it opens): granted.
 - `useCameraPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the camera permission: [response, request, get].
 - `useMediaLibraryPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the photo-library permission: [response, request, get].
+
+### `denext/expo/intent-launcher`
+
+- `enum ActivityAction` — The intent actions Expo names (any other action string works too).
+- `getApplicationIconAsync(packageName: string): Promise<string>` — The icon of the app with packageName.
+- `interface IntentLauncherParams` — Extra intent parameters.
+- `interface IntentLauncherResult` — What the started activity returned.
+- `openApplication(packageName: string): void` — Open the app with packageName (its launch activity).
+- `enum ResultCode` — An activity's result code.
+- `startActivityAsync(activityAction: ActivityAction | string, params?: IntentLauncherParams): Promise<IntentLauncherResult>` — Start an activity for activityAction and wait for its result.
 
 ### `denext/expo/keep-awake`
 
@@ -3523,6 +3734,19 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `TextInputWrapper(props: TextInputWrapperViewProps): VNode` — The same component as TextInputWrapperView.
 - `TextInputWrapperView(props: TextInputWrapperViewProps): VNode` — A wrapper that reports pastes in the input inside it.
 - `interface TextInputWrapperViewProps` — TextInputWrapper props.
+
+### `denext/expo/print`
+
+- `interface FilePrintOptions` — Options for printToFileAsync.
+- `interface FilePrintResult` — A PDF made by printToFileAsync.
+- `Orientation: OrientationType` — The orientation values.
+- `interface OrientationType` — The orientation values Expo takes.
+- `interface PageMargins` — Page margins in points.
+- `printAsync(options: PrintOptions): Promise<void>` — Print HTML or a file with the system print dialog.
+- `interface Printer` — A printer (selectPrinterAsync).
+- `interface PrintOptions` — What to print.
+- `printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult>` — Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).
+- `selectPrinterAsync(): Promise<Printer>` — Pick a printer (iOS): not available here.
 
 ### `denext/expo/quick-actions`
 

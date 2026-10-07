@@ -212,6 +212,10 @@ ignorePatterns = [
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
+  # The pinned Capacitor plugins' published `.d.ts` files, vendored verbatim (imports aside) by
+  # `deno task parity:native:plugins`; tests/expo-plugin-definitions.test.ts type-checks the expo
+  # shims against them in a subprocess, so the graph never imports them.
+  "scripts/parity/native/baselines/expo-plugins/**",
   # Content-collection entries: `.mdx` documents the @denext/content-collections plugin compiles
   # at build (never imported as modules by the app), so the graph can't reach them.
   "examples/*/content/**/*.mdx",

@@ -42,6 +42,14 @@ jobs:
         with:
           deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
 
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac and run with java
+        # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
@@ -189,6 +197,14 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac and run with java
+        # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Coverage (fails under the threshold)
         run: deno task test:coverage
 
@@ -206,6 +222,14 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac and run with java
+        # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: swiftc is on the runner
         run: swiftc --version

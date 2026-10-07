@@ -1,0 +1,44 @@
+{
+  "brightness": {
+    "npm": "@capacitor-community/screen-brightness",
+    "version": "8.0.0",
+    "pluginName": "ScreenBrightness",
+    "pluginInterface": "ScreenBrightnessPlugin",
+    "definitions": "@capacitor-community/screen-brightness/definitions.d.ts"
+  },
+  "print": {
+    "npm": "@capgo/capacitor-printer",
+    "version": "8.1.4",
+    "pluginName": "Printer",
+    "pluginInterface": "PrinterPlugin",
+    "definitions": "@capgo/capacitor-printer/definitions.d.ts"
+  },
+  "intent-launcher": {
+    "npm": "@capgo/capacitor-intent-launcher",
+    "version": "8.3.34",
+    "pluginName": "IntentLauncher",
+    "pluginInterface": "IntentLauncherPlugin",
+    "definitions": "@capgo/capacitor-intent-launcher/definitions.d.ts"
+  },
+  "contacts": {
+    "npm": "@capgo/capacitor-contacts",
+    "version": "8.1.4",
+    "pluginName": "CapacitorContacts",
+    "pluginInterface": "CapacitorContactsPlugin",
+    "definitions": "@capgo/capacitor-contacts/definitions.d.ts"
+  },
+  "calendar": {
+    "npm": "@ebarooni/capacitor-calendar",
+    "version": "8.8.0",
+    "pluginName": "CapacitorCalendar",
+    "pluginInterface": "CapacitorCalendarPlugin",
+    "definitions": "@ebarooni/capacitor-calendar/definitions.d.ts"
+  },
+  "text-to-speech": {
+    "npm": "@capacitor-community/text-to-speech",
+    "version": "8.0.2",
+    "pluginName": "TextToSpeech",
+    "pluginInterface": "TextToSpeechPlugin",
+    "definitions": "@capacitor-community/text-to-speech/definitions.d.ts"
+  }
+}

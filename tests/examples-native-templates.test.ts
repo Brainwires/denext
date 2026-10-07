@@ -143,3 +143,50 @@ for (const example of EXAMPLES) {
     assertEquals(problems, [], `${example} has stale native files:\n  ${problems.join("\n  ")}`);
   });
 }
+
+type Platform = "android" | "ios";
+
+/** The examples one job builds: its working directory, or its `example` matrix. */
+function jobExamples(job: string): string[] {
+  const dir = /working-directory: examples\/(\S+)/.exec(job)?.[1];
+  if (dir !== "${{") return dir ? [dir] : [];
+  // A matrix job's working directory is `examples/${{ matrix.example }}`.
+  const matrix = /example: \[([^\]]*)\]/.exec(job)?.[1] ?? "";
+  return matrix.split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+/** The examples each job of mobile-build.yml builds, by platform. */
+function builtByWorkflow(workflow: string): Record<Platform, Set<string>> {
+  const jobs = workflow.slice(workflow.indexOf("\njobs:\n")).split(/\n {2}(?=[\w-]+:\n)/).slice(1);
+  const built: Record<Platform, Set<string>> = { android: new Set(), ios: new Set() };
+  for (const job of jobs) {
+    const platform = job.includes("mobile build android") ? "android" : "ios";
+    for (const name of jobExamples(job)) built[platform].add(name);
+  }
+  return built;
+}
+
+/** Whether `path` is a directory. */
+async function isDir(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test("examples: the nightly mobile build compiles every committed native project", async () => {
+  // Regenerated files that are never compiled can break unnoticed: each example's android/ and
+  // ios/ project must be built by a job of mobile-build.yml (its working directory, or a matrix
+  // entry of a job whose working directory is `examples/${{ matrix.example }}`).
+  const built = builtByWorkflow(
+    await Deno.readTextFile(join(ROOT, ".github/workflows/mobile-build.yml")),
+  );
+  for (const example of EXAMPLES) {
+    const name = example.slice("examples/".length);
+    for (const platform of ["android", "ios"] as const) {
+      if (!await isDir(join(ROOT, example, platform))) continue;
+      assert(built[platform].has(name), `${example}/${platform} is not compiled`);
+    }
+  }
+});

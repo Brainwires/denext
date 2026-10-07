@@ -769,6 +769,13 @@ interface PluginReminderFields {
   recurrence?: { frequency: string; interval: number; end?: number };
 }
 
+/** A new calendar's (or reminders list's) fields. */
+interface PluginListFields {
+  title: string;
+  color?: string;
+  sourceId?: string;
+}
+
 /** The JS side of `@ebarooni/capacitor-calendar` (the calls used here). */
 interface CalendarPlugin {
   checkAllPermissions(): Promise<{ result: Record<string, PluginPermission> }>;
@@ -776,11 +783,15 @@ interface CalendarPlugin {
   requestWriteOnlyCalendarAccess(): Promise<{ result: PluginPermission }>;
   requestFullRemindersAccess(): Promise<{ result: PluginPermission }>;
   listCalendars(): Promise<{ result: PluginCalendar[] }>;
-  getDefaultCalendar(o?: object): Promise<{ result: PluginCalendar | null }>;
-  selectCalendarsWithPrompt(o?: object): Promise<{ result: PluginCalendar[] }>;
+  getDefaultCalendar(
+    o?: { useFallbackCalendar?: boolean },
+  ): Promise<{ result: PluginCalendar | null }>;
+  selectCalendarsWithPrompt(o?: { multiple?: boolean }): Promise<{ result: PluginCalendar[] }>;
   fetchAllCalendarSources(): Promise<{ result: { type: number; id: string; title: string }[] }>;
-  createCalendar(o: object): Promise<{ id: string }>;
-  modifyCalendar(o: object): Promise<void>;
+  createCalendar(
+    o: PluginListFields & { accountName?: string; ownerAccount?: string },
+  ): Promise<{ id: string }>;
+  modifyCalendar(o: { id: string; title?: string; color?: string }): Promise<void>;
   deleteCalendar(o: { id: string }): Promise<void>;
   listEventsInRange(o: { from: number; to: number }): Promise<{ result: PluginEvent[] }>;
   createEvent(o: PluginEventFields): Promise<{ id: string | null }>;
@@ -789,8 +800,8 @@ interface CalendarPlugin {
   createEventWithPrompt(o: PluginEventFields): Promise<{ id: string | null }>;
   modifyEventWithPrompt(o: { id: string }): Promise<{ result: string | null }>;
   getRemindersLists(): Promise<{ result: PluginCalendar[] }>;
-  createRemindersList(o: object): Promise<{ id: string }>;
-  updateRemindersList(o: object): Promise<{ id: string }>;
+  createRemindersList(o: PluginListFields): Promise<{ id: string }>;
+  updateRemindersList(o: { id: string; title?: string; color?: string }): Promise<{ id: string }>;
   deleteRemindersList(o: { id: string }): Promise<void>;
   getRemindersFromLists(o: { listIds: string[] }): Promise<{ result: PluginReminder[] }>;
   getReminderById(o: { id: string }): Promise<{ result: PluginReminder | null }>;

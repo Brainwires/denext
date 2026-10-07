@@ -556,7 +556,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`
   modules (Expo SDK 58) over `denext/mobile` and web APIs (haptics,
   secure-store, file-system, sqlite, notifications, auth-session, web-browser,
-  widgets, …), aliased automatically
+  widgets, and contacts / calendar / print / brightness / intent-launcher over
+  pinned Capacitor plugins, …), aliased automatically
   in `reactNative` mode; `denext/expo/manifest` lists each one's status and
   omissions. `registerRootComponent` mounts through `AppRegistry`, so the app's
   own entry is the web entry. — `src/expo/manifest.ts`.

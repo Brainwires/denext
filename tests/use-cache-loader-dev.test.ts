@@ -98,10 +98,15 @@ Deno.test("dev copies: many edits keep at most two copies per module", async () 
       const { mod } = await generation(dir, dev)("app/page.ts");
       assertEquals((mod.text as () => string)(), `E${i}-OTHER`);
     }
-    // Pruning is fire-and-forget: let the removals land.
-    await new Promise((r) => setTimeout(r, 50));
-    const files = [...Deno.readDirSync(join(dir, ".denext/server-cache/dev"))].map((e) => e.name);
     assertEquals(dev.size, 4, "two modules × two copies");
+    // Pruning is fire-and-forget: poll until the removals land (bounded, so a leak still fails).
+    const onDisk = () =>
+      [...Deno.readDirSync(join(dir, ".denext/server-cache/dev"))].map((e) => e.name);
+    let files = onDisk();
+    for (let i = 0; i < 200 && files.length > 4; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      files = onDisk();
+    }
     assert(files.length <= 4, `${files.length} copies on disk: ${files}`);
   } finally {
     await Deno.remove(dir, { recursive: true });
