@@ -353,6 +353,19 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
+### The secure store on Linux
+
+- **What:** `Deno.desktop.secureStore` (runtime 2.9.7-denext.12): `get` / `set` / `delete` of a
+  small secret per (service, account) in the Secret Service through libsecret (loaded at run time),
+  with the state around it read over D-Bus first: no provider ("install gnome-keyring", "enable
+  KWallet's Secret Service"), a locked keyring no one here can unlock (refused at once) or an
+  unlock prompt nobody answers (refused after the timeout) reject `SecureStoreUnavailable` with
+  the reason. Never a plaintext fallback, and a locked item is never `null`.
+- **Why:** denext's `secure-store` ran `secret-tool`, which a stock Ubuntu desktop doesn't ship, and
+  told a locked keyring from a missing item only by parsing its output.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
 ### The rich clipboard
 
 - **What:** `Deno.desktop.clipboard` reads and writes text, HTML and PNG images, lists

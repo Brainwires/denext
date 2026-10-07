@@ -276,9 +276,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use.
 - **`secureStore` per OS:** on macOS other programs of the same user can read its items (they are
-  written by `/usr/bin/security`, which the item trusts); on Linux it needs `secret-tool`
-  (`libsecret-tools` / `libsecret`), a Secret Service provider and an unlocked keyring, else every
-  call rejects `backend_unavailable` with the reason.
+  written by `/usr/bin/security`, which the item trusts); on Linux it needs a Secret Service
+  provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
+  unlocked — runtime 2.9.7-denext.12 reaches it through libsecret, older runtimes through
+  `secret-tool` (`libsecret-tools` / `libsecret`) — else every call rejects `backend_unavailable`
+  with the reason (never a plaintext fallback).
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF

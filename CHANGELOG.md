@@ -57,6 +57,13 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Added
 
+- **Linux `secureStore` through the runtime's own libsecret store** (runtime 2.9.7-denext.12,
+  `Deno.desktop.secureStore`): no `secret-tool` to install. A missing provider says what to do
+  ("install gnome-keyring", or "enable KWallet's Secret Service" where KWallet runs without
+  serving it); a locked keyring no one can unlock is refused at once, and an unlock prompt nobody
+  answers after the timeout. Items are the ones `secret-tool` writes, so stored values stay
+  readable. Older runtimes keep the `secret-tool` path.
+
 - **Platform-specific files: `BigButton.ios.tsx`, `.android`, `.mobile`, `.macos` / `.windows` /
   `.linux`, `.desktop` and `.web`.** React Native's platform extensions, for every denext app (App
   Router native and next-compat, SPA mode, React Native mode). Each target probes its own files

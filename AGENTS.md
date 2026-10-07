@@ -408,8 +408,9 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing `secret-tool`, Secret
-Service or unlocked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing Secret Service provider
+or a locked keyring rejects `backend_unavailable` with the reason — runtime 2.9.7-denext.12 uses
+libsecret itself, older runtimes `secret-tool`) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`

@@ -217,3 +217,124 @@ Deno.test("secureStore (Linux): an unlock prompt nobody answers is backend_unava
   await unavailable(call(cap, "get", { key: "k" }), "did not answer");
   assert(signals.every((s) => s.aborted), "the hung secret-tool was aborted (killed)");
 });
+
+// --- runtime 2.9.7-denext.12: the runtime's own store (`Deno.desktop.secureStore`) -------------
+
+type StoreMode = "ok" | "unavailable" | "invalid";
+
+/** A fake `Deno.desktop.secureStore` over an in-memory map (what libsecret would hold). */
+function fakeRuntimeStore(mode: () => StoreMode, supported = true) {
+  const items = new Map<string, string>();
+  const calls: Array<{ op: string; service: string; account: string; options?: unknown }> = [];
+  const fail = () => {
+    if (mode() === "unavailable") {
+      const err = new Error(
+        "the gnome-keyring keyring is locked and no one here can answer its unlock prompt",
+      );
+      err.name = "SecureStoreUnavailable";
+      throw err;
+    }
+    if (mode() === "invalid") throw new TypeError("account must be a non-empty string");
+  };
+  const store = {
+    supported,
+    get(service: string, account: string, options?: unknown) {
+      calls.push({ op: "get", service, account, options });
+      fail();
+      return Promise.resolve(items.get(account) ?? null);
+    },
+    set(service: string, account: string, value: string, options?: unknown) {
+      calls.push({ op: "set", service, account, options });
+      fail();
+      items.set(account, value);
+      return Promise.resolve();
+    },
+    delete(service: string, account: string, options?: unknown) {
+      calls.push({ op: "delete", service, account, options });
+      fail();
+      items.delete(account);
+      return Promise.resolve();
+    },
+  };
+  return { api: { secureStore: store }, calls, items };
+}
+
+Deno.test("secureStore (Linux, runtime store): used when supported; secret-tool never runs", async () => {
+  const runtime = fakeRuntimeStore(() => "ok");
+  const tool = fakeSecretTool(() => "ok");
+  const cap = secureStoreCapability({
+    service: "com.example.app",
+    os: "linux",
+    run: tool.run,
+    api: runtime.api,
+    answerTimeoutMs: 7000,
+  });
+  assertEquals(await call(cap, "get", { key: "absent" }), null);
+  assertEquals(await call(cap, "set", { key: "tok", value: "héllo\n" }), { ok: true });
+  assertEquals(await call(cap, "get", { key: "tok" }), "héllo\n");
+  // Stored as secret-tool did (base64 of UTF-8), so items of either path read the same.
+  assertEquals(
+    runtime.items.get("tok"),
+    btoa(String.fromCharCode(...new TextEncoder().encode("héllo\n"))),
+  );
+  assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true });
+  assertEquals(await call(cap, "get", { key: "tok" }), null);
+  assertEquals(tool.calls, [], "no secret-tool");
+  // The app's service, the page's key, the label, and the answer timeout.
+  assertEquals(runtime.calls[1], {
+    op: "set",
+    service: "com.example.app",
+    account: "tok",
+    options: { label: "com.example.app", timeout: 7000 },
+  });
+  assertEquals(runtime.calls[0].options, { timeout: 7000 });
+  // The method permissions cover the runtime store (unscoped --allow-sys) and the older path.
+  assertEquals(cap.methods.get.permissions, { run: ["secret-tool"], sys: ["*"] });
+});
+
+Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailable with the reason, never null", async () => {
+  const runtime = fakeRuntimeStore(() => "unavailable");
+  const cap = secureStoreCapability({ service: "com.example.app", os: "linux", api: runtime.api });
+  for (
+    const [method, args] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], [
+      "delete",
+      { key: "k" },
+    ]] as const
+  ) {
+    await unavailable(call(cap, method, args), "the secure store is unavailable", "locked");
+  }
+  // Bad arguments the runtime refuses are validation errors.
+  const invalid = fakeRuntimeStore(() => "invalid");
+  const bad = secureStoreCapability({ service: "com.example.app", os: "linux", api: invalid.api });
+  const err = await assertRejects(() => call(bad, "get", { key: "k" }), DesktopCapError);
+  assertEquals(err.code, "validation");
+});
+
+Deno.test("secureStore (Linux, runtime store): a runtime without one keeps secret-tool; never on macOS / Windows", async () => {
+  const none = fakeRuntimeStore(() => "ok", false);
+  const tool = fakeSecretTool(() => "ok");
+  const cap = secureStoreCapability({
+    service: "com.example.app",
+    os: "linux",
+    run: tool.run,
+    api: none.api,
+  });
+  assertEquals(await call(cap, "set", { key: "tok", value: "v" }), { ok: true });
+  assertEquals(tool.calls, ["store"]);
+  assertEquals(none.calls, []);
+  // macOS: the Keychain CLI, even with a runtime store present.
+  const runtime = fakeRuntimeStore(() => "ok");
+  const ran: string[] = [];
+  const mac = secureStoreCapability({
+    service: "com.example.app",
+    os: "darwin",
+    api: runtime.api,
+    run: (cmd) => {
+      ran.push(cmd);
+      return Promise.resolve({ code: 1, stdout: "" });
+    },
+  });
+  assertEquals(await call(mac, "get", { key: "tok" }), null);
+  assertEquals(ran, ["security"]);
+  assertEquals(runtime.calls, []);
+});

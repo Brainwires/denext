@@ -92,17 +92,19 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     value: true,
     api: ["secureStore"],
     os: {
-      // The runtime drives the OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS
-      // `security`, Linux `secret-tool`, Windows WinRT PasswordVault via `powershell.exe`.
+      // The OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS `security`, Windows
+      // WinRT PasswordVault via `powershell.exe`. Linux: the runtime's own store (2.9.7-denext.12:
+      // the Secret Service through libsecret), which needs an unscoped --allow-sys; `secret-tool`
+      // on older runtimes.
       darwin: { run: ["security"] },
-      linux: { run: ["secret-tool"] },
+      linux: { run: ["secret-tool"], sys: ["*"] },
       windows: { run: ["powershell.exe"] },
     },
     trust: "full",
     notes:
       "OS keychain via CLI (Keychain `security` / libsecret `secret-tool` / Windows PasswordVault)",
     manual: [
-      "secure-store: Linux needs secret-tool (libsecret-tools on Debian/Ubuntu, libsecret on Fedora; the .deb / .rpm depend on it) and a running, unlocked Secret Service (GNOME Keyring, KWallet); without them every call fails `backend_unavailable` with the reason, never a plain file.",
+      "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (runtime 2.9.7-denext.12; secret-tool from libsecret-tools / libsecret before it, which the .deb / .rpm then depend on). Without one every call fails `backend_unavailable` with the reason, never a plain file.",
       "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
     ],
   },

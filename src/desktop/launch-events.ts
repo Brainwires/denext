@@ -252,6 +252,22 @@ export interface DesktopAppApi {
    * have changed (a tray host came or went).
    */
   platformFeatures?(): Promise<unknown>;
+  /**
+   * The OS's secret store in the runtime (2.9.7-denext.12 and later; the Secret Service on Linux,
+   * `supported` false elsewhere). A store that can't answer rejects with an error named
+   * `"SecureStoreUnavailable"`.
+   */
+  readonly secureStore?: {
+    readonly supported: boolean;
+    get(service: string, account: string, options?: { timeout?: number }): Promise<string | null>;
+    set(
+      service: string,
+      account: string,
+      value: string,
+      options?: { label?: string; timeout?: number },
+    ): Promise<void>;
+    delete(service: string, account: string, options?: { timeout?: number }): Promise<void>;
+  };
   /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
   quit?(): boolean;
   /** The OS's own file dialogs. */

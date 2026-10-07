@@ -3,11 +3,19 @@
  * Deno Desktop (see `secureGet`/`secureSet`/`secureDelete` in `src/desktop/native.ts`). Keyed by an
  * app-specific service name + the caller's key.
  *
- * Backends are the OS credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
+ * Linux, under denext's pinned runtime 2.9.7-denext.12 and later: the runtime's own secure store
+ * (`Deno.desktop.secureStore`: the Secret Service through libsecret, inside the runtime). It refuses
+ * with the reason (no provider: "install gnome-keyring" / "enable KWallet's Secret Service"; a
+ * locked keyring no one here can unlock, at once; an unlock nobody answers, after the timeout), which
+ * this cap passes on as `backend_unavailable`. Items are the ones `secret-tool` writes (attributes
+ * `service` and `account`), so values stored by the older path stay readable.
+ *
+ * Elsewhere the backends are the OS credential CLIs (subprocess, argv — no shell), chosen for safety
+ * over raw FFI:
  * - macOS: `security add/find/delete-generic-password` (the login Keychain). A write runs
  *   `security -i` and sends the command line on STDIN, so the secret is never argv.
- * - Linux: `secret-tool store/lookup/clear` (libsecret / the Secret Service). The secret is written
- *   on STDIN, never argv.
+ * - Linux on an older runtime: `secret-tool store/lookup/clear` (libsecret / the Secret Service).
+ *   The secret is written on STDIN, never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
  *   travels on STDIN as JSON, never argv (PowerShell `-Command` joins trailing argv into the command
  *   text). Verified by the Windows CI (a real PasswordVault set/get/delete round-trip).
@@ -38,6 +46,7 @@
 
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
+import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 
 /** The running OS spelling the command builder branches on. */
 type Os = "darwin" | "windows" | "linux";
@@ -239,6 +248,20 @@ function noAnswerError(ms: number): DesktopCapError {
   );
 }
 
+/**
+ * A stored value (base64 of UTF-8) as the page's string; `null` for none, or for a value this cap
+ * didn't write (not our base64).
+ */
+function decodeStored(stored: string | null): string | null {
+  const b64 = stored?.trim() ?? "";
+  if (!b64) return null;
+  try {
+    return new TextDecoder().decode(base64ToBytes(b64));
+  } catch {
+    return null;
+  }
+}
+
 /** Options for {@linkcode secureStoreCapability}. */
 export interface SecureStoreDeps {
   /** The app-specific service name (the keychain "service" / secret-tool `service` attribute). */
@@ -248,11 +271,40 @@ export interface SecureStoreDeps {
   /** The CLI runner (defaults to a real subprocess); tests inject a fake store. */
   readonly run?: SecureRunner;
   /**
-   * Linux: how long `secret-tool` may wait for the Secret Service (default 20 s, under the
-   * bridge's 30 s deadline) before the call fails `backend_unavailable` — a locked keyring whose
-   * unlock prompt nobody can answer otherwise just hangs.
+   * Linux: how long the Secret Service may take to answer (default 20 s, under the bridge's 30 s
+   * deadline) before the call fails `backend_unavailable` — a locked keyring whose unlock prompt
+   * nobody answers otherwise just hangs. The runtime's store gets it as its timeout.
    */
   readonly answerTimeoutMs?: number;
+  /**
+   * The runtime's app API (default `Deno.desktop`): its `secureStore`, when `supported`, is the
+   * Linux backend; tests pass a fake, or `null` for the `secret-tool` path.
+   */
+  readonly api?: DesktopAppApi | null;
+}
+
+/** The runtime's secure store (`Deno.desktop.secureStore`). */
+type RuntimeSecureStore = NonNullable<DesktopAppApi["secureStore"]>;
+
+/**
+ * A rejection of the runtime's store as a capability error: `"SecureStoreUnavailable"` (no
+ * provider, a locked keyring, no answer) is `backend_unavailable` with the runtime's reason; bad
+ * arguments are `validation`.
+ *
+ * @param err What the runtime threw.
+ * @returns The error.
+ */
+function runtimeSecureStoreError(err: unknown): DesktopCapError {
+  const e = err as { name?: unknown; message?: unknown } | null;
+  const message = typeof e?.message === "string" ? e.message.slice(0, 400) : "";
+  if (err instanceof TypeError) {
+    return new DesktopCapError("validation", message || "invalid secure-store arguments");
+  }
+  return new DesktopCapError(
+    "backend_unavailable",
+    `the secure store is unavailable: ${message || "the Secret Service failed"}`,
+    { status: 503 },
+  );
 }
 
 /** The default {@linkcode SecureStoreDeps.answerTimeoutMs}. */
@@ -298,12 +350,24 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
   const run = deps.run ?? runSecureCli;
   const service = deps.service;
 
-  // One permission descriptor + one read-key preamble, shared by all methods.
+  // One permission descriptor + one read-key preamble, shared by all methods. Linux: the runtime's
+  // store needs an unscoped --allow-sys (the user's keyring is shared by every app); `secret-tool`
+  // is the older runtimes' path.
   const permissions: DesktopPermissions = os === "darwin"
     ? { run: ["security"] }
     : os === "linux"
-    ? { run: ["secret-tool"] }
+    ? { run: ["secret-tool"], sys: ["*"] }
     : { run: ["powershell.exe"] };
+  /** Linux: the runtime's own secure store, when it has one (2.9.7-denext.12 and later). */
+  const runtimeStore = (): RuntimeSecureStore | undefined => {
+    if (os !== "linux" || deps.api === null) return undefined;
+    const store = (deps.api ?? desktopAppApi())?.secureStore;
+    try {
+      return store?.supported === true ? store : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
   const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
   /** Linux: `run`, killed and `backend_unavailable` when the Secret Service does not answer. */
@@ -359,6 +423,16 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
+          const store = runtimeStore();
+          if (store) {
+            let b64: string | null;
+            try {
+              b64 = await store.get(service, key, { timeout: answerMs });
+            } catch (err) {
+              throw runtimeSecureStoreError(err);
+            }
+            return decodeStored(b64);
+          }
           const result = await exec("get", key, undefined, ctx.signal);
           const { code, stdout } = result;
           if (code !== 0) {
@@ -366,13 +440,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
             if (os === "linux") await linuxMiss(result, key, ctx.signal);
             return null;
           }
-          const b64 = stdout.trim();
-          if (!b64) return null;
-          try {
-            return new TextDecoder().decode(base64ToBytes(b64));
-          } catch {
-            return null; // a value not written by this cap (not our base64) — treat as absent
-          }
+          return decodeStored(stdout);
         },
       },
       set: {
@@ -381,6 +449,15 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
           const b64 = bytesToBase64(new TextEncoder().encode(value));
+          const store = runtimeStore();
+          if (store) {
+            try {
+              await store.set(service, key, b64, { label: service, timeout: answerMs });
+            } catch (err) {
+              throw runtimeSecureStoreError(err);
+            }
+            return { ok: true };
+          }
           const result = await exec("set", key, b64, ctx.signal);
           const { code } = result;
           if (os === "linux" && code !== 0 && result.stderr?.trim()) {
@@ -401,6 +478,15 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         handler: async (args, ctx) => {
           // a non-zero (not found) is fine — delete is idempotent — unless the backend failed
           const key = keyArg(args);
+          const store = runtimeStore();
+          if (store) {
+            try {
+              await store.delete(service, key, { timeout: answerMs });
+            } catch (err) {
+              throw runtimeSecureStoreError(err);
+            }
+            return { ok: true };
+          }
           const result = await exec("delete", key, undefined, ctx.signal);
           if (os === "linux" && result.code !== 0) await linuxMiss(result, key, ctx.signal);
           return { ok: true };

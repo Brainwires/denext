@@ -1714,19 +1714,22 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
       </Callout>
       <Callout kind="note">
-        <strong>The secure store on Linux.</strong> <code>secure-store</code> runs{" "}
-        <code>secret-tool</code>, which a stock desktop may not ship: it is in{" "}
-        <code>libsecret-tools</code> (Debian / Ubuntu) or <code>libsecret</code> (Fedora), and the
-        {" "}
-        <code>.deb</code> / <code>.rpm</code>{" "}
-        installers depend on it when the capability is on (an AppImage or <code>.tar.gz</code>{" "}
-        user installs it). It also needs a Secret Service provider (GNOME Keyring or KWallet) with
-        the keyring unlocked. When one of those is missing, every call rejects with{" "}
+        <strong>The secure store on Linux.</strong> Under runtime 2.9.7-denext.12{" "}
+        <code>secure-store</code>{" "}
+        is the runtime&apos;s own: the Secret Service through libsecret, which every desktop ships.
+        It needs a Secret Service provider: GNOME Keyring, or KWallet with its Secret Service
+        enabled. When there is none, or its keyring is locked, every call rejects with{" "}
         <code>backend_unavailable</code>{" "}
-        and a reason naming the fix: the package to install, &quot;no Secret Service provider
-        (gnome-keyring or KWallet)&quot;, no D-Bus session bus, or a locked keyring (including an
-        unlock prompt nobody answers within 20 seconds). It never reads as a missing value:{" "}
-        <code>get</code> returns <code>null</code> only for a key that is really not there.
+        and a reason naming the fix: &quot;install gnome-keyring&quot;, &quot;enable KWallet&apos;s
+        Secret Service&quot; (KWallet runs but doesn&apos;t serve it), no D-Bus session bus, or a
+        locked keyring — refused at once where no one can answer the unlock prompt, else after the
+        prompt goes unanswered for 20 seconds. Older runtimes run <code>secret-tool</code>{" "}
+        instead (<code>libsecret-tools</code> on Debian / Ubuntu, <code>libsecret</code>{" "}
+        on Fedora; the <code>.deb</code> / <code>.rpm</code>{" "}
+        installers depend on it), with the same errors. It never reads as a missing value:{" "}
+        <code>get</code> returns <code>null</code>{" "}
+        only for a key that is really not there, and there is never a plaintext fallback. Items are
+        the ones <code>secret-tool</code> writes, so values stored by either path stay readable.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
