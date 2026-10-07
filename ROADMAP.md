@@ -81,8 +81,7 @@
 
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
 - **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
-- **Richer events:** API-token issue / revoke events, a typed `signInFailed.reason` union, and
-  `ip` on the other events (only `signInFailed` carries it).
+- **`ip` on every auth event** (only `signInFailed` carries it today).
 
 ## Server, ops and API surface
 

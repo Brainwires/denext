@@ -1,5 +1,6 @@
 // A provider's `?error=` on the OAuth callback. Anyone can craft that URL, so only a
-// protocol-shaped code reaches the sign-in page's `?error=` and `signInFailed.reason`.
+// protocol-shaped code reaches the sign-in page's `?error=` and `signInFailed.providerError`
+// (with `reason: "provider_error"`); free text is `oauth_failed`.
 
 import { assertEquals } from "@std/assert";
 import { github } from "../src/server/auth/providers.ts";
@@ -26,12 +27,15 @@ Deno.test("OAuth callback: a protocol-shaped ?error= passes through; free text r
     canonicalOrigin: ORIGIN,
     providers: [github({ clientId: "id", clientSecret: "secret" })],
     pages: { signIn: "/login" },
-    events: { signInFailed: ({ reason }) => void reasons.push(reason) },
+    events: {
+      signInFailed: ({ reason, providerError }) =>
+        void reasons.push(providerError ? `${reason}:${providerError}` : reason),
+    },
     logger: { warn: (_message, data) => void warnings.push(data) },
   };
   assertEquals(await callbackLands(config, "error=access_denied"), "/login?error=access_denied");
   const spoof = encodeURIComponent("Your account is locked. Call +1 555 0100");
   assertEquals(await callbackLands(config, `error=${spoof}`), "/login?error=oauth_failed");
-  assertEquals(reasons, ["access_denied", "oauth_failed"]);
+  assertEquals(reasons, ["provider_error:access_denied", "oauth_failed"]);
   assertEquals(warnings.length, 1, "the raw text is logged, not reflected");
 });

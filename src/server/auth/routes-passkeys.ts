@@ -61,7 +61,7 @@ import { cookieSessionOptions } from "./options.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { readAuthSession } from "./session.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
-import type { AuthSession } from "./types.ts";
+import type { AuthSession, SignInFailedReason } from "./types.ts";
 import {
   base64UrlField,
   parseClientData,
@@ -329,7 +329,7 @@ async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Respons
 /** Report a refused passkey sign-in; the answer is always the same generic `401`. */
 async function refuse(
   ctx: AuthRouteContext,
-  reason: string,
+  reason: Extract<SignInFailedReason, "invalid_passkey" | "invalid_mfa_code">,
   code?: string,
 ): Promise<Response> {
   if (code) ctx.options.logger.warn("denextAuth: refused a passkey sign-in", { code });

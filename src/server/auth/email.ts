@@ -44,7 +44,12 @@ import {
   subjectBucketKeys,
   verificationLimiter,
 } from "./rate-limit.ts";
-import type { AuthConfig, SendVerificationRequest, VerificationRequestParams } from "./types.ts";
+import type {
+  ApiTokenRevokedReason,
+  AuthConfig,
+  SendVerificationRequest,
+  VerificationRequestParams,
+} from "./types.ts";
 import {
   issueVerificationToken,
   normalizeEmailIdentifier,
@@ -529,10 +534,21 @@ async function retireSecondFactor(
   await disableTotp(config, userId);
 }
 
-/** Revoke every live bearer API token of `userId` (a no-op without the api-token group). */
-async function revokeApiTokens(adapter: ProvenMailboxAdapter, userId: string): Promise<void> {
+/**
+ * Revoke every live bearer API token of `userId` (a no-op without the api-token group), firing
+ * `apiTokenRevoked` with `reason` for each.
+ */
+async function revokeApiTokens(
+  options: ResolvedAuthOptions,
+  adapter: ProvenMailboxAdapter,
+  userId: string,
+  reason: ApiTokenRevokedReason,
+): Promise<void> {
   if (!adapter.listApiTokens || !adapter.revokeApiToken) return;
-  for (const token of await adapter.listApiTokens(userId)) await adapter.revokeApiToken(token.id);
+  for (const token of await adapter.listApiTokens(userId)) {
+    await adapter.revokeApiToken(token.id);
+    await emitAuthEvent(options, "apiTokenRevoked", { tokenId: token.id, userId, reason });
+  }
 }
 
 /**
@@ -554,7 +570,7 @@ async function evictUnprovenAccess(
 ): Promise<void> {
   await retirePassword(options, adapter, userId);
   await retireSecondFactor(config, adapter, userId);
-  await revokeApiTokens(adapter, userId);
+  await revokeApiTokens(options, adapter, userId, "email_verified");
   await revokeUserSessions(config, options, userId);
 }
 
@@ -619,7 +635,7 @@ export async function resetPassword(
   await adapter.setCredential!(user.id, await options.hasher.hash(input.password));
   if (wasVerified) {
     await revokeUserSessions(config, options, user.id);
-    await revokeApiTokens(adapter, user.id);
+    await revokeApiTokens(options, adapter, user.id, "password_reset");
   }
   await emitAuthEvent(options, "passwordReset", { user: owner });
   return { ok: true, user: owner };

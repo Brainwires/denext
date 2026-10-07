@@ -65,7 +65,12 @@ import {
   wantsJson,
 } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
-import type { AuthConfig, EmailProvider, VerificationRequestParams } from "./types.ts";
+import type {
+  AuthConfig,
+  EmailProvider,
+  SignInFailedReason,
+  VerificationRequestParams,
+} from "./types.ts";
 import {
   issueVerificationCode,
   issueVerificationToken,
@@ -193,7 +198,7 @@ function verificationFailed(ctx: AuthRouteContext, asJson: boolean): Response {
 function emitFailure(
   ctx: AuthRouteContext,
   provider: EmailProvider,
-  reason: string,
+  reason: SignInFailedReason,
 ): Promise<void> {
   const trust = { trustForwardedHeaders: authTrustsProxy(ctx.config) };
   const ip = clientIpBucket(ctx.request, trust);

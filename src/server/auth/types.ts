@@ -297,6 +297,44 @@ export interface AuthLogger {
 }
 
 /**
+ * Why a sign-in attempt was refused, as `signInFailed` reports it — a closed set, so an app can
+ * switch over it exhaustively:
+ *
+ * - `"invalid_credentials"` — a wrong password, or a wrong, spent or expired email link / code;
+ * - `"invalid_mfa_code"` — a wrong TOTP or backup code (or passkey) at the second-factor step;
+ * - `"invalid_passkey"` — a passkey assertion that failed verification (the WebAuthn reason
+ *   goes to the logger);
+ * - `"rate_limited"` — a budget was spent;
+ * - `"access_denied"` — `callbacks.signIn` vetoed it;
+ * - `"account_not_linked"` — the account-linking rules refused to attach it to an existing user;
+ * - `"adapter_error"` — the adapter threw while persisting it;
+ * - `"invalid_state"` — an OAuth callback without its matching transaction (CSRF, replay);
+ * - `"invalid_request"` — a malformed OAuth callback (a form_post body, a downgraded GET);
+ * - `"config"` — the provider could not be resolved (discovery, a malformed endpoint);
+ * - `"oauth_failed"` — the code exchange, the `id_token` or the profile failed;
+ * - `"provider_error"` — the provider itself answered `?error=` (its code in `providerError`);
+ * - `"invalid_nonce"` / `"invalid_token"` — a native `id_token` sign-in's nonce or token.
+ */
+export type SignInFailedReason =
+  | "invalid_credentials"
+  | "invalid_mfa_code"
+  | "invalid_passkey"
+  | "rate_limited"
+  | "access_denied"
+  | "account_not_linked"
+  | "adapter_error"
+  | "invalid_state"
+  | "invalid_request"
+  | "config"
+  | "oauth_failed"
+  | "provider_error"
+  | "invalid_nonce"
+  | "invalid_token";
+
+/** Why an API token was revoked, as `apiTokenRevoked` reports it. */
+export type ApiTokenRevokedReason = "revoked" | "password_reset" | "email_verified";
+
+/**
  * Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a
  * throw is caught and routed to {@link AuthLogger.error} — an event handler can never
  * fail a sign-in.
@@ -323,14 +361,14 @@ export interface AuthEvents {
      * provider of the first.
      */
     provider?: string;
+    /** Why — see {@link SignInFailedReason}. */
+    reason: SignInFailedReason;
     /**
-     * A stable machine-readable reason: `"invalid_credentials"` (a wrong password, or a
-     * wrong, spent or expired email link / code), `"invalid_mfa_code"` (a wrong TOTP or
-     * backup code at the second-factor step), `"rate_limited"`, `"access_denied"`,
-     * `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code
-     * (`"invalid_state"`, `"config"`, `"oauth_failed"`, or the provider's own `?error=`).
+     * For `reason: "provider_error"`: the provider's own `?error=` code (`access_denied`,
+     * `login_required`, `user_cancelled_authorize`, …) — protocol-shaped codes only; free text
+     * is reported as `"oauth_failed"` instead.
      */
-    reason: string;
+    providerError?: string;
     /**
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
      * credentials POST, the sign-in start, the email link / code redeem and the MFA
@@ -338,6 +376,35 @@ export interface AuthEvents {
      * limiter actually counts.
      */
     ip?: string;
+  }) => Promise<void> | void;
+  /**
+   * A bearer API token was minted (`issueApiToken`, `POST {basePath}/tokens`). Never carries
+   * the token or its hash.
+   */
+  apiTokenIssued?: (payload: {
+    /** The owner. */
+    userId: string;
+    /** The token's id (what `DELETE {basePath}/tokens/:id` takes). */
+    tokenId: string;
+    /** Its label. */
+    name?: string;
+    /** Its scopes. */
+    scopes?: string[];
+    /** When it expires, epoch seconds; absent for a token that never does. */
+    expiresAt?: number;
+  }) => Promise<void> | void;
+  /**
+   * A bearer API token was revoked: by `revokeApiToken` / `DELETE {basePath}/tokens/:id`
+   * (`"revoked"`), by a password reset (`"password_reset"`), or by the first proof of an
+   * unverified account's mailbox (`"email_verified"`, the pre-account-hijacking eviction).
+   */
+  apiTokenRevoked?: (payload: {
+    /** The token's id. */
+    tokenId: string;
+    /** The owner, when known (always, except a bare `revokeApiToken(config, id)`). */
+    userId?: string;
+    /** Why. */
+    reason: ApiTokenRevokedReason;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
   sessionRevoked?: (payload: {

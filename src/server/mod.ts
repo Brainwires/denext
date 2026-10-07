@@ -579,6 +579,7 @@ export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
   AccountDeletedPayload,
+  ApiTokenRevokedReason,
   AuthCallbacks,
   AuthConfig,
   AuthCookieConfig,
@@ -600,6 +601,7 @@ export type {
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
+  SignInFailedReason,
   VerificationRequestParams,
 } from "./auth/types.ts";
 

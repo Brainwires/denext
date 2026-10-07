@@ -1093,24 +1093,35 @@ closed, never open.
 `events` are side-effect hooks on the lifecycle. Each handler may be async and is
 awaited, so an audit row is written before the response is built.
 
-| Event                   | Payload                                  | Fires when                                                            |
-| ----------------------- | ---------------------------------------- | --------------------------------------------------------------------- |
-| `signIn`                | `{ user, provider, isNewUser? }`         | A session was issued                                                  |
-| `signOut`               | `{ session }` (`null` if there was none) | `/signout` cleared the session                                        |
-| `signInFailed`          | `{ provider?, reason, ip? }`             | An attempt was refused                                                |
-| `sessionRevoked`        | `{ sessionId?, userId? }`                | `revokeSession` / `revokeAllSessions` ran                             |
-| `createUser`            | `{ user }`                               | An adapter user record was created                                    |
-| `linkAccount`           | `{ user, account }`                      | A provider account was linked to an existing user                     |
-| `verificationRequested` | `{ identifier, purpose, expiresAt }`     | A verification, reset, magic-link or code mail went to the mailer     |
-| `emailVerified`         | `{ user }`                               | An address was proven — a verification link, or a first email sign-in |
-| `passwordReset`         | `{ user }`                               | A reset token set a new password (the sessions are already revoked)   |
+| Event                   | Payload                                           | Fires when                                                            |
+| ----------------------- | ------------------------------------------------- | --------------------------------------------------------------------- |
+| `signIn`                | `{ user, provider, isNewUser? }`                  | A session was issued                                                  |
+| `signOut`               | `{ session }` (`null` if there was none)          | `/signout` cleared the session                                        |
+| `signInFailed`          | `{ provider?, reason, providerError?, ip? }`      | An attempt was refused                                                |
+| `sessionRevoked`        | `{ sessionId?, userId? }`                         | `revokeSession` / `revokeAllSessions` ran                             |
+| `createUser`            | `{ user }`                                        | An adapter user record was created                                    |
+| `linkAccount`           | `{ user, account }`                               | A provider account was linked to an existing user                     |
+| `verificationRequested` | `{ identifier, purpose, expiresAt }`              | A verification, reset, magic-link or code mail went to the mailer     |
+| `emailVerified`         | `{ user }`                                        | An address was proven — a verification link, or a first email sign-in |
+| `passwordReset`         | `{ user }`                                        | A reset token set a new password (the sessions are already revoked)   |
+| `apiTokenIssued`        | `{ userId, tokenId, name?, scopes?, expiresAt? }` | A bearer API token was minted (`issueApiToken`, `POST /tokens`)       |
+| `apiTokenRevoked`       | `{ tokenId, userId?, reason }`                    | A bearer API token was revoked — `reason` says how (below)            |
 
-`reason` is a stable machine-readable string an app can route on:
-`"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link or
-code), `"invalid_mfa_code"` (a wrong TOTP or backup code at the step-up),
-`"rate_limited"`, `"access_denied"`, `"account_not_linked"`, `"adapter_error"` (the
-persistence step threw — see below), or an OAuth failure code such as `"oauth_failed"`,
-`"config"` or `"invalid_state"`.
+`signInFailed.reason` is the closed `SignInFailedReason` union, so a `switch` over it can be
+exhaustive: `"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link
+or code), `"invalid_mfa_code"` (a wrong TOTP or backup code, or passkey, at the step-up),
+`"invalid_passkey"`, `"rate_limited"`, `"access_denied"`, `"account_not_linked"`,
+`"adapter_error"` (the persistence step threw — see below), the OAuth failures
+`"invalid_state"`, `"invalid_request"`, `"config"` and `"oauth_failed"`, the native `id_token`
+failures `"invalid_nonce"` and `"invalid_token"`, and `"provider_error"` — the provider itself
+answered `?error=`, its protocol-shaped code (`access_denied`, `login_required`, …) in
+`providerError` and on the sign-in page's `?error=`.
+
+`apiTokenIssued` and `apiTokenRevoked` never carry the token or its hash. `apiTokenRevoked`'s
+`reason` is `"revoked"` (`revokeApiToken`, `DELETE /tokens/:id`), `"password_reset"` (a reset
+revokes every token) or `"email_verified"` (the first proof of an unverified account's mailbox
+retires tokens set up without it — see pre-account hijacking). `userId` is absent only for a
+bare `revokeApiToken(config, id)`; pass `{ userId }` as its third argument to carry it.
 
 `verificationRequested` never carries the token or the link, and fires only for a delivery
 that succeeded. A sign-in that stops at a second factor fires `signIn` only when the

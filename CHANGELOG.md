@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Breaking
 
+- **`signInFailed.reason` is the closed `SignInFailedReason` union** (exported from
+  `denext/server`), so a `switch` over it can be exhaustive. A provider's own `?error=` is no
+  longer passed through as the reason: it is `reason: "provider_error"` with the code in the new
+  `providerError` field (the sign-in page's `?error=` is unchanged).
 - **Linux `secureStore` is the pinned runtime's alone.** The `secret-tool` fallback is gone: under
   the stock runtime (or any runtime without `Deno.desktop.secureStore`) every Linux call rejects
   `backend_unavailable`. The `secure-store` capability no longer bakes `--allow-run=secret-tool`,
@@ -18,6 +22,11 @@ and this project adheres to
 
 ### Added
 
+- **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
+  retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
+  `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)
+  and the pre-account-hijacking eviction (`"email_verified"`) — with the token id and owner,
+  never the token or its hash. `revokeApiToken(config, id, { userId })` carries the owner.
 - **`denext generate migration | seed | ci`**, scaffolded like `generate docker` (project-root
   files, the flavor auto-detected with an optional override, never overwriting a file).
   `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,

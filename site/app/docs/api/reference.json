@@ -4905,6 +4905,18 @@
           "denextOnly": true
         },
         {
+          "name": "ApiTokenRevokedReason",
+          "slug": "ApiTokenRevokedReason",
+          "kind": "typeAlias",
+          "signature": "type ApiTokenRevokedReason = revoked | password_reset | email_verified",
+          "doc": "Why an API token was revoked, as apiTokenRevoked reports it.",
+          "docFull": "Why an API token was revoked, as `apiTokenRevoked` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiValidationError",
           "slug": "ApiValidationError",
           "kind": "class",
@@ -10143,9 +10155,9 @@
           "name": "revokeApiToken",
           "slug": "revokeApiToken",
           "kind": "function",
-          "signature": "revokeApiToken(config: AuthConfig, id: string): Promise<void>",
-          "doc": "Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error.",
-          "docFull": "Revoke a token by id — it stops authenticating immediately and can never be revived.\nRevoking an unknown (or already revoked) id is a no-op, not an error.",
+          "signature": "revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<void>",
+          "doc": "Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error. Fires apiTokenRevoked (reason: \"revoked\").",
+          "docFull": "Revoke a token by id — it stops authenticating immediately and can never be revived.\nRevoking an unknown (or already revoked) id is a no-op, not an error. Fires\n`apiTokenRevoked` (`reason: \"revoked\"`).",
           "params": [
             {
               "name": "config",
@@ -10154,6 +10166,10 @@
             {
               "name": "id",
               "doc": "The ApiTokenRecord.id to revoke."
+            },
+            {
+              "name": "options",
+              "doc": "The owner, when the caller knows it — carried on the event."
             }
           ],
           "returns": "",
@@ -10852,6 +10868,18 @@
           "signature": "interface SignalSink",
           "doc": "The status a caught control signal asks for (0 = none caught).",
           "docFull": "The status a caught control signal asks for (0 = none caught).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SignInFailedReason",
+          "slug": "SignInFailedReason",
+          "kind": "typeAlias",
+          "signature": "type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token",
+          "doc": "Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:",
+          "docFull": "Why a sign-in attempt was refused, as `signInFailed` reports it — a closed set, so an app can\nswitch over it exhaustively:\n\n- `\"invalid_credentials\"` — a wrong password, or a wrong, spent or expired email link / code;\n- `\"invalid_mfa_code\"` — a wrong TOTP or backup code (or passkey) at the second-factor step;\n- `\"invalid_passkey\"` — a passkey assertion that failed verification (the WebAuthn reason\n  goes to the logger);\n- `\"rate_limited\"` — a budget was spent;\n- `\"access_denied\"` — `callbacks.signIn` vetoed it;\n- `\"account_not_linked\"` — the account-linking rules refused to attach it to an existing user;\n- `\"adapter_error\"` — the adapter threw while persisting it;\n- `\"invalid_state\"` — an OAuth callback without its matching transaction (CSRF, replay);\n- `\"invalid_request\"` — a malformed OAuth callback (a form_post body, a downgraded GET);\n- `\"config\"` — the provider could not be resolved (discovery, a malformed endpoint);\n- `\"oauth_failed\"` — the code exchange, the `id_token` or the profile failed;\n- `\"provider_error\"` — the provider itself answered `?error=` (its code in `providerError`);\n- `\"invalid_nonce\"` / `\"invalid_token\"` — a native `id_token` sign-in's nonce or token.",
           "params": [],
           "returns": "",
           "examples": [],

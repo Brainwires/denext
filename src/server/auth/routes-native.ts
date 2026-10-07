@@ -79,7 +79,7 @@ import {
 import { clearAuthSession, readAuthSession } from "./session.ts";
 import type { AdapterAccount } from "./adapter.ts";
 import { isOAuthProvider } from "./types.ts";
-import type { AuthSession, NativeIdTokenProviderConfig } from "./types.ts";
+import type { AuthSession, NativeIdTokenProviderConfig, SignInFailedReason } from "./types.ts";
 
 /** The most a native POST body may carry (an id_token is a couple of KiB). */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -348,7 +348,10 @@ async function handleIdToken(ctx: AuthRouteContext): Promise<Response | null> {
 async function refusedSignIn(
   ctx: AuthRouteContext,
   provider: string,
-  reason: string,
+  reason: Extract<
+    SignInFailedReason,
+    "invalid_nonce" | "invalid_token" | "account_not_linked" | "access_denied"
+  >,
   status = 401,
 ): Promise<Response> {
   await emitAuthEvent(ctx.options, "signInFailed", { provider, reason });

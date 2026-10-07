@@ -68,7 +68,12 @@ import {
   type Transaction,
 } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
-import { type AuthUser, isOAuthProvider, type OAuthProvider } from "./types.ts";
+import {
+  type AuthUser,
+  isOAuthProvider,
+  type OAuthProvider,
+  type SignInFailedReason,
+} from "./types.ts";
 
 /**
  * Refuse a sign-in: emit `signInFailed`, then redirect to the sign-in page carrying a
@@ -83,11 +88,33 @@ import { type AuthUser, isOAuthProvider, type OAuthProvider } from "./types.ts";
 async function refuse(
   ctx: AuthRouteContext,
   providerId: string | undefined,
-  reason: string,
+  reason: SignInFailedReason,
+  providerError?: string,
 ): Promise<Response> {
-  await emitAuthEvent(ctx.options, "signInFailed", { provider: providerId, reason });
+  await emitAuthEvent(ctx.options, "signInFailed", {
+    provider: providerId,
+    reason,
+    ...(providerError ? { providerError } : {}),
+  });
   const signinPage = ctx.config.pages?.signIn || "/";
-  return redirect(safeRedirectLocation(`${signinPage}?error=${encodeURIComponent(reason)}`));
+  const code = providerError ?? reason;
+  return redirect(safeRedirectLocation(`${signinPage}?error=${encodeURIComponent(code)}`));
+}
+
+/**
+ * Refuse a callback that carried the provider's own `?error=`: a protocol-shaped code is
+ * reported as `provider_error` with the code in `providerError` (and on the URL); free text as
+ * `oauth_failed`.
+ */
+function refuseProviderError(
+  ctx: AuthRouteContext,
+  providerId: string,
+  raw: string,
+): Promise<Response> {
+  const code = providerErrorCode(ctx, providerId, raw);
+  return code === "oauth_failed"
+    ? refuse(ctx, providerId, "oauth_failed")
+    : refuse(ctx, providerId, "provider_error", code);
 }
 
 /**
@@ -273,7 +300,7 @@ async function completeCallback(
 ): Promise<Response> {
   const providerError = params.get("error");
   if (providerError) {
-    return await refuse(ctx, provider.id, providerErrorCode(ctx, provider.id, providerError));
+    return await refuseProviderError(ctx, provider.id, providerError);
   }
 
   const tx = await readTx(ctx);

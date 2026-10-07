@@ -350,7 +350,7 @@ Deno.test("form_post: the provider's error arrives in the POST body", async () =
     config,
   );
   assertEquals(errorOf(res), "user_cancelled_authorize");
-  assertEquals(failures, ["user_cancelled_authorize"]);
+  assertEquals(failures, ["provider_error"]);
 });
 
 Deno.test("form_post: a GET carrying a code is refused (no downgrade to the query mode)", async () => {

@@ -198,7 +198,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   **sliding sessions** (`session.updateAge`, `updateAuthSession()`, client
   `useSession().update()` / `refetchInterval`), **events + logger**
   (`signIn`, `signOut`, `signInFailed`, `sessionRevoked`, `createUser`,
-  `linkAccount`, `verificationRequested`, `emailVerified`, `passwordReset` — a throwing handler can never change the HTTP result), a
+  `linkAccount`, `verificationRequested`, `emailVerified`, `passwordReset`,
+  `apiTokenIssued`, `apiTokenRevoked`; `signInFailed.reason` is the closed
+  `SignInFailedReason` union — a throwing handler can never change the HTTP result), a
   configurable **`basePath`** and cookie names, and per-IP rate limits on
   `/auth/signin/*` (20 per 15 min) and `/auth/session` (60 per min), a per-address
   send budget and a per-user second-factor budget on top of the per-credential one.

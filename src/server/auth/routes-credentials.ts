@@ -44,7 +44,7 @@ import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
 import { applySignInCallback, type AuthRouteContext, isSameOrigin, json } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
-import type { AuthUser, CredentialsProvider } from "./types.ts";
+import type { AuthUser, CredentialsProvider, SignInFailedReason } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
 const MAX_CREDENTIALS_BYTES = 64 * 1024;
@@ -53,12 +53,10 @@ const MAX_CREDENTIALS_BYTES = 64 * 1024;
  * Why a credentials attempt was refused, as `signInFailed` reports it. Stable strings —
  * an app routes on them (alerting on `"rate_limited"`, counting `"invalid_credentials"`).
  */
-type FailureReason =
-  | "invalid_credentials"
-  | "rate_limited"
-  | "access_denied"
-  | "account_not_linked"
-  | "adapter_error";
+type FailureReason = Extract<
+  SignInFailedReason,
+  "invalid_credentials" | "rate_limited" | "access_denied" | "account_not_linked" | "adapter_error"
+>;
 
 /**
  * Fire `signInFailed` for a refused attempt. The response is decided by the caller and is
