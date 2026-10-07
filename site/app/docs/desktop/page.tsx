@@ -1550,7 +1550,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>
               unscoped <code>--allow-read</code> /{" "}
-              <code>--allow-write</code>, plus osascript · PowerShell · zenity/kdialog
+              <code>--allow-write</code>, plus osascript · PowerShell (macOS / Windows without the
+              runtime&apos;s panels)
             </td>
             <td>full</td>
           </tr>
@@ -1687,16 +1688,18 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Under denext&apos;s pinned runtime, <code>dialogs</code>{" "}
         shows the OS&apos;s own panels (<code>NSOpenPanel</code> as a sheet on the window,{" "}
-        <code>IFileOpenDialog</code>, <code>GtkFileChooserNative</code>{" "}
-        — the portal under Flatpak / Snap) with the page&apos;s MIME <code>types</code>{" "}
-        as file-type filters, and <code>clipboard</code>{" "}
+        <code>IFileOpenDialog</code>; on Linux the desktop&apos;s own dialog through
+        xdg-desktop-portal&apos;s FileChooser wherever the portal offers one, else GTK&apos;s
+        chooser, as <code>platformFeatures().fileChooser</code> reports) with the page&apos;s MIME
+        {" "}
+        <code>types</code> as file-type filters, and <code>clipboard</code>{" "}
         reads and writes the OS clipboard — text, HTML (<code>
           {`readClipboard({ format: "html" })`}
         </code>, <code>{`writeClipboard({ html, text })`}</code>) and PNG images (base64,{" "}
         <code>{`{ format: "image" }`}</code> / <code>{`{ image }`}</code>), with{" "}
         <code>clipboardFormats()</code> listing what it holds. Under the stock runtime{" "}
         <code>dialogs</code>{" "}
-        drives the OS dialog programs instead (osascript · PowerShell · zenity/kdialog) and{" "}
+        drives the OS dialog programs instead on macOS and Windows (osascript · PowerShell) and{" "}
         <code>clipboard</code> answers <code>unavailable</code> so the page keeps the WebView&apos;s
         {" "}
         <code>navigator.clipboard</code>. A handle from either dialog path has the same scope. Under
@@ -1706,8 +1709,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         answer <code>unavailable</code>{" "}
         and the page keeps the WebView Notification API (immediate only) and its in-page menu.{" "}
         <code>dialogs</code> answers <code>unavailable</code>{" "}
-        under the stock runtime on a headless Linux with no{" "}
-        <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
+        under the stock runtime on Linux (zenity and kdialog are separate installs that differ in
+        what they offer, so denext doesn&apos;t shell out to them), so the page&apos;s{" "}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
       </Callout>
       <Callout kind="note">

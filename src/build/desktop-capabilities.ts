@@ -182,11 +182,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["pickDocument", "saveFile", "pickFolder"],
     all: { read: ["*"], write: ["*"] },
     os: {
-      // Native panels are driven as subprocesses (osascript / PowerShell / zenity|kdialog), not
-      // FFI — the same argv-only pattern the other caps use.
+      // Without the runtime's own panels, macOS and Windows drive them as subprocesses (osascript /
+      // PowerShell), not FFI — the same argv-only pattern the other caps use. Linux uses only the
+      // runtime's (xdg-desktop-portal's FileChooser, else GTK's): nothing to run.
       darwin: { run: ["osascript"] },
       windows: { run: ["powershell.exe"] },
-      linux: { run: ["zenity", "kdialog"] },
     },
     // FULL, not broad: `--allow-run=osascript` / `powershell.exe` are script interpreters, so any
     // code in the Deno process can run arbitrary commands through them.
@@ -195,7 +195,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     manual: [
       "dialogs: --allow-run of osascript (macOS) / powershell.exe (Windows) lets any code in the Deno process run arbitrary scripts through them; the runtime itself passes only fixed scripts.",
       "dialogs: a path the user picks is only known at run time, but Deno Desktop bakes permissions at build time, so reading or writing it needs an unscoped --allow-read / --allow-write. The runtime narrows it to the paths picked this session; any other code in the Deno process is not narrowed.",
-      "dialogs: Linux users need zenity or kdialog installed.",
+      "dialogs: on Linux the dialogs are the runtime's: the desktop's own (xdg-desktop-portal's FileChooser) wherever the portal offers one, GTK's otherwise (`platformFeatures().fileChooser` says which); without denext's pinned runtime they answer `unavailable` and the page keeps <input type=\"file\">.",
     ],
   },
   notifications: {

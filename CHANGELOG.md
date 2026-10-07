@@ -130,6 +130,14 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Changed
 
+- **Linux file dialogs are only the runtime's.** `pickDocument` / `saveFile` / `pickFolder` no
+  longer shell out to zenity or kdialog (separate installs a desktop may not ship, which differ in
+  what they offer): without denext's pinned runtime's dialogs they answer `unavailable` and the page
+  keeps `<input type="file">`. Runtime 2.9.7-denext.12 shows the desktop's own dialog through
+  xdg-desktop-portal's FileChooser wherever the portal offers one (GTK's chooser otherwise), and
+  `platformFeatures().fileChooser` says which. The `dialogs` capability no longer bakes
+  `--allow-run=zenity,kdialog` on Linux.
+
 - **denext pins Deno Desktop runtime 2.9.7-denext.11** (laufey `00f2128`, API 45): Chromium's
   sandbox for CEF on Windows (the bootstrap layout below: `<App>.exe` is CEF's bootstrap,
   `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime); Linux notifications through the

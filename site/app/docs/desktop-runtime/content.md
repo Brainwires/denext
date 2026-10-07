@@ -344,7 +344,12 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   cancelable with an `AbortSignal`, never blocking the runtime (on Windows they run on laufey's
   own STA thread).
 - **Why:** stock Deno Desktop had only `alert` / `confirm` / `prompt`. Without the runtime, denext
-  falls back to shelling out to osascript, PowerShell, zenity or kdialog.
+  falls back to shelling out to osascript (macOS) or PowerShell (Windows); on Linux the dialogs are
+  only the runtime's (zenity and kdialog are separate installs that differ in what they offer).
+- **Linux (runtime 2.9.7-denext.12):** the desktop's own dialog through xdg-desktop-portal's
+  FileChooser, called directly (not only inside Flatpak / Snap), wherever the portal offers one; GTK's
+  chooser where it doesn't (a wlroots desktop with only `xdg-desktop-portal-wlr`).
+  `platformFeatures().fileChooser` says which, `fileChooserReason` why GTK's.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
@@ -667,7 +672,8 @@ packages and runs; what the stock runtime lacks degrades instead of breaking:
   rejects `unsupported`; ask `windowCapabilities()` what the current runtime can do.
 - Capabilities that need the runtime answer `unavailable`, and the page keeps its web path: the
   WebView clipboard, the WebView `Notification` API, the in-page context menu. File dialogs run
-  through the OS dialog programs (osascript, PowerShell, zenity or kdialog).
+  through the OS dialog programs on macOS and Windows (osascript, PowerShell); on Linux they answer
+  `unavailable` and the page keeps `<input type="file">`.
 
 Every `denext/mobile` and `denext/desktop` function is feature-detected this way, so one codebase
 works on either runtime.

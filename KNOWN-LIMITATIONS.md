@@ -279,6 +279,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   written by `/usr/bin/security`, which the item trusts); on Linux it needs `secret-tool`
   (`libsecret-tools` / `libsecret`), a Secret Service provider and an unlocked keyring, else every
   call rejects `backend_unavailable` with the reason.
+- **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
+  page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
+  with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF
+  window on Wayland can't be named to the portal, so its portal dialog isn't modal to the window.
 - **Some desktop paths can only be verified by hand** (Touch ID / Windows Hello passkeys, signed
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
   no CI runner has the hardware or identities, so they are checked before each final release
