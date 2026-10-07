@@ -9,8 +9,6 @@
  * @module
  */
 
-import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
-
 /** The endpoint prefix denext auth mounts on unless the app configured `basePath`. */
 const DEFAULT_BASE_PATH = "/auth";
 
@@ -59,18 +57,26 @@ export function passkeysSupported(): boolean {
     typeof navigator !== "undefined" && !!navigator.credentials;
 }
 
-/** base64url → ArrayBuffer. */
+/**
+ * base64url → ArrayBuffer. Written inline rather than imported from `@std/encoding`: that
+ * module builds its lookup tables at load time, a side effect the bundler can't drop, so it
+ * would land in every app's shared chunk whether or not passkeys are used.
+ */
 function fromB64u(value: string): ArrayBuffer {
-  return decodeBase64Url(value).buffer as ArrayBuffer;
+  const b64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(
+    atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")),
+    (c) => c.charCodeAt(0),
+  ).buffer;
 }
 
-/** ArrayBuffer → base64url. */
+/** ArrayBuffer (or a view) → unpadded base64url. */
 function toB64u(buffer: ArrayBuffer | ArrayBufferView): string {
-  return encodeBase64Url(
-    buffer instanceof ArrayBuffer
-      ? new Uint8Array(buffer)
-      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-  );
+  const bytes = buffer instanceof ArrayBuffer
+    ? new Uint8Array(buffer)
+    : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /** A credential descriptor list with its ids decoded. */
