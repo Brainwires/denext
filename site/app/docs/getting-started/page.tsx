@@ -108,6 +108,17 @@ deno task dev`}
         {" "}
         <code>denext build</code> run the same framework. <code>denext create</code> writes both.
       </p>
+      <p>
+        <code>denext upgrade</code> moves them together, with every first-party{" "}
+        <code>@denext/*</code>{" "}
+        package you pin: to the newest denext that each of those packages has a compatible version
+        for (a package's compatibility is its own <code>@denext/denext</code>{" "}
+        range), keeping each pin's <code>^</code>/<code>~</code> and the rest of the file as it was.
+        {" "}
+        <code>--dry-run</code> prints the plan, <code>--check</code>{" "}
+        exits 1 when anything is out of date (for CI), and <code>--to 3.2.0</code>{" "}
+        names the version.
+      </p>
 
       <h2>Your first page</h2>
       <Code lang="tsx">

@@ -57,6 +57,11 @@ export interface CatalogEntry {
   spec: string;
   /** The package's export keys (`["."]`, `[".", "./command"]`, …). */
   exports: string[];
+  /**
+   * The `@denext/denext` range this version is built against (`^3.2.0`), from its own
+   * import map; absent for a package that does not import denext. `denext upgrade` reads it.
+   */
+  denext?: string;
   kind: CatalogKind;
   factory?: string;
   verb?: string;
@@ -192,6 +197,13 @@ function optionsSchemaFor(dir: string, block: CatalogBlock, doc: unknown): Schem
   return summary ? { description: summary, ...schema } : schema;
 }
 
+/** `{ denext: "^3.2.0" }` from a package's `@denext/denext` import, or `{}` when it has none. */
+function denextRange(cfg: Record<string, unknown>): { denext?: string } {
+  const spec = (cfg.imports as Record<string, unknown> | undefined)?.["@denext/denext"];
+  const m = typeof spec === "string" ? /^jsr:@denext\/denext@([^/]+)$/.exec(spec) : null;
+  return m ? { denext: m[1] } : {};
+}
+
 function entryFor(pkg: PackageSource): CatalogEntry {
   const { dir, config: cfg } = pkg;
   const name = String(cfg.name ?? "");
@@ -207,6 +219,7 @@ function entryFor(pkg: PackageSource): CatalogEntry {
     version,
     spec: specFor(name, version),
     exports: exportKeys(cfg.exports),
+    ...denextRange(cfg),
     kind: block.kind,
     ...(block.factory ? { factory: block.factory } : {}),
     ...(block.verb ? { verb: block.verb } : {}),

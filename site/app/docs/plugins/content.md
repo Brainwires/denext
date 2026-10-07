@@ -373,8 +373,11 @@ The **first-party catalog is generated**, not hand-maintained: every `@denext/*`
 its current version and `jsr:` range, whether it is a plugin or a plain library, its factory
 export, the CLI verb it contributes, its option keys and — for a plugin — the JSON Schema of
 its options are emitted to `src/plugin/catalog.json` from the packages' own `deno.json` +
-README (`deno task gen:plugin-catalog`; a drift test fails if it goes stale). `denext migrate`
-takes its plugin pins from it, and `denext ui` lists it.
+README (`deno task gen:plugin-catalog`; a drift test fails if it goes stale), along with the
+`@denext/denext` range each package's own import map declares (`denext`). `denext migrate`
+takes its plugin pins from it, `denext ui` lists it, and `denext upgrade` reads the ranges
+to move denext and the plugins to versions that agree (a version the catalog doesn't know is
+looked up in its published `deno.json` on JSR).
 
 What a package cannot state about itself it declares in its `deno.json`, under
 `denext.catalog`:

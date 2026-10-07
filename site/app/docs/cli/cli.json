@@ -1507,6 +1507,38 @@
           "description": "Packages to update (default: all)"
         }
       ]
+    },
+    {
+      "name": "upgrade",
+      "summary": "Bump denext, its CLI tasks and the first-party @denext/* packages together",
+      "usage": "denext upgrade [dir] [options]",
+      "description": "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\nrun the CLI) and moves them to the newest versions that work together: the newest denext\nevery pinned first-party package has a compatible version for (each package's own\n@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\nNothing moves backwards; each pin keeps its ^ / ~ / exact operator. --to picks the denext\nversion; --dry-run prints the plan; --check exits 1 when anything is out of date.",
+      "flags": [
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "Print the plan without writing deno.json"
+        },
+        {
+          "name": "check",
+          "type": "boolean",
+          "description": "Write nothing; exit 1 when an upgrade is available (for CI)"
+        },
+        {
+          "name": "to",
+          "type": "string",
+          "valueName": "<version>",
+          "description": "The denext version to move to (default: the newest every package supports)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
     }
   ],
   "projectCommands": {

@@ -79,6 +79,11 @@ export type JsrSearchResult =
 /** The outcome of {@linkcode fetchJsrMeta}. */
 export type JsrMetaResult = { readonly ok: true; readonly latest: string } | JsrFailure;
 
+/** A package's published versions (yanked ones left out) and its `latest`. */
+export type JsrVersionsResult =
+  | { readonly ok: true; readonly latest: string; readonly versions: readonly string[] }
+  | JsrFailure;
+
 /** Options every JSR request takes. */
 export interface JsrRequestOptions {
   /** Aborts the request (the UI shutting down, or the page going away). */
@@ -180,6 +185,42 @@ export async function fetchJsrMeta(
   name: string,
   opts: JsrRequestOptions = {},
 ): Promise<JsrMetaResult> {
+  const doc = await fetchMetaDocument(scope, name, opts);
+  return doc.ok ? { ok: true, latest: doc.latest } : doc;
+}
+
+/**
+ * Read every published, non-yanked version of a package from its registry metadata
+ * (`GET https://jsr.io/@scope/name/meta.json`) — what `denext upgrade` resolves against.
+ *
+ * @param scope The scope, without the `@`.
+ * @param name The package name.
+ * @param opts An abort `signal`, an injected `fetch`.
+ * @returns The validated `latest` and versions (in the registry's order), or `{ ok: false }`.
+ */
+export async function fetchJsrVersions(
+  scope: string,
+  name: string,
+  opts: JsrRequestOptions = {},
+): Promise<JsrVersionsResult> {
+  const doc = await fetchMetaDocument(scope, name, opts);
+  if (!doc.ok) return doc;
+  if (!isRecord(doc.meta.versions)) return failure("unexpected response shape");
+  const versions = Object.entries(doc.meta.versions)
+    .filter(([v, info]) => isVersion(v) && !(isRecord(info) && info.yanked === true))
+    .map(([v]) => v);
+  return { ok: true, latest: doc.latest, versions };
+}
+
+/** `meta.json`, validated: a record naming this package, with a semver `latest`. */
+async function fetchMetaDocument(
+  scope: string,
+  name: string,
+  opts: JsrRequestOptions,
+): Promise<
+  | { readonly ok: true; readonly latest: string; readonly meta: Record<string, unknown> }
+  | JsrFailure
+> {
   if (!isJsrSpec(`@${scope}/${name}`)) return failure("invalid package name");
   const path = `/@${encodeURIComponent(scope)}/${encodeURIComponent(name)}/meta.json`;
   const fetched = await getJson(new URL(path, REGISTRY_ORIGIN), opts);
@@ -188,7 +229,7 @@ export async function fetchJsrMeta(
   if (!isRecord(meta) || !isVersion(meta.latest)) return failure("no valid latest version");
   if (meta.scope !== undefined && meta.scope !== scope) return failure("unexpected response shape");
   if (meta.name !== undefined && meta.name !== name) return failure("unexpected response shape");
-  return { ok: true, latest: meta.latest };
+  return { ok: true, latest: meta.latest, meta };
 }
 
 /** A package's published `deno.json` (else `jsr.json`) at one version, parsed. */

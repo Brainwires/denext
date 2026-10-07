@@ -14,6 +14,7 @@ import { routesCommand } from "./commands/routes.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
+import { upgradeCommand } from "./commands/upgrade.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
 import { profileCommand } from "./commands/profile.ts";
@@ -45,6 +46,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(addCommand);
   reg.register(removeCommand);
   reg.register(updateCommand);
+  reg.register(upgradeCommand);
   // Diagnostics + supply chain.
   reg.register(doctorCommand);
   reg.register(infoCommand);

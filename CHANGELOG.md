@@ -18,6 +18,14 @@ and this project adheres to
 
 ### Added
 
+- **`denext upgrade`** moves the project's `jsr:@denext/denext` pin, the `deno task`s pinned to
+  the CLI and every first-party `@denext/*` package together, to the newest denext each pinned
+  package has a compatible version for (a package's `@denext/denext` range, from
+  `src/plugin/catalog.json` or its published `deno.json` on JSR). Nothing moves backwards, each
+  pin keeps its `^` / `~` / exact operator and the file keeps its comments and order. `--to`
+  names the denext version (a package with no compatible version is then an error),
+  `--dry-run` prints the plan, `--check` exits 1 when anything is out of date, and `--json`
+  prints the plan. The plugin catalog gains each package's `denext` range.
 - **`denext routes`** lists the app's pages and API route handlers as a table (kind, route, HTTP
   methods, dynamic params, file), or `{ pages, api }` with `--json`. It scans `app/` without
   importing a route module — an API route's methods are read from its source — and the MCP

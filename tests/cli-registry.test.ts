@@ -41,6 +41,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "test",
     "ui",
     "update",
+    "upgrade",
   ]);
 });
 
