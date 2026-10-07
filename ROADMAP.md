@@ -96,8 +96,6 @@ Each is documented as a manual recipe today (the
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
 - **`denext generate migration | seed | ci`,** scaffolded the way `generate docker` is.
-- **CDN cache headers by default:** an ISR hit emits `public, s-maxage=<revalidate>,
-  stale-while-revalidate=…`, with a config key to turn it off.
 - **`global-error.tsx` hydration on the next-compat and static-export paths** (it hydrates on
   the native build and dev; elsewhere `reset` is inert).
 - **`next/font/local` metric-matched fallback faces:** parse the local font's metrics (today

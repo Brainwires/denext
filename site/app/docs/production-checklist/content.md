@@ -131,8 +131,10 @@ Each line: what to set → where it is documented. Config keys go in
 - `hsts` — `max-age=31536000` host-only by default;
   `{ includeSubDomains: true }` only when every subdomain is HTTPS. →
   [Configuration › Security](/docs/config#security)
-- `headers()` rules for CDN caching of ISR pages — denext emits **no
-  `Cache-Control`** on an ISR hit today, so a CDN in front needs the rule. →
+- CDN caching of ISR pages — an ISR page answers `public, s-maxage=<fresh
+  seconds>, stale-while-revalidate=31536000` by default (never for a request
+  with a cookie or `Authorization`, nor a response setting one); a `headers()`
+  rule overrides it per route and `cdnCacheHeaders: false` turns it off. →
   [Data & caching › CDN headers](/docs/data#cdn-headers)
 
 **Observability**
@@ -209,15 +211,6 @@ import type { DenextConfig } from "denext/server";
 export default {
   canonicalOrigin: "https://example.com",
   maxConcurrency: 100,
-  headers: () => [
-    {
-      source: "/blog/:slug",
-      headers: [{
-        key: "Cache-Control",
-        value: "public, s-maxage=60, stale-while-revalidate=600",
-      }],
-    },
-  ],
   tasks: { history: true },
 } satisfies DenextConfig;
 ```

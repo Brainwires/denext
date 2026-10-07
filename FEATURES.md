@@ -139,7 +139,10 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `experimental.cacheComponents` still works and dev-warns) — not default-on,
   with its documented bounds in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
-- **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
+- **ISR** (`revalidate` / `force-static`) with stale-while-revalidate, and **CDN cache
+  headers by default**: an ISR page answers `public, s-maxage=<fresh seconds>,
+  stale-while-revalidate=…`, never for a credentialed request or a cookie-setting
+  response (`cdnCacheHeaders: false` turns it off).
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory
   LRU fallback; swap in any custom `CacheStore` via `setCacheStore` to share

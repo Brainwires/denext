@@ -19,6 +19,61 @@ import {
 } from "./page-document.ts";
 
 /**
+ * The `stale-while-revalidate` window an ISR response grants a shared cache, in seconds: a
+ * year, Next.js's default `expireTime`. ISR itself serves a stale page indefinitely while it
+ * regenerates, so the CDN may too — each request past `s-maxage` revalidates in the background.
+ */
+const CDN_STALE_WHILE_REVALIDATE = 31_536_000;
+
+/**
+ * The `Cache-Control` a shared cache gets for an ISR document: `public`, fresh for as long as
+ * ISR keeps the entry fresh — `s-maxage=<revalidate>` on the render that stores it, the
+ * seconds left until `staleAt` on a later hit (0 once stale, while it regenerates), so a CDN
+ * never holds a page past the moment ISR would refresh it — then `stale-while-revalidate`. A
+ * `force-static` entry (never stale) is fresh for the whole window.
+ *
+ * @param staleAt When the entry goes stale (epoch ms), `Infinity`/absent for never.
+ * @param now The current time (epoch ms).
+ * @returns The header value.
+ */
+export function cdnCacheControl(staleAt: number | undefined, now: number = Date.now()): string {
+  if (staleAt === undefined || !Number.isFinite(staleAt)) {
+    return `public, s-maxage=${CDN_STALE_WHILE_REVALIDATE}`;
+  }
+  const fresh = Math.max(0, Math.ceil((staleAt - now) / 1000));
+  return `public, s-maxage=${fresh}, stale-while-revalidate=${CDN_STALE_WHILE_REVALIDATE}`;
+}
+
+/**
+ * Add the CDN header ({@link cdnCacheControl}) to an ISR document's final response — only when
+ * nothing about the exchange is private. The render being impersonal (it read no cookies or
+ * headers, or it would not be in the page cache) is necessary but not sufficient: the header is
+ * left off when `cdnCacheHeaders` is `false`, when the REQUEST carried a `Cookie` or
+ * `Authorization` (middleware may have routed on it, and a shared cache must never key a
+ * credentialed exchange as public), when the RESPONSE sets a cookie (a CDN would hand one
+ * visitor's cookie to everyone), when it is not a 200, and when middleware or a `headers()`
+ * rule already set `Cache-Control` (the app's own policy wins).
+ *
+ * @param pr The page request.
+ * @param res The finalized response.
+ * @param staleAt The entry's `staleAt`.
+ * @returns The response, with the header when eligible.
+ */
+export function withCdnCacheControl(
+  pr: PageRequest,
+  res: Response,
+  staleAt: number | undefined,
+): Response {
+  const { request, app } = pr.state;
+  if (app.config.cdnCacheHeaders === false || res.status !== 200) return res;
+  if (request.headers.has("cookie") || request.headers.has("authorization")) return res;
+  if (res.headers.has("cache-control") || res.headers.getSetCookie().length > 0) return res;
+  const headers = new Headers(res.headers);
+  headers.set("cache-control", cdnCacheControl(staleAt));
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/**
  * In-flight ISR renders, keyed by page cache key. Followers await the leader and
  * re-read the cache instead of rendering in parallel (stampede protection). It
  * only ever coordinates waiting — a live render is never shared across requests.
@@ -210,7 +265,10 @@ async function serveCacheHit(pr: PageRequest, hit: CachedPage): Promise<Response
     const loader = shell.flight ? pr.pageLoad : pr.state.app.config.load;
     return servePprShell(pr, shell, cacheState, loader);
   }
-  return htmlResponse(pr.state, hit.body, hit.status, hit.csp, { "x-denext-cache": cacheState });
+  const res = htmlResponse(pr.state, hit.body, hit.status, hit.csp, {
+    "x-denext-cache": cacheState,
+  });
+  return withCdnCacheControl(pr, res, hit.staleAt);
 }
 
 /** Whether the page's layout chain → page sets `export const compress = false` (last wins). */
@@ -303,11 +361,11 @@ export async function cacheAndServeBuffered(
   const unkeyedLeak = config.cacheKeyParams
     ? warnUnkeyedParamReads(pr.state.ctx, config.cacheKeyParams)
     : false;
-  if (!unkeyedLeak) {
-    await config.pageCache!.set(
-      pr.cacheKey,
-      pageCacheEntry(pr, cachedDoc, rendered.status, timing, { csp }),
-    );
-  }
-  return htmlResponse(pr.state, cachedDoc, rendered.status, csp, { "x-denext-cache": "MISS" });
+  const res = htmlResponse(pr.state, cachedDoc, rendered.status, csp, { "x-denext-cache": "MISS" });
+  if (unkeyedLeak) return res; // served to this request only: never public
+  await config.pageCache!.set(
+    pr.cacheKey,
+    pageCacheEntry(pr, cachedDoc, rendered.status, timing, { csp }),
+  );
+  return withCdnCacheControl(pr, res, timing.staleAt);
 }

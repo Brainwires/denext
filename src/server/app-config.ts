@@ -189,6 +189,13 @@ export interface AppConfig {
    */
   cacheKeyParams?: string[];
   /**
+   * Shared-cache headers on ISR pages (`Cache-Control: public, s-maxage=…,
+   * stale-while-revalidate=…`) — default on; `false` sends none. Never on a credentialed
+   * request, a response that sets a cookie, or one whose `Cache-Control` is already set.
+   * `denext start`/`dev` take it from the config's `cdnCacheHeaders`.
+   */
+  cdnCacheHeaders?: boolean;
+  /**
    * Compress dynamic responses per `Accept-Encoding` — default `true` (gzip, like Next.js's
    * `compress`); `{ encodings: ["br", "gzip"] }` also sends brotli. See `compressResponse`
    * (compress.ts) for the skip rules; a page/layout/route opts out with

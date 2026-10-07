@@ -697,6 +697,9 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
+  if (config.cdnCacheHeaders !== undefined && typeof config.cdnCacheHeaders !== "boolean") {
+    fail("cdnCacheHeaders", "must be a boolean");
+  }
   validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {
     num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables

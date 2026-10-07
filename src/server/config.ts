@@ -1372,6 +1372,16 @@ export interface DenextConfig {
    */
   cacheKeyParams?: string[];
   /**
+   * Send shared-cache headers with ISR pages — **on by default**. A page served from the ISR
+   * cache (and the render that stores it) answers `Cache-Control: public, s-maxage=<seconds
+   * it stays fresh>, stale-while-revalidate=31536000` (`public, s-maxage=31536000` for
+   * `force-static`), so a CDN in front caches it as long as denext would. Never for a request
+   * carrying a `Cookie` or `Authorization`, a response that sets a cookie, a non-200, a dynamic
+   * render, or a response whose `Cache-Control` middleware or a `headers()` rule already set.
+   * `false` sends no `Cache-Control` with ISR pages (the behavior before 3.3).
+   */
+  cdnCacheHeaders?: boolean;
+  /**
    * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
    * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
    * Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's
@@ -1880,7 +1890,7 @@ export function resolveCacheComponents(
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
  * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams` and `compress`, each falling back
+ * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
  * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
  * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
@@ -1903,6 +1913,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
+  /** Whether ISR pages carry shared-cache (`public, s-maxage`) headers (default on). */
+  cdnCacheHeaders?: boolean;
   /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
   compress?: boolean | CompressConfig;
   /**
@@ -1962,6 +1974,7 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     slotBackstop: config?.slotBackstop,
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
+    cdnCacheHeaders: config?.cdnCacheHeaders,
     compress: config?.compress,
     desktopAppOrigin: configuredDesktopAppOrigin(config),
   };

@@ -144,6 +144,16 @@ and this project adheres to
 
 ### Changed
 
+- **ISR pages send CDN cache headers by default.** The render that stores an ISR entry and
+  every later hit answer `Cache-Control: public, s-maxage=<seconds it stays fresh>,
+  stale-while-revalidate=31536000` (`s-maxage` is the route's `revalidate` on the MISS and the
+  time left on a hit, `0` once stale; `force-static` is `public, s-maxage=31536000`), so a CDN
+  in front caches them as long as denext does — before, an ISR page carried no
+  `Cache-Control`. The header is never sent for a request carrying a `Cookie` or
+  `Authorization`, a response that sets a cookie, a non-200, a dynamic render (still
+  `private, no-store`), or a response whose `Cache-Control` middleware or a `headers()` rule
+  set. `cdnCacheHeaders: false` restores the old behavior.
+
 - **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
   session carries the email from the verified `id_token` and the name Apple posts on a user's
   first authorization (the unsigned `user` field — used for the display name only). Asking for
