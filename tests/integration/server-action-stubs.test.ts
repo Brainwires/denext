@@ -191,7 +191,9 @@ async function server(dir: string, verb: "start" | "dev") {
   const exited = child.status.then((s) => s);
   let exitCode: number | null = null;
   exited.then((s) => exitCode = s.code);
-  const origin = `http://127.0.0.1:${port}`;
+  // `localhost`: `denext dev` binds it, which a runner may resolve to `::1` only (`start` binds
+  // 0.0.0.0); the client tries each address the name resolves to.
+  const origin = `http://localhost:${port}`;
   // Generous: a loaded machine takes a while to start (and, in dev, to build) the server.
   let ready = false;
   for (
