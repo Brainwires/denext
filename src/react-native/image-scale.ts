@@ -71,14 +71,23 @@ interface ImageStatics {
     success: (w: number, h: number) => void,
     failure?: (e: unknown) => void,
   ) => void;
-  prefetch?: (uri: string) => Promise<unknown>;
+  prefetch?: (uri: string, callback?: (requestId: number) => void) => Promise<unknown>;
   [key: string]: unknown;
 }
+
+/** In-flight `prefetch` requests by id, each with the way to settle it as aborted. */
+const prefetches = new Map<number, (reason: Error) => void>();
+/** The last prefetch request id handed out. */
+let lastPrefetchId = 0;
 
 /**
  * React Native mode's patch of react-native-web's `Image`: adds the statics it lacks,
  * `resolveAssetSource` ({@linkcode resolveAssetSource}), `getSizeWithHeaders` (as `getSize`:
- * the browser cannot send headers for an image) and `prefetchWithMetadata` (as `prefetch`).
+ * the browser cannot send headers for an image), `prefetchWithMetadata` (as `prefetch`) and
+ * `abortPrefetch`. `prefetch(url, callback?)` takes React Native's (Android's) callback, which
+ * gets the request id as soon as the request starts; `abortPrefetch(id)` rejects that
+ * request's promise (`Error("Prefetch aborted")`) and forgets it. The browser may still finish
+ * the download into its cache, as an aborted Fresco request may.
  *
  * @param Image react-native-web's `Image`.
  * @returns The same `Image`, with the statics.
@@ -93,6 +102,24 @@ export function withImageStatics<T>(Image: T): T {
     success: (w: number, h: number) => void,
     failure?: (e: unknown) => void,
   ) => img.getSize?.(uri, success, failure);
+  if (typeof img.abortPrefetch !== "function") {
+    const webPrefetch = img.prefetch;
+    img.prefetch = (uri: string, callback?: (requestId: number) => void) => {
+      const id = ++lastPrefetchId;
+      const request = new Promise<unknown>((resolve, reject) => {
+        prefetches.set(id, reject);
+        (webPrefetch ? webPrefetch(uri) : Promise.resolve(false)).then(resolve, reject);
+      }).finally(() => prefetches.delete(id));
+      if (typeof callback === "function") callback(id);
+      return request;
+    };
+    img.abortPrefetch = (requestId: number) => {
+      const abort = prefetches.get(requestId);
+      if (!abort) return;
+      prefetches.delete(requestId);
+      abort(new Error("Prefetch aborted"));
+    };
+  }
   img.prefetchWithMetadata ??= (uri: string) =>
     img.prefetch ? img.prefetch(uri) : Promise.resolve(false);
   return Image;

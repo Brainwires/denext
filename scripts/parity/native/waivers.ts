@@ -45,4 +45,54 @@ export const NATIVE_WAIVERS: Waiver[] = [
       "`AnimatedAddition` … `AnimatedWithChildren`) for typing only; React Native's runtime " +
       "`Animated` does not export them either, so the member diff reports type-level names.",
   },
+  // ── Declarations React Native's legacy `.d.ts` exports and its runtime does not ───────
+  // TypeScript treats every top-level declaration of a `.d.ts` module as exported, so the
+  // legacy types React Native 0.86 ships (`types/index.d.ts` → `Libraries/**/*.d.ts`) "export"
+  // helper declarations its runtime never had. Checked against react-native 0.86.3's own
+  // JavaScript (`index.js` and `Libraries/`): none of these names or members exists there, and
+  // 0.87's generated types (`types_generated/`) drop them. An app that reads one gets
+  // `undefined` in React Native too.
+  {
+    // `declare class ViewComponent extends React.Component<ViewProps> {}` and
+    // `declare const ViewBase: Constructor<HostInstance> & typeof ViewComponent` (and the same
+    // pair for each core component, plus `FlatListComponent` / `SectionListComponent`): the
+    // base classes the `.d.ts` builds `View`, `Text`, … from.
+    pattern: "^(?:ActivityIndicator|DrawerLayoutAndroid|ImageBackground|Image|" +
+      "KeyboardAvoidingView|ProgressBarAndroid|RefreshControl|SafeAreaView|ScrollView|Switch|" +
+      "TextInput|Text|TouchableNativeFeedback|TouchableWithoutFeedback|View)(?:Base|Component)$" +
+      "|^(?:FlatList|SectionList)Component$",
+    categories: ["MISSING_VALUE"],
+    reason: "Type-only base classes of React Native's legacy `.d.ts` (`declare const ViewBase`, " +
+      "`declare class ViewComponent`, …); React Native's runtime does not export them.",
+  },
+  {
+    // Every React Native flavour (react-native, react-native-windows, react-native-macos).
+    symbol: "DeviceEventEmitter",
+    categories: ["MEMBER_MISSING"],
+    members: ["sharedSubscriber"],
+    reason: "`sharedSubscriber` is declared by React Native's legacy `DeviceEventEmitterStatic` " +
+      "type only; `RCTDeviceEventEmitter` (an `EventEmitter`) has no such member at run time.",
+  },
+  {
+    symbol: "NativeAppEventEmitter",
+    categories: ["MEMBER_MISSING"],
+    members: ["sharedSubscriber"],
+    reason: "`NativeAppEventEmitter` is React Native's alias of `DeviceEventEmitter`; its " +
+      "`sharedSubscriber` is the same type-only declaration.",
+  },
+  {
+    symbol: "LayoutAnimation",
+    categories: ["MEMBER_MISSING"],
+    members: ["configChecker"],
+    reason: "`configChecker` is declared by React Native's legacy `LayoutAnimationStatic` type " +
+      "only; `Libraries/LayoutAnimation/LayoutAnimation.js` exports no such member.",
+  },
+  {
+    symbol: "View",
+    categories: ["MEMBER_MISSING"],
+    members: ["forceTouchAvailable"],
+    reason: "`View.forceTouchAvailable` is declared by React Native's legacy `.d.ts` only; the " +
+      "runtime value is `Platform.constants.forceTouchAvailable` (iOS), which denext's " +
+      "`Platform` provides.",
+  },
 ];

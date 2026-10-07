@@ -24,6 +24,20 @@ and this project adheres to
   capability, and the test that proves it. Security advisories say to upgrade Next.js first.
   The page is generated from `catalog/fixed-in-denext.json` (`deno task docs:fixed`), and a test
   fails when an evidence test is missing or renamed.
+- **React Native's remaining runtime statics in React Native mode.** `AppRegistry` gains
+  sections (`registerSection`, `getSectionKeys`, `getSections`, `section` in `registerComponent` /
+  `registerConfig`), `getRunnable` / `getRegistry`, `setSurfaceProps` (new `initialProps` for the
+  running app, its state kept), `setRootViewStyleProvider` and the headless-task registry
+  (`registerHeadlessTask`, `registerCancellableHeadlessTask`, `startHeadlessTask`,
+  `cancelHeadlessTask`); `StyleSheet.setStyleAttributePreprocessor` runs its processor over
+  compiled and inline styles alike; `Image.prefetch(url, callback)` reports the request id and
+  `Image.abortPrefetch(id)` aborts it; `PixelRatio.startDetecting()` exists (a no-op, as in React
+  Native). The native parity ledger (`scripts/parity/native/baselines/known-gaps.json`) is empty:
+  the remaining entries were declarations React Native's legacy `.d.ts` exports but its runtime
+  never had (`ViewBase` / `ViewComponent` and the other `*Base` / `*Component` classes,
+  `DeviceEventEmitter.sharedSubscriber`, `LayoutAnimation.configChecker`,
+  `View.forceTouchAvailable`), now waived with that reason. A parity waiver can name the
+  `members` it covers, so a member that goes missing later still fails the gate.
 
 ## [3.2.0] - 2026-10-07
 

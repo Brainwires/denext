@@ -36,6 +36,7 @@ import {
   imageScaleVariants,
   reactNativePatchesPlugin,
   withDimensionsFontScale,
+  withStyleAttributePreprocessing,
   wrapDefaultExport,
 } from "../src/build/react-native-patches.ts";
 import { fakePlugin, inShell, settle } from "./helpers/mobile-fakes.ts";
@@ -300,8 +301,17 @@ Deno.test("image scale: variants on disk (no base file needed); a plain image is
 
 // ---- react-native-web patches -----------------------------------------------------------------
 
+/** react-native-web's real style `preprocess` runs the attribute processors first. */
+async function checkPreprocessPatch(cjs: boolean): Promise<void> {
+  const pre = new URL(`${cjs ? "cjs/" : ""}exports/StyleSheet/preprocess.js`, RNW);
+  const processed = withStyleAttributePreprocessing(await Deno.readTextFile(pre), cjs);
+  assertStringIncludes(processed, "originalStyle = __denextProcessStyle(originalStyle);");
+  await esbuild.transform(processed, { loader: "js", format: cjs ? "cjs" : "esm" });
+}
+
 Deno.test({
-  name: "patches: react-native-web's real ScrollView / Text / PixelRatio / Dimensions, ES and CJS",
+  name:
+    "patches: react-native-web's real ScrollView / Text / PixelRatio / Image / AppRegistry / StyleSheet / Dimensions, ES and CJS",
   // Needs the installed react-native-web@0.21.2 (node_modules); skipped where it is absent.
   ignore: !RNW_INSTALLED,
 }, async () => {
@@ -312,6 +322,8 @@ Deno.test({
       ["Text", "withFontScaling", "Text"],
       ["PixelRatio", "withFontScaleRatio", "PixelRatio"],
       ["Image", "withImageStatics", "ImageWithStatics"],
+      ["AppRegistry", "withAppRegistry", "AppRegistry"],
+      ["StyleSheet", "withStyleSheetStatics", "stylesheet"],
     ];
     for (const [name, wrapper, local] of cases) {
       const source = await Deno.readTextFile(at(name));
@@ -321,6 +333,7 @@ Deno.test({
       else assertStringIncludes(out, `export default __denextWrap(${local});`);
       await esbuild.transform(out, { loader: "js", format: cjs ? "cjs" : "esm" });
     }
+    await checkPreprocessPatch(cjs);
     const dims = withDimensionsFontScale(await Deno.readTextFile(at("Dimensions")), cjs);
     assert(!/fontScale:\s*1\b/.test(dims));
     assertStringIncludes(dims, "fontScale: __denextFontScale()");
