@@ -8,6 +8,7 @@
 
 import { NextResponse } from "../next/server.ts";
 import type { Middleware } from "../../server/mod.ts";
+import { currentContext } from "../../server/request-context.ts";
 import {
   defineRouting,
   detectLocale,
@@ -46,6 +47,9 @@ export function createMiddleware(config: RoutingConfig | ResolvedRouting): Middl
       return res;
     }
 
+    // The answer depends on the visitor, not the URL: no shared-cache header for this response.
+    const ctx = currentContext();
+    if (ctx) ctx.localeNegotiated = true;
     const locale = detectLocale(request, routing);
     const isDefault = locale === routing.defaultLocale;
 

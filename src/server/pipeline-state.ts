@@ -63,6 +63,11 @@ export interface RequestState {
   /** Headers from config header rules and middleware, applied by {@link finalize}. */
   injectedHeaders?: Headers;
   /**
+   * Whether a `middleware.ts` matched this request (a handler ran, or a runner that does not say).
+   * `cdnCacheHeaders` holds its public header back then, unless `evenWithMiddleware`.
+   */
+  middlewareMatched?: boolean;
+  /**
    * Set when this request is the ISR "leader" for a cache key — released in the
    * pipeline's finally so concurrent requests for the same key stop waiting.
    */

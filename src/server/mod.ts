@@ -252,6 +252,7 @@ export {
   type AppleAppLinks,
   type AppLinksConfig,
   type CacheConfig,
+  type CdnCacheHeadersConfig,
   type CompiledPattern,
   type CompressConfig,
   type CorsConfig,

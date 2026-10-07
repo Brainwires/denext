@@ -153,7 +153,10 @@ async function printUriNative(p: PrinterPlugin, uri: string): Promise<void> {
   return await p.printFile({ path: uri.replace(/^file:\/\//, "") });
 }
 
-/** Print `html` or `uri` from a hidden iframe, or the page itself with neither. */
+/**
+ * Print `html` or `uri` from a hidden iframe, or the page itself with neither. The HTML frame is
+ * sandboxed without script (see below).
+ */
 function printWeb(options: PrintOptions): Promise<void> {
   const g = globalThis as { document?: Document; print?: () => void };
   const doc = g.document;
@@ -177,8 +180,13 @@ function printWeb(options: PrintOptions): Promise<void> {
         setTimeout(() => frame.remove(), 1000);
       }
     };
-    if (html) frame.srcdoc = html;
-    else frame.src = options.uri!;
+    if (html) {
+      // The caller's HTML runs in no script: `allow-modals` lets it print, `allow-same-origin`
+      // lets this page call print() on it, and without `allow-scripts` that origin is never
+      // the HTML's to use (a script in it would otherwise run as the page itself).
+      frame.setAttribute("sandbox", "allow-modals allow-same-origin");
+      frame.srcdoc = html;
+    } else frame.src = options.uri!;
     doc.body.appendChild(frame);
   });
 }

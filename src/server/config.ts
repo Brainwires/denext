@@ -1122,6 +1122,22 @@ export interface CompressConfig {
   encodings?: Array<"gzip" | "br">;
 }
 
+/**
+ * Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object:
+ * the headers on, with these settings).
+ */
+export interface CdnCacheHeadersConfig {
+  /**
+   * Send the header on a request a `middleware.ts` matched too. Off by default: middleware may
+   * gate a page on something a shared cache does not key on (an IP allow-list, an auth proxy's
+   * header, geolocation, `Accept-Language`), and a CDN would then serve the gated page to
+   * everyone. Turn it on only when no matched middleware decides who may see a cached page.
+   *
+   * @default false
+   */
+  evenWithMiddleware?: boolean;
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
   /**
@@ -1372,15 +1388,23 @@ export interface DenextConfig {
    */
   cacheKeyParams?: string[];
   /**
-   * Send shared-cache headers with ISR pages — **on by default**. A page served from the ISR
-   * cache (and the render that stores it) answers `Cache-Control: public, s-maxage=<seconds
-   * it stays fresh>, stale-while-revalidate=31536000` (`public, s-maxage=31536000` for
-   * `force-static`), so a CDN in front caches it as long as denext would. Never for a request
-   * carrying a `Cookie` or `Authorization`, a response that sets a cookie, a non-200, a dynamic
-   * render, or a response whose `Cache-Control` middleware or a `headers()` rule already set.
-   * `false` sends no `Cache-Control` with ISR pages (the behavior before 3.3).
+   * Send shared-cache headers with ISR pages — **off by default** (opt-in). With `true`, a page
+   * served from the ISR cache (and the render that stores it) answers `Cache-Control: public,
+   * s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000` (`public,
+   * s-maxage=31536000` for `force-static`), so a CDN in front caches it as long as denext would.
+   * Never for a request carrying a `Cookie` or `Authorization`, a response that sets a cookie, a
+   * non-200, a dynamic render, a response whose `Cache-Control` middleware or a `headers()` rule
+   * already set, or a request a `middleware.ts` matched (`{ evenWithMiddleware: true }` sends it
+   * there too).
+   *
+   * The risk: a CDN keys a page on its URL alone, so a page gated on anything else the cached
+   * render didn't read — an IP allow-list, an auth proxy's header, geolocation,
+   * `Accept-Language` — is served from the CDN to everyone once one allowed visitor fetched it.
+   * Turn it on only for pages every visitor may see.
+   *
+   * @default false
    */
-  cdnCacheHeaders?: boolean;
+  cdnCacheHeaders?: boolean | CdnCacheHeadersConfig;
   /**
    * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
    * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
@@ -1913,8 +1937,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
-  /** Whether ISR pages carry shared-cache (`public, s-maxage`) headers (default on). */
-  cdnCacheHeaders?: boolean;
+  /** Whether ISR pages carry shared-cache (`public, s-maxage`) headers (default off). */
+  cdnCacheHeaders?: boolean | CdnCacheHeadersConfig;
   /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
   compress?: boolean | CompressConfig;
   /**

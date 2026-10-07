@@ -16,7 +16,12 @@ import { type RequestContext, runDeferred } from "./request-context.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
-import { type MiddlewareOutcome, redirectResponse, withHeaders } from "./middleware.ts";
+import {
+  middlewareMatched,
+  type MiddlewareOutcome,
+  redirectResponse,
+  withHeaders,
+} from "./middleware.ts";
 import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
@@ -145,6 +150,7 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   // Matchers see the locale-stripped path (Next strips the i18n prefix before middleware).
   const outcome = await runner(state.request, resolveLocale(state)?.rest);
   state.dispatchRouteType = "render";
+  state.middlewareMatched = middlewareMatched(outcome);
   // A short-circuit Response still leaves through finalize(): cookies().set() queued in
   // the middleware and the injected header rules must reach the client.
   if (outcome.type === "response") return finalize(state, outcome.response);

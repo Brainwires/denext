@@ -124,7 +124,10 @@ Deno.test("expo-print: the printer plugin in the shell; an iframe on the web", a
     createElement: () => {
       const frame: Any = {
         style: {},
-        setAttribute() {},
+        attributes: {} as Record<string, string>,
+        setAttribute(name: string, value: string) {
+          frame.attributes[name] = value;
+        },
         remove() {},
         contentWindow: { focus() {}, print: () => printed.push(`frame:${frame.srcdoc}`) },
       };
@@ -143,6 +146,10 @@ Deno.test("expo-print: the printer plugin in the shell; an iframe on the web", a
   });
   assertEquals(printed, ["frame:<p>Receipt</p>", "page"]);
   assert(appended[0].style.cssText.includes("width:0"));
+  // The caller's HTML is sandboxed: it may print (modals; same origin so the page can call
+  // print() on it) but never run script in the page's origin.
+  assertEquals(appended[0].attributes.sandbox, "allow-modals allow-same-origin");
+  assert(!appended[0].attributes.sandbox.includes("allow-scripts"));
   await assertRejects(() => Print.printToFileAsync({ html: "x" }), Error, "No PDF renderer");
   await assertRejects(() => Print.selectPrinterAsync(), Error, "not available");
   assertEquals(Print.Orientation, { portrait: "portrait", landscape: "landscape" });

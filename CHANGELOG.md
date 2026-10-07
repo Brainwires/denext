@@ -301,15 +301,21 @@ and this project adheres to
 
 ### Changed
 
-- **ISR pages send CDN cache headers by default.** The render that stores an ISR entry and
-  every later hit answer `Cache-Control: public, s-maxage=<seconds it stays fresh>,
+- **ISR pages can send CDN cache headers: `cdnCacheHeaders`, opt-in.** (Earlier in this cycle
+  it was on by default; it is now off, because a CDN keys on the URL alone and would serve a page
+  gated on an IP allow-list, an auth proxy's header, geolocation or `Accept-Language` to
+  everyone.) With `cdnCacheHeaders: true` the render that stores an ISR entry and every later hit
+  answer `Cache-Control: public, s-maxage=<seconds it stays fresh>,
   stale-while-revalidate=31536000` (`s-maxage` is the route's `revalidate` on the MISS and the
-  time left on a hit, `0` once stale; `force-static` is `public, s-maxage=31536000`), so a CDN
-  in front caches them as long as denext does — before, an ISR page carried no
-  `Cache-Control`. The header is never sent for a request carrying a `Cookie` or
-  `Authorization`, a response that sets a cookie, a non-200, a dynamic render (still
-  `private, no-store`), or a response whose `Cache-Control` middleware or a `headers()` rule
-  set. `cdnCacheHeaders: false` restores the old behavior.
+  time left on a hit, `0` once stale; `force-static` is `public, s-maxage=31536000`, a year,
+  which `revalidatePath` / `revalidateTag` do not purge from the CDN), so a CDN in front caches
+  them as long as denext does. The header is never sent for a request carrying a `Cookie` or
+  `Authorization` (most CDNs leave `Cookie` out of their key, so this does not keep cookie
+  variants apart there), a response that sets a cookie, a non-200, a dynamic render (still
+  `private, no-store`), a response whose `Cache-Control` middleware or a `headers()` rule set, a
+  request whose locale was negotiated (`detectLocale`, `localeMiddleware`, next-intl's
+  middleware), or a request a `middleware.ts` matched, unless
+  `cdnCacheHeaders: { evenWithMiddleware: true }`.
 
 - **denext pins Deno Desktop runtime 2.9.7-denext.12** (deno `cd310b28`, laufey `4f6f00f`, API
   47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
@@ -360,9 +366,12 @@ and this project adheres to
 - **A macOS `secureStore.set` over an item an older denext wrote can no longer lose it.** In the
   login keychain the runtime's store refuses to store over that item, so it is deleted first; when
   the store then failed (the keychain locked, with prompts off) the old value was gone. The write
-  now reads the old value first (`security -w`), asks the runtime's store whether it can answer
-  before touching anything (a locked keychain fails the write with the item intact), and puts the
-  item back with its old value if the store fails after the delete, returning the store's error.
+  now reads the old value first (`security -w`; one it can't read fails the write
+  `backend_unavailable` with the item left in place), asks the runtime's store for the key before
+  touching anything (a read, which may show macOS's unlock prompt for a locked login keychain; a
+  cancel fails the write with the item intact), and puts the item back with its old value if the
+  store fails after the delete, returning the store's error (a put-back that fails too is logged,
+  without the key or value).
   Each key's secure-store operations now also run one at a time, so a first-read move can't undo a
   concurrent write of the same key. The put-back runs under its own 10 s deadline, not the call's
   signal: when the store failed because the bridge's per-method timeout aborted that signal, the
@@ -396,6 +405,22 @@ and this project adheres to
 
 ### Security
 
+- **`denext mobile add app-config` writes nothing from the app config as markup or build
+  settings.** The config may come from another repository: an `ios.infoPlist` key ending in
+  `UsageDescription` was written raw into `<key>…</key>` (so it could add any plist entry), an
+  `android.permissions` entry raw into `<uses-permission android:name="…">` (and a `(` in one
+  threw), and `expo-build-properties`' `ios.deploymentTarget` raw into `project.pbxproj` (so it
+  could add a build setting). Plist keys must be letters, digits, `_`, `.`, `-`; permissions
+  letters, digits, `_`, `.`; the deployment target a version (`16`, `16.4`, `16.4.1`); anything
+  else is a `manual` item with the reason, never written. The shared native-config writers
+  (`withPlistString`, `withPlistDefault`, `withPlistStringArray`, `withPlistDictTrue`,
+  `withPlistTrue`, `withManifestPermission`, `withManifestMetaData`,
+  `withManifestApplicationAttribute`, `withDeploymentTargetAtLeast`, `withGradleSdkAtLeast`)
+  refuse such a key, name or permission themselves (null: "set it by hand"), and match a
+  permission or meta-data name literally.
+- **`expo-print`'s web `printAsync({ html })` runs the HTML without script.** It went into a
+  same-origin `srcdoc` iframe with scripts on, so caller HTML ran as the page; the frame is now
+  `sandbox="allow-modals allow-same-origin"` (printing still works; no script runs in it).
 - **macOS `secureStore` items are the app's own.** They were written with `/usr/bin/security`,
   which the item then trusts, so any program of the same user could read them back with `security
   find-generic-password -w`, without a prompt. Under a runtime with its own store
@@ -403,9 +428,13 @@ and this project adheres to
   app's process writes the Keychain item itself: the data-protection keychain when the app is
   signed with a keychain access group (a provisioning profile), else the login keychain with an
   access list naming only the app, so another program gets macOS's prompt rather than the secret.
-  Items written the old way move over on their first read (read with `security`, stored in the
-  runtime's store, then deleted; put back if the store fails), so a signed-in user stays signed in
-  (Clerk's client JWT lives here); a write or delete removes the old item too. An older runtime
+  Items written the old way move over on their first read during the first launch under the
+  runtime's store (read with `security`, stored in the runtime's store, then deleted; put back if
+  the store fails), so a signed-in user stays signed in (Clerk's client JWT lives here); a write
+  or delete removes the old item too. That launch writes a per-service marker into the runtime's
+  store, and later launches never import a `security` item again: any program of the user can
+  plant one, and a read miss would otherwise hand it to the app as its own value (the remaining
+  window, that first launch, is in KNOWN-LIMITATIONS). An older runtime
   keeps the `security` path. On macOS the `secure-store` capability now bakes an unscoped
   `--allow-sys` (the runtime's store) besides `--allow-run=security`.
 - **Over-the-air UIs are re-verified whenever the shell serves them, not only on arrival.** A

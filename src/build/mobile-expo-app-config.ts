@@ -12,13 +12,18 @@
 //
 // The app config is read statically (`readExpoAppConfig`: project code never runs). What it
 // cannot carry is reported: computed values, build properties without a Capacitor
-// counterpart. `denext migrate --from expo` suggests this capability when there is something
+// counterpart. The config may come from someone else's repository, so nothing in it reaches a
+// native file as markup or build settings: values are XML-escaped, and the plist keys, Android
+// permissions and the deployment target are validated first. One that fails is a `manual` item
+// with the reason, never written (the shared writers refuse it too). `denext migrate --from expo` suggests this capability when there is something
 // to carry.
 
 import { join } from "@std/path";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import { readExpoAppConfig } from "./expo-app-config.ts";
 import {
+  isAndroidName,
+  isPlistKey,
   withManifestApplicationAttribute,
   withManifestPermission,
   withPlistDefault,
@@ -41,11 +46,15 @@ const IMPLIED_PERMISSIONS = new Set(["android.permission.INTERNET"]);
  * @param min The lowest value it may have.
  */
 export function withGradleSdkAtLeast(gradle: string, key: string, min: number): string | null {
+  if (!/^\w+$/.test(key) || !Number.isSafeInteger(min)) return null;
   const m = new RegExp(`(\\b${key}\\s*=\\s*)(\\d+)`).exec(gradle);
   if (!m) return null;
   if (Number(m[2]) >= min) return gradle;
   return gradle.slice(0, m.index) + m[1] + String(min) + gradle.slice(m.index + m[0].length);
 }
+
+/** A deployment target as Xcode writes one: `16`, `16.4`, `16.4.1`. */
+const DEPLOYMENT_TARGET = /^\d+(\.\d+){0,2}$/;
 
 /** Compare dotted versions (`"15.0"` < `"16.4"`). */
 function versionBelow(a: string, b: string): boolean {
@@ -61,12 +70,14 @@ function versionBelow(a: string, b: string): boolean {
 
 /**
  * `project.pbxproj` with every `IPHONEOS_DEPLOYMENT_TARGET` below `target` raised to it (the
- * project's and its targets' configurations). Null when it sets none.
+ * project's and its targets' configurations). Null when it sets none, or when `target` is not a
+ * version (`16`, `16.4`, `16.4.1`): anything else could end the setting and add another.
  *
  * @param pbxproj The project file.
  * @param target The deployment target (`"16.0"`).
  */
 export function withDeploymentTargetAtLeast(pbxproj: string, target: string): string | null {
+  if (!DEPLOYMENT_TARGET.test(target)) return null;
   const re = /(IPHONEOS_DEPLOYMENT_TARGET\s*=\s*)"?([\d.]+)"?;/g;
   if (!re.test(pbxproj)) return null;
   re.lastIndex = 0;
@@ -140,7 +151,15 @@ export async function addExpoAppConfigToProject(
     report.skipped.push("no app.json or app.config.* here: nothing to carry over.");
     return report;
   }
-  const plist = Object.entries(config.infoPlist).filter(([key]) => /UsageDescription$/.test(key));
+  const usage = Object.entries(config.infoPlist).filter(([key]) => /UsageDescription$/.test(key));
+  const plist = usage.filter(([key]) => {
+    if (isPlistKey(key)) return true;
+    report.manual.push(
+      `Info.plist key ${JSON.stringify(key)}: not a valid Info.plist key (letters, digits, ` +
+        "`_`, `.`, `-`); not written",
+    );
+    return false;
+  });
   for (const [key, value] of plist) {
     if (value === null) {
       report.manual.push(`Info.plist ${key}: its text is computed in code; set it by hand`);
@@ -156,9 +175,15 @@ export async function addExpoAppConfigToProject(
     report,
   );
   const build = config.buildProperties;
-  const manifest = config.androidPermissions.filter((p) => !IMPLIED_PERMISSIONS.has(p)).map((
-    permission,
-  ) => ({
+  const permissions = config.androidPermissions.filter((p) => {
+    if (isAndroidName(p)) return !IMPLIED_PERMISSIONS.has(p);
+    report.manual.push(
+      `android.permissions ${JSON.stringify(p)}: not a valid Android permission name (letters, ` +
+        "digits, `_`, `.`); not written",
+    );
+    return false;
+  });
+  const manifest = permissions.map((permission) => ({
     label: `<uses-permission ${permission}>`,
     apply: (text: string) => withManifestPermission(text, permission),
   }));
@@ -187,7 +212,14 @@ export async function addExpoAppConfigToProject(
     })),
     report,
   );
-  const target = build?.iosDeploymentTarget;
+  let target = build?.iosDeploymentTarget;
+  if (target && !DEPLOYMENT_TARGET.test(target)) {
+    report.manual.push(
+      `expo-build-properties ios.deploymentTarget ${JSON.stringify(target)}: not a version ` +
+        "(`16`, `16.4`, `16.4.1`); not written",
+    );
+    target = undefined;
+  }
   if (target) {
     await edit(dir, PBXPROJ, [{
       label: `IPHONEOS_DEPLOYMENT_TARGET ${target} (raised only)`,

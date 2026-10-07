@@ -161,7 +161,7 @@ behind a CDN and let the shared store be the origin's memory, not the edge's.
 
 Two cheaper options when a shared store is more than the app needs: **a CDN** in
 front of each node, which caches ISR pages from the `public, s-maxage` header
-they carry by default (see [CDN headers](/docs/data#cdn-headers)), accepting that invalidation is the CDN's
+they carry with `cdnCacheHeaders: true` (see [CDN headers](/docs/data#cdn-headers)), accepting that invalidation is the CDN's
 purge API rather than `revalidateTag`; or **`cache: { store: "memory" }`** on a
 short `revalidate`, which makes the per-node staleness explicit and bounded
 instead of durable.

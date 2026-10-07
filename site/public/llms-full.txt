@@ -1195,6 +1195,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cacheStoreHealthy(): Promise<boolean>` — Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing.
 - `cacheTag(...tags: string[]): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
+- `interface CdnCacheHeadersConfig` — Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).
 - `interface Channel<T>` — A channel on the server.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).

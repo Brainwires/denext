@@ -1802,10 +1802,15 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         identity keep access. An ad-hoc or unsigned build is a new program to macOS each time it is
         rebuilt, so its first read after a rebuild shows the prompt (Always Allow). Values an older
         denext stored through <code>/usr/bin/security</code>{" "}
-        (readable by any program of the user) move over on their first read, so a signed-in user
-        stays signed in. An older runtime (or the stock one) keeps the <code>security</code>{" "}
-        path. The capability bakes an unscoped <code>--allow-sys</code>{" "}
-        for the runtime&apos;s store, plus <code>--allow-run=security</code>.
+        (readable by any program of the user) move over on their first read during the first launch
+        under the runtime&apos;s store, so a signed-in user stays signed in; that launch leaves a
+        marker in the store, and later launches never import such an item again (another program
+        could have planted it). A write over one the runtime&apos;s store finds in its way reads its
+        value first: one it can&apos;t read fails the write and stays where it is. An older runtime
+        (or the stock one) keeps the <code>security</code> path. The capability bakes an unscoped
+        {" "}
+        <code>--allow-sys</code> for the runtime&apos;s store, plus{" "}
+        <code>--allow-run=security</code>.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}

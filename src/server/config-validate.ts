@@ -677,6 +677,18 @@ function validateCompress(compress: unknown, fail: Fail): void {
   }
 }
 
+/** `cdnCacheHeaders`: a boolean, or `{ evenWithMiddleware?: boolean }`. */
+function validateCdnCacheHeaders(cdn: unknown, fail: Fail): void {
+  if (cdn === undefined || typeof cdn === "boolean") return;
+  if (typeof cdn !== "object" || cdn === null || Array.isArray(cdn)) {
+    fail("cdnCacheHeaders", "must be a boolean or { evenWithMiddleware?: boolean }");
+  }
+  const even = (cdn as { evenWithMiddleware?: unknown }).evenWithMiddleware;
+  if (even !== undefined && typeof even !== "boolean") {
+    fail("cdnCacheHeaders.evenWithMiddleware", "must be a boolean");
+  }
+}
+
 /**
  * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
  * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
@@ -697,9 +709,7 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
-  if (config.cdnCacheHeaders !== undefined && typeof config.cdnCacheHeaders !== "boolean") {
-    fail("cdnCacheHeaders", "must be a boolean");
-  }
+  validateCdnCacheHeaders(config.cdnCacheHeaders, fail);
   validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {
     num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables

@@ -150,7 +150,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     maxConcurrency: "number",
     slotBackstop: "number",
     cacheKeyParams: "chips",
-    cdnCacheHeaders: "toggle",
+    cdnCacheHeaders: "union", // `boolean | CdnCacheHeadersConfig`: a toggle branch + an options group
     compress: "union", // `boolean | CompressConfig`: a toggle branch + an options group
     nodeResolve: "toggle",
     cacheComponents: "toggle",

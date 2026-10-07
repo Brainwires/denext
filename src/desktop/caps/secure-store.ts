@@ -17,8 +17,8 @@
  * with a keychain access group (a provisioning profile), else the login keychain with an access
  * list naming only the app. Another program of the same user gets macOS's prompt, never the secret.
  * Items an older denext wrote through `security` (which trust `/usr/bin/security`, so any program
- * of the user could read them through it) move over on their first read (see
- * `migratingBackend`), so a signed-in user keeps their tokens.
+ * of the user could read them through it) move over on their first read during the first launch
+ * under that store (see `migratingBackend`), so a signed-in user keeps their tokens.
  *
  * Otherwise (macOS under an older or the stock runtime, and Windows) the backends are the OS
  * credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
@@ -238,6 +238,11 @@ export interface SecureStoreDeps {
    * Linux and macOS backend; tests pass a fake, or `null` for a runtime without one.
    */
   readonly api?: DesktopAppApi | null;
+  /**
+   * Where a warning goes (default `console.warn`): a legacy item that could not be put back after a
+   * failed move. Never given a value or a key.
+   */
+  readonly warn?: (message: string) => void;
 }
 
 /** The runtime's secure store (`Deno.desktop.secureStore`). */
@@ -379,7 +384,20 @@ function cliBackend(os: Exclude<Os, "linux">, service: string, run: SecureRunner
  */
 const RESTORE_TIMEOUT_MS = 10_000;
 
-/** `kSecAttrCreator` of the items the runtime's macOS store writes, as `security` prints it. */
+/**
+ * The runtime-store key of the "legacy items moved" marker, one per service. A page can never
+ * name it: `safeKey` refuses a key that starts with `-`.
+ */
+const LEGACY_MOVED_MARKER = "-denext-legacy-security-items-moved";
+
+/** The marker's stored value (base64 of `1`, so it decodes like every other value here). */
+const LEGACY_MOVED_VALUE = "MQ==";
+
+/**
+ * `kSecAttrCreator` of the items the runtime's macOS store writes, as `security` prints it. It
+ * only tells an item the runtime wrote from one an older denext wrote, for the move; it proves
+ * nothing about who wrote it (any program of the user can create an item with that creator).
+ */
 const RUNTIME_ITEM_CREATOR = '"crtr"<uint32>="Lfy1"';
 
 /**
@@ -436,28 +454,72 @@ function keyQueue(): <T>(key: string, op: () => Promise<T>) => Promise<T> {
  * signed-in user keeps their tokens. A write or delete removes a legacy item too, so it can never
  * come back on a later read.
  *
+ * The move is one-time: any program of the user can plant an item that looks like a legacy one,
+ * and a read miss that adopted it would hand the app a value the app never wrote. So the first
+ * launch under the runtime's store writes a per-service marker into that store
+ * ({@linkcode LEGACY_MOVED_MARKER}); that launch keeps moving the keys its pages read, and every
+ * later launch finds the marker and never adopts a legacy item again (a read miss is a miss, with
+ * no `security` call; a delete touches only the runtime's store). A write never adopts anything
+ * (it stores the page's value), so after the marker it still clears a leftover legacy item that
+ * blocks the runtime's store in the login keychain, keeping the item's value to put back on a
+ * failure. Residual window: during that first launch a planted item for a key the app has not read
+ * yet is still adopted on its first read; legacy items for keys the app does not read during the
+ * first launch are not moved later (they stay in the login keychain, unread). The marker is read
+ * only after the runtime's store has answered for the key (the keychain is unlocked by then);
+ * reads of the runtime's store may show macOS's unlock prompt, so none of this assumes a read is
+ * prompt-free.
+ *
  * In the login keychain the two can't coexist (one item per service + account): the runtime
  * refuses to store over an item it didn't write, so the legacy item is deleted first and, when the
  * store still fails, put back with the value it held (read with `security -w` before the delete),
- * on a write as on a read: a failed write leaves the old value, never nothing. A write first asks
- * the runtime's store for the key (no prompt): a store that can't answer (the keychain locked)
- * fails the write before the legacy item is touched. `security` is pointed at a (service, key)
+ * on a write as on a read: a failed write leaves the old value, never nothing; a legacy item whose
+ * value can't be read is never deleted (the write fails `backend_unavailable` instead). A write
+ * first asks the runtime's store for the key: a read, which may show macOS's unlock prompt for a
+ * locked login keychain; when the user cancels it (or the store can't answer), the write fails
+ * before the legacy item is touched. A put-back that fails is logged (without the key or value). `security` is pointed at a (service, key)
  * only while the runtime's own item isn't there (`security delete-generic-password` would match it
  * too). Each key's operations run one at a time (see {@linkcode keyQueue}).
  *
  * @param runtime The runtime's store.
  * @param legacy The `security` CLI.
  * @param present Whether a legacy item is there (see {@linkcode legacyItemPresent}).
+ * @param warn Where a lost put-back is reported.
  * @returns The backend.
  */
 function migratingBackend(
   runtime: SecureBackend,
   legacy: SecureBackend,
   present: (key: string, signal: AbortSignal) => Promise<boolean>,
+  warn: (message: string) => void,
 ): SecureBackend {
   // Keys with no legacy item left, as far as this process knows: no `security` call for them.
   const settled = new Set<string>();
   const serial = keyQueue();
+  /**
+   * Whether this launch may still adopt legacy items: the marker was absent when first asked
+   * (this launch then writes it, and stays the moving launch). Asked once per process; a failed
+   * read is asked again on the next call.
+   */
+  let moving: Promise<boolean> | undefined;
+  /** Whether the marker was found (cached; no read): a later launch. */
+  let moved = false;
+  const movingLaunch = (signal: AbortSignal): Promise<boolean> => {
+    if (moving) return moving;
+    const asked = (async () => {
+      if ((await runtime.get(LEGACY_MOVED_MARKER, signal)) !== null) {
+        moved = true;
+        return false;
+      }
+      // A marker that can't be written is written by the next launch instead.
+      await runtime.set(LEGACY_MOVED_MARKER, LEGACY_MOVED_VALUE, signal).catch(() => {});
+      return true;
+    })();
+    moving = asked;
+    asked.catch(() => {
+      if (moving === asked) moving = undefined;
+    });
+    return asked;
+  };
   /**
    * Store `b64` in the runtime's store over a legacy item known to be there, holding `kept`
    * (`null`: it could not be read). When the store fails after the legacy item was deleted to make
@@ -496,7 +558,12 @@ function migratingBackend(
       await runtime.set(key, b64, signal);
     } catch (err) {
       if (kept !== null) {
-        await legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {});
+        await legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {
+          warn(
+            "an item an older denext wrote could not be put back after a failed move into the " +
+              "runtime's store; its value is lost",
+          );
+        });
       }
       throw err;
     }
@@ -520,27 +587,53 @@ function migratingBackend(
       settled.add(key);
       return;
     }
-    // Can the runtime's store answer at all (no prompt)? If not, nothing is touched.
+    // Can the runtime's store answer at all? (A read: macOS may prompt to unlock the keychain; a
+    // cancel fails the write here.) If not, nothing is touched.
     await runtime.get(key, signal);
-    await replaceLegacy(key, b64, await legacy.get(key, signal), signal);
+    const kept = await legacy.get(key, signal);
+    // With nothing to put back, deleting the item to make room could lose it: leave it.
+    if (kept === null) {
+      throw new DesktopCapError(
+        "backend_unavailable",
+        "the secure store could not read the item an older denext wrote for this key, so it was " +
+          "left in place and the write was not made",
+        { status: 503 },
+      );
+    }
+    await replaceLegacy(key, b64, kept, signal);
+  };
+  /** A write in a later launch: the runtime's store first; a legacy item in its way is replaced. */
+  const writeAfterMove = async (key: string, b64: string, signal: AbortSignal) => {
+    try {
+      await runtime.set(key, b64, signal);
+      settled.add(key);
+    } catch {
+      await migrateOnWrite(key, b64, signal);
+    }
   };
   return {
     get: (key, signal) =>
       serial(key, async () => {
         const stored = await runtime.get(key, signal);
         if (stored !== null || settled.has(key)) return stored;
+        // A later launch never adopts a legacy item (it may have been planted).
+        if (!(await movingLaunch(signal))) {
+          settled.add(key);
+          return null;
+        }
         return migrateOnRead(key, signal);
       }),
     set: (key, b64, signal) =>
-      serial(
-        key,
-        () => settled.has(key) ? runtime.set(key, b64, signal) : migrateOnWrite(key, b64, signal),
-      ),
+      serial(key, () => {
+        if (settled.has(key)) return runtime.set(key, b64, signal);
+        return moved ? writeAfterMove(key, b64, signal) : migrateOnWrite(key, b64, signal);
+      }),
     delete: (key, signal) =>
       serial(key, async () => {
         await runtime.delete(key, signal);
-        // The runtime's item is gone, so `security` can only match a legacy one.
-        if (!settled.has(key)) await legacy.delete(key, signal);
+        // The runtime's item is gone, so `security` can only match a legacy one. A later launch
+        // leaves legacy items alone (a read never adopts them).
+        if (!settled.has(key) && (await movingLaunch(signal))) await legacy.delete(key, signal);
         settled.add(key);
       }),
   };
@@ -598,6 +691,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
           runtimeBackend(store, service, answerMs),
           cli,
           (key, signal) => legacyItemPresent(run, service, key, signal),
+          deps.warn ?? ((m) => console.warn(`denext desktop secureStore (${service}): ${m}`)),
         ),
       };
     }

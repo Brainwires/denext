@@ -291,7 +291,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   without a provisioning profile that grants a keychain access group it lives in the login
   keychain, where another program gets macOS's prompt (which the user can allow) rather than
   nothing, and an ad-hoc or unsigned build is a new program to macOS after each rebuild, so its
-  first read prompts; on Linux it needs a Secret Service
+  first read prompts; values an older denext stored through `security` move over only when the
+  app reads them during its first launch under the runtime's store (a marker in that store ends
+  the move, so a key the app first reads later stays behind in the login keychain), and during
+  that first launch an item another program of the user plants for a key the app has not read
+  yet is still adopted on that key's first read; on Linux it needs a Secret Service
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
   unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
   Linux secure store, and there is no `secret-tool` path) — else every call rejects

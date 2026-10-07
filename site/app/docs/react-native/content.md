@@ -108,7 +108,11 @@ The report then lists:
   (only ever raised) and `android.usesCleartextTraffic`. The report names the config plugins
   whose native settings nothing carries over (a local `./plugins/with….js`, a third-party
   plugin), and the `expo-build-properties` options with no Capacitor counterpart
-  (`ios.useFrameworks`, …);
+  (`ios.useFrameworks`, …). The app config may come from someone else's repository, so
+  nothing in it reaches a native file as markup or a build setting: text is XML-escaped, and a
+  plist key that is not letters, digits, `_`, `.` and `-`, an Android permission that is not
+  letters, digits, `_` and `.`, or a deployment target that is not a version (`16`, `16.4`,
+  `16.4.1`) is listed in the report with the reason and not written;
 - a Tailwind input (`global.css`) for uniwind / NativeWind, which needs [the recipe](#recipe-uniwind-and-tailwind).
 
 On T3 Code's `apps/mobile`, the migrated app's build failed on exactly the three modules the

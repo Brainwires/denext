@@ -5579,6 +5579,18 @@
           "denextOnly": true
         },
         {
+          "name": "CdnCacheHeadersConfig",
+          "slug": "CdnCacheHeadersConfig",
+          "kind": "interface",
+          "signature": "interface CdnCacheHeadersConfig",
+          "doc": "Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).",
+          "docFull": "Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object:\nthe headers on, with these settings).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Channel",
           "slug": "Channel",
           "kind": "interface",

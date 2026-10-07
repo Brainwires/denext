@@ -3,7 +3,13 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { ApiBatchConfig, AppLinksConfig, CompressConfig, CorsConfig } from "./config.ts";
+import type {
+  ApiBatchConfig,
+  AppLinksConfig,
+  CdnCacheHeadersConfig,
+  CompressConfig,
+  CorsConfig,
+} from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -190,11 +196,12 @@ export interface AppConfig {
   cacheKeyParams?: string[];
   /**
    * Shared-cache headers on ISR pages (`Cache-Control: public, s-maxage=…,
-   * stale-while-revalidate=…`) — default on; `false` sends none. Never on a credentialed
-   * request, a response that sets a cookie, or one whose `Cache-Control` is already set.
+   * stale-while-revalidate=…`) — default off; `true` (or an options object) sends them. Never
+   * on a credentialed request, a response that sets a cookie, one whose `Cache-Control` is
+   * already set, or a request a middleware matched (unless `{ evenWithMiddleware: true }`).
    * `denext start`/`dev` take it from the config's `cdnCacheHeaders`.
    */
-  cdnCacheHeaders?: boolean;
+  cdnCacheHeaders?: boolean | CdnCacheHeadersConfig;
   /**
    * Compress dynamic responses per `Accept-Encoding` — default `true` (gzip, like Next.js's
    * `compress`); `{ encodings: ["br", "gzip"] }` also sends brotli. See `compressResponse`

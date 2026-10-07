@@ -998,8 +998,23 @@
       }
     },
     "cdnCacheHeaders": {
-      "description": "Send shared-cache headers with ISR pages — **on by default**. A page served from the ISR cache (and the render that stores it) answers `Cache-Control: public, s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000` (`public, s-maxage=31536000` for `force-static`), so a CDN in front caches it as long as denext would. Never for a request carrying a `Cookie` or `Authorization`, a response that sets a cookie, a non-200, a dynamic render, or a response whose `Cache-Control` middleware or a `headers()` rule already set. `false` sends no `Cache-Control` with ISR pages (the behavior before 3.3).",
-      "type": "boolean"
+      "description": "Send shared-cache headers with ISR pages — **off by default** (opt-in). With `true`, a page served from the ISR cache (and the render that stores it) answers `Cache-Control: public, s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000` (`public, s-maxage=31536000` for `force-static`), so a CDN in front caches it as long as denext would. Never for a request carrying a `Cookie` or `Authorization`, a response that sets a cookie, a non-200, a dynamic render, a response whose `Cache-Control` middleware or a `headers()` rule already set, or a request a `middleware.ts` matched (`{ evenWithMiddleware: true }` sends it there too).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "evenWithMiddleware": {
+              "description": "Send the header on a request a `middleware.ts` matched too. Off by default: middleware may gate a page on something a shared cache does not key on (an IP allow-list, an auth proxy's header, geolocation, `Accept-Language`), and a CDN would then serve the gated page to everyone. Turn it on only when no matched middleware decides who may see a cached page.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "default": false
     },
     "compress": {
       "description": "Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/ JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's CPU) only when listed in `{ encodings }` (`{ encodings: [\"br\", \"gzip\"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through `node:zlib`, flushed explicitly; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a flush per chunk, so it still reaches the browser progressively. Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives), a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with `export const compress = false`. Build-time precompressed client bundles (`.gz`) are served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.",

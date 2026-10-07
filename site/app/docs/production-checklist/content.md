@@ -131,10 +131,12 @@ Each line: what to set → where it is documented. Config keys go in
 - `hsts` — `max-age=31536000` host-only by default;
   `{ includeSubDomains: true }` only when every subdomain is HTTPS. →
   [Configuration › Security](/docs/config#security)
-- CDN caching of ISR pages — an ISR page answers `public, s-maxage=<fresh
-  seconds>, stale-while-revalidate=31536000` by default (never for a request
-  with a cookie or `Authorization`, nor a response setting one); a `headers()`
-  rule overrides it per route and `cdnCacheHeaders: false` turns it off. →
+- CDN caching of ISR pages — opt in with `cdnCacheHeaders: true`: an ISR page
+  then answers `public, s-maxage=<fresh seconds>, stale-while-revalidate=31536000`
+  (never for a request with a cookie or `Authorization`, a response setting one,
+  a negotiated locale, or a request a `middleware.ts` matched); turn it on only
+  for pages every visitor may see, and purge the CDN yourself after a
+  `revalidatePath` / `revalidateTag`. →
   [Data & caching › CDN headers](/docs/data#cdn-headers)
 
 **Observability**

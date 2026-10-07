@@ -46,9 +46,14 @@ export function cdnCacheControl(staleAt: number | undefined, now: number = Date.
 
 /**
  * Add the CDN header ({@link cdnCacheControl}) to an ISR document's final response — only when
- * nothing about the exchange is private. The render being impersonal (it read no cookies or
- * headers, or it would not be in the page cache) is necessary but not sufficient: the header is
- * left off when `cdnCacheHeaders` is `false`, when the REQUEST carried a `Cookie` or
+ * `cdnCacheHeaders` turns it on (it is off by default) and nothing about the exchange is
+ * private. The render being impersonal (it read no cookies or headers, or it would not be in the
+ * page cache) is necessary but not sufficient: the header is left off when a `middleware.ts`
+ * matched the request (it may gate the page on an IP, an auth proxy's header, geolocation or
+ * `Accept-Language`, none of which a CDN keys on; `{ evenWithMiddleware: true }` sends it
+ * anyway), when the request's locale was negotiated (`detectLocale`: `Accept-Language` or the
+ * `NEXT_LOCALE` cookie — `evenWithMiddleware` does not lift this), when the REQUEST carried a
+ * `Cookie` or
  * `Authorization` (middleware may have routed on it, and a shared cache must never key a
  * credentialed exchange as public), when the RESPONSE sets a cookie (a CDN would hand one
  * visitor's cookie to everyone), when it is not a 200, and when middleware or a `headers()`
@@ -64,8 +69,11 @@ export function withCdnCacheControl(
   res: Response,
   staleAt: number | undefined,
 ): Response {
-  const { request, app } = pr.state;
-  if (app.config.cdnCacheHeaders === false || res.status !== 200) return res;
+  const { request, app, middlewareMatched } = pr.state;
+  const cdn = app.config.cdnCacheHeaders;
+  if (!cdn || res.status !== 200) return res;
+  if (middlewareMatched && (cdn === true || cdn.evenWithMiddleware !== true)) return res;
+  if (pr.state.ctx.localeNegotiated) return res;
   if (request.headers.has("cookie") || request.headers.has("authorization")) return res;
   if (res.headers.has("cache-control") || res.headers.getSetCookie().length > 0) return res;
   const headers = new Headers(res.headers);

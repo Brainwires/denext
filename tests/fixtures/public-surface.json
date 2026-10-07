@@ -501,6 +501,7 @@
     "CacheStats:interface",
     "CacheStore:interface",
     "CachedPage:interface",
+    "CdnCacheHeadersConfig:interface",
     "Channel:interface",
     "ChannelConfig:interface",
     "ChannelContext:interface",

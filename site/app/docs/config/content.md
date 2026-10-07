@@ -213,14 +213,20 @@ itself (it reads neither the config keys nor the env vars for them).
   fork the ISR page-cache key; every other param (`?utm_*`, `?fbclid`) is
   ignored for keying but still reaches the render via `searchParams`. Unset,
   every param participates.
-- **`cdnCacheHeaders`** — `boolean` (**on by default**). An ISR page (the
-  render that stores it and every hit) answers `Cache-Control: public,
-  s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000`
-  (`force-static`: `public, s-maxage=31536000`), so a CDN caches it as long as
-  denext does. Never for a request with a `Cookie` or `Authorization`, a
-  response that sets a cookie, a non-200 or dynamic render, or a response whose
-  `Cache-Control` middleware or a `headers()` rule set. `false` sends none. See
-  [CDN headers](/docs/data#cdn-headers).
+- **`cdnCacheHeaders`** — `boolean | { evenWithMiddleware?: boolean }` (**off
+  by default**). Turned on, an ISR page (the render that stores it and every
+  hit) answers `Cache-Control: public, s-maxage=<seconds it stays fresh>,
+  stale-while-revalidate=31536000` (`force-static`: `public, s-maxage=31536000`,
+  a year), so a CDN caches it as long as denext does. Never for a request with a
+  `Cookie` or `Authorization`, a response that sets a cookie, a non-200 or
+  dynamic render, a response whose `Cache-Control` middleware or a `headers()`
+  rule set, a request whose locale was negotiated (`Accept-Language` /
+  `NEXT_LOCALE`), or a request a `middleware.ts` matched
+  (`{ evenWithMiddleware: true }` sends it there too). The risk: a CDN keys on
+  the URL, so a page gated on anything else (an IP allow-list, an auth proxy's
+  header, geolocation) is served to everyone once cached, and most CDNs leave
+  `Cookie` out of the key too. `revalidatePath` / `revalidateTag` do not purge
+  the CDN's copy. See [CDN headers](/docs/data#cdn-headers).
 - **`compress`** — `boolean | { encodings?: ("gzip" | "br")[] }` (**on by
   default**, gzip, like Next.js's `compress`). Compresses dynamic responses —
   rendered HTML, Flight/JSON payloads and route-handler text, JSON, JavaScript,
