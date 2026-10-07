@@ -152,6 +152,9 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * `jsx-runtime-lib` mark the elements npm code creates, and the component bailout keeps
  * React's semantics for them): the reconciler's check is +106 B raw (62,932 → 63,038 B)
  * in every app, and the marking runtime itself ships only in compat builds.
+ * Re-based 64 → 65.5 KB (65,500 B) after 3.2.0 (measured 63,939 B, 61 B of headroom): the auth, passkey
+ * and server-ops work kept the shared graph flat, but the budget had no room left for the next
+ * small runtime addition. Native, desktop and mobile code is verified absent from this total.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -160,7 +163,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 64_000, `shared chunks total ${sharedTotal} bytes (budget 64 KB raw)`);
+  assert(sharedTotal < 65_500, `shared chunks total ${sharedTotal} bytes (budget 65,500 B raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
