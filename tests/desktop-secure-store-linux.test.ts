@@ -150,7 +150,7 @@ Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailabl
   assertEquals(err.code, "validation");
 });
 
-Deno.test("secureStore (Linux): a runtime without its own store is backend_unavailable; never on macOS / Windows", async () => {
+Deno.test("secureStore (Linux): a runtime without its own store is backend_unavailable; never on Windows", async () => {
   // A runtime whose store is not supported (or absent: the stock runtime) — no fallback, no CLI.
   for (const api of [fakeRuntimeStore(() => "ok", false).api, null, {}]) {
     const tool = noCli();
@@ -182,19 +182,20 @@ Deno.test("secureStore (Linux): a runtime without its own store is backend_unava
   // Validation still comes first (a bad key never reaches a backend).
   const bad = await assertRejects(() => call(cap, "get", { key: "-x" }), DesktopCapError);
   assertEquals(bad.code, "validation");
-  // macOS: the Keychain CLI, even with a runtime store present.
+  // Windows: PasswordVault through PowerShell, even with a runtime store present (macOS uses the
+  // runtime's store: desktop-secure-store-macos.test.ts).
   const runtime = fakeRuntimeStore(() => "ok");
   const ran: string[] = [];
-  const mac = secureStoreCapability({
+  const win = secureStoreCapability({
     service: "com.example.app",
-    os: "darwin",
+    os: "windows",
     api: runtime.api,
     run: (cmd) => {
       ran.push(cmd);
       return Promise.resolve({ code: 1, stdout: "" });
     },
   });
-  assertEquals(await call(mac, "get", { key: "tok" }), null);
-  assertEquals(ran, ["security"]);
+  assertEquals(await call(win, "get", { key: "tok" }), null);
+  assertEquals(ran, ["powershell.exe"]);
   assertEquals(runtime.calls, []);
 });

@@ -92,16 +92,17 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     value: true,
     api: ["secureStore"],
     os: {
-      // The OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS `security`, Windows
-      // WinRT PasswordVault via `powershell.exe`. Linux: the runtime's own store (the Secret
-      // Service through libsecret), which needs an unscoped --allow-sys.
-      darwin: { run: ["security"] },
+      // Linux and macOS: the runtime's own store (the Secret Service through libsecret; the
+      // Keychain, items only the app may read), which needs an unscoped --allow-sys. macOS keeps
+      // `security` for runtimes without that store and to move older items over. Windows: WinRT
+      // PasswordVault via `powershell.exe` (argv/stdin, no shell).
+      darwin: { run: ["security"], sys: ["*"] },
       linux: { sys: ["*"] },
       windows: { run: ["powershell.exe"] },
     },
     trust: "full",
     notes:
-      "OS keychain (Keychain `security` / the runtime's libsecret on Linux / Windows PasswordVault)",
+      "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
     manual: [
       "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (`libsecret-1.so.0`, loaded at run time: the .deb depends on libsecret-1-0, the .rpm on libsecret). Without one, or under the stock runtime, every call fails `backend_unavailable` with the reason, never a plain file.",
       "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",

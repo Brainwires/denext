@@ -417,7 +417,8 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
+(macOS Keychain written by the app's own process inside the runtime, readable only by the app; items
+an older denext wrote through `security` move over on first read; Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
 on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
 or a locked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's

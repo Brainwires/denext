@@ -116,6 +116,7 @@ ours is open yet.
 | [Title bar preferences](#title-bar-preferences)                                              | laufey, Deno, denext | planned                                                                      |
 | [Native file dialogs](#native-file-dialogs)                                                  | laufey, Deno, denext | planned                                                                      |
 | [The secure store on Linux](#the-secure-store-on-linux)                                      | laufey, Deno, denext | planned                                                                      |
+| [The secure store on macOS](#the-secure-store-on-macos)                                      | laufey, Deno, denext | planned                                                                      |
 | [The rich clipboard](#the-rich-clipboard)                                                    | laufey, Deno, denext | planned                                                                      |
 | [Global shortcuts](#global-shortcuts)                                                        | laufey, Deno, denext | planned                                                                      |
 | [Launch at login](#launch-at-login)                                                          | laufey, Deno, denext | planned                                                                      |
@@ -392,6 +393,26 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   the secure store is the runtime's alone, and a `.deb` / `.rpm` with `secure-store` on depends on
   libsecret itself (`libsecret-1-0` / `libsecret`). Items keep the `service` / `account`
   attributes `secret-tool` wrote, so values stored before stay readable.
+- **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
+### The secure store on macOS
+
+- **What:** `Deno.desktop.secureStore` on macOS (from `2.9.7-denext.13`): a generic password per
+  (service, account) that the app's own process writes through Security.framework. With a
+  provisioning profile that grants a keychain access group it goes to the data-protection
+  keychain, in the app's access group; otherwise to the login keychain with an access list whose
+  only trusted application is the app (its designated requirement, so updates signed by the same
+  identity keep access). `set` and `delete` never prompt (a locked keychain rejects
+  `SecureStoreUnavailable`); `get` may (a locked keychain, a rebuilt ad-hoc app) and rejects after
+  its timeout. An item another program wrote for the same service and account is never read
+  (`null`) and makes `set` reject until it is deleted.
+- **Why:** denext's `secure-store` wrote macOS items with `/usr/bin/security`, which the item then
+  trusts, so any program of the same user could read them back with `security
+  find-generic-password -w`, without a prompt. Now another program gets macOS's prompt, never the
+  secret. denext moves the items it wrote that way on their first read (read with `security`,
+  stored in the runtime's store, then deleted), so a signed-in user stays signed in; a runtime
+  without the store keeps the `security` path.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 

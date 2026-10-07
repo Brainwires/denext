@@ -266,8 +266,13 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use.
-- **`secureStore` per OS:** on macOS other programs of the same user can read its items (they are
-  written by `/usr/bin/security`, which the item trusts); on Linux it needs a Secret Service
+- **`secureStore` per OS:** on macOS the item is the app's own only under a runtime with its own
+  store (denext.13 and later; until that runtime is pinned, items are written by
+  `/usr/bin/security`, which the item trusts, so other programs of the same user can read them);
+  without a provisioning profile that grants a keychain access group it lives in the login
+  keychain, where another program gets macOS's prompt (which the user can allow) rather than
+  nothing, and an ad-hoc or unsigned build is a new program to macOS after each rebuild, so its
+  first read prompts; on Linux it needs a Secret Service
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
   unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
   Linux secure store, and there is no `secret-tool` path) — else every call rejects

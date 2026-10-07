@@ -274,6 +274,21 @@ and this project adheres to
   render or action call), and each target's session registers and dispatches its own instance
   (its platform files). Production keeps one registry.
 
+### Security
+
+- **macOS `secureStore` items are the app's own.** They were written with `/usr/bin/security`,
+  which the item then trusts, so any program of the same user could read them back with `security
+  find-generic-password -w`, without a prompt. Under a runtime with its own store
+  (`Deno.desktop.secureStore` `supported`: denext's pinned runtime from `2.9.7-denext.13`) the
+  app's process writes the Keychain item itself: the data-protection keychain when the app is
+  signed with a keychain access group (a provisioning profile), else the login keychain with an
+  access list naming only the app, so another program gets macOS's prompt rather than the secret.
+  Items written the old way move over on their first read (read with `security`, stored in the
+  runtime's store, then deleted; put back if the store fails), so a signed-in user stays signed in
+  (Clerk's client JWT lives here); a write or delete removes the old item too. An older runtime
+  keeps the `security` path. On macOS the `secure-store` capability now bakes an unscoped
+  `--allow-sys` (the runtime's store) besides `--allow-run=security`.
+
 ## [3.2.0] - 2026-10-07
 
 ### Breaking

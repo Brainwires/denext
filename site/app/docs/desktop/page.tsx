@@ -1784,6 +1784,25 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         {" "}
         wrote, so values an older denext stored stay readable.
       </Callout>
+      <Callout kind="note">
+        <strong>The secure store on macOS.</strong> Under the pinned runtime (from{" "}
+        <code>2.9.7-denext.13</code>) <code>secure-store</code>{" "}
+        is the runtime&apos;s own: the app&apos;s process writes the Keychain item itself, so only
+        the app may read it. Signed with a provisioning profile that grants a keychain access group
+        (see{" "}
+        <a href="#desktop-macos-profile">restricted entitlements</a>), the item goes to the
+        data-protection keychain, which no other app can read at all. Otherwise (a Developer ID
+        signature without a profile, ad-hoc, unsigned) it goes to the login keychain with an access
+        list naming only the app: any other program of the user, <code>security</code>{" "}
+        included, gets macOS&apos;s prompt rather than the secret, and updates signed by the same
+        identity keep access. An ad-hoc or unsigned build is a new program to macOS each time it is
+        rebuilt, so its first read after a rebuild shows the prompt (Always Allow). Values an older
+        denext stored through <code>/usr/bin/security</code>{" "}
+        (readable by any program of the user) move over on their first read, so a signed-in user
+        stays signed in. An older runtime (or the stock one) keeps the <code>security</code>{" "}
+        path. The capability bakes an unscoped <code>--allow-sys</code>{" "}
+        for the runtime&apos;s store, plus <code>--allow-run=security</code>.
+      </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
         <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}

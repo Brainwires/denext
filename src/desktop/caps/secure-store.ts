@@ -11,8 +11,17 @@
  * and `account`, as `secret-tool` writes them. A runtime without that store (the stock runtime) has
  * no Linux secure store: every call is `backend_unavailable`, never a plain file.
  *
- * On macOS and Windows the backends are the OS credential CLIs (subprocess, argv — no shell), chosen
- * for safety over raw FFI:
+ * macOS: the runtime's own store when it has one (`Deno.desktop.secureStore` `supported`, denext's
+ * pinned runtime from denext.13): the Keychain, written by the app's own process through
+ * Security.framework, so the item is the app's: the data-protection keychain when the app is signed
+ * with a keychain access group (a provisioning profile), else the login keychain with an access
+ * list naming only the app. Another program of the same user gets macOS's prompt, never the secret.
+ * Items an older denext wrote through `security` (which trust `/usr/bin/security`, so any program
+ * of the user could read them through it) move over on their first read (see
+ * `migratingBackend`), so a signed-in user keeps their tokens.
+ *
+ * Otherwise (macOS under an older or the stock runtime, and Windows) the backends are the OS
+ * credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
  * - macOS: `security add/find/delete-generic-password` (the login Keychain). A write runs
  *   `security -i` and sends the command line on STDIN, so the secret is never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
@@ -24,11 +33,11 @@
  * runtime store, or no running Secret Service), a write/read is a real error, not a silent success
  * or a plaintext fallback.
  *
- * NOTE (macOS): `security -i` exits 0 even when a command it read fails, so a write is confirmed
- * by reading the value back. Items written through `security` trust `/usr/bin/security` in their
- * ACL, so another process of the SAME USER that runs `security find-generic-password` can read
- * them without a prompt — the same local-process trust boundary the bridge already accepts (see
- * `bridge.ts` and KNOWN-LIMITATIONS.md).
+ * NOTE (macOS, the `security` path): `security -i` exits 0 even when a command it read fails, so a
+ * write is confirmed by reading the value back. Items written through `security` trust
+ * `/usr/bin/security` in their ACL, so another process of the SAME USER that runs `security
+ * find-generic-password` can read them without a prompt: the reason the runtime's store replaces
+ * this path wherever the runtime has one.
  *
  * Runtime-only (imported by the desktop entry via the caps resolver, never a client bundle).
  *
@@ -219,14 +228,14 @@ export interface SecureStoreDeps {
   /** The CLI runner (defaults to a real subprocess); tests inject a fake store. */
   readonly run?: SecureRunner;
   /**
-   * Linux: how long the Secret Service may take to answer (default 20 s, under the bridge's 30 s
-   * deadline) before the call fails `backend_unavailable` — a locked keyring whose unlock prompt
-   * nobody answers otherwise just hangs. The runtime's store gets it as its timeout.
+   * The runtime's store (Linux, macOS): how long it may take to answer (default 20 s, under the
+   * bridge's 30 s deadline) before the call fails `backend_unavailable` — a locked keyring whose
+   * unlock prompt nobody answers otherwise just hangs. The runtime's store gets it as its timeout.
    */
   readonly answerTimeoutMs?: number;
   /**
    * The runtime's app API (default `Deno.desktop`): its `secureStore`, when `supported`, is the
-   * Linux backend; tests pass a fake, or `null` for a runtime without one.
+   * Linux and macOS backend; tests pass a fake, or `null` for a runtime without one.
    */
   readonly api?: DesktopAppApi | null;
 }
@@ -287,6 +296,182 @@ function safeKey(key: string): string {
   return key;
 }
 
+/** One backend's three operations, on base64 values (see `decodeStored`). */
+interface SecureBackend {
+  get(key: string, signal: AbortSignal): Promise<string | null>;
+  set(key: string, b64: string, signal: AbortSignal): Promise<void>;
+  delete(key: string, signal: AbortSignal): Promise<void>;
+}
+
+/**
+ * The runtime's own store as a backend: every rejection is a capability error
+ * (`runtimeSecureStoreError`).
+ *
+ * @param store The runtime's store.
+ * @param service The app-specific service name.
+ * @param timeout The answer timeout in milliseconds.
+ * @returns The backend.
+ */
+function runtimeBackend(
+  store: RuntimeSecureStore,
+  service: string,
+  timeout: number,
+): SecureBackend {
+  const guard = async <T>(p: () => Promise<T>): Promise<T> => {
+    try {
+      return await p();
+    } catch (err) {
+      throw runtimeSecureStoreError(err);
+    }
+  };
+  return {
+    get: (key) => guard(() => store.get(service, key, { timeout })),
+    set: (key, b64) => guard(() => store.set(service, key, b64, { label: service, timeout })),
+    delete: (key) => guard(() => store.delete(service, key, { timeout })),
+  };
+}
+
+/**
+ * The OS credential CLI as a backend (macOS `security`, Windows PowerShell + PasswordVault).
+ *
+ * @param os The OS.
+ * @param service The app-specific service name.
+ * @param run The CLI runner.
+ * @returns The backend.
+ */
+function cliBackend(os: Exclude<Os, "linux">, service: string, run: SecureRunner): SecureBackend {
+  const exec = (
+    op: "get" | "set" | "delete",
+    key: string,
+    b64: string | undefined,
+    signal: AbortSignal,
+  ) => {
+    const c = secureStoreCommand(os, op, service, key, b64);
+    return run(c.cmd, c.args, c.stdin, signal);
+  };
+  return {
+    get: async (key, signal) => {
+      const { code, stdout } = await exec("get", key, undefined, signal);
+      // Not found (a missing backend already threw).
+      return code === 0 ? stdout.trim() : null;
+    },
+    set: async (key, b64, signal) => {
+      const { code } = await exec("set", key, b64, signal);
+      // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
+      const stored = os === "darwin" && code === 0
+        ? (await exec("get", key, undefined, signal)).stdout.trim() === b64
+        : code === 0;
+      if (!stored) {
+        throw new DesktopCapError("store_failed", "the secure store rejected the write");
+      }
+    },
+    delete: async (key, signal) => {
+      // A non-zero exit (not found) is fine: delete is idempotent.
+      await exec("delete", key, undefined, signal);
+    },
+  };
+}
+
+/** `kSecAttrCreator` of the items the runtime's macOS store writes, as `security` prints it. */
+const RUNTIME_ITEM_CREATOR = '"crtr"<uint32>="Lfy1"';
+
+/**
+ * Whether the login keychain holds an item for (`service`, `key`) that the runtime's store did
+ * not write: one an older denext wrote through `security`. Attributes only (`find-generic-password`
+ * without `-w`), which macOS hands out without a prompt.
+ *
+ * @param run The CLI runner.
+ * @param service The app-specific service name.
+ * @param key The account/key.
+ * @param signal Aborts the CLI.
+ * @returns Whether such an item is there.
+ */
+async function legacyItemPresent(
+  run: SecureRunner,
+  service: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const { code, stdout } = await run(
+    "security",
+    ["find-generic-password", "-a", key, "-s", service],
+    undefined,
+    signal,
+  );
+  return code === 0 && !stdout.includes(RUNTIME_ITEM_CREATOR);
+}
+
+/**
+ * macOS under a runtime with its own store (the Keychain, written by the app's own process, so
+ * only the app may read the item), with the items an older denext wrote through `/usr/bin/security`
+ * moved over: those trust `security`, so any program of the user could read them. On a read miss
+ * the legacy item is read with `security`, stored in the runtime's store, then deleted, so a
+ * signed-in user keeps their tokens. A write or delete removes a legacy item too, so it can never
+ * come back on a later read.
+ *
+ * In the login keychain the two can't coexist (one item per service + account): the runtime
+ * refuses to store over an item it didn't write, so the legacy item is deleted first and, on a
+ * read, restored if the store still fails. `security` is pointed at a (service, key) only while
+ * the runtime's own item isn't there (`security delete-generic-password` would match it too).
+ *
+ * @param runtime The runtime's store.
+ * @param legacy The `security` CLI.
+ * @param present Whether a legacy item is there (see {@linkcode legacyItemPresent}).
+ * @returns The backend.
+ */
+function migratingBackend(
+  runtime: SecureBackend,
+  legacy: SecureBackend,
+  present: (key: string, signal: AbortSignal) => Promise<boolean>,
+): SecureBackend {
+  // Keys with no legacy item left, as far as this process knows: no `security` call for them.
+  const settled = new Set<string>();
+  /** Store `b64` in the runtime's store over a legacy item known to be there. */
+  const replaceLegacy = async (key: string, b64: string, signal: AbortSignal) => {
+    try {
+      // The data-protection keychain: no clash; the legacy copy goes after.
+      await runtime.set(key, b64, signal);
+      await legacy.delete(key, signal);
+    } catch {
+      // The login keychain: the legacy item is in the way.
+      await legacy.delete(key, signal);
+      await runtime.set(key, b64, signal);
+    }
+    settled.add(key);
+  };
+  return {
+    get: async (key, signal) => {
+      const stored = await runtime.get(key, signal);
+      if (stored !== null || settled.has(key)) return stored;
+      const old = (await present(key, signal)) ? await legacy.get(key, signal) : null;
+      // Not there, or not a value this cap wrote (not our base64): leave it alone.
+      if (old === null || decodeStored(old) === null) {
+        settled.add(key);
+        return null;
+      }
+      try {
+        await replaceLegacy(key, old, signal);
+      } catch {
+        // Keep the user's value where it was (the next read retries the move).
+        await legacy.set(key, old, signal).catch(() => {});
+      }
+      return old;
+    },
+    set: async (key, b64, signal) => {
+      if (settled.has(key)) return runtime.set(key, b64, signal);
+      if (await present(key, signal)) return replaceLegacy(key, b64, signal);
+      await runtime.set(key, b64, signal);
+      settled.add(key);
+    },
+    delete: async (key, signal) => {
+      await runtime.delete(key, signal);
+      // The runtime's item is gone, so `security` can only match a legacy one.
+      if (!settled.has(key)) await legacy.delete(key, signal);
+      settled.add(key);
+    },
+  };
+}
+
 /**
  * Build the `secureStore` capability.
  *
@@ -298,40 +483,53 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
   const run = deps.run ?? runSecureCli;
   const service = deps.service;
 
-  // One permission descriptor + one read-key preamble, shared by all methods. Linux: the runtime's
-  // store needs an unscoped --allow-sys (the user's keyring is shared by every app).
+  // One permission descriptor + one read-key preamble, shared by all methods. The runtime's store
+  // (Linux; macOS under a runtime that has it) needs an unscoped --allow-sys (the user's keyring
+  // is shared by every app); macOS keeps `security` for runtimes without it and for moving older
+  // items over.
   const permissions: DesktopPermissions = os === "darwin"
-    ? { run: ["security"] }
+    ? { run: ["security"], sys: ["*"] }
     : os === "linux"
     ? { sys: ["*"] }
     : { run: ["powershell.exe"] };
-  /**
-   * Linux: the runtime's own secure store (denext's pinned runtime); `backend_unavailable` when the
-   * runtime has none. `undefined` on macOS and Windows (their CLIs).
-   */
+  const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
+  /** The runtime's own secure store when it has one (`supported`), else `undefined`. */
   const runtimeStore = (): RuntimeSecureStore | undefined => {
-    if (os !== "linux") return undefined;
-    let store: RuntimeSecureStore | undefined;
+    if (os === "windows") return undefined;
     try {
       const candidate = deps.api === null ? undefined : (deps.api ?? desktopAppApi())?.secureStore;
-      store = candidate?.supported === true ? candidate : undefined;
+      return candidate?.supported === true ? candidate : undefined;
     } catch {
-      store = undefined;
+      return undefined;
     }
-    if (!store) throw noLinuxStoreError();
-    return store;
+  };
+  let migrating: { store: RuntimeSecureStore; backend: SecureBackend } | undefined;
+  /**
+   * The backend for this call: Linux, the runtime's store (`backend_unavailable` when the runtime
+   * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
+   * Windows, PowerShell + PasswordVault.
+   */
+  const backend = (): SecureBackend => {
+    const store = runtimeStore();
+    if (os === "linux") {
+      if (!store) throw noLinuxStoreError();
+      return runtimeBackend(store, service, answerMs);
+    }
+    const cli = cliBackend(os, service, run);
+    if (!store) return cli;
+    if (migrating?.store !== store) {
+      migrating = {
+        store,
+        backend: migratingBackend(
+          runtimeBackend(store, service, answerMs),
+          cli,
+          (key, signal) => legacyItemPresent(run, service, key, signal),
+        ),
+      };
+    }
+    return migrating.backend;
   };
   const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
-  const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
-  const exec = (
-    op: "get" | "set" | "delete",
-    key: string,
-    b64: string | undefined,
-    signal: AbortSignal,
-  ) => {
-    const c = secureStoreCommand(os as Exclude<Os, "linux">, op, service, key, b64);
-    return run(c.cmd, c.args, c.stdin, signal);
-  };
 
   return {
     name: "secureStore",
@@ -340,20 +538,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          const store = runtimeStore();
-          if (store) {
-            let b64: string | null;
-            try {
-              b64 = await store.get(service, key, { timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return decodeStored(b64);
-          }
-          const { code, stdout } = await exec("get", key, undefined, ctx.signal);
-          // Not found (a missing backend already threw).
-          if (code !== 0) return null;
-          return decodeStored(stdout);
+          return decodeStored(await backend().get(key, ctx.signal));
         },
       },
       set: {
@@ -361,42 +546,15 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         handler: async (args, ctx) => {
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
-          const b64 = bytesToBase64(new TextEncoder().encode(value));
-          const store = runtimeStore();
-          if (store) {
-            try {
-              await store.set(service, key, b64, { label: service, timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return { ok: true };
-          }
-          const { code } = await exec("set", key, b64, ctx.signal);
-          // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
-          const stored = os === "darwin" && code === 0
-            ? (await exec("get", key, undefined, ctx.signal)).stdout.trim() === b64
-            : code === 0;
-          if (!stored) {
-            throw new DesktopCapError("store_failed", "the secure store rejected the write");
-          }
+          await backend().set(key, bytesToBase64(new TextEncoder().encode(value)), ctx.signal);
           return { ok: true };
         },
       },
       delete: {
         permissions,
         handler: async (args, ctx) => {
-          // a non-zero exit (not found) is fine: delete is idempotent
           const key = keyArg(args);
-          const store = runtimeStore();
-          if (store) {
-            try {
-              await store.delete(service, key, { timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return { ok: true };
-          }
-          await exec("delete", key, undefined, ctx.signal);
+          await backend().delete(key, ctx.signal);
           return { ok: true };
         },
       },
