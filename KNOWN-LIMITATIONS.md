@@ -81,6 +81,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   never slides, and there is no absolute session ceiling.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
   one-time codes; rate limiters count per node without a shared `rateLimit.store`.
+- **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
+  Metadata Service), and ES256 / RS256 / Ed25519 keys only.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII; `microsoftEntra` needs a specific tenant (`common` can't verify).
 - **Native sessions:** a user with a second factor can't use a native `id_token` sign-in

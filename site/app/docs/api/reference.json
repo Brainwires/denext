@@ -5090,7 +5090,7 @@
           "kind": "interface",
           "signature": "interface AuthAdapter",
           "doc": "Where denext auth persists identities. Implement it over any store; denext ships inMemoryAuthAdapter() and sqliteAuthAdapter().",
-          "docFull": "Where denext auth persists identities. Implement it over any store; denext ships\n`inMemoryAuthAdapter()` and `sqliteAuthAdapter()`.\n\n**Atomicity contract.** Three methods are **consume-once** and MUST be atomic against\nconcurrent callers — a compare-and-delete / conditional update inside one transaction,\nnot a read followed by a write. Two racing requests must see exactly one success:\n{@linkcode AuthAdapter.useVerificationToken} (delete-and-return),\n{@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and\n{@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). A non-atomic implementation\nturns each of them into a replay window.",
+          "docFull": "Where denext auth persists identities. Implement it over any store; denext ships\n`inMemoryAuthAdapter()` and `sqliteAuthAdapter()`.\n\n**Atomicity contract.** Three methods are **consume-once** and MUST be atomic against\nconcurrent callers — a compare-and-delete / conditional update inside one transaction,\nnot a read followed by a write. Two racing requests must see exactly one success:\n{@linkcode AuthAdapter.useVerificationToken} (delete-and-return),\n{@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and\n{@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). So are the passkey group's\n{@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),\n{@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and\n{@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic\nimplementation turns each of them into a replay window.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5211,6 +5211,18 @@
           "signature": "interface AuthorizedCallbackInput",
           "doc": "What AuthCallbacks.authorized is asked about.",
           "docFull": "What {@link AuthCallbacks.authorized} is asked about.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthPasskeyConfig",
+          "slug": "AuthPasskeyConfig",
+          "kind": "interface",
+          "signature": "interface AuthPasskeyConfig",
+          "doc": "Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.",
+          "docFull": "Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or\nas the second. Every field is optional; the relying party defaults to `canonicalOrigin`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6179,6 +6191,27 @@
           "docFull": "Define a scheduled/background task. Validates any declared `schedule` up front (throws on a\nmalformed cron expression). Place the result as the default export of a `tasks/<name>.ts` file,\nor register it programmatically with {@linkcode registerTask}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "deletePasskey",
+          "slug": "deletePasskey",
+          "kind": "function",
+          "signature": "deletePasskey(config: AuthConfig, input: object): Promise<boolean>",
+          "doc": "Remove one of a user's passkeys. Gate it yourself (a recent sign-in, as DELETE {basePath}/passkeys/:id requires): a stolen session must not strip a user's factors.",
+          "docFull": "Remove one of a user's passkeys. Gate it yourself (a recent sign-in, as\n`DELETE {basePath}/passkeys/:id` requires): a stolen session must not strip a user's factors.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The owner, and the credential ID."
+            }
+          ],
+          "returns": "true when the passkey existed, belonged to userId, and was removed.",
           "examples": [],
           "denextOnly": true
         },
@@ -7382,8 +7415,8 @@
           "slug": "inMemoryAuthAdapter",
           "kind": "function",
           "signature": "inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter",
-          "doc": "Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.",
-          "docFull": "Build a per-process, in-memory {@link ./adapter.ts | AuthAdapter}: every method group\n(users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions,\naccount deletion) plus a\n`sessions` store and `close()`. Ids are `crypto.randomUUID()` unless the caller\nsupplies one; emails are matched case-insensitively and whitespace-trimmed.\n\nNothing persists across a restart and nothing is shared between replicas — use it for\ndevelopment, tests and single-process demos, and\n{@link ./sqlite-adapter.ts | sqliteAuthAdapter} for anything real.",
+          "doc": "Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.",
+          "docFull": "Build a per-process, in-memory {@link ./adapter.ts | AuthAdapter}: every method group\n(users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions,\npasskeys, account deletion) plus a\n`sessions` store and `close()`. Ids are `crypto.randomUUID()` unless the caller\nsupplies one; emails are matched case-insensitively and whitespace-trimmed.\n\nNothing persists across a restart and nothing is shared between replicas — use it for\ndevelopment, tests and single-process demos, and\n{@link ./sqlite-adapter.ts | sqliteAuthAdapter} for anything real.",
           "params": [
             {
               "name": "options",
@@ -7888,6 +7921,27 @@
           "denextOnly": true
         },
         {
+          "name": "listPasskeys",
+          "slug": "listPasskeys",
+          "kind": "function",
+          "signature": "listPasskeys(config: AuthConfig, userId: string): Promise<PasskeySummary[]>",
+          "doc": "A user's passkeys, for an account-settings page — no key material.",
+          "docFull": "A user's passkeys, for an account-settings page — no key material.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            }
+          ],
+          "returns": "Their passkeys, oldest first.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LiveActivityPush",
           "slug": "LiveActivityPush",
           "kind": "interface",
@@ -8195,9 +8249,9 @@
           "name": "MfaMethod",
           "slug": "MfaMethod",
           "kind": "typeAlias",
-          "signature": "type MfaMethod = totp | bcp",
-          "doc": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
-          "docFull": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+          "signature": "type MfaMethod = totp | bcp | hwk",
+          "doc": "A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey (\"hwk\", RFC 8176's proof of possession of a hardware-secured key).",
+          "docFull": "A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey\n(`\"hwk\"`, RFC 8176's proof of possession of a hardware-secured key).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8898,6 +8952,42 @@
           "signature": "parsePattern(pattern: string): Segment[]",
           "doc": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
           "docFull": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeyChallengeRecord",
+          "slug": "PasskeyChallengeRecord",
+          "kind": "interface",
+          "signature": "interface PasskeyChallengeRecord",
+          "doc": "A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.",
+          "docFull": "A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with\nthe ceremony it belongs to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeyRecord",
+          "slug": "PasskeyRecord",
+          "kind": "interface",
+          "signature": "interface PasskeyRecord",
+          "doc": "A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, \"credential record\"): what verifying its later assertions needs. Nothing in it is secret: the public key verifies, it cannot sign.",
+          "docFull": "A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, \"credential record\"):\nwhat verifying its later assertions needs. Nothing in it is secret: the public key verifies,\nit cannot sign.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeySummary",
+          "slug": "PasskeySummary",
+          "kind": "interface",
+          "signature": "interface PasskeySummary",
+          "doc": "A passkey as the app may show it — no key material.",
+          "docFull": "A passkey as the app may show it — no key material.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -10918,8 +11008,8 @@
           "slug": "sqliteAuthAdapter",
           "kind": "function",
           "signature": "sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter",
-          "doc": "Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, account deletion) plus a sessions store over the **same** database handle and an idempotent close().",
-          "docFull": "Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:\nevery method group (users, accounts, verification tokens, credentials, API tokens, MFA,\nnative app sessions, account deletion)\nplus a `sessions` store over the **same** database handle and an idempotent `close()`.\n\nIds are `crypto.randomUUID()` unless the caller supplies one; emails are matched\ncase-insensitively and whitespace-trimmed, and a unique index refuses a second user on\none address. The schema is created on first use and evolved additively on every open\n(see the module doc). Single-node, and TOTP secrets are at rest in plaintext.",
+          "doc": "Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** database handle and an idempotent close().",
+          "docFull": "Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:\nevery method group (users, accounts, verification tokens, credentials, API tokens, MFA,\nnative app sessions, passkeys, account deletion)\nplus a `sessions` store over the **same** database handle and an idempotent `close()`.\n\nIds are `crypto.randomUUID()` unless the caller supplies one; emails are matched\ncase-insensitively and whitespace-trimmed, and a unique index refuses a second user on\none address. The schema is created on first use and evolved additively on every open\n(see the module doc). Single-node, and TOTP secrets are at rest in plaintext.",
           "params": [
             {
               "name": "options",
@@ -12877,6 +12967,66 @@
           "denextOnly": false
         },
         {
+          "name": "PasskeyCallOptions",
+          "slug": "PasskeyCallOptions",
+          "kind": "interface",
+          "signature": "interface PasskeyCallOptions",
+          "doc": "Options shared by every passkey call.",
+          "docFull": "Options shared by every passkey call.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeyClientError",
+          "slug": "PasskeyClientError",
+          "kind": "typeAlias",
+          "signature": "type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | exists | rate_limited | network",
+          "doc": "Why a passkey call failed.",
+          "docFull": "Why a passkey call failed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeySignInOptions",
+          "slug": "PasskeySignInOptions",
+          "kind": "interface",
+          "signature": "interface PasskeySignInOptions",
+          "doc": "Options for signInWithPasskey.",
+          "docFull": "Options for {@linkcode signInWithPasskey}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PasskeySignInResult",
+          "slug": "PasskeySignInResult",
+          "kind": "typeAlias",
+          "signature": "type PasskeySignInResult = object | object",
+          "doc": "What signInWithPasskey resolves to.",
+          "docFull": "What {@linkcode signInWithPasskey} resolves to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "passkeysSupported",
+          "slug": "passkeysSupported",
+          "kind": "function",
+          "signature": "passkeysSupported(): boolean",
+          "doc": "Whether this browser can run a WebAuthn ceremony at all.",
+          "docFull": "Whether this browser can run a WebAuthn ceremony at all.",
+          "params": [],
+          "returns": "true when PublicKeyCredential and navigator.credentials exist.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PlainBody",
           "slug": "PlainBody",
           "kind": "typeAlias",
@@ -13132,6 +13282,35 @@
           "denextOnly": true
         },
         {
+          "name": "registerPasskey",
+          "slug": "registerPasskey",
+          "kind": "function",
+          "signature": "registerPasskey(options?: PasskeyCallOptions & object): Promise<RegisterPasskeyResult>",
+          "doc": "Register a passkey for the signed-in user: {basePath}/passkey/register/options, the browser's create ceremony, then {basePath}/passkey/register. The server requires a recent sign-in (\"reauth_required\" otherwise).",
+          "docFull": "Register a passkey for the signed-in user: `{basePath}/passkey/register/options`, the\nbrowser's create ceremony, then `{basePath}/passkey/register`. The server requires a recent\nsign-in (`\"reauth_required\"` otherwise).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A label for the passkey, and the auth base path."
+            }
+          ],
+          "returns": "{ ok: true, passkey }, or { ok: false, error }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RegisterPasskeyResult",
+          "slug": "RegisterPasskeyResult",
+          "kind": "typeAlias",
+          "signature": "type RegisterPasskeyResult = object | object",
+          "doc": "What registerPasskey resolves to.",
+          "docFull": "What {@linkcode registerPasskey} resolves to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RequestArgs",
           "slug": "RequestArgs",
           "kind": "typeAlias",
@@ -13339,6 +13518,23 @@
           "docFull": "Options for {@link signIn}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "signInWithPasskey",
+          "slug": "signInWithPasskey",
+          "kind": "function",
+          "signature": "signInWithPasskey(options?: PasskeySignInOptions): Promise<PasskeySignInResult>",
+          "doc": "Sign in with a passkey — or, while the session owes a second factor, complete it with one: {basePath}/passkey/authenticate/options, the browser's get ceremony (the authenticator offers its passkeys for this site), then {basePath}/passkey/authenticate. On success it navigates to callbackUrl unless redirect: false.",
+          "docFull": "Sign in with a passkey — or, while the session owes a second factor, complete it with one:\n`{basePath}/passkey/authenticate/options`, the browser's get ceremony (the authenticator\noffers its passkeys for this site), then `{basePath}/passkey/authenticate`. On success it\nnavigates to `callbackUrl` unless `redirect: false`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Where to land, whether to navigate, and the auth base path."
+            }
+          ],
+          "returns": "{ ok: true } (with mfa: \"required\" when a second factor is still owed), or { ok: false, error }.",
           "examples": [],
           "denextOnly": true
         },

@@ -36,6 +36,7 @@ import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
 import { nativeRoutes } from "./routes-native.ts";
 import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes-oauth.ts";
+import { passkeyRoutes } from "./routes-passkeys.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
   type AuthRoute,
@@ -191,6 +192,9 @@ const declaredRoutes: readonly AuthRoute[] = [
   // The second factor: POST `/mfa`, `/mfa/enroll`, `/mfa/confirm`, `/mfa/disable` — each
   // spends the per-user MFA budget itself, and answers `null` without the MFA group.
   ...mfaRoutes,
+  // Passkeys (`passkeys` config): registration and sign-in ceremonies, list and delete. They
+  // answer `null` when the feature isn't configured.
+  ...passkeyRoutes,
   // Native app sessions (`native` config): authorize/complete in the browser sheet, the token /
   // revoke / nonce calls, native Apple/Google id_token sign-in — plus `POST /account/delete`.
   // They answer `null` when the feature (or the adapter group behind it) isn't configured.

@@ -32,6 +32,7 @@ import { emitAuthEvent } from "./events.ts";
 import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
+import { resolvePasskeys } from "./passkeys.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
 import {
@@ -100,6 +101,8 @@ function validateConfig(config: AuthConfig): void {
   const options = resolveAuthOptions(config);
   // `native`: registered redirect URIs and the adapter's native session group, checked now.
   resolveNative(config);
+  // `passkeys`: the relying party (never derived from the Host header) and the adapter group.
+  resolvePasskeys(config);
   if (options.mfa.required === "always" && !hasMfaAdapter(options)) {
     // Every sign-in would come back pending with no way to enroll or verify a factor:
     // nobody could ever finish signing in.

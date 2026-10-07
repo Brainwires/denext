@@ -64,6 +64,19 @@ and this project adheres to
   (`default-src 'none'`, its style allowed by hash), can't be framed, is `no-store`, escapes
   every value from the link, and sends `Referrer-Policy: same-origin` so the token-bearing URL
   never leaks cross-origin while the POST keeps its `Origin`. Off by default.
+- **Passkeys (WebAuthn Level 3)**: `denextAuth({ passkeys })` adds the registration and
+  authentication ceremonies at `{basePath}/passkey/*` (plus `GET /passkeys` and
+  `DELETE /passkeys/:id`), verified server-side with `crypto.subtle` and an in-house strict CBOR
+  decoder — no npm. ES256, RS256 and Ed25519 credentials; `none` and `packed` attestation (self,
+  or an `x5c` leaf checked against §8.2.1); origin, RP ID, `crossOrigin`, User Present / User
+  Verified, backup-flag and signature-counter checks (a counter that goes backwards — a cloned
+  authenticator — is refused); single-use challenges stored as hashes and bound to the browser
+  by a signed cookie. A passkey signs in usernameless (with user verification it satisfies MFA
+  on its own, `amr: ["hwk", "mfa"]`) or completes a pending second factor. The adapters gain a
+  passkey group (`auth_passkeys`, `auth_passkey_challenges` in `sqliteAuthAdapter`);
+  `denext/client` gains `registerPasskey()`, `signInWithPasskey()` and `passkeysSupported()`;
+  `denext/server` gains `listPasskeys()` / `deletePasskey()`. Verified against the WebAuthn L3
+  §16 test vectors.
 - **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
   `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
   credentials), is validated at import, and scopes the policy to the method it guards: the

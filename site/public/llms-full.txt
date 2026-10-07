@@ -1167,6 +1167,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthNativeConfig` — **Native session mode** — sessions for an app whose WebView can't use the __Host- SameSite cookie (a Capacitor shell at capacitor://localhost). The app opens {basePath}/native/authorize in a system browser sheet (openAuthSession), signs in there with any provider, and receives a one-time code at its redirect URI; it exchanges the code plus its PKCE verifier at POST {basePath}/native/token for a short-lived bearer access token and a rotating refresh token. auth(), requireAuth() and requireSession() accept the access token. Needs an adapter with the native session group.
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
+- `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
 - `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
@@ -1237,6 +1238,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
 - `defineSubscription<Out, In>(config: SubscriptionConfig<In, Out>): SubscriptionRef<In, Out>` — Define a typed, validated live query. Export it from a "use server" module (or give it an id) and subscribe from the client with useSubscription.
 - `defineTask<R>(def: TaskDefinition<R>): Task<R>` — Define a scheduled/background task. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a tasks/<name>.ts file, or register it programmatically with registerTask.
+- `deletePasskey(config: AuthConfig, input: object): Promise<boolean>` — Remove one of a user's passkeys. Gate it yourself (a recent sign-in, as DELETE {basePath}/passkeys/:id requires): a stolen session must not strip a user's factors.
 - `denextAuth(config: AuthConfig): DenextPlugin` — Create the denext auth plugin. Add it to plugins in denext.config.ts; it auto-mounts the /auth/* endpoints and makes auth available.
 - `interface DenextCommand` — A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
@@ -1328,7 +1330,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `ImageResponse(element: VNode | object, options?: ImageResponseOptions): Response` — Render JSX (or a satori element object) to a PNG Response.
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
-- `inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter` — Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.
+- `inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter` — Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.
 - `interface InMemoryAuthAdapterOptions` — Options for inMemoryAuthAdapter.
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
 - `inMemoryChannelTransport(): ChannelTransport` — The default transport: loopback, this instance only.
@@ -1365,6 +1367,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LayoutModule` — Shape of a layout module.
 - `type LayoutProps<P, Slots> = object & mapped` — Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, "sidebar"> adds a sidebar prop).
 - `listApiTokens(config: AuthConfig, userId: string): Promise<ApiTokenRecord[]>` — A user's live API tokens (revoked and expired ones are already hidden by the adapter). The records carry tokenHash, never a usable token — redact it before sending a list to a client.
+- `listPasskeys(config: AuthConfig, userId: string): Promise<PasskeySummary[]>` — A user's passkeys, for an account-settings page — no key material.
 - `interface LiveActivityPush` — A Live Activity update (iOS 16.1+, APNs only).
 - `interface LiveConfig` — Live Server Components security policy (the top-level live config). Presence rooms and useLive data subscriptions are **default-deny**, identically in dev and production: without a policy hook (or LiveConfig.allowAnonymous) the hub refuses joins/subscriptions — so a persistent socket can't read other users' presence or run registered actions — and surfaces a loud, actionable error the first time it runs (there is no dev/prod divergence that could let it work locally and silently break in production). Resource caps in LiveLimits always apply.
 - `interface LiveConnectionContext` — Identity/context passed to Live authorization hooks. The hooks run inside the viewer's own request context (the connection's replayed cookies), so getSession() / cookies() work inside them to derive the acting user.
@@ -1388,7 +1391,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
 - `type MfaAttemptResult = object | object` — The outcome of spendMfaAttempt.
-- `type MfaMethod = totp | bcp` — A second factor a step-up can be completed with: a TOTP code, or a backup code.
+- `type MfaMethod = totp | bcp | hwk` — A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey ("hwk", RFC 8176's proof of possession of a hardware-secured key).
 - `interface MfaRecord` — A user's TOTP factor plus their single-use backup codes.
 - `mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>` — A user's second-factor state — for an account-settings page.
 - `interface MfaStatus` — A user's second-factor state, as mfaStatus reports it.
@@ -1443,6 +1446,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
 - `parseAcceptLanguage(header: string | null): string[]` — Parse an Accept-Language header into an ordered list of locale codes.
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
+- `interface PasskeyChallengeRecord` — A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.
+- `interface PasskeyRecord` — A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, "credential record"): what verifying its later assertions needs. Nothing in it is secret: the public key verifies, it cannot sign.
+- `interface PasskeySummary` — A passkey as the app may show it — no key material.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
 - `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
@@ -1588,7 +1594,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
 - `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
 - `spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>` — Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.
-- `sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter` — Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, account deletion) plus a sessions store over the **same** database handle and an idempotent close().
+- `sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter` — Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** database handle and an idempotent close().
 - `interface SqliteAuthAdapterOptions` — Options for sqliteAuthAdapter.
 - `sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
 - `interface SqliteCacheStoreOptions` — Options for sqliteCacheStore.
@@ -1736,6 +1742,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
+- `interface PasskeyCallOptions` — Options shared by every passkey call.
+- `type PasskeyClientError = unsupported | cancelled | invalid | unauthorized | reauth_required | exists | rate_limited | network` — Why a passkey call failed.
+- `interface PasskeySignInOptions` — Options for signInWithPasskey.
+- `type PasskeySignInResult = object | object` — What signInWithPasskey resolves to.
+- `passkeysSupported(): boolean` — Whether this browser can run a WebAuthn ceremony at all.
 - `type PlainBody<H> = conditional` — A plain handler's request body: the B of its TypedRequest<B> first param, else never.
 - `type PlainResponse<H> = conditional` — A plain handler's response: the T of its TypedResponse<T> return, else unknown.
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
@@ -1755,6 +1766,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type RegisteredParams = conditional` — The per-route params map when typed-routes is wired (from .denext/routes.ts), else a loose fallback. Each key is a route pattern (/blog/[slug]) → its params object ({ slug: string }).
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
 - `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
+- `registerPasskey(options?: PasskeyCallOptions & object): Promise<RegisterPasskeyResult>` — Register a passkey for the signed-in user: {basePath}/passkey/register/options, the browser's create ceremony, then {basePath}/passkey/register. The server requires a recent sign-in ("reauth_required" otherwise).
+- `type RegisterPasskeyResult = object | object` — What registerPasskey resolves to.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
 - `type RequestOf<E> = parenthesized & parenthesized & parenthesized & object` — The options object for one endpoint: params/body/query are typed when the route declares them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
@@ -1771,6 +1784,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
 - `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.
 - `interface SignInOptions` — Options for signIn.
+- `signInWithPasskey(options?: PasskeySignInOptions): Promise<PasskeySignInResult>` — Sign in with a passkey — or, while the session owes a second factor, complete it with one: {basePath}/passkey/authenticate/options, the browser's get ceremony (the authenticator offers its passkeys for this site), then {basePath}/passkey/authenticate. On success it navigates to callbackUrl unless redirect: false.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
 - `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).

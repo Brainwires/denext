@@ -511,6 +511,8 @@ export type {
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
+  PasskeyChallengeRecord,
+  PasskeyRecord,
   VerificationPurpose,
   VerificationTokenRecord,
   VerificationTokenRef,
@@ -570,6 +572,9 @@ export type {
   TotpVerifyOptions,
   TotpVerifyResult,
 } from "./auth/totp.ts";
+// Passkeys (WebAuthn): the account-settings helpers behind `{basePath}/passkeys`.
+export { deletePasskey, listPasskeys } from "./auth/passkeys.ts";
+export type { PasskeySummary } from "./auth/passkeys.ts";
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
@@ -583,6 +588,7 @@ export type {
   AuthMfaConfig,
   AuthNativeConfig,
   AuthorizedCallbackInput,
+  AuthPasskeyConfig,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,

@@ -523,6 +523,37 @@ export interface AuthMfaConfig {
   freshness?: number;
 }
 
+/**
+ * Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or
+ * as the second. Every field is optional; the relying party defaults to `canonicalOrigin`.
+ */
+export interface AuthPasskeyConfig {
+  /**
+   * The relying party ID credentials are scoped to: the host of `canonicalOrigin` by default,
+   * or a registrable suffix of it (`"example.com"` for `https://app.example.com`) to share
+   * passkeys across subdomains. Every accepted origin's host must equal it or end in
+   * `.<rpId>` (WebAuthn L3 §5.1.4.1).
+   */
+  rpId?: string;
+  /** The relying party name an authenticator may show. Default: the RP ID. */
+  rpName?: string;
+  /**
+   * The origins a ceremony may come from, matched exactly against `clientDataJSON.origin`.
+   * Default: `[canonicalOrigin]`. Add an Android app's `android:apk-key-hash:…` origin or a
+   * second web origin here.
+   */
+  origins?: string[];
+  /**
+   * `"required"` (the default) asks the authenticator to verify the user (biometric, PIN) and
+   * refuses an assertion without the UV flag — such a sign-in is two factors in one, so it
+   * also satisfies a pending second factor. `"preferred"` accepts a presence-only assertion,
+   * which is one factor: a user with TOTP is then still asked for a code.
+   */
+  userVerification?: "required" | "preferred";
+  /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
+  timeout?: number;
+}
+
 /** A provider whose `id_token`s a native app may exchange at `POST {basePath}/native/<id>`. */
 export interface NativeIdTokenProviderConfig {
   /**
@@ -746,6 +777,13 @@ export interface AuthConfig {
   email?: AuthEmailConfig;
   /** Second-factor (TOTP) policy. */
   mfa?: AuthMfaConfig;
+  /**
+   * Passkeys (WebAuthn): `POST {basePath}/passkey/*` registers them from a signed-in session
+   * and signs in with them (a first factor, or the second factor of a pending session).
+   * Needs an adapter with the passkey group (both shipped adapters have it). `true` takes
+   * every default. See {@link AuthPasskeyConfig}.
+   */
+  passkeys?: AuthPasskeyConfig | true;
   /**
    * Native session mode for a Capacitor (or desktop) app: code exchange → bearer access token
    * + rotating refresh token, and native Apple / Google `id_token` sign-in. See

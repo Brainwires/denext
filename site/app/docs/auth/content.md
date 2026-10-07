@@ -139,6 +139,9 @@ Every path is relative to `basePath` (default `/auth`).
 | `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                             |
 | `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                             |
 | `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                      |
+| `/passkey/*`          | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).  |
+| `/passkeys`           | GET         | The signed-in user's passkeys (no key material).                                                                                                                     |
+| `/passkeys/:id`       | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                 |
 | `/native/authorize`   | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                            |
 | `/native/complete`    | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                        |
 | `/native/token`       | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                      |
@@ -150,8 +153,8 @@ Every path is relative to `basePath` (default `/auth`).
 A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall
 through to your app — that is where a reset link and `pages.mfa` can land. The account rows
 exist only when the adapter can run them — `/verify` and `/reset*` need the
-verification-token group (`/reset*` also `setCredential`), `/mfa*` the whole MFA group —
-and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
+verification-token group (`/reset*` also `setCredential`), `/mfa*` the whole MFA group,
+`/passkey*` a `passkeys` config — and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
 config (and an adapter with the native session group), and `/account/delete` only with an
 adapter that implements `deleteUser`.
 
@@ -429,15 +432,16 @@ Every method may be sync or async — the exported alias for that is `MaybePromi
 miss is `undefined` (never `null`). The users and accounts groups are required; everything
 else is optional and gates the feature that needs it.
 
-| Group               | Methods                                                                                   | Gates                                               |
-| ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Users (required)    | `createUser`, `getUser`, `getUserByEmail`, `getUserByAccount`, `updateUser`               | Adapter-backed sign-in at all                       |
-| Accounts (required) | `linkAccount` — plus optional `unlinkAccount`, `listAccounts`                             | Account linking                                     |
-| Verification tokens | `createVerificationToken`, `useVerificationToken`                                         | Email verification, reset, magic links, email codes |
-| Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                             | `credentials()` without `authorize`, password reset |
-| API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens` | Bearer tokens and `/auth/tokens`                    |
-| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`            | TOTP two-factor and backup codes                    |
-| Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                     | `session.strategy: "database"`, drain               |
+| Group               | Methods                                                                                                                          | Gates                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Users (required)    | `createUser`, `getUser`, `getUserByEmail`, `getUserByAccount`, `updateUser`                                                      | Adapter-backed sign-in at all                       |
+| Accounts (required) | `linkAccount` — plus optional `unlinkAccount`, `listAccounts`                                                                    | Account linking                                     |
+| Verification tokens | `createVerificationToken`, `useVerificationToken`                                                                                | Email verification, reset, magic links, email codes |
+| Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                                                                    | `credentials()` without `authorize`, password reset |
+| API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens`                                        | Bearer tokens and `/auth/tokens`                    |
+| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`                                                   | TOTP two-factor and backup codes                    |
+| Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge` | WebAuthn sign-in and step-up                        |
+| Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                            | `session.strategy: "database"`, drain               |
 
 Three methods are **consume-once** and must be atomic against concurrent callers — a
 compare-and-delete or conditional update inside one transaction, not a read followed by a
@@ -449,6 +453,10 @@ write. Two racing requests must see exactly one success:
   comparison, and remove the first match inside the same critical section.
 - `claimTotpStep` — succeed only when the step is strictly greater than the stored one,
   and store it in the same operation.
+- `usePasskeyChallenge` — delete-and-return, like `useVerificationToken`; `createPasskey`
+  stores nothing (and answers `false`) when the credential ID is already registered; and
+  `updatePasskey` writes only while the stored counter is still the one the assertion was
+  checked against.
 
 A non-atomic implementation turns each of them into a replay window. The full contract,
 with every record type, is
@@ -463,7 +471,9 @@ Six `auth_`-prefixed tables: `auth_users` (with a unique index on the lower-case
 users), `auth_accounts` (primary key `(provider, provider_account_id)`),
 `auth_verification_tokens` (primary key `(identifier, purpose)`, so re-sending a link
 invalidates the previous one — a mailbox can never hold two working reset links),
-`auth_credentials`, `auth_api_tokens` (unique on the token hash) and `auth_mfa`.
+`auth_credentials`, `auth_api_tokens` (unique on the token hash), `auth_mfa`, the native
+session tables, `auth_passkeys` (primary key the credential ID) and
+`auth_passkey_challenges` (only the challenge's SHA-256).
 
 Schema policy: `CREATE TABLE IF NOT EXISTS` on every open, then every declared column a
 table is missing is added with `ALTER TABLE … ADD COLUMN`, decided by
@@ -957,6 +967,79 @@ checks a code (claiming or spending it) and answers `{ ok: true, method: "totp" 
 `verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
 stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
 `backupCodeMatcher(hasher, code)`.
+
+## Passkeys (WebAuthn)
+
+A passkey signs a user in with the device's own unlock — Face ID, Touch ID, Windows Hello, a
+security key — and nothing to type or phish. `passkeys` turns them on; the relying party is
+`canonicalOrigin`'s host unless you name one:
+
+```ts
+denextAuth({
+  // …
+  canonicalOrigin: "https://app.example.com",
+  adapter: sqliteAuthAdapter({ path: "auth.db" }),
+  passkeys: true, // or { rpId: "example.com", rpName: "Example", userVerification: "required" }
+});
+```
+
+| Key                | Default                  | What it sets                                                                                                  |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
+| `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
+| `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
+| `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
+
+It needs an adapter with the passkey group (both shipped adapters have it), and a relying
+party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
+`denextAuth()` throws.
+
+**In the browser**, `denext/client` runs each ceremony:
+
+```tsx
+"use client";
+import { registerPasskey, signInWithPasskey } from "denext/client";
+
+// On the sign-in page — usernameless: the device offers this site's passkeys.
+const result = await signInWithPasskey({ callbackUrl: "/dashboard" });
+// { ok: true } (navigated), { ok: true, mfa: "required" }, or { ok: false, error: "cancelled" | … }
+
+// In account settings, from a recent sign-in.
+await registerPasskey({ name: "MacBook" }); // { ok: true, passkey } | { ok: false, error }
+```
+
+`passkeysSupported()` says whether the browser has WebAuthn at all. A refused call resolves
+`{ ok: false, error }` — `"cancelled"`, `"invalid"`, `"unauthorized"`, `"reauth_required"`,
+`"exists"`, `"rate_limited"`, `"network"` or `"unsupported"` — and never throws.
+
+**What the server checks** (WebAuthn Level 3): the client data's type, challenge, origin
+and `crossOrigin` (a call from a cross-origin iframe is refused); the authenticator data's
+RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
+credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement,
+`none` or `packed` (self, or an `x5c` leaf whose signature and certificate profile are
+checked — denext does not chain it to an authenticator vendor's root); and each assertion's
+signature, its backup-eligibility flag against the stored record, and the signature counter.
+A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
+`signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
+
+Every challenge is 32 random bytes, stored only as its SHA-256 through the adapter's atomic
+`usePasskeyChallenge`, and bound to the browser that asked for it by a short-lived signed
+cookie: a replayed response, or one relayed to another browser, is refused. Registration
+needs a complete session that signed in within `mfa.freshness` (five minutes at least), like
+`/mfa/enroll`, so a stolen session can't plant a passkey of its own.
+
+**Factors.** Under `userVerification: "required"` a passkey proves possession and the user's
+PIN or biometric, so it **completes a sign-in on its own** — a user with TOTP isn't asked for a
+code — with `amr: ["hwk", "mfa"]`. Under `"preferred"` a presence-only assertion is one factor
+(`amr: ["hwk"]`) and the usual step-up follows. A pending session can also **step up with a
+passkey**: `signInWithPasskey()` while `pendingMfaSession()` is set offers that user's
+passkeys and, on success, mints a fresh complete session (`amr` gains `hwk` and `mfa`), the way
+`POST {basePath}/mfa` does with a code. It spends the same per-user MFA budget.
+
+For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, createdAt,
+lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
+one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the recent-sign-in rule.
 
 ## Roles and authorization
 
@@ -1581,9 +1664,12 @@ in its test mode (`+clerk_test` addresses verify with `424242`).
 What the first-party auth layer still does not do — the full ledger is
 [Known limitations](/docs/limitations):
 
-- **No mailer, no passkeys, no next-auth compatibility shim.** Every emailed token goes
-  through your `sendVerificationRequest`; WebAuthn and a `next-auth` shim are on the
-  roadmap.
+- **No mailer, no next-auth compatibility shim.** Every emailed token goes through your
+  `sendVerificationRequest`; a `next-auth` shim is on the roadmap.
+- **Passkeys: no attestation trust, three algorithms.** A `packed` attestation's certificate
+  is checked but not chained to a vendor root (no FIDO Metadata Service), so it can't prove a
+  specific authenticator model; `tpm`, `android-key`, `apple` and `fido-u2f` statements are
+  refused, as are ES384, ES512 and Ed448 keys. Browsers send `none` unless asked otherwise.
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
 - **TOTP secrets are stored in plaintext in the adapter** — a verifier needs the secret, so

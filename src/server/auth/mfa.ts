@@ -35,8 +35,11 @@ type MfaAdapter = Required<
   Pick<AuthAdapter, "getMfa" | "setMfa" | "consumeBackupCode" | "claimTotpStep">
 >;
 
-/** A second factor a step-up can be completed with: a TOTP code, or a backup code. */
-export type MfaMethod = "totp" | "bcp";
+/**
+ * A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey
+ * (`"hwk"`, RFC 8176's proof of possession of a hardware-secured key).
+ */
+export type MfaMethod = "totp" | "bcp" | "hwk";
 
 /** A user's second-factor state, as {@linkcode mfaStatus} reports it. */
 export interface MfaStatus {
@@ -289,7 +292,8 @@ export async function disableTotp(config: AuthConfig, userId: string): Promise<v
 
 /**
  * Whether `session` carries a second-factor proof recent enough for a sensitive action:
- * its `amr` includes `totp` or `bcp` and it authenticated at most `mfa.freshness` seconds
+ * its `amr` includes `totp`, `bcp` or `mfa` (a passkey with user verification, or a passkey
+ * step-up) and it authenticated at most `mfa.freshness` seconds
  * ago — measured from `authTime`, which sliding expiry never moves.
  *
  * A session issued before 2.5.0-rc.3 has no `authTime`; it is measured from `issuedAt`
@@ -307,7 +311,9 @@ export function hasFreshFactor(
 ): boolean {
   const provedAt = session.authTime ?? (options.updateAge > 0 ? undefined : session.issuedAt);
   if (provedAt === undefined) return false;
-  const proved = (session.amr ?? []).some((method) => method === "totp" || method === "bcp");
+  const proved = (session.amr ?? []).some((method) =>
+    method === "totp" || method === "bcp" || method === "mfa"
+  );
   const age = Math.floor(nowMs / 1000) - provedAt;
   return proved && age >= 0 && age <= options.mfa.freshness;
 }
@@ -354,8 +360,11 @@ export async function completeStepUp(
   method: MfaMethod,
 ): Promise<AuthSession> {
   if (session.sessionId) await ctx.options.sessionStore?.delete(session.sessionId);
+  // A passkey step-up records the key AND that the session is now multi-factor (`mfa`), which
+  // is what `hasFreshFactor` reads — `hwk` alone is also what a one-factor passkey sign-in says.
+  const added = method === "hwk" ? ["hwk", "mfa"] : [method];
   const fresh = await issueAuthSession(ctx.config, session.user, session.provider, {
-    amr: [...(session.amr ?? []), method],
+    amr: [...(session.amr ?? []), ...added],
   });
   await emitAuthEvent(ctx.options, "signIn", {
     user: session.user,

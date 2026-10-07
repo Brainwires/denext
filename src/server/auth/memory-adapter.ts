@@ -38,6 +38,8 @@ import type {
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
+  PasskeyChallengeRecord,
+  PasskeyRecord,
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./adapter.ts";
@@ -128,6 +130,10 @@ interface MemoryState {
   nativeGrants: Table<NativeGrantRecord>;
   /** Native session families by id. */
   nativeSessions: Table<NativeSessionRecord>;
+  /** Passkeys by credential id. */
+  passkeys: Table<PasskeyRecord>;
+  /** Single-use WebAuthn challenges by hash. */
+  passkeyChallenges: Table<PasskeyChallengeRecord>;
   /** The store `sessions` exposes. */
   sessions: SessionStore;
   /** Epoch seconds. */
@@ -155,6 +161,8 @@ function createState(options: InMemoryAuthAdapterOptions): MemoryState {
     mfa: new Map(),
     nativeGrants: table<NativeGrantRecord>(max),
     nativeSessions: table<NativeSessionRecord>(max),
+    passkeys: table<PasskeyRecord>(max),
+    passkeyChallenges: table<PasskeyChallengeRecord>(max),
     sessions: inMemorySessionStore(),
     now: options.now ?? (() => Math.floor(Date.now() / 1000)),
     lock<T>(key: string, run: () => Promise<T>): Promise<T> {
@@ -504,6 +512,54 @@ function deleteUserRows(state: MemoryState, id: string): void {
     (token) => state.apiTokenHashes.delete(token.tokenHash),
   );
   dropWhere(state.nativeSessions, (session) => session.userId === id);
+  dropWhere(state.passkeys, (passkey) => passkey.userId === id);
+}
+
+/** The passkey group: credential records and single-use challenges. */
+function passkeyMethods(
+  state: MemoryState,
+): Pick<
+  AuthAdapter,
+  | "createPasskey"
+  | "getPasskey"
+  | "listPasskeys"
+  | "updatePasskey"
+  | "deletePasskey"
+  | "createPasskeyChallenge"
+  | "usePasskeyChallenge"
+> {
+  return {
+    createPasskey(record) {
+      // Check-and-insert with no await between: atomic on the single JS thread.
+      if (state.passkeys.get(record.id)) return false;
+      state.passkeys.set(record.id, { ...record, transports: record.transports?.slice() });
+      return true;
+    },
+    getPasskey: (id) => copy(state.passkeys.get(id)),
+    listPasskeys: (userId) =>
+      [...state.passkeys.rows.values()]
+        .filter((passkey) => passkey.userId === userId)
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map((passkey) => ({ ...passkey })),
+    updatePasskey(id, fromSignCount, update) {
+      const record = state.passkeys.get(id);
+      if (!record || record.signCount !== fromSignCount) return false;
+      state.passkeys.set(id, { ...record, ...update });
+      return true;
+    },
+    deletePasskey(id) {
+      state.passkeys.delete(id);
+    },
+    createPasskeyChallenge(record) {
+      state.passkeyChallenges.set(record.hash, { ...record });
+    },
+    usePasskeyChallenge(hash) {
+      const record = state.passkeyChallenges.get(hash);
+      if (!record) return undefined;
+      state.passkeyChallenges.delete(hash);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+  };
 }
 
 /** The account-deletion group: every row of the user, plus their `sessions` records. */
@@ -528,13 +584,15 @@ function closeState(state: MemoryState): void {
   state.mfa.clear();
   state.nativeGrants.rows.clear();
   state.nativeSessions.rows.clear();
+  state.passkeys.rows.clear();
+  state.passkeyChallenges.rows.clear();
   state.sessions.close?.();
 }
 
 /**
  * Build a per-process, in-memory {@link ./adapter.ts | AuthAdapter}: every method group
  * (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions,
- * account deletion) plus a
+ * passkeys, account deletion) plus a
  * `sessions` store and `close()`. Ids are `crypto.randomUUID()` unless the caller
  * supplies one; emails are matched case-insensitively and whitespace-trimmed.
  *
@@ -556,6 +614,8 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     ...mfaMethods(state),
     ...nativeMethods(state),
     ...deletionMethods(state),
+    // Passkeys: credential records + single-use challenges.
+    ...passkeyMethods(state),
     sessions: state.sessions,
     close: () => closeState(state),
   };

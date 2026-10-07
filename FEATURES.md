@@ -213,7 +213,11 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   sends nothing — the next-auth CVE-2022-35924 class); and **TOTP two-factor**
   (RFC 6238 enroll / confirm / disable at `/auth/mfa*`, single-use backup codes
   stored as hashes, a replay-guarded step claim) whose pending step-up reads as
-  signed out everywhere until the second factor, then mints a fresh session. A
+  signed out everywhere until the second factor, then mints a fresh session;
+  **passkeys** (WebAuthn L3 registration + authentication at `/auth/passkey/*`,
+  verified with `crypto.subtle` and an in-house CBOR decoder: ES256 / RS256 / Ed25519,
+  `none` / `packed` attestation, counter clone detection, single-use browser-bound
+  challenges) as a first factor or the second. A
   first email sign-in into an unverified account retires whatever was set up
   without proof of the mailbox (pre-account hijacking). denext ships no mailer:
   every message goes through `sendVerificationRequest`.

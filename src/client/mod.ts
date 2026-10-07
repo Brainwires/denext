@@ -79,6 +79,15 @@ export { dynamic } from "../runtime/dynamic.ts";
 
 // First-party auth: the client half of `denextAuth` (also exported from the root `denext`).
 export { SessionProvider, signIn, signOut, useSession } from "./auth.ts";
+// Passkeys (`denextAuth({ passkeys })`): register one, sign in or step up with one.
+export { passkeysSupported, registerPasskey, signInWithPasskey } from "./passkeys.ts";
+export type {
+  PasskeyCallOptions,
+  PasskeyClientError,
+  PasskeySignInOptions,
+  PasskeySignInResult,
+  RegisterPasskeyResult,
+} from "./passkeys.ts";
 export type {
   ClientSession,
   CredentialsSignInResult,
