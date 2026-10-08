@@ -889,6 +889,13 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** `lists` names the engine of the DOM list packages: `"denext"` or `"library"`. */
+function validateLists(value: unknown, fail: Fail): void {
+  if (value !== undefined && value !== "denext" && value !== "library") {
+    fail("lists", 'must be "denext" or "library"');
+  }
+}
+
 /** `platformExtensions` is a boolean or `{ native?: boolean, osFiles?: boolean }`. */
 function validatePlatformExtensions(value: unknown, fail: Fail): void {
   if (value === undefined || typeof value === "boolean") return;
@@ -1128,6 +1135,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, fail);

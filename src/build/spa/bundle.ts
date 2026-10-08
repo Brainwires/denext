@@ -9,6 +9,7 @@ import {
 import { join, resolve, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
 import {
+  domListsEnabled,
   featureFlags,
   momentumSafeScrollEnabled,
   nodeResolveEnabled,
@@ -210,6 +211,8 @@ async function bundleCompatSpa(
     // Barrel imports of `optimizePackageImports` packages → their defining modules (lucide's
     // barrel + `dynamicIconImports` otherwise put every icon chunk on the startup path).
     optimizePackageImports: optimizePackageImportsList(config),
+    // `lists: "denext"`: `@legendapp/list/react` on denext's VirtualList (dom-lists.ts).
+    domLists: domListsEnabled(config),
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,

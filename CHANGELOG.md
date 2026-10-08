@@ -10,6 +10,23 @@ and this project adheres to
 
 ### Added
 
+- **`lists: "denext"` runs LegendList's DOM build on `VirtualList`.** With the new top-level
+  `lists: "denext"`, every `@legendapp/list/react` import (the app's and its packages') resolves
+  to a `LegendList` built from React Native mode's adapter over DOM elements, in SPA mode and on
+  the App Router (server render, the bundled builds and the unbundled dev loop alike), so an app
+  gets the engine with no code change. `className` / `contentContainerClassName` and the other
+  DOM attributes land on the scroll element, the ref's scroll-view getters and `refScrollView`
+  return the element, and `contentInsetEndAdjustment` / `contentInset`'s end add room after the
+  last item. The lists parity gate gains the DOM build (`@legendapp/list/react` 3.4.0, none
+  missing). `"library"`, the default, keeps the real package.
+- **LegendList's `getState().listen` and `listenToPosition` call back** (React Native mode and
+  the DOM build): `totalSize`, `headerSize`, `footerSize`, `anchoredEndSpaceSize`, the at-end /
+  at-start flags, `lastItemKeys`, `numContainers`, `otherAxisSize`, `readyToRender` and an item's
+  position are reported after each commit, scroll frame and measurement when they change; before,
+  every listener was a no-op.
+- **`VirtualList`'s `scrollerProps`**: more attributes and event handlers for the scroll element
+  (`id`, `data-*`, `onKeyDown`, …).
+
 - **Remix `defer()` data streams per boundary.** On a streamed Flight page each deferred value is
   sent as its own `<script type="application/json" data-dnx-v>` chunk the moment it resolves,
   and each Suspense boundary's Flight subtree (`data-dnx-f`) beside its HTML, so an early

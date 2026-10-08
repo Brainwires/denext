@@ -53,6 +53,7 @@ export const CONFIG_KEYS = [
   "features",
   "optimizePackageImports",
   "momentumSafeScroll",
+  "lists",
   "platformExtensions",
   "mobile",
   "desktop",

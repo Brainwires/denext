@@ -41,6 +41,12 @@ export interface ListPrimitives {
   readonly StyleSheet?: RNStyleSheet;
   /** The `RefreshControl` used when `onRefresh` is given without a `refreshControl`. */
   readonly RefreshControl?: VNodeType;
+  /**
+   * The DOM build of a list package (`@legendapp/list/react`): `className` /
+   * `contentContainerClassName` and the other DOM attributes land on the scroll element, and the
+   * ref's scroll-view getters and `refScrollView` receive that element itself.
+   */
+  readonly dom?: boolean;
 }
 
 /** The `separators` a `renderItem` receives (React Native's). */

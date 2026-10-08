@@ -1608,6 +1608,17 @@ export interface DenextConfig {
    */
   momentumSafeScroll?: boolean;
   /**
+   * Which engine runs the DOM list packages. `"denext"`: `@legendapp/list/react` (LegendList's
+   * DOM build), imported by the app or by its packages, runs on denext's `VirtualList` with
+   * LegendList's props, ref methods (`scrollToEnd`, `scrollToIndex`, `getState`, …) and cell
+   * hooks, in SPA mode and on the App Router (server render included); the app's source stays
+   * unchanged. `"library"` (the default): the real package. Applies to apps that use npm React
+   * (the esbuild build path). React Native mode's own list packages are `reactNative.lists`.
+   *
+   * @default "library"
+   */
+  lists?: "denext" | "library";
+  /**
    * Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to
    * `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package,
    * `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The
@@ -1893,6 +1904,11 @@ export interface ExperimentalConfig {
  */
 export function momentumSafeScrollEnabled(config: DenextConfig | null | undefined): boolean {
   return config?.momentumSafeScroll !== false;
+}
+
+/** Whether the DOM list packages run on denext's `VirtualList` (`lists: "denext"`). */
+export function domListsEnabled(config: DenextConfig | null | undefined): boolean {
+  return config?.lists === "denext";
 }
 
 /**

@@ -20,6 +20,7 @@
  * @module
  */
 
+import { domListsPlugin } from "./dom-lists.ts";
 import {
   missingVariantMessage,
   type PlatformResolution,
@@ -264,6 +265,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // React Native mode's FlashList / LegendList shims (see react-native-lists.ts).
     "react-native-flash-list": u("src/react-native/flash-list.ts"),
     "react-native-legend-list": u("src/react-native/legend-list.ts"),
+    // `@legendapp/list/react` (the DOM build) on VirtualList, with `lists: "denext"` (see
+    // dom-lists.ts).
+    "lists-legend-list": u("src/lists/legend-list.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -700,6 +704,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/react-native": "react-native.js",
   "denext/react-native/flash-list": "react-native-flash-list.js",
   "denext/react-native/legend-list": "react-native-legend-list.js",
+  // `lists: "denext"`: `@legendapp/list/react` (see dom-lists.ts).
+  "denext/lists/legend-list": "lists-legend-list.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
@@ -1200,6 +1206,11 @@ export interface BundleNextCompatModulesOptions {
    * way denext's resolver does); omit or pass `[]` to leave every import as written.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
+   * VirtualList-backed modules (see dom-lists.ts).
+   */
+  domLists?: boolean;
   /**
    * Extensions probed AHEAD of the defaults when an extensionless import is resolved — both
    * relative/alias imports and package subpaths (with {@link resolveAllNodeModules}). React
@@ -2183,7 +2194,7 @@ async function compatPlugins(
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
   let plugins: esbuild.Plugin[] = [
-    ...(options.extraPlugins ?? []),
+    ...leadingPlugins(options),
     envPoisonPlugin(deno),
     ...(deno ? [frameworkUrlExternalPlugin()] : []),
     googleFontsPlugin(),
@@ -2205,6 +2216,12 @@ async function compatPlugins(
     }));
   }
   return plugins;
+}
+
+/** The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). */
+function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin[] {
+  const lists = options.domLists ? [domListsPlugin(options.platform ?? "browser")] : [];
+  return [...(options.extraPlugins ?? []), ...lists];
 }
 
 /**

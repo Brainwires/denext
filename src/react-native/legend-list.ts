@@ -3,15 +3,20 @@
  * hooks. React Native mode resolves `@legendapp/list` and `@legendapp/list/react-native` to a
  * module that builds `LegendList` from the app's react-native-web primitives with
  * {@linkcode createLegendList} and re-exports the hooks (unless
- * `reactNative: { lists: "library" }`); `@legendapp/list/react` (the DOM build) keeps
- * resolving to the real package. A prebuilt runtime entry (`denext/react-native/legend-list`);
- * not a public entrypoint.
+ * `reactNative: { lists: "library" }`); `@legendapp/list/react` (the DOM build) resolves to
+ * `src/lists/legend-list.ts` (the same component over DOM primitives) only with the top-level
+ * `lists: "denext"`. A prebuilt runtime entry (`denext/react-native/legend-list`); not a public
+ * entrypoint.
  *
  * Differences, all deliberate: `recycleItems` maps to the engine's cell reuse (off by default,
  * as in LegendList); `getFixedItemSize` / `getEstimatedItemSize` / `estimatedItemSize` are
  * estimates the engine confirms by measuring; `waitForInitialLayout` and `itemsAreEqual` have no
  * effect (the first window renders at once; items re-render on their props); the state's
- * `listen` / `listenToPosition` never call back.
+ * `listen` reports `totalSize`, `headerSize`, `footerSize`, `anchoredEndSpaceSize`,
+ * `isAtEnd` / `isAtStart` / `isNearEnd` / `isNearStart`,
+ * `isWithinMaintainScrollAtEndThreshold`, `lastItemKeys`, `numContainers`, `otherAxisSize`,
+ * `readyToRender` and `activeStickyIndex` (after each commit, scroll frame and measurement,
+ * when the value changed); any other type never calls back.
  *
  * @module
  */
@@ -134,6 +139,13 @@ export interface LegendListProps<T>
   readonly drawDistance?: number;
   /** One size estimate. */
   readonly estimatedItemSize?: number;
+  /** Px of room after the last item on top of the content's own end padding (the web build's). */
+  readonly contentInsetEndAdjustment?: number;
+  /**
+   * The content's insets: the end one (`bottom`, or `right` when horizontal) is room after the
+   * last item, as `contentInsetEndAdjustment` is; the start ones are accepted, no effect.
+   */
+  readonly contentInset?: { top?: number; left?: number; bottom?: number; right?: number };
   /** The viewport's size before layout. */
   readonly estimatedListSize?: { height: number; width: number };
   /** Re-render the items when this changes. */
@@ -291,6 +303,28 @@ export interface LegendListState {
   readonly startBuffered: number;
 }
 
+/** One `listen` type's subscribers and the value they last heard. */
+interface Listening<V> {
+  readonly cbs: Set<(value: V) => void>;
+  last: V;
+}
+
+/**
+ * The `getState().listen` / `listenToPosition` subscribers of one list, told about changes after
+ * each commit, scroll frame and measurement (see {@linkcode notifyListeners}).
+ */
+interface ListenHub {
+  readonly types: Map<string, Listening<unknown>>;
+  readonly positions: Map<string, Listening<number | undefined>>;
+  /** A notify is queued (measurements coalesce into one microtask). */
+  queued: boolean;
+}
+
+/** A new, empty hub. */
+function listenHub(): ListenHub {
+  return { types: new Map(), positions: new Map(), queued: false };
+}
+
 /** Scroll params. */
 interface ScrollIndexParams {
   readonly animated?: boolean;
@@ -299,7 +333,7 @@ interface ScrollIndexParams {
   readonly viewPosition?: number;
 }
 
-/** LegendList's ref. */
+/** LegendList's ref (the DOM build's scroll-view getters return the scroll element). */
 export interface LegendListRef {
   /** Does nothing (sizes are measured on every change). */
   clearCaches(options?: { mode?: "sizes" | "full" }): void;
@@ -407,12 +441,16 @@ function initialIndexOf(props: LegendListProps<unknown>): number | undefined {
 }
 
 /** The first-commit scroll LegendList's props ask for beyond an index. */
-function legendMount(props: LegendListProps<unknown>, p: Packing): EngineOptions["onMount"] {
+function legendMount(
+  props: LegendListProps<unknown>,
+  p: Packing,
+  dom: boolean,
+): EngineOptions["onMount"] {
   const i = props.initialScrollIndex;
   const offset = props.initialScrollOffset;
-  const ref = props.refScrollView;
+  const ref = props.refScrollView as Ref<unknown> | undefined;
   return (h) => {
-    if (ref) assignRef(ref, h.getScrollResponder());
+    if (ref) assignRef(ref, scrollViewOf(h, dom));
     if (typeof i === "object" && i !== null && (i.viewOffset || i.viewPosition)) {
       h.scrollToIndex({ ...i, index: rowOfItem(p, i.index), animated: false });
     } else if (offset !== undefined && i === undefined) {
@@ -420,6 +458,11 @@ function legendMount(props: LegendListProps<unknown>, p: Packing): EngineOptions
     }
     props.onReady?.();
   };
+}
+
+/** What `refScrollView` receives: the scroll element (the DOM build), else a `ScrollView`. */
+function scrollViewOf(h: CoreHandle, dom: boolean): unknown {
+  return dom ? h.getScrollableNode() : h.getScrollResponder();
 }
 
 /** Set a ref. */
@@ -454,6 +497,7 @@ function legendEngine(
   keyOf: (item: unknown, i: number) => string,
   wrapCell: EngineOptions["wrapCell"],
   onScrollFrame: EngineOptions["onScrollFrame"],
+  dom = false,
 ): EngineOptions {
   const atEnd = props.maintainScrollAtEnd;
   const threshold = props.maintainScrollAtEndThreshold ?? 0.1;
@@ -487,7 +531,7 @@ function legendEngine(
     threshold: 0.5,
     wrapCell,
     onScrollFrame,
-    onMount: legendMount(props, p),
+    onMount: legendMount(props, p, dom),
     keepMounted: keptRows(
       props,
       data,
@@ -569,6 +613,94 @@ function dispatchAmounts(bus: Bus, p: Packing): void {
   }
 }
 
+/** What a `listen` value is read from. */
+interface ListenCtx {
+  readonly state: LegendListState;
+  readonly core: CoreHandle | null;
+  readonly endSpace: number;
+  readonly horizontal: boolean;
+  readonly keyOf: (item: unknown, i: number) => string;
+}
+
+/** The scroll element (with the sizes the listeners read). */
+function scrollNodeOf(
+  c: ListenCtx,
+): (Element & { clientWidth?: number; clientHeight?: number }) | null {
+  return c.core?.getScrollableNode() ?? null;
+}
+
+/** The size along the scroll axis of the list's `[attr]` slot (its footer), 0 without one. */
+function slotSize(c: ListenCtx, attr: string): number {
+  const el = scrollNodeOf(c)?.querySelector?.(`[${attr}]`) as
+    | { offsetHeight?: number; offsetWidth?: number }
+    | null
+    | undefined;
+  return (c.horizontal ? el?.offsetWidth : el?.offsetHeight) ?? 0;
+}
+
+/** The value each `listen` type reports (a type not listed never calls back). */
+const LISTEN_VALUES: Readonly<Record<string, (c: ListenCtx) => unknown>> = {
+  totalSize: (c) => c.state.contentLength,
+  headerSize: (c) => Math.max(0, -(c.core?.engine()?.getScrollMetrics().min ?? 0)),
+  footerSize: (c) => slotSize(c, "data-vl-footer"),
+  anchoredEndSpaceSize: (c) => c.endSpace,
+  isAtEnd: (c) => c.state.isAtEnd,
+  isAtStart: (c) => c.state.isAtStart,
+  isNearEnd: (c) => c.state.isNearEnd,
+  isNearStart: (c) => c.state.isNearStart,
+  isWithinMaintainScrollAtEndThreshold: (c) => c.state.isWithinMaintainScrollAtEndThreshold,
+  activeStickyIndex: (c) => c.state.activeStickyIndex,
+  lastItemKeys: (c) => {
+    const n = c.state.data.length;
+    return n > 0 ? [c.keyOf(c.state.data[n - 1], n - 1)] : [];
+  },
+  numContainers: (c) => c.state.end < c.state.start ? 0 : c.state.end - c.state.start + 1,
+  otherAxisSize: (c) =>
+    (c.horizontal ? scrollNodeOf(c)?.clientHeight : scrollNodeOf(c)?.clientWidth) ?? 0,
+  readyToRender: (c) => c.core !== null,
+};
+
+/** Whether two `listen` values are the same (arrays by their items). */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+  }
+  return Object.is(a, b);
+}
+
+/** Subscribe `cb` to `key`'s entry of `map`, seeding it with `initial()`; returns the remover. */
+function subscribe<V>(
+  map: Map<string, Listening<V>>,
+  key: string,
+  cb: (value: V) => void,
+  initial: () => V,
+): () => void {
+  let l = map.get(key);
+  if (!l) {
+    l = { cbs: new Set(), last: initial() };
+    map.set(key, l);
+  }
+  const entry = l;
+  entry.cbs.add(cb);
+  return () => {
+    entry.cbs.delete(cb);
+    if (entry.cbs.size === 0 && map.get(key) === entry) map.delete(key);
+  };
+}
+
+/** Tell each subscriber whose value changed (`read` builds the context only when needed). */
+function notifyListeners(hub: ListenHub, read: () => ListenCtx): void {
+  if (hub.types.size === 0 && hub.positions.size === 0) return;
+  const c = read();
+  const tell = <V>(l: Listening<V>, value: V): void => {
+    if (sameValue(value, l.last)) return;
+    l.last = value;
+    for (const cb of [...l.cbs]) cb(value);
+  };
+  for (const [type, l] of hub.types) tell(l, LISTEN_VALUES[type]?.(c));
+  for (const [key, l] of hub.positions) tell(l, c.state.positionByKey(key));
+}
+
 /** The state `getState()` reports. */
 function legendState(
   core: CoreHandle | null,
@@ -576,6 +708,7 @@ function legendState(
   p: Packing,
   keyOf: (item: unknown, i: number) => string,
   threshold: number,
+  listening?: { hub: ListenHub; endSpace: number; horizontal: boolean },
 ): LegendListState {
   const engine = core?.engine() ?? null;
   const m = engine?.getScrollMetrics() ?? { offset: 0, viewport: 0, min: 0, max: 0, rows: 0 };
@@ -590,7 +723,14 @@ function legendState(
   const fromEnd = m.max - m.offset;
   const fromStart = m.offset - m.min;
   const positionAtIndex = (i: number) => layoutOf(core, p, i)?.y ?? 0;
-  return {
+  const ctx = (): ListenCtx => ({
+    state,
+    core,
+    keyOf,
+    endSpace: listening?.endSpace ?? 0,
+    horizontal: listening?.horizontal ?? false,
+  });
+  const state: LegendListState = {
     activeStickyIndex: -1,
     contentLength: m.rows,
     data,
@@ -609,8 +749,15 @@ function legendState(
       "": { average: data.length > 0 ? m.rows / p.rows : 0, count: data.length },
     }),
     indexByKey,
-    listen: () => () => {},
-    listenToPosition: () => () => {},
+    listen: (type, cb) => {
+      if (!listening) return () => {};
+      return subscribe(listening.hub.types, type, cb, () => LISTEN_VALUES[type]?.(ctx()));
+    },
+    listenToPosition: (key, cb) => {
+      if (!listening) return () => {};
+      const heard = cb as (value: number | undefined) => void;
+      return subscribe(listening.hub.positions, key, heard, () => state.positionByKey(key));
+    },
     positionAtIndex,
     positionByKey: (key) => {
       const i = indexByKey(key);
@@ -624,17 +771,44 @@ function legendState(
     start,
     startBuffered: start,
   };
+  return state;
 }
 
-/** The LegendList ref over the core. */
+/** The state `getState()` reports now, with the list's `listen` hub. */
+function currentState(
+  core: { current: CoreHandle | null },
+  latest: LegendLatest,
+  keyOf: (item: unknown, i: number) => string,
+  hub: ListenHub,
+): LegendListState {
+  const { data, packing, props, endSpace } = latest.current;
+  return legendState(
+    core.current,
+    data,
+    packing,
+    keyOf,
+    props.maintainScrollAtEndThreshold ?? 0.1,
+    {
+      hub,
+      endSpace: endSpace ?? 0,
+      horizontal: !!props.horizontal,
+    },
+  );
+}
+
+/** The LegendList ref over the core (the DOM build's scroll-view getters return the element). */
 function legendHandle(
   core: { current: CoreHandle | null },
-  latest: {
-    current: { data: readonly unknown[]; packing: Packing; props: LegendListProps<unknown> };
-  },
+  latest: LegendLatest,
   keyOf: (item: unknown, i: number) => string,
+  hub: ListenHub,
+  dom: boolean,
 ): LegendListRef {
   const c = () => core.current;
+  const responder = (): ScrollResponder | null =>
+    dom
+      ? c()?.getScrollableNode() as unknown as ScrollResponder ?? null
+      : c()?.getScrollResponder() ?? null;
   const rowOf = (i: number) => rowOfItem(latest.current.packing, i);
   const toIndex = (params: ScrollIndexParams): Promise<void> => {
     c()?.scrollToIndex({ ...params, index: rowOf(params.index) });
@@ -654,18 +828,11 @@ function legendHandle(
   return {
     clearCaches() {},
     flashScrollIndicators() {},
-    getNativeScrollRef: () => c()?.getScrollResponder() ?? null,
-    getAnimatableRef: () => c()?.getScrollResponder() ?? null,
+    getNativeScrollRef: responder,
+    getAnimatableRef: responder,
     getScrollableNode: () => c()?.getScrollableNode() ?? null,
-    getScrollResponder: () => c()?.getScrollResponder() ?? null,
-    getState: () =>
-      legendState(
-        c(),
-        latest.current.data,
-        latest.current.packing,
-        keyOf,
-        latest.current.props.maintainScrollAtEndThreshold ?? 0.1,
-      ),
+    getScrollResponder: responder,
+    getState: () => currentState(core, latest, keyOf, hub),
     reportContentInset() {},
     scrollIndexIntoView: (params) => intoView(params.index, params.animated),
     scrollItemIntoView: (params) =>
@@ -710,7 +877,10 @@ function firstVisibleTracker(
   };
 }
 
-/** Hook: the scroll-frame listeners (sticky change, first visible, viewability amounts). */
+/**
+ * Hook: the scroll-frame listeners (sticky change, first visible, viewability amounts, the
+ * state's `listen` subscribers).
+ */
 function useScrollFrame(
   props: LegendListProps<unknown>,
   core: { current: CoreHandle | null },
@@ -718,6 +888,7 @@ function useScrollFrame(
   data: readonly unknown[],
   p: Packing,
   keyOf: (item: unknown, i: number) => string,
+  notify: () => void,
 ): EngineOptions["onScrollFrame"] {
   const onSticky = props.onStickyHeaderChange;
   return useMemo(() => {
@@ -732,9 +903,11 @@ function useScrollFrame(
       sticky?.(e);
       first?.(e);
       if (bus.amount.size > 0) dispatchAmounts(bus, p);
+      notify();
     };
   }, [
     core,
+    notify,
     bus,
     data,
     p,
@@ -782,6 +955,7 @@ function legendViewability(
  * @returns The `LegendList` component.
  */
 export function createLegendList(prim: ListPrimitives): (props: LegendListProps<unknown>) => VNode {
+  const dom = prim.dom === true;
   function LegendList(props: LegendListProps<unknown>): VNode {
     const core = useRef<CoreHandle | null>(null);
     const childData = useMemo(() => childItems(props.children), [props.children]);
@@ -792,26 +966,30 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
       props.overrideItemLayout as OverrideItemLayout | undefined,
       props.extraData,
     );
-    const latest = useRef({ data, packing, props });
+    const latest: LegendLatest = useRef<LegendLatest["current"]>({ data, packing, props });
     latest.current = { data, packing, props };
     const keyOf = useKeyOf(props.keyExtractor);
     const [bus, wanted] = useBus(core);
-    useImperativeHandle(props.ref, () => legendHandle(core, latest, keyOf), [keyOf]);
+    const { hub, notify, queue } = useListenHub(core, latest, keyOf);
+    useImperativeHandle(props.ref, () => legendHandle(core, latest, keyOf, hub, dom), [keyOf]);
     useLegendLoad(props);
-    const onScrollFrame = useScrollFrame(props, core, bus, data, packing, keyOf);
+    const onScrollFrame = useScrollFrame(props, core, bus, data, packing, keyOf, notify);
     const render = useLegendRender(props, data, packing, prim);
     const wrapCell = useWrapCell(bus, keyOf, data.length);
-    const extras = useLegendExtras(props, prim, core, latest, keyOf);
+    const extras = useLegendExtras(props, prim, core, latest, keyOf, queue);
+    latest.current.endSpace = extras.engine.endSpace;
     const engine: EngineOptions = {
       ...legendEngine(
         props,
         data,
         packing,
         keyOf,
-        packing.cols === 1 ? wrapCell : undefined,
+        singleColumn(packing, wrapCell),
         onScrollFrame,
+        dom,
       ),
       ...extras.engine,
+      ...domEngine(props, dom),
     };
     const extra = useMemo(() => ({}), [props.extraData, props.dataVersion, props.dataKey]);
     const list: VirtualizedListProps<unknown> = {
@@ -827,14 +1005,148 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
   return LegendList;
 }
 
+/** The cell wrapper for a one-column list (a grid's rows hold several items: none). */
+function singleColumn(
+  p: Packing,
+  wrapCell: NonNullable<EngineOptions["wrapCell"]>,
+): EngineOptions["wrapCell"] {
+  return p.cols === 1 ? wrapCell : undefined;
+}
+
 /** The latest render's inputs, as the list's ref and reports read them. */
 type LegendLatest = {
-  current: { data: readonly unknown[]; packing: Packing; props: LegendListProps<unknown> };
+  current: {
+    data: readonly unknown[];
+    packing: Packing;
+    props: LegendListProps<unknown>;
+    /** The room after the last item (`anchoredEndSpace` + `contentInsetEndAdjustment`). */
+    endSpace?: number;
+  };
 };
+
+/** The `listen` context over the latest render. */
+function listenCtx(
+  core: { current: CoreHandle | null },
+  latest: LegendLatest,
+  keyOf: (item: unknown, i: number) => string,
+  hub: ListenHub,
+): ListenCtx {
+  return {
+    state: currentState(core, latest, keyOf, hub),
+    core: core.current,
+    keyOf,
+    endSpace: latest.current.endSpace ?? 0,
+    horizontal: !!latest.current.props.horizontal,
+  };
+}
+
+/**
+ * Hook: the list's `listen` hub, its `notify` (run after every commit here, and on scroll
+ * frames by the caller) and `queue` (one coalesced notify for a batch of measurements).
+ */
+function useListenHub(
+  core: { current: CoreHandle | null },
+  latest: LegendLatest,
+  keyOf: (item: unknown, i: number) => string,
+): { hub: ListenHub; notify: () => void; queue: () => void } {
+  const hub = useMemo(listenHub, []);
+  const out = useMemo(() => {
+    const notify = () => notifyListeners(hub, () => listenCtx(core, latest, keyOf, hub));
+    return { hub, notify, queue: () => queueNotify(hub, notify) };
+  }, [hub, keyOf]);
+  // After every commit: the sizes and edges the state's `listen` subscribers watch.
+  useLayoutEffect(out.notify);
+  return out;
+}
+
+/** Run `notify` once in a microtask (a batch of measurements notifies once). */
+function queueNotify(hub: ListenHub, notify: () => void): void {
+  if (hub.queued || (hub.types.size === 0 && hub.positions.size === 0)) return;
+  hub.queued = true;
+  queueMicrotask(() => {
+    hub.queued = false;
+    notify();
+  });
+}
+
+/** LegendList's own callback props, never forwarded to the DOM build's scroll element. */
+const LEGEND_CALLBACKS: ReadonlySet<string> = new Set([
+  "onContentSizeChange",
+  "onEndReached",
+  "onEndReachedThreshold",
+  "onFirstVisibleItemChanged",
+  "onItemSizeChanged",
+  "onLayout",
+  "onLoad",
+  "onMetricsChange",
+  "onMomentumScrollBegin",
+  "onMomentumScrollEnd",
+  "onReady",
+  "onRefresh",
+  "onScroll",
+  "onScrollBeginDrag",
+  "onScrollEndDrag",
+  "onStartReached",
+  "onStartReachedThreshold",
+  "onStickyHeaderChange",
+  "onViewableItemsChanged",
+]);
+
+/** The DOM attributes LegendList's DOM build passes to its scroll element. */
+const DOM_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "id",
+  "role",
+  "tabIndex",
+  "title",
+  "dir",
+  "lang",
+  "hidden",
+  "inert",
+  "translate",
+  "draggable",
+  "spellCheck",
+  "contentEditable",
+  "autoFocus",
+  "slot",
+]);
+
+/**
+ * Whether a prop of the DOM build is an attribute of its scroll element: `id`, `data-*`,
+ * `aria-*`, the global attributes above, and DOM event handlers (`on*` that is not one of
+ * LegendList's own callbacks).
+ */
+export function isScrollerAttribute(name: string): boolean {
+  if (DOM_ATTRIBUTES.has(name) || name.startsWith("data-") || name.startsWith("aria-")) {
+    return true;
+  }
+  return /^on[A-Z]/.test(name) && !LEGEND_CALLBACKS.has(name);
+}
+
+/** The DOM build's engine extras: the classes and the scroll element's other attributes. */
+function domEngine(props: LegendListProps<unknown>, dom: boolean): EngineOptions {
+  if (!dom) return {};
+  const own = props as unknown as Record<string, unknown>;
+  const attrs: Record<string, unknown> = {};
+  let any = false;
+  for (const name in own) {
+    if (own[name] !== undefined && isScrollerAttribute(name)) {
+      attrs[name] = own[name];
+      any = true;
+    }
+  }
+  return {
+    className: typeof own.className === "string" ? own.className : undefined,
+    contentContainerClassName: typeof own.contentContainerClassName === "string"
+      ? own.contentContainerClassName
+      : undefined,
+    scrollerProps: any ? attrs : undefined,
+  };
+}
 
 /**
  * Hook: LegendList's layout reports and snap points (`onMetricsChange`, `anchoredEndSpace`,
- * `onItemSizeChanged`, `snapToIndices`) as engine options and list props.
+ * `contentInsetEndAdjustment`, `onItemSizeChanged`, `snapToIndices`) as engine options and list
+ * props. `measured` hears every measurement (the `listen` subscribers).
  */
 function useLegendExtras(
   props: LegendListProps<unknown>,
@@ -842,6 +1154,7 @@ function useLegendExtras(
   core: { current: CoreHandle | null },
   latest: LegendLatest,
   keyOf: (item: unknown, i: number) => string,
+  measured: () => void,
 ): { engine: EngineOptions; list: Partial<VirtualizedListProps<unknown>> } {
   const { data, packing } = latest.current;
   const { metrics, slots } = useSlotMetrics(props, prim.View);
@@ -857,11 +1170,15 @@ function useLegendExtras(
     [props.snapToIndices, data.length, packing],
   );
   const reports = props.onItemSizeChanged || props.anchoredEndSpace;
+  const report = reports ? itemReporter(latest, keyOf, anchor.schedule) : undefined;
   return {
     engine: {
-      endSpace: anchor.size,
+      endSpace: anchor.size + endInset(props),
       snapRows,
-      onItemMeasured: reports ? itemReporter(latest, keyOf, anchor.schedule) : undefined,
+      onItemMeasured: (info) => {
+        report?.(info);
+        measured();
+      },
     },
     list: {
       ...snapProps(props),
@@ -869,6 +1186,13 @@ function useLegendExtras(
       onLayout: props.anchoredEndSpace ? relayout(props.onLayout, anchor.update) : props.onLayout,
     },
   };
+}
+
+/** The room `contentInset`'s end and `contentInsetEndAdjustment` add after the last item. */
+function endInset(props: LegendListProps<unknown>): number {
+  const inset = props.contentInset;
+  const end = (props.horizontal ? inset?.right : inset?.bottom) ?? 0;
+  return Math.max(0, end) + Math.max(0, props.contentInsetEndAdjustment ?? 0);
 }
 
 /** `snapToIndices` as the engine rows whose cells snap (`undefined` when there are none). */

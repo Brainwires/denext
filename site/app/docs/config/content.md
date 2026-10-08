@@ -495,6 +495,11 @@ every `--platform` target included.
   `exports` — the reason `denext migrate` never rewrites `package.json`. Set
   `false` to force app deps back through Deno's strict `npm:` loader (escape
   hatch).
+- **`lists`** — `"denext" | "library"` (default `"library"`). `"denext"` runs
+  `@legendapp/list/react` (LegendList's DOM build), imported by the app or its packages, on
+  denext's `VirtualList` with LegendList's props, ref methods and cell hooks, in SPA mode and
+  on the App Router. See [LegendList on the web](/docs/lists#legendlist-on-the-web). React
+  Native mode's own list packages are `reactNative.lists`.
 - **`momentumSafeScroll`** — `boolean` (**default on**). In iOS WebKit (Safari,
   WKWebView, Capacitor) any programmatic scroll write during a touch fling
   (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and

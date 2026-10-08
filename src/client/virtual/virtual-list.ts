@@ -306,6 +306,7 @@ export const VirtualList: <T>(props: VirtualListProps<T>) => VNode = /* @__PURE_
     const scroller = h(
       "div",
       {
+        ...props.scrollerProps,
         ref: ctl.rootRef,
         class: control ? undefined : props.class ?? props.className,
         "data-denext-virtual-list": "",

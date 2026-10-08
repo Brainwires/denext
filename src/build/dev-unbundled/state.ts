@@ -156,6 +156,12 @@ export interface UnbundledDevOptions {
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
   momentumSafeScroll?: boolean;
   /**
+   * compat: package specifiers served as a prebuilt runtime module instead of from the npm
+   * bundle (`lists: "denext"` maps `@legendapp/list/react` → `denext/lists/legend-list`), for
+   * the app's own imports and for the npm bundle's packages alike.
+   */
+  specAliases?: Readonly<Record<string, string>>;
+  /**
    * SPA mode: the app's single client entry (absolute path to `main.tsx`). When set,
    * {@link ENTRY_PATH} (with no `?p=`) serves a per-module SPA entry that imports the
    * app entry by its `@fs` URL — so a SPA's component edits hot-swap per-module too.

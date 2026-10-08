@@ -2,7 +2,9 @@
 // Chromium: horizontal RTL (visual order, scroll offsets, scrollToIndex, edge callbacks),
 // sticky-header push, FLIP layout animations, print mode, a real text selection keeping its
 // rows mounted, the window-scroll page-offset cache (content above the list resizing), the
-// keyboard inset, and progressive rendering's per-frame work on heavy rows (reported as JSON).
+// keyboard inset, progressive rendering's per-frame work on heavy rows (reported as JSON), and
+// `lists: "denext"`'s LegendList DOM build as a chat (start at the end, follow appends and a
+// growing last message, `getState().listen("totalSize")`, the scroll element's class).
 //
 // Opt-in (launches Chromium): run with `deno task test:e2e`, or directly:
 //   deno test -A tests/e2e/virtual-list-browser.e2e.test.ts
@@ -19,6 +21,7 @@ const ENTRY = `
 import { h } from ${JSON.stringify(join(FW, "src/jsx/jsx-runtime.ts"))};
 import { createRoot, flushSync } from ${JSON.stringify(join(FW, "src/client/reconciler.ts"))};
 import { VirtualList } from ${JSON.stringify(join(FW, "src/client/virtual/virtual-list.ts"))};
+import { LegendList } from ${JSON.stringify(join(FW, "src/lists/legend-list.ts"))};
 
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
 const frames = async (n) => { for (let i = 0; i < n; i++) await frame(); };
@@ -175,6 +178,47 @@ window.scenarios = {
     scrollTo(0, 0);
     document.body.style.margin = "";
     return { before, after };
+  },
+
+  async legendChat() {
+    let ref = null;
+    const totals = [];
+    let data = rowsOf(300);
+    let tall = 40;
+    const msg = (r, i) => h("div", {
+      style: { height: (i === data.length - 1 ? tall : 40) + "px", boxSizing: "border-box" },
+    }, r.text);
+    const legend = (p) => h(LegendList, p);
+    if (root) root.unmount();
+    if (host) host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const render = () => flushSync(() => root.render(legend({
+      data, ref: (x) => { ref = x; }, keyExtractor: (r) => r.id, estimatedItemSize: 90,
+      initialScrollAtEnd: true, maintainScrollAtEnd: true, maintainScrollAtEndThreshold: 0.1,
+      className: "chat-list", style: { height: "400px" },
+      renderItem: ({ item, index }) => msg(item, index),
+    })));
+    render();
+    await frames(6);
+    const s = sc();
+    const gap = () => Math.round(s.scrollHeight - s.clientHeight - s.scrollTop);
+    const atStart = { gap: gap(), isAtEnd: ref.getState().isAtEnd, cls: s.className };
+    const stop = ref.getState().listen("totalSize", (v) => totals.push(v));
+    data = [...data, ...rowsOf(310).slice(300)];
+    render();
+    await frames(6);
+    const afterAppend = { gap: gap(), last: !!row(309), isAtEnd: ref.getState().isAtEnd };
+    tall = 400; // the last message grows as it streams
+    render();
+    await frames(6);
+    const afterGrow = { gap: gap(), isAtEnd: ref.getState().isAtEnd };
+    await ref.scrollToIndex({ index: 0, animated: false });
+    await frames(4);
+    const afterTop = { top: Math.round(s.scrollTop), first: !!row(0) };
+    stop();
+    return { atStart, afterAppend, afterGrow, afterTop, totals: totals.length, total: totals.at(-1) };
   },
 
   async keyboard() {
@@ -415,6 +459,30 @@ Deno.test({
         report.windowScroll = r;
         assertEquals(r.before, [1000, 0]);
         assertEquals(r.after, [2000, 0], "re-read after the header above grew (ResizeObserver)");
+      },
+    );
+
+    await t.step(
+      'lists: "denext" LegendList chat: starts at the end, follows appends and a growing message',
+      async () => {
+        const r = await run<Record<string, Record<string, number | boolean | string> | number>>(
+          "window.scenarios.legendChat()",
+        );
+        report.legendChat = r;
+        const at = r.atStart as Record<string, number | boolean | string>;
+        const app = r.afterAppend as Record<string, number | boolean>;
+        const grow = r.afterGrow as Record<string, number | boolean>;
+        const top = r.afterTop as Record<string, number | boolean>;
+        assertEquals(at.gap, 0, "initialScrollAtEnd: at the end");
+        assertEquals(at.isAtEnd, true);
+        assertEquals(at.cls, "chat-list", "className on the scroll element");
+        assertEquals(app.gap, 0, "maintainScrollAtEnd follows the appends");
+        assert(app.last, "the newest message is rendered");
+        assertEquals(grow.gap, 0, "and a last message that grows");
+        assertEquals(top.top, 0, "scrollToIndex(0) reaches the start");
+        assert(top.first, "the first message is rendered there");
+        assert((r.totals as number) > 0, "listen('totalSize') called back");
+        assertEquals(r.total, 310 * 40 + 360, "the rows' measured total");
       },
     );
 

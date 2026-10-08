@@ -174,6 +174,7 @@ export function compatDepUrl(
   spec: string,
   names?: Iterable<string>,
 ): string | null {
+  spec = st.opts.specAliases?.[spec] ?? spec;
   const runtime = runtimeDepUrl(spec);
   if (runtime !== undefined) return runtime;
   if (/^(node:|data:|https?:)/.test(spec)) return null;

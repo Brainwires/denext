@@ -108,6 +108,7 @@ const WORKFLOWS: FilteredWorkflow[] = [
     owned: [
       "scripts/parity/**",
       "src/react-native/**",
+      "src/lists/**",
       "src/react-native-compat/**",
       "src/expo/**",
       "src/build/react-native*.ts",

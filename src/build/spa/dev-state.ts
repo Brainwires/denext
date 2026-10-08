@@ -5,11 +5,13 @@ import { platformResolution } from "../platform-extensions.ts";
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
 import {
+  domListsEnabled,
   featureFlags,
   momentumSafeScrollEnabled,
   nodeResolveEnabled,
   type SpaConfig,
 } from "../../server/config.ts";
+import { domListAliases } from "../dom-lists.ts";
 import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { buildAppCss, concatCss } from "../css.ts";
@@ -196,6 +198,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
+      // `lists: "denext"`: `@legendapp/list/react` → denext's VirtualList-backed module.
+      specAliases: domListsEnabled(paths.config) ? domListAliases() : undefined,
       // Each target's platform files for the app's own modules (`web` unless the page names one).
       resolvePlatform: (platform) => platformResolution(paths.config, platform),
       // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).

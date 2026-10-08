@@ -122,6 +122,12 @@ export interface EngineOptions {
   readonly endSpace?: number;
   /** A data row was measured: its first measurement, or a new size (the engine's report). */
   readonly onItemMeasured?: (info: { index: number; size: number; previous: number }) => void;
+  /** The scroller's class (the DOM build's `className`), ahead of the style's. */
+  readonly className?: string;
+  /** The content container's class (the DOM build's `contentContainerClassName`). */
+  readonly contentContainerClassName?: string;
+  /** More attributes of the scroller (the DOM build's `id`, `data-*`, event handlers, …). */
+  readonly scrollerProps?: Readonly<Record<string, unknown>>;
 }
 
 /** The core's ref: `VirtualizedList`'s methods plus what the adapters build on. */
@@ -539,13 +545,15 @@ function containerProps(
   const { own, hide } = scrollerStyle(list, engine);
   const user = wrapped ? {} : resolveStyle(prim.StyleSheet, list.style);
   const content = resolveStyle(prim.StyleSheet, list.contentContainerStyle);
+  const contentClass = classes(engine.contentContainerClassName, content.class);
   const snap = list.pagingEnabled ? null : snapOptionsFromProps(list);
   return {
-    class: classes(user.class, hide && HIDE_SCROLLBAR_CLASS),
+    class: classes(engine.className, user.class, hide && HIDE_SCROLLBAR_CLASS),
     style: { ...own, ...user.style },
     ...(snap ? { scrollSnap: snap } : {}),
-    contentContainerStyle: content.style ?? (content.class ? {} : undefined),
-    contentContainerClass: content.class,
+    ...(engine.scrollerProps ? { scrollerProps: engine.scrollerProps } : {}),
+    contentContainerStyle: content.style ?? (contentClass ? {} : undefined),
+    contentContainerClass: contentClass,
   };
 }
 
@@ -1020,8 +1028,46 @@ function useModel(list: VirtualizedListProps<unknown>): Model {
 interface LayoutBox {
   offsetLeft?: number;
   offsetTop?: number;
+  offsetWidth?: number;
+  offsetHeight?: number;
   clientWidth?: number;
   clientHeight?: number;
+}
+
+/** React Native's layout event. */
+export interface LayoutEventLike {
+  readonly nativeEvent: {
+    readonly layout: { x: number; y: number; width: number; height: number };
+  };
+}
+
+/**
+ * Report `node`'s layout (its border box with `outer`, else its client box) to `cb` now and
+ * whenever it resizes; returns the disconnect.
+ */
+export function observeLayout(
+  node: Element,
+  outer: boolean,
+  cb: (e: LayoutEventLike) => void,
+): () => void {
+  const box = node as Element & LayoutBox;
+  const report = (): void =>
+    cb({
+      nativeEvent: {
+        layout: {
+          x: box.offsetLeft ?? 0,
+          y: box.offsetTop ?? 0,
+          width: (outer ? box.offsetWidth : box.clientWidth) ?? 0,
+          height: (outer ? box.offsetHeight : box.clientHeight) ?? 0,
+        },
+      },
+    });
+  report();
+  const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  if (!RO) return () => {};
+  const ro = new RO(report);
+  ro.observe(node);
+  return () => ro.disconnect();
 }
 
 /** Hook: React Native's `onLayout`, from a `ResizeObserver` on the scroll element. */
@@ -1030,25 +1076,9 @@ function useOnLayout(list: VirtualizedListProps<unknown>, handle: CoreHandle): v
   latest.current = list.onLayout;
   const wanted = !!list.onLayout;
   useLayoutEffect(() => {
-    const node = handle.getScrollableNode() as (LayoutBox & Element) | null;
+    const node = handle.getScrollableNode();
     if (!wanted || !node) return;
-    const report = (): void =>
-      latest.current?.({
-        nativeEvent: {
-          layout: {
-            x: node.offsetLeft ?? 0,
-            y: node.offsetTop ?? 0,
-            width: node.clientWidth ?? 0,
-            height: node.clientHeight ?? 0,
-          },
-        },
-      });
-    report();
-    const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
-    if (!RO) return;
-    const ro = new RO(report);
-    ro.observe(node);
-    return () => ro.disconnect();
+    return observeLayout(node, false, (e) => latest.current?.(e));
   }, [wanted, handle]);
 }
 

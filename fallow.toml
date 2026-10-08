@@ -149,6 +149,10 @@ entry = [
   # importing the npm package they stand in for, so each export is that package's public API
   # (the `src/expo/*` shims are entry points through deno.json's exports).
   "src/react-native-compat/*.ts",
+  # `lists: "denext"`'s DOM list modules (src/build/dom-lists.ts): prebuilt runtime entries
+  # (`denext/lists/<name>`) an app reaches by importing the package they stand in for
+  # (`@legendapp/list/react`), so each export is that package's public API.
+  "src/lists/*.ts",
   # The next-compat stand-ins a LIBRARY reaches through `next/router` / `next/compat/router`:
   # prebuilt runtime entries (`runtimeEntryPoints` in src/build/next-compat.ts), loaded by URL.
   "src/compat/next/router.ts",

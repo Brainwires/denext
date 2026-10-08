@@ -4,7 +4,8 @@
 import { type Platform, platformResolution } from "../platform-extensions.ts";
 import { devPlatformImports, devPlatformRedirects } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
-import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
+import { domListsEnabled, featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
+import { domListAliases } from "../dom-lists.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { resolveAction } from "../../server/action-handler.ts";
@@ -42,6 +43,8 @@ export function getUnbundled(st: DevState): UnbundledDev {
     features: featureFlags(st.paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
+    // `lists: "denext"`: `@legendapp/list/react` → denext's VirtualList-backed module.
+    specAliases: domListsEnabled(st.paths.config) ? domListAliases() : undefined,
     // Each target's platform files for the app's own modules (`web` unless the page names one).
     // A next-compat app serves every shell the web target: its server render in dev is the
     // per-generation esbuild bundle, built for web, and its islands must match it.

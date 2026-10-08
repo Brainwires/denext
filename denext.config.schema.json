@@ -1110,6 +1110,14 @@
       "type": "boolean",
       "default": true
     },
+    "lists": {
+      "description": "Which engine runs the DOM list packages. `\"denext\"`: `@legendapp/list/react` (LegendList's DOM build), imported by the app or by its packages, runs on denext's `VirtualList` with LegendList's props, ref methods (`scrollToEnd`, `scrollToIndex`, `getState`, …) and cell hooks, in SPA mode and on the App Router (server render included); the app's source stays unchanged. `\"library\"` (the default): the real package. Applies to apps that use npm React (the esbuild build path). React Native mode's own list packages are `reactNative.lists`.",
+      "enum": [
+        "denext",
+        "library"
+      ],
+      "default": "library"
+    },
     "platformExtensions": {
       "description": "Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package, `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`; android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` → `.web`. Applies to the app's own modules (packages in `node_modules` keep their own resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and android (off by default: `.native` files are usually native code, which a WebView cannot run). In React Native mode the app's `.ios` / `.android` files are native code too, so they are not probed unless `{ osFiles: true }`. `false` turns platform files off. See https://denext.dev/docs/platform-files.",
       "anyOf": [
