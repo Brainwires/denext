@@ -333,12 +333,20 @@ and this project adheres to
   middleware), or a request a `middleware.ts` matched, unless
   `cdnCacheHeaders: { evenWithMiddleware: true }`.
 
-- **denext pins Deno Desktop runtime 2.9.7-denext.12** (deno `cd310b28`, laufey `4f6f00f`, API
+- **denext pins Deno Desktop runtime 2.9.7-denext.13** (deno `a8de3d1a`, laufey `6974b61`, API
   47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
-  xdg-desktop-portal's FileChooser and the runtime's own Linux secure store are now what every
-  denext desktop app gets. `Deno.exit()` ends the app through the backend on every OS, so the web
-  engine flushes its storage first; `SIGTERM`, `SIGINT` and `SIGHUP` quit a Linux CEF app cleanly
-  (the WebView backend has no such handler yet); `platformFeatures().sessionType` follows the
+  xdg-desktop-portal's FileChooser, the runtime's own Linux secure store and the runtime's own macOS
+  secure store (see Security) are now what every denext desktop app gets. `Deno.exit()` ends the
+  app through the backend on every OS, so the web engine flushes its storage first; `SIGTERM`,
+  `SIGINT` and `SIGHUP` quit a Linux app cleanly on both backends, also with a dialog open (a quit
+  cancels open GTK dialogs; the uncaught-error dialog took about 80 seconds to end under
+  `SIGTERM`) and with a stuck UI thread (ended by the signal after 10 seconds instead of ignored
+  until `SIGKILL`); every `exit()` on Linux parks the UI thread before any exit handler runs (a
+  WebKitGTK crash at exit on X11); the Linux secure store follows the Secret Service to a new
+  owner (a second gnome-keyring daemon taking the name made writes fail until a restart); a
+  headless runtime launch (the full-app updater's helper) is no longer cut off after 10 seconds,
+  and the Linux update helper waits for the processes still running from the install, AppImage
+  included, before it swaps or rolls back. `platformFeatures().sessionType` follows the
   display that is there (a session labelled Wayland with only an X display is X11, and CEF opens
   its window there); KDE's service cache (`kbuildsycoca6` / `kbuildsycoca5`) is rebuilt after a
   scheme registration, so the first deep link on Plasma reaches the app; WebKitGTK renders with
@@ -444,19 +452,6 @@ and this project adheres to
   (`deno task parity:native:plugins`) and every method, argument key and result field the shims
   use is type-checked against them, offline. `expo-calendar`'s and `expo-contacts`' plugin
   declarations were tightened to the shapes the plugins take.
-- **A macOS `secureStore.set` over an item an older denext wrote can no longer lose it.** In the
-  login keychain the runtime's store refuses to store over that item, so it is deleted first; when
-  the store then failed (the keychain locked, with prompts off) the old value was gone. The write
-  now reads the old value first (`security -w`; one it can't read fails the write
-  `backend_unavailable` with the item left in place), asks the runtime's store for the key before
-  touching anything (a read, which may show macOS's unlock prompt for a locked login keychain; a
-  cancel fails the write with the item intact), and puts the item back with its old value if the
-  store fails after the delete, returning the store's error (a put-back that fails too is logged,
-  without the key or value).
-  Each key's secure-store operations now also run one at a time, so a first-read move can't undo a
-  concurrent write of the same key. The put-back runs under its own 10 s deadline, not the call's
-  signal: when the store failed because the bridge's per-method timeout aborted that signal, the
-  put-back was killed at once and the item lost.
 - **`denext desktop doctor --linux` no longer warns about a locked keyring that unlocks by
   itself.** gnome-keyring keeps a keyring with no password (an autologin's login keyring, as on
   Cinnamon) unencrypted and reports it locked until first use, which unlocks it with no prompt; the
@@ -550,20 +545,29 @@ and this project adheres to
   `sandbox="allow-modals allow-same-origin"` (printing still works; no script runs in it).
 - **macOS `secureStore` items are the app's own.** They were written with `/usr/bin/security`,
   which the item then trusts, so any program of the same user could read them back with `security
-  find-generic-password -w`, without a prompt. Under a runtime with its own store
-  (`Deno.desktop.secureStore` `supported`: denext's pinned runtime from `2.9.7-denext.13`) the
-  app's process writes the Keychain item itself: the data-protection keychain when the app is
-  signed with a keychain access group (a provisioning profile), else the login keychain with an
-  access list naming only the app, so another program gets macOS's prompt rather than the secret.
-  Items written the old way move over on their first read during the first launch under the
-  runtime's store (read with `security`, stored in the runtime's store, then deleted; put back if
-  the store fails), so a signed-in user stays signed in (Clerk's client JWT lives here); a write
-  or delete removes the old item too. That launch writes a per-service marker into the runtime's
-  store, and later launches never import a `security` item again: any program of the user can
-  plant one, and a read miss would otherwise hand it to the app as its own value (the remaining
-  window, that first launch, is in KNOWN-LIMITATIONS). An older runtime
-  keeps the `security` path. On macOS the `secure-store` capability now bakes an unscoped
-  `--allow-sys` (the runtime's store) besides `--allow-run=security`.
+  find-generic-password -w`, without a prompt. Under denext's pinned runtime (`2.9.7-denext.13`,
+  whose `Deno.desktop.secureStore` is `supported` on macOS) the app's process writes the Keychain
+  item itself: the data-protection keychain when the app is signed with a keychain access group (a
+  provisioning profile), else the login keychain with an access list naming only the app, so
+  another program gets macOS's prompt rather than the secret. In the login keychain a team-signed
+  app also reads an item another program planted or replaced as not there (macOS stamps the
+  writer's partition on the item); an ad-hoc build gets macOS's prompt for one and an unsigned
+  build has no such protection (KNOWN-LIMITATIONS). Items written the old way move over on their
+  first read during the first launch under the runtime's store (read with `security`, stored in
+  the runtime's store, then deleted), so a signed-in user stays signed in (Clerk's client JWT
+  lives here); a write or delete removes the old item too. That launch writes a per-service marker
+  into the runtime's store, and later launches never import a `security` item again: any program
+  of the user can plant one, and a read miss would otherwise hand it to the app as its own value
+  (the remaining window, that first launch, is in KNOWN-LIMITATIONS). A move can't lose the old
+  value: a write over an old item reads its value first (one it can't read fails the write
+  `backend_unavailable` with the item left in place), asks the runtime's store for the key before
+  touching anything (a read, which may show macOS's unlock prompt; a cancel fails the write with
+  the item intact), and puts the item back with its old value if the store fails after the delete
+  (under its own 10 s deadline, so the call's own timeout can't cut the put-back short; a put-back
+  that fails too is logged without the key or value). Each key's secure-store operations run one
+  at a time, so a first-read move can't undo a concurrent write of the same key. An older or the
+  stock runtime keeps the `security` path. On macOS the `secure-store` capability now bakes an
+  unscoped `--allow-sys` (the runtime's store) besides `--allow-run=security`.
 - **Over-the-air UIs are re-verified whenever the shell serves them, not only on arrival.** A
   downloaded UI was checked once, when it was downloaded, so a file changed on the device
   afterwards (another app on a rooted or jailbroken device, malware with storage access,

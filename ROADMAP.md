@@ -11,11 +11,6 @@
 
 ## Deno Desktop
 
-- **Pin runtime `2.9.7-denext.13`.** It brings the macOS runtime secure store
-  (`Deno.desktop.secureStore`: the app's own process writes its Keychain items, so another program
-  gets macOS's prompt instead of the secret; under the pinned `denext.12` writes still go through
-  `/usr/bin/security`) and the Linux exit-ordering and update-helper fixes. At the pin, state the
-  macOS store as current in the CHANGELOG Security entry, /docs/desktop and /docs/desktop-runtime.
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a
   Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
   3.1.0. Add a vTPM Windows 11 VM (or a Windows 11 PC) and run the CONTRIBUTING manual check.

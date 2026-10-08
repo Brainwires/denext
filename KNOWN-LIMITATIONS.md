@@ -247,10 +247,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `chrome-sandbox`): `appCapabilities().sandbox` reads `"off"`. Set
   `desktop.linux.requireSandbox: true` to refuse to start there instead (exit status 78);
   `denext desktop doctor --linux` says which sandbox a machine allows.
-- **Linux signals:** the CEF backend quits cleanly on `SIGTERM`, `SIGINT` and `SIGHUP`, but a
-  `SIGTERM` while its uncaught-error dialog is open takes about 80 seconds to end the app. The
-  WebView backend on Linux has no clean-quit signal handler yet: a signal ends it the default way,
-  without the backend's storage flush (`Deno.exit()` and closing the window do flush).
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
@@ -285,14 +281,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use.
-- **`secureStore` per OS:** on macOS the item is the app's own only under a runtime with its own
-  store (denext.13 and later; until that runtime is pinned, items are written by
-  `/usr/bin/security`, which the item trusts, so other programs of the same user can read them);
-  without a provisioning profile that grants a keychain access group it lives in the login
+- **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
+  writes through `/usr/bin/security`, which any program of the same user can read back) an app
+  without a provisioning profile that grants a keychain access group keeps its items in the login
   keychain, where another program gets macOS's prompt (which the user can allow) rather than
-  nothing, and an ad-hoc or unsigned build is a new program to macOS after each rebuild, so its
-  first read prompts; values an older denext stored through `security` move over only when the
-  app reads them during its first launch under the runtime's store (a marker in that store ends
+  nothing. That keychain guards reads, not writes: another program of the user can replace an
+  item's value or plant one for a key without a prompt. A team-signed app (Developer ID,
+  development, App Store) reads such an item as not there (`null`), so a replaced value is lost to
+  it; an ad-hoc signed build can't tell it from its own earlier build, so its read shows macOS's
+  prompt; an unsigned build reads and writes it as its own, so it has no protection against
+  another program's writes. An ad-hoc or unsigned build is also a new program to macOS after each
+  rebuild, so its first read prompts. Values an older denext stored through `security` move over
+  only when the app reads them during its first launch under the runtime's store (a marker in that store ends
   the move, so a key the app first reads later stays behind in the login keychain), and during
   that first launch an item another program of the user plants for a key the app has not read
   yet is still adopted on that key's first read; on Linux it needs a Secret Service

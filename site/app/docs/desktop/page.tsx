@@ -1793,8 +1793,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         wrote, so values an older denext stored stay readable.
       </Callout>
       <Callout kind="note">
-        <strong>The secure store on macOS.</strong> Under the pinned runtime (from{" "}
-        <code>2.9.7-denext.13</code>) <code>secure-store</code>{" "}
+        <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}
+        <code>secure-store</code>{" "}
         is the runtime&apos;s own: the app&apos;s process writes the Keychain item itself, so only
         the app may read it. Signed with a provisioning profile that grants a keychain access group
         (see{" "}
@@ -1804,8 +1804,13 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         list naming only the app: any other program of the user, <code>security</code>{" "}
         included, gets macOS&apos;s prompt rather than the secret, and updates signed by the same
         identity keep access. An ad-hoc or unsigned build is a new program to macOS each time it is
-        rebuilt, so its first read after a rebuild shows the prompt (Always Allow). Values an older
-        denext stored through <code>/usr/bin/security</code>{" "}
+        rebuilt, so its first read after a rebuild shows the prompt (Always Allow). The login
+        keychain guards reads, not writes: another program of the user can replace an item&apos;s
+        value or plant one without a prompt. An app signed by a team (Developer ID, development, App
+        Store) reads such an item as not there (<code>null</code>), as macOS stamps the writer on
+        it; an ad-hoc build gets the prompt for it, and an unsigned build reads it as its own, so
+        ship a signed build. Values an older denext stored through <code>/usr/bin/security</code>
+        {" "}
         (readable by any program of the user) move over on their first read during the first launch
         under the runtime&apos;s store, so a signed-in user stays signed in; that launch leaves a
         marker in the store, and later launches never import such an item again (another program
