@@ -13,7 +13,10 @@ import {
   type CapacitorStep,
   runCapacitorSteps,
 } from "../src/build/migrate-capacitor.ts";
-import { createMigrateCommand } from "../src/cli/commands/migrate.ts";
+import {
+  createMigrateCommand,
+  terminalRunner as terminalRunnerForTest,
+} from "../src/cli/commands/migrate.ts";
 import type { PlannedCommand } from "../src/build/mobile-capabilities.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 
@@ -193,6 +196,84 @@ export default config;
     assertStringIncludes(review, "https://localhost");
     assert(!review.includes("VITE_CLERK_PUBLISHABLE_KEY"), "a key that is neither is not listed");
   });
+});
+
+// Audit 3.4.0 S2: the install never runs the migrated project's lifecycle scripts. npm, pnpm and
+// bun take `--ignore-scripts`; Yarn Berry rejects that flag, so Yarn is told through its env
+// (`npm_config_ignore_scripts` for Yarn 1, `YARN_ENABLE_SCRIPTS` for Berry).
+Deno.test("migrate --enable-capacitor: every package manager installs without lifecycle scripts", async () => {
+  const cases: Array<[string, PlannedCommand, string]> = [
+    ["package-lock.json", {
+      cmd: "npm",
+      args: ["install", "-D", "--ignore-scripts"],
+      cwd: "",
+    }, "npm install -D --ignore-scripts"],
+    ["pnpm-lock.yaml", {
+      cmd: "pnpm",
+      args: ["add", "-D", "--ignore-scripts"],
+      cwd: "",
+    }, "pnpm add -D --ignore-scripts"],
+    ["bun.lock", {
+      cmd: "bun",
+      args: ["add", "-D", "--ignore-scripts"],
+      cwd: "",
+    }, "bun add -D --ignore-scripts"],
+    ["yarn.lock", {
+      cmd: "yarn",
+      args: ["add", "-D"],
+      cwd: "",
+      env: { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "0" },
+    }, "npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=0 yarn add -D"],
+  ];
+  for (const [lockfile, expected, line] of cases) {
+    await withTree({
+      [lockfile]: "",
+      "package.json": {
+        name: "app",
+        private: true,
+        scripts: { postinstall: "node evil.js" },
+        dependencies: { react: "19.2.6", "react-dom": "19.2.6" },
+        devDependencies: { vite: "^8.0.0" },
+      },
+      "vite.config.ts": "export default {};\n",
+      "index.html": `<!doctype html><html><head><title>A</title></head><body>` +
+        `<div id="root"></div><script type="module" src="/src/main.ts"></script></body></html>`,
+      "src/main.ts": "document.body.textContent = 'a';\n",
+    }, async (root) => {
+      const r = await migrateProject(root, { capacitor: true });
+      const { packages, steps } = r.capacitor!;
+      assertEquals(steps[0].label, "install", lockfile);
+      assertEquals(steps[0].command, {
+        ...expected,
+        args: [...expected.args, ...packages],
+        cwd: root,
+      }, lockfile);
+      assertEquals(steps[0].line, `${line} ${packages.join(" ")}`, lockfile);
+    });
+  }
+});
+
+Deno.test("migrate CLI --enable-capacitor: the runner passes a step's env to the child", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_migrate_env_" });
+  try {
+    const out = join(dir, "env.txt");
+    const runner = terminalRunnerForTest(false);
+    const { code } = await runner({
+      cmd: Deno.execPath(),
+      args: [
+        "eval",
+        `Deno.writeTextFileSync(${
+          JSON.stringify(out)
+        }, String(Deno.env.get("YARN_ENABLE_SCRIPTS")))`,
+      ],
+      cwd: dir,
+      env: { YARN_ENABLE_SCRIPTS: "0" },
+    });
+    assertEquals(code, 0);
+    assertEquals(await Deno.readTextFile(out), "0");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("migrate --enable-capacitor: --app-id, --platform, and packages already installed", async () => {

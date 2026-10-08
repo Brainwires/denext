@@ -262,11 +262,19 @@ It writes, beside the usual files:
 
 Then it installs the pinned Capacitor 8 packages it lacks (`@capacitor/cli`,
 `core`, and the platforms') as dev dependencies with the project's package manager
-and `--ignore-scripts` (so a monorepo's own `prepare` script does not run), e.g.
-`pnpm add -D --ignore-scripts @capacitor/cli@^8.5.2 …`. With no lockfile it does
-not pick a manager for you: it prints the command. With `--platform ios,android`
-it also exports once and runs `npx cap add` for each platform that has no folder
-yet; without it, `cap add` is yours to run.
+without running the project's lifecycle scripts (a monorepo's own `prepare`, a
+`postinstall`): npm, pnpm and bun get `--ignore-scripts`, e.g.
+`pnpm add -D --ignore-scripts @capacitor/cli@^8.5.2 …`, and Yarn, which rejects
+that flag in Berry, runs with `npm_config_ignore_scripts=true` (Yarn 1) and
+`YARN_ENABLE_SCRIPTS=0` (Berry) in its environment. With no lockfile it does not
+pick a manager for you: it prints the command. With `--platform ios,android` it
+also exports once and runs `npx cap add` for each platform that has no folder yet;
+without it, `cap add` is yours to run.
+
+`--platform` runs the project's own code by design: the export builds the app
+(its `vite.config.ts`, plugins and build-time imports) and `npx cap add` runs the
+installed Capacitor CLI, which reads `capacitor.config.ts`. Use it only on a
+checkout you would build anyway; `--check` lists the commands without running them.
 
 What migrate cannot know is listed for review: a build-time switch the phone build
 may need set differently (an env key such as `VITE_HOSTED_APP_CHANNEL`), backend

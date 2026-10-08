@@ -211,12 +211,14 @@ denext mobile add haptics share secure-store`}
         {" "}
         tasks and the native build outputs in{" "}
         <code>.gitignore</code>. It installs the pinned Capacitor 8 packages with the project&apos;s
-        package manager (<code>--ignore-scripts</code>, as dev dependencies), and with{" "}
-        <code>--platform ios,android</code> exports and runs{" "}
-        <code>npx cap add</code>. What it cannot know (a hosted / remote mode switch in the build
-        env, a backend URL a phone can reach, CORS for <code>capacitor://localhost</code> and{" "}
-        <code>https://localhost</code>) is listed for review; <code>--check</code>{" "}
-        shows the whole plan.{" "}
+        package manager (as dev dependencies, without the project&apos;s lifecycle scripts), and
+        with <code>--platform ios,android</code> exports and runs{" "}
+        <code>npx cap add</code>, which run the project&apos;s own build code. What it cannot know
+        (a hosted / remote mode switch in the build env, a backend URL a phone can reach, CORS for
+        {" "}
+        <code>capacitor://localhost</code> and <code>https://localhost</code>) is listed for review;
+        {" "}
+        <code>--check</code> shows the whole plan.{" "}
         <a href="/docs/migrating#3c-adding-an-ios--android-target---enable-capacitor">
           Migrating › Adding an iOS / Android target
         </a>{" "}

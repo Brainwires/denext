@@ -903,11 +903,12 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
 /** A package manager `denext mobile add` can drive. */
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun" | "deno";
 
-/** A subprocess to run: `cmd args…` in `cwd`. */
+/** A subprocess to run: `cmd args…` in `cwd`, with `env` added to the inherited environment. */
 export interface PlannedCommand {
   readonly cmd: string;
   readonly args: readonly string[];
   readonly cwd: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** Runs a {@linkcode PlannedCommand} and resolves its exit code. */

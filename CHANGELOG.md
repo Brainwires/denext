@@ -214,6 +214,12 @@ and this project adheres to
   tenant shared one entry and got the first tenant's result. A loop variable, a `catch`
   parameter and a block `let` / `const` are now bound like a function's locals, also for a
   method in a function declared inside such a block.
+- **`denext migrate --enable-capacitor` no longer runs a Yarn project's install scripts.** npm,
+  pnpm and bun installed the Capacitor packages with `--ignore-scripts`, but Yarn ran without it
+  (Yarn Berry rejects the flag), so the project's `postinstall` / `prepare` ran. Yarn now runs
+  with `npm_config_ignore_scripts=true` (Yarn 1) and `YARN_ENABLE_SCRIPTS=0` (Berry), and the
+  printed command carries them. The migrate docs now say that `--platform` runs the project's
+  export and `npx cap add`, which execute the project's own code.
 
 ## [3.3.0] - 2026-10-08
 

@@ -231,27 +231,40 @@ function missingPackages(
 }
 
 /**
- * The install command for `specs` as dev dependencies. `--ignore-scripts` keeps the project's
- * own lifecycle scripts (a monorepo's `prepare`) from running: the Capacitor packages need no
- * install script. Yarn is left without it (Yarn Berry rejects the flag).
+ * Yarn's switches for "run no lifecycle scripts": Yarn Berry rejects `--ignore-scripts`, so
+ * both majors are told through the environment — `npm_config_ignore_scripts` (Yarn 1 reads the
+ * npm config) and `YARN_ENABLE_SCRIPTS` (Berry's `enableScripts`).
+ */
+const YARN_NO_SCRIPTS_ENV: Readonly<Record<string, string>> = {
+  npm_config_ignore_scripts: "true",
+  YARN_ENABLE_SCRIPTS: "0",
+};
+
+/**
+ * The install command for `specs` as dev dependencies. It never runs the project's own
+ * lifecycle scripts (a monorepo's `prepare`, a `postinstall`): the Capacitor packages need no
+ * install script. npm, pnpm and bun take `--ignore-scripts`; Yarn gets
+ * {@link YARN_NO_SCRIPTS_ENV}.
  */
 function installCommand(
   pm: MigratePackageManager,
   specs: string[],
   cwd: string,
 ): PlannedCommand {
+  if (pm === "yarn") {
+    return { cmd: pm, args: ["add", "-D", ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
+  }
   const args = pm === "npm"
     ? ["install", "-D", "--ignore-scripts"]
-    : pm === "yarn"
-    ? ["add", "-D"]
     : ["add", "-D", "--ignore-scripts"];
   return { cmd: pm, args: [...args, ...specs], cwd };
 }
 
-/** A command as one shell line (arguments with spaces or quotes are quoted). */
+/** A command as one shell line (env assignments first; arguments with spaces or quotes quoted). */
 function commandLine(c: PlannedCommand): string {
   const quote = (a: string) => (/^[\w@^.:/=,+-]+$/.test(a) ? a : JSON.stringify(a));
-  return [c.cmd, ...c.args].map(quote).join(" ");
+  const env = Object.entries(c.env ?? {}).map(([k, v]) => `${k}=${quote(v)}`);
+  return [...env, ...[c.cmd, ...c.args].map(quote)].join(" ");
 }
 
 /** A step from a command. */

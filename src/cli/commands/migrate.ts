@@ -616,13 +616,15 @@ function printCheckCodemod(
 
 /**
  * Run a planned command with the terminal attached, resolving its exit code. `toStderr` sends
- * its stdout to stderr, so `migrate --json` keeps stdout for the JSON document.
+ * its stdout to stderr, so `migrate --json` keeps stdout for the JSON document. A command's
+ * `env` is added to the inherited environment.
  */
-function terminalRunner(toStderr: boolean): CommandRunner {
-  return async ({ cmd, args, cwd }) => {
+export function terminalRunner(toStderr: boolean): CommandRunner {
+  return async ({ cmd, args, cwd, env }) => {
     const child = new Deno.Command(cmd, {
       args: [...args],
       cwd,
+      ...(env ? { env: { ...env } } : {}),
       stdin: "inherit",
       stdout: toStderr ? "piped" : "inherit",
       stderr: "inherit",
