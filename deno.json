@@ -277,6 +277,7 @@
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
     "sass": "npm:sass@^1.80.0",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@^3",
+    "@tanstack/router-plugin": "npm:@tanstack/router-plugin@^1.168.0",
     "@denext/swc": "jsr:@denext/swc@^76.0.0",
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
     "esbuild": "npm:esbuild@^0.24.0",

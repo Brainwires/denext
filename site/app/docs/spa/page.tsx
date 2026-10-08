@@ -180,9 +180,120 @@ const u = new URL("./asset.bin", import.meta.url); // emitted + rewritten`}
           <strong>Route codegen</strong> (e.g. TanStack Router): run it out-of-band —{" "}
           <code>tsr generate</code> in a <code>prebuild</code> step, <code>tsr watch</code>{" "}
           alongside <code>denext dev</code>. <code>examples/tanstack-router</code>{" "}
-          in the repo is a stock file-based TanStack Router app wired this way.
+          in the repo is a stock file-based TanStack Router app wired this way. With{" "}
+          <code>spa.tanstackRouter</code> set (below), <code>denext build</code> and{" "}
+          <code>export</code> regenerate the route tree themselves, as the Vite plugin does.
         </li>
       </ul>
+
+      <h2>Vite build parity</h2>
+      <p>
+        Four things a Vite build does that a migrated app may rely on. All apply to{" "}
+        <code>denext build</code> and <code>denext export</code>; <code>denext dev</code>{" "}
+        does not code-split, emit, or write a manifest.
+      </p>
+
+      <h3>
+        Route code-splitting — <code>spa.tanstackRouter</code>
+      </h3>
+      <p>
+        TanStack Router's <code>autoCodeSplitting</code>{" "}
+        moves each file route's component (and its loader, error, pending and not-found components)
+        into its own chunk that the router fetches when the route is visited, so the startup bundle
+        holds only the router and the route tree. denext runs the same splitter (
+        <code>@tanstack/router-plugin</code>'s compiler, a build-time tool) on the npm-React path:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: {
+  entry: "./src/main.tsx",
+  tanstackRouter: {
+    autoCodeSplitting: true,
+    // routesDirectory / generatedRouteTree: default to tsr.config.json, else ./src/routes
+  },
+}`}
+      </Code>
+      <p>
+        <code>denext migrate</code> sets it when vite.config's <code>tanstackRouter()</code> has
+        {" "}
+        <code>autoCodeSplitting: true</code>.
+      </p>
+
+      <h3>
+        Chunk-load errors — <code>vite:preloadError</code>
+      </h3>
+      <p>
+        After a deploy (or an over-the-air update) replaces the content-hashed chunks, a tab still
+        running the old entry can ask for a chunk that is gone. As in a Vite build, the failed
+        dynamic import dispatches a cancelable <code>vite:preloadError</code> event on{" "}
+        <code>window</code> with the error as <code>event.payload</code>, and a{" "}
+        <code>denext:chunkError</code> event of the same shape. Call <code>preventDefault()</code>
+        {" "}
+        to suppress the error (the import then resolves to{" "}
+        <code>undefined</code>) — typically to reload once onto the new build:
+      </p>
+      <Code lang="ts">
+        {`addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  if (!sessionStorage.getItem("reloaded")) {
+    sessionStorage.setItem("reloaded", "1");
+    location.reload();
+  }
+});`}
+      </Code>
+      <p>
+        Without a listener that prevents it, the import rejects with the original error, as before.
+        It covers every split chunk of a production SPA bundle (both bundlers); it adds nothing to
+        an App Router app.
+      </p>
+
+      <h3>Files a plugin emits</h3>
+      <p>
+        A Vite plugin that writes a generated file from <code>generateBundle</code>{" "}
+        (a licence list, a version stamp) has a denext equivalent: a plugin build step's{" "}
+        <code>emitFile</code>, which publishes the file at the site root — in the export, and from
+        {" "}
+        <code>denext start</code>{" "}
+        after a build. An existing Vite plugin of that kind runs unchanged through{" "}
+        <code>viteEmitterPlugin</code>:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+import { viteEmitterPlugin } from "denext/plugin-kit";
+import { licensesPlugin } from "./scripts/licenses.ts";
+
+export default {
+  mode: "spa",
+  plugins: [viteEmitterPlugin(licensesPlugin({ fileName: "third-party-licenses.json" }))],
+  spa: { entry: "./src/main.tsx" },
+} satisfies DenextConfig;`}
+      </Code>
+      <p>
+        <code>denext migrate</code>{" "}
+        writes this for an emitter imported from the app's own module; one it cannot carry over
+        (other build hooks, values from vite.config) is listed for review. See{" "}
+        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>.
+      </p>
+
+      <h3>
+        Build manifest — <code>spa.viteManifest</code>
+      </h3>
+      <p>
+        A server written for a Vite build may read <code>.vite/manifest.json</code>{" "}
+        to learn which files are content-hashed and can be served as <code>immutable</code>.{" "}
+        <code>{"spa: { viteManifest: true }"}</code>{" "}
+        writes one into the export, in Vite's shape, listing every content-hashed file under{" "}
+        <code>_denext/client/</code>:
+      </p>
+      <Code lang="json">
+        {`{
+  "_denext/client/chunk-AB12CD34.js": { "file": "_denext/client/chunk-AB12CD34.js" }
+}`}
+      </Code>
+      <p>
+        The entry (<code>index.js</code>) and stylesheet (<code>index.css</code>) keep their names
+        across builds, so they are not listed.
+      </p>
 
       <h2>Styling</h2>
       <p>

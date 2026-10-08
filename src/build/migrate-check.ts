@@ -276,6 +276,11 @@ function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
   }];
 }
 
+/** File-emitting Vite plugins migrate could not carry into denext.config.ts. */
+function viteEmitterFindings(r: MigrateResult): MigrateFinding[] {
+  return r.spa?.viteEmitterReview ?? [];
+}
+
 /** A Capacitor / Expo app with no icon to generate the native icons from, or a small one. */
 function appIconFindings(r: MigrateResult): MigrateFinding[] {
   const icon = r.spa?.appIcon;
@@ -316,6 +321,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
     review: [
       ...next.review,
       ...spaProxyFindings(r),
+      ...viteEmitterFindings(r),
       ...transformFindings(r),
       ...expo.review,
       ...appIconFindings(r),

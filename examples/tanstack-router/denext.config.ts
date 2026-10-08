@@ -13,5 +13,8 @@ export default {
     // The element the app renders into. TanStack's scaffold uses `#app` (Vite's uses `#root`).
     rootId: "app",
     loading: '<p class="boot">Loading…</p>',
+    // `@tanstack/router-plugin`'s `autoCodeSplitting`: each route's component is its own chunk,
+    // loaded on navigation, so the startup bundle holds only the router and the route tree.
+    tanstackRouter: { autoCodeSplitting: true },
   },
 } satisfies DenextConfig;

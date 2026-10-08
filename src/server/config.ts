@@ -307,8 +307,42 @@ export interface SpaConfig {
    * holds a PKCS#8 PEM (`denext ota keygen`), the manifest is also signed.
    */
   ota?: boolean;
+  /**
+   * Write a Vite-shaped build manifest, `.vite/manifest.json`, into the static export: one
+   * entry per content-hashed client file (`"_denext/client/chunk-AB12CD34.js": { "file":
+   * "_denext/client/chunk-AB12CD34.js" }`), the shape Vite's `build.manifest` writes. A server
+   * written for a Vite build reads it to learn which files are safe to serve as `immutable`.
+   * The entry `index.js` and `index.css` keep their names across builds and are not listed.
+   * Default `false`.
+   */
+  viteManifest?: boolean;
+  /**
+   * TanStack Router file-based routing: with `autoCodeSplitting: true` a production build splits
+   * each route file's `component` (and loader, error/pending/not-found components) into its own
+   * chunk loaded on navigation, as `@tanstack/router-plugin`'s `autoCodeSplitting` does under
+   * Vite. Applies on the esbuild path (npm React / `compatibilityMode`); `denext dev` bundles
+   * routes unsplit. `denext migrate` carries it from a `vite.config` that sets it.
+   */
+  tanstackRouter?: SpaTanstackRouterConfig;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
+}
+
+/** TanStack Router build settings under {@link SpaConfig.tanstackRouter}. */
+export interface SpaTanstackRouterConfig {
+  /** Split each route's components into their own lazily loaded chunks. Default `false`. */
+  autoCodeSplitting?: boolean;
+  /**
+   * The route files' directory, relative to the project root. Default: `tsr.config.json`'s
+   * `routesDirectory`, else `./src/routes`.
+   */
+  routesDirectory?: string;
+  /**
+   * The generated route tree, relative to the project root (rewritten at build, as the Vite
+   * plugin does). Default: `tsr.config.json`'s `generatedRouteTree`, else
+   * `./src/routeTree.gen.ts`.
+   */
+  generatedRouteTree?: string;
 }
 
 /**

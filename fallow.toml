@@ -25,6 +25,7 @@ ignoreDependencies = [
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
   "@std/yaml", # deno.json: jsr:@std/yaml@^1.0.0 — compose round-trip parse (src/build/compose-edit.ts)
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
+  "@tanstack/router-plugin", # deno.json: npm:@tanstack/router-plugin — spa.tanstackRouter's route splitter (build-time)
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
   # Workspace packages and examples import the published framework by its JSR name

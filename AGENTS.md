@@ -722,12 +722,17 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
 `optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
-`mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
+`mode: "spa"` + `spa: { entry, … }` for SPA mode — with Vite build parity: `spa.tanstackRouter:
+{ autoCodeSplitting: true }` splits TanStack Router routes into chunks, a failed chunk load
+dispatches a cancelable `vite:preloadError` (+ `denext:chunkError`) with `event.payload`, and
+`spa.viteManifest: true` writes `.vite/manifest.json`). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
-`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
+`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets at build and export;
+its `emitFile({ fileName, source })` publishes a file at the site root like Vite's
+`this.emitFile`, and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb). Declare it as `plugins: [myPlugin()]`. See

@@ -70,9 +70,12 @@ export default {
   with a history-API fallback, and can `export` / package it as a static desktop
   app. Use it to host an existing Vite-style SPA on denext's toolchain.
 - **`spa`** — `SpaConfig` (required when `mode: "spa"`). Fields: `entry` (the
-  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`,
-  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell), and
-  `desktop` (desktop-packaging options). See [SPA mode](/docs/spa).
+  client entry file, required), `rootId`, `title`, `head`, `loading`, `lang`, `env`,
+  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell),
+  `precompress`, `ota`, `viteManifest` (write a Vite-shaped `.vite/manifest.json`
+  of the export's content-hashed files), `tanstackRouter` (`{ autoCodeSplitting }`:
+  split TanStack Router routes into their own chunks), and `desktop`
+  (desktop-packaging options). See [SPA mode](/docs/spa).
 
 ## Images
 
@@ -332,7 +335,8 @@ export default {
 
 - **`plugins`** — `DenextPlugin[]`. denext plugins (e.g. a Pages Router, or
   htmx). Each is set up once before routes are scanned and may contribute
-  routes, claim requests, emit build assets, generate inputs the app imports
+  routes, claim requests, emit build assets (and publish files at the site root
+  with `emitFile`, at build and export), generate inputs the app imports
   (prepare steps, live in dev), register a teardown, and add CLI verbs. Apps
   with no plugins pay nothing.
 

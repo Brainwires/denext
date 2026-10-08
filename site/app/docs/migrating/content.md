@@ -206,6 +206,18 @@ deno run -A jsr:@denext/denext/cli migrate apps/web \
   --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws
 ```
 
+From the Vite config it also carries two build plugins over (the config is read, never run):
+
+- TanStack Router's `tanstackRouter({ autoCodeSplitting: true })` becomes
+  `spa.tanstackRouter: { autoCodeSplitting: true }`, so route components stay out of the
+  startup chunk ([SPA mode › Vite build parity](/docs/spa)).
+- A plugin that emits a file from `generateBundle` (`this.emitFile({ type: "asset", … })`),
+  imported from your own module, is wired into `denext.config.ts` as
+  `viteEmitterPlugin(<the same call>)` from `denext/plugin-kit`, so the file still lands in the
+  build and the export. An emitter that also uses other build hooks, is declared inline in
+  vite.config, or is called with values from vite.config is listed for review instead (in the
+  summary and in `denext migrate --check`).
+
 The same SPA path also detects a **Create React App** (a `react-scripts` dep, or
 a `public/index.html` with React) and a **generic React SPA** (React plus a root
 `index.html`, no Vite/CRA/Next) — seeding `spa.env` from

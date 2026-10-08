@@ -10,7 +10,7 @@ import { buildContent, discoverContentConfig } from "../packages/content-collect
 import { createContentCommand } from "../packages/content-collections/command.ts";
 import { contentCollections } from "../packages/content-collections/mod.ts";
 import type { CommandContext } from "../src/cli/command.ts";
-import type { PluginBuildContext, PluginContext } from "../src/plugin/mod.ts";
+import type { PluginContext, PluginPrepareContext } from "../src/plugin/mod.ts";
 import {
   clearContentCache,
   Content,
@@ -267,10 +267,10 @@ Deno.test("denext content: no content.config.ts errors and exits 1", async () =>
 Deno.test("contentCollections plugin registers a prepare step + command; the step builds the store", async () => {
   const dir = await makeProject();
   try {
-    let prepare: ((c: PluginBuildContext) => void | Promise<void>) | undefined;
+    let prepare: ((c: PluginPrepareContext) => void | Promise<void>) | undefined;
     let commandName = "";
     const ctx = {
-      addPrepareStep: (fn: (c: PluginBuildContext) => void | Promise<void>) => (prepare = fn),
+      addPrepareStep: (fn: (c: PluginPrepareContext) => void | Promise<void>) => (prepare = fn),
       addCommand: (c: { name: string }) => (commandName = c.name),
     } as unknown as PluginContext;
     contentCollections().setup(ctx);

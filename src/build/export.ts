@@ -8,6 +8,7 @@
 // `render` (every page × param set × locale, then `public/`). This module runs them in order.
 
 import { writePlatformStamp } from "./ota-manifest.ts";
+import { runPluginBuildSteps } from "../plugin/mod.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import {
   bundleExportFlight,
@@ -53,6 +54,13 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   await writeMobileExportExtras(paths.projectDir, paths.config, ctx.outDir);
   // 3c. `desktop.preload`, bundled for the desktop runtime to inline first into every page.
   await writeDesktopPreload(paths, ctx.outDir);
+  // 3c'. Plugin build steps; what they publish with `emitFile` lands at the export's root.
+  await runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  }, { emitDir: ctx.outDir });
   // 3d. A platform export names its target (an OTA manifest of it then does too).
   if (ctx.platform !== "web") await writePlatformStamp(ctx.outDir, ctx.platform);
   // Tear down the shared esbuild service the compat SSR build started (one-shot export).

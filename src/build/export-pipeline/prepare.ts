@@ -2,7 +2,7 @@
 
 import { copy, ensureDir, walk } from "@std/fs";
 import { join } from "@std/path";
-import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
+import { EMITTED_DIR, runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -72,18 +72,22 @@ async function exportPagesRouter(
     outDir: paths.outDir,
     config: paths.config ?? {},
   });
+  // The files steps publish with `emitFile` are collected aside and copied in after `public/`.
+  const emitted = join(paths.outDir, EMITTED_DIR);
+  await Deno.remove(emitted, { recursive: true }).catch(() => {});
   await runPluginBuildSteps({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
     outDir: paths.outDir,
     config: paths.config ?? {},
-  });
+  }, { emitDir: emitted });
   await writeViaStaging(outDir, async (staging) => {
     // Prerendered HTML (+ props.json for soft-nav) → site root; client bundles →
     // `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML); `public/` → site root.
     await copyDirIfPresent(join(paths.outDir, "pages-static"), staging);
     await copyDirIfPresent(join(paths.outDir, "pages-client"), join(staging, "_denext", "pages"));
     await copyDirIfPresent(paths.publicDir, staging);
+    await copyDirIfPresent(emitted, staging);
   });
   return { outDir, pages: await countHtml(outDir), skipped: [] };
 }

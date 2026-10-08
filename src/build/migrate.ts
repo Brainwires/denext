@@ -16,6 +16,15 @@
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { mfs } from "./migrate-io.ts";
+import {
+  type MappedViteEmitter,
+  readViteConfig,
+  tanstackRouterFacts,
+  type ViteEmitterFacts,
+  viteEmitterFacts,
+  type ViteEmitterFinding,
+} from "./migrate-vite-plugins.ts";
+import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
@@ -145,8 +154,10 @@ const SOFT_DROP = new Set([
   "@vitejs/plugin-react",
   "@vitejs/plugin-react-swc",
   // Vite plugins with no role under denext: Tailwind runs through denext's own pipeline;
-  // TanStack's route codegen is run out-of-band (`tsr generate`), its devtools Vite plugin
-  // has no dev server to hook. (`@tanstack/router-cli` stays: the app still runs it.)
+  // TanStack's router plugin is denext's own build step (`spa.tanstackRouter`, which migrate
+  // sets from its `autoCodeSplitting`; route codegen otherwise runs out-of-band via
+  // `tsr generate`), its devtools Vite plugin has no dev server to hook. (`@tanstack/router-cli`
+  // stays: the app still runs it.)
   "@tailwindcss/vite",
   "@tanstack/router-plugin",
   "@tanstack/devtools-vite",
@@ -344,6 +355,12 @@ export interface SpaMigrateInfo {
   /** The app icon migrate found for a mobile build, recorded as `mobile.icon` (see {@link AppIconReport}). */
   appIcon?: AppIconReport;
   nodeModulesDir: "manual" | "auto";
+  /** `spa.tanstackRouter`, carried from a vite.config running TanStack's `autoCodeSplitting`. */
+  tanstackRouter?: SpaTanstackRouterConfig;
+  /** File-emitting Vite plugins wired into `denext.config.ts` through `viteEmitterPlugin`. */
+  viteEmitters?: MappedViteEmitter[];
+  /** File-emitting Vite plugins migrate could not carry over (reported for review). */
+  viteEmitterReview?: ViteEmitterFinding[];
 }
 
 /** The app icon migrate found (or did not) for `denext mobile assets` / `mobile build`. */
@@ -2082,6 +2099,10 @@ function spaConfigSource(o: {
   noPrecompress?: boolean;
   /** The `mobile` block pinning the app icon migrate found, and the source it came from. */
   mobileIcon?: MobileIconFacts;
+  /** `spa.tanstackRouter` (TanStack Router's `autoCodeSplitting`, from vite.config). */
+  tanstackRouter?: SpaTanstackRouterConfig;
+  /** File-emitting Vite plugins, run through `viteEmitterPlugin`. */
+  viteEmitters?: MappedViteEmitter[];
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
@@ -2106,12 +2127,14 @@ function spaConfigSource(o: {
     : "";
   return GEN_MARKER + "\n" +
     `import type { DenextConfig } from "denext/server";\n` +
+    viteEmitterImports(o.viteEmitters) +
     (needsPkg ? `import pkg from "./package.json" with { type: "json" };\n` : "") +
     `\n` +
     (needsBuildEnv ? BUILD_ENV_HELPER : "") +
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
+    viteEmitterLines(o.viteEmitters) +
     (o.reactNative ? reactNativeConfigLines(o.desktopPackages ?? []) : "") +
     // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
@@ -2131,6 +2154,7 @@ function spaConfigSource(o: {
       ? `    // The Capacitor shell loads files as they are: no .gz siblings.\n    precompress: false,\n`
       : "") +
     (envLines ? `    env: {\n${envLines}\n    },\n` : "") +
+    tanstackRouterLines(o.tanstackRouter) +
     proxyBlock +
     // Show the desktop-icon override so it's discoverable (commented → auto-detection
     // stays the default). The path can point anywhere; a PNG is composed into the macOS
@@ -2140,6 +2164,28 @@ function spaConfigSource(o: {
       : "") +
     `  },\n` +
     `} satisfies DenextConfig;\n`;
+}
+
+/** The generated config's imports for the vite.config's file-emitting plugins. */
+function viteEmitterImports(emitters: readonly MappedViteEmitter[] = []): string {
+  if (emitters.length === 0) return "";
+  return `import { viteEmitterPlugin } from "denext/plugin-kit";\n` +
+    emitters.map((e) => `${e.importLine}\n`).join("");
+}
+
+/** The generated config's `spa.tanstackRouter` lines (TanStack Router's `autoCodeSplitting`). */
+function tanstackRouterLines(tanstackRouter: SpaTanstackRouterConfig | undefined): string {
+  if (!tanstackRouter) return "";
+  return `    // TanStack Router's autoCodeSplitting (from vite.config): each route's components load\n` +
+    `    // as their own chunk.\n    tanstackRouter: ${tsValue(tanstackRouter)},\n`;
+}
+
+/** The generated config's `plugins` entry running the vite.config's file-emitting plugins. */
+function viteEmitterLines(emitters: readonly MappedViteEmitter[] = []): string {
+  if (emitters.length === 0) return "";
+  const calls = emitters.map((e) => `    viteEmitterPlugin(${e.call}),\n`).join("");
+  return `  // Vite plugins that emit files from generateBundle (from vite.config), run as build steps.\n` +
+    `  plugins: [\n${calls}  ],\n`;
 }
 
 /** A plain value as TypeScript source: identifier keys unquoted, nested objects inline. */
@@ -2704,6 +2750,9 @@ async function spaSourceFacts(
   head?: string;
   loading?: string;
   rootId?: string;
+  tanstackRouter?: SpaTanstackRouterConfig;
+  viteEmitters: MappedViteEmitter[];
+  viteEmitterReview: ViteEmitterFinding[];
 }> {
   const idx = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
   const { entry, title } = idx;
@@ -2714,6 +2763,7 @@ async function spaSourceFacts(
     : null;
   const { proxy, proxyUnresolved } = await spaProxy(dir, options, source);
   const reactCompiler = await spaUsesReactCompiler(dir, source);
+  const vite = await viteBuildPluginFacts(dir, source);
   return {
     entry,
     title,
@@ -2725,6 +2775,25 @@ async function spaSourceFacts(
     head,
     loading,
     rootId,
+    tanstackRouter: vite.tanstackRouter,
+    viteEmitters: vite.emitters.mapped,
+    viteEmitterReview: vite.emitters.review,
+  };
+}
+
+/**
+ * The Vite build plugins whose output denext carries over (see migrate-vite-plugins.ts): TanStack
+ * Router's `autoCodeSplitting`, and plugins that emit files from `generateBundle`.
+ */
+async function viteBuildPluginFacts(
+  dir: string,
+  source: SpaSource,
+): Promise<{ tanstackRouter?: SpaTanstackRouterConfig; emitters: ViteEmitterFacts }> {
+  const config = source === "vite" ? await readViteConfig(dir) : null;
+  if (!config) return { emitters: { mapped: [], review: [] } };
+  return {
+    tanstackRouter: tanstackRouterFacts(config.text),
+    emitters: await viteEmitterFacts(dir),
   };
 }
 
@@ -2770,6 +2839,8 @@ async function migrateSpaProject(
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
   const facts = await spaSourceFacts(dir, deps, options, source);
+  // `viteEmitterPlugin` in the generated config.
+  if (facts.viteEmitters.length > 0) imports["denext/plugin-kit"] = R.sub("plugin-kit");
   const cap = options.capacitor
     ? await spaCapacitorPlan(dir, deps, pm, R, options, facts, source)
     : null;

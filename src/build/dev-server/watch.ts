@@ -8,7 +8,7 @@ import { forgetTaggedClients } from "../../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../../runtime/server-action.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
-import type { PluginBuildContext } from "../../plugin/mod.ts";
+import type { PluginPrepareContext } from "../../plugin/mod.ts";
 import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
@@ -119,8 +119,8 @@ function configFilesOf(st: DevState): Set<string> {
   return files;
 }
 
-/** The PluginBuildContext a prepare re-run gets in dev (mirrors the build-time context). */
-function prepareContext(st: DevState): PluginBuildContext {
+/** The context a prepare re-run gets in dev (mirrors the build-time context). */
+function prepareContext(st: DevState): PluginPrepareContext {
   return {
     projectRoot: st.paths.projectDir,
     appDir: st.paths.appDir,

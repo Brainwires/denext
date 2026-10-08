@@ -64,6 +64,37 @@ and this project adheres to
   through the same code, so its `mobile:*` tasks now run the app's installed Capacitor CLI
   (`npx cap`) when a package manager installed it, and the denext CLI outside the app's
   `node_modules`, as the other migrated tasks do.
+- **TanStack Router route code-splitting in SPA builds (`spa.tanstackRouter`).**
+  `{ autoCodeSplitting: true }` runs `@tanstack/router-plugin`'s splitter (its compiler, a
+  build-time npm tool) in `denext build` / `export` on the esbuild path: each file route's
+  component, loader and error/pending/not-found components move into their own chunk, loaded
+  when the route is visited, and the route tree is regenerated as the Vite plugin does. The
+  package's own esbuild adapter splits nothing (it never runs the route generator), so denext
+  hosts its Vite plugins instead. `denext migrate` sets it from a vite.config whose
+  `tanstackRouter()` has `autoCodeSplitting: true`; `examples/tanstack-router` now uses it.
+- **Chunk-load errors dispatch `vite:preloadError` in SPA builds.** When a split chunk fails to
+  load (a 404 after a deploy or an OTA update), a production SPA bundle dispatches a cancelable
+  `vite:preloadError` event on `window` with the error as `event.payload`, plus a
+  `denext:chunkError` alias, and rethrows unless a listener called `preventDefault()` (the
+  import then resolves to `undefined`), as Vite's preload helper does. Both bundle paths; the
+  App Router's shared runtime is unchanged.
+- **Plugin build steps publish files with `emitFile`.** A `PluginBuildContext` gains
+  `emitFile({ fileName, source })`, Vite's `this.emitFile` for assets: the file lands at the
+  export's root, or in `<outDir>/emitted/`, which `denext start` serves (an emitted file wins
+  over a same-named `public/` file in both), and `clientModules` lists the client bundle's
+  modules on the SPA esbuild path. `viteEmitterPlugin(vitePlugin)` (`denext/plugin-kit`) runs a
+  Vite plugin's `generateBundle` emitter unchanged as a build step, and `denext migrate` wires
+  one imported from the app's own module (others are listed for review). Prepare steps now
+  take a `PluginPrepareContext` (the same fields, without the emit seam).
+- **`spa.viteManifest: true` writes a Vite-shaped `.vite/manifest.json`** into the static
+  export, one `{ file }` entry per content-hashed client file, for a server that reads Vite's
+  manifest to serve those files as `immutable`. The unhashed entry and stylesheet are not listed.
+
+### Changed
+
+- **Plugin build steps run at `denext export` too**, on the App Router and SPA paths (they ran
+  only at `denext build` and in a Pages Router export), and a SPA now sets up its configured
+  plugins and runs their prepare and build steps; before, SPA mode ignored `plugins`.
 
 ### Fixed
 

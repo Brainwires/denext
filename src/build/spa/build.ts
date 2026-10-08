@@ -26,16 +26,48 @@ import {
 } from "./shared.ts";
 import { writeMobileExportExtras } from "../mobile-export-extras.ts";
 import { writeDesktopPreload } from "../desktop-preload.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import {
+  EMITTED_DIR,
+  type PluginPrepareContext,
+  runPluginBuildSteps,
+  runPluginPrepareSteps,
+} from "../../plugin/mod.ts";
+import { writeViteManifest } from "./vite-manifest.ts";
 
-/** Bundle the entry into `clientDir` and write the shell into `shellDir`. */
+/**
+ * Set up the config's plugins and run their prepare steps (codegen the app imports), before
+ * the bundle — the same seams an App Router build runs. A SPA without plugins pays nothing.
+ */
+async function preparePlugins(paths: ProjectPaths, mode: "build" | "export"): Promise<void> {
+  if ((paths.config?.plugins ?? []).length === 0) return;
+  await setupPlugins(paths, mode);
+  await runPluginPrepareSteps(pluginContext(paths));
+}
+
+/** The plugin step context of this SPA project. */
+function pluginContext(paths: ProjectPaths): PluginPrepareContext {
+  return {
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  };
+}
+
+/**
+ * Bundle the entry into `clientDir` and write the shell into `shellDir`.
+ *
+ * @returns The modules the client bundle contains, when the build collected them.
+ */
 async function bundleAndShell(
   paths: ProjectPaths,
   entryPath: string,
   clientDir: string,
   shellDir: string,
   platform: Platform = "web",
-): Promise<void> {
-  const { hasStyles } = await bundleSpaInto(
+): Promise<readonly string[] | undefined> {
+  const { hasStyles, modules } = await bundleSpaInto(
     paths,
     entryPath,
     clientDir,
@@ -63,6 +95,7 @@ async function bundleAndShell(
     reactNativeRootStyle: reactNativeRootStyle(paths.config),
   });
   await Deno.writeTextFile(join(shellDir, SHELL_FILE), html);
+  return modules;
 }
 
 /**
@@ -78,10 +111,15 @@ export async function buildSpa(paths: ProjectPaths): Promise<{ outDir: string }>
   await Deno.remove(staging, { recursive: true }).catch(() => {});
   await ensureDir(staging);
   try {
+    await preparePlugins(paths, "build");
     console.log(`  SPA mode: bundling ${spa.entry} -> client/${ENTRY_FILE}`);
-    await bundleAndShell(paths, entryPath, staging, staging);
+    const clientModules = await bundleAndShell(paths, entryPath, staging, staging);
     await Deno.remove(finalClientDir, { recursive: true }).catch(() => {});
     await Deno.rename(staging, finalClientDir);
+    // Plugin build steps; what they publish with `emitFile` lands in `<outDir>/emitted/`,
+    // which `denext start` serves ahead of `public/`.
+    await Deno.remove(join(paths.outDir, EMITTED_DIR), { recursive: true }).catch(() => {});
+    await runPluginBuildSteps(pluginContext(paths), { clientModules });
   } catch (err) {
     // A failed build must not leave a half-written staging dir behind (the atomic swap
     // above never ran, so the previous working output is still intact).
@@ -130,6 +168,7 @@ export async function exportSpa(
   const { spa, entryPath } = spaEntryPath(paths);
   await assertEntryExists(entryPath);
   const outDir = await resolveExportOutDir(paths, options.outDir);
+  await preparePlugins(paths, "export");
   await writeViaStaging(outDir, async (staging) => {
     const clientOut = join(staging, "_denext", "client");
     await ensureDir(clientOut);
@@ -137,8 +176,11 @@ export async function exportSpa(
       `  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}` +
         (platform === "web" ? "" : ` (platform: ${platform})`),
     );
-    await bundleAndShell(paths, entryPath, clientOut, staging, platform);
+    const clientModules = await bundleAndShell(paths, entryPath, clientOut, staging, platform);
     await copyPublic(paths.publicDir, staging);
+    // Plugin build steps, after `public/`: a file published with `emitFile` lands at the
+    // export's root (replacing a same-named public file, as a Vite-emitted asset does).
+    await runPluginBuildSteps(pluginContext(paths), { emitDir: staging, clientModules });
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
     // `desktop.preload`: one classic script the desktop runtime inlines first into every page.
     await writeDesktopPreload(paths, staging);
@@ -146,6 +188,14 @@ export async function exportSpa(
     if (platform !== "web") await writePlatformStamp(staging, platform);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
     await stashSourceMapsIfHidden(staging, paths.outDir);
+    // `spa.viteManifest`: `.vite/manifest.json` listing the content-hashed client files, for a
+    // server that reads Vite's manifest to serve them as immutable.
+    if (spa.viteManifest === true) {
+      const count = await writeViteManifest(staging);
+      console.log(
+        `  Vite manifest: .vite/manifest.json (${count} hashed file${count === 1 ? "" : "s"})`,
+      );
+    }
     // Last, once every file of the export is in place: the OTA manifest hashes the final
     // tree (`*.gz` siblings excluded), so nothing may be written after it.
     // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped

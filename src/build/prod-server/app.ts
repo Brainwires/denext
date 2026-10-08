@@ -3,7 +3,7 @@
 
 import { join } from "@std/path";
 import { timed } from "../../runtime/timing.ts";
-import { getPluginRequestHandler } from "../../plugin/mod.ts";
+import { EMITTED_DIR, getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createApp } from "../../server/app.ts";
 import {
@@ -170,6 +170,7 @@ export async function createProdApp(
     getManifest: () => manifest,
     load,
     publicDir: paths.publicDir,
+    emittedDir: join(paths.outDir, EMITTED_DIR),
     clientEntryFor: assets.clientEntryFor,
     styleHrefsFor: assets.styleHrefsFor,
     globalErrorEntry: assets.globalErrorEntry,

@@ -99,6 +99,17 @@ function reportDeps(r: MigrateResult): void {
   }
 }
 
+/** The vite.config build plugins migrate carried over (or left for review). */
+function reportViteBuildPlugins(s: NonNullable<MigrateResult["spa"]>): void {
+  if (s.tanstackRouter) {
+    console.log("    tanstack router: autoCodeSplitting carried over (spa.tanstackRouter)");
+  }
+  for (const e of s.viteEmitters ?? []) {
+    console.log(`    vite emitter: ${e.name}() runs as a build step (viteEmitterPlugin)`);
+  }
+  for (const f of s.viteEmitterReview ?? []) console.log(`    ⚠ ${f.item}: ${f.reason}`);
+}
+
 /** What a SPA/CRA/generic migration wrote (mode "spa", optional desktop entry). */
 function reportSpa(r: MigrateResult, desktop: boolean): void {
   const s = r.spa!;
@@ -116,6 +127,7 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
       (s.rootId ? ` · mount #${s.rootId}` : ""),
   );
   reportAppIcon(s.appIcon);
+  reportViteBuildPlugins(s);
   if (!desktop) return;
   const proxyNote = s.proxy
     ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`

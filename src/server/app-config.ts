@@ -76,6 +76,12 @@ export interface AppConfig {
   actionScope?: (request: Request) => Promise<string>;
   /** Directory of static assets served at the URL root. */
   publicDir?: string;
+  /**
+   * Directory of the files plugin build steps published with `emitFile` at `denext build`
+   * (`<outDir>/emitted`), served at the URL root ahead of {@link publicDir} (an emitted file
+   * replaces a same-named public one, as it does in an export).
+   */
+  emittedDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
   clientEntryFor?: (route: PageRoute) => string | undefined;
   /**

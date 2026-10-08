@@ -114,9 +114,9 @@ Core routes always win, so a plugin never shadows an App Router page.
 
 ### Seam 3 — build steps
 
-`ctx.addBuildStep(fn)` registers a step run during `denext build`, after the core
-client bundles are written. Use it to emit your plugin's own assets into the output
-directory:
+`ctx.addBuildStep(fn)` registers a step run during `denext build` and `denext export`
+(App Router, SPA and Pages Router alike), after the core client bundles are written. Use it
+to emit your plugin's own assets into the output directory:
 
 ```ts
 ctx.addBuildStep(async ({ outDir, projectRoot, config }) => {
@@ -124,13 +124,38 @@ ctx.addBuildStep(async ({ outDir, projectRoot, config }) => {
 });
 ```
 
+To publish a generated file **at the site root** — the build-time analogue of a Vite plugin's
+`this.emitFile({ type: "asset", fileName, source })` — call `emitFile`. In `denext export` the
+file lands in the export directory; in `denext build` it lands in `<outDir>/emitted/`, which
+`denext start` serves at the same URL. An emitted file replaces a same-named `public/` file in
+both. A `fileName` is a relative, `/`-separated path (no `..`, no leading `/`):
+
+```ts
+ctx.addBuildStep(async ({ emitFile, clientModules }) => {
+  await emitFile({
+    fileName: "third-party-licenses.json",
+    source: JSON.stringify(await collectLicenses(clientModules ?? [])),
+  });
+});
+```
+
+`clientModules` lists the modules in the client bundle (absolute paths) when the build knows
+them — a SPA built through esbuild (npm React / `compatibilityMode`) — and is `undefined`
+otherwise. An existing Vite plugin that only emits files from `generateBundle` runs unchanged
+through `viteEmitterPlugin(vitePlugin)` from `denext/plugin-kit`: its hook gets a `this` whose
+`emitFile` publishes through this seam (asset files with a `fileName`), and a `bundle` holding
+one chunk whose `modules` are `clientModules`. Other Vite hooks are not run.
+
 ### Seam 3b — prepare steps (codegen, dev **and** build)
 
 `ctx.addPrepareStep(fn, { watch })` registers a step that generates inputs the app then
-imports — types, a data artifact. Unlike a build step (which runs only at `denext build`),
+imports — types, a data artifact. Unlike a build step (which runs only at `denext build` and
+`denext export`),
 a prepare step runs in **both** lifecycles: once at `denext build` and once at `denext dev`
 startup, and again in dev whenever a file under its `watch` globs changes — so its generated
-output stays live as you edit. Same `PluginBuildContext` as a build step. This is the seam
+output stays live as you edit. Its context is a build step's without `emitFile` /
+`clientModules` (`PluginPrepareContext`): a prepare step generates inputs, not published
+output. This is the seam
 `@denext/content-collections` uses to keep its typed store in sync with your content files.
 
 ```ts

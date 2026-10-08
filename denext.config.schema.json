@@ -160,6 +160,28 @@
           "description": "Stamp the static export for over-the-air UI updates: `denext export` writes `_denext/ota.json` (every file's path, SHA-256 and size, plus a `version` hashed over them) into the export directory as its last step. A Capacitor shell with the `DenextOta` plugin (`denext mobile add-ota`) reads the bundled copy to know which UI it ships, and `checkForUiUpdate` from `denext/mobile` compares a server's copy against it. Default `false`. `*.gz` siblings are never listed. When the `DENEXT_OTA_SIGNING_KEY` env var holds a PKCS#8 PEM (`denext ota keygen`), the manifest is also signed.",
           "type": "boolean"
         },
+        "viteManifest": {
+          "description": "Write a Vite-shaped build manifest, `.vite/manifest.json`, into the static export: one entry per content-hashed client file (`\"_denext/client/chunk-AB12CD34.js\": { \"file\": \"_denext/client/chunk-AB12CD34.js\" }`), the shape Vite's `build.manifest` writes. A server written for a Vite build reads it to learn which files are safe to serve as `immutable`. The entry `index.js` and `index.css` keep their names across builds and are not listed. Default `false`.",
+          "type": "boolean"
+        },
+        "tanstackRouter": {
+          "description": "TanStack Router file-based routing: with `autoCodeSplitting: true` a production build splits each route file's `component` (and loader, error/pending/not-found components) into its own chunk loaded on navigation, as `@tanstack/router-plugin`'s `autoCodeSplitting` does under Vite. Applies on the esbuild path (npm React / `compatibilityMode`); `denext dev` bundles routes unsplit. `denext migrate` carries it from a `vite.config` that sets it.",
+          "type": "object",
+          "properties": {
+            "autoCodeSplitting": {
+              "description": "Split each route's components into their own lazily loaded chunks. Default `false`.",
+              "type": "boolean"
+            },
+            "routesDirectory": {
+              "description": "The route files' directory, relative to the project root. Default: `tsr.config.json`'s `routesDirectory`, else `./src/routes`.",
+              "type": "string"
+            },
+            "generatedRouteTree": {
+              "description": "The generated route tree, relative to the project root (rewritten at build, as the Vite plugin does). Default: `tsr.config.json`'s `generatedRouteTree`, else `./src/routeTree.gen.ts`.",
+              "type": "string"
+            }
+          }
+        },
         "desktop": {
           "description": "`deno desktop` packaging settings (used when building the desktop app).",
           "type": "object",

@@ -726,12 +726,17 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
 `optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
-`mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
+`mode: "spa"` + `spa: { entry, … }` for SPA mode — with Vite build parity: `spa.tanstackRouter:
+{ autoCodeSplitting: true }` splits TanStack Router routes into chunks, a failed chunk load
+dispatches a cancelable `vite:preloadError` (+ `denext:chunkError`) with `event.payload`, and
+`spa.viteManifest: true` writes `.vite/manifest.json`). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
-`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
+`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets at build and export;
+its `emitFile({ fileName, source })` publishes a file at the site root like Vite's
+`this.emitFile`, and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb). Declare it as `plugins: [myPlugin()]`. See
@@ -1123,7 +1128,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
 - `interface ViewToken<T>` — One row as onViewableItemsChanged reports it (React Native's ViewToken).
-- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
+- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; "none" opts out):
 - `interface VirtualItem` — One positioned row of UseVirtualListResult.items.
 - `VirtualList: (props: VirtualListProps<T>) => VNode` — A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.
 - `type VirtualListAlign = start | center | end | auto` — Where a row lands in the viewport when scrolled to ("auto": the least movement).
@@ -1316,6 +1321,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EmailProvider` — A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.
 - `interface EmailProviderOptions` — Options for magicLink and emailOtp.
 - `type EmailRequestResult = object | object` — What a verification or reset request reports — never whether the address exists.
+- `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
 - `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
 - `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a confirmed factor exists; disable it first) or "reauth_required" (a complete session that didn't sign in recently).
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
@@ -1502,10 +1508,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PlatformExtensionsConfig` — The object form of DenextConfig.platformExtensions.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
-- `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir.
+- `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir, and publishes generated files at the site root with PluginBuildContext.emitFile. Runs at denext build and at denext export (App Router, SPA and Pages Router alike).
 - `interface PluginContext` — The seams a plugin's DenextPlugin.setup may extend.
 - `type PluginMode = dev | build | prod | export` — Where denext is running when a plugin's DenextPlugin.setup fires.
-- `type PluginPrepareStep = (context: PluginBuildContext) => void | Promise<void>` — A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Same PluginBuildContext as a build step.
+- `interface PluginPrepareContext` — Context passed to a PluginPrepareStep (and the base of a build step's).
+- `type PluginPrepareStep = (context: PluginPrepareContext) => void | Promise<void>` — A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build / export), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Its PluginPrepareContext is a build step's context without the emit seam: a prepare step generates inputs, not published output.
 - `type PluginRequestHandler = (request: Request) => Response | null | undefined | Promise<Response | null | undefined>` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
 - `type PluginTeardown = () => void | Promise<void>` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
 - `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.

@@ -23,7 +23,7 @@ import { transformFeatures } from "./feature-transform.ts";
 import { firstPartyTsxPlugin } from "./spa-onload.ts";
 
 /** A per-module source transform: `(source, absPath) → new source | null` (null = unchanged). */
-type SourceTransform = (source: string, path: string) => Promise<string | null>;
+export type SourceTransform = (source: string, path: string) => Promise<string | null>;
 
 /**
  * The auto-memo compiler as a per-module transform. `absolutize: false` — the in-place onLoad
@@ -59,12 +59,26 @@ export function spaSourceTransformPlugin(
   projectDir: string,
   config: ProjectPaths["config"],
 ): esbuild.Plugin | undefined {
+  const transform = spaSourceTransform(config);
+  if (!transform) return undefined;
+  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, transform);
+}
+
+/**
+ * The enabled SPA source transforms (auto-memo compiler, then the feature-flag fold) chained into
+ * one `(source, absPath) → new source | null` transform, or `undefined` when neither is on. A
+ * plugin that claims a module's `onLoad` itself (esbuild runs only the first `onLoad` that
+ * answers) applies this to its own output, so the module is not left untransformed.
+ *
+ * @param config The resolved denext config (gates each transform).
+ */
+export function spaSourceTransform(config: ProjectPaths["config"]): SourceTransform | undefined {
   const transforms: SourceTransform[] = [];
   if (reactCompilerEnabled(config)) transforms.push(autoMemoTransform());
   const features = featureFlags(config);
   if (Object.keys(features).length > 0) transforms.push(featureFoldTransform(features));
   if (transforms.length === 0) return undefined;
-  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, async (source, path) => {
+  return async (source, path) => {
     let out = source;
     let any = false;
     for (const t of transforms) {
@@ -75,5 +89,5 @@ export function spaSourceTransformPlugin(
       }
     }
     return any ? out : null;
-  });
+  };
 }
