@@ -452,7 +452,7 @@ jobs:
         run: dotnet tool install --global wix --version 5.0.2 && wix --version
       - name: A deep link and version 1.0.0
         run: |
-          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          sed -i 's|app: { identifier: "com.example.denext-native" }|app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }|' denext.config.ts
           grep -q denextnative denext.config.ts
           VERSION=1.0.0 deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = Deno.env.get("VERSION"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
           deno install
@@ -488,7 +488,7 @@ jobs:
       # loads: libsecret-1-0 / libsecret, not the secret-tool CLI).
       - name: A deep link and secure-store
         run: |
-          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }, capabilities: { secureStore: true }/' denext.config.ts
+          sed -i 's|app: { identifier: "com.example.denext-native" }|app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }, capabilities: { secureStore: true }|' denext.config.ts
           grep -q denextnative denext.config.ts
           grep -q 'capabilities: { secureStore: true }' denext.config.ts
           deno install
@@ -552,7 +552,7 @@ jobs:
           set -eux
           deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.desktop.backend = "cef"; Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
           grep -q '"backend": "cef"' deno.json
-          sed -i 's/capabilities: { secureStore: true }/capabilities: { secureStore: true }, linux: { requireSandbox: true }/' denext.config.ts
+          sed -i 's|capabilities: { secureStore: true }|capabilities: { secureStore: true }, linux: { requireSandbox: true }|' denext.config.ts
           grep -q 'requireSandbox: true' denext.config.ts
           deno run -A scripts/package-linux.ts --no-export --format deb
           sudo apt-get install -y ./dist/denext-native-x64.deb

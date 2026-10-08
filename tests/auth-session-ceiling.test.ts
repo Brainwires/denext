@@ -107,8 +107,16 @@ function refresh(cfg: AuthConfig, session: AuthSession): Promise<AuthSession> {
 Deno.test("cookie: a slide far from the ceiling gets a full maxAge", async () => {
   const cfg = config();
   const session = payload(UPDATE_AGE * 2, UPDATE_AGE * 2);
+  // The clock may tick over a second boundary during the refresh: bracket it.
+  const before = nowSec();
   const slid = await refresh(cfg, session);
-  assertEquals(slid.expiresAt, nowSec() + MAX_AGE);
+  const after = nowSec();
+  assert(
+    slid.expiresAt >= before + MAX_AGE && slid.expiresAt <= after + MAX_AGE,
+    `a full maxAge from the slide (got ${slid.expiresAt}, window ${before + MAX_AGE}..${
+      after + MAX_AGE
+    })`,
+  );
   assertEquals(slid.authTime, session.authTime, "a slide never moves authTime");
 });
 
