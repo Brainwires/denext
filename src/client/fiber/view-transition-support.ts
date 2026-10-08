@@ -1,11 +1,15 @@
 // Client-reconciler seam for `<ViewTransition>` per-element marking. The navigation runtime
-// drives a view transition THROUGH this null-default slot, so the always-shipped navigation
-// / reconciler code never statically imports the marking logic (view-transition-runtime.ts).
+// drives a view transition THROUGH this null-default slot, and the work loop hands every commit
+// to it (a Transition commit may run inside `document.startViewTransition`), so the
+// always-shipped navigation / reconciler code never statically imports the marking logic
+// (view-transition-runtime.ts).
 // The generated entry installs the real support (installViewTransitionSupport) ONLY when a
 // build scan sees `<ViewTransition>`, so `deno bundle` tree-shakes the marking runtime out of
 // an app that never renders one — the same lever the class-component, Activity and Live seams
 // use. Without it installed, a `<ViewTransition>` is a transparent passthrough and only the
 // route-level cross-fade (navigation.ts always wraps the commit in startViewTransition) applies.
+
+import type { Fiber } from "./fiber.ts";
 
 /**
  * One in-flight view transition's marking handle. Scoped per transition (not module-global) so
@@ -20,8 +24,17 @@ export interface ActiveViewTransition {
   clear(): void;
 }
 
-/** The per-element view-transition marking the navigation runtime drives. */
+/** The per-element view-transition marking the navigation runtime and the work loop drive. */
 export interface ViewTransitionSupport {
+  /**
+   * Commit a rendered tree: `run` applies it. A commit made only of Transition work
+   * (`eligible`: a transition, a deferred value, a Suspense reveal) that enters, exits, shares
+   * or updates a `<ViewTransition>` runs inside `document.startViewTransition`'s update callback
+   * instead (React's same-page triggers); anything else — or no View Transitions API — runs now.
+   */
+  commit(wipRoot: Fiber, eligible: boolean, run: () => void): void;
+  /** Apply a commit still waiting for its transition's update callback: new work is starting. */
+  flush(): void;
   /**
    * Stamp the CURRENT (outgoing) hosts now (before `startViewTransition`, so the old-state
    * capture sees the names) with `types` fixed for this transition, and return a handle whose

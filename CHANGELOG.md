@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **`<ViewTransition>` animates same-page updates, as React 19.2's does.** A commit made only of
+  Transition work — a `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal —
+  now runs inside `document.startViewTransition` when a wrapped element enters, exits, is shared
+  (a `name` that leaves one place and enters another: `share` on both sides), or updates (its
+  content changed, or a reorder moved its box; an unmoved one is cancelled). Urgent updates never
+  animate. The outgoing side is named before the browser's old-state capture, the incoming side
+  after the commit, and the stamps are cleared when it finishes; when nothing outside a boundary
+  changed, the root's cross-fade is cancelled. Unnamed boundaries get an automatic name (a
+  `<ViewTransition>` without props now marks its child too), the `default` class prop applies
+  when a trigger's own is unset, `"auto"` / `"none"` work as in React, and two mounted boundaries
+  with the same `name` warn in development. Without the View Transitions API the commit applies
+  directly. The runtime stays behind the `<ViewTransition>` import gate.
 - **`denext migrate --enable-capacitor` gives a migrated app an iOS / Android target**, the way
   `--desktop` gives it a desktop one: a Vite / CRA / generic SPA, a Next App Router app (its
   static export) or an Expo app. It writes `capacitor.config.ts` (`--app-id`, else an existing

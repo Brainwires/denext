@@ -29,8 +29,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   DevTools; there is no client cache scope).
 - **A class component inside a hidden `<Activity>` still runs `componentDidMount`**, and a hidden
   subtree's refs stay attached; function components' effects are not mounted until it is shown.
-- **`<ViewTransition>` animates navigation commits only.** A same-page add/remove/reorder is not
-  animated; names must be unique among live elements; elsewhere it needs the View Transitions API.
+- **`<ViewTransition>` takes no `onEnter`/`onExit`/`onUpdate`/`onShare` callbacks** and needs a
+  single element child (its config rides an attribute on it). An `<Activity>` going hidden is not
+  animated as an exit, and an update is not skipped when the boundary is off-screen.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).

@@ -31,6 +31,7 @@ import { handleThrow, SUSPENDED_TRANSITION } from "./unwind.ts";
 import { commitRoot, flushPassiveEffects } from "./commit.ts";
 import { createWorkInProgress, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
 import { beginHydration, endHydration } from "./hydration.ts";
+import { getViewTransitionSupport } from "./view-transition-support.ts";
 
 function performUnitOfWork(unit: Fiber): Fiber | null {
   let next: Fiber | null;
@@ -59,7 +60,20 @@ function completeUnitOfWork(unit: Fiber): Fiber | null {
   return null;
 }
 
+/**
+ * Commit `wipRoot` through the `<ViewTransition>` runtime when the app uses one (a commit of
+ * only Transition work may then wait for `document.startViewTransition`'s update callback), else
+ * now. `run` performs the commit plus whatever must follow it — so a deferred commit also defers
+ * what would otherwise force it early (useTransition's `isPending` reset).
+ */
+function commitWith(wipRoot: Fiber, eligible: boolean, run: () => void): void {
+  const vt = getViewTransitionSupport();
+  if (vt) vt.commit(wipRoot, eligible, run);
+  else run();
+}
+
 export function beginConcurrentRender(): void {
+  getViewTransitionSupport()?.flush(); // new work renders from the committed tree
   let handle: RootHandle | null = null;
   for (const h of activeRoots) {
     if ((h.pendingLanes & TransitionLane) !== NoLane) {
@@ -151,14 +165,16 @@ function finishConcurrentRender(): void {
   const handle = concurrentHandle!;
   const wipRoot = concurrentWipRoot!;
   clearConcurrentRender();
-  setDuringRender(true);
-  try {
-    commitRoot(handle, wipRoot);
-  } finally {
-    setDuringRender(false);
-  }
-  if (anyRootHasLane(SyncLane)) scheduleSyncFlush();
-  settleTransitions();
+  commitWith(wipRoot, true, () => {
+    setDuringRender(true);
+    try {
+      commitRoot(handle, wipRoot);
+    } finally {
+      setDuringRender(false);
+    }
+    if (anyRootHasLane(SyncLane)) scheduleSyncFlush();
+    settleTransitions();
+  });
 }
 
 function resumeConcurrentInner(): void {
@@ -192,6 +208,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     // new unit of work for exactly this reason (it manifested as a Base UI dialog never
     // unmounting on close: the root's unmount-watcher effect was stranded, so the exit
     // never completed and the dialog could not reopen).
+    getViewTransitionSupport()?.flush(); // a commit awaiting its view transition lands first
     flushPassiveEffects();
     if (++guard > MAX_RENDER_PASSES) {
       // A component is scheduling updates during render in a loop. Clear the lane
@@ -203,6 +220,10 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
           `Last update scheduled by <${lastUpdateSourceName()}>.`,
       );
     }
+    // A commit of only Transition work (or a Suspense reveal) may run in a view transition; a
+    // direct render (`root.render`, hydration) has no pending lane and is urgent.
+    const eligible = (handle.pendingLanes & lanes) === TransitionLane || handle.reveal === true;
+    handle.reveal = false;
     handle.pendingLanes &= ~lanes; // clear the lanes we're about to process
     setRenderLanes(lanes);
     const wipRoot = createWorkInProgress(handle.current, null);
@@ -225,7 +246,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
         handle.hydrate = false;
       }
     }
-    commitRoot(handle, wipRoot);
+    commitWith(wipRoot, eligible, () => commitRoot(handle, wipRoot));
   } while ((handle.pendingLanes & lanes) !== NoLane);
   // A lower-priority lane (e.g. a transition scheduled by useDeferredValue during
   // this synchronous render) won't be re-entered by the loop above — arm its flush.

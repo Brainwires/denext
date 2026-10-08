@@ -13,7 +13,7 @@
 
 import type { Fiber } from "./fiber.ts";
 import type { VNodeChildren } from "../../jsx/types.ts";
-import { NoLane, TransitionLane } from "./fiber.ts";
+import { NoLane, TransitionLane, Update } from "./fiber.ts";
 import { reconcileChildren } from "./reconcile-children.ts";
 import { noteOffscreen } from "./state.ts";
 import { renderLanes, scheduleUpdateLane } from "./scheduler.ts";
@@ -75,7 +75,10 @@ function beginActivity(wip: Fiber): Fiber | null {
   // Reveal (hidden → visible): un-hide the preserved children, force them to render live, and
   // let the commit restore their DOM + reconnect the effects the hide tore down. The exact
   // same reveal the <Suspense> offscreen path uses.
-  if (wip.offscreen === true) revealOffscreenChildren(wip);
+  if (wip.offscreen === true) {
+    revealOffscreenChildren(wip);
+    wip.flags |= Update; // marks the reveal on the commit's flagged paths (a view transition enters it)
+  }
   return wip.child;
 }
 

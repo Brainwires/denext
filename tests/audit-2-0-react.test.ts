@@ -120,7 +120,9 @@ Deno.test("root barrel: cache / Activity / ViewTransition are available from `de
   const html = await renderToString(
     h(Activity, { mode: "visible" }, h(ViewTransition, null, h("b", null, "x"))),
   );
-  assertStringIncludes(html, "<b>x</b>");
+  // A prop-less <ViewTransition> still marks its child (it participates under an automatic
+  // name, as React's does); the child renders unwrapped.
+  assertStringIncludes(html, '<b data-dnx-vt="{}">x</b>');
 });
 
 Deno.test("useFormStatus exposes the pending submission's data/method/action", async () => {

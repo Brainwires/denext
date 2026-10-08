@@ -46,6 +46,8 @@ function currentRequestContext(): object | undefined {
 export interface ViewTransitionMarker {
   /** Pairs an outgoing and incoming element by this `view-transition-name` (shared-element morph). */
   name?: string;
+  /** `view-transition-class` for any trigger whose own prop is unset (`"auto"`: the browser default). */
+  default?: string | Record<string, string>;
   /** `view-transition-class` applied when the element ENTERS (present in the new state only). */
   enter?: string | Record<string, string>;
   /** `view-transition-class` applied when the element EXITS (present in the old state only). */
@@ -66,17 +68,26 @@ function singleElementChild(children: VNodeChildren): VNode | null {
  * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is
  * transparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}
  * attribute onto its **single host child** (a DOM attribute survives server rendering AND the
- * Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking
- * runtime finds these elements and applies real `view-transition-name` (and
- * `view-transition-class` from `enter`/`exit`/`update`/`share`), so a `name` shared across
- * routes morphs one element into the other. **Route-level** transitions apply regardless: a soft
- * navigation commits inside `document.startViewTransition` where the browser supports it (see
- * `withViewTransition` in `src/client/navigation.ts`). Without the gated runtime, or for a
- * wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
+ * Flight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements
+ * and applies real `view-transition-name` (an automatic one when `name` is unset) and
+ * `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`; `"none"` opts out):
+ *
+ * - **Same-page updates** (React's triggers): a commit made only of Transition work — a
+ *   `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside
+ *   `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that
+ *   leaves one place and enters another) or updates (its content mutated or its layout moved).
+ *   An urgent update never animates.
+ * - **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`
+ *   in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the
+ *   other; the route-level cross-fade applies regardless.
+ *
+ * Where the browser lacks the View Transitions API the commit simply applies. A wrapper whose
+ * child isn't a single element (nothing to mark) is a plain passthrough.
  */
 export function ViewTransition(
   props: {
     name?: string;
+    default?: string | Record<string, string>;
     enter?: string | Record<string, string>;
     exit?: string | Record<string, string>;
     update?: string | Record<string, string>;
@@ -85,16 +96,13 @@ export function ViewTransition(
   },
 ): VNode {
   const marker: ViewTransitionMarker = {};
-  if (props?.name != null) marker.name = props.name;
-  if (props?.enter != null) marker.enter = props.enter;
-  if (props?.exit != null) marker.exit = props.exit;
-  if (props?.update != null) marker.update = props.update;
-  if (props?.share != null) marker.share = props.share;
-  const child = singleElementChild(props?.children ?? null);
-  // Nothing to pair (no name/class) or no single element to stamp → transparent passthrough.
-  if (child === null || Object.keys(marker).length === 0) {
-    return h(Fragment, null, props?.children);
+  for (const k of ["name", "default", "enter", "exit", "update", "share"] as const) {
+    if (props?.[k] != null) (marker as Record<string, unknown>)[k] = props[k];
   }
+  const child = singleElementChild(props?.children ?? null);
+  // No single element to stamp → transparent passthrough. A wrapper with no config still marks
+  // its child: like React's, it participates under an automatic name.
+  if (child === null) return h(Fragment, null, props?.children);
   // Clone the child, adding the config attribute. On a host element it lands in the DOM (and
   // the Flight payload); on a component child the author must forward it — like React, whose
   // ViewTransition also requires a single element child. Spread the child so its element brand

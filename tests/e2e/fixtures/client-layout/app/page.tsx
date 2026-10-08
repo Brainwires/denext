@@ -1,3 +1,5 @@
+import { Demo } from "./demo.tsx";
+
 export default function Page() {
-  return <p data-testid="page">a page under a client root layout</p>;
+  return <Demo />;
 }

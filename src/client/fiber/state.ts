@@ -86,6 +86,8 @@ export interface RootHandle {
    * children are then PLACED, not synced, so foreign top-level nodes (the doctype) survive.
    */
   documentRoot?: boolean;
+  /** The pending sync work is only a Suspense reveal (a retry): its commit may animate. */
+  reveal?: boolean;
   /** RootOptions error callbacks (React 19 parity), or undefined. */
   onCaughtError?: RootErrorCallback;
   onUncaughtError?: RootErrorCallback;

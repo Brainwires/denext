@@ -43,6 +43,10 @@ export function retrySuspense(inst: Fiber): void {
   // — so a one-sided clear would render the fallback forever.
   inst.showingFallback = false;
   if (inst.alternate) inst.alternate.showingFallback = false;
+  // A reveal is Transition-like work (React's retry lanes): when it is the root's only pending
+  // urgent work, its commit may run in a view transition (see `reveal`).
+  const handle = rootHandleOf(inst);
+  const quiet = handle !== null && (handle.pendingLanes & SyncLane) === 0;
   const st = inst.listState;
   if (st && inst.listIndex != null) {
     // Mark this member ready on the shared state (indexed — the captured fiber may
@@ -52,6 +56,7 @@ export function retrySuspense(inst: Fiber): void {
   } else {
     scheduleUpdate(inst);
   }
+  if (quiet) handle!.reveal = true;
 }
 
 export function resetBoundary(inst: Fiber): void {
