@@ -853,7 +853,8 @@ export function clientModuleSource(
 /** The React Router v7 hooks a boundary imports (props contract, client data APIs). */
 function rr7Runtime(rr7: boolean, client: ClientExports | null): string[] {
   if (!rr7) return [];
-  const names = ["useActionData", "useMatches"];
+  // Aliased: the route module may import `useActionData` / `useMatches` itself.
+  const names = ["useActionData as __rrUseActionData", "useMatches as __rrUseMatches"];
   if (client) names.push("useClientRouteData");
   if (client?.action) names.push("useClientRouteAction");
   return names;
@@ -1013,7 +1014,7 @@ function boundarySource(
     : "";
   // Hooks run unconditionally at the top (the fallback branch must not skip them).
   const rr7Hooks = rr7
-    ? "  const __actionData = useActionData();\n  const __matches = useMatches();\n"
+    ? "  const __actionData = __rrUseActionData();\n  const __matches = __rrUseMatches();\n"
     : "";
   const withLayout = (el: string) => viaLayout ? `<Layout>${el}</Layout>` : el;
   const user = withLayout(`<${userName}${userProps} />`);

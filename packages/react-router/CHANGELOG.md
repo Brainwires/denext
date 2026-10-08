@@ -15,6 +15,9 @@ semver, independent of `@denext/denext`.
 - **`prerender` is applied:** a listed static route becomes `force-static`, and a dynamic
   route's listed params its `generateStaticParams` (what `denext export` writes). `true` lists
   every static path, and the function form gets them as `getStaticPaths()`.
+- **Fixed:** a route module that imports `useActionData` or `useMatches` itself no longer fails
+  to load (`Identifier 'useActionData' has already been declared`): the generated boundary
+  imports its own copies under private names.
 - Requires denext 3.4.0 (`useClientRouteData` / `useClientRouteAction` in `denext/remix`). The
   `@denext/denext` range moves to `^3.4.0` when this publishes, which waits for core 3.4.0.
 

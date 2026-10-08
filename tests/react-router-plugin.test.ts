@@ -293,7 +293,9 @@ export default function Hydrating({ loaderData }: { loaderData: { from: string }
   return <p id="hydrating">{loaderData.from}</p>;
 }
 `,
-    "routes/lazy.tsx": `export function loader() {
+    // Imports `useActionData` itself: the generated boundary's own hooks must not clash.
+    "routes/lazy.tsx": `import { useActionData } from "react-router";
+export function loader() {
   return { from: "server" };
 }
 export async function clientLoader() {
@@ -306,7 +308,8 @@ export function action() {
   return { ok: true };
 }
 export default function Lazy({ loaderData }: { loaderData: { from: string } }) {
-  return <p id="lazy">{loaderData.from}</p>;
+  const done = useActionData<{ ok: boolean }>();
+  return <p id="lazy">{loaderData.from}{done ? " saved" : ""}</p>;
 }
 `,
     "routes/client-only.tsx": `export async function clientLoader() {
