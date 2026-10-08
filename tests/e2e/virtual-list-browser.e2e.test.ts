@@ -213,7 +213,12 @@ window.scenarios = {
     tall = 400; // the last message grows as it streams
     render();
     await frames(6);
-    const afterGrow = { gap: gap(), isAtEnd: ref.getState().isAtEnd };
+    const afterGrow = {
+      gap: gap(),
+      isAtEnd: ref.getState().isAtEnd,
+      contentLength: Math.round(ref.getState().contentLength),
+      scrollHeight: s.scrollHeight,
+    };
     await ref.scrollToIndex({ index: 0, animated: false });
     await frames(4);
     const afterTop = { top: Math.round(s.scrollTop), first: !!row(0) };
@@ -479,6 +484,7 @@ Deno.test({
         assertEquals(app.gap, 0, "maintainScrollAtEnd follows the appends");
         assert(app.last, "the newest message is rendered");
         assertEquals(grow.gap, 0, "and a last message that grows");
+        assertEquals(grow.contentLength, grow.scrollHeight, "contentLength is the scroll content");
         assertEquals(top.top, 0, "scrollToIndex(0) reaches the start");
         assert(top.first, "the first message is rendered there");
         assert((r.totals as number) > 0, "listen('totalSize') called back");

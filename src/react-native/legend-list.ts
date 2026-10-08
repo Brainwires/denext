@@ -640,7 +640,7 @@ function slotSize(c: ListenCtx, attr: string): number {
 
 /** The value each `listen` type reports (a type not listed never calls back). */
 const LISTEN_VALUES: Readonly<Record<string, (c: ListenCtx) => unknown>> = {
-  totalSize: (c) => c.state.contentLength,
+  totalSize: (c) => c.core?.engine()?.getScrollMetrics().rows ?? 0,
   headerSize: (c) => Math.max(0, -(c.core?.engine()?.getScrollMetrics().min ?? 0)),
   footerSize: (c) => slotSize(c, "data-vl-footer"),
   anchoredEndSpaceSize: (c) => c.endSpace,
@@ -701,6 +701,24 @@ function notifyListeners(hub: ListenHub, read: () => ListenCtx): void {
   for (const [key, l] of hub.positions) tell(l, c.state.positionByKey(key));
 }
 
+/**
+ * The scroll content's length, as LegendList reports it: the header, the items, the footer and
+ * the room after them (the scroll element's scroll size; the header and the items before the
+ * element is laid out).
+ */
+function contentLengthOf(
+  core: CoreHandle | null,
+  m: { min: number; rows: number },
+  horizontal: boolean,
+): number {
+  const node = core?.getScrollableNode() as
+    | { scrollHeight?: number; scrollWidth?: number }
+    | null
+    | undefined;
+  const laidOut = horizontal ? node?.scrollWidth : node?.scrollHeight;
+  return laidOut && laidOut > 0 ? laidOut : m.rows - m.min;
+}
+
 /** The state `getState()` reports. */
 function legendState(
   core: CoreHandle | null,
@@ -732,7 +750,7 @@ function legendState(
   });
   const state: LegendListState = {
     activeStickyIndex: -1,
-    contentLength: m.rows,
+    contentLength: contentLengthOf(core, m, listening?.horizontal ?? false),
     data,
     elementAtIndex: (i) =>
       core?.getScrollableNode()?.querySelector?.(`[data-index="${core.visual(rowOfItem(p, i))}"]`),
