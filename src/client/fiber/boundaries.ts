@@ -56,7 +56,10 @@ export function retrySuspense(inst: Fiber): void {
   } else {
     scheduleUpdate(inst);
   }
-  if (quiet) handle!.reveal = true;
+  // Only a retry queued as sync work is a reveal: one that landed on the TransitionLane is
+  // animatable as a transition already, and its time-sliced commit never consumes the mark —
+  // which would leave it set for the next unrelated sync render.
+  if (quiet && (handle!.pendingLanes & SyncLane) !== 0) handle!.reveal = true;
 }
 
 export function resetBoundary(inst: Fiber): void {

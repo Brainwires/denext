@@ -410,6 +410,67 @@ Deno.test("a Suspense reveal animates: the fallback exits, the content enters", 
   assertEquals(vtClass(env.calls[0].next.get("content")!), "reveal");
 });
 
+/** A labelled root over a Suspense boundary whose content waits on `gate`; the retry is armed. */
+function revealFixture() {
+  const env = setup();
+  let resolve: () => void = () => {};
+  let ready = false;
+  const promise = new Promise<void>((r) => (resolve = () => ((ready = true), r())));
+  function Data() {
+    if (!ready) throw promise;
+    return h(ViewTransition, { enter: "reveal" }, h("p", { "data-testid": "content" }, "data"));
+  }
+  const tree = (label: string) =>
+    h(
+      "div",
+      null,
+      h(ViewTransition, { update: "relabel" }, h("span", { "data-testid": "label" }, label)),
+      h(Suspense, {
+        fallback: h(ViewTransition, { exit: "fade" }, h("p", null, "…")),
+        children: h(Data, null),
+      }),
+    ) as VNode;
+  const root = createRoot(env.container as Any);
+  root.render(tree("one"));
+  flushSync();
+  return { ...env, root, tree, resolve, promise };
+}
+
+Deno.test("root.render() between a Suspense retry and its flush commits synchronously", async () => {
+  // A retry marks the root's pending sync work as a pure reveal (animatable). A direct
+  // `root.render` before the retry's microtask joins that work: it is an element update, so
+  // it is urgent and must commit now, not wait on a view transition's update callback
+  // (commitFlightNav's resumabilityReboot then ran against the old DOM).
+  const { root, tree, resolve, promise, container } = revealFixture();
+  resolve();
+  await promise; // the retry is scheduled; its sync flush is still queued
+  root.render(tree("two"));
+  assertStringIncludes((container as Any).innerHTML, ">two<", "the DOM updated synchronously");
+  await tick();
+});
+
+Deno.test("a reveal retried inside an async transition leaves no stale reveal for root.render()", async () => {
+  // A retry that lands on the TransitionLane commits through the concurrent path, which never
+  // consumes the root's reveal mark — so a later direct `root.render` read it as a reveal.
+  const { root, tree, resolve, promise, container } = revealFixture();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  startTransition(async () => {
+    await gate;
+  });
+  resolve();
+  await promise;
+  // Let the transition retry render on the time-sliced path (a timer), not via flushSync.
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  assertStringIncludes((container as Any).innerHTML, "data", "the reveal committed");
+  release();
+  await gate;
+  await tick();
+  root.render(tree("two"));
+  assertStringIncludes((container as Any).innerHTML, ">two<", "the DOM updated synchronously");
+  await tick();
+});
+
 Deno.test("an Activity revealed in a transition enters", async () => {
   const env = setup();
   let show: (b: boolean) => void = () => {};

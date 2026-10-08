@@ -156,8 +156,13 @@ function registerRoot(
   return handle;
 }
 
-/** Render `vnode` into a root synchronously. */
+/**
+ * Render `vnode` into a root synchronously. A new element is urgent work: it clears any
+ * pending reveal mark (a Suspense retry not yet flushed), so the commit it joins is never
+ * held for a view transition's update callback — `root.render` returns with the DOM updated.
+ */
 function renderInto(handle: RootHandle, vnode: VNode): void {
+  handle.reveal = false;
   handle.pendingElement = vnode;
   renderRoot(handle, SyncLane);
 }
