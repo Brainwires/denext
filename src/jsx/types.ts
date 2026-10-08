@@ -17,6 +17,7 @@ import type {
   TdHTMLAttributes,
   TextareaHTMLAttributes,
 } from "../compat/react-types.ts";
+import type { ClientDirectives } from "../jsx-directives.ts";
 
 /** A stable identity for a VNode among its siblings, used to keep lists reconciled. */
 export type Key = string | number | bigint | null | undefined;
@@ -111,36 +112,15 @@ export declare namespace JSX {
   /**
    * Props TypeScript admits on EVERY JSX element — intrinsic tags and components
    * alike — regardless of the element's own prop type. denext puts the resumability
-   * hydration directives here so `<Island client:visible />` type-checks on any
-   * component without each one re-declaring them. The runtime strips every
-   * `client:*` key before it reaches the DOM (see `parseStrategy` in
-   * `runtime/lazy-directive.ts`), so these are authoring markers, not real props.
+   * hydration directives here (the `client:*` keys of {@linkcode ClientDirectives}) so
+   * `<Island client:visible />` type-checks on any component without each one re-declaring
+   * them. The runtime strips every `client:*` key before it reaches the DOM (see
+   * `parseStrategy` in `runtime/lazy-directive.ts`), so these are authoring markers, not
+   * real props.
    */
-  interface IntrinsicAttributes {
+  interface IntrinsicAttributes extends ClientDirectives<VNodeChild> {
     /** Optional reconciliation key for this element. */
     key?: Key;
-    /** Hydrate this client island eagerly, per-island (`client:load`). */
-    "client:load"?: boolean;
-    /** Hydrate when the main thread is idle (`client:idle`). */
-    "client:idle"?: boolean;
-    /** Hydrate when the island scrolls into view (`client:visible`). */
-    "client:visible"?: boolean;
-    /** Hydrate on first interaction — focus/pointer/keydown (`client:interaction`). */
-    "client:interaction"?: boolean;
-    /**
-     * Hydrate when a CSS media query matches. The query is the attribute value:
-     * `client:media="(min-width: 800px)"`. Bare `client:media` (boolean) is accepted
-     * for symmetry but a query string is the useful form.
-     */
-    "client:media"?: boolean | string;
-    /** Render on the client only, skipping SSR entirely (`client:only`). */
-    "client:only"?: boolean;
-    /**
-     * SPA mode: what a `client:*` element renders until its trigger mounts the component
-     * (and what `client:interaction` listens on). A Flight route ignores it: the island's
-     * server HTML is its placeholder.
-     */
-    "client:placeholder"?: VNodeChild;
   }
   /**
    * Intrinsic elements: common tags carry real per-element prop typing (from the

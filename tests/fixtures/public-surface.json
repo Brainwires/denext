@@ -1518,6 +1518,9 @@
   "denext/feature": [
     "feature:function"
   ],
+  "denext/jsx-directives": [
+    "ClientDirectives:interface"
+  ],
   "denext/virtual-masonry": [
     "MasonryLayout:class",
     "MasonryPlacement:interface",
