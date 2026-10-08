@@ -41,6 +41,17 @@ on:
       - "src/cli/commands/serve.ts"
       - "src/cli/commands/patch.ts"
       - "src/mobile/**"
+      # The CLI and manifest modules those import directly (tests/workflow-path-filters.test.ts
+      # fails when a direct import of the window test, the desktop verbs or src/build is missing).
+      - "src/cli/command.ts"
+      - "src/cli/dev-attach.ts"
+      - "src/cli/self-exec.ts"
+      - "src/cli/shared.ts"
+      - "src/expo/manifest.ts"
+      - "src/mcp/inspect.ts"
+      - "src/plugin/mod.ts"
+      - "src/react-native-compat/manifest.ts"
+      - "src/react-native/lists/manifest.ts"
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"
@@ -92,17 +103,17 @@ jobs:
             ~/AppData/Local/deno/denext-desktop-runtime
           key: desktop-runtime-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
-      # (gnome-keyring + secret-tool), a notification server (dunst), xprop (x11-utils: the session
-      # script polls for the window manager), the XDG scheme tools, and the WebKitGTK runtime the
-      # webview backend loads.
+      # (gnome-keyring, and libsecret, which the runtime loads for secureStore), a notification
+      # server (dunst), xprop (x11-utils: the session script polls for the window manager), the XDG
+      # scheme tools, and the WebKitGTK runtime the webview backend loads.
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
-            xdg-utils desktop-file-utils zenity \
+            xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-1-0 dunst \
+            xdg-utils desktop-file-utils \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
         if: runner.os == 'Linux'

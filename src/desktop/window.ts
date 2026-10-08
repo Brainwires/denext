@@ -141,9 +141,11 @@ export interface WindowCapabilities {
    */
   readonly sessionType: "wayland" | "x11" | "tty" | "unknown" | null;
   /**
-   * CEF's cookie store: `"os"` (encrypted) or `"basic"` (unencrypted: the Linux login keyring was
-   * locked with no one to unlock it); `null` on the WebView backends, `"unknown"` before runtime
-   * 2.9.7-denext.10.
+   * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
+   * keyring) or `"basic"` (obfuscated with a fixed key, not protected by the OS: always on macOS,
+   * where CEF runs with Chromium's mock keychain and its constant key, and on Linux when the login
+   * keyring was locked with no one to unlock it); `null` on the WebView backends, `"unknown"`
+   * before runtime 2.9.7-denext.10.
    */
   readonly cookieEncryption: "os" | "basic" | "unknown" | null;
   /** Any other key the runtime reports. */

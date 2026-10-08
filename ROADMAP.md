@@ -36,7 +36,8 @@
 - **Android on a real device.** Every Android half (`denext/mobile`, the `denext mobile add`
   generators, React Native mode's shell-backed APIs, `mobile dev`, the storage plugin,
   `NativeViewSlot`'s `scrollPassthrough`) is compiled and unit-tested only, and the OTA plugin's
-  Android template is compiled by hand, not in CI. The emulator comparison has Capacitor missing
+  Android templates are compiled and run in CI against JDK stand-ins for Android and Capacitor
+  (`tests/ota-reverify.test.ts`), not built with Gradle there. The emulator comparison has Capacitor missing
   vsync on 67–70% of fling frames against React Native's 25–28%; run on a device (a device farm
   is an option), then profile the WebView list (layers, `content-visibility`) if the gap holds.
   No Android parity claim before that.
@@ -48,8 +49,6 @@
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
 - **Accessibility:** move focus to the new screen on navigation; read bold text and grayscale
   from the OS (both read `false` today).
-- **The remaining Expo shims:** `expo-battery`, `expo-sms`, `expo-intent-launcher`,
-  `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
@@ -57,14 +56,9 @@
   picking, file transfer with progress, a notification service extension and badges, SQLite
   encryption, a PowerSync recipe.
 - **React Native 0.88 in the parity ledger:** the baseline is React Native 0.86.3; move it to
-  0.88 once that is final and close the runtime gaps the diff shows (14 against the release
-  candidate).
-- **The parity ledger's React Native gaps:** the 32 `*Base` / `*Component` type aliases, the
-  missing members (`AppRegistry`'s headless tasks and others, in
-  `scripts/parity/native/baselines/known-gaps.json`), `AppState`'s `memoryWarning`,
-  `Linking.sendIntent()`, `ActionSheetIOS.dismissActionSheet()`, and the lists'
-  `renderScrollComponent`, `automaticallyAdjustKeyboardInsets` and LegendList `snapToIndices`
-  (`lists.known-gaps.json`).
+  0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
+  `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
+  Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
 - **A build-time `platform` constant** (`import { platform } from "denext/platform"`, folded to
   the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
   export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
@@ -81,17 +75,9 @@
 
 ## Auth
 
-- **Passkeys / WebAuthn** over the adapter's credential tables.
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
 - **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
-- **OAuth `response_mode=form_post`:** a POST callback plus a `SameSite=None` transaction cookie.
-  Apple needs it to hand over a user's name and email; the web `apple()` provider is
-  `openid`-only until then.
-- **An optional magic-link confirm page:** the GET renders a form that POSTs the token, closing
-  link-scanner burns and login CSRF.
-- **`totpQrSvg()`:** a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` returns.
-- **Richer events:** API-token issue / revoke events, a typed `signInFailed.reason` union, and
-  `ip` on the other events (only `signInFailed` carries it).
+- **`ip` on every auth event** (only `signInFailed` carries it today).
 
 ## Server, ops and API surface
 
@@ -103,15 +89,6 @@ Each is documented as a manual recipe today (the
 - **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
-- **`cors()` and `csrf()` API middlewares** for `createApi().use(...)`: an allowlist-driven
-  preflight, and an origin / double-submit check for cookie-authenticated route handlers.
-- **Task retries:** `defineTask({ retry: { attempts, backoff } })`, recorded in run history, with
-  the overlap guard aware of a retrying run.
-- **`denext generate migration | seed | ci`,** scaffolded the way `generate docker` is.
-- **`denext upgrade`:** bump the `denext` pin, its CLI task and every first-party plugin together.
-- **`denext routes`:** the app's pages and API routes as a table / `--json`.
-- **CDN cache headers by default:** an ISR hit emits `public, s-maxage=<revalidate>,
-  stale-while-revalidate=…`, with a config key to turn it off.
 - **`global-error.tsx` hydration on the next-compat and static-export paths** (it hydrates on
   the native build and dev; elsewhere `reset` is inert).
 - **`next/font/local` metric-matched fallback faces:** parse the local font's metrics (today

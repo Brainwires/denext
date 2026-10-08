@@ -26,6 +26,7 @@ ignoreDependencies = [
   "@std/yaml", # deno.json: jsr:@std/yaml@^1.0.0 — compose round-trip parse (src/build/compose-edit.ts)
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
+  "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",
@@ -211,6 +212,10 @@ ignorePatterns = [
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
+  # The pinned Capacitor plugins' published `.d.ts` files, vendored verbatim (imports aside) by
+  # `deno task parity:native:plugins`; tests/expo-plugin-definitions.test.ts type-checks the expo
+  # shims against them in a subprocess, so the graph never imports them.
+  "scripts/parity/native/baselines/expo-plugins/**",
   # Content-collection entries: `.mdx` documents the @denext/content-collections plugin compiles
   # at build (never imported as modules by the app), so the graph can't reach them.
   "examples/*/content/**/*.mdx",

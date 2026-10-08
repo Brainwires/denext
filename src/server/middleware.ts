@@ -227,7 +227,24 @@ export type MiddlewareOutcome =
     requestHeaders?: Headers;
     /** The request to route (request-header overrides already applied). */
     request?: Request;
+    /**
+     * `false` when no matcher selected the request, so no handler ran. Absent means one may
+     * have: a custom runner that does not say counts as matched (`cdnCacheHeaders` holds its
+     * header back on a matched request).
+     */
+    matched?: boolean;
   };
+
+/**
+ * Whether a middleware outcome says a handler may have run for the request: anything but a
+ * `next` that says no matcher selected it (a runner that does not say counts as matched).
+ *
+ * @param outcome A runner's (or one entry's) outcome.
+ * @returns Whether it counts as matched.
+ */
+export function middlewareMatched(outcome: MiddlewareOutcome): boolean {
+  return outcome.type !== "next" || outcome.matched !== false;
+}
 
 /**
  * A resolved, request-ready middleware runner (null when there is none). `matchPath` is the
@@ -499,7 +516,7 @@ async function runEntry(
   url: URL,
   matchPath: string,
 ): Promise<MiddlewareOutcome> {
-  if (!matches(entry.config, matchPath, { request, url })) return { type: "next" };
+  if (!matches(entry.config, matchPath, { request, url })) return { type: "next", matched: false };
   const result = await callHandler(entry, request, url);
 
   if (result instanceof Response) {
@@ -573,16 +590,20 @@ export function composeMiddleware(
     let path = matchPath ?? url.pathname;
 
     // A module-level matcher gates the entire chain.
-    if (!matches(moduleConfig, path, { request, url })) return { type: "next", request };
+    if (!matches(moduleConfig, path, { request, url })) {
+      return { type: "next", request, matched: false };
+    }
 
     const accumulated = new Headers();
     let hasHeaders = false;
     let rewritten = false;
     let requestHeaders: Headers | undefined;
+    const steps: MiddlewareOutcome[] = [];
 
     for (const entry of entries) {
       const step = await runEntry(entry, currentRequest, url, path);
       if (step.type === "response") return step; // short-circuit
+      steps.push(step);
       if (step.headers) {
         mergeResponseHeaders(accumulated, step.headers);
         hasHeaders = true;
@@ -615,7 +636,8 @@ export function composeMiddleware(
         external,
       };
     }
-    return { type: "next", headers, requestHeaders, request: outcomeRequest };
+    const matched = steps.some(middlewareMatched);
+    return { type: "next", headers, requestHeaders, request: outcomeRequest, matched };
   };
 }
 

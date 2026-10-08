@@ -12,9 +12,8 @@
  * drive the OS dialog programs as subprocesses instead:
  * - macOS: `osascript` (`choose file` / `choose file name` / `choose folder`).
  * - Windows: PowerShell `System.Windows.Forms` Open/Save/FolderBrowser dialogs (STA).
- * Linux has no such program it can count on (zenity and kdialog are separate installs that a
- * desktop may not ship, and they differ in what they offer), so there a dialog without the runtime's
- * is `unavailable` and the page uses `<input type="file">`.
+ * Linux has no such program it can count on, so there a dialog without the runtime's is
+ * `unavailable` and the page uses `<input type="file">`.
  *
  * SECURITY / contract (both paths):
  * - `Deno.Command` takes an argv array (no shell); the only page-supplied string is `suggestedName`.

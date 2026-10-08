@@ -4,7 +4,7 @@
 // thin desktop.ts + `spa.proxy` (prefixes parsed from the Vite proxy).
 
 import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { findSpaTailwindInput, migrateProject } from "../src/build/migrate.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 
@@ -103,7 +103,9 @@ function assertDesktopTask(task: string): void {
     task.includes("--icon desktop-icon.png"),
     "desktop task wires the composed icon (built by `export`)",
   );
-  assert(/ -o "[^"]+" desktop\.ts$/.test(task), `desktop task names the bundle (-o): ${task}`);
+  // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`, which
+  // `export` fills from denext.config.ts — an `-o` would override the configured name.
+  assert(!/ -o /.test(task) && / desktop\.ts$/.test(task), `desktop task has no -o: ${task}`);
 }
 
 /**
@@ -112,12 +114,13 @@ function assertDesktopTask(task: string): void {
  * the config validator's allow-list.
  */
 async function assertDesktopDenoFlags(dir: string): Promise<void> {
-  const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
-  const m = config.match(/^ {2}desktop: \{ denoFlags: (\[[^\]]*\]) \},$/m);
-  assert(m, `denext.config.ts has a top-level desktop.denoFlags:\n${config}`);
-  const denoFlags = JSON.parse(m[1]);
+  const config = (await import(toFileUrl(join(dir, "denext.config.ts")).href)).default;
+  const { denoFlags, app } = config.desktop;
   assertEquals(denoFlags, ["--node-modules-dir=none", "--exclude-unused-npm"]);
-  validateDenextConfig({ desktop: { denoFlags } });
+  // The bundle's name lives in the config (the title, as the old `-o` had it), so editing
+  // `desktop.app.name` / adding `identifier` renames the app on the next `deno task desktop`.
+  assertEquals(app, { name: "My App" });
+  validateDenextConfig({ desktop: { denoFlags, app } });
 }
 
 Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {
@@ -139,8 +142,9 @@ async function assertSpaConfig(dir: string): Promise<void> {
     'tailwind: { input: "./src/index.css", output: "./src/index.gen.css" }',
     'entry: "./src/main.tsx"',
     'title: "My App"',
-    'VITE_FOO: ""',
-    'VITE_BAR: ""',
+    // Each key reads the build environment (the shell or a .env file), as Vite exposes VITE_*.
+    'VITE_FOO: buildEnv("VITE_FOO")',
+    'VITE_BAR: buildEnv("VITE_BAR")',
     "APP_VERSION: pkg.version",
     'import pkg from "./package.json"',
     'prefixes: ["/api", "/ws"]',
@@ -181,6 +185,58 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     const gitignore = await Deno.readTextFile(join(dir, ".gitignore"));
     for (const entry of [".denext/", "out/", "src/index.gen.css", "desktop-icon.png"]) {
       assert(gitignore.includes(entry), `.gitignore missing ${entry}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate SPA (--desktop --backend): a computed Vite proxy is reported, --proxy wins", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_computed_proxy_" });
+  try {
+    await writeViteApp(dir, { pnpm: true });
+    // T3 Code's vite.config: the proxy map is built from a shared list, not a literal.
+    await Deno.writeTextFile(
+      join(dir, "vite.config.ts"),
+      `import { PREFIXES } from "./shared.ts";\n` +
+        `export default { server: { proxy: Object.fromEntries(\n` +
+        `  PREFIXES.map((p) => [p, { target: "http://localhost:3773", ws: true }]),\n` +
+        `) } };\n`,
+    );
+    const r = await migrateProject(dir, { desktop: true, backend: "http://127.0.0.1:3773" });
+    // The fallback is kept, but flagged so the user passes --proxy.
+    assertEquals(r.spa?.proxy?.prefixes, ["/api"]);
+    assertEquals(r.spa?.proxyUnresolved, "vite.config.ts");
+
+    // An explicit --proxy answers it: nothing left unresolved.
+    const again = await migrateProject(dir, {
+      desktop: true,
+      backend: "http://127.0.0.1:3773",
+      proxyPrefixes: ["/api", "/ws"],
+    });
+    assertEquals(again.spa?.proxy?.prefixes, ["/api", "/ws"]);
+    assertEquals(again.spa?.proxyUnresolved, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate SPA: spa.env reads the build environment, as Vite exposes VITE_*", async () => {
+  // Vite inlines any VITE_* variable set at build time; a migrated app that baked "" ignored
+  // `VITE_HOSTED_APP_CHANNEL=… deno task export` (and every .env file) without a word.
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_env_" });
+  try {
+    await writeViteApp(dir, { pnpm: true });
+    await migrateProject(dir);
+    Deno.env.set("VITE_FOO", "from-the-shell");
+    try {
+      const url = toFileUrl(join(dir, "denext.config.ts")).href;
+      const config = (await import(url)).default;
+      assertEquals(config.spa.env.VITE_FOO, "from-the-shell");
+      assertEquals(config.spa.env.VITE_BAR, ""); // unset → "" (as before)
+      assertEquals(config.spa.env.APP_VERSION, "1.2.3");
+    } finally {
+      Deno.env.delete("VITE_FOO");
     }
   } finally {
     await Deno.remove(dir, { recursive: true });

@@ -8,6 +8,580 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-08
+
+### Breaking
+
+- **`signInFailed.reason` is the closed `SignInFailedReason` union** (exported from
+  `denext/server`), so a `switch` over it can be exhaustive. A provider's own `?error=` is no
+  longer passed through as the reason: it is `reason: "provider_error"` with the code in the new
+  `providerError` field (the sign-in page's `?error=` is unchanged).
+- **Linux `secureStore` is the pinned runtime's alone.** The `secret-tool` fallback is gone: under
+  the stock runtime (or any runtime without `Deno.desktop.secureStore`) every Linux call rejects
+  `backend_unavailable`. The `secure-store` capability no longer bakes `--allow-run=secret-tool`,
+  and the `.deb` / `.rpm` depend on `libsecret-1-0` / `libsecret` (the library the runtime loads)
+  instead of `libsecret-tools`.
+- **Auth sessions have an absolute lifetime, `session.maxLifetime`** — a hard ceiling counted
+  from the sign-in (`authTime`) that sliding refresh never extends, on the cookie and the
+  database strategy alike. Its default is 30 days (or `maxAge`, when that is longer), so a
+  session that slides with `session.updateAge` now ends 30 days after its sign-in where it used
+  to live as long as it was used; a session that never slides is unaffected. A session past
+  the ceiling reads as signed out whatever its `expiresAt` says, a `callbacks.session` can't lift
+  an expiry past it, and a session issued before 2.5.0-rc.3 (no `authTime`) is no longer slid.
+  A `maxLifetime` that isn't a positive whole number of seconds, or is shorter than `maxAge`,
+  makes `denextAuth()` throw. The default is on rather than opt-in because an unbounded session
+  is what a stolen, regularly used cookie needs; set a larger `maxLifetime` to keep sessions
+  longer.
+- **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
+  session carries the email from the verified `id_token` and the name Apple posts on a user's
+  first authorization (the unsigned `user` field — used for the display name only). Asking for
+  the `name` / `email` scopes no longer throws. On upgrade: an Apple sign-in in flight during
+  the deploy (started on the old version, returning to the new one) fails and must be retried;
+  Apple now returns with a cross-site `POST` to `{basePath}/callback/apple`, so app middleware
+  or a proxy / WAF rule that blocks cross-site POSTs breaks Apple sign-in until it lets that
+  path through; and Apple users now carry an email (often a private relay address), so an app
+  that links accounts by email, or keys anything on it, sees Apple accounts take part.
+- **TOTP secrets are sealed at rest under the auth `secret`** (see Added): rotate it by listing,
+  never by replacing. A retired `secret` must stay in `secret: [current, …retired]` until every
+  TOTP factor sealed under it has been re-sealed, and a re-seal happens only when a TOTP or
+  backup-code check for that user passes — a user who only signs in by passkey with user
+  verification is never re-sealed, and an adapter without `replaceMfaSecret` never re-seals, so
+  there the retired secret must stay indefinitely. Replacing the secret (or dropping a retired
+  one too early) permanently breaks those users' TOTP: it fails closed, and only their backup
+  codes still sign in. Their recovery is `disableTotp(authConfig, userId)` by an administrator
+  (or `/mfa/disable` from a session a backup code or passkey reached), then a new enrollment;
+  `enrollTotp` does not let anyone enroll over the unopenable factor, since a password alone
+  could then replace a second factor. Rolling back to 3.2.x breaks every row already sealed as
+  `totp.v1.*`: 3.2 reads the stored value as the plaintext secret.
+
+### Added
+
+- **A Capacitor app gets the icon it already has, automatically.** With no `--icon`,
+  `denext mobile assets` takes `mobile.icon` from `denext.config.ts` (new, with
+  `mobile.backgroundColor`, `mobile.adaptiveIcon`, `mobile.splashIcon`,
+  `mobile.splashBackgroundColor` and `mobile.darkBackgroundColor`), then `assets/icon.png`, then
+  an Expo app config in the project or a sibling monorepo app (`icon`, `android.adaptiveIcon`,
+  `splash`; `app.config.ts` is read statically and a computed value is reported, never run), then
+  the web manifest's largest square icon (a maskable one as the adaptive foreground, with
+  `background_color`), the apple-touch-icon and the largest PNG favicon, and reports which one it
+  chose and why it passed the others over. An icon under 1024×1024 is upscaled with a warning
+  naming a better source, and a transparent one is flattened onto the background with a warning.
+  `denext mobile build` replaces Capacitor's placeholder icon (and splash) for the platform it
+  builds, `denext mobile doctor --store` reports the placeholder as an error, and `denext migrate`
+  (the Vite / CRA path and `--from expo`) records the chosen icon as `mobile.icon`, prints it in
+  its report and `--check`, and adds a review item for a Capacitor or Expo app that has none (or
+  only one under 1024×1024).
+- **TOTP secrets are encrypted at rest.** The MFA layer seals each secret before any adapter
+  stores it — AES-256-GCM under a key HKDF-SHA-256-derived from the auth `secret` (a dedicated
+  label; a random 96-bit nonce per seal; the user id bound in as additional data) — as
+  `totp.v1.<nonce>.<ciphertext>`, and opens it only to check a code. A plaintext row stored by
+  an earlier denext keeps verifying and is re-sealed on that read; with `secret: [current,
+  previous]` a factor sealed under `previous` opens and is re-sealed under `current`. A value no
+  configured secret opens, or a tampered one, fails closed (no TOTP code verifies, the user stays
+  enrolled, backup codes still work). The re-seal goes through the new optional adapter method
+  `replaceMfaSecret(userId, expected, next)`, a compare-and-swap of that one field, which both
+  shipped adapters implement.
+- **Thirteen more Expo SDK shims** for React Native mode, each in the expo parity gate:
+  `expo-system-ui`, `expo-linear-gradient`, `expo-localization`, `expo-speech`, `expo-sensors`,
+  `expo-video-thumbnails`, `expo-battery`, `expo-gl`, `expo-mail-composer`, `expo-checkbox`,
+  `expo-sms`, `expo-mesh-gradient` and `expo-cellular`. They run on web APIs: CSS gradients,
+  `Intl`, the Web Speech API, motion events converted to Expo's units (g, rad/s), a `<video>`
+  frame drawn on a `<canvas>`, WebGL 2 for `GLView`, `mailto:` / `sms:` URLs. In the Capacitor
+  shell `expo-battery` reads `@capacitor/device`, and `expo-speech` uses the new
+  `denext mobile add text-to-speech` capability (`@capacitor-community/text-to-speech`, which
+  the Android shell needs because its WebView has no `speechSynthesis`). `denext migrate --from
+  expo` suggests both capabilities. Each shim's omissions are in `denext/expo/manifest`.
+- **`onOtaRejected` and `otaStatus().tampered`** (`denext/mobile`): the page hears a downloaded UI
+  the shell refused because it no longer matches its signed manifest (see Security), and
+  `otaStatus()` names that version until `otaReset()`. `denext mobile doctor` (`store` and
+  `release`) flags an OTA plugin from before re-verification (`ota-reverify`, an error).
+- **`denext mobile add app-config`** carries an Expo app's native config into its Capacitor
+  shell, as Expo's prebuild would: `ios.infoPlist` usage strings and the ones config plugins set
+  from their options into `Info.plist` (only when absent), `android.permissions` into
+  `AndroidManifest.xml`, and `expo-build-properties`' deployment target, Android SDK levels (only
+  raised) and `usesCleartextTraffic`. `denext migrate --from expo` puts it in the suggested
+  command when there is something to carry, reads more plugins' usage strings
+  (`expo-sensors`, `expo-tracking-transparency`, `expo-secure-store`, `expo-calendar`'s
+  reminders, …), and names the config plugins whose native settings nothing carries over.
+- **Five Expo SDK shims over pinned Capacitor 8 plugins**, each with its `denext mobile add`
+  capability: `expo-contacts` (`contacts`, `@capgo/capacitor-contacts`: the legacy function API
+  and the `Contact` / `Group` classes for the fields the plugin has), `expo-calendar`
+  (`calendar`, `@ebarooni/capacitor-calendar`: calendars, events, iOS reminders, the native event
+  editor, in the object and legacy APIs), `expo-print` (`print`, `@capgo/capacitor-printer`: HTML
+  or a file through the system print dialog, which a WebView cannot open by itself),
+  `expo-brightness` (`brightness`, `@capacitor-community/screen-brightness`) and
+  `expo-intent-launcher` (`intent-launcher`, `@capgo/capacitor-intent-launcher`, Android). Off
+  the shell they answer as Expo's web builds; what a plugin cannot do (attendees, contact
+  containers, HTML to PDF, Android's system brightness setting) rejects with `ERR_UNAVAILABLE`
+  and is listed in the manifest. `denext migrate --from expo` suggests the capabilities.
+- **`apiTokenIssued` and `apiTokenRevoked` events.** Every way a bearer API token is minted or
+  retired fires one — `issueApiToken` / `POST {basePath}/tokens`, and `revokeApiToken` /
+  `DELETE {basePath}/tokens/:id` (`reason: "revoked"`), a password reset (`"password_reset"`)
+  and the pre-account-hijacking eviction (`"email_verified"`) — with the token id and owner,
+  never the token or its hash. `revokeApiToken(config, id, { userId })` carries the owner and
+  resolves `true` for an actual revocation; an unknown or already revoked id resolves `false`
+  and fires nothing (the adapter's `revokeApiToken` may return that boolean, as both shipped
+  adapters do; one that returns nothing is taken to have revoked the token).
+- **`denext generate migration | seed | ci`**, scaffolded like `generate docker` (project-root
+  files, the flavor auto-detected with an optional override, never overwriting a file).
+  `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,
+  `tasks/migrate.ts` — a task that applies pending files in order on `node:sqlite`, each in a
+  transaction and recorded once in `_migrations` (`denext task migrate`); a Prisma or Drizzle
+  project is pointed at `prisma migrate dev` / `drizzle-kit generate`. `seed` writes an
+  idempotent `tasks/seed.ts` (`node:sqlite`, or `PrismaClient` in a Prisma project). `ci`
+  writes `.github/workflows/ci.yml` with Deno pinned, the project's `check` task (else fmt,
+  lint, test) and its `build` (a SPA's `export`). The `denext ui` Generate panel and the MCP
+  `denext_generate` tool offer all three.
+- **`denext upgrade`** moves the project's `jsr:@denext/denext` pin, the `deno task`s pinned to
+  the CLI and every first-party `@denext/*` package together, to the newest denext each pinned
+  package has a compatible version for (a package's `@denext/denext` range, from
+  `src/plugin/catalog.json` or its published `deno.json` on JSR). Nothing moves backwards, each
+  pin keeps its `^` / `~` / exact operator and the file keeps its comments and order. `--to`
+  names the denext version (a package with no compatible version is then an error),
+  `--dry-run` prints the plan, `--check` exits 1 when anything is out of date, and `--json`
+  prints the plan. The plugin catalog gains each package's `denext` range.
+- **`denext routes`** lists the app's pages and API route handlers as a table (kind, route, HTTP
+  methods, dynamic params, file), or `{ pages, api }` with `--json`. It scans `app/` without
+  importing a route module — an API route's methods are read from its source — and the MCP
+  `denext_list_routes` tool now reads the same listing (`src/build/route-list.ts`).
+- **Task retries:** `defineTask({ retry: { attempts, backoff } })` runs a failed task again up to
+  `attempts` more times (`backoff`: a fixed delay in ms, or `{ strategy: "fixed" |
+  "exponential", delayMs, maxDelayMs }`; default exponential from 1 s, capped at 5 min) and
+  settles with the last attempt's outcome. The handler's context gains `attempt`. A retrying
+  scheduled run still holds the overlap guard, and shutdown ends its wait. With
+  `tasks.history`, every attempt is a row (`attempt`, `willRetry`; the store migrates an older
+  `tasks.db` in place), a retried failure no longer counts as a failure, and the `denext ui`
+  Cron page shows each task's retries.
+- **OAuth `response_mode=form_post`** (OAuth 2.0 Form Post Response Mode): `responseMode:
+  "form_post"` on any OAuth / OIDC provider (`oidc({ responseMode })`) asks for it, makes the
+  flow's `__Host-` transaction cookie `SameSite=None; Secure`, and has
+  `POST {basePath}/callback/:provider` complete the flow from the urlencoded body with the same
+  single-use `state`, PKCE and `nonce` checks the GET runs. A GET carrying a code for such a
+  provider is refused (`invalid_request`), a POST to a query-mode one is a `405`, and
+  `response_mode` in `authorizationParams` is a config error. Profile mappers see the posted
+  extras as `callbackParams`. `getSession()` now always sets `Secure` on a `SameSite=None`
+  cookie.
+- **`magicLink({ confirm: true })`: a confirmation page in front of the magic-link redeem.** The
+  link's GET renders a page naming the account, whose button POSTs the token to the same URL;
+  only that POST (same-origin gated, under the failure budget) spends it, so a mail gateway's
+  pre-fetch can't burn a link and nobody is signed in without a click. The page runs no script
+  (`default-src 'none'`, its style allowed by hash), can't be framed, is `no-store`, escapes
+  every value from the link, and sends `Referrer-Policy: same-origin` so the token-bearing URL
+  never leaks cross-origin while the POST keeps its `Origin`. Off by default.
+- **Passkeys (WebAuthn Level 3)**: `denextAuth({ passkeys })` adds the registration and
+  authentication ceremonies at `{basePath}/passkey/*` (plus `GET /passkeys` and
+  `DELETE /passkeys/:id`), verified server-side with `crypto.subtle` and an in-house strict CBOR
+  decoder — no npm. ES256, RS256 and Ed25519 credentials; `none` and `packed` attestation (self,
+  or an `x5c` leaf checked against §8.2.1); origin, RP ID, `crossOrigin`, User Present / User
+  Verified, backup-flag and signature-counter checks (a counter that goes backwards — a cloned
+  authenticator — is refused); single-use challenges stored as hashes and bound to the browser
+  by a signed cookie (one ceremony per browser at a time). A passkey signs in usernameless (with
+  user verification it satisfies MFA on its own, `amr: ["hwk", "mfa"]`) or completes a pending
+  second factor — but not the step-up of a presence-only passkey sign-in (`amr: ["hwk"]`), which
+  takes a code (`403 code_required`): one key is one factor. Registration needs a recent
+  sign-in and, for an account with an email address, a verified one (`403 email_unverified`);
+  the pre-account-hijacking eviction and a password reset delete every passkey of the account
+  (an adapter holding passkeys it can't delete fails them closed). A user id over the 64-byte
+  WebAuthn user-handle limit is a refused ceremony. The adapters gain a
+  passkey group (`auth_passkeys`, `auth_passkey_challenges` in `sqliteAuthAdapter`);
+  `denext/client` gains `registerPasskey()`, `signInWithPasskey()` and `passkeysSupported()`
+  (every refusal a typed `{ ok: false, error }`, an authenticator's `InvalidStateError` included
+  as `"exists"`);
+  `denext/server` gains `listPasskeys()` / `deletePasskey()`. Verified against the WebAuthn L3
+  §16 test vectors.
+- **`cors()` and `csrf()` API middlewares** (`denext/server`) for `createApi().use(...)`.
+  `cors(policy)` takes the app `cors` config's shape (exact origins, never `*` with
+  credentials), is validated at import, and scopes the policy to the method it guards: the
+  framework answers that method's preflight before `middleware.ts` and decorates every response
+  the endpoint produces, errors included; it replaces the route's `export const cors` and the
+  app's policy for that method. `csrf()` refuses a cookie-carrying non-`GET`/`HEAD`/`OPTIONS`
+  request from any origin but the app's own, `allowedOrigins` (config or option) or the Deno
+  Desktop origin — the Server Actions rule — with a 403 `csrf_failed`; `doubleSubmit` also
+  requires an `x-csrf-token` header echoing a token cookie the middleware issues
+  (`__Host-denext-csrf` on a secure request — https, or a trusted proxy's `x-forwarded-proto` —
+  so a sibling subdomain can't plant one; `denext-csrf` over plain http, where either name is
+  read).
+  `ApiMiddlewareDocs` gains `errors`, so `csrf_failed` is listed on the endpoint in
+  `@denext/openapi`.
+- **`totpQrSvg(uri, options?)` (`denext/server`) renders a TOTP provisioning URI as an SVG QR
+  code**, with no dependency: denext's own ISO/IEC 18004 encoder — byte mode, Reed–Solomon error
+  correction at level L, M (default), Q or H, versions 1–40, the lowest-penalty mask — checked
+  module for module against two independent encoders and decoded back by a third. The markup is
+  one `<path>` with a 4-module quiet zone and an accessible `<title>`, with no script or
+  external reference; colours accept only a hex value or a keyword, and anything but an
+  `otpauth://` URI is refused. The encoder behind `denext dev --lan`'s terminal QR code is the
+  same one, now beyond version 10, and picks its mask the way §7.8 orders it (before the format
+  information is drawn).
+- **`appCapabilities()` reports the Linux CEF sandbox and the Linux file chooser** (runtime
+  2.9.7-denext.12): `sandbox` (`"namespace"`, `"setuid"`, `"chromium"` or `"off"`) with the
+  runtime's `sandboxReason`, and `fileChooser` (`"portal"` or `"gtk"`) with `fileChooserReason`.
+  An older runtime reads `"unknown"`.
+- **`desktop.linux.requireSandbox`.** `true` makes a Linux CEF app refuse to start where its web
+  content would run without Chromium's sandbox (a tarball or AppImage on Ubuntu 23.10+, or root):
+  the package script writes `"requireSandbox": true` into the bundle's `laufey-launch.json`, and
+  the app exits with status 78 and one line saying why. `LAUFEY_REQUIRE_SANDBOX=1` does the same
+  from a launcher; `=0` can't undo a shipped `true`.
+- **`denext desktop doctor --linux` reports the CEF sandbox** a machine allows (unprivileged user
+  namespaces, else only the `.deb` / `.rpm`'s setuid `chrome-sandbox`, else none as root), with
+  `requireSandbox` as the fix for an app that would rather not start unsandboxed.
+- **`denext migrate --check [--json]` previews a migration and writes nothing.** It runs the
+  same planners as `denext migrate` against an in-memory overlay and reports the files it would
+  create, modify, move or delete, what won't migrate (unsupported native dependencies,
+  next.config keys, a hand-authored `deno.json`, Expo native-only packages, …) with the reason,
+  what to review, and a verdict (`ready`, `review` or `blocked`). It needs read access only
+  (plus jsr.io when run from JSR), works for every source `migrate` supports, and exits 1 when
+  the migration would fail. A real `migrate --json` result gains a `nextConfig` field (what the
+  next.config translation carried and dropped).
+- **"Fixed in denext" ([/docs/fixed](https://denext.dev/docs/fixed)).** Problems people hit on
+  Next.js, React, Vite and React Native stacks that denext handles, each with the error text,
+  why it happens, what denext does, whether it is a fix, a difference, a trade-off or a
+  capability, and the test that proves it. Security advisories say to upgrade Next.js first.
+  The page is generated from `catalog/fixed-in-denext.json` (`deno task docs:fixed`), and a test
+  fails when an evidence test is missing or renamed.
+- **React Native's remaining runtime statics in React Native mode.** `AppRegistry` gains
+  sections (`registerSection`, `getSectionKeys`, `getSections`, `section` in `registerComponent` /
+  `registerConfig`), `getRunnable` / `getRegistry`, `setSurfaceProps` (new `initialProps` for the
+  running app, its state kept), `setRootViewStyleProvider` and the headless-task registry
+  (`registerHeadlessTask`, `registerCancellableHeadlessTask`, `startHeadlessTask`,
+  `cancelHeadlessTask`); `StyleSheet.setStyleAttributePreprocessor` runs its processor over
+  compiled and inline styles alike; `Image.prefetch(url, callback)` reports the request id and
+  `Image.abortPrefetch(id)` aborts it; `PixelRatio.startDetecting()` exists (a no-op, as in React
+  Native). The native parity ledger (`scripts/parity/native/baselines/known-gaps.json`) is empty:
+  the remaining entries were declarations React Native's legacy `.d.ts` exports but its runtime
+  never had (`ViewBase` / `ViewComponent` and the other `*Base` / `*Component` classes,
+  `DeviceEventEmitter.sharedSubscriber`, `LayoutAnimation.configChecker`,
+  `View.forceTouchAvailable`), now waived with that reason. A parity waiver can name the
+  `members` it covers, so a member that goes missing later still fails the gate.
+- **The list adapters' last React Native names.** `renderScrollComponent` (`FlatList`,
+  `SectionList`, `VirtualizedList`, FlashList, LegendList) renders a list inside the app's own
+  scroll view: the element gets the list's ref and the items, as React Native clones it, and its
+  scroll node becomes the list's scroller; the scroll callbacks, `onLayout` and
+  `onContentSizeChange` stay the list's, so none fires twice. FlashList takes a component or a
+  function. `automaticallyAdjustKeyboardInsets` adds room after the last item for the part of a
+  vertical list the keyboard covers. LegendList gains `anchoredEndSpace` (room that keeps an
+  anchor item at the viewport's start, with `onSizeChanged` / `onReady`), `onItemSizeChanged`,
+  `onMetricsChange` and `snapToIndices`. FlashList's benchmark exports (`useBenchmark`,
+  `useFlatListBenchmark`, `useDataMultiplier`, `JSFPSMonitor`, `autoScroll`, `Cancellable`) run
+  as on a device. `VirtualList` gains `onItemMeasured` (a row's first measurement and each size
+  change), and its handle's `getItemLayout()` says whether the size is `measured`. The lists
+  ledger (`scripts/parity/native/baselines/lists.known-gaps.json`) is empty; SectionList's
+  `data` / `getItem` / `getItemCount`, which its type inherits and React Native never reads, are
+  waived, and the lists gate takes documented waivers (`LIST_WAIVERS`).
+- **React Native 0.88's runtime names in React Native mode,** ahead of the 0.88 pin (each existed
+  in React Native's runtime; 0.88's generated types export them): `DeviceInfo`,
+  `ReactNativeVersion`, `UTFSequence`, `VirtualViewMode` (a Flow enum), `Networking` (React
+  Native's networking module over `fetch`, with its event tuples), `usePressability` (React
+  Native's press timing), `EventEmitter`, `AssetRegistry` (react-native-web's registry, the one
+  `Image` reads), `VirtualizedSectionList` (on denext's list engine, `getItem` / `getItemCount`
+  sections), `Platform.isDisableAnimations`, `Systrace.trace`, `LayoutAnimation.setEnabled`,
+  `LogBox`'s `isInstalled` / `clearAllLogs` / `addLog` / `addConsoleLog` / `addException`, and
+  `UIManager`'s `measureLayoutRelativeToParent`, `viewIsDescendantOf`, `findSubviewIn`,
+  `sendAccessibilityEvent` and the native-renderer members. `VirtualList` props gain
+  `persistentScrollbar` (accepted). Against `react-native@0.88.0-rc.4`, the core and lists diffs
+  report no gaps; the lists capture reads 0.88's generated types.
+- **React Native's last three parity gaps: `AppState` `memoryWarning`, `Linking.sendIntent()` and
+  `ActionSheetIOS.dismissActionSheet()`.** In the Capacitor shell the bridge every denext native
+  plugin installs forwards the OS's low-memory warning (iOS's
+  `didReceiveMemoryWarningNotification`, Android's `onLowMemory` and `onTrimMemory` from
+  `TRIM_MEMORY_RUNNING_LOW`, `TRIM_MEMORY_UI_HIDDEN` excepted) as the `denext:memorywarning`
+  window event, which `AppState` emits to its `memoryWarning` listeners (no argument, as React
+  Native); a browser and a Deno Desktop window never fire it. `Linking.sendIntent(action,
+  extras?)` starts an Android intent through denext's `DenextSettings` plugin (`denext mobile add
+  permissions`) with React Native's `{ key, value }` extras (a number is put as a double), and
+  rejects with `Error("Unsupported")` on iOS, the web and the desktop, as React Native does;
+  `expo-linking`'s `sendIntent` follows it (`UnavailabilityError` off Android).
+  `ActionSheetIOS.dismissActionSheet()` closes the topmost open sheet without calling its
+  callback (React Native's behaviour), a no-op with none open: the in-page dialog or menu, the
+  shell's native menu, and `@capacitor/action-sheet`'s system sheet through `DenextContextMenu`'s
+  new `dismiss`, which `denext mobile add action-sheet` now installs. `showContextMenu` and the
+  dialog `Alert` uses take an `AbortSignal` (`signal`) that closes them. Native template
+  generations: the bridge view controller (OTA 8, auth-session 5, app-extension 5), the composed
+  MainActivity (5), `DenextSettings` (2) and `DenextContextMenu` (2); an unedited earlier file is
+  upgraded by the next `denext mobile add`, then ship a new binary.
+- **`denext desktop doctor --linux` reports CEF's cookie store** (`cookies   CEF: os | basic |
+  unknown`) as the runtime picks it for a new profile, with a fix when a CEF app would start with
+  `--password-store=basic`, and sees an **XEmbed system tray** on X11 (`_NET_SYSTEM_TRAY_S<n>`'s
+  owner, named after its X client: `an XEmbed system tray (i3bar)`), which the runtime falls back
+  to when no StatusNotifierWatcher runs.
+- **The desktop kitchen sink's drive mode** (`examples/desktop-kitchen-sink`): the manual checks
+  (file dialogs, a notification click, the secure store, the tray, the title bar, the window
+  states, deep links) run from a command queue, `deno task drive <command>` or a file dropped in
+  its folder, with no one at the screen and no input injection; `native-dialog` closes the
+  runtime's own dialog through its `AbortSignal`. `test:window` takes `--backend webview|cef`,
+  `--runtime-dir`, `--stock-runtime`, `--results <file>` and `--json`, prints the session facts
+  (`platformFeatures()`, `appCapabilities()`, `windowCapabilities()`), and writes them with the
+  backend, the runtime and the counts to its results document. `e2e/wm-session.sh` runs it in a
+  nested session with the window manager you pick (i3, openbox, xfwm4 on Xvfb or Xephyr; weston
+  or sway on Wayland).
+
+### Changed
+
+- **ISR pages can send CDN cache headers: `cdnCacheHeaders`, opt-in.** (Earlier in this cycle
+  it was on by default; it is now off, because a CDN keys on the URL alone and would serve a page
+  gated on an IP allow-list, an auth proxy's header, geolocation or `Accept-Language` to
+  everyone.) With `cdnCacheHeaders: true` the render that stores an ISR entry and every later hit
+  answer `Cache-Control: public, s-maxage=<seconds it stays fresh>,
+  stale-while-revalidate=31536000` (`s-maxage` is the route's `revalidate` on the MISS and the
+  time left on a hit, `0` once stale; `force-static` is `public, s-maxage=31536000`, a year,
+  which `revalidatePath` / `revalidateTag` do not purge from the CDN), so a CDN in front caches
+  them as long as denext does. The header is never sent for a request carrying a `Cookie` or
+  `Authorization` (most CDNs leave `Cookie` out of their key, so this does not keep cookie
+  variants apart there), a response that sets a cookie, a non-200, a dynamic render (still
+  `private, no-store`), a response whose `Cache-Control` middleware or a `headers()` rule set, a
+  request whose locale was negotiated (`detectLocale`, `localeMiddleware`, next-intl's
+  middleware), or a request a `middleware.ts` matched, unless
+  `cdnCacheHeaders: { evenWithMiddleware: true }`.
+- **denext pins Deno Desktop runtime 2.9.7-denext.13** (deno `a8de3d1a`, laufey `6974b61`, API
+  47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
+  xdg-desktop-portal's FileChooser, the runtime's own Linux secure store and the runtime's own macOS
+  secure store (see Security) are now what every denext desktop app gets. `Deno.exit()` ends the
+  app through the backend on every OS, so the web engine flushes its storage first; `SIGTERM`,
+  `SIGINT` and `SIGHUP` quit a Linux app cleanly on both backends, also with a dialog open (a quit
+  cancels open GTK dialogs; the uncaught-error dialog took about 80 seconds to end under
+  `SIGTERM`) and with a stuck UI thread (ended by the signal after 10 seconds instead of ignored
+  until `SIGKILL`); every `exit()` on Linux parks the UI thread before any exit handler runs (a
+  WebKitGTK crash at exit on X11); the Linux secure store follows the Secret Service to a new
+  owner (a second gnome-keyring daemon taking the name made writes fail until a restart); a
+  headless runtime launch (the full-app updater's helper) is no longer cut off after 10 seconds,
+  and the Linux update helper waits for the processes still running from the install, AppImage
+  included, before it swaps or rolls back. `platformFeatures().sessionType` follows the
+  display that is there (a session labelled Wayland with only an X display is X11, and CEF opens
+  its window there); KDE's service cache (`kbuildsycoca6` / `kbuildsycoca5`) is rebuilt after a
+  scheme registration, so the first deep link on Plasma reaches the app; WebKitGTK renders with
+  shared-memory frames on X11; and CEF's cookie store uses the KWallet daemon Chromium's own rule
+  picks. Notification clicks carry a MAC from a per-install key (`<app data dir>/
+  laufey-notification-key`), and the runtime drops clicks it never posted or whose tag (256 bytes),
+  data (4 KiB) or action id (1 KiB) is over the limits; the tag, action and data stay untrusted.
+- **macOS CEF cookies report `cookieEncryption: "basic"`.** CEF runs with Chromium's mock keychain,
+  whose key is a constant, so its cookies on disk are obfuscated, not protected by the OS; the docs
+  no longer say otherwise.
+- **`denext desktop doctor --linux` reads the session as the runtime does:** the session type from
+  the display that is there (`XDG_SESSION_TYPE` unset is `unknown`; a declared `wayland` with only
+  `$DISPLAY` is `x11`), libsecret in place of `secret-tool`, a portal that is installed but
+  doesn't start told apart from one older than 1.19, an activatable notification server that
+  fails to start reported with D-Bus's reason (the doctor starts it as the runtime would), and
+  the XEmbed tray an X11 window manager may run named where no StatusNotifierWatcher is.
+
+### Fixed
+
+- **A migrated desktop app takes its name and identifier from `desktop.app`.** The `desktop`
+  task `denext migrate --desktop` writes ran a bare `deno desktop -o "<title>"`, which reads
+  `desktop.app` from deno.json only, so a `desktop.app.name` / `identifier` set in
+  `denext.config.ts` (where the docs put them) was ignored, and every migrated build of an app
+  got the same `com.deno.desktop.<title>` bundle id, sharing one app's storage. `export` now copies
+  `desktop.app` into deno.json for a project with a `desktop.ts` (as `denext desktop run` and the
+  package scripts already did); the generated config sets `desktop.app.name` to the title, and the
+  task no longer passes `-o`. A project migrated earlier keeps its `-o` until it is re-migrated.
+- **A migrated SPA's `spa.env` reads the build environment.** `migrate` wrote every `VITE_*`
+  (and `REACT_APP_*`) key as a literal `""`, so a value set at build time —
+  `VITE_HOSTED_APP_CHANNEL=… deno task export`, or a `.env` file — never reached
+  `import.meta.env`, where `vite build` inlines it. The generated config now reads each key with
+  a `buildEnv("KEY")` helper (`""` when unset or unreadable).
+- **An over-the-air UI that can't be read for a moment is no longer quarantined as tampered.**
+  A launch before the first unlock (a silent push or a `BGTask`) finds a downloaded iOS UI
+  data-protected, and re-verification took the failed read for a changed file: the good UI was
+  moved to `quarantine/`, reported `tampered` and never served again. Both stores now tell an I/O
+  or permission error (the file is there; `NSFileReadNoPermissionError` / `EPERM`, an Android
+  `IOException`) apart from a size or hash mismatch: that request is refused, a launch whose
+  stored manifest can't be read serves the confirmed or bundled UI for that launch only (a trial
+  keeps its attempt), nothing is quarantined, and the next launch checks again. The OTA templates
+  stay generation 9 (it has not shipped): **upgrade note**, a project that ran `denext mobile
+  add-ota` from an unreleased 3.3 build re-runs it to pick up the fix (an unedited file is
+  upgraded in place) and ships a new binary.
+- **`denext mobile add-ota` says when a partial upgrade won't compile, and the doctor flags it.**
+  One generation's OTA files call into each other, so keeping an edited file while the others are
+  upgraded breaks the build; `add-ota` now adds a manual step naming the kept and the upgraded
+  files, and `denext mobile doctor` reports OTA files from different template generations
+  (`ota-generations`, an error) and an Android app that sets its own `RouteProcessor`, which
+  replaces the one that re-verifies a downloaded UI (`android-route-processor`, a warning).
+- **Android `Linking.sendIntent` no longer crashes the app when Android refuses the activity.**
+  `DenextSettings` caught only `ActivityNotFoundException`; a `SecurityException` (`ACTION_CALL`
+  without `CALL_PHONE`, an activity that is not exported) escaped the plugin method and Capacitor's
+  bridge crashed the app. It now rejects (code `failed`), as React Native's `IntentModule` does;
+  `openAppSettings()` likewise.
+- **`expo-calendar/legacy`, `expo-contacts/legacy` and the `/next` subpaths resolve to denext's
+  shims.** Expo 58 exports them, but only `expo-file-system/legacy` and
+  `expo-media-library/legacy` were aliased, so an app importing the others got the real npm
+  package. `denext/expo/calendar/legacy` and `denext/expo/contacts/legacy` are the legacy function
+  APIs (each in the expo parity gate), and `expo-calendar/next`, `expo-contacts/next`,
+  `expo-file-system/next` and `expo-media-library/next` are the main shims, as SDK 58 maps them.
+- **`expo-brightness` matches Expo off Android.** On iOS and the web the Android-only calls
+  rejected or threw (unhandled rejections on iOS); as in Expo they now resolve:
+  `restoreSystemBrightnessAsync` and `setSystemBrightnessModeAsync` do nothing,
+  `isUsingSystemBrightnessAsync` is `false`, `getSystemBrightnessModeAsync` is `UNKNOWN`, and
+  `get/setSystemBrightnessAsync` are the screen's level. A `NaN` level is Expo's `TypeError`, and
+  the web's permission is `undetermined`.
+- **`usePressability` no longer presses twice on older WebKit.** Safari before PointerEvent clicks
+  sends the click that follows a tap without a `pointerType`, which was taken for a keyboard click
+  after the responder had already pressed; the click that trails a release is now part of that
+  press.
+- **React Native mode's `Networking` reports what it claims.** `didReceiveNetworkDataProgress` is
+  emitted (loaded, total) for an incremental base64 / blob response before the whole body; a
+  `{ uri }` request body is the bytes at that URI instead of no body, and any other unknown body
+  fails the request with an error instead of sending nothing; `clearCookies` removes cookies set
+  for a deeper path or a parent domain and reports whether any were actually removed.
+- **`ActionSheetIOS.dismissActionSheet()` no longer drops the choice of a sheet it can't close.**
+  Without `denext mobile add action-sheet`'s `DenextContextMenu` plugin the system sheet stays on
+  screen, but its callback was dropped; the dismiss is now a no-op there and the user's choice
+  still arrives.
+- **Expo shims:** `expo-gl` calls only `onContextCreate` after a context restore (not
+  `onContextRestored` as well), as Expo's web `GLView`; `expo-sms` navigates to the `sms:` URL
+  (which the shell hands to the OS) instead of opening a popup a lost user gesture blocks while
+  the call resolved as if it had opened; `expo-cellular` reports `UNKNOWN` on a desktop browser or
+  in Deno Desktop (whose connection has no type) instead of the link's speed class as `4G`;
+  `expo-checkbox` draws a `processColor` number as a colour; `expo-mesh-gradient` averages hex /
+  `rgb()` / numeric colours itself, so iOS before 16.2 (no `color-mix()`) keeps the background.
+- **Lists:** LegendList's `anchoredEndSpace` recomputes once per batch of measurements instead of
+  once per item (the first layout of a long tail walked it O(n²)); a FlashList benchmark whose
+  scroll pass throws stops its FPS monitor's frame loop and can be started again.
+- **`denext migrate --desktop --backend` no longer drops a Vite proxy built in code without a
+  word.** A `vite.config` whose `server.proxy` is computed (T3 Code's
+  `Object.fromEntries(PREFIXES.map(…))`) has no literal prefixes to read, so `spa.proxy` fell back
+  to `/api` — and the desktop app never reached `/ws` — while `--check` said "ready". Migrate now
+  prints a warning, the result carries `spa.proxyUnresolved`, and `--check` lists it as a review
+  item; `--proxy` answers it. A literal proxy written on one line (`proxy: { "/api": … } }`) is
+  now read too (it used to fall back to `/api` as well).
+- **`llms-full.txt` and the MCP reference page are regenerated, and a test keeps them so.** They
+  lacked the `expo-brightness` / `-calendar` / `-contacts` / `-intent-launcher` / `-print` APIs,
+  the new `expo-cellular` signatures and `denext_generate`'s `migration` / `seed` / `ci` kinds;
+  `tests/docs-generated.test.ts` now fails when either drifts from its source.
+- **The Expo shims over pinned plugins are checked against the plugins' own types.** Their unit
+  tests ran against hand-written fakes; the pinned versions' `.d.ts` files are now vendored
+  (`deno task parity:native:plugins`) and every method, argument key and result field the shims
+  use is type-checked against them, offline. `expo-calendar`'s and `expo-contacts`' plugin
+  declarations were tightened to the shapes the plugins take.
+- **`denext desktop doctor --linux` no longer warns about a locked keyring that unlocks by
+  itself.** gnome-keyring keeps a keyring with no password (an autologin's login keyring, as on
+  Cinnamon) unencrypted and reports it locked until first use, which unlocks it with no prompt; the
+  doctor reads the keyring file's header and says so instead (`locked (no password: it unlocks on
+  first use, with no prompt)`). A keyring with a password still warns that reads prompt.
+- **The desktop kitchen sink's geometry checks skip on i3** instead of failing: i3 reports a tiled
+  window as maximized and ignores an unmaximize, so a maximized window that stays maximized after
+  one, filling its work area, counts as tiled (as an unmaximized one filling it already did for
+  Sway), and the maximize / unmaximize check's unmaximize wait is covered too.
+- **The `notifications` capability measures its limits in UTF-8 bytes,** as the runtime does: a
+  notification's data over 4 KiB (non-ASCII text counted by bytes, not UTF-16 units) and an action
+  id over 1 KiB are refused with `validation` instead of being posted with a click the runtime
+  would drop.
+- **`denext dev` re-renders a nested Server Component after an edit.** The App Router dev loader
+  cache-busted only the module it was asked for (`page.tsx?g=N`); Deno resolves that module's
+  relative imports without the query, so an edited component the page imports (`app/ui/Label.tsx`,
+  or `components/X.tsx` outside `app/`) kept rendering its first version until the server
+  restarted. An edited module, and every module on the way to it, now renders as a copy named by
+  its content: the edit reaches the render, an unchanged module keeps its instance across edits,
+  and each module keeps at most two copies on disk.
+- **`denext dev` runs an edited Server Action's new code, and each target's own action.** Each
+  `"use server"` module was registered once per process, so an edited action kept running its old
+  implementation, and when one session served several targets (web and an iOS shell) the first
+  target to register owned the action id. An edit now re-registers the module (before the next
+  render or action call), and each target's session registers and dispatches its own instance
+  (its platform files). Production keeps one registry.
+- **`deno task prisma:setup` runs again.** The setup script `denext migrate` writes for a Prisma
+  app (`scripts/denext-prisma-setup.ts`) called `mfs.stat`, a denext-internal helper that doesn't
+  exist in the app, so the script threw a ReferenceError before applying the schema. It calls
+  `Deno.stat` again, and a test type-checks the emitted script on its own.
+- **`denext migrate --check` says when it couldn't evaluate `next.config.*`.** The evaluator is a
+  `deno` subprocess, so the check needs `--allow-run` as well as read access; without it,
+  `basePath` and the other keys were reported as "won't migrate". The report now says
+  `couldn't evaluate next.config (needs --allow-run)` under review instead, and the documented
+  command (`deno run --allow-read --allow-env --allow-run …`) and the flag's help say so. The
+  suggested `denext migrate` command keeps `--denext-local-path`, a project at a filesystem root
+  (`/`, `C:\`) gets relative paths in the plan, and a Remix app's `--check --codemod` notes that
+  the codemod plan names files at their pre-migration paths.
+- **`denext upgrade` finds an older compatible plugin and stops on a JSR failure.** It looked at
+  only the newest 6 denext and 8 plugin versions, so an older release that fits was missed; it now
+  scans the whole history newest first (bounded at 200 JSR reads). A JSR request that fails is an
+  error ("couldn't reach JSR …"), no longer read as an incompatible version. A package that
+  imports no denext stays within its own caret range unless `--allow-major`; `--to` an older
+  denext than the pin is refused without `--allow-downgrade`; the `jsr:/@denext/denext@…/`
+  import-map prefix form is matched; and workspace members' `deno.json` files move with the root
+  (a member without one is reported).
+- **`denext dev` no longer loses an edit to a tagging pass that was still loading.** A pass over
+  the `"use server"` / `"use client"` modules that started before an edit could mark its module
+  tagged after the edit cleared the set, so later passes skipped it and the edit never registered.
+  A pass now marks a module tagged only if no edit came in while it loaded. One `"use server"`
+  module that fails to load no longer fails every dev action request: the other modules are still
+  registered, their actions run, and only a request for an action that didn't load gets the
+  error.
+- **Task retries and shutdown.** A backoff (or `maxDelayMs`) past 2^31-1 ms overflowed the timer
+  and retried at once; it is capped at that limit. A failed attempt whose backoff wait was cut
+  short by shutdown was recorded with `will_retry = 1`; whether it retries is now decided after
+  the wait. `runTask(name)` called with no signal now gets one that aborts on server shutdown.
+- **`denext dev` keeps an edited module's two most recently used copies.** Reverting an edit made
+  an older copy current again, but it stayed first in line for removal, so the next edit deleted
+  the copy in use.
+- **`denext generate ci` reads tasks from the parsed `deno.json(c)`.** A pattern match stopped at
+  the first `}`, so a task in the object form (`{ "command": … }`) hid the `check` / `build`
+  tasks after it. The generated `tasks/migrate.ts` runs a migration file that has its own
+  `BEGIN;` / `COMMIT;` as written (wrapped in the runner's transaction it failed), and encodes a
+  file name with `#`, `?` or `%` before building its URL.
+
+### Security
+
+- **`denext migrate --from expo` no longer pastes an app config's scheme or domain into a shell
+  command unchecked.** The suggested `denext mobile add … --scheme … --domain …` line joined the
+  `scheme` and `ios.associatedDomains` values as written, so a hostile `app.json` in someone else's
+  repository became a shell injection for whoever copied the command. Only a URL scheme
+  (`[a-z][a-z0-9+.-]*`) and a host name reach the command now, shell-quoted where needed (a
+  `*.example.com` wildcard); anything else is listed as a manual item, quoted, in the report and
+  in `migrate --check`.
+- **`denext mobile add app-config` writes nothing from the app config as markup or build
+  settings.** The config may come from another repository: an `ios.infoPlist` key ending in
+  `UsageDescription` was written raw into `<key>…</key>` (so it could add any plist entry), an
+  `android.permissions` entry raw into `<uses-permission android:name="…">` (and a `(` in one
+  threw), and `expo-build-properties`' `ios.deploymentTarget` raw into `project.pbxproj` (so it
+  could add a build setting). Plist keys must be letters, digits, `_`, `.`, `-`; permissions
+  letters, digits, `_`, `.`; the deployment target a version (`16`, `16.4`, `16.4.1`); anything
+  else is a `manual` item with the reason, never written. The shared native-config writers
+  (`withPlistString`, `withPlistDefault`, `withPlistStringArray`, `withPlistDictTrue`,
+  `withPlistTrue`, `withManifestPermission`, `withManifestMetaData`,
+  `withManifestApplicationAttribute`, `withDeploymentTargetAtLeast`, `withGradleSdkAtLeast`)
+  refuse such a key, name or permission themselves (null: "set it by hand"), and match a
+  permission or meta-data name literally.
+- **`expo-print`'s web `printAsync({ html })` runs the HTML without script.** It went into a
+  same-origin `srcdoc` iframe with scripts on, so caller HTML ran as the page; the frame is now
+  `sandbox="allow-modals allow-same-origin"` (printing still works; no script runs in it).
+- **macOS `secureStore` items are the app's own.** They were written with `/usr/bin/security`,
+  which the item then trusts, so any program of the same user could read them back with `security
+  find-generic-password -w`, without a prompt. Under denext's pinned runtime (`2.9.7-denext.13`,
+  whose `Deno.desktop.secureStore` is `supported` on macOS) the app's process writes the Keychain
+  item itself: the data-protection keychain when the app is signed with a keychain access group (a
+  provisioning profile), else the login keychain with an access list naming only the app, so
+  another program gets macOS's prompt rather than the secret. In the login keychain a team-signed
+  app also reads an item another program planted or replaced as not there (macOS stamps the
+  writer's partition on the item); an ad-hoc build gets macOS's prompt for one and an unsigned
+  build has no such protection (KNOWN-LIMITATIONS). Items written the old way move over on their
+  first read during the first launch under the runtime's store (read with `security`, stored in
+  the runtime's store, then deleted), so a signed-in user stays signed in (Clerk's client JWT
+  lives here); a write or delete removes the old item too. That launch writes a per-service marker
+  into the runtime's store, and later launches never import a `security` item again: any program
+  of the user can plant one, and a read miss would otherwise hand it to the app as its own value
+  (the remaining window, that first launch, is in KNOWN-LIMITATIONS). A move can't lose the old
+  value: a write over an old item reads its value first (one it can't read fails the write
+  `backend_unavailable` with the item left in place), asks the runtime's store for the key before
+  touching anything (a read, which may show macOS's unlock prompt; a cancel fails the write with
+  the item intact), and puts the item back with its old value if the store fails after the delete
+  (under its own 10 s deadline, so the call's own timeout can't cut the put-back short; a put-back
+  that fails too is logged without the key or value). Each key's secure-store operations run one
+  at a time, so a first-read move can't undo a concurrent write of the same key. An older or the
+  stock runtime keeps the `security` path. On macOS the `secure-store` capability now bakes an
+  unscoped `--allow-sys` (the runtime's store) besides `--allow-run=security`.
+- **Over-the-air UIs are re-verified whenever the shell serves them, not only on arrival.** A
+  downloaded UI was checked once, when it was downloaded, so a file changed on the device
+  afterwards (another app on a rooted or jailbroken device, malware with storage access,
+  corruption) was served at every launch. The OTA plugin (template generation 9) now stores the
+  manifest's signed fields with the files and checks that manifest at every launch, before the
+  first page (the signature with the embedded key, and the version recomputed from the file
+  list), and checks each file's SHA-256 and size the first time it serves it in a process (iOS:
+  `DenextOtaRouter` in front of Capacitor's asset handler; Android: the `RouteProcessor`
+  `DenextOta.prepare` gives the bridge). Hashing on first serve rather than all at launch keeps a
+  large UI's launch cost to the files a page loads (T3 Code's UI is 2,424 files, 41 MB). A
+  mismatch, or a file the manifest does not list, quarantines the version (`quarantine/`), falls
+  back to the bundled UI (or the confirmed download, re-verified) and fires `otaRejected`.
+  Existing apps re-run `denext mobile add-ota` (an unedited plugin is upgraded in place) and ship
+  a new binary. The desktop updater already re-verified the overlay (signature and every file) at
+  every launch; it now has tests for an edited, unsigned or re-signed stored manifest.
+
 ## [3.2.0] - 2026-10-07
 
 ### Breaking
@@ -11109,7 +11683,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.2.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.3.0...development
+[3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0
 [3.1.0]: https://jsr.io/@denext/denext@3.1.0
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2

@@ -44,6 +44,11 @@ export interface DialogRequest {
   readonly defaultValue?: string;
   /** The first field's `inputmode` (from React Native's `keyboardType`). */
   readonly inputMode?: string;
+  /**
+   * Closes the dialog when aborted (`index: null`): the in-page modal, or a queued one before
+   * it opens. A system dialog already up (`@capacitor/dialog`) cannot be closed from the page.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** How a dialog closed. */
@@ -338,6 +343,7 @@ function showWeb(request: DialogRequest): Promise<DialogResult> {
     const finish = (index: number | null) => {
       if (settled) return;
       settled = true;
+      request.signal?.removeEventListener("abort", onAbort);
       card.removeEventListener("keydown", onKey);
       backdrop.removeEventListener("click", onBackdrop);
       backdrop.remove();
@@ -357,6 +363,10 @@ function showWeb(request: DialogRequest): Promise<DialogResult> {
     function onBackdrop(e: DialogEvent): void {
       if (e.target === backdrop && request.cancelable) finish(null);
     }
+    function onAbort(): void {
+      finish(null);
+    }
+    request.signal?.addEventListener("abort", onAbort);
     card.addEventListener("keydown", onKey);
     backdrop.addEventListener("click", onBackdrop);
     backdrop.appendChild(card);
@@ -367,6 +377,8 @@ function showWeb(request: DialogRequest): Promise<DialogResult> {
 
 /** Show `request` now: natively when the plugin is there and it fits, else in the page. */
 async function present(request: DialogRequest): Promise<DialogResult> {
+  // Closed while it waited its turn: it never opens.
+  if (request.signal?.aborted) return { index: null };
   const plugin = nativePlugin<DialogPlugin>("Dialog", ["alert", "confirm", "prompt"]);
   if (plugin && fitsNative(request)) return await showNative(plugin, request);
   return await showWeb(request);
@@ -385,6 +397,9 @@ async function present(request: DialogRequest): Promise<DialogResult> {
  *   and stays inside (Tab wraps), Escape presses the `cancel`-style button (or dismisses when
  *   `cancelable`), Enter in a field presses OK, a destructive button is red, and focus returns
  *   to where it was. Without a document (SSR) it resolves `index: null` at once.
+ *
+ * Aborting `request.signal` closes the in-page modal (or a queued dialog before it opens) with
+ * `index: null`.
  *
  * @param request What to show.
  * @returns How the dialog closed.

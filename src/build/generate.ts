@@ -7,6 +7,7 @@
 
 import { dirname, join, relative } from "@std/path";
 import { detectDockerMode, dockerPlan } from "./docker-template.ts";
+import { ciPlan, migrationPlan, seedPlan } from "./generate-ops.ts";
 import { resolveProject } from "./paths.ts";
 
 /**
@@ -28,10 +29,32 @@ export const GENERATE_KINDS = [
   "task",
   "test",
   "docker",
+  "migration",
+  "seed",
+  "ci",
 ] as const;
 
 /** The artifacts `denext generate` can scaffold. */
 export type GenerateKind = typeof GENERATE_KINDS[number];
+
+/**
+ * Kinds whose name is optional — the CLI verb and the `denext ui` picker both refuse a missing
+ * name for every other kind. `docker`, `seed` and `ci` take an optional flavor override in the
+ * name slot; the App Router boundaries default to the root segment; `middleware` has nothing
+ * to name.
+ */
+export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKind>([
+  "docker",
+  "middleware",
+  "loading",
+  "error",
+  "not-found",
+  "seed",
+  "ci",
+]);
+
+/** The kinds that write project-root ops files (no App Router `app/` dir needed). */
+type OpsKind = "docker" | "migration" | "seed" | "ci";
 
 /** One file a generate run would produce. */
 export interface GeneratePreviewFile {
@@ -296,16 +319,11 @@ async function planArtifacts(
   kind: GenerateKind,
   name: string,
 ): Promise<GeneratePreviewFile[]> {
-  // Docker assets live at the project root and don't need an App Router `app/` dir (a SPA
-  // app may not have one), so handle them before `resolveProject`. `name`, when present,
-  // is the mode override (`server` | `spa`).
-  if (kind === "docker") {
-    const mode = await detectDockerMode(projectDir, name || undefined);
-    return (await dockerPlan(projectDir, { mode })).map(({ path, contents }) => ({
-      path,
-      contents,
-    }));
-  }
+  // Docker, migration, seed and CI files live at the project root and don't need an App
+  // Router `app/` dir (a SPA app may not have one), so handle them before `resolveProject`.
+  // `name`, when present, is the override (`server` | `spa`, the data flavor, the provider) —
+  // or, for a migration, its name.
+  if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name);
   const paths = await resolveProject(projectDir);
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
   // Reject `..` path components early with a clear message (safeJoin also guards).
@@ -314,6 +332,33 @@ async function planArtifacts(
   }
   const target = artifactTarget(kind, name, segment, projectDir, paths.appDir);
   return target ? [{ path: target.path, contents: target.content }] : [];
+}
+
+function isOpsKind(kind: GenerateKind): kind is OpsKind {
+  return kind === "docker" || kind === "migration" || kind === "seed" || kind === "ci";
+}
+
+/** The project-root ops scaffolds (Docker, migrations, seeds, CI); `name` is the override. */
+async function opsPlan(
+  projectDir: string,
+  kind: OpsKind,
+  name: string,
+): Promise<GeneratePreviewFile[]> {
+  switch (kind) {
+    case "docker": {
+      const mode = await detectDockerMode(projectDir, name || undefined);
+      return (await dockerPlan(projectDir, { mode })).map(({ path, contents }) => ({
+        path,
+        contents,
+      }));
+    }
+    case "migration":
+      return await migrationPlan(projectDir, name);
+    case "seed":
+      return await seedPlan(projectDir, name);
+    case "ci":
+      return await ciPlan(projectDir, name);
+  }
 }
 
 /**
@@ -356,7 +401,7 @@ export async function generateArtifact(
  * the source base (`src/` when present, else the project root).
  */
 function artifactTarget(
-  kind: Exclude<GenerateKind, "docker">,
+  kind: Exclude<GenerateKind, OpsKind>,
   name: string,
   segment: string,
   projectDir: string,

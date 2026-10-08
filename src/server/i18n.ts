@@ -9,6 +9,7 @@
 
 import type { Middleware } from "./middleware.ts";
 import { next, redirectResponse } from "./middleware.ts";
+import { currentContext } from "./request-context.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** Internationalization configuration. */
@@ -183,6 +184,9 @@ export function parseAcceptLanguage(header: string | null): string[] {
  * matches a supported `fr`).
  */
 export function detectLocale(request: Request, i18n: I18nConfig): string {
+  // The answer depends on the visitor, not the URL: no shared-cache header for this response.
+  const ctx = currentContext();
+  if (ctx) ctx.localeNegotiated = true;
   const supported = new Set(i18n.locales);
 
   // 1. Explicit cookie preference.

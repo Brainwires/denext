@@ -107,6 +107,6 @@ export async function resolveFlightLoader(
   const load = (url: string) => tagVia(url.startsWith("file:") ? fromFileUrl(url) : url);
   const scope = config.tagScope?.() ?? "";
   await timed("tagClientModules", () => tagClientModules(flightClients, load, scope));
-  if (flightServers) await tagServerModules(flightServers, load);
+  if (flightServers) await tagServerModules(flightServers, load, scope);
   return { useFlight, pageLoad: config.load };
 }

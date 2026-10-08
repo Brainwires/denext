@@ -59,6 +59,18 @@ const RNW: Record<string, string> = {
     'export default "RNW_PRESS";\n',
   // react-native-web's own SafeAreaView (replaced by the overlay).
   "node_modules/react-native-web/dist/exports/SafeAreaView/index.js": 'export default "RNW_SAV";\n',
+  // The modules it vendors from React Native and its asset registry (React Native 0.88's
+  // `EventEmitter`, `VirtualizedSectionList` and `AssetRegistry`), and the list primitives.
+  "node_modules/react-native-web/dist/vendor/react-native/vendor/emitter/EventEmitter.js":
+    "export default class EventEmitter { listenerCount() { return 0; } }\n",
+  "node_modules/react-native-web/dist/vendor/react-native/VirtualizedSectionList/index.js":
+    'export default "RNW_VSL";\n',
+  "node_modules/react-native-web/dist/modules/AssetRegistry/index.js":
+    "var assets = [];\nexport function registerAsset(a) { return assets.push(a); }\n" +
+    "export function getAssetByID(id) { return assets[id - 1]; }\n",
+  "node_modules/react-native-web/dist/exports/StyleSheet/index.js": 'export default "RNW_SHEET";\n',
+  "node_modules/react-native-web/dist/exports/RefreshControl/index.js":
+    'export default "RNW_RC";\n',
   "all.js": `import * as RN from "react-native";
 import requireDeep from "react-native/Libraries/ReactNative/requireNativeComponent";
 import * as Systrace from "react-native/Libraries/Performance/Systrace";
@@ -82,6 +94,8 @@ const STAND_INS: Record<string, string> = {
     ),
     "export function createAnimatedHook(Animated, kind) {\n" +
     "  return function hook(v) { return new Animated[kind](v); };\n}\n",
+    "export function createVirtualizedSectionList(p) {\n" +
+    '  return "DENEXT_VSL(" + p.View + "," + p.StyleSheet + ")";\n}\n',
   ].join(""),
   "react-dom": "export function unstable_batchedUpdates(fn, a) { return fn(a); }\n",
 };
@@ -204,6 +218,34 @@ Deno.test("react-native entry: every added name binds from its source", async ()
   assertEquals(Registry.unstable_hasStaticViewConfig("X"), false);
   assertEquals((RN.DevMenu as { show(): void }).show(), undefined);
   assertEquals(RN.CodegenTypes, {});
+  assertEquals(Systrace.trace("x", () => 7), 7, "Systrace.trace runs the function");
+  assertEquals(
+    (mod.Systrace as Record<string, (n: string, f: () => number) => number>)
+      .trace("y", () => 8),
+    8,
+  );
+});
+
+Deno.test("react-native entry: EventEmitter, VirtualizedSectionList and AssetRegistry (React Native 0.88)", async () => {
+  const { mod } = await bundle("all.js");
+  const RN = mod.RNs as Record<string, unknown>;
+  const Emitter = RN.EventEmitter as new () => { listenerCount(): number };
+  assertEquals(new Emitter().listenerCount(), 0, "react-native-web's vendored EventEmitter");
+  assertEquals(
+    RN.VirtualizedSectionList,
+    "DENEXT_VSL(RNW_VIEW,RNW_SHEET)",
+    "the vendored VirtualizedSectionList loads as denext's adapter",
+  );
+  const assets = RN.AssetRegistry as {
+    registerAsset(a: unknown): number;
+    getAssetByID(id: number): unknown;
+  };
+  const id = assets.registerAsset({ name: "logo" });
+  assertEquals(id, 1, "ids start at 1 (truthy), as in React Native");
+  assertEquals(assets.getAssetByID(id), { name: "logo" });
+  const bare = (await bundle("all.js", true)).mod.names as string[];
+  assert(bare.includes("EventEmitter") && bare.includes("AssetRegistry"));
+  assert(!bare.includes("VirtualizedSectionList"), "its adapter needs the overlay");
 });
 
 Deno.test("react-native entry: unused additions tree-shake away", async () => {

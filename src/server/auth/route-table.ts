@@ -35,7 +35,8 @@ import { handleCredentials } from "./routes-credentials.ts";
 import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
 import { nativeRoutes } from "./routes-native.ts";
-import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
+import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes-oauth.ts";
+import { passkeyRoutes } from "./routes-passkeys.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
   type AuthRoute,
@@ -116,8 +117,9 @@ type CallbackHandler<P extends AuthProvider> = (
 
 /**
  * `{basePath}/callback/:provider`, per provider type: the verbs it answers. GET is the
- * OAuth/OIDC redirect back and the magic-link click; POST the Credentials sign-in and the
- * email send/redeem. A verb missing here is a `405`.
+ * OAuth/OIDC redirect back and the magic-link click; POST the Credentials sign-in, the
+ * email send/redeem, and a `responseMode: "form_post"` provider's response (a query-mode
+ * provider answers that POST `405` itself). A verb missing here is a `405`.
  */
 const CALLBACKS: {
   readonly [T in AuthProvider["type"]]: Partial<
@@ -126,8 +128,8 @@ const CALLBACKS: {
 } = {
   credentials: { POST: handleCredentials },
   email: emailCallbacks,
-  oauth: { GET: handleOAuthCallback },
-  oidc: { GET: handleOAuthCallback },
+  oauth: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
+  oidc: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
 };
 
 /** Whether `method` is a verb some callback answers. */
@@ -190,6 +192,9 @@ const declaredRoutes: readonly AuthRoute[] = [
   // The second factor: POST `/mfa`, `/mfa/enroll`, `/mfa/confirm`, `/mfa/disable` — each
   // spends the per-user MFA budget itself, and answers `null` without the MFA group.
   ...mfaRoutes,
+  // Passkeys (`passkeys` config): registration and sign-in ceremonies, list and delete. They
+  // answer `null` when the feature isn't configured.
+  ...passkeyRoutes,
   // Native app sessions (`native` config): authorize/complete in the browser sheet, the token /
   // revoke / nonce calls, native Apple/Google id_token sign-in — plus `POST /account/delete`.
   // They answer `null` when the feature (or the adapter group behind it) isn't configured.

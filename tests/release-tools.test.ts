@@ -181,3 +181,13 @@ Deno.test("relinkDocsPages rewrites the pages that link a folded anchor, and hon
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("the release regenerates the plugin catalog the bump makes stale, before the corpus", async () => {
+  const { RELEASE_REGEN_TASKS } = await import("../scripts/release.ts");
+  const deno = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
+  for (const task of RELEASE_REGEN_TASKS) assert(task in deno.tasks, `${task} is a deno task`);
+  const at = (t: string) => RELEASE_REGEN_TASKS.indexOf(t);
+  assert(at("gen:plugin-catalog") >= 0, "the catalog is regenerated");
+  assert(at("gen:plugin-catalog") < at("docs:corpus"), "before the corpus that reads it");
+  assert(at("docs:mcp") < at("docs:corpus"), "the MCP page feeds the corpus");
+});

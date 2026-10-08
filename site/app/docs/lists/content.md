@@ -794,17 +794,37 @@ styles resolve as they would on a `View`.
 the engine scrolls to the estimate, measures, and corrects. Code that uses the callback to
 retry keeps working; the retry never runs.
 
-**Not provided:**
+**Custom scroll views.** `renderScrollComponent` (all five lists) renders the list inside the
+app's own scroll view, a `ScrollView`, `Animated.ScrollView` or a keyboard-aware one: the
+element it returns gets the list's ref and the items as children, as React Native's
+`VirtualizedList` clones it, and its scroll node becomes the list's scroller. It receives the
+list's props (`style`, `horizontal`, `refreshControl`, the indicator and keyboard props) without
+the scroll callbacks, `onLayout` and `onContentSizeChange`, which the list reports itself, so
+none fires twice. FlashList takes a component or a function, as v2 does.
 
-- `renderScrollComponent`: the scroller is the list's own element.
-- `automaticallyAdjustKeyboardInsets` (pass the keyboard's height as `keyboardInset` on a
-  `VirtualList`, or wrap the list in `KeyboardAvoidingView`).
-- FlashList's benchmark utilities.
-- LegendList's `anchoredEndSpace`, `onItemSizeChanged`, `onMetricsChange` and `snapToIndices`.
+**The keyboard.** `automaticallyAdjustKeyboardInsets` adds room after the last item for the part
+of a vertical list the on-screen keyboard covers (at the bottom, also when `inverted`), so every
+item scrolls above it, and a list resting at its end stays there. Where the web view resizes
+around the keyboard (Android, the iOS shell's default) nothing overlaps and nothing is added.
+
+**LegendList's layout reports.** `anchoredEndSpace` keeps an anchor item at the viewport's start
+by adding room after the last item (the viewport minus the items from the anchor on, the footer
+and the content's end padding), with `onSizeChanged` and `onReady` as LegendList calls them; the
+items from the anchor on stay rendered. `onItemSizeChanged` reports each measured size change
+with the item, `onMetricsChange` the header's and footer's sizes, and `snapToIndices` makes those
+items snap points (with the content's start and end, unless `snapToStart` / `snapToEnd` is
+`false`).
+
+**FlashList's benchmark.** `useBenchmark`, `useFlatListBenchmark`, `useDataMultiplier`,
+`JSFPSMonitor`, `autoScroll` and `Cancellable` run as on a device: the list scrolls to its end and
+back at a fling's speed while animation frames are counted, then the callback gets the frame
+rate and FlashList's suggestions. For a profile of a route, use `denext profile`.
 
 `deno task parity:native` checks every adapter's props, ref methods and exports against the
-pinned React Native 0.86.3, react-native-web 0.21.2, FlashList 2.3.2 and LegendList 3.4.0, and
-lists these gaps in `scripts/parity/native/baselines/lists.known-gaps.json`.
+pinned React Native 0.86.3, react-native-web 0.21.2, FlashList 2.3.2 and LegendList 3.4.0. None
+is missing: `scripts/parity/native/baselines/lists.known-gaps.json` is empty. SectionList's
+`data`, `getItem` and `getItemCount` are waived: its type inherits them, but React Native's
+`SectionList` never reads them (the items come from `sections`).
 
 ### The escape hatch
 

@@ -14,7 +14,8 @@
  * - The `users` + `accounts` methods are **required**; every other group is optional
  *   and gates the feature that needs it (verification tokens gate email verification /
  *   password reset / magic links, `getCredential`/`setCredential` gate first-party
- *   password storage, the api-token group gates bearer tokens, the MFA group gates TOTP).
+ *   password storage, the api-token group gates bearer tokens, the MFA group gates TOTP,
+ *   the passkey group gates WebAuthn).
  *
  * @module
  */
@@ -114,7 +115,12 @@ export interface ApiTokenRecord {
 export interface MfaRecord {
   /** The owning {@linkcode AdapterUser.id}. */
   userId: string;
-  /** The base32 TOTP secret. Stored in plaintext — see the auth KNOWN-LIMITATIONS entry. */
+  /**
+   * The TOTP secret **sealed** by the MFA layer: `totp.v1.<nonce>.<ciphertext>` (AES-256-GCM
+   * under a key derived from the auth `secret`). Store it as an opaque string. A row written
+   * before sealing existed holds the plaintext base32 secret; it is still read, and re-sealed
+   * through {@linkcode AuthAdapter.replaceMfaSecret}. `""` marks a disabled factor.
+   */
   secret: string;
   /** When enrollment was confirmed (epoch seconds); `undefined` while pending. */
   confirmedAt?: number;
@@ -122,6 +128,51 @@ export interface MfaRecord {
   backupCodeHashes: string[];
   /** The last TOTP step already spent, for the replay guard. */
   lastStep?: number;
+}
+
+/**
+ * A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, "credential record"):
+ * what verifying its later assertions needs. Nothing in it is secret: the public key verifies,
+ * it cannot sign.
+ */
+export interface PasskeyRecord {
+  /** The credential ID, base64url — the primary key; globally unique (§7.1 step 25). */
+  id: string;
+  /** The owning {@linkcode AdapterUser.id}. */
+  userId: string;
+  /** The credential public key as a COSE_Key, base64url. */
+  publicKey: string;
+  /** Its COSE algorithm: `-7` (ES256), `-257` (RS256) or `-8` (EdDSA). */
+  alg: number;
+  /** The last signature counter seen (§6.1.1); `0` for an authenticator without one. */
+  signCount: number;
+  /** The BE flag at registration — fixed for the credential's life (§7.2 step 18). */
+  backupEligible: boolean;
+  /** The BS flag as last seen: whether the credential is currently synced / backed up. */
+  backedUp: boolean;
+  /** The transports the client reported (`"internal"`, `"hybrid"`, `"usb"`, …). */
+  transports?: string[];
+  /** The authenticator model's AAGUID (hex), when it reported one. */
+  aaguid?: string;
+  /** A label the user gave it ("MacBook", "YubiKey"). */
+  name?: string;
+  /** Registration time, epoch seconds. */
+  createdAt: number;
+  /** Last successful sign-in with it, epoch seconds. */
+  lastUsedAt?: number;
+}
+
+/**
+ * A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with
+ * the ceremony it belongs to.
+ */
+export interface PasskeyChallengeRecord {
+  /** SHA-256 (hex) of the base64url challenge. */
+  hash: string;
+  /** Expiry, epoch seconds. */
+  expiresAt: number;
+  /** Opaque payload the flow wants back (JSON: the ceremony, its user, its browser binding). */
+  data: string;
 }
 
 /**
@@ -195,8 +246,11 @@ export interface VerificationTokenRef {
  * not a read followed by a write. Two racing requests must see exactly one success:
  * {@linkcode AuthAdapter.useVerificationToken} (delete-and-return),
  * {@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and
- * {@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). A non-atomic implementation
- * turns each of them into a replay window.
+ * {@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). So are the passkey group's
+ * {@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),
+ * {@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and
+ * {@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic
+ * implementation turns each of them into a replay window.
  */
 export interface AuthAdapter {
   // ---- users (required) ----------------------------------------------------
@@ -344,8 +398,11 @@ export interface AuthAdapter {
    * Revoke a bearer token (optional).
    *
    * @param id The token id.
+   * @returns `true` when a token that wasn't revoked yet was revoked, `false` for an unknown or
+   *   already revoked id. (An adapter that returns nothing is taken to have revoked it, so
+   *   `apiTokenRevoked` fires for every call — return the boolean.)
    */
-  revokeApiToken?(id: string): MaybePromise<void>;
+  revokeApiToken?(id: string): MaybePromise<boolean | void>;
 
   /**
    * A user's bearer tokens (optional). Implementations never return the secret.
@@ -381,6 +438,20 @@ export interface AuthAdapter {
    * @param userId The owner.
    */
   deleteMfa?(userId: string): MaybePromise<void>;
+
+  /**
+   * **Atomically** replace a user's stored TOTP secret, only while it still equals
+   * `expected` (optional) — how a legacy plaintext secret, or one sealed under a rotated-out
+   * auth `secret`, is re-sealed when it is read. A compare-and-swap of that one field, never a
+   * whole-record write: a concurrent `claimTotpStep` or `consumeBackupCode` must not be undone.
+   * Without it, such a secret stays in its old (still readable) form.
+   *
+   * @param userId The owner.
+   * @param expected The stored secret as it was read.
+   * @param next The re-sealed secret to store.
+   * @returns `true` when the secret was replaced; `false` when it had changed meanwhile.
+   */
+  replaceMfaSecret?(userId: string, expected: string, next: string): MaybePromise<boolean>;
 
   /**
    * **Atomically** spend one backup code. Backup codes are stored salted-and-hashed, so
@@ -485,6 +556,75 @@ export interface AuthAdapter {
    * @param userId The owner.
    */
   revokeNativeSessionsByUser?(userId: string): MaybePromise<void>;
+
+  // ---- passkeys (optional) ---------------------------------------------------
+
+  /**
+   * Store a newly registered passkey (optional; the passkey group gates
+   * `denextAuth({ passkeys })`). **Atomic** against a duplicate ID: when a credential with
+   * this `id` is already registered — to anyone — store nothing and return `false`
+   * (WebAuthn L3 §7.1 step 25).
+   *
+   * @param record The credential record.
+   * @returns `true` when stored, `false` when the ID was taken.
+   */
+  createPasskey?(record: PasskeyRecord): MaybePromise<boolean>;
+
+  /**
+   * A passkey by credential ID.
+   *
+   * @param id The base64url credential ID.
+   * @returns The record, or `undefined`.
+   */
+  getPasskey?(id: string): MaybePromise<PasskeyRecord | undefined>;
+
+  /**
+   * A user's passkeys, oldest first.
+   *
+   * @param userId The owner.
+   * @returns The records.
+   */
+  listPasskeys?(userId: string): MaybePromise<PasskeyRecord[]>;
+
+  /**
+   * **Atomically** record a verified assertion: a compare-and-swap that writes `update` only
+   * while the stored `signCount` is still `fromSignCount`, so two assertions racing on one
+   * counter value can't both pass the clone check.
+   *
+   * @param id The credential ID.
+   * @param fromSignCount The counter the assertion was verified against.
+   * @param update The new counter, backup state and last-use time.
+   * @returns `true` when this call wrote the update.
+   */
+  updatePasskey?(
+    id: string,
+    fromSignCount: number,
+    update: { signCount: number; backedUp: boolean; lastUsedAt: number },
+  ): MaybePromise<boolean>;
+
+  /**
+   * Remove a passkey. Removing an unknown one is not an error.
+   *
+   * @param id The credential ID.
+   */
+  deletePasskey?(id: string): MaybePromise<void>;
+
+  /**
+   * Store a single-use WebAuthn challenge.
+   *
+   * @param record The challenge's hash, expiry and ceremony.
+   */
+  createPasskeyChallenge?(record: PasskeyChallengeRecord): MaybePromise<void>;
+
+  /**
+   * **Atomically** redeem a challenge: delete it and return what it was, or `undefined` when
+   * absent. Two concurrent redemptions must produce exactly one record; an expired one is
+   * consumed too but resolves `undefined`.
+   *
+   * @param hash SHA-256 (hex) of the presented challenge.
+   * @returns The consumed record, or `undefined`.
+   */
+  usePasskeyChallenge?(hash: string): MaybePromise<PasskeyChallengeRecord | undefined>;
 
   // ---- account deletion (optional) -----------------------------------------
 

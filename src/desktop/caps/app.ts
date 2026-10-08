@@ -315,6 +315,10 @@ export function createAppController(options: AppControllerOptions): AppControlle
             badge: typeof dock?.setBadge === "function",
             badgeShows: facts.badge,
             badgeReason: facts.badgeReason,
+            sandbox: facts.sandbox,
+            sandboxReason: facts.sandboxReason,
+            fileChooser: facts.fileChooser,
+            fileChooserReason: facts.fileChooserReason,
             bounce: typeof dock?.bounce === "function",
             dockMenu: dockMenuWorks(),
           };

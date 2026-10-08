@@ -1061,13 +1061,6 @@ Deno.test("secureStoreCommand: per-OS argv; the secret is stdin on every OS, nev
   );
   assertEquals(secureStoreCommand("darwin", "get", "svc", "tok").args[0], "find-generic-password");
 
-  const lin = secureStoreCommand("linux", "set", "svc", "tok", "QjY0");
-  assertEquals(lin.cmd, "secret-tool");
-  assertEquals(lin.args[0], "store");
-  assertEquals(lin.stdin, "QjY0"); // secret on stdin, never argv
-  assert(!lin.args.includes("QjY0"));
-  assertEquals(secureStoreCommand("linux", "get", "svc", "tok").args[0], "lookup");
-
   // Windows (WinRT PasswordVault via powershell.exe): the script is CONSTANT and every value
   // travels in the stdin JSON — powershell.exe -Command joins trailing argv into the command text,
   // so service/key/secret must never appear in argv.
@@ -1196,10 +1189,10 @@ Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON pay
   assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
-Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (secret-tool getopt)", async () => {
+Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (CLI getopt)", async () => {
   const cap = secureStoreCapability({
     service: "svc",
-    os: "linux",
+    os: "windows",
     run: () => {
       throw new Error("the runner must not be reached for an invalid key");
     },
@@ -1215,7 +1208,7 @@ Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is re
   let reached = false;
   const ok = secureStoreCapability({
     service: "svc",
-    os: "linux",
+    os: "windows",
     run: () => {
       reached = true;
       return Promise.resolve({ code: 1, stdout: "" });
@@ -2029,12 +2022,11 @@ Deno.test("isRefusedDownloadHost: malformed IPv4 and mapped forms are not mistak
 
 // --- secureStore: argv, read-back and the real runner ------------------------
 
-Deno.test("secureStoreCommand: Linux delete is `secret-tool clear`; a missing secret is empty stdin", () => {
-  assertEquals(secureStoreCommand("linux", "delete", "svc", "tok"), {
-    cmd: "secret-tool",
-    args: ["clear", "service", "svc", "account", "tok"],
-  });
-  assertEquals(secureStoreCommand("linux", "set", "svc", "tok").stdin, "");
+Deno.test("secureStoreCommand: a missing secret is an empty value; macOS delete argv", () => {
+  assertEquals(
+    JSON.parse(secureStoreCommand("windows", "set", "svc", "tok").stdin!).value,
+    null,
+  );
   assertEquals(
     secureStoreCommand("darwin", "set", "svc", "tok").stdin,
     'add-generic-password -U -a "tok" -s "svc" -w ""\n',
@@ -2053,10 +2045,8 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   let code = 0;
   const cap = secureStoreCapability({
     service: "svc",
-    os: "linux",
-    // `search` (the locked-keyring double-check after a silent miss) finds nothing.
-    run: (_cmd, args) =>
-      Promise.resolve(args[0] === "search" ? { code: 0, stdout: "" } : { code, stdout }),
+    os: "windows",
+    run: () => Promise.resolve({ code, stdout }),
   });
   assertEquals(await call(cap, "get", { key: "k" }), null, "empty stdout");
   stdout = "%%% not base64 %%%";

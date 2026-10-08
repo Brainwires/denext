@@ -14,6 +14,11 @@ import {
   registerInMainActivity,
 } from "../src/build/mobile-native-install.ts";
 import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
+import {
+  composedMainActivitiesAt,
+  MAIN_ACTIVITY_PACKAGE,
+  preparedMainActivityAt,
+} from "./_release-templates.ts";
 
 /** The features releases before the marker line registered (their shapes are pinned by hash). */
 const FEATURES: readonly AndroidFeature[] = ["share-receive", "widgets", "auth-session", "ota"];
@@ -103,7 +108,7 @@ async function assertUpgrades(
       label,
     );
     // Only a file already at this release's generation is not an upgrade.
-    const current = text.startsWith("// denext-main-activity-template: 4 ");
+    const current = text.startsWith("// denext-main-activity-template: 5 ");
     assertEquals(report.upgraded, current ? [] : [path], label);
   });
 }
@@ -111,7 +116,7 @@ async function assertUpgrades(
 Deno.test("MainActivity: written under an intact marker line, package on the next line", async () => {
   for (const set of combinations()) {
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 4 sha256="), set.join("+"));
+    assert(text.startsWith("// denext-main-activity-template: 5 sha256="), set.join("+"));
     assertEquals(await markedTemplateIntact("main-activity", text), true);
     assert(unmarked(text).startsWith("package com.example.app;\n"));
   }
@@ -119,7 +124,7 @@ Deno.test("MainActivity: written under an intact marker line, package on the nex
 
 Deno.test("MainActivity: every pre-marker shape upgrades to the current source, any package", async () => {
   // Releases before the marker wrote exactly today's body (their hashes are pinned in
-  // SHIPPED_MAIN_ACTIVITY_SHA256; the git-backed test below checks them against the tags).
+  // SHIPPED_MAIN_ACTIVITY_SHA256; the release-fixture test below checks them against what shipped).
   for (const pkg of PACKAGES) {
     for (const set of combinations()) {
       const old = beforeRecovery(unmarked(await mainActivitySource(pkg, new Set(set))));
@@ -353,77 +358,18 @@ Deno.test("MainActivity: a marked one registering a plugin this release does not
   });
 });
 
-/** Whether this checkout has the release tags (a shallow CI clone may not). */
-async function hasTag(tag: string): Promise<boolean> {
-  try {
-    const out = await new Deno.Command("git", {
-      args: ["rev-parse", "-q", "--verify", `refs/tags/${tag}`],
-    }).output();
-    return out.success;
-  } catch {
-    return false;
-  }
-}
-
-/** `git show <tag>:<path>` as text. */
-async function showAt(tag: string, path: string): Promise<string> {
-  const out = await new Deno.Command("git", { args: ["show", `${tag}:${path}`] }).output();
-  assert(out.success, `git show ${tag}:${path}`);
-  return new TextDecoder().decode(out.stdout);
-}
-
-/** The OTA-only MainActivity `add-ota` wrote at `tag` (v2.7.0 … v2.9.0: `preparedMainActivity`). */
-async function preparedMainActivityAt(tag: string, pkg: string): Promise<string> {
-  const src = await showAt(tag, "src/build/mobile-ota-install.ts");
-  const m = /function preparedMainActivity\(pkg: string\): string \{\n {2}return `([\s\S]*?)`;\n\}/
-    .exec(src);
-  assert(m, `${tag}: preparedMainActivity`);
-  return m[1].replace("${pkg}", pkg);
-}
-
-/** `mainActivitySource` for every feature combination of `tag` (v2.10.0-rc.1 …). */
-async function composedMainActivitiesAt(
-  tag: string,
-  pkg: string,
-): Promise<Array<{ set: AndroidFeature[]; text: string }>> {
-  const dir = await Deno.makeTempDir({ prefix: "denext_main_activity_tag_" });
-  try {
-    const archive = new Deno.Command("git", {
-      args: ["archive", tag, "src/build"],
-      stdout: "piped",
-    }).spawn();
-    const untar = new Deno.Command("tar", { args: ["-x", "-C", dir], stdin: "piped" }).spawn();
-    await archive.stdout.pipeTo(untar.stdin);
-    assert((await archive.status).success && (await untar.status).success, `git archive ${tag}`);
-    const file = join(dir, "src/build/mobile-native-install.ts");
-    const src = await Deno.readTextFile(file);
-    const order = JSON.parse(
-      /const FEATURE_ORDER[^=]*= (\[[\s\S]*?\]);/.exec(src)![1].replace(/,\s*\]/, "]"),
-    ) as AndroidFeature[];
-    const mod = await import(`file://${file}`);
-    const out: Array<{ set: AndroidFeature[]; text: string }> = [];
-    for (let mask = 1; mask < 1 << order.length; mask++) {
-      const set = order.filter((_, i) => mask & (1 << i));
-      out.push({ set, text: await mod.mainActivitySource(pkg, new Set(set)) });
-    }
-    return out;
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-}
-
 Deno.test({
   name: "MainActivity: what v2.7.0 … v2.10.0-rc.3 wrote upgrades to the current source",
-  ignore: !(await hasTag("v2.10.0-rc.3")),
   async fn() {
-    const pkg = "com.brainwires.t3code";
+    // From the committed fixture (tests/_release-templates.ts), so this runs in CI's tagless clone.
+    const pkg = MAIN_ACTIVITY_PACKAGE;
     for (const tag of ["v2.7.0", "v2.7.1", "v2.8.0", "v2.8.1", "v2.8.2", "v2.8.3", "v2.9.0"]) {
-      const old = await preparedMainActivityAt(tag, pkg);
+      const old = preparedMainActivityAt(tag, pkg);
       await assertUpgrades(pkg, old, "widgets", new Set(["ota", "widgets"]), tag);
     }
     let shapes = 0;
     for (const tag of ["v2.10.0-rc.1", "v2.10.0-rc.2", "v2.10.0-rc.3"]) {
-      for (const { set, text } of await composedMainActivitiesAt(tag, pkg)) {
+      for (const { set, text } of composedMainActivitiesAt<AndroidFeature>(tag)) {
         const label = `${tag} ${set.join("+")}`;
         // Adding a feature it lacks, and re-adding one it has (brought up to date either way).
         const missing = FEATURES.find((f) => !set.includes(f)) ?? "ota";

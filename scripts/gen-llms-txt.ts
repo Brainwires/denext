@@ -16,6 +16,10 @@ import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT_DIR = `${ROOT}site/public`;
+/** Where the concise index is committed (the static export serves it at /llms.txt). */
+export const LLMS_OUT = `${OUT_DIR}/llms.txt`;
+/** Where the full guide is committed (served at /llms-full.txt). */
+export const LLMS_FULL_OUT = `${OUT_DIR}/llms-full.txt`;
 const SITE = "https://denext.dev";
 const REPO = "https://github.com/Brainwires/denext";
 
@@ -61,6 +65,9 @@ export function llmsIndex(): string {
 - [API reference](${SITE}/docs/api): every public symbol with signatures.
 - [Examples](${SITE}/docs/examples): every runnable example app, one page each
   (\`/docs/examples/<name>\`) with its README and the commands that run it.
+- [Fixed in denext](${SITE}/docs/fixed): problems on Next.js, React, Vite and React Native
+  stacks that denext handles, each with the test that proves it (source:
+  \`catalog/fixed-in-denext.json\`).
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.
 - [GitHub](${REPO}): source, examples, and issues.
 
@@ -73,6 +80,8 @@ export function llmsIndex(): string {
   running dev server's errors + console, render a route/component server-side, and search or
   read every docs page and API symbol offline (\`denext_search_docs\` / \`denext_read_docs\`).
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: \`denext migrate\`.
+  \`denext migrate --check [--json]\` reports what it would change and what won't migrate,
+  writing nothing.
 `;
 }
 
@@ -108,7 +117,7 @@ export async function llmsFull(): Promise<string> {
 
 if (import.meta.main) {
   await Deno.mkdir(OUT_DIR, { recursive: true });
-  await Deno.writeTextFile(`${OUT_DIR}/llms.txt`, llmsIndex());
-  await Deno.writeTextFile(`${OUT_DIR}/llms-full.txt`, await llmsFull());
+  await Deno.writeTextFile(LLMS_OUT, llmsIndex());
+  await Deno.writeTextFile(LLMS_FULL_OUT, await llmsFull());
   console.log(`Wrote ${OUT_DIR}/llms.txt and llms-full.txt`);
 }

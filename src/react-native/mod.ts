@@ -23,9 +23,20 @@
 export { AccessibilityInfo } from "./accessibility-info.ts";
 export { ActionSheetIOS } from "./action-sheet-ios.ts";
 export { Alert } from "./alert.ts";
+export { withAppRegistry } from "./app-registry.ts";
 export { AppState } from "./app-state.ts";
 export { BackHandler } from "./back-handler.ts";
 export { createAnimatedHook, DevSettings, RootTagContext } from "./core-extras.ts";
+export {
+  DeviceInfo,
+  ReactNativeVersion,
+  UTFSequence,
+  VirtualViewMode,
+  withLayoutAnimationStatics,
+  withLogBoxStatics,
+} from "./core-statics.ts";
+export { Networking } from "./networking.ts";
+export { usePressability } from "./pressability.ts";
 export { Clipboard, Share, Vibration } from "./device-apis.ts";
 export {
   AppTheme,
@@ -50,11 +61,12 @@ export { Platform } from "./platform.ts";
 export { DynamicColorIOS, PlatformColor } from "./platform-color.ts";
 export { createRefreshControl } from "./refresh-control.ts";
 export { createFlatList } from "./lists/flat-list.ts";
-export { createSectionList } from "./lists/section-list.ts";
+export { createSectionList, createVirtualizedSectionList } from "./lists/section-list.ts";
 export { createVirtualizedList } from "./lists/virtualized.ts";
 export { createNativeSafeAreaProvider, createSafeAreaView } from "./safe-area.ts";
 export { withScrollSnap } from "./scroll-snap.ts";
 export { StatusBar } from "./status-bar.ts";
+export { processStyleAttributes, withStyleSheetStatics } from "./style-attributes.ts";
 export { ToastAndroid } from "./toast-android.ts";
 export { createTouchableNativeFeedback } from "./touchable-native-feedback.ts";
 export { DrawerLayoutAndroid, Settings } from "./android-compat.ts";

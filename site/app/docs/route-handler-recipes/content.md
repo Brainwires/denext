@@ -191,49 +191,33 @@ send. What denext does not give you on a raw socket: authorization that
 re-checks over time, per-connection limits, back-pressure, fan-out across
 instances. Those are what Live channels are.
 
-## CORS preflight by hand
+## CORS and CSRF
 
-`OPTIONS` is a routable method, so a preflight is a handler like any other.
-There is no `cors()` helper yet (it is on the
-[roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md)); this is
-the whole thing for one allowed origin:
+You rarely write a preflight by hand. The app's `cors` config covers every API
+route, a route narrows or lifts it with `export const cors = { … } | false`, and
+one endpoint takes its own policy with the `cors()` middleware:
 
 ```ts
 // app/api/public/route.ts
-const ALLOWED = new Set(["https://app.example.com"]);
+import { cors, createApi, csrf } from "denext/server";
 
-function corsHeaders(origin: string | null): HeadersInit {
-  if (!origin || !ALLOWED.has(origin)) return {};
-  return {
-    "access-control-allow-origin": origin,
-    "access-control-allow-credentials": "true",
-    "vary": "Origin",
-  };
-}
+const api = createApi()
+  .use(cors({ origins: ["https://app.example.com"], credentials: true }))
+  .use(csrf({ allowedOrigins: ["https://app.example.com"] }));
 
-export function OPTIONS(request: Request): Response {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      ...corsHeaders(request.headers.get("origin")),
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "content-type, authorization",
-      "access-control-max-age": "86400",
-    },
-  });
-}
-
-export async function GET(request: Request): Promise<Response> {
-  return Response.json({ ok: true }, {
-    headers: corsHeaders(request.headers.get("origin")),
-  });
-}
+export const GET = api.define({}, () => ({ ok: true }));
+export const POST = api.define({}, () => ({ saved: true }));
 ```
 
-Never echo `*` with `allow-credentials`, and never reflect an unlisted origin.
-Middleware can answer the preflight for a whole prefix instead — `middleware.ts`
-runs before routing and may return a `Response` — but a per-route `OPTIONS`
-keeps the policy next to the data it protects.
+The framework answers the preflight (before `middleware.ts`, so an auth guard
+never refuses it), echoes only an exactly-listed origin, never pairs `*` with
+credentials, and adds `Vary: Origin`. `csrf()` refuses a cookie-carrying write
+from any other origin with a 403 `csrf_failed`, the same rule Server Actions
+apply; `doubleSubmit: true` adds a token cookie the page echoes in
+`x-csrf-token` (`__Host-denext-csrf` over https, `denext-csrf` over plain http). See [Typed API](/docs/typed-api#cors-and-csrf--cors-and-csrf).
+
+A plain handler that wants the headers itself can still export `OPTIONS`: it is
+a routable method when no policy covers the route.
 
 ## When to use Live channels instead
 

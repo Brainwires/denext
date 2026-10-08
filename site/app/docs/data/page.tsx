@@ -126,19 +126,48 @@ export default function Feed() {
 
       <h2 id="cdn-headers">CDN headers</h2>
       <p>
-        An ISR page currently ships with{" "}
-        <strong>
-          no <code>Cache-Control</code>
-        </strong>{" "}
-        of its own (the dynamic path sets{" "}
-        <code>private, no-store</code>; the cached path sets nothing), so a CDN in front of denext
-        treats it as uncacheable and every request reaches the origin. Until denext emits a CDN
-        policy by default (it is on the{" "}
-        <a href="https://github.com/Brainwires/denext/blob/main/ROADMAP.md">
-          roadmap
-        </a>), add the header with a <code>headers()</code>{" "}
-        rule scoped to the ISR routes — the rule's <code>Cache-Control</code>{" "}
-        replaces whatever the response carried, so keep it off dynamic paths:
+        With <code>cdnCacheHeaders: true</code>{" "}
+        (it is off by default), an ISR page tells a shared cache it may keep it. The render that
+        stores the entry (
+        <code>x-denext-cache: MISS</code>) and every later hit answer
+      </p>
+      <Code lang="http">
+        {`Cache-Control: public, s-maxage=60, stale-while-revalidate=31536000`}
+      </Code>
+      <p>
+        where <code>s-maxage</code>{" "}
+        is how long the entry stays fresh in denext's own cache — the route's{" "}
+        <code>revalidate</code> on the MISS, the seconds left on a hit, <code>0</code>{" "}
+        once it is stale and regenerating — so the CDN never holds a page past the moment denext
+        would refresh it. A <code>force-static</code> page is <code>public, s-maxage=31536000</code>
+        {" "}
+        — a year, and <code>revalidatePath</code> / <code>revalidateTag</code>{" "}
+        do not reach the CDN's copy. Browsers keep nothing (<code>s-maxage</code>{" "}
+        is for shared caches only).
+      </p>
+      <p>
+        Turn it on only for pages every visitor may see. A CDN keys a page on its URL, so a page
+        gated on anything else — an IP allow-list, an auth proxy's header, geolocation,{" "}
+        <code>Accept-Language</code>{" "}
+        — is served from the CDN to everyone once one allowed visitor fetched it; and most CDNs
+        leave <code>Cookie</code>{" "}
+        out of the key, so the cookie rule below does not keep cookie-based variants apart there
+        either. That is why the header is also left off when a <code>middleware.ts</code>{" "}
+        matched the request (<code>{"{ evenWithMiddleware: true }"}</code>{" "}
+        sends it anyway, for middleware that decides nothing about who sees the page) and when the
+        request's locale was negotiated (<code>detectLocale</code>,{" "}
+        <code>localeMiddleware</code>, next-intl's middleware; <code>evenWithMiddleware</code>{" "}
+        does not lift this).
+      </p>
+      <p>
+        Nothing private is ever marked public. The header is left off when the request carried a
+        {" "}
+        <code>Cookie</code> or <code>Authorization</code>{" "}
+        (middleware may have routed on it), when the response sets a cookie, when the status is not
+        200, when the render read <code>cookies()</code>/<code>headers()</code> (it is{" "}
+        <code>private, no-store</code> and never stored), and when middleware or a{" "}
+        <code>headers()</code> rule already set <code>Cache-Control</code>{" "}
+        — the app's own policy wins:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
@@ -147,23 +176,21 @@ import type { DenextConfig } from "denext/server";
 export default {
   headers: () => [
     {
-      source: "/blog/:slug", // ISR routes only — never a path that reads cookies()
-      headers: [{
-        key: "Cache-Control",
-        // the CDN keeps it 60s, serves stale for 10 min while it refetches; browsers don't cache
-        value: "public, max-age=0, s-maxage=60, stale-while-revalidate=600",
-      }],
+      source: "/blog/:slug",
+      // a longer stale window of your own on these routes only
+      headers: [{ key: "Cache-Control", value: "public, s-maxage=60, stale-while-revalidate=600" }],
     },
   ],
+  // shared-cache headers on every eligible ISR page (off by default):
+  // cdnCacheHeaders: true,
 } satisfies DenextConfig;`}
       </Code>
       <p>
-        Match <code>s-maxage</code> to the route's <code>revalidate</code>{" "}
-        so the two layers expire together, and remember that <code>revalidateTag</code>{" "}
-        purges denext's store, not the CDN's — pair it with the CDN's purge API (or a short{" "}
-        <code>s-maxage</code>) when freshness after a mutation matters. Responses already vary on
-        {" "}
-        <code>x-denext-nav</code>{" "}
+        <code>revalidateTag</code> and <code>revalidatePath</code>{" "}
+        purge denext's store, not the CDN's — pair them with the CDN's purge API when freshness
+        after a mutation matters. A middleware that varies its rewrite on a request header other
+        than the cookie should set its own <code>Cache-Control</code> (or <code>Vary</code>
+        ). Responses already vary on <code>x-denext-nav</code>{" "}
         so a soft-navigation payload is never confused with the HTML document by an intermediary.
       </p>
 

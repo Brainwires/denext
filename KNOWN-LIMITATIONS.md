@@ -68,18 +68,27 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **No mailer:** emailed tokens go through your `sendVerificationRequest`, handed over after the
   response, so delivery is best-effort where the platform freezes the isolate.
-- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops); TOTP secrets are
-  stored in plaintext because verification needs them. Protect the file.
-- **Magic links redeem on GET**, so a link-scanning mail gateway can spend one, and a link the
-  attacker requested can sign a victim into the attacker's account (as in Auth.js). Prefer
-  `emailOtp()` where that matters.
+- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
+- **Magic links redeem on GET by default**, so a link-scanning mail gateway can spend one, and a
+  link the attacker requested can sign a victim into the attacker's account (as in Auth.js).
+  `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
+  redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
   eviction or account deletion; run a `sessionStore` (or `session.strategy: "database"`).
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
-  never slides, and there is no absolute session ceiling.
+  never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
-  one-time codes; rate limiters count per node without a shared `rateLimit.store`.
+  one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
+  under it are re-sealed — only when a TOTP or backup-code check passes, so never for a user who
+  signs in only by passkey with user verification, and never with an adapter lacking
+  `replaceMfaSecret` (there it stays for good); rate limiters count per node without a shared
+  `rateLimit.store`.
+- **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
+  passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
+  an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
+- **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
+  Metadata Service), and ES256 / RS256 / Ed25519 keys only.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII; `microsoftEntra` needs a specific tenant (`common` can't verify).
 - **Native sessions:** a user with a second factor can't use a native `id_token` sign-in
@@ -155,9 +164,9 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   not applied; an `"over"` view hides while covered; controls inside an iOS `"embed"` view
   don't complete a tap (use `"under"`); a slot a list unmounts destroys its view.
 - **OTA updates can't change what the app is** (Apple DPLA 3.3.1(B)); the signing key is in the
-  binary, so rotating it takes a store release; downloaded files are verified once, on arrival;
-  the fingerprint gate can't see native code pulled in from outside `ios/`, `android/` and the
-  declared plugins; an iOS web-content crash during a trial is reloaded by Capacitor, not the plugin.
+  binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
+  in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
+  trial is reloaded by Capacitor, not the plugin.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).
@@ -180,6 +189,18 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
+- **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
+  (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):
+  `GLView` is the page's WebGL 2. Barometer and pedometer readings, the carrier facts of
+  `expo-cellular`, Low Power Mode, and attachments on `expo-sms` / `expo-mail-composer` (an
+  `sms:` / `mailto:` URL cannot carry them) are not available.
+- **Can't (the pinned plugin has no call for it):** `expo-calendar` attendees, looking an event
+  up by id, opening one in the calendar app, changing a single occurrence or setting its time
+  zone; `expo-contacts` containers and change events, and on Android an update keeps only names,
+  company, job title, note, emails and phones (addresses, URLs, the birthday and the photo are
+  dropped); `expo-print`'s `printToFileAsync` (HTML to PDF) and `selectPrinterAsync`; Android's
+  system brightness and brightness mode in `expo-brightness` (no `WRITE_SETTINGS`; brightness
+  listeners never fire). These reject with `ERR_UNAVAILABLE`.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web
@@ -207,12 +228,25 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
-  user manager; macOS shows them only from a signed bundle. A click's `data` is untrusted (any
-  process of the same user can send one). [Details](https://denext.dev/docs/desktop#desktop-notifications).
+  user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
+  untrusted: the runtime drops clicks it never posted (each carries a MAC from a per-install key,
+  `<app data dir>/laufey-notification-key`), but any process of the same user can read that key.
+  A notification's tag is at most 256 bytes, its data 4 KiB and an action id 1 KiB (UTF-8): a
+  larger click is dropped, so denext refuses to post one. [Details](https://denext.dev/docs/desktop#desktop-notifications).
 - **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **CEF cookies on macOS are only obfuscated, not protected by the OS.** CEF runs with
+  Chromium's mock keychain, whose key is a constant, so the cookie store on disk is encrypted with
+  a key every copy of Chromium knows (`cookieEncryption: "basic"`, always): any process that can
+  read the app's data directory can read its cookies. The macOS WebView backend (WKWebView) keeps
+  cookies in WebKit's own store; Windows CEF uses DPAPI (`"os"`).
+- **A Linux CEF app run from a tarball or AppImage on Ubuntu 23.10+ has no Chromium sandbox**
+  (AppArmor restricts user namespaces, and only the `.deb` / `.rpm` install the setuid
+  `chrome-sandbox`): `appCapabilities().sandbox` reads `"off"`. Set
+  `desktop.linux.requireSandbox: true` to refuse to start there instead (exit status 78);
+  `denext desktop doctor --linux` says which sandbox a machine allows.
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
@@ -247,12 +281,25 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use.
-- **`secureStore` per OS:** on macOS other programs of the same user can read its items (they are
-  written by `/usr/bin/security`, which the item trusts); on Linux it needs a Secret Service
+- **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
+  writes through `/usr/bin/security`, which any program of the same user can read back) an app
+  without a provisioning profile that grants a keychain access group keeps its items in the login
+  keychain, where another program gets macOS's prompt (which the user can allow) rather than
+  nothing. That keychain guards reads, not writes: another program of the user can replace an
+  item's value or plant one for a key without a prompt. A team-signed app (Developer ID,
+  development, App Store) reads such an item as not there (`null`), so a replaced value is lost to
+  it; an ad-hoc signed build can't tell it from its own earlier build, so its read shows macOS's
+  prompt; an unsigned build reads and writes it as its own, so it has no protection against
+  another program's writes. An ad-hoc or unsigned build is also a new program to macOS after each
+  rebuild, so its first read prompts. Values an older denext stored through `security` move over
+  only when the app reads them during its first launch under the runtime's store (a marker in that store ends
+  the move, so a key the app first reads later stays behind in the login keychain), and during
+  that first launch an item another program of the user plants for a key the app has not read
+  yet is still adopted on that key's first read; on Linux it needs a Secret Service
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
-  unlocked — runtime 2.9.7-denext.12 reaches it through libsecret, older runtimes through
-  `secret-tool` (`libsecret-tools` / `libsecret`) — else every call rejects `backend_unavailable`
-  with the reason (never a plaintext fallback).
+  unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
+  Linux secure store, and there is no `secret-tool` path) — else every call rejects
+  `backend_unavailable` with the reason (never a plaintext fallback).
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF

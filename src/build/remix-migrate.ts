@@ -23,6 +23,7 @@
 
 import { isAbsolute, join, relative } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { mfs } from "./migrate-io.ts";
 import {
   analyzeModule,
   clientModuleSource,
@@ -216,7 +217,7 @@ async function walkRoutesDir(
   prefix: string,
   out: RemixRoute[],
 ): Promise<void> {
-  for await (const e of Deno.readDir(dir)) {
+  for await (const e of mfs.readDir(dir)) {
     if (e.name.startsWith(".") || e.name.startsWith("__")) continue;
     const full = join(dir, e.name);
     if (e.isFile) {
@@ -259,7 +260,7 @@ async function addFolderRoute(
   if (index) await addRemixRoute(routesDir, join(dir, index), `${stem}._index`, out);
   // Nested folders continue the dot-nesting (`users/$id/route.tsx` → `users.$id`); other
   // files in a route folder are colocated, not routes.
-  for await (const e of Deno.readDir(dir)) {
+  for await (const e of mfs.readDir(dir)) {
     if (!e.isDirectory || e.name.startsWith(".") || e.name.startsWith("__")) continue;
     const full = join(dir, e.name);
     if (e.name.endsWith("+")) {
@@ -277,7 +278,7 @@ async function addRemixRoute(
   out: RemixRoute[],
 ): Promise<void> {
   const parsed = parseRemixStem(stem);
-  const source = await Deno.readTextFile(file).catch(() => null);
+  const source = await mfs.readTextFile(file).catch(() => null);
   if (source === null) return;
   const relNoExt = relative(routesDir, file).replace(/\\/g, "/").replace(/\.[^.]+$/, "");
   out.push({ file, parsed, key: parsed.segments.join("/"), remixId: `routes/${relNoExt}`, source });
@@ -312,7 +313,7 @@ export async function transformRemixApp(dir: string): Promise<RemixMigrateInfo> 
   const routes = (await exists(routesDir)) ? await collectRemixRoutes(routesDir) : [];
   const isLayout = layoutDetector(routes);
   const rootRel = await firstExisting(appDir, ROUTE_EXTS.map((x) => `root.${x}`));
-  const rootSource = rootRel ? await Deno.readTextFile(join(appDir, rootRel)) : null;
+  const rootSource = rootRel ? await mfs.readTextFile(join(appDir, rootRel)) : null;
 
   const converted: RemixRoute[] = [];
   for (const r of routes) {
@@ -348,8 +349,8 @@ export async function transformRemixApp(dir: string): Promise<RemixMigrateInfo> 
   const oldFiles = await listFiles(routesDir);
   const generated = new Set(plan.planned.map((p) => p.dest));
   for (const p of plan.planned) {
-    await Deno.mkdir(dirnameOf(p.dest), { recursive: true });
-    await Deno.writeTextFile(p.dest, p.code);
+    await mfs.mkdir(dirnameOf(p.dest), { recursive: true });
+    await mfs.writeTextFile(p.dest, p.code);
   }
   const moved = await relocateColocated(oldFiles, routesDir, colocatedDir, routeFiles, generated);
   if (moved > 0) {
@@ -623,7 +624,7 @@ async function entryStartup(
 ): Promise<EntryStartup | null> {
   const rel = await firstExisting(plan.appDir, ROUTE_EXTS.map((x) => `${base}.${x}`));
   if (!rel) return null;
-  const source = await Deno.readTextFile(join(plan.appDir, rel)).catch(() => null);
+  const source = await mfs.readTextFile(join(plan.appDir, rel)).catch(() => null);
   const parsed = source === null ? null : await parseRouteModule(source);
   if (!parsed) return null;
   const out: EntryStartup = { imports: [], helpers: [], effects: [] };
@@ -871,7 +872,7 @@ function loadContextProperty(key: LoadContextKey): string {
 async function planLoadContext(plan: RemixPlan, dir: string): Promise<boolean> {
   const rel = await firstExisting(dir, SERVER_ENTRIES);
   if (!rel) return false;
-  const source = await Deno.readTextFile(join(dir, rel)).catch(() => null);
+  const source = await mfs.readTextFile(join(dir, rel)).catch(() => null);
   if (source === null || !source.includes("getLoadContext")) return false;
   const parsed = await parseRouteModule(source);
   const fn = parsed ? findLoadContextFn(parsed.items) : null;
@@ -922,15 +923,15 @@ async function removeOldTree(
 ): Promise<void> {
   const { appDir, info } = plan;
   for (const file of oldFiles) {
-    if (routeFiles.has(file)) await Deno.remove(file).catch(() => {});
+    if (routeFiles.has(file)) await mfs.remove(file).catch(() => {});
   }
   await pruneEmptyDirs(routesDir);
-  if (rootRel) await Deno.remove(join(appDir, rootRel)).catch(() => {});
+  if (rootRel) await mfs.remove(join(appDir, rootRel)).catch(() => {});
   for (const ext of ROUTE_EXTS) {
     for (const base of ["entry.server", "entry.client"]) {
       const p = join(appDir, `${base}.${ext}`);
       if (!(await exists(p))) continue;
-      await Deno.remove(p).catch(() => {});
+      await mfs.remove(p).catch(() => {});
       info.entriesDeleted.push(`app/${base}.${ext}`);
     }
   }
@@ -955,8 +956,8 @@ async function relocateColocated(
     // (a route literally named `routes`) is not colocated.
     if (routeFiles.has(file) || generated.has(file)) continue;
     const dest = join(colocatedDir, relative(routesDir, file));
-    await Deno.mkdir(dirnameOf(dest), { recursive: true });
-    await Deno.rename(file, dest);
+    await mfs.mkdir(dirnameOf(dest), { recursive: true });
+    await mfs.rename(file, dest);
     moved++;
   }
   return moved;
@@ -974,14 +975,14 @@ async function listFiles(dir: string): Promise<string[]> {
 async function pruneEmptyDirs(dir: string): Promise<boolean> {
   let empty = true;
   try {
-    for await (const e of Deno.readDir(dir)) {
+    for await (const e of mfs.readDir(dir)) {
       const full = join(dir, e.name);
       if (!(e.isDirectory && await pruneEmptyDirs(full))) empty = false;
     }
   } catch {
     return true; // already gone
   }
-  if (empty) await Deno.remove(dir).catch(() => {});
+  if (empty) await mfs.remove(dir).catch(() => {});
   return empty;
 }
 
@@ -996,7 +997,7 @@ interface ImportRemap {
 
 /** Node subpath imports (`"imports": { "#app/*": "./app/*" }`) as prefix → absolute dir pairs. */
 async function packageImportAliases(dir: string): Promise<Array<[string, string]>> {
-  const pkg = await Deno.readTextFile(join(dir, "package.json")).catch(() => null);
+  const pkg = await mfs.readTextFile(join(dir, "package.json")).catch(() => null);
   if (!pkg) return [];
   let imports: Record<string, unknown> = {};
   try {
@@ -1082,20 +1083,33 @@ function rebaseRelativeImports(
  * relocated colocated modules to `app/_routes/`. Returns the number of files changed.
  */
 async function remapImportsInTree(appDir: string, where: ImportRemap): Promise<number> {
-  let count = 0;
-  for await (const file of walkFiles(appDir)) {
-    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
-    const src = await Deno.readTextFile(file).catch(() => null);
-    if (src === null) continue;
+  return await rewriteModulesInTree(appDir, (src, file) => {
     const fromDir = dirnameOf(file);
-    const out = rewriteSpecifiers(src, (spec, names) => {
+    return rewriteSpecifiers(src, (spec, names) => {
       const target = resolveSpecifier(spec, fromDir, where);
       if (target === null) return null;
       const mapped = remapImportTarget(target, names, where);
       return mapped === target ? null : relativeSpecifier(fromDir, mapped);
     });
+  });
+}
+
+/**
+ * Run `transform` over every `.ts`/`.tsx`/`.js`/`.jsx` module under `appDir`, writing back the
+ * ones it changes. Returns how many files changed.
+ */
+async function rewriteModulesInTree(
+  appDir: string,
+  transform: (src: string, file: string) => string,
+): Promise<number> {
+  let count = 0;
+  for await (const file of walkFiles(appDir)) {
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
+    const src = await mfs.readTextFile(file).catch(() => null);
+    if (src === null) continue;
+    const out = transform(src, file);
     if (out !== src) {
-      await Deno.writeTextFile(file, out);
+      await mfs.writeTextFile(file, out);
       count++;
     }
   }
@@ -1117,15 +1131,15 @@ async function rewriteRoutesDirReferences(dir: string): Promise<void> {
   ) {
     const file = join(dir, name);
     if (!(await exists(file))) continue;
-    const src = await Deno.readTextFile(file);
+    const src = await mfs.readTextFile(file);
     const next = src.replaceAll("app/routes/", "app/_routes/");
-    if (next !== src) await Deno.writeTextFile(file, next);
+    if (next !== src) await mfs.writeTextFile(file, next);
   }
 }
 
 /** Recursively yield every file path under `dir`. */
 async function* walkFiles(dir: string): AsyncGenerator<string> {
-  for await (const entry of Deno.readDir(dir)) {
+  for await (const entry of mfs.readDir(dir)) {
     const full = join(dir, entry.name);
     if (entry.isDirectory) yield* walkFiles(full);
     else if (entry.isFile) yield full;
@@ -1139,18 +1153,11 @@ async function* walkFiles(dir: string): AsyncGenerator<string> {
  * files were modified.
  */
 async function rewriteRemixImportsInTree(appDir: string): Promise<number> {
-  let count = 0;
-  for await (const file of walkFiles(appDir)) {
-    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
-    const src = await Deno.readTextFile(file).catch(() => null);
-    if (src === null || (!src.includes("@remix-run/") && !src.includes("react-router"))) continue;
-    const out = rewriteRemixImports(src);
-    if (out !== src) {
-      await Deno.writeTextFile(file, out);
-      count++;
-    }
-  }
-  return count;
+  return await rewriteModulesInTree(
+    appDir,
+    (src) =>
+      src.includes("@remix-run/") || src.includes("react-router") ? rewriteRemixImports(src) : src,
+  );
 }
 
 // ── Small path/fs helpers (kept local to avoid widening migrate.ts's surface) ──

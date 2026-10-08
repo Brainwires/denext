@@ -16,7 +16,9 @@
  *   failure is the same `401 { error: "invalid code" }` (a form: a `303` to `pages.error`,
  *   else `pages.signIn`, with `?error=Verification`); past the budget, a `429`.
  * - `GET ?token=…&email=…[&callbackUrl=…]` — the **magic-link click**, which consumes the
- *   token (Auth.js parity: a mail gateway that pre-fetches links can spend one).
+ *   token (Auth.js parity: a mail gateway that pre-fetches links can spend one). Under
+ *   `magicLink({ confirm: true })` it consumes nothing: it renders a page naming the address,
+ *   whose button POSTs the token back (the redeem above).
  *
  * A redeemed token proves the mailbox: an existing user's unset `emailVerified` is set
  * (firing `emailVerified`) — but first everything set up on that unverified account
@@ -63,7 +65,12 @@ import {
   wantsJson,
 } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
-import type { AuthConfig, EmailProvider, VerificationRequestParams } from "./types.ts";
+import type {
+  AuthConfig,
+  EmailProvider,
+  SignInFailedReason,
+  VerificationRequestParams,
+} from "./types.ts";
 import {
   issueVerificationCode,
   issueVerificationToken,
@@ -191,7 +198,7 @@ function verificationFailed(ctx: AuthRouteContext, asJson: boolean): Response {
 function emitFailure(
   ctx: AuthRouteContext,
   provider: EmailProvider,
-  reason: string,
+  reason: SignInFailedReason,
 ): Promise<void> {
   const trust = { trustForwardedHeaders: authTrustsProxy(ctx.config) };
   const ip = clientIpBucket(ctx.request, trust);
@@ -432,14 +439,15 @@ export async function handleEmailRequest(
 
 /**
  * `GET {basePath}/callback/:provider?token=…&email=…[&callbackUrl=…]` — the magic-link
- * click. Consumes the token and signs the mailbox's owner in (always a redirect). A code
- * provider has no GET: codes are never put in a URL.
+ * click. Consumes the token and signs the mailbox's owner in (always a redirect) — or, for a
+ * `magicLink({ confirm: true })` provider, renders the confirmation page and consumes
+ * nothing. A code provider has no GET: codes are never put in a URL.
  *
  * @param ctx The route context.
  * @param provider The email provider the callback names.
  * @returns A `303` to `afterSignIn` / `callbackUrl` (or `pages.mfa` for a pending
  * session), to the error page with `?error=Verification` / `?error=AccessDenied`, a
- * `429`, or a `405` for a code provider.
+ * `429`, the `200` confirmation page, or a `405` for a code provider.
  */
 export async function handleEmailRedeem(
   ctx: AuthRouteContext,
@@ -454,7 +462,87 @@ export async function handleEmailRedeem(
     secret: query.get("token") ?? "",
     callbackUrl: query.get("callbackUrl") ?? undefined,
   };
+  if (provider.confirm) return await confirmPage(ctx, provider, input);
   return await redeem(ctx, provider, adapter, input, false);
+}
+
+// ---- the confirmation page -----------------------------------------------------
+
+/** The confirmation page's only style sheet — allowed by its hash, so the CSP stays `'none'`. */
+const CONFIRM_STYLE =
+  "body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;" +
+  "min-height:100vh;background:#f6f6f7;color:#18181b}main{max-width:24rem;padding:2rem;" +
+  "background:#fff;border-radius:12px;box-shadow:0 1px 3px #0002}h1{font-size:1.25rem;" +
+  "margin:0 0 .5rem}button{font:inherit;padding:.6rem 1.2rem;border:0;border-radius:8px;" +
+  "background:#18181b;color:#fff;cursor:pointer}p.note{color:#71717a;font-size:.875rem}" +
+  "@media (prefers-color-scheme:dark){body{background:#09090b;color:#fafafa}main{background:" +
+  "#18181b}button{background:#fafafa;color:#18181b}}";
+
+/** `'sha256-…'` of {@link CONFIRM_STYLE}, computed once. */
+let confirmStyleHash: Promise<string> | undefined;
+
+/** The CSP source for the confirmation page's `<style>`. */
+function styleHash(): Promise<string> {
+  confirmStyleHash ??= crypto.subtle
+    .digest("SHA-256", new TextEncoder().encode(CONFIRM_STYLE))
+    .then((digest) => `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`);
+  return confirmStyleHash;
+}
+
+/** Escape text for an HTML text node or a double-quoted attribute. */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/**
+ * The `magicLink({ confirm: true })` page: the address the link signs in as, and a form that
+ * POSTs the token (plus `email` and `callbackUrl`) back to this callback, where the redeem
+ * spends it under the same-origin gate and the failure budget. Rendering it spends nothing
+ * and reads nothing from the adapter, so a link scanner's GET is harmless.
+ *
+ * Every value is HTML-escaped (the query is attacker-controlled). The page is `no-store`,
+ * can't be framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY` — no clickjacking the
+ * button), runs no script (`default-src 'none'`, the style allowed by hash), may post only to
+ * this origin (`form-action 'self'`), and sends `Referrer-Policy: same-origin` — the URL
+ * carries the token, so it must not leak cross-origin, while the form's POST must still carry
+ * this origin in `Origin` (`no-referrer` would make that `null` and fail the gate).
+ */
+async function confirmPage(
+  ctx: AuthRouteContext,
+  provider: EmailProvider,
+  input: RedeemInput,
+): Promise<Response> {
+  const email = normalizeEmailIdentifier(input.email);
+  if (!email || !input.secret) return redirect(errorLocation(ctx.config, "Verification"));
+  const action = `${ctx.options.prefix}callback/${encodeURIComponent(provider.id)}`;
+  const hidden = (name: string, value: string) =>
+    `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
+  const fields = [
+    hidden("email", email),
+    hidden("token", input.secret),
+    ...(input.callbackUrl ? [hidden("callbackUrl", input.callbackUrl)] : []),
+  ].join("");
+  const html = "<!doctype html>" +
+    '<html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="robots" content="noindex"><title>Confirm sign-in</title>' +
+    `<style>${CONFIRM_STYLE}</style></head><body><main><h1>Sign in</h1>` +
+    `<p>Continue as <strong>${escapeHtml(email)}</strong>?</p>` +
+    `<form method="post" action="${escapeHtml(action)}">${fields}` +
+    '<button type="submit">Sign in</button></form>' +
+    '<p class="note">If you didn\'t ask to sign in, close this page.</p></main></body></html>';
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "same-origin",
+      "x-frame-options": "DENY",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": `default-src 'none'; style-src ${await styleHash()}; ` +
+        "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    },
+  });
 }
 
 /**

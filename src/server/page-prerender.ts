@@ -20,7 +20,7 @@ import {
   servePprShell,
   shellFromPrerender,
 } from "./page-document.ts";
-import { mayCacheRender, pageCacheEntry } from "./page-cache-flow.ts";
+import { mayCacheRender, pageCacheEntry, withCdnCacheControl } from "./page-cache-flow.ts";
 import { classRendered } from "../runtime/render-scope.ts";
 
 type Prerendered = PrerenderedPage | PrerenderedFlightPage;
@@ -107,10 +107,10 @@ async function serveStaticShell(
     ...flightDocumentFields(pre, pr.useFlight),
   });
   const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
-  if (mayCacheRender(pr)) {
-    await config.pageCache!.set(pr.cacheKey, pageCacheEntry(pr, shellDoc, 200, timing, { csp }));
-  }
-  return htmlResponse(pr.state, shellDoc, 200, csp, { "x-denext-cache": "MISS" });
+  const res = htmlResponse(pr.state, shellDoc, 200, csp, { "x-denext-cache": "MISS" });
+  if (!mayCacheRender(pr)) return res; // request-specific: served once, never public
+  await config.pageCache!.set(pr.cacheKey, pageCacheEntry(pr, shellDoc, 200, timing, { csp }));
+  return withCdnCacheControl(pr, res, timing.staleAt);
 }
 
 /**

@@ -10,7 +10,8 @@ import { RESOURCES } from "../src/mcp/server.ts";
 import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const OUT = `${ROOT}site/app/docs/mcp/mcp.json`;
+/** Where the generated reference is committed (the docs page imports it). */
+export const MCP_OUT = `${ROOT}site/app/docs/mcp/mcp.json`;
 
 interface Param {
   name: string;
@@ -36,19 +37,23 @@ function paramsOf(schema: Record<string, unknown>): Param[] {
   return Object.entries(props).map(([name, p]) => paramOf(name, p, required));
 }
 
-const tools = TOOLS.map((t) => ({
-  name: t.name,
-  description: t.description,
-  params: paramsOf(t.inputSchema),
-}));
-const resources = RESOURCES.map((r) => ({
-  uri: r.uri,
-  name: r.name,
-  description: r.description,
-}));
+/** The reference as committed: every tool (with its parameters) and resource, as JSON text. */
+export function generateMcpReference(): string {
+  const tools = TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    params: paramsOf(t.inputSchema),
+  }));
+  const resources = RESOURCES.map((r) => ({
+    uri: r.uri,
+    name: r.name,
+    description: r.description,
+  }));
+  return JSON.stringify({ tools, resources }, null, 2) + "\n";
+}
 
-await Deno.mkdir(dirname(OUT), { recursive: true });
-await Deno.writeTextFile(OUT, JSON.stringify({ tools, resources }, null, 2) + "\n");
-console.log(
-  `mcp reference: ${tools.length} tools + ${resources.length} resources → ${OUT}`,
-);
+if (import.meta.main) {
+  await Deno.mkdir(dirname(MCP_OUT), { recursive: true });
+  await Deno.writeTextFile(MCP_OUT, generateMcpReference());
+  console.log(`mcp reference: ${TOOLS.length} tools + ${RESOURCES.length} resources → ${MCP_OUT}`);
+}

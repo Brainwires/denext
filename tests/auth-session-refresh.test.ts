@@ -55,6 +55,7 @@ function payload(agedBy = 0, over: Partial<AuthSession> = {}): AuthSession {
     expiresAt: issuedAt + MAX_AGE,
     v: 2,
     issuedAt,
+    authTime: issuedAt,
     ...over,
   };
 }
@@ -133,7 +134,7 @@ Deno.test("a v1 payload (no issuedAt/amr/v) still verifies and reads, with issue
   assertEquals(session.amr, [], "a missing amr reads as none");
 });
 
-Deno.test("a v1 payload past updateAge refreshes like any other", async () => {
+Deno.test("a v1 payload past updateAge is read but never slid (no authTime, no ceiling to cap it)", async () => {
   const cfg = config();
   const expiresAt = nowSec() + MAX_AGE - UPDATE_AGE * 2; // issued 2×updateAge ago
   const cookie = await mintCookie(cfg, {
@@ -143,8 +144,9 @@ Deno.test("a v1 payload past updateAge refreshes like any other", async () => {
   });
 
   const { body, cookies } = await fetchSessionRoute(cfg, cookie);
-  assert(issued(cookies), "the aged v1 session is re-issued");
-  assert((body.expires as number) > expiresAt, "and its expiry moves forward");
+  assertEquals(issued(cookies), undefined, "the aged v1 session is not re-issued");
+  assertEquals(body.expires, expiresAt, "it ends at its current expiry");
+  assertEquals((body.user as { id: string }).id, "old", "but it still reads");
 });
 
 // ---- GET /auth/session ------------------------------------------------------

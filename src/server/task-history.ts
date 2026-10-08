@@ -48,10 +48,12 @@ const PRUNE_EVERY = 200;
 const PRUNE_INTERVAL_MS = 600_000;
 
 /**
- * The schema version stamped into `PRAGMA user_version` when the file is created, so a later
- * shape has a number to migrate from. A file at 0 predates the stamp and has this same schema.
+ * The schema version stamped into `PRAGMA user_version`, so a later shape has a number to
+ * migrate from. 0 predates the stamp and is version 1's schema; 2 adds `attempt` and
+ * `will_retry` (task retries), which an older file gains by `ALTER TABLE` on its first open by a
+ * writer. Both columns default, so an older writer's `INSERT` still works on a newer file.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** Options for {@linkcode taskHistoryRecorder} and {@linkcode readTaskHistory}. */
 export interface TaskHistoryOptions {
@@ -75,8 +77,10 @@ export interface TaskHistoryRow {
   readonly lastDurationMs: number;
   /** Successes inside the window. */
   readonly successes: number;
-  /** Failures inside the window. */
+  /** Failures inside the window (a failed attempt that was retried is not one). */
   readonly failures: number;
+  /** Retry attempts inside the window. */
+  readonly retries: number;
 }
 
 /** One run in the recent feed. */
@@ -93,6 +97,10 @@ export interface TaskHistoryRun {
   readonly ok: boolean;
   /** The error head, a string result's tail, or null. */
   readonly detail: string | null;
+  /** Which attempt it was (`1` = the first run; a task without `retry` is always 1). */
+  readonly attempt: number;
+  /** A failed attempt that was retried. */
+  readonly willRetry: boolean;
 }
 
 /** What a read returns — including why there is nothing, which is itself an answer. */
@@ -129,16 +137,31 @@ function initSchema(d: SqliteDb, busyMs: number): void {
   d.exec(
     "CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT NOT NULL, " +
       "trigger TEXT NOT NULL, started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL, " +
-      "ok INTEGER NOT NULL, detail TEXT)",
+      "ok INTEGER NOT NULL, detail TEXT, attempt INTEGER NOT NULL DEFAULT 1, " +
+      "will_retry INTEGER NOT NULL DEFAULT 0)",
   );
+  // A version-1 file (created before retries) gains the two columns.
+  const have = new Set(columnsOf(d));
+  if (!have.has("attempt")) {
+    d.exec("ALTER TABLE runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!have.has("will_retry")) {
+    d.exec("ALTER TABLE runs ADD COLUMN will_retry INTEGER NOT NULL DEFAULT 0");
+  }
   d.exec("CREATE INDEX IF NOT EXISTS runs_task_started ON runs (task, started_at DESC)");
   d.exec("CREATE INDEX IF NOT EXISTS runs_started ON runs (started_at DESC)");
-  // Stamp only an unversioned file: a future version must never be wound back to 1 by an older
-  // writer, and a 0 is a file from before the stamp existed, whose schema is this one.
+  // Only ever raise the stamp: a future version must never be wound back by an older writer.
   try {
     const [row] = d.query<{ user_version: number }>("PRAGMA user_version");
-    if (Number(row?.user_version ?? 0) === 0) d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    if (Number(row?.user_version ?? 0) < SCHEMA_VERSION) {
+      d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    }
   } catch { /* keep going: the version is bookkeeping, not the schema */ }
+}
+
+/** The `runs` table's column names (empty when it does not exist). */
+function columnsOf(d: SqliteDb): string[] {
+  return d.query<{ name: string }>("PRAGMA table_info(runs)").map((c) => c.name);
 }
 
 /**
@@ -213,7 +236,8 @@ export function taskHistoryRecorder(
       if (!d) return;
       try {
         d.exec(
-          "INSERT INTO runs (task, trigger, started_at, duration_ms, ok, detail) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO runs (task, trigger, started_at, duration_ms, ok, detail, attempt, " +
+            "will_retry) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           [
             run.name,
             run.trigger,
@@ -221,6 +245,8 @@ export function taskHistoryRecorder(
             Math.trunc(run.durationMs),
             run.ok ? 1 : 0,
             run.detail ?? null,
+            Math.trunc(run.attempt ?? 1),
+            run.willRetry ? 1 : 0,
           ],
         );
         failures = 0;
@@ -282,6 +308,10 @@ export function readTaskHistory(
       } catch { /* keep the default */ }
     }
     const since = Date.now() - windowDays * 86_400_000;
+    // A version-1 file (read-only here, so never migrated by the reader) has no retry columns.
+    const retryCols = columnsOf(d).includes("will_retry");
+    const attemptCol = retryCols ? "attempt" : "1 AS attempt";
+    const willRetryCol = retryCols ? "will_retry" : "0 AS will_retry";
     const tasks = d.query<{
       task: string;
       last_ok: number;
@@ -289,12 +319,17 @@ export function readTaskHistory(
       last_duration_ms: number;
       successes: number;
       failures: number;
+      retries: number;
     }>(
       "SELECT task, " +
         "(SELECT ok FROM runs r2 WHERE r2.task = r1.task ORDER BY started_at DESC LIMIT 1) AS last_ok, " +
         "MAX(started_at) AS last_run_at, " +
         "(SELECT duration_ms FROM runs r3 WHERE r3.task = r1.task ORDER BY started_at DESC LIMIT 1) AS last_duration_ms, " +
-        "SUM(ok) AS successes, SUM(1 - ok) AS failures " +
+        "SUM(ok) AS successes, " +
+        (retryCols
+          ? "SUM(CASE WHEN ok = 0 AND will_retry = 0 THEN 1 ELSE 0 END) AS failures, " +
+            "SUM(CASE WHEN attempt > 1 THEN 1 ELSE 0 END) AS retries "
+          : "SUM(1 - ok) AS failures, 0 AS retries ") +
         "FROM runs r1 WHERE started_at >= ? GROUP BY task ORDER BY last_run_at DESC",
       [since],
     ).map((row) => ({
@@ -304,6 +339,7 @@ export function readTaskHistory(
       lastDurationMs: row.last_duration_ms,
       successes: Number(row.successes),
       failures: Number(row.failures),
+      retries: Number(row.retries),
     }));
     const recent = d.query<{
       task: string;
@@ -312,8 +348,11 @@ export function readTaskHistory(
       duration_ms: number;
       ok: number;
       detail: string | null;
+      attempt: number;
+      will_retry: number;
     }>(
-      "SELECT task, trigger, started_at, duration_ms, ok, detail FROM runs ORDER BY started_at DESC LIMIT 20",
+      `SELECT task, trigger, started_at, duration_ms, ok, detail, ${attemptCol}, ${willRetryCol} ` +
+        "FROM runs ORDER BY started_at DESC, id DESC LIMIT 20",
     ).map((row) => ({
       task: row.task,
       trigger: row.trigger,
@@ -321,6 +360,8 @@ export function readTaskHistory(
       durationMs: row.duration_ms,
       ok: row.ok === 1,
       detail: row.detail,
+      attempt: Number(row.attempt),
+      willRetry: row.will_retry === 1,
     }));
     return { available: true, windowDays, tasks, recent };
   } catch (err) {

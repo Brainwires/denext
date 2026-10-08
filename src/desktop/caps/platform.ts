@@ -2,7 +2,9 @@
  * The runtime's probe of the session (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10
  * and later), read for the `app`, `window` and `notifications` capabilities. Runtime
  * 2.9.7-denext.11 adds how the badge shows and, on Linux, how notifications are sent, whether a
- * click starts a quit app and whether a scheduled one is posted while it is closed. The runtime (laufey) does the probing:
+ * click starts a quit app and whether a scheduled one is posted while it is closed. Runtime
+ * 2.9.7-denext.12 adds the Chromium sandbox a Linux CEF window runs in and the file chooser a Linux
+ * dialog uses, each with the runtime's reason. The runtime (laufey) does the probing:
  * D-Bus names, the Secret Service's lock state, the portal versions, the cookie store. denext only
  * validates what it answered and passes it on, so the page learns WHY a feature is missing.
  *
@@ -34,6 +36,17 @@ export type BadgeShows = "dock" | "launcher-entry" | "title";
 /** How Linux notifications are sent: the xdg-desktop-portal, or `org.freedesktop.Notifications`. */
 export type NotificationTransport = "portal" | "freedesktop";
 
+/**
+ * The Chromium sandbox a Linux CEF window's web content runs in: unprivileged user namespaces, the
+ * setuid `chrome-sandbox` helper (installed by the `.deb` / `.rpm`), on with Chromium choosing the
+ * layer (the runtime's probe could not run), or off (neither is available: a tarball or AppImage
+ * on Ubuntu 23.10 and later, or root).
+ */
+export type SandboxMode = "namespace" | "setuid" | "chromium" | "off";
+
+/** The file chooser a Linux dialog uses: xdg-desktop-portal's FileChooser, or GTK's own. */
+export type FileChooser = "portal" | "gtk";
+
 /** The probe facts the capabilities surface. */
 export interface PlatformFacts {
   /** Linux: `wayland` / `x11` / `tty` / `unknown`; `null` on macOS and Windows. */
@@ -44,7 +57,10 @@ export interface PlatformFacts {
   readonly trayReason: string | null;
   /** The Secret Service (the secure store's, and CEF's cookie key's, backing store). */
   readonly secretService: SecretServiceState | Unknown;
-  /** CEF's cookie store: `"os"` (encrypted with an OS-held key) or `"basic"` (unencrypted). */
+  /**
+   * CEF's cookie store: `"os"` (encrypted with an OS-held key) or `"basic"` (a fixed key: always
+   * on macOS, Chromium's mock keychain; on Linux when no keyring can be unlocked).
+   */
   readonly cookieEncryption: "os" | "basic" | null | Unknown;
   /** How the badge shows (runtime 2.9.7-denext.11 and later). */
   readonly badge: BadgeShows | Unknown;
@@ -60,6 +76,14 @@ export interface PlatformFacts {
   readonly notificationScheduleWhileClosed: boolean | null | Unknown;
   /** Why not, when `notificationScheduleWhileClosed` is `false`. */
   readonly notificationScheduleReason: string | null;
+  /** CEF on Linux: the Chromium sandbox web content runs in; `null` elsewhere. */
+  readonly sandbox: SandboxMode | null | Unknown;
+  /** CEF on Linux: why the runtime chose that sandbox mode (its `laufey: sandbox:` line). */
+  readonly sandboxReason: string | null;
+  /** Linux: the chooser a file dialog uses; `null` elsewhere. */
+  readonly fileChooser: FileChooser | null | Unknown;
+  /** Why GTK's, when `fileChooser` is `"gtk"`. */
+  readonly fileChooserReason: string | null;
 }
 
 /** The longest runtime reason passed on. */
@@ -89,10 +113,24 @@ const UNKNOWN_FACTS: PlatformFacts = Object.freeze({
   notificationColdStartReason: null,
   notificationScheduleWhileClosed: "unknown",
   notificationScheduleReason: null,
+  sandbox: "unknown",
+  sandboxReason: null,
+  fileChooser: "unknown",
+  fileChooserReason: null,
 });
 
 const BADGE_SHOWS = new Set(["dock", "launcher-entry", "title"]);
 const TRANSPORTS = new Set(["portal", "freedesktop"]);
+const SANDBOX_MODES = new Set(["namespace", "setuid", "chromium", "off"]);
+const FILE_CHOOSERS = new Set(["portal", "gtk"]);
+
+/** `value` when it is `null` or in `allowed`, else `"unknown"` (an older runtime omits the key). */
+function oneOfOrNull<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<string>,
+): T | null | Unknown {
+  return value === null || allowed.has(value as string) ? value as T | null : "unknown";
+}
 
 /** A `boolean | null` fact a runtime reports (`"unknown"` when it doesn't: an older runtime). */
 function booleanOrNull(value: unknown): boolean | null | Unknown {
@@ -146,6 +184,21 @@ export async function platformFacts(api: DesktopAppApi | undefined): Promise<Pla
       : "unknown",
     cookieEncryption: cookie === null || cookie === "os" || cookie === "basic" ? cookie : "unknown",
     ...notificationAndBadgeFacts(raw),
+    ...sandboxAndChooserFacts(raw),
+  };
+}
+
+/** The sandbox and file chooser facts (runtime 2.9.7-denext.12): `"unknown"` before it. */
+function sandboxAndChooserFacts(
+  raw: Record<string, unknown>,
+): Pick<PlatformFacts, "sandbox" | "sandboxReason" | "fileChooser" | "fileChooserReason"> {
+  const sandbox = oneOfOrNull<SandboxMode>(raw.sandbox, SANDBOX_MODES);
+  const fileChooser = oneOfOrNull<FileChooser>(raw.fileChooser, FILE_CHOOSERS);
+  return {
+    sandbox,
+    sandboxReason: sandbox === null || sandbox === "unknown" ? null : reasonText(raw.sandboxReason),
+    fileChooser,
+    fileChooserReason: fileChooser === "gtk" ? reasonText(raw.fileChooserReason) : null,
   };
 }
 
@@ -154,7 +207,15 @@ function notificationAndBadgeFacts(
   raw: Record<string, unknown>,
 ): Omit<
   PlatformFacts,
-  "sessionType" | "trayHost" | "trayReason" | "secretService" | "cookieEncryption"
+  | "sessionType"
+  | "trayHost"
+  | "trayReason"
+  | "secretService"
+  | "cookieEncryption"
+  | "sandbox"
+  | "sandboxReason"
+  | "fileChooser"
+  | "fileChooserReason"
 > {
   const badge: BadgeShows | Unknown = BADGE_SHOWS.has(raw.badge as string)
     ? raw.badge as BadgeShows

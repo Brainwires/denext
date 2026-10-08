@@ -101,6 +101,14 @@ export interface ProfileInput {
   /** The verified OIDC `id_token` claims, if present. */
   claims?: Record<string, unknown>;
   /**
+   * The authorization response's other fields, for a provider that answers by
+   * `response_mode=form_post` ({@link OAuthProvider.responseMode}) — everything the provider
+   * POSTed besides `code`, `state`, `error`, `iss` and `id_token`. Sign in with Apple puts its
+   * one-time `user` JSON (the name) here. **Unauthenticated**: the browser posted it, so a
+   * mapper may take a display name from it, never an email or an id.
+   */
+  callbackParams?: Record<string, string>;
+  /**
    * The provider's email list, if a {@link OAuthProvider.userEmailsUrl} is configured
    * and fetched (e.g. GitHub `/user/emails`). Lets a synchronous mapper expose only a
    * verified address — the OAuth-provider analogue of the OIDC `email_verified` claim.
@@ -141,6 +149,16 @@ export interface OAuthProvider {
   profile: (input: ProfileInput) => AuthUser;
   /** Extra authorization-request query params (e.g. `{ access_type: "offline" }`). */
   authorizationParams?: Record<string, string>;
+  /**
+   * How the provider returns the authorization response (OAuth 2.0 Multiple Response Type
+   * Encoding Practices §2.1). `"query"` (the default) redirects back with `?code=…&state=…`,
+   * answered by `GET {basePath}/callback/:id`. `"form_post"` (OAuth 2.0 Form Post Response
+   * Mode §2) has the browser POST them as a form to the same URL, which Sign in with Apple
+   * requires to hand over a user's name and email. A form_post flow's transaction cookie is
+   * `SameSite=None; Secure` — the provider's cross-site POST must carry it — and its callback
+   * accepts only the POST: a GET carrying a code is refused.
+   */
+  responseMode?: "query" | "form_post";
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
    * from the configured endpoints when omitted.
@@ -211,6 +229,12 @@ export interface EmailProvider {
    * an unknown address is sent nothing — and answered exactly as if it had been.
    */
   allowSignUp: boolean;
+  /**
+   * `magicLink({ confirm: true })`: the link's GET renders a confirmation page whose form POSTs
+   * the token, instead of spending it — so a mail gateway that pre-fetches links can't burn
+   * one, and nobody is signed in without pressing the button. Absent for `emailOtp()`.
+   */
+  confirm?: boolean;
 }
 
 /** Any configured provider. */
@@ -273,6 +297,44 @@ export interface AuthLogger {
 }
 
 /**
+ * Why a sign-in attempt was refused, as `signInFailed` reports it — a closed set, so an app can
+ * switch over it exhaustively:
+ *
+ * - `"invalid_credentials"` — a wrong password, or a wrong, spent or expired email link / code;
+ * - `"invalid_mfa_code"` — a wrong TOTP or backup code (or passkey) at the second-factor step;
+ * - `"invalid_passkey"` — a passkey assertion that failed verification (the WebAuthn reason
+ *   goes to the logger);
+ * - `"rate_limited"` — a budget was spent;
+ * - `"access_denied"` — `callbacks.signIn` vetoed it;
+ * - `"account_not_linked"` — the account-linking rules refused to attach it to an existing user;
+ * - `"adapter_error"` — the adapter threw while persisting it;
+ * - `"invalid_state"` — an OAuth callback without its matching transaction (CSRF, replay);
+ * - `"invalid_request"` — a malformed OAuth callback (a form_post body, a downgraded GET);
+ * - `"config"` — the provider could not be resolved (discovery, a malformed endpoint);
+ * - `"oauth_failed"` — the code exchange, the `id_token` or the profile failed;
+ * - `"provider_error"` — the provider itself answered `?error=` (its code in `providerError`);
+ * - `"invalid_nonce"` / `"invalid_token"` — a native `id_token` sign-in's nonce or token.
+ */
+export type SignInFailedReason =
+  | "invalid_credentials"
+  | "invalid_mfa_code"
+  | "invalid_passkey"
+  | "rate_limited"
+  | "access_denied"
+  | "account_not_linked"
+  | "adapter_error"
+  | "invalid_state"
+  | "invalid_request"
+  | "config"
+  | "oauth_failed"
+  | "provider_error"
+  | "invalid_nonce"
+  | "invalid_token";
+
+/** Why an API token was revoked, as `apiTokenRevoked` reports it. */
+export type ApiTokenRevokedReason = "revoked" | "password_reset" | "email_verified";
+
+/**
  * Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a
  * throw is caught and routed to {@link AuthLogger.error} — an event handler can never
  * fail a sign-in.
@@ -299,14 +361,14 @@ export interface AuthEvents {
      * provider of the first.
      */
     provider?: string;
+    /** Why — see {@link SignInFailedReason}. */
+    reason: SignInFailedReason;
     /**
-     * A stable machine-readable reason: `"invalid_credentials"` (a wrong password, or a
-     * wrong, spent or expired email link / code), `"invalid_mfa_code"` (a wrong TOTP or
-     * backup code at the second-factor step), `"rate_limited"`, `"access_denied"`,
-     * `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code
-     * (`"invalid_state"`, `"config"`, `"oauth_failed"`, or the provider's own `?error=`).
+     * For `reason: "provider_error"`: the provider's own `?error=` code (`access_denied`,
+     * `login_required`, `user_cancelled_authorize`, …) — protocol-shaped codes only; free text
+     * is reported as `"oauth_failed"` instead.
      */
-    reason: string;
+    providerError?: string;
     /**
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
      * credentials POST, the sign-in start, the email link / code redeem and the MFA
@@ -314,6 +376,35 @@ export interface AuthEvents {
      * limiter actually counts.
      */
     ip?: string;
+  }) => Promise<void> | void;
+  /**
+   * A bearer API token was minted (`issueApiToken`, `POST {basePath}/tokens`). Never carries
+   * the token or its hash.
+   */
+  apiTokenIssued?: (payload: {
+    /** The owner. */
+    userId: string;
+    /** The token's id (what `DELETE {basePath}/tokens/:id` takes). */
+    tokenId: string;
+    /** Its label. */
+    name?: string;
+    /** Its scopes. */
+    scopes?: string[];
+    /** When it expires, epoch seconds; absent for a token that never does. */
+    expiresAt?: number;
+  }) => Promise<void> | void;
+  /**
+   * A bearer API token was revoked: by `revokeApiToken` / `DELETE {basePath}/tokens/:id`
+   * (`"revoked"`), by a password reset (`"password_reset"`), or by the first proof of an
+   * unverified account's mailbox (`"email_verified"`, the pre-account-hijacking eviction).
+   */
+  apiTokenRevoked?: (payload: {
+    /** The token's id. */
+    tokenId: string;
+    /** The owner, when known (always, except a bare `revokeApiToken(config, id)`). */
+    userId?: string;
+    /** Why. */
+    reason: ApiTokenRevokedReason;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
   sessionRevoked?: (payload: {
@@ -414,6 +505,16 @@ export interface AuthSessionConfig {
    * `requireSession` and `updateAuthSession()` — never inside a bare `auth()`.
    */
   updateAge?: number;
+  /**
+   * The absolute session lifetime in seconds: a hard ceiling counted from the sign-in
+   * (`authTime`) that sliding refresh never extends. A session is refused once it is this
+   * old, whatever its `expiresAt` says, on both strategies; a step-up to a second factor is a
+   * new authentication and starts a new ceiling. Default: 30 days, or `maxAge` when that is
+   * longer, so a session that never slides is unaffected. Must be a whole number of seconds
+   * no shorter than `maxAge` (`denextAuth()` throws otherwise). Native app sessions have their
+   * own cap, `native.refreshTokenMaxAge`.
+   */
+  maxLifetime?: number;
 }
 
 /** What {@link AuthConfig.sendVerificationRequest} is handed for each outbound token. */
@@ -497,6 +598,37 @@ export interface AuthMfaConfig {
    * an action always asks for a code.
    */
   freshness?: number;
+}
+
+/**
+ * Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or
+ * as the second. Every field is optional; the relying party defaults to `canonicalOrigin`.
+ */
+export interface AuthPasskeyConfig {
+  /**
+   * The relying party ID credentials are scoped to: the host of `canonicalOrigin` by default,
+   * or a registrable suffix of it (`"example.com"` for `https://app.example.com`) to share
+   * passkeys across subdomains. Every accepted origin's host must equal it or end in
+   * `.<rpId>` (WebAuthn L3 §5.1.4.1).
+   */
+  rpId?: string;
+  /** The relying party name an authenticator may show. Default: the RP ID. */
+  rpName?: string;
+  /**
+   * The origins a ceremony may come from, matched exactly against `clientDataJSON.origin`.
+   * Default: `[canonicalOrigin]`. Add an Android app's `android:apk-key-hash:…` origin or a
+   * second web origin here.
+   */
+  origins?: string[];
+  /**
+   * `"required"` (the default) asks the authenticator to verify the user (biometric, PIN) and
+   * refuses an assertion without the UV flag — such a sign-in is two factors in one, so it
+   * also satisfies a pending second factor. `"preferred"` accepts a presence-only assertion,
+   * which is one factor: a user with TOTP is then still asked for a code.
+   */
+  userVerification?: "required" | "preferred";
+  /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
+  timeout?: number;
 }
 
 /** A provider whose `id_token`s a native app may exchange at `POST {basePath}/native/<id>`. */
@@ -722,6 +854,13 @@ export interface AuthConfig {
   email?: AuthEmailConfig;
   /** Second-factor (TOTP) policy. */
   mfa?: AuthMfaConfig;
+  /**
+   * Passkeys (WebAuthn): `POST {basePath}/passkey/*` registers them from a signed-in session
+   * and signs in with them (a first factor, or the second factor of a pending session).
+   * Needs an adapter with the passkey group (both shipped adapters have it). `true` takes
+   * every default. See {@link AuthPasskeyConfig}.
+   */
+  passkeys?: AuthPasskeyConfig | true;
   /**
    * Native session mode for a Capacitor (or desktop) app: code exchange → bearer access token
    * + rotating refresh token, and native Apple / Google `id_token` sign-in. See

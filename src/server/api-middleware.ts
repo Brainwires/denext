@@ -1,15 +1,25 @@
-// First-party middleware for `createApi().use(...)`: the two every API needs.
+// First-party middleware for `createApi().use(...)`: sessions, rate limits, CORS and CSRF.
 //
 //   const authed = createApi().use(rateLimit({ max: 60, windowMs: 60_000 })).use(requireSession());
 //   export const GET = authed.define({ … }, ({ ctx }) => ctx.session.user.id);
 //
-// Both run BEFORE validation (see `define-api.ts`), so a rejected caller never reaches a schema.
+// They run BEFORE validation (see `define-api.ts`), so a rejected caller never reaches a schema.
+// `cors()` is the exception: it carries a policy the dispatch seam applies (a preflight never
+// reaches a handler, and the headers must decorate error responses too).
 
-import type { ApiMiddleware, ApiMiddlewareInput } from "./define-api.ts";
+import { type ApiMiddleware, type ApiMiddlewareInput, tagMiddlewareDocs } from "./define-api.ts";
 import { ApiError } from "./api-error.ts";
 import { hasRole, updateAuthSession } from "./auth/mod.ts";
 import type { AuthSession } from "./auth/types.ts";
 import { inMemoryRateLimitStore, type RateLimitStore, resolveClientIp } from "./auth/rate-limit.ts";
+import type { CorsConfig } from "./config.ts";
+import { CORS_POLICY, resolveCors } from "./cors.ts";
+import { verifyOrigin } from "./origin-check.ts";
+import { cookies, currentContext } from "./request-context.ts";
+import { randomToken } from "./auth/oauth.ts";
+import { constantTimeEqualHex } from "./auth/hash.ts";
+import { getCookies } from "@std/http/cookie";
+import { requestOrigin } from "./absolute-url.ts";
 
 /** Options for {@link requireSession}. */
 export interface RequireSessionOptions {
@@ -104,4 +114,177 @@ function defaultKey(
 ): string {
   const ip = resolveClientIp(input.request, keyOptions);
   return `${ip}|${input.method} ${new URL(input.request.url).pathname}`;
+}
+
+// ── cors() ───────────────────────────────────────────────────────────────────
+
+/**
+ * An allowlist-driven CORS policy for the endpoints a chain defines — the same exact-origin,
+ * fail-closed rules as the app's `cors` config (`origins`, `methods`, `headers`,
+ * `exposeHeaders`, `credentials`, `maxAge`), scoped to one endpoint. The framework answers a
+ * preflight for the method the policy guards (`204`, before `middleware.ts` and before this
+ * chain runs) and decorates every response the endpoint produces, errors included, with the
+ * headers the request's origin is granted. It REPLACES the route's `export const cors` and the
+ * app's `cors` for that method. The policy is validated here, so a bad one fails at import.
+ *
+ * CORS only tells a browser which origins may READ a response; pair it with {@link csrf} on a
+ * cookie-authenticated endpoint to refuse the cross-site writes a browser still sends.
+ *
+ * @param config The policy (the {@link CorsConfig} shape).
+ * @returns A middleware carrying the resolved policy (no context extension).
+ */
+export function cors(config: CorsConfig): ApiMiddleware<object> {
+  const policy = resolveCors(config);
+  if (!policy) throw new Error("denext: cors() needs a policy object with an `origins` array");
+  const mw: ApiMiddleware<object> = () => undefined;
+  Object.defineProperty(mw, CORS_POLICY, { value: policy });
+  return mw;
+}
+
+// ── csrf() ───────────────────────────────────────────────────────────────────
+
+/** The methods a CSRF check never applies to (they must not change state). */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+/** The double-submit cookie's default name. */
+const DEFAULT_CSRF_COOKIE = "denext-csrf";
+/** The double-submit header's default name. */
+const DEFAULT_CSRF_HEADER = "x-csrf-token";
+
+/** The double-submit half of {@link CsrfOptions}. */
+export interface CsrfDoubleSubmitOptions {
+  /**
+   * The token cookie (readable by the page's script, `SameSite=Strict`). Default
+   * `__Host-denext-csrf` on a secure request (https, or a trusted proxy's `x-forwarded-proto`)
+   * — the prefix stops a sibling subdomain from planting a token of its own — and
+   * `denext-csrf` over plain http. Either name is read; a secure request ignores the
+   * unprefixed one. A name set here is used as given.
+   */
+  cookie?: string;
+  /** The request header that must echo it (default `x-csrf-token`). */
+  header?: string;
+}
+
+/** Options for {@link csrf}. */
+export interface CsrfOptions {
+  /**
+   * Origins allowed to call on top of the app's own origin and `allowedOrigins` — full origins
+   * (`https://admin.example.com`), bare hosts, or a custom-scheme app origin
+   * (`capacitor://localhost`), matched exactly as Server Actions match them.
+   */
+  allowedOrigins?: string[];
+  /**
+   * Also require a double-submit token: the request must carry a header equal to the token
+   * cookie, which this middleware issues on any request that lacks it (read it from
+   * `document.cookie` and send it back). `true` uses the default names. Default `false` —
+   * the origin check alone is denext's same-origin model.
+   */
+  doubleSubmit?: boolean | CsrfDoubleSubmitOptions;
+  /**
+   * Check a request that carries no `Cookie` header too (default `false`: with no cookie there
+   * is no ambient credential to abuse, so a bearer-token or server-to-server caller passes).
+   */
+  checkCookieless?: boolean;
+  /** The 403's message (default `"Cross-site request refused"`). */
+  message?: string;
+}
+
+/**
+ * Refuse cross-site state changes on a cookie-authenticated endpoint. A non-safe method
+ * (anything but `GET`/`HEAD`/`OPTIONS`) must come from the app's own origin, `allowedOrigins`
+ * (app config or these options) or the app's Deno Desktop origin — the `Origin` header, else
+ * `Referer`, and neither present is a refusal: the same gate Server Actions, the typed-API batch
+ * and `denextAuth` apply. With `doubleSubmit` the request must also echo the token cookie in a
+ * header. A refusal is a 403 `csrf_failed` envelope, before any schema runs; the code is folded
+ * into the endpoint's documented errors for `@denext/openapi`.
+ *
+ * @param options Extra origins, the double-submit token, cookieless handling.
+ * @returns A middleware (no context extension).
+ */
+export function csrf(options: CsrfOptions = {}): ApiMiddleware<object> {
+  const double = options.doubleSubmit === true ? {} : options.doubleSubmit || null;
+  const cookieName = double?.cookie;
+  const headerName = double?.header ?? DEFAULT_CSRF_HEADER;
+  const refuse = (): never => {
+    throw new ApiError(403, "csrf_failed", {
+      message: options.message ?? "Cross-site request refused",
+    });
+  };
+  const mw: ApiMiddleware<object> = ({ request, method }) => {
+    const token = double ? ensureCsrfToken(request, cookieName) : null;
+    if (SAFE_METHODS.has(method)) return;
+    if (!options.checkCookieless && !request.headers.get("cookie")) return;
+    if (!verifyOrigin(request, csrfOriginOptions(options.allowedOrigins))) refuse();
+    if (token === null) return;
+    const echoed = request.headers.get(headerName) ?? "";
+    if (token === "" || !constantTimeEqualHex(echoed, token)) refuse();
+  };
+  return tagMiddlewareDocs(mw, { errors: { csrf_failed: 403 } });
+}
+
+/** The same-origin options Server Actions use, from the request context, plus `extra`. */
+function csrfOriginOptions(extra: string[] = []) {
+  const ctx = currentContext();
+  return {
+    allowedOrigins: [...(ctx?.originAllowlist?.allowedOrigins ?? []), ...extra],
+    canonicalOrigin: ctx?.originAllowlist?.canonicalOrigin,
+    trustForwardedHeaders: ctx?.trustForwardedHeaders,
+    desktopAppOrigin: ctx?.desktopAppOrigin,
+  };
+}
+
+/** The `__Host-`-prefixed default token cookie a secure request uses. */
+const HOST_CSRF_COOKIE = `__Host-${DEFAULT_CSRF_COOKIE}`;
+
+/**
+ * Whether the client's connection is https: the request URL, or the first hop of
+ * `x-forwarded-proto` when the app trusts its proxy (an untrusted one could be spoofed).
+ */
+function isSecureRequest(request: Request): boolean {
+  const trustForwardedHeaders = currentContext()?.trustForwardedHeaders ?? false;
+  return requestOrigin(request, { trustForwardedHeaders }).toLowerCase().startsWith("https://");
+}
+
+/** Which double-submit cookie names a request reads, which one it is issued, and `Secure`. */
+interface CsrfCookie {
+  read: string[];
+  issue: string;
+  secure: boolean;
+}
+
+/**
+ * The double-submit cookie for `request`. A custom name is used as given. With the default, a
+ * secure request reads and issues `__Host-denext-csrf` only — an unprefixed cookie is what a
+ * sibling subdomain could plant — and plain http reads either name and issues `denext-csrf`
+ * (a browser won't store a `__Host-` cookie without `Secure`).
+ */
+function csrfCookie(request: Request, custom: string | undefined): CsrfCookie {
+  if (custom !== undefined) return { read: [custom], issue: custom, secure: false };
+  if (isSecureRequest(request)) {
+    return { read: [HOST_CSRF_COOKIE], issue: HOST_CSRF_COOKIE, secure: true };
+  }
+  return {
+    read: [HOST_CSRF_COOKIE, DEFAULT_CSRF_COOKIE],
+    issue: DEFAULT_CSRF_COOKIE,
+    secure: false,
+  };
+}
+
+/**
+ * The request's double-submit token (`""` when it sent none), issuing a fresh token cookie
+ * when it is missing so the page can echo it on its next write ({@link csrfCookie} names it).
+ */
+function ensureCsrfToken(request: Request, custom: string | undefined): string {
+  const cookie = csrfCookie(request, custom);
+  const jar = getCookies(request.headers);
+  const sent = cookie.read.map((name) => jar[name]).find(Boolean);
+  if (sent) return sent;
+  if (currentContext()) {
+    cookies().set(cookie.issue, randomToken(), {
+      httpOnly: false,
+      sameSite: "Strict",
+      path: "/",
+      ...(cookie.secure ? { secure: true } : {}),
+    });
+  }
+  return "";
 }

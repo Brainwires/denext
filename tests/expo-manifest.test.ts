@@ -74,10 +74,11 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   }
   assertEquals(expoShimName("expo-haptics"), "haptics");
   assertEquals(expoShimName("expo-file-system/legacy"), "file-system/legacy");
-  assertEquals(expoShimName("expo-contacts"), null);
+  assertEquals(expoShimName("expo-task-manager"), null);
   assertEquals(expoShimSpecifier("expo-file-system/legacy"), "denext/expo/file-system/legacy");
   assertEquals(files["denext/expo/file-system/legacy"], "expo-file-system-legacy.js");
-  assertEquals(expoShimSpecifier("expo-file-system/next"), null);
+  // SDK 58's `/next` is the package's main entry again: the same shim.
+  assertEquals(expoShimSpecifier("expo-file-system/next"), "denext/expo/file-system");
   assertEquals(Object.keys(expoRuntimeEntries((r) => r)).length, Object.keys(EXPO_SHIMS).length);
   assertEquals(expoShimSpecifier("expo/fetch"), "denext/expo/expo");
   assertEquals(expoShimSpecifier("expo/config"), null);
@@ -104,6 +105,52 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   );
   assertEquals(expoShimSpecifier("expo-auth-session/providers/github"), null);
   assert(EXPO_FILTER.test("@expo/ui/swift-ui") && !EXPO_FILTER.test("@expo/vector-icons"));
+});
+
+/**
+ * The `/legacy` and `/next` subpaths in the `exports` map of each shimmed package at its pinned
+ * SDK 58 version (`npm view <pkg>@<pin> exports`; no other shimmed package exports one). `next`
+ * points at the package's main entry, `legacy` at the pre-SDK-58 API.
+ */
+const EXPO_58_SUBPATHS: Readonly<Record<string, readonly ("legacy" | "next")[]>> = {
+  "expo-calendar": ["next", "legacy"],
+  "expo-contacts": ["next", "legacy"],
+  "expo-file-system": ["next", "legacy"],
+  "expo-media-library": ["next", "legacy"],
+};
+
+Deno.test("expo manifest: every /legacy and /next subpath Expo 58 exports is aliased to a shim", () => {
+  for (const [pkg, subpaths] of Object.entries(EXPO_58_SUBPATHS)) {
+    assert(pkg in EXPO_SHIMS, `${pkg} is shimmed`);
+    for (const sub of subpaths) {
+      const spec = `${pkg}/${sub}`;
+      if (sub === "next") {
+        assertEquals(expoShimSpecifier(spec), expoShimSpecifier(pkg), `${spec} is the main shim`);
+      } else {
+        // A legacy API is its own shim (and its own parity target).
+        assert(spec in EXPO_SHIMS, `${spec} has a manifest entry`);
+        assertEquals(expoShimSpecifier(spec), `denext/expo/${expoShimName(spec)}`, spec);
+      }
+    }
+  }
+  assertEquals(expoShimSpecifier("expo-calendar/legacy"), "denext/expo/calendar/legacy");
+  assertEquals(expoShimSpecifier("expo-contacts/next"), "denext/expo/contacts");
+});
+
+Deno.test("expo-calendar/legacy, expo-contacts/legacy: the main shims' legacy functions, not the object API", async () => {
+  const calendar = await import("../src/expo/calendar.ts");
+  const calendarLegacy = await import("../src/expo/calendar-legacy.ts");
+  assertEquals(calendarLegacy.getCalendarsAsync, calendar.getCalendarsAsync);
+  assertEquals(calendarLegacy.EntityTypes, calendar.EntityTypes);
+  assertEquals(calendarLegacy.PermissionStatus.GRANTED, "granted");
+  assert(!("getCalendars" in calendarLegacy), "the object API is the main entry's");
+  const contacts = await import("../src/expo/contacts.ts");
+  const contactsLegacy = await import("../src/expo/contacts-legacy.ts");
+  assertEquals(contactsLegacy.getContactsAsync, contacts.getContactsAsync);
+  assertEquals(contactsLegacy.Fields, contacts.Fields);
+  assertEquals(contactsLegacy.onContactsChangeEventName, "onContactsChange");
+  // `Contact` / `Group` are the legacy record types there, not the classes.
+  assert(!("Contact" in contactsLegacy) && !("Group" in contactsLegacy));
 });
 
 Deno.test("expo bridge: only the shims' import of internal/react-native.ts is externalized", () => {
@@ -158,6 +205,24 @@ const BEYOND_T3: Readonly<Record<string, string>> = {
   "expo-screen-capture": "58.0.5",
   "expo-screen-orientation": "58.0.2",
   "expo-store-review": "58.0.2",
+  "expo-battery": "58.0.3",
+  "expo-cellular": "58.0.2",
+  "expo-checkbox": "58.0.2",
+  "expo-gl": "58.0.3",
+  "expo-brightness": "58.0.2",
+  "expo-intent-launcher": "58.0.3",
+  "expo-print": "58.0.5",
+  "expo-calendar": "58.0.6",
+  "expo-contacts": "58.0.6",
+  "expo-linear-gradient": "58.0.3",
+  "expo-localization": "58.0.3",
+  "expo-mail-composer": "58.0.3",
+  "expo-mesh-gradient": "58.0.3",
+  "expo-sensors": "58.0.2",
+  "expo-sms": "58.0.2",
+  "expo-speech": "58.0.3",
+  "expo-system-ui": "58.0.5",
+  "expo-video-thumbnails": "58.0.2",
 };
 
 let t3Present = false;

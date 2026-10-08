@@ -62,7 +62,10 @@ platform. Behind that proxy, tell denext its public origin (§6):
 without it every Server Action posted through a proxy that rewrites `Host` is
 refused as cross-origin (`403`).
 
-**Don't hand-write it.** `denext generate docker` writes the `Dockerfile`,
+**Don't hand-write it.** `denext generate ci` writes a GitHub Actions workflow
+(`.github/workflows/ci.yml`: Deno pinned to the version that generated it, then
+the project's `check` task — else `deno fmt --check`, `deno lint`, `deno test` —
+and its `build` task, or `export` for a SPA). `denext generate docker` writes the `Dockerfile`,
 `docker-compose.yml` and `.dockerignore` for you — SSR or static image
 auto-detected from your config — and the [Project UI](/docs/ui)'s Docker panel
 regenerates the same three files with options (image mode `server` | `static`,

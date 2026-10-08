@@ -17,6 +17,7 @@ import {
   desktopBridgeOrigins,
   desktopInspectable,
   desktopLaunchConfig,
+  desktopRequireSandbox,
   laufeyLaunchEnv,
   laufeyLaunchPath,
   syncDesktopAppConfig,
@@ -25,6 +26,8 @@ import {
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
 import { desktopOriginCheck } from "../src/cli/commands/doctor.ts";
+import { validateDenextConfig } from "../src/server/config-validate.ts";
+import type { DenextConfig } from "../src/server/config.ts";
 
 const T3 = { desktop: { app: { origin: "T3Code://App/", identifier: "com.t3.code" } } };
 
@@ -403,4 +406,43 @@ Deno.test("sync: deep links without an origin still write app.json (no origin ke
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only", async () => {
+  assertEquals(desktopRequireSandbox({ desktop: { linux: { requireSandbox: true } } }), true);
+  assertEquals(desktopRequireSandbox({ desktop: { linux: { requireSandbox: "yes" } } }), false);
+  assertEquals(desktopRequireSandbox({ desktop: {} }), false);
+  assertEquals(desktopRequireSandbox(undefined), false);
+  const dir = await project();
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "export default { desktop: { linux: { requireSandbox: true } } };\n",
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
+    const linux = await writeLaufeyLaunchConfig(entry, "linux", join(dir, "linux"));
+    // The runtime's CEF host refuses to start unsandboxed (exit 78); the file wins over
+    // LAUFEY_REQUIRE_SANDBOX=0.
+    assertEquals(JSON.parse(await Deno.readTextFile(linux!)), {
+      inspectable: false,
+      bridgeOrigins: ["app://localhost"],
+      requireSandbox: true,
+    });
+    for (const os of ["darwin", "windows"] as const) {
+      const other = await writeLaufeyLaunchConfig(entry, os, join(dir, os));
+      assertEquals(JSON.parse(await Deno.readTextFile(other!)).requireSandbox, undefined, os);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("config validation: desktop.linux", () => {
+  const check = (linux: unknown) => () =>
+    validateDenextConfig({ desktop: { linux } } as unknown as DenextConfig);
+  check({ requireSandbox: true })();
+  check({})();
+  assertThrows(check("strict"), Error, "desktop.linux");
+  assertThrows(check({ requireSandbox: 1 }), Error, "desktop.linux.requireSandbox");
 });

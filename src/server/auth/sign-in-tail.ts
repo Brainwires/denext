@@ -41,6 +41,11 @@ export interface FinishSignInOptions {
   amr: string[];
   /** Answer JSON instead of redirecting; defaults to what the request asks for. */
   json?: boolean;
+  /**
+   * The first factor was itself multi-factor (a passkey with user verification: possession
+   * plus a PIN or biometric), so no pending step-up is owed whatever `mfa.required` says.
+   */
+  satisfiesMfa?: boolean;
 }
 
 /**
@@ -59,7 +64,7 @@ export async function finishSignIn(
   options: FinishSignInOptions,
 ): Promise<Response> {
   const asJson = options.json ?? wantsJson(ctx.request);
-  const pending = await mfaPendingFor(ctx.options, user);
+  const pending = !options.satisfiesMfa && await mfaPendingFor(ctx.options, user);
   await issueAuthSession(ctx.config, user, provider, {
     mfaPending: pending,
     amr: options.amr,

@@ -29,6 +29,7 @@ import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
 import { manifestMetaDataValue } from "./mobile-native-config.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
+import { capacitorPlaceholders } from "./mobile-icon-source.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -649,34 +650,58 @@ async function androidRes(root: string, prefix: string, name: string): Promise<b
 const ASSET_FIX = "generate every size from one 1024×1024 icon and a splash image (e.g. " +
   "`npx @capacitor/assets generate`), then rebuild";
 
+const PLACEHOLDER_FIX = "run `denext mobile assets` (it takes `mobile.icon`, an Expo app " +
+  "config's icon, the web manifest's icon or the apple-touch-icon; `--icon <png>` names one), " +
+  "then rebuild — `denext mobile build` also replaces the placeholder itself";
+
+/** The finding for a platform whose launcher icon is still Capacitor's placeholder. */
+async function placeholderIcon(
+  root: string,
+  platform: "ios" | "android",
+): Promise<MobileDoctorFinding[]> {
+  const files = await capacitorPlaceholders(root, platform, "icon");
+  if (files.length === 0) return [];
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: `${files[0]}${files.length > 1 ? ` (and ${files.length - 1} more)` : ""} is ` +
+      "still Capacitor's placeholder icon (the Capacitor logo), which App Review rejects " +
+      "(guideline 2.1, placeholder content) and which ships as the app's home-screen icon",
+    fix: PLACEHOLDER_FIX,
+  }];
+}
+
+/** The iOS App Store icon: missing, or still the placeholder. */
+async function iosIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
+  if (!p.hasIos) return [];
+  const icons = await catalogImages(join(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"));
+  if (icons && icons.length > 0) return await placeholderIcon(p.root, "ios");
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: "ios/App/App/Assets.xcassets/AppIcon.appiconset has no icon image",
+    fix: ASSET_FIX,
+  }];
+}
+
+/** The Android launcher icon: missing, or still the placeholder. */
+async function androidIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
+  if (!p.hasAndroid) return [];
+  if (await androidRes(p.root, "mipmap", "ic_launcher")) {
+    return await placeholderIcon(p.root, "android");
+  }
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: "android/app/src/main/res has no mipmap*/ic_launcher icon",
+    fix: ASSET_FIX,
+  }];
+}
+
 const appIcons: Check = {
   id: "app-icons",
   profiles: ["store"],
-  run: async (p) => {
-    const out: MobileDoctorFinding[] = [];
-    if (p.hasIos) {
-      const icons = await catalogImages(
-        join(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"),
-      );
-      if (!icons || icons.length === 0) {
-        out.push({
-          check: "app-icons",
-          level: "error",
-          message: "ios/App/App/Assets.xcassets/AppIcon.appiconset has no icon image",
-          fix: ASSET_FIX,
-        });
-      }
-    }
-    if (p.hasAndroid && !(await androidRes(p.root, "mipmap", "ic_launcher"))) {
-      out.push({
-        check: "app-icons",
-        level: "error",
-        message: "android/app/src/main/res has no mipmap*/ic_launcher icon",
-        fix: ASSET_FIX,
-      });
-    }
-    return out;
-  },
+  run: async (p) => [...await iosIconFindings(p), ...await androidIconFindings(p)],
 };
 
 const splash: Check = {
@@ -944,6 +969,15 @@ function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): bo
   return (meta ?? "").trim() !== "";
 }
 
+/** The platforms whose OTA store `denext mobile add-ota` wrote into the project. */
+async function otaPlatforms(p: MobileProject): Promise<(keyof typeof OTA_STORES)[]> {
+  const platforms: (keyof typeof OTA_STORES)[] = [];
+  for (const platform of ["iOS", "Android"] as const) {
+    if ((await readText(join(p.root, OTA_STORES[platform]))) !== null) platforms.push(platform);
+  }
+  return platforms;
+}
+
 /**
  * Over-the-air updates without a public key: a script in the page can call the OTA plugin, so an
  * unsigned UI is only as trustworthy as every origin it may come from. A release embeds the key.
@@ -951,13 +985,10 @@ function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): bo
 const otaSigning: Check = {
   id: "ota-signing",
   profiles: ["release"],
-  applies: async (p) =>
-    (await readText(join(p.root, OTA_STORES.iOS))) !== null ||
-    (await readText(join(p.root, OTA_STORES.Android))) !== null,
+  applies: async (p) => (await otaPlatforms(p)).length > 0,
   run: async (p) => {
     const findings: MobileDoctorFinding[] = [];
-    for (const platform of ["iOS", "Android"] as const) {
-      if ((await readText(join(p.root, OTA_STORES[platform]))) === null) continue;
+    for (const platform of await otaPlatforms(p)) {
       if (otaKeyEmbedded(p, platform)) continue;
       findings.push({
         check: "ota-signing",
@@ -967,6 +998,146 @@ const otaSigning: Check = {
           "that persists)",
         fix: "`denext ota keygen`, then `denext mobile add-ota --public-key <key>.pub`; sign " +
           "every manifest (`--sign` / DENEXT_OTA_SIGNING_KEY) and ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
+/**
+ * What marks an OTA plugin that re-verifies a downloaded UI whenever it serves it (generation 9),
+ * per platform: the file and the text it must contain. Each platform needs both: the store's
+ * launch check and the hook that checks each file as it is served.
+ */
+const OTA_REVERIFY_MARKERS = {
+  iOS: [
+    [OTA_STORES.iOS, "verifyInstalled"],
+    [BRIDGE_VIEW_CONTROLLER, "DenextOtaRouter()"],
+  ],
+  Android: [
+    [OTA_STORES.Android, "verifyInstalled"],
+    ["android/app/src/main/java/dev/denext/ota/DenextOta.java", "setRouteProcessor("],
+  ],
+} as const;
+
+/** A finding's message and fix (its check and level come from {@linkcode perOtaPlatform}). */
+type OtaIssue = Pick<MobileDoctorFinding, "message" | "fix">;
+
+/**
+ * An error-level check (`store` and `release`) over each platform with an OTA plugin:
+ * `inspect` returns the platform's issue, or null.
+ */
+function perOtaPlatform(
+  id: string,
+  inspect: (p: MobileProject, platform: keyof typeof OTA_STORES) => Promise<OtaIssue | null>,
+): Check {
+  return {
+    id,
+    profiles: ["store", "release"],
+    applies: async (p) => (await otaPlatforms(p)).length > 0,
+    run: async (p) => {
+      const findings: MobileDoctorFinding[] = [];
+      for (const platform of await otaPlatforms(p)) {
+        const issue = await inspect(p, platform);
+        if (issue) findings.push({ check: id, level: "error", ...issue });
+      }
+      return findings;
+    },
+  };
+}
+
+/**
+ * An OTA plugin from before re-verification: it checks a downloaded UI once, when it arrives, so
+ * a file changed on the device afterwards (a rooted or jailbroken device, malware with storage
+ * access, corruption) is served at every launch.
+ */
+const otaReverify: Check = perOtaPlatform("ota-reverify", async (p, platform) => {
+  for (const [file, marker] of OTA_REVERIFY_MARKERS[platform]) {
+    if ((await readText(join(p.root, file)))?.includes(marker)) continue;
+    return {
+      message: `${platform}: the over-the-air UI plugin predates re-verification: a downloaded ` +
+        "UI is checked only when it arrives, so a file changed on the device afterwards is served",
+      fix: "run `denext mobile add-ota` (an unedited plugin is upgraded; an edited one needs " +
+        "`--force` or the changes merged by hand); then ship a new binary",
+    };
+  }
+  return null;
+});
+
+/** The OTA template files `denext mobile add-ota` writes, per platform (the bridge aside). */
+const OTA_TEMPLATE_FILES = {
+  iOS: ["ios/App/App/DenextOtaPlugin.swift", OTA_STORES.iOS],
+  Android: [
+    "android/app/src/main/java/dev/denext/ota/DenextOta.java",
+    "android/app/src/main/java/dev/denext/ota/DenextOtaPlugin.java",
+    OTA_STORES.Android,
+  ],
+} as const;
+
+/** The template generation on a file's `denext-ota-template` marker line, or null without one. */
+function otaGeneration(text: string | null): number | null {
+  const marker = text === null ? null : /^\/\/ denext-ota-template: (\d+) sha256=/.exec(text);
+  return marker ? Number(marker[1]) : null;
+}
+
+/**
+ * OTA files from different template generations on one platform: a generation can add calls
+ * from one file into another (generation 9: `DenextOtaRouter`, `verifyInstalled`, `routes()`), so
+ * an edited file kept by a later `add-ota` while the others were upgraded does not compile. An
+ * edited file keeps the marker line it was written with, which tells its generation.
+ */
+const otaGenerations: Check = perOtaPlatform("ota-generations", async (p, platform) => {
+  const generations = new Map<string, number>();
+  for (const file of OTA_TEMPLATE_FILES[platform]) {
+    const generation = otaGeneration(await readText(join(p.root, file)));
+    if (generation !== null) generations.set(file.slice(file.lastIndexOf("/") + 1), generation);
+  }
+  if (new Set(generations.values()).size < 2) return null;
+  const listed = [...generations].map(([name, generation]) => `${name} ${generation}`);
+  return {
+    message: `${platform}: the over-the-air UI files come from different template ` +
+      `generations (${listed.join(", ")}); one generation's files call into each ` +
+      "other, so the app does not compile (or misses a check) until they match",
+    fix: "merge denext's current template into the edited file by hand, or re-run " +
+      "`denext mobile add-ota --force` and re-apply your edits",
+  };
+});
+
+/** Every Java / Kotlin source of the Android app outside denext's OTA package, as text. */
+async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
+  const out: { path: string; text: string }[] = [];
+  for (const base of ["android/app/src/main/java", "android/app/src/main/kotlin"]) {
+    const dir = join(root, base);
+    if (!(await isDir(dir))) continue;
+    for await (const e of walk(dir, { includeDirs: false, exts: [".java", ".kt"] })) {
+      const rel = posixRelative(root, e.path);
+      if (rel.includes("/dev/denext/ota/")) continue;
+      out.push({ path: rel, text: await Deno.readTextFile(e.path) });
+    }
+  }
+  return out;
+}
+
+/**
+ * An Android app that sets its own `RouteProcessor`: Capacitor's bridge holds one, and the OTA
+ * plugin's (installed by `DenextOta.prepare`) is what re-verifies each file of a downloaded UI as
+ * it is served. Another one set after it replaces it, and the files are served unchecked.
+ */
+const androidRouteProcessor: Check = {
+  id: "android-route-processor",
+  profiles: ["store", "release"],
+  applies: async (p) => (await otaPlatforms(p)).includes("Android"),
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const source of await androidAppSources(p.root)) {
+      if (!/\bsetRouteProcessor\s*\(/.test(source.text)) continue;
+      findings.push({
+        check: "android-route-processor",
+        level: "warning",
+        message: `Android: ${source.path} sets its own RouteProcessor, which replaces the one ` +
+          "the over-the-air UI plugin installs: a downloaded UI's files are then served without " +
+          "re-verification",
+        fix: "drop the call and leave the bridge's route processor to `DenextOta.prepare`",
       });
     }
     return findings;
@@ -997,6 +1168,9 @@ const CHECKS: readonly Check[] = [
   cssShimLeak,
   fastlane,
   otaSigning,
+  otaReverify,
+  otaGenerations,
+  androidRouteProcessor,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

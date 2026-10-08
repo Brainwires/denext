@@ -852,6 +852,21 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  (not ACCESS_BACKGROUND_LOCATION), and prints the App Store and Play review steps.\n" +
     "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
+    "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +
+    "  engine; the Android WebView has no speechSynthesis).\n" +
+    "  contacts, calendar, print, brightness and intent-launcher add the plugins behind\n" +
+    "  expo-contacts (@capgo/capacitor-contacts), expo-calendar (@ebarooni/capacitor-calendar),\n" +
+    "  expo-print (@capgo/capacitor-printer), expo-brightness\n" +
+    "  (@capacitor-community/screen-brightness) and expo-intent-launcher\n" +
+    "  (@capgo/capacitor-intent-launcher, Android); contacts and calendar write their usage\n" +
+    "  strings and permissions.\n" +
+    "  app-config has no npm package: it writes an Expo app's own native config, read\n" +
+    "  statically from app.json / app.config.* as `migrate --from expo` does, into the shell:\n" +
+    "  ios.infoPlist usage strings and the ones its config plugins set (Info.plist, each only\n" +
+    "  when absent), android.permissions (AndroidManifest.xml), and expo-build-properties'\n" +
+    "  ios.deploymentTarget (project.pbxproj), android min / compile / target SDK\n" +
+    "  (variables.gradle; each only raised) and usesCleartextTraffic. Run it with the other\n" +
+    "  capabilities so the app's usage strings win over their defaults.\n" +
     "\n" +
     "  context-menu has no npm package: it writes denext's DenextContextMenu plugin (the\n" +
     "  UIContextMenuInteraction long-press menu with its lifted preview and UIMenu on iOS, a\n" +

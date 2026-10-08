@@ -7,7 +7,7 @@
  * @module
  */
 
-import { isNativeShell, openExternal } from "../mobile/bridge.ts";
+import { isNativeShell, nativePlatform, openExternal } from "../mobile/bridge.ts";
 import { onDeepLink } from "../mobile/deep-link.ts";
 import { openAppSettings } from "../mobile/permissions.ts";
 import { nativePlugin } from "../mobile/plugin.ts";
@@ -19,6 +19,12 @@ import {
   listeners,
   subscription,
 } from "./internal.ts";
+
+/** One extra of `Linking.sendIntent`, as React Native types it. */
+export interface IntentExtra {
+  readonly key: string;
+  readonly value: string | number | boolean;
+}
 
 /** What a `url` listener receives. */
 export interface LinkingEvent {
@@ -42,10 +48,13 @@ export interface LinkingStatic {
   canOpenURL(url: string): Promise<boolean>;
   getInitialURL(): Promise<string | null>;
   openSettings(): Promise<void>;
-  sendIntent(
-    action: string,
-    extras?: Array<{ key: string; value: string | number | boolean }>,
-  ): Promise<void>;
+  /** Android: start an activity for `action` with `extras`. Rejects elsewhere, as in React Native. */
+  sendIntent(action: string, extras?: readonly IntentExtra[]): Promise<void>;
+}
+
+/** The slice of denext's `DenextSettings` plugin `sendIntent` needs (Android only). */
+interface IntentPlugin {
+  sendIntent(options: { action: string; extras?: IntentExtra[] }): Promise<unknown>;
 }
 
 /** The slice of `@capacitor/app` the launch URL needs. */
@@ -111,7 +120,12 @@ function openOther(target: URL, windowName: string): void {
  *   `openAppSettings()`: denext's `DenextSettings` plugin in the shell (`denext mobile add
  *   permissions`), iOS's `app-settings:` URL without it. It rejects where nothing can open them
  *   (the Android shell without the plugin, a browser).
- * - `sendIntent()` rejects: a web view cannot send an Android intent.
+ * - `sendIntent(action, extras?)`: inside the Android shell, starts an activity for the intent
+ *   action through denext's `DenextSettings` plugin (`denext mobile add permissions`), each
+ *   extra a `{ key, value }` with a string, number (put as a double, as React Native does) or
+ *   boolean value; it rejects when no activity handles the action, and in the Android shell
+ *   without the plugin. On iOS, the web and a Deno Desktop window it rejects with
+ *   `Error("Unsupported")`, as React Native does off Android.
  *
  * @example
  * ```ts
@@ -183,7 +197,20 @@ export const Linking: LinkingStatic = {
   openSettings() {
     return openAppSettings();
   },
-  sendIntent() {
-    return Promise.reject(new Error("Linking.sendIntent is not available in a web view"));
+  async sendIntent(action, extras) {
+    if (nativePlatform() !== "android") throw new Error("Unsupported");
+    if (typeof action !== "string" || action === "") {
+      throw new TypeError(`Linking.sendIntent: invalid action ${JSON.stringify(action)}`);
+    }
+    const plugin = nativePlugin<IntentPlugin>("DenextSettings", ["sendIntent"]);
+    if (!plugin) {
+      throw new Error(
+        "Linking.sendIntent needs denext's DenextSettings plugin: run `denext mobile add permissions`",
+      );
+    }
+    await plugin.sendIntent({
+      action,
+      ...(extras ? { extras: extras.map(({ key, value }) => ({ key, value })) } : {}),
+    });
   },
 };

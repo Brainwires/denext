@@ -20,6 +20,7 @@ import {
   generateArtifact,
   type GenerateKind,
   type GeneratePreviewFile,
+  OPTIONAL_NAME_KINDS,
   safeJoin,
 } from "../../build/generate.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
@@ -44,25 +45,17 @@ const KIND_LEAD: Record<GenerateKind, string> = {
   "task": "tasks/<name>.ts — a defineTask job for cron or runTask()",
   "test": "tests/<Name>.test.tsx — a component test using denext/testing",
   "docker": "Dockerfile + docker-compose.yml + .dockerignore",
+  "migration": "migrations/<stamp>_<name>.sql (+ tasks/migrate.ts) — a node:sqlite migration",
+  "seed": "tasks/seed.ts — idempotent development data (denext task seed)",
+  "ci": ".github/workflows/ci.yml — check + build on every push and pull request",
 };
-
-/**
- * Kinds whose name is optional — mirrors `NO_NAME` in `src/cli/commands/generate.ts`, so the
- * GUI refuses exactly what the verb refuses. `docker` still *uses* the field (as the
- * `server`|`spa` mode override) and the boundaries still take an optional route path; only
- * `middleware` has nothing to name.
- */
-const NO_NAME: ReadonlySet<string> = new Set([
-  "docker",
-  "middleware",
-  "loading",
-  "error",
-  "not-found",
-]);
 
 /** What the name field suggests for each kind. */
 const NAME_HINT: Partial<Record<GenerateKind, string>> = {
   "docker": "server | spa (optional — auto-detected)",
+  "migration": "migration name (add_users)",
+  "seed": "sqlite | prisma (optional — auto-detected)",
+  "ci": "github (optional)",
   "loading": "route path (optional — root segment when empty)",
   "error": "route path (optional — root segment when empty)",
   "not-found": "route path (optional — root segment when empty)",
@@ -109,7 +102,7 @@ function showPanel(ctx: UiContext): Response {
       kinds: GENERATE_KINDS.map((kind) => ({
         kind,
         lead: KIND_LEAD[kind],
-        needsName: !NO_NAME.has(kind),
+        needsName: !OPTIONAL_NAME_KINDS.has(kind),
       })),
     });
   }
@@ -177,7 +170,7 @@ async function checkName(
   typed: string,
   name: string,
 ): Promise<string | null> {
-  if (!name) return NO_NAME.has(kind) ? null : `missing name for "${kind}"`;
+  if (!name) return OPTIONAL_NAME_KINDS.has(kind) ? null : `missing name for "${kind}"`;
   if (isAbsolute(typed) || typed.startsWith("/") || typed.startsWith("\\")) {
     return `"${typed}" is an absolute path — name an artifact relative to the project.`;
   }
@@ -319,7 +312,7 @@ function GenerateForm({ state }: ViewProps): VNode {
         autocomplete: "off",
         placeholder: NAME_HINT[state.kind] ?? "dashboard/settings",
         disabled: unnamed,
-        required: !NO_NAME.has(state.kind),
+        required: !OPTIONAL_NAME_KINDS.has(state.kind),
       }),
     ),
     h("button", { type: "submit", name: "op", value: "preview" }, "Preview"),

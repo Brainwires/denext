@@ -254,6 +254,6 @@ export async function handleRevokeToken(ctx: AuthRouteContext): Promise<Response
   if (!session || session instanceof Response) return session;
   const own = await listApiTokens(ctx.config, session.user.id);
   if (!own.some((token) => token.id === ctx.params.id)) return json({ error: "not found" }, 404);
-  await revokeApiToken(ctx.config, ctx.params.id);
+  await revokeApiToken(ctx.config, ctx.params.id, { userId: session.user.id });
   return json({ ok: true });
 }

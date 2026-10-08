@@ -11,6 +11,7 @@
  * @module
  */
 
+import { withUIManagerStatics } from "./ui-manager.ts";
 import { nativeModule, nativeModuleName } from "../mobile/native-module.ts";
 import { nativeViewComponent, nativeViewSlotCommand } from "../mobile/native-view.ts";
 import { h } from "../jsx/jsx-runtime.ts";
@@ -254,7 +255,8 @@ export function dispatchViewManagerCommand(tag: unknown, command: unknown, args?
 /**
  * react-native-web's `UIManager` with the view manager API it lacks, added in place (a member it
  * already has is kept): {@linkcode getViewManagerConfig}, `hasViewManagerConfig` and
- * {@linkcode dispatchViewManagerCommand}.
+ * {@linkcode dispatchViewManagerCommand}, plus React Native's other members it lacks
+ * (`withUIManagerStatics`: `measureLayoutRelativeToParent`, `viewIsDescendantOf`, …).
  *
  * @param UIManager react-native-web's `UIManager`.
  * @returns The same object.
@@ -264,5 +266,5 @@ export function withViewManagerCommands<T extends object>(UIManager: T): T {
   u.getViewManagerConfig ??= getViewManagerConfig;
   u.hasViewManagerConfig ??= (name: string) => getViewManagerConfig(name) !== null;
   u.dispatchViewManagerCommand ??= dispatchViewManagerCommand;
-  return UIManager;
+  return withUIManagerStatics(UIManager);
 }

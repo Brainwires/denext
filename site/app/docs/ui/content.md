@@ -450,9 +450,9 @@ the UI checks the permission and never prompts.
 
 ## Generate
 
-`/generate` is a GUI over `denext generate`. Pick one of the thirteen kinds — `page`,
+`/generate` is a GUI over `denext generate`. Pick one of the sixteen kinds — `page`,
 `route`, `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-`middleware`, `task`, `test`, `docker` — name it, and preview.
+`middleware`, `task`, `test`, `docker`, `migration`, `seed`, `ci` — name it, and preview.
 
 Preview is the real dry run: the same plan the write uses, showing every file it would
 create with its full contents, so what you read is what lands. "Write files" answers `303`

@@ -405,8 +405,11 @@ Deno.test("auth() and requireSession() accept the native access token; nothing s
   });
   assertEquals(guarded.user.id, h.userId);
   // A tampered token, and a cookie-less request with a bad bearer, are signed out.
-  const tampered = tokens.access_token.slice(0, -2) +
-    (tokens.access_token.endsWith("A") ? "BB" : "AA");
+  // Flip a character well inside the signature (never the trailing one: its low bits are base64
+  // padding, so a change there can decode to the same bytes and still verify).
+  const at = tokens.access_token.length - 8;
+  const tampered = tokens.access_token.slice(0, at) +
+    (tokens.access_token[at] === "A" ? "B" : "A") + tokens.access_token.slice(at + 1);
   assertEquals(await asBearer(tampered, () => auth()), null);
   assertEquals(await asBearer(`nat_${"x".repeat(40)}.sig`, () => auth()), null);
   assertEquals(await asBearer(tokens.access_token, () => requireAuth(new Request(ORIGIN))), null);

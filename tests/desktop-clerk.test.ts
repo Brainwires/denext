@@ -822,20 +822,32 @@ Deno.test("startClerkBrowserSignIn: the redemption must succeed, load a client a
 });
 
 // A locked Secret Service whose unlock prompt nobody answers (autologin Plasma/GNOME: gcr shows
-// the prompt, secret-tool blocks): the cap gives up after its answer timeout with
-// `backend_unavailable`. That used to reach clerk-js from its before-request hook, so every
-// Frontend API request failed (each after another full timeout) and clerk-js never loaded.
+// the prompt, libsecret blocks): the runtime's store gives up after the cap's answer timeout and
+// the cap rejects `backend_unavailable`. That used to reach clerk-js from its before-request hook,
+// so every Frontend API request failed (each after another full timeout) and clerk-js never loaded.
 Deno.test("clerk bridge: a keychain that never answers falls back to memory for the launch, so Clerk loads", async () => {
   let spawned = 0;
+  const timedOut = (_service: string, _account: string, options?: { timeout?: number }) => {
+    spawned++;
+    const err = new Error(
+      `the Secret Service did not answer within ${(options?.timeout ?? 0) / 1000} s (an unlock ` +
+        "prompt nobody answered)",
+    );
+    err.name = "SecureStoreUnavailable";
+    return new Promise<never>((_, reject) => setTimeout(() => reject(err), options?.timeout));
+  };
   const cap = secureStoreCapability({
     service: "dev.denext.clerk-example",
     os: "linux",
     answerTimeoutMs: 20,
-    // secret-tool waiting on an unanswered prompt: never settles, not even when killed.
-    run: () => {
-      spawned++;
-      return new Promise(() => {});
-    },
+    api: {
+      secureStore: {
+        supported: true,
+        get: timedOut,
+        set: (s: string, a: string, _v: string, o?: { timeout?: number }) => timedOut(s, a, o),
+        delete: timedOut,
+      },
+    } as unknown as Parameters<typeof secureStoreCapability>[0]["api"],
   });
   const ctx = {
     emit: () => {},

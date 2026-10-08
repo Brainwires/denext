@@ -184,10 +184,16 @@ Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env
 
 Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay the baseline", () => {
   // Scoped caps add only their exact run + sys; no write, no per-token read/write leaks.
+  // secure-store on macOS: the runtime's Keychain store (unscoped --allow-sys, which subsumes
+  // device's osRelease) and `security` (older runtimes, moving older items over).
   assertEquals(desktopBuildFlags(caps({ secureStore: true, device: true }), "darwin"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-sys=osRelease",
+    "--allow-sys",
     "--allow-run=security",
+  ]);
+  assertEquals(desktopBuildFlags(caps({ device: true }), "darwin"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys=osRelease",
   ]);
   // secure-store on Windows uses WinRT PasswordVault via powershell.exe (not on other OSes).
   assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [

@@ -611,15 +611,15 @@ Deno.test("routes: a failed token exchange reaches logger.error and fires signIn
 
 Deno.test("routes: the provider's own ?error= and a bad state both fire signInFailed", async () => {
   const issuer = freshIssuer();
-  const failures: { provider?: string; reason: string }[] = [];
+  const failures: { provider?: string; reason: string; providerError?: string }[] = [];
   const config: AuthConfig = {
     secret: "test-secret-value-at-least-32-chars-long",
     canonicalOrigin: ORIGIN,
     dangerouslyAllowInsecureProviders: true,
     providers: [discoveryProvider(issuer)],
     events: {
-      signInFailed: (payload) => {
-        failures.push({ provider: payload.provider, reason: payload.reason });
+      signInFailed: ({ provider, reason, providerError }) => {
+        failures.push({ provider, reason, ...(providerError ? { providerError } : {}) });
       },
     },
   };
@@ -631,7 +631,7 @@ Deno.test("routes: the provider's own ?error= and a bad state both fire signInFa
   const bad = await run(new Request(`${ORIGIN}/auth/callback/idp?code=c&state=nope`), config);
   assertEquals(bad.res!.headers.get("location"), "/?error=invalid_state");
   assertEquals(failures, [
-    { provider: "idp", reason: "access_denied" },
+    { provider: "idp", reason: "provider_error", providerError: "access_denied" },
     { provider: "idp", reason: "invalid_state" },
   ]);
 });

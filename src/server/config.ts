@@ -335,8 +335,41 @@ export interface MobileFlavorConfig {
   env?: Record<string, string>;
 }
 
+/** Android adaptive-icon layers under {@link MobileConfig.adaptiveIcon}. */
+export interface MobileAdaptiveIconConfig {
+  /** The foreground layer (a logo on transparency, 108dp canvas); default: the icon, scaled into the 72dp viewport. */
+  foreground?: string;
+  /** A full-bleed background image; default: {@link MobileConfig.backgroundColor}. */
+  backgroundImage?: string;
+  /** The Android 13 themed-icon layer (its shape is used, in white); default: the foreground. */
+  monochrome?: string;
+}
+
 /** Settings for `denext mobile build` / `denext mobile assets` (the Capacitor shell). */
 export interface MobileConfig {
+  /**
+   * The app icon `denext mobile assets` (and `denext mobile build`, replacing Capacitor's
+   * placeholder) generates every size from: a PNG / JPEG / WebP, 1024×1024 or larger, relative
+   * to the project. `denext migrate` writes it from the icon the app already has (an Expo app
+   * config, the web manifest, the apple-touch-icon). Unset, it is found the same way at each
+   * run. `--icon` and a flavor's `icon` take precedence. See
+   * {@link https://denext.dev/docs/mobile-build}.
+   */
+  icon?: string;
+  /**
+   * The icon background, `#rrggbb`: a transparent icon is flattened onto it for iOS (App Store
+   * icons have no alpha channel), and it is Android's adaptive background and the splash
+   * background. Default `#ffffff`.
+   */
+  backgroundColor?: string;
+  /** Android adaptive-icon layers (relative to the project). */
+  adaptiveIcon?: MobileAdaptiveIconConfig;
+  /** A logo centred on the splash background (default: the icon). */
+  splashIcon?: string;
+  /** The splash background, `#rrggbb`, when it differs from {@link backgroundColor}. */
+  splashBackgroundColor?: string;
+  /** The dark-mode splash background, `#rrggbb`; dark splash variants are written with it. */
+  darkBackgroundColor?: string;
   /**
    * Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`.
    * Names are lowercase letters, digits and `-`.
@@ -919,6 +952,8 @@ export interface DesktopConfig {
    * bundle is signed with a real identity (`DENEXT_CODESIGN_IDENTITY`).
    */
   macos?: DesktopMacosConfig;
+  /** Linux launch settings the package scripts write to the app's `laufey-launch.json`. */
+  linux?: DesktopLinuxConfig;
   /**
    * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
    * package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json
@@ -931,6 +966,22 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/** {@link DesktopConfig.linux}: Linux launch settings of the packaged app. */
+export interface DesktopLinuxConfig {
+  /**
+   * Refuse to start where the CEF backend would run web content without Chromium's sandbox: no
+   * unprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an
+   * AppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The
+   * app then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox),
+   * …`) and exits with status 78 before the runtime loads. Default `false`: the app starts
+   * unsandboxed there and `appCapabilities().sandbox` reads `"off"`. The package scripts write it
+   * to the Linux bundle's `laufey-launch.json` (`"requireSandbox": true`), where
+   * `LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's
+   * pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.
+   */
+  requireSandbox?: boolean;
 }
 
 /** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */
@@ -1102,6 +1153,22 @@ export interface CompressConfig {
    * @default ["gzip"]
    */
   encodings?: Array<"gzip" | "br">;
+}
+
+/**
+ * Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object:
+ * the headers on, with these settings).
+ */
+export interface CdnCacheHeadersConfig {
+  /**
+   * Send the header on a request a `middleware.ts` matched too. Off by default: middleware may
+   * gate a page on something a shared cache does not key on (an IP allow-list, an auth proxy's
+   * header, geolocation, `Accept-Language`), and a CDN would then serve the gated page to
+   * everyone. Turn it on only when no matched middleware decides who may see a cached page.
+   *
+   * @default false
+   */
+  evenWithMiddleware?: boolean;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -1353,6 +1420,24 @@ export interface DenextConfig {
    * list every param whose value changes cacheable output. Unset, every param participates.
    */
   cacheKeyParams?: string[];
+  /**
+   * Send shared-cache headers with ISR pages — **off by default** (opt-in). With `true`, a page
+   * served from the ISR cache (and the render that stores it) answers `Cache-Control: public,
+   * s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000` (`public,
+   * s-maxage=31536000` for `force-static`), so a CDN in front caches it as long as denext would.
+   * Never for a request carrying a `Cookie` or `Authorization`, a response that sets a cookie, a
+   * non-200, a dynamic render, a response whose `Cache-Control` middleware or a `headers()` rule
+   * already set, or a request a `middleware.ts` matched (`{ evenWithMiddleware: true }` sends it
+   * there too).
+   *
+   * The risk: a CDN keys a page on its URL alone, so a page gated on anything else the cached
+   * render didn't read — an IP allow-list, an auth proxy's header, geolocation,
+   * `Accept-Language` — is served from the CDN to everyone once one allowed visitor fetched it.
+   * Turn it on only for pages every visitor may see.
+   *
+   * @default false
+   */
+  cdnCacheHeaders?: boolean | CdnCacheHeadersConfig;
   /**
    * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
    * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
@@ -1862,7 +1947,7 @@ export function resolveCacheComponents(
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
  * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams` and `compress`, each falling back
+ * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
  * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
  * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
@@ -1885,6 +1970,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
+  /** Whether ISR pages carry shared-cache (`public, s-maxage`) headers (default off). */
+  cdnCacheHeaders?: boolean | CdnCacheHeadersConfig;
   /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
   compress?: boolean | CompressConfig;
   /**
@@ -1944,6 +2031,7 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     slotBackstop: config?.slotBackstop,
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
+    cdnCacheHeaders: config?.cdnCacheHeaders,
     compress: config?.compress,
     desktopAppOrigin: configuredDesktopAppOrigin(config),
   };

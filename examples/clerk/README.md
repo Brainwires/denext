@@ -193,7 +193,7 @@ xcrun devicectl device install app --device <device id> ../build/Build/Products/
 
   ```sh
   deno task test:desktop                        # from examples/clerk, in a logged-in session
-  # Linux, headless: a display and an unlocked Secret Service (needs secret-tool, libsecret-tools)
+  # Linux, headless: a display and an unlocked Secret Service (gnome-keyring; the runtime loads libsecret)
   sh ../desktop-kitchen-sink/e2e/linux-session.sh deno task test:desktop
   ```
 

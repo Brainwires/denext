@@ -13,14 +13,41 @@ name: Parity (react-native / expo)
 #     pinned `expo-*` baseline (scripts/parity/native/baselines/expo.baseline.json), minus
 #     the shim's `omitted` list. Offline: it runs `deno doc` over the shims, no npm.
 #
-# Heavy (installs npm): PRs to `main` and `main` itself, where it gates the release merge —
-# same policy as the `integration` / `next-compat` jobs in ci.yml. Run it any time via the
-# workflow_dispatch button. Accept a new baseline with `deno task parity:native:refresh`
-# and record intentional gaps with `deno task parity:native:gaps`.
+# PRs to `main` (where it gates the release merge) and every push to `main` or `development` that
+# touches the compat surface: the path filter below lists the react-native / expo shims, the parity
+# scripts and what they import directly (tests/workflow-path-filters.test.ts fails when one of them
+# imports a file the filter misses), so a parity regression shows up on the push that made it rather
+# than at the release. Run it any time via the workflow_dispatch button. Accept a new baseline with
+# `deno task parity:native:refresh` and record intentional gaps with `deno task parity:native:gaps`.
 
 on:
   push:
-    branches: [main]
+    branches: [main, development]
+    paths:
+      - "src/react-native/**"
+      - "src/react-native-compat/**"
+      - "src/expo/**"
+      - "src/build/react-native*.ts"
+      - "src/build/expo*.ts"
+      # What the shims, React Native mode's build modules and the parity scripts import directly:
+      # the list layer, denext/mobile, the hooks, context and JSX runtime the shims build on, and
+      # the build modules React Native mode's bundle options come from.
+      - "src/build/native-module-scan.ts"
+      - "src/build/next-compat.ts"
+      - "src/build/reanimated*.ts"
+      - "src/server/config.ts"
+      - "src/client/virtual/**"
+      - "src/mobile/**"
+      - "src/desktop/window.ts"
+      - "src/jsx/jsx-runtime.ts"
+      - "src/jsx/types.ts"
+      - "src/runtime/context.ts"
+      - "src/runtime/hooks.ts"
+      - "src/runtime/react-core.ts"
+      - "scripts/parity/**"
+      - "deno.json"
+      - "deno.lock"
+      - ".github/workflows/parity-native.yml"
   pull_request:
     branches: [main]
   workflow_dispatch:

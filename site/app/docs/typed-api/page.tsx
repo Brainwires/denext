@@ -76,6 +76,52 @@ export const PATCH = authed.define({
         that correlates with the server log), exactly like a <code>defineAction</code> error.
       </p>
 
+      <h2>CORS and CSRF — cors() and csrf()</h2>
+      <Code lang="ts">
+        {`// app/api/cart/route.ts
+import { cors, createApi, csrf, requireSession } from "denext/server";
+
+const cart = createApi()
+  .use(cors({ origins: ["https://shop.example.com"], credentials: true }))
+  .use(csrf({ allowedOrigins: ["https://shop.example.com"] }))
+  .use(requireSession());
+
+export const POST = cart.define({ body: CartItem }, ({ body, ctx }) => addToCart(ctx.session, body));`}
+      </Code>
+      <p>
+        <code>cors(policy)</code> takes the same policy as the app's <code>cors</code>{" "}
+        config — exact origins, <code>methods</code>, <code>headers</code>,{" "}
+        <code>exposeHeaders</code>, <code>credentials</code>, <code>maxAge</code>{" "}
+        — validated when the module loads, scoped to the endpoint it guards. The framework answers
+        the preflight for that method (a <code>204</code>, before <code>middleware.ts</code>{" "}
+        and before the chain runs) and decorates every response the endpoint produces, errors
+        included. It replaces the route's <code>export const cors</code>{" "}
+        and the app's policy for that method.
+      </p>
+      <p>
+        <code>csrf()</code>{" "}
+        refuses cross-site writes on a cookie-authenticated endpoint with the rule Server Actions
+        use: a non-<code>GET</code>/<code>HEAD</code>/<code>OPTIONS</code>{" "}
+        request carrying a cookie must come from the app's own origin, its{" "}
+        <code>allowedOrigins</code>{" "}
+        (app config or the middleware's own), or its Deno Desktop origin — by{" "}
+        <code>Origin</code>, else{" "}
+        <code>Referer</code>, and neither is a refusal. A request with no cookie passes (there is no
+        ambient credential to abuse; <code>checkCookieless: true</code> checks it too).{" "}
+        <code>doubleSubmit: true</code> also requires an <code>x-csrf-token</code>{" "}
+        header equal to the token cookie, which the middleware issues (readable by script,{" "}
+        <code>SameSite=Strict</code>) to any request that lacks it: <code>__Host-denext-csrf</code>
+        {" "}
+        on a secure request (https, or a trusted proxy's{" "}
+        <code>x-forwarded-proto</code>), so a sibling subdomain can't plant one, and{" "}
+        <code>denext-csrf</code>{" "}
+        over plain http. Either name is read, except that a secure request ignores the unprefixed
+        one. A refusal is a 403 <code>csrf_failed</code>{" "}
+        envelope, and the code joins the endpoint's documented errors in{" "}
+        <code>@denext/openapi</code>. CORS only governs what a browser lets a page read, so a
+        cookie-authenticated endpoint open to another origin wants both.
+      </p>
+
       <h2>The typed client</h2>
       <Code lang="ts">
         {`import { createApiClient, isApiClientError } from "denext";

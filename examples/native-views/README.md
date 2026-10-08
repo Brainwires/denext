@@ -41,6 +41,22 @@ then the `map` view (`DenextMapViewFactory.swift` on MapKit,
 `android/app/build.gradle`). Neither map needs an API key. OpenStreetMap's tile
 servers are for light use; point a production app at its own tile source.
 
+### Regenerating the native files
+
+Every file denext writes into `ios/` and `android/` starts with a
+`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
+fails when a committed one is behind the template denext writes today (or was edited
+by hand). After a template change, re-run the installers: they upgrade an unedited
+file in place and leave the rest of the project alone.
+
+```sh
+deno run -A --node-modules-dir=none ../../cli.ts mobile add native-map context-menu \
+  system-icons storage
+```
+
+The `Scanner` native module (`ScannerPlugin.swift` / `ScannerPlugin.kt`, from
+`mobile add native-module --name Scanner`) is the app's own code once written.
+
 ## Device checklist (iPhone)
 
 Build with `deno task cap:sync` then `deno task ios`, and on the phone:

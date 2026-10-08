@@ -476,16 +476,28 @@ Deno.test("facebook profile: Graph fields; the Graph API never asserts email ver
   assertStringIncludes(p.userinfoUrl!, "fields=id,name,email,picture");
 });
 
-Deno.test("apple: `openid` only — name/email need response_mode=form_post (documented limitation)", () => {
+Deno.test("apple: openid name email over response_mode=form_post; the email only from the id_token", () => {
   const p = apple(CRED);
-  assertEquals(p.scopes, ["openid"]);
+  assertEquals(p.scopes, ["openid", "name", "email"]);
+  assertEquals(p.responseMode, "form_post");
   assertEquals(p.issuer, "https://appleid.apple.com");
-  assertThrows(
-    () => apple({ ...CRED, scopes: ["openid", "email"] }),
-    TypeError,
-    "form_post",
-  );
-  assertThrows(() => apple({ ...CRED, scopes: ["name"] }), TypeError);
+  assertEquals(apple({ ...CRED, scopes: ["openid"] }).scopes, ["openid"]);
+  const claims = { sub: "001.x", email: "r@privaterelay.appleid.com", email_verified: "true" };
+  const user = JSON.stringify({
+    name: { firstName: " Ada ", lastName: "L" },
+    email: "evil@x.test",
+  });
+  const mapped = p.profile({ tokens: {}, claims, callbackParams: { user } });
+  assertEquals(mapped, {
+    id: "001.x",
+    name: "Ada L",
+    email: "r@privaterelay.appleid.com",
+    emailVerified: true,
+    image: undefined,
+  });
+  // Without a posted `user` (every sign-in after the first) there is just no name.
+  assertEquals(p.profile({ tokens: {}, claims }).name, undefined);
+  assertEquals(p.profile({ tokens: {}, claims, callbackParams: { user: "[1]" } }).name, undefined);
 });
 
 Deno.test("microsoftEntra: the multi-tenant aliases are refused (template issuer can't be verified)", () => {

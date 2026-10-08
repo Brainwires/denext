@@ -16,11 +16,13 @@
 //     resolved) and the shims' exports from src/react-native/lists/manifest.ts.
 //
 // A name the real side has and the adapter lacks fails the gate unless it is in
-// baselines/lists.known-gaps.json (`parity:native:gaps -- lists` rewrites it) or matches a
-// waiver below. Extra adapter names are reported, never a failure.
+// baselines/lists.known-gaps.json (`parity:native:gaps -- lists` rewrites it), matches the
+// policy pattern below, or is named by a documented `LIST_WAIVERS` entry (waivers.ts). Extra
+// adapter names are reported, never a failure.
 
 import { LIST_PACKAGES } from "../../../src/react-native/lists/manifest.ts";
 import { npmInstall } from "./shared.ts";
+import { LIST_WAIVERS, type ListWaiver } from "./waivers.ts";
 
 const DIR = "scripts/parity/native/baselines";
 const baselinePath = (root: string) => `${root}/${DIR}/lists.baseline.json`;
@@ -203,11 +205,22 @@ export async function denextListSurfaces(root: string): Promise<Record<string, L
 
 // ── the diff ───────────────────────────────────────────────────────────────────────────
 
+/** Whether a documented waiver names `name` of `target`. */
+function listWaived(
+  waivers: readonly ListWaiver[],
+  target: string,
+  kind: ListGap["kind"],
+  name: string,
+): boolean {
+  return waivers.some((w) => w.target === target && w.kind === kind && w.names.includes(name));
+}
+
 /** Every EXPECTED name the adapters lack (waived names left out). */
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 export function listGaps(
   expected: Record<string, ListSurface>,
   actual: Record<string, ListSurface>,
+  waivers: readonly ListWaiver[] = LIST_WAIVERS,
 ): ListGap[] {
   const gaps: ListGap[] = [];
   const kinds = [["props", "prop"], ["methods", "method"], ["exports", "export"]] as const;
@@ -215,7 +228,8 @@ export function listGaps(
     for (const [field, kind] of kinds) {
       const have = new Set(actual[target]?.[field] ?? []);
       for (const name of surface[field] ?? []) {
-        if (!have.has(name) && !WAIVED.test(name)) gaps.push({ target, kind, name });
+        if (have.has(name) || WAIVED.test(name)) continue;
+        if (!listWaived(waivers, target, kind, name)) gaps.push({ target, kind, name });
       }
     }
   }
@@ -335,6 +349,35 @@ function isTypeDeclaration(
     ts.isClassDeclaration(node);
 }
 
+/**
+ * Where the installed React Native declares its lists' props: the legacy hand-written `.d.ts`
+ * (up to 0.87), or the generated types (`types_generated/`, 0.88 on, where the legacy list
+ * declarations are gone and `VirtualizedListProps` is a type alias of its own file).
+ */
+function reactNativeListTypes(nm: string): { flat: string; section: string; virtualized: string } {
+  const legacy = `${nm}/react-native/Libraries/Lists/FlatList.d.ts`;
+  let hasLegacy = true;
+  try {
+    Deno.statSync(legacy);
+  } catch {
+    hasLegacy = false;
+  }
+  if (hasLegacy) {
+    return {
+      flat: legacy,
+      section: `${nm}/react-native/Libraries/Lists/SectionList.d.ts`,
+      virtualized: `${nm}/@react-native/virtualized-lists/Lists/VirtualizedList.d.ts`,
+    };
+  }
+  const generated = `${nm}/react-native/types_generated/Libraries/Lists`;
+  return {
+    flat: `${generated}/FlatList.d.ts`,
+    section: `${generated}/SectionList.d.ts`,
+    virtualized:
+      `${nm}/@react-native/virtualized-lists/types_generated/Lists/VirtualizedListProps.d.ts`,
+  };
+}
+
 /** The TypeScript-side capture, run over the installed packages in `dir`. */
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
@@ -342,9 +385,7 @@ async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
   const ts = (await import("npm:typescript@^5")).default;
   const nm = `${dir}/node_modules`;
   const files = {
-    flat: `${nm}/react-native/Libraries/Lists/FlatList.d.ts`,
-    section: `${nm}/react-native/Libraries/Lists/SectionList.d.ts`,
-    virtualized: `${nm}/@react-native/virtualized-lists/Lists/VirtualizedList.d.ts`,
+    ...reactNativeListTypes(nm),
     flash: `${nm}/@shopify/flash-list/dist/index.d.ts`,
     flashProps: `${nm}/@shopify/flash-list/dist/FlashListProps.d.ts`,
     flashRef: `${nm}/@shopify/flash-list/dist/FlashListRef.d.ts`,

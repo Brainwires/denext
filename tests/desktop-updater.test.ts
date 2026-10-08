@@ -674,6 +674,53 @@ Deno.test("desktop updater: launch re-verification serves only a complete, signe
   });
 });
 
+Deno.test("desktop updater: launch re-verification refuses an overlay whose stored manifest changed after apply", async () => {
+  await withFeed(async ({ k, data }) => {
+    const config = cfg(data, k.publicKey);
+    const good = await signedFiles(k, UI, { sequence: 5, notes: "signed notes" });
+    const vdir = join(data, "versions", good.version);
+    await layOut(vdir, good, UI);
+    await writePointer(data, good.version, false);
+    assertEquals(
+      await resolveDesktopUiDir("/bundled", config),
+      vdir,
+      "control: the intact overlay",
+    );
+    // A signed field edited in the stored manifest: the signature no longer verifies.
+    await writeManifestJson(vdir, { ...good, notes: "edited notes" });
+    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    // The signature stripped.
+    const { signature: _dropped, ...unsigned } = good;
+    await writeManifestJson(vdir, unsigned as OtaManifest);
+    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    // Re-signed by another key (the files and version intact).
+    const other = await keys();
+    await writeManifestJson(
+      vdir,
+      await signedFiles(other, UI, { sequence: 5, notes: "signed notes" }),
+    );
+    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    // A file and its manifest entry changed together: the version no longer matches.
+    await writeManifestJson(vdir, good);
+    await Deno.writeTextFile(join(vdir, "a.js"), "evil()");
+    const forged = {
+      ...good,
+      files: await Promise.all(
+        good.files.map(async (f) =>
+          f.path === "a.js"
+            ? { ...f, sha256: await sha256Hex(encoder.encode("evil()")), size: 6 }
+            : f
+        ),
+      ),
+    };
+    await writeManifestJson(vdir, forged);
+    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    // Every launch checks again: restored, it is served again.
+    await layOut(vdir, good, UI);
+    assertEquals(await resolveDesktopUiDir("/bundled", config), vdir);
+  });
+});
+
 Deno.test("desktop updater: apply re-verifies the staging dir (missing, unsafe, absent or altered files)", async () => {
   await withFeed(async ({ k, data }) => {
     const config = cfg(data, k.publicKey);

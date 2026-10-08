@@ -18,6 +18,7 @@
 
 import { dirname, join, relative } from "@std/path";
 import { appendGitignore } from "./gitignore.ts";
+import { mfs } from "./migrate-io.ts";
 
 /** Prisma 6 line: the first release with the ESM/Deno `prisma-client` generator + GA driver adapters. */
 const PRISMA_VERSION = "6.19.3";
@@ -160,7 +161,7 @@ async function rewritePrismaSources(
   const clientModules: string[] = [];
   const refsRewritten: string[] = [];
   for (const file of await collectSourceFiles(dir)) {
-    const original = await Deno.readTextFile(file);
+    const original = await mfs.readTextFile(file);
     if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) continue;
     if (original.includes("__denextPrismaAdapter")) continue;
     const relFile = relative(dir, file).replace(/\\/g, "/"); // reported `/`-separated
@@ -174,14 +175,14 @@ async function rewritePrismaSources(
       text = injectAdapter(text, rel, warnings, relFile);
       clientModules.push(relFile);
     }
-    if (text !== original) await Deno.writeTextFile(file, text);
+    if (text !== original) await mfs.writeTextFile(file, text);
   }
   return { clientModules, refsRewritten };
 }
 
 /** Replace the `generator client { … }` block with the ESM/Deno client generator. */
 async function rewriteSchema(schemaAbs: string, warnings: string[]): Promise<void> {
-  const src = await Deno.readTextFile(schemaAbs);
+  const src = await mfs.readTextFile(schemaAbs);
   // `queryCompiler` + `driverAdapters`: the Rust-free query compiler (no native engine
   // binary) driven through the better-sqlite3 driver adapter. Without them, the generator
   // emits the library engine — which needs a native `.node` binary AND rejects `{ adapter }`
@@ -198,10 +199,10 @@ async function rewriteSchema(schemaAbs: string, warnings: string[]): Promise<voi
   }
   const block = /generator\s+client\s*\{[\s\S]*?\n\}/;
   if (block.test(src)) {
-    await Deno.writeTextFile(schemaAbs, src.replace(block, denoBlock));
+    await mfs.writeTextFile(schemaAbs, src.replace(block, denoBlock));
   } else {
     // No `generator client` block — append one (a schema can omit it and rely on defaults).
-    await Deno.writeTextFile(schemaAbs, `${src.trimEnd()}\n\n${denoBlock}\n`);
+    await mfs.writeTextFile(schemaAbs, `${src.trimEnd()}\n\n${denoBlock}\n`);
     warnings.push("prisma/schema.prisma had no `generator client` block — appended the Deno one.");
   }
 }
@@ -263,7 +264,7 @@ const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbU
 async function stripPrismaFromPackageJson(pkgPath: string): Promise<boolean> {
   let raw: string;
   try {
-    raw = await Deno.readTextFile(pkgPath);
+    raw = await mfs.readTextFile(pkgPath);
   } catch {
     return false;
   }
@@ -286,8 +287,8 @@ async function stripPrismaFromPackageJson(pkgPath: string): Promise<boolean> {
   }
   if (changed) {
     // Preserve the file's indentation style where obvious (2-space default).
-    await Deno.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
-    await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+    await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
+    await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
   return changed;
 }
@@ -295,8 +296,8 @@ async function stripPrismaFromPackageJson(pkgPath: string): Promise<boolean> {
 /** Write the `links` patch package.json (its index.mjs is produced by the setup bundle step). */
 async function writePatchPackage(dir: string): Promise<void> {
   const pkgDir = join(dir, PATCH_DIR);
-  await Deno.mkdir(pkgDir, { recursive: true });
-  await Deno.writeTextFile(
+  await mfs.mkdir(pkgDir, { recursive: true });
+  await mfs.writeTextFile(
     join(pkgDir, "package.json"),
     JSON.stringify(
       {
@@ -358,8 +359,8 @@ await run(HAS_MIGRATIONS ? "prisma migrate deploy" : "prisma db push", [
 
 console.log("\\n✓ Prisma setup complete — run \`deno task build\` (or dev).");
 `;
-  await Deno.mkdir(join(dir, "scripts"), { recursive: true });
-  await Deno.writeTextFile(join(dir, SETUP_SCRIPT), script);
+  await mfs.mkdir(join(dir, "scripts"), { recursive: true });
+  await mfs.writeTextFile(join(dir, SETUP_SCRIPT), script);
 }
 
 /** The relative specifier from `file`'s directory to the generated client entry. */
@@ -384,7 +385,7 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
     let entries: Deno.DirEntry[];
     try {
       entries = [];
-      for await (const e of Deno.readDir(root)) entries.push(e);
+      for await (const e of mfs.readDir(root)) entries.push(e);
     } catch {
       return;
     }
@@ -405,7 +406,7 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
 
 async function fileExists(p: string): Promise<boolean> {
   try {
-    await Deno.stat(p);
+    await mfs.stat(p);
     return true;
   } catch {
     return false;

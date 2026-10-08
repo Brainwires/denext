@@ -28,16 +28,28 @@
 // surface uses; tests/export-routes-conformance.test.ts holds both routers to the shared vectors
 // (tests/fixtures/export-routes.json), compiling this one with swiftc where it exists.
 
-/** The `router()` override, first thing in the bridge view controller's class body. */
-export const EXPORT_ROUTER_OVERRIDE =
-  `    /// Serves an exported multi-page app's routes: Capacitor's router answers every path
+/**
+ * The `router()` override, first thing in the bridge view controller's class body, returning
+ * `router` (a Swift expression). The OTA bridge returns `DenextOtaRouter()`, which wraps
+ * `DenextExportRouter` and verifies a downloaded UI's files as they are served
+ * (ota-native-templates.ts); every other bridge returns `DenextExportRouter()`.
+ *
+ * @param router The Swift expression the override returns.
+ * @returns The override's Swift source.
+ */
+export function exportRouterOverride(router = "DenextExportRouter()"): string {
+  return `    /// Serves an exported multi-page app's routes: Capacitor's router answers every path
     /// without an extension with the root \`index.html\` (a single-page-app assumption), so
     /// \`/protected\` would load the home page.
     override open func router() -> Router {
-        DenextExportRouter()
+        ${router}
     }
 
 `;
+}
+
+/** The `router()` override every bridge but the OTA one carries ({@linkcode exportRouterOverride}). */
+export const EXPORT_ROUTER_OVERRIDE: string = exportRouterOverride();
 
 /** The router, appended to the bridge view controller's file. */
 export const EXPORT_ROUTER_SWIFT = `
@@ -84,13 +96,14 @@ const CLASS_ANCHOR = "class DenextBridgeViewController: CAPBridgeViewController 
  * override first in the class body and `DenextExportRouter` at the end of the file.
  *
  * @param source The Swift template.
+ * @param router The Swift expression `router()` returns (default `DenextExportRouter()`).
  * @returns The template with the router.
  * @throws When `source` has no `DenextBridgeViewController` class to override `router()` in.
  */
-export function withExportRouter(source: string): string {
+export function withExportRouter(source: string, router?: string): string {
   if (!source.includes(CLASS_ANCHOR)) {
     throw new Error("the bridge view controller template has no place for the export router");
   }
-  return source.replace(CLASS_ANCHOR, CLASS_ANCHOR + EXPORT_ROUTER_OVERRIDE) +
+  return source.replace(CLASS_ANCHOR, CLASS_ANCHOR + exportRouterOverride(router)) +
     EXPORT_ROUTER_SWIFT;
 }

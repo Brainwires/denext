@@ -15,6 +15,7 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { mfs } from "./migrate-io.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
@@ -23,13 +24,18 @@ import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
+import {
+  formatIconSearch,
+  type IconSearch,
+  mobileIconConfig,
+  resolveIconSource,
+} from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
   capacitorConfigSource,
   capacitorIdentity,
   capacitorTasks,
   expoApiUsage,
-  type ExpoAppConfig,
   expoConfigScript,
   type ExpoDependencyReport,
   expoDependencyReport,
@@ -38,9 +44,9 @@ import {
   type MetroResolution,
   type MobilePlan,
   prebuildFolders,
-  readExpoAppConfig,
   readMetroResolution,
 } from "./expo-migrate.ts";
+import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
 import { findReactNativeWeb } from "./react-native.ts";
 import { findSqliteWasm } from "./sqlite-wasm.ts";
 import {
@@ -304,13 +310,36 @@ export interface SpaMigrateInfo {
   /** The mount element id written to `spa.rootId` — only when the app does not render into `#root`. */
   rootId?: string;
   proxy?: { prefixes: string[]; target: string };
+  /**
+   * The vite.config whose dev proxy is built in code, so its prefixes could not be read and
+   * `proxy` fell back to `/api` (unset when `--proxy` was passed or the proxy is a literal).
+   */
+  proxyUnresolved?: string;
   /** `denext.config.ts` was written (false when one already existed). */
   configWritten: boolean;
   /** `desktop.ts` was written (false when `--desktop` off or one already existed). */
   desktopWritten: boolean;
   /** The `--icon` file the desktop task uses (always `desktop-icon.png` — composed by `export` from `spa.desktop.icon` or an auto-detected web icon); undefined when no icon was detected at migrate time. */
   desktopIcon?: string;
+  /** The app icon migrate found for a mobile build, recorded as `mobile.icon` (see {@link AppIconReport}). */
+  appIcon?: AppIconReport;
   nodeModulesDir: "manual" | "auto";
+}
+
+/** The app icon migrate found (or did not) for `denext mobile assets` / `mobile build`. */
+export interface AppIconReport {
+  /** The icon, relative to the project (`./public/apple-touch-icon.png`); null when none was found. */
+  icon: string | null;
+  /** The rule that picked it (`expo`, `manifest`, `apple-touch-icon`, …). */
+  kind: string | null;
+  /** Its pixel size (`180×180`). */
+  size?: string;
+  /** The project is a Capacitor / Expo app, so a missing icon needs a look. */
+  mobile: boolean;
+  /** `mobile.icon` (and its layers) was written into the generated denext.config.ts. */
+  recorded: boolean;
+  /** The report lines: the source, a size warning, what was passed over. */
+  lines: string[];
 }
 
 /** Result of a migration run (for the CLI to print). */
@@ -346,6 +375,37 @@ export interface MigrateResult {
   prisma?: PrismaMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
+  /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
+  nextConfig?: NextConfigReport;
+}
+
+/** How the app's `next.config.*` translated into `denext.config.ts`. */
+export interface NextConfigReport {
+  /** The config file that was read (`next.config.ts`, …). */
+  file: string;
+  /** The config was evaluated; false means every key must be ported by hand. */
+  evaluated: boolean;
+  /** Why evaluation failed, when it did. */
+  reason?: string;
+  /** Keys copied into `denext.config.ts` (literal fields and inlined rule functions). */
+  carried: string[];
+  /** Keys denext does not copy, each with its denext equivalent (empty when none is needed). */
+  dropped: Array<{ key: string; note: string }>;
+}
+
+/** The {@link NextConfigReport} for a translation, or undefined when the app has no next.config. */
+function nextConfigReport(next: NextConfigTranslation | null): NextConfigReport | undefined {
+  if (!next?.file) return undefined;
+  return {
+    file: next.file,
+    evaluated: !next.raw,
+    ...(next.raw && next.rawReason ? { reason: next.rawReason } : {}),
+    carried: [...Object.keys(next.fields), ...Object.keys(next.rules)],
+    dropped: next.dropped.map((key) => ({
+      key,
+      note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
+    })),
+  };
 }
 
 /** What `denext migrate --from expo` found and wrote, beyond the SPA facts. */
@@ -384,7 +444,7 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
     // parser — a naive `//`-stripper corrupts `//` inside string values (e.g. the
     // `"$schema": "https://…"` URL the official Next.js example tsconfigs carry),
     // which silently drops every `paths` alias.
-    return parseJsonc(await Deno.readTextFile(path)) as Record<string, unknown>;
+    return parseJsonc(await mfs.readTextFile(path)) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -718,13 +778,13 @@ async function writeDenoJsonUnlessAuthored(
 ): Promise<boolean> {
   const denoJsonPath = join(dir, "deno.json");
   if (!(await writable(denoJsonPath))) return true;
-  await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+  await mfs.writeTextFile(denoJsonPath, denoJsonText(denoJson));
   written.unshift(denoJsonPath);
   return false;
 }
 
 async function writable(path: string): Promise<boolean> {
-  const cur = await Deno.readTextFile(path).catch(() => null);
+  const cur = await mfs.readTextFile(path).catch(() => null);
   return cur === null || cur.includes(GEN_SENTINEL);
 }
 
@@ -745,6 +805,8 @@ interface NextConfigTranslation {
   file: string | null;
   /** True when the config couldn't be evaluated → emit a hand-port note instead. */
   raw: boolean;
+  /** Why the evaluation failed (when {@link raw}). */
+  rawReason?: string;
   /**
    * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
    * remark/rehype/recma lists). `createMDX` hides those options inside a webpack-loader
@@ -869,7 +931,7 @@ async function readNextConfig(
  */
 async function hasMdxPluginWiring(configFile: string): Promise<boolean> {
   try {
-    const src = await Deno.readTextFile(configFile);
+    const src = await mfs.readTextFile(configFile);
     return /\b(remark|rehype|recma)Plugins\b/.test(src) ||
       (/@next\/mdx|createMDX/.test(src) && /codehike|remark-|rehype-|recma-/.test(src));
   } catch {
@@ -895,7 +957,7 @@ async function evalNextConfig(
     program: NEXT_EVAL_PROGRAM,
     marker: NEXT_EVAL_MARKER,
   });
-  if (!result.ok) return { ...base, raw: true };
+  if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
   return {
     ...base,
     ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
@@ -985,7 +1047,7 @@ async function writePagesRouterConfig(
     pluginImports.push(`import { effect } from "@denext/effect";`);
     pluginCalls.push("effect()");
   }
-  await Deno.writeTextFile(
+  await mfs.writeTextFile(
     configPath,
     GEN_MARKER + "\n" +
       pluginImports.join("\n") + "\n\n" +
@@ -1022,7 +1084,7 @@ export async function findTailwindInput(
   for (const rel of candidates) {
     let css: string;
     try {
-      css = await Deno.readTextFile(join(dir, rel));
+      css = await mfs.readTextFile(join(dir, rel));
     } catch {
       continue;
     }
@@ -1061,7 +1123,7 @@ export async function findSpaTailwindInput(dir: string): Promise<string | null> 
   const known = await findTailwindInput(dir, SPA_TAILWIND_INPUT_CANDIDATES);
   if (known) return known;
   for (const rel of await cssFilesUnder(join(dir, "src"), "src", 3)) {
-    const css = await Deno.readTextFile(join(dir, rel)).catch(() => "");
+    const css = await mfs.readTextFile(join(dir, rel)).catch(() => "");
     if (TAILWIND_DIRECTIVE.test(css)) return "./" + rel;
   }
   return null;
@@ -1073,7 +1135,7 @@ async function cssFilesUnder(abs: string, rel: string, depth: number): Promise<s
   const files: string[] = [];
   const dirs: string[] = [];
   try {
-    for await (const e of Deno.readDir(abs)) {
+    for await (const e of mfs.readDir(abs)) {
       if (e.isFile && e.name.endsWith(".css")) files.push(`${rel}/${e.name}`);
       else if (e.isDirectory && e.name !== "node_modules") dirs.push(e.name);
     }
@@ -1101,20 +1163,20 @@ async function writeAppRouterConfig(
   imports: Record<string, string>,
   hasEffect: boolean,
   written: string[],
-): Promise<boolean> {
+): Promise<{ exists: boolean; next: NextConfigTranslation | null }> {
   const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps)
     ? await findTailwindInput(dir)
     : null;
   const publicEnv = await collectNextPublicEnvKeys(dir);
   const next = await readNextConfig(dir);
   if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
-  if (!(await writable(configPath))) return true;
-  await Deno.writeTextFile(
+  if (!(await writable(configPath))) return { exists: true, next };
+  await mfs.writeTextFile(
     configPath,
     nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
   );
   written.push(configPath);
-  return false;
+  return { exists: false, next };
 }
 
 /**
@@ -1138,7 +1200,7 @@ export async function migrateProject(
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
   const written: string[] = [];
-  const { pagesConfigWritten, pagesConfigExists } = await writeMigratedConfig(
+  const { pagesConfigWritten, pagesConfigExists, next } = await writeMigratedConfig(
     dir,
     pagesRouter,
     { R, jsr, deps, imports, hasEffect },
@@ -1169,6 +1231,7 @@ export async function migrateProject(
     pagesConfigExists,
     denoJsonExists,
     prisma,
+    nextConfig: nextConfigReport(next),
   };
 }
 
@@ -1225,13 +1288,19 @@ async function writeMigratedConfig(
     hasEffect: boolean;
   },
   written: string[],
-): Promise<{ pagesConfigWritten: boolean; pagesConfigExists: boolean }> {
+): Promise<
+  {
+    pagesConfigWritten: boolean;
+    pagesConfigExists: boolean;
+    next: NextConfigTranslation | null;
+  }
+> {
   const configPath = join(dir, "denext.config.ts");
   if (pagesRouter) {
     const r = await writePagesRouterConfig(configPath, app.R, app.imports, app.hasEffect, written);
-    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists };
+    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists, next: null };
   }
-  const pagesConfigExists = await writeAppRouterConfig(
+  const { exists: pagesConfigExists, next } = await writeAppRouterConfig(
     dir,
     configPath,
     app.deps,
@@ -1240,7 +1309,7 @@ async function writeMigratedConfig(
     app.hasEffect,
     written,
   );
-  return { pagesConfigWritten: false, pagesConfigExists };
+  return { pagesConfigWritten: false, pagesConfigExists, next };
 }
 
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
@@ -1480,7 +1549,7 @@ async function isGenericSpa(
 async function readCraIndex(
   dir: string,
 ): Promise<{ entry: string; title: string }> {
-  const html = await Deno.readTextFile(join(dir, "public", "index.html")).catch(
+  const html = await mfs.readTextFile(join(dir, "public", "index.html")).catch(
     () => null,
   );
   let title = "app";
@@ -1590,7 +1659,7 @@ function pnpUnsupported(dir: string): Error {
 async function readIndexHtml(
   dir: string,
 ): Promise<{ entry: string; title: string; head?: string; loading?: string; rootId?: string }> {
-  const html = await Deno.readTextFile(join(dir, "index.html")).catch(() => null);
+  const html = await mfs.readTextFile(join(dir, "index.html")).catch(() => null);
   if (!html) return { entry: "./src/main.tsx", title: "app" };
   const { entry, title } = parseEntryAndTitle(html);
   const rootId = await mountElementId(dir, entry, html);
@@ -1611,7 +1680,7 @@ async function readIndexHtml(
  * blank page with no error — `createRoot(null)` throws before the first paint.
  */
 async function mountElementId(dir: string, entry: string, html: string): Promise<string> {
-  const source = await Deno.readTextFile(join(dir, entry)).catch(() => "");
+  const source = await mfs.readTextFile(join(dir, entry)).catch(() => "");
   // The lookup passed to `createRoot`/`hydrateRoot`/`render` first — an entry that removes a
   // `#splash` before mounting `#app` has two lookups and only the mount one counts — then any
   // lookup at all.
@@ -1711,7 +1780,7 @@ async function collectSpaEnvKeys(dir: string): Promise<string[]> {
     }
   };
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
-    const t = await Deno.readTextFile(join(dir, f)).catch(() => null);
+    const t = await mfs.readTextFile(join(dir, f)).catch(() => null);
     if (t) scan(t);
   }
   await walkCode(join(dir, "src"), scan);
@@ -1726,14 +1795,14 @@ async function walkCode(
   // `Deno.readDir` is lazy — a missing/again-unreadable dir throws while iterating, not at
   // the call — so the guard must wrap the whole loop (App Router apps have no `src/`).
   try {
-    for await (const e of Deno.readDir(root)) {
+    for await (const e of mfs.readDir(root)) {
       if (e.isDirectory) {
         if (
           e.name === "node_modules" || e.name === "dist" || e.name === ".denext"
         ) continue;
         await walkCode(join(root, e.name), scan);
       } else if (/\.(tsx?|jsx?|mts|mjs)$/.test(e.name)) {
-        const t = await Deno.readTextFile(join(root, e.name)).catch(() => null);
+        const t = await mfs.readTextFile(join(root, e.name)).catch(() => null);
         if (t) scan(t);
       }
     }
@@ -1742,23 +1811,54 @@ async function walkCode(
   }
 }
 
-/** Best-effort prefixes from a *literal* `proxy: { "/api": … }` in vite.config (else undefined). */
+/** The top-level `"/prefix":` keys of a literal `proxy: { … }` object (brace-matched). */
+function literalProxyKeys(text: string): string[] {
+  const m = /\bproxy\s*:\s*\{/.exec(text);
+  if (!m) return [];
+  let depth = 0;
+  let body = "";
+  for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) break;
+    // Keep only depth-1 text, so a nested `{ "/x": … }` is not read as a prefix.
+    else if (depth === 1) body += c;
+  }
+  return [...body.matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((x) => x[1]);
+}
+
+/**
+ * The vite.config's dev proxy: best-effort prefixes from a *literal* `proxy: { "/api": … }`,
+ * else `computed` naming the config file when it HAS a `proxy:` key whose prefixes are built
+ * in code (`Object.fromEntries(PREFIXES.map(…))`) and so cannot be read statically.
+ */
 async function parseViteProxyPrefixes(
   dir: string,
-): Promise<string[] | undefined> {
+): Promise<{ prefixes?: string[]; computed?: string }> {
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
-    const t = await Deno.readTextFile(join(dir, f)).catch(() => null);
+    const t = await mfs.readTextFile(join(dir, f)).catch(() => null);
     if (!t) continue;
-    const block = t.match(/proxy\s*:\s*\{([\s\S]*?)\n\s*\}/);
-    if (block) {
-      const keys = [...block[1].matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((
-        x,
-      ) => x[1]);
-      if (keys.length) return keys;
-    }
+    const keys = literalProxyKeys(t);
+    if (keys.length) return { prefixes: keys };
+    if (/\bproxy\s*:/.test(t)) return { computed: f };
   }
-  return undefined;
+  return {};
 }
+
+/**
+ * The generated config's `buildEnv` helper: a build-time environment variable (the shell or a
+ * `.env` file), "" when unset or when the process may not read it (a desktop runtime with a
+ * scoped `--allow-env` imports this config too).
+ */
+const BUILD_ENV_HELPER =
+  `/** A build-time variable (the shell or a .env file), as Vite exposes VITE_*; "" if unset. */\n` +
+  `const buildEnv = (key: string): string => {\n` +
+  `  try {\n` +
+  `    return Deno.env.get(key) ?? "";\n` +
+  `  } catch {\n` +
+  `    return ""; // no permission to read it\n` +
+  `  }\n` +
+  `};\n\n`;
 
 /** Source text for the generated `denext.config.ts`. */
 function spaConfigSource(o: {
@@ -1783,12 +1883,19 @@ function spaConfigSource(o: {
   desktopPackages?: readonly string[];
   /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
   noPrecompress?: boolean;
+  /** The `mobile` block pinning the app icon migrate found, and the source it came from. */
+  mobileIcon?: { config: Record<string, unknown>; from: string };
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
+  // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
+  // way Vite inlines any `VITE_*` set at build time; a literal "" would ignore both.
+  const needsBuildEnv = o.envKeys.some((k) => k !== "APP_VERSION");
   const envLines = o.envKeys
-    .map((
-      k,
-    ) => (k === "APP_VERSION" ? `      APP_VERSION: pkg.version,` : `      ${k}: "",`))
+    .map((k) =>
+      k === "APP_VERSION"
+        ? `      APP_VERSION: pkg.version,`
+        : `      ${k}: buildEnv(${JSON.stringify(k)}),`
+    )
     .join("\n");
   const tailwindBlock = o.tailwind
     ? `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${
@@ -1804,6 +1911,7 @@ function spaConfigSource(o: {
     `import type { DenextConfig } from "denext/server";\n` +
     (needsPkg ? `import pkg from "./package.json" with { type: "json" };\n` : "") +
     `\n` +
+    (needsBuildEnv ? BUILD_ENV_HELPER : "") +
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
@@ -1812,7 +1920,8 @@ function spaConfigSource(o: {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
-    (o.desktop ? desktopDenoFlagsLines() : "") +
+    mobileIconLines(o.mobileIcon) +
+    (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
@@ -1836,19 +1945,101 @@ function spaConfigSource(o: {
     `} satisfies DenextConfig;\n`;
 }
 
+/** A plain value as TypeScript source: identifier keys unquoted, nested objects inline. */
+function tsValue(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value).map(([k, v]) =>
+      `${/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)}: ${tsValue(v)}`
+    );
+    return `{ ${entries.join(", ")} }`;
+  }
+  return JSON.stringify(value);
+}
+
 /**
- * The generated config's `desktop.denoFlags` (a `--desktop` migration): the `deno desktop` flags
- * the `desktop` task bakes, so `denext desktop run | dev | package` pass them too.
- * `--node-modules-dir=none` resolves the desktop runtime's npm deps from Deno's cache (a manual
- * or workspace `node_modules` does not carry them, and `deno desktop` would type-check against it
- * and rewrite the root `package.json`); `--exclude-unused-npm` embeds only the npm packages
- * `desktop.ts` reaches.
+ * The generated config's `mobile` block: the app icon `denext mobile assets` and
+ * `denext mobile build` generate from, pinned so a later build does not pick another.
  */
-function desktopDenoFlagsLines(): string {
+function mobileIconLines(m: { config: Record<string, unknown>; from: string } | undefined): string {
+  if (!m) return "";
+  const fields = Object.entries(m.config).map(([k, v]) => `    ${k}: ${tsValue(v)},\n`).join("");
+  return `  // The app icon \`denext mobile assets\` / \`mobile build\` generate from (found by migrate\n` +
+    `  // in ${m.from}); point it at a 1024×1024 PNG for a sharp App Store icon.\n` +
+    `  mobile: {\n${fields}  },\n`;
+}
+
+/** What {@linkcode migrateAppIcon} found: the report, and the config facts that record it. */
+interface MigratedIcon {
+  report: AppIconReport;
+  /** Spread into the config facts: `mobileIcon` when there is an icon to record. */
+  facts: { mobileIcon?: { config: Record<string, unknown>; from: string } };
+}
+
+/** No icon to record: the report alone. */
+function noIcon(mobile: boolean, lines: string[]): MigratedIcon {
+  return { report: { icon: null, kind: null, mobile, recorded: false, lines }, facts: {} };
+}
+
+/** The report, saying whether `mobile.icon` landed in a config migrate wrote. */
+function appIconInfo(icon: MigratedIcon, configWritten: boolean): AppIconReport {
+  return { ...icon.report, recorded: configWritten && icon.facts.mobileIcon !== undefined };
+}
+
+/**
+ * Find the app icon for the migrated app, and the `mobile` config that records it.
+ *
+ * @param dir The project.
+ * @param mobile The project is a Capacitor / Expo app.
+ * @returns The report, and the config block when an icon was found.
+ */
+async function migrateAppIcon(
+  dir: string,
+  mobile: boolean,
+): Promise<MigratedIcon> {
+  let search: IconSearch;
+  try {
+    search = await resolveIconSource(dir);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return noIcon(mobile, [`icon source: ${message}`]);
+  }
+  const s = search.source;
+  const lines = formatIconSearch(search);
+  if (!s) return noIcon(mobile, lines);
+  const config = mobileIconConfig(dir, s);
+  return {
+    report: {
+      icon: config.icon as string,
+      kind: s.kind,
+      size: `${s.width}×${s.height}`,
+      mobile,
+      recorded: false,
+      lines,
+    },
+    // A `mobile.icon` already in the project's config is not written again.
+    facts: s.kind === "config" ? {} : { mobileIcon: { config, from: s.from } },
+  };
+}
+
+/**
+ * The generated config's `desktop` block (a `--desktop` migration). `denoFlags` are the
+ * `deno desktop` flags the `desktop` task bakes, so `denext desktop run | dev | package` pass
+ * them too: `--node-modules-dir=none` resolves the desktop runtime's npm deps from Deno's cache
+ * (a manual or workspace `node_modules` does not carry them, and `deno desktop` would type-check
+ * against it and rewrite the root `package.json`); `--exclude-unused-npm` embeds only the npm
+ * packages `desktop.ts` reaches. `app.name` names the bundle: `export` copies `desktop.app` into
+ * deno.json, where the task's bare `deno desktop` reads the name and the identifier.
+ */
+function desktopConfigLines(appName: string): string {
   const flags = MIGRATED_DESKTOP_DENO_FLAGS.map((f) => JSON.stringify(f)).join(", ");
-  return `  // \`deno desktop\` flags \`denext desktop run | dev | package\` pass before the entry: npm\n` +
-    `  // deps from Deno's cache (not node_modules), and only the npm packages desktop.ts reaches.\n` +
-    `  desktop: { denoFlags: [${flags}] },\n`;
+  return `  desktop: {\n` +
+    `    // \`deno desktop\` flags \`denext desktop run | dev | package\` pass before the entry: npm\n` +
+    `    // deps from Deno's cache (not node_modules), and only the npm packages desktop.ts reaches.\n` +
+    `    denoFlags: [${flags}],\n` +
+    `    // The bundle's name; add \`identifier\` (e.g. "com.example.app") for its bundle id.\n` +
+    `    // \`export\` copies this into deno.json, where \`deno task desktop\` reads it.\n` +
+    `    app: { name: ${JSON.stringify(appName)} },\n` +
+    `  },\n`;
 }
 
 /** The `desktop.denoFlags` a `--desktop` migration writes (and its `desktop` task bakes). */
@@ -2048,7 +2239,6 @@ function spaTasks(
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
-  appName = "app",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2102,16 +2292,16 @@ function spaTasks(
     // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
     // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
     const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
-    // `-o <AppName>`: without it `deno desktop` names the bundle after the entry file
-    // (`desktop.app`, CFBundleName "desktop"). The title becomes the bundle/Dock name.
+    // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`,
+    // which `export` fills from `desktop.app` in denext.config.ts (the generated config sets
+    // `name` to the title). An `-o` would pin the name and leave a configured one unused.
     //
     // The same two resolution flags are written to the config's `desktop.denoFlags`, which
     // `denext desktop run | dev | package` read; this raw `deno desktop` call reads no config,
     // so it keeps them inline.
     tasks.desktop = `deno task export && deno desktop ` +
       `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
-      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} ` +
-      `-o ${JSON.stringify(appName)} desktop.ts`;
+      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} desktop.ts`;
   }
   return tasks;
 }
@@ -2186,10 +2376,17 @@ async function spaProxy(
   dir: string,
   options: MigrateOptions,
   source: SpaSource,
-): Promise<{ prefixes: string[]; target: string } | undefined> {
-  if (!options.desktop || !options.backend) return undefined;
-  const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : undefined;
-  return { prefixes: options.proxyPrefixes ?? parsed ?? ["/api"], target: options.backend };
+): Promise<{ proxy?: { prefixes: string[]; target: string }; proxyUnresolved?: string }> {
+  if (!options.desktop || !options.backend) return {};
+  const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : {};
+  const proxy = {
+    prefixes: options.proxyPrefixes ?? parsed.prefixes ?? ["/api"],
+    target: options.backend,
+  };
+  // A proxy built in code falls back to `/api`; report it unless --proxy answered it.
+  return options.proxyPrefixes || !parsed.computed
+    ? { proxy }
+    : { proxy, proxyUnresolved: parsed.computed };
 }
 
 /** Write `path` from `source()` when absent or previously migrate-generated; true if written. */
@@ -2199,7 +2396,7 @@ async function writeIfWritable(
   written: string[],
 ): Promise<boolean> {
   if (!(await writable(path))) return false;
-  await Deno.writeTextFile(path, source());
+  await mfs.writeTextFile(path, source());
   written.push(path);
   return true;
 }
@@ -2290,6 +2487,7 @@ async function spaSourceFacts(
   envKeys: string[];
   tailwind: string | null;
   proxy: { prefixes: string[]; target: string } | undefined;
+  proxyUnresolved?: string;
   reactCompiler: boolean;
   head?: string;
   loading?: string;
@@ -2302,9 +2500,20 @@ async function spaSourceFacts(
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps)
     ? await findSpaTailwindInput(dir)
     : null;
-  const proxy = await spaProxy(dir, options, source);
+  const { proxy, proxyUnresolved } = await spaProxy(dir, options, source);
   const reactCompiler = await spaUsesReactCompiler(dir, source);
-  return { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading, rootId };
+  return {
+    entry,
+    title,
+    envKeys,
+    tailwind,
+    proxy,
+    proxyUnresolved,
+    reactCompiler,
+    head,
+    loading,
+    rootId,
+  };
 }
 
 /**
@@ -2318,7 +2527,7 @@ async function spaUsesReactCompiler(dir: string, source: SpaSource): Promise<boo
   if (source !== "vite") return false;
   for (const name of ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"]) {
     try {
-      const src = await Deno.readTextFile(join(dir, name));
+      const src = await mfs.readTextFile(join(dir, name));
       if (/react-compiler|reactCompilerPreset|babel-plugin-react-compiler/.test(src)) return true;
     } catch { /* not present — try the next candidate */ }
   }
@@ -2349,11 +2558,15 @@ async function migrateSpaProject(
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
   const facts = await spaSourceFacts(dir, deps, options, source);
+  const icon = await migrateAppIcon(
+    dir,
+    await anyExists(dir, ["capacitor.config.ts", "capacitor.config.json", "capacitor.config.js"]),
+  );
 
   const nodeModulesDir = manual ? "manual" : "auto";
   const files = await writeSpaProjectFiles(
     dir,
-    facts,
+    { ...facts, ...icon.facts },
     imports,
     nodeModulesDir,
     R,
@@ -2366,6 +2579,7 @@ async function migrateSpaProject(
     configWritten: files.configWritten,
     desktopWritten: files.desktopWritten,
     desktopIcon: files.desktopIcon,
+    appIcon: appIconInfo(icon, files.configWritten),
     nodeModulesDir,
   });
 }
@@ -2395,7 +2609,7 @@ async function writeSpaProjectFiles(
   const denoJson = spaDenoJson(
     imports,
     nodeModulesDir,
-    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir, desktopAppName(facts.title)),
+    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir),
   );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -2484,6 +2698,7 @@ async function migrateExpoProject(
       written,
     );
   }
+  const icon = await migrateAppIcon(dir, true);
   const facts = {
     entry: entry.entry,
     title,
@@ -2493,6 +2708,7 @@ async function migrateExpoProject(
     reactNative: true,
     desktopPackages,
     noPrecompress: true,
+    ...icon.facts,
   };
   const configWritten = await writeIfWritable(
     join(dir, "denext.config.ts"),
@@ -2505,7 +2721,7 @@ async function migrateExpoProject(
     written,
   );
   const tasks = {
-    ...spaTasks(false, R.cli, false, nodeModulesDir, desktopAppName(title)),
+    ...spaTasks(false, R.cli, false, nodeModulesDir),
     ...capacitorTasks(R.cli),
   };
   const denoJsonExists = await finishSpaProjectFiles(
@@ -2540,6 +2756,7 @@ async function migrateExpoProject(
       tailwind: false,
       configWritten,
       desktopWritten: false,
+      appIcon: appIconInfo(icon, configWritten),
       nodeModulesDir,
     },
     expo: {

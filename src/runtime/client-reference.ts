@@ -86,6 +86,9 @@ export function clientRefOf(value: unknown): ClientRefInfo | null {
 // don't re-import. ES modules are singletons, so tagging the imported instance also tags the
 // very functions a server page imports transitively.
 const taggedClients = new Set<string>();
+// Bumped by forgetTaggedClients: a tagging pass that started before the bump must not mark its
+// (possibly pre-edit) module tagged after the set was cleared.
+let clientTagGeneration = 0;
 
 /**
  * Import each `"use client"` module and tag its exports as client references, so
@@ -105,6 +108,7 @@ export async function tagClientModules(
   const key = (clientId: string) => scope ? `${scope}\0${clientId}` : clientId;
   const pending = [...clients].filter(([clientId]) => !taggedClients.has(key(clientId)));
   if (pending.length === 0) return;
+  const generation = clientTagGeneration;
   // With an app loader (compat: the keyed single server bundle) every ref costs one lookup;
   // bare `import()`s go through one barrel module instead (see importViaBarrel).
   const barrel = !load && pending.length > BARREL_MIN
@@ -114,9 +118,20 @@ export async function tagClientModules(
     pending.map(async ([clientId, ref], i) => {
       const mod = barrel ? barrel[i] : load ? await load(ref.url) : await import(ref.url);
       tagClientExports(mod as Record<string, unknown>, clientId);
-      taggedClients.add(key(clientId));
+      // `forgetTaggedClients` ran while this module loaded: what loaded may be the pre-edit
+      // instance, so leave it untagged and let the next pass tag the current one.
+      if (generation === clientTagGeneration) taggedClients.add(key(clientId));
     }),
   );
+}
+
+/**
+ * Dev: forget which modules were tagged, so the next {@linkcode tagClientModules} tags an edited
+ * island's new instance (an unchanged one loads the same instance; tagging it again is a no-op).
+ */
+export function forgetTaggedClients(): void {
+  clientTagGeneration++;
+  taggedClients.clear();
 }
 
 /** Above this many islands, {@link tagClientModules} imports through one barrel module. */

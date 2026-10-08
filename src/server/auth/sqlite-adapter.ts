@@ -7,8 +7,9 @@
  * denextAuth({ ..., adapter: sqliteAuthAdapter({ path: "auth.db" }) });
  * ```
  *
- * Eight `auth_`-prefixed tables hold users, linked provider accounts, verification tokens,
- * password hashes, bearer API tokens, TOTP factors, and native-app grants and session families. The adapter also exposes
+ * Ten `auth_`-prefixed tables hold users, linked provider accounts, verification tokens,
+ * password hashes, bearer API tokens, TOTP factors, native-app grants and session families,
+ * and passkeys with their single-use challenges. The adapter also exposes
  * {@linkcode AuthAdapter.sessions} — a {@link ./sqlite-session-store.ts | sqliteSessionStore}
  * driven over the **same** handle, so one file holds everything and an app that already
  * had `sessionStore: sqliteSessionStore({ path })` can point the adapter at that same
@@ -25,8 +26,9 @@
  *
  * Single-node, like the session store: a local file suits one instance. Every replica must
  * see the same database, so for multi-replica either mount one shared volume or implement
- * {@link ./adapter.ts | AuthAdapter} over your shared database. TOTP secrets are stored in
- * plaintext by construction (a TOTP verifier needs the secret) — protect the file itself.
+ * {@link ./adapter.ts | AuthAdapter} over your shared database. TOTP secrets arrive sealed
+ * by the MFA layer (AES-256-GCM under a key derived from the auth `secret`), so the file alone
+ * holds no usable factor; a pre-sealing plaintext row is re-sealed on its next read.
  *
  * @module
  */
@@ -43,6 +45,8 @@ import type {
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
+  PasskeyChallengeRecord,
+  PasskeyRecord,
   VerificationTokenRecord,
 } from "./adapter.ts";
 import { emailKey } from "./email-key.ts";
@@ -97,7 +101,7 @@ interface IndexSpec {
   duplicates?: string;
 }
 
-/** The eight tables, in creation order. */
+/** The ten tables, in creation order. */
 const SCHEMA: TableSpec[] = [
   {
     name: "auth_users",
@@ -236,6 +240,36 @@ const SCHEMA: TableSpec[] = [
       },
     ],
   },
+  {
+    name: "auth_passkeys",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["public_key", "TEXT NOT NULL"],
+      ["alg", "INTEGER NOT NULL"],
+      ["sign_count", "INTEGER NOT NULL"],
+      ["backup_eligible", "INTEGER"],
+      ["backed_up", "INTEGER"],
+      ["transports", "TEXT"],
+      ["aaguid", "TEXT"],
+      ["name", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["last_used_at", "INTEGER"],
+    ],
+    indexes: [{ sql: "CREATE INDEX IF NOT EXISTS auth_passkeys_user ON auth_passkeys (user_id)" }],
+  },
+  {
+    name: "auth_passkey_challenges",
+    columns: [
+      ["hash", "TEXT PRIMARY KEY"],
+      ["expires_at", "INTEGER NOT NULL"],
+      ["data", "TEXT"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_passkey_challenges_expiry " +
+        "ON auth_passkey_challenges (expires_at)",
+    }],
+  },
 ];
 
 /** Open node:sqlite at `path` behind the {@link SqliteDb} interface this adapter drives. */
@@ -370,6 +404,12 @@ const INT: Codec = {
   to: (value) => typeof value === "number" ? value : null,
 };
 
+/** An `INTEGER` 0/1 column holding a boolean (absent → `false`). */
+const BOOL: Codec = {
+  from: (value) => value === 1,
+  to: (value) => value === true ? 1 : 0,
+};
+
 /** A `TEXT` column holding a JSON array of strings — absent when the column is NULL. */
 const LIST: Codec = {
   from: (value) => parseList(value),
@@ -464,6 +504,27 @@ const MFA_MAP: FieldMap<MfaRecord> = {
 const NATIVE_GRANT_MAP: FieldMap<NativeGrantRecord> = {
   hash: ["hash", TEXT],
   kind: ["kind", TEXT],
+  expiresAt: ["expires_at", INT],
+  data: ["data", TEXT],
+};
+
+const PASSKEY_MAP: FieldMap<PasskeyRecord> = {
+  id: ["id", TEXT],
+  userId: ["user_id", TEXT],
+  publicKey: ["public_key", TEXT],
+  alg: ["alg", INT],
+  signCount: ["sign_count", INT],
+  backupEligible: ["backup_eligible", BOOL],
+  backedUp: ["backed_up", BOOL],
+  transports: ["transports", LIST],
+  aaguid: ["aaguid", TEXT],
+  name: ["name", TEXT],
+  createdAt: ["created_at", INT],
+  lastUsedAt: ["last_used_at", INT],
+};
+
+const PASSKEY_CHALLENGE_MAP: FieldMap<PasskeyChallengeRecord> = {
+  hash: ["hash", TEXT],
   expiresAt: ["expires_at", INT],
   data: ["data", TEXT],
 };
@@ -709,10 +770,12 @@ function apiTokenMethods(
       state.db().exec("UPDATE auth_api_tokens SET last_used_at = ? WHERE id = ?", [lastUsedAt, id]);
     },
     revokeApiToken(id) {
-      state.db().exec(
-        "UPDATE auth_api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+      const revoked = state.db().query(
+        "UPDATE auth_api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL " +
+          "RETURNING id",
         [state.now(), id],
       );
+      return revoked.length === 1;
     },
     listApiTokens: (userId) =>
       state.db()
@@ -747,7 +810,10 @@ async function firstMatch(
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: SqliteState,
-): Pick<AuthAdapter, "getMfa" | "setMfa" | "deleteMfa" | "consumeBackupCode" | "claimTotpStep"> {
+): Pick<
+  AuthAdapter,
+  "getMfa" | "setMfa" | "deleteMfa" | "replaceMfaSecret" | "consumeBackupCode" | "claimTotpStep"
+> {
   const read = (userId: string): MfaRecord | undefined => {
     const row = one(state.db(), "SELECT * FROM auth_mfa WHERE user_id = ?", [userId]);
     return row && fromRow(MFA_MAP, row);
@@ -759,6 +825,15 @@ function mfaMethods(
     },
     deleteMfa(userId) {
       state.db().exec("DELETE FROM auth_mfa WHERE user_id = ?", [userId]);
+    },
+    replaceMfaSecret(userId, expected, next) {
+      // One conditional UPDATE of the one column: it lands only while the stored secret is
+      // still the one that was read, and leaves `last_step` / `backup_code_hashes` alone.
+      const swapped = state.db().query(
+        "UPDATE auth_mfa SET secret = ? WHERE user_id = ? AND secret = ? RETURNING user_id",
+        [next, userId, expected],
+      );
+      return swapped.length === 1;
     },
     async consumeBackupCode(userId, matches) {
       // The comparison is the caller's (scrypt), so the read-match-write cannot be one
@@ -870,6 +945,74 @@ function nativeMethods(
   };
 }
 
+/** The passkey group: credential records and single-use challenges. */
+function passkeyMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createPasskey"
+  | "getPasskey"
+  | "listPasskeys"
+  | "updatePasskey"
+  | "deletePasskey"
+  | "createPasskeyChallenge"
+  | "usePasskeyChallenge"
+> {
+  return {
+    createPasskey(record) {
+      // INSERT … ON CONFLICT DO NOTHING: a credential ID registered once can't be taken over.
+      const row = toRow(PASSKEY_MAP, record);
+      const columns = Object.keys(row);
+      const inserted = state.db().query(
+        `INSERT INTO auth_passkeys (${columns.join(", ")}) ` +
+          `VALUES (${columns.map(() => "?").join(", ")}) ON CONFLICT(id) DO NOTHING RETURNING id`,
+        Object.values(row),
+      );
+      return inserted.length === 1;
+    },
+    getPasskey(id) {
+      const row = one(state.db(), "SELECT * FROM auth_passkeys WHERE id = ?", [id]);
+      return row && fromRow(PASSKEY_MAP, row);
+    },
+    listPasskeys: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_passkeys WHERE user_id = ? ORDER BY created_at, id",
+          [userId],
+        )
+        .map((row) => fromRow(PASSKEY_MAP, row)),
+    updatePasskey(id, fromSignCount, update) {
+      // The WHERE clause is the compare-and-swap on the counter.
+      const updated = state.db().query(
+        "UPDATE auth_passkeys SET sign_count = ?, backed_up = ?, last_used_at = ? " +
+          "WHERE id = ? AND sign_count = ? RETURNING id",
+        [update.signCount, update.backedUp ? 1 : 0, update.lastUsedAt, id, fromSignCount],
+      );
+      return updated.length === 1;
+    },
+    deletePasskey(id) {
+      state.db().exec("DELETE FROM auth_passkeys WHERE id = ?", [id]);
+    },
+    createPasskeyChallenge(record) {
+      put(state.db(), "auth_passkey_challenges", toRow(PASSKEY_CHALLENGE_MAP, record));
+      // Challenges a minute past their expiry are reclaimed on every write (an indexed delete).
+      state.db().exec("DELETE FROM auth_passkey_challenges WHERE expires_at <= ?", [
+        state.now() - 60,
+      ]);
+    },
+    usePasskeyChallenge(hash) {
+      // One statement: read and delete together, so a concurrent redemption never sees it.
+      const row = state.db().query<Record<string, SqlValue>>(
+        "DELETE FROM auth_passkey_challenges WHERE hash = ? RETURNING *",
+        [hash],
+      )[0];
+      if (!row) return undefined;
+      const record = fromRow(PASSKEY_CHALLENGE_MAP, row);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+  };
+}
+
 /**
  * How long (seconds) a native session family is kept after it expired or was revoked: 30
  * days, then the next sign-in deletes it.
@@ -883,6 +1026,7 @@ const USER_TABLES = [
   "auth_api_tokens",
   "auth_mfa",
   "auth_native_sessions",
+  "auth_passkeys",
 ];
 
 /**
@@ -966,13 +1110,13 @@ function createState(
 /**
  * Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:
  * every method group (users, accounts, verification tokens, credentials, API tokens, MFA,
- * native app sessions, account deletion)
+ * native app sessions, passkeys, account deletion)
  * plus a `sessions` store over the **same** database handle and an idempotent `close()`.
  *
  * Ids are `crypto.randomUUID()` unless the caller supplies one; emails are matched
  * case-insensitively and whitespace-trimmed, and a unique index refuses a second user on
  * one address. The schema is created on first use and evolved additively on every open
- * (see the module doc). Single-node, and TOTP secrets are at rest in plaintext.
+ * (see the module doc). Single-node; TOTP secrets are stored as the MFA layer seals them.
  *
  * @param options Database path (or an `openDb` hook), clock override, sweep interval.
  * @returns The adapter, ready to pass as `denextAuth({ adapter })`.
@@ -993,6 +1137,7 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...apiTokenMethods(state),
     ...mfaMethods(state),
     ...nativeMethods(state),
+    ...passkeyMethods(state),
     async deleteUser(id) {
       deleteUserRows(state, id);
       await sessions.deleteByUser(id);

@@ -30,8 +30,11 @@ export function baseLoaderFor(st: DevState, bust = true): ModuleLoader {
  * The loader every server-side import goes through. In compat mode it defers to the
  * react→denext server bundles that `getManifest → refreshBoundary` builds (once per
  * generation, before the boundary refs are redirected). Otherwise it is the base loader,
- * wrapped for Cache Components when enabled — the wrapper (and the transformed copies it
- * writes) is rebuilt per generation so edits are picked up on reload.
+ * wrapped by the copy compiler once a module is edited, a platform file redirects an import or
+ * Cache Components are on. The `?g=` query busts only the module asked for: Deno resolves its
+ * relative imports without it, so an edited module it imports would stay cached for the life of
+ * the process. The compiler (rebuilt per generation, over the session's {@link DevState.devCopies})
+ * loads each edited module, and every module on the way to it, as a copy named by its content.
  */
 export function createDevLoader(
   st: DevState,
@@ -50,10 +53,13 @@ export function createDevLoader(
     // per-generation copy loader, one per target (each writes its own copies).
     const platform = opts.platform ?? renderPlatform();
     const redirects = await devPlatformRedirects(st, platform);
-    if (!st.useCacheEnabled && Object.keys(redirects).length === 0) return base(filePath);
+    if (
+      !st.useCacheEnabled && Object.keys(redirects).length === 0 && !st.devCopies.anyEdited
+    ) return base(filePath);
     let current = st.ucLoads.get(platform);
     if (current?.gen !== st.generation) {
-      const dir = platform === "web" ? String(st.generation) : `${st.generation}-${platform}`;
+      // One directory per target for the session: a copy's name carries its content.
+      const dir = platform === "web" ? "dev" : `dev-${platform}`;
       // The render and the boundary tagging share one compiler, so a module the render loads
       // as a copy is tagged (an action registered) as that same copy.
       const [load, tag] = createUseCacheLoaders([baseLoaderFor(st), baseLoaderFor(st, false)], {
@@ -61,6 +67,7 @@ export function createDevLoader(
         cacheDir: join(st.paths.outDir, "server-cache", dir),
         redirects,
         useCache: st.useCacheEnabled,
+        dev: st.devCopies,
       });
       current = { gen: st.generation, load, tag };
       st.ucLoads.set(platform, current);

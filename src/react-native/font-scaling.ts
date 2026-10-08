@@ -152,13 +152,17 @@ export function withFontScaling(Text: VNodeType): VNodeType {
 
 /**
  * react-native-web's `PixelRatio` with `getFontScale()` answering {@linkcode reactNativeFontScale}
- * (react-native-web's answers 1).
+ * (react-native-web's answers 1), and React Native's `startDetecting()`, which it lacks: a no-op
+ * in React Native too (the ratio is read live from `devicePixelRatio` on every call).
  *
  * @param PixelRatio react-native-web's `PixelRatio` class.
  * @returns The same class.
  */
-export function withFontScaleRatio<T extends { getFontScale?: () => number }>(PixelRatio: T): T {
+export function withFontScaleRatio<
+  T extends { getFontScale?: () => number; startDetecting?: () => void },
+>(PixelRatio: T): T {
   PixelRatio.getFontScale = reactNativeFontScale;
+  PixelRatio.startDetecting ??= () => {};
   return PixelRatio;
 }
 

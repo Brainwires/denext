@@ -10,8 +10,7 @@ import { realPathOfNearestSync, within } from "../ui/security.ts";
 import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../build/generate.ts";
 import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
-import { resolveProject } from "../build/paths.ts";
-import { scanRoutes } from "../router/manifest.ts";
+import { collectRoutes, formatRouteListText } from "../build/route-list.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
 import { devtoolsTools } from "./devtools.ts";
@@ -162,21 +161,6 @@ async function codemodReport(dir: string): Promise<{ text: string }> {
   };
 }
 
-/** List an app's routes (pages + API) with their dynamic params. */
-async function listRoutes(dir: string): Promise<string> {
-  const paths = await resolveProject(dir);
-  const m = await scanRoutes(paths.appDir);
-  const fmt = (routePath: string, pattern: { kind: string; value: string }[]): string => {
-    const params = pattern.filter((s) => s.kind !== "static").map((s) => s.value);
-    return `  ${routePath}${params.length ? `   (params: ${params.join(", ")})` : ""}`;
-  };
-  const pages = m.pages.map((p) => fmt(p.routePath, p.pattern));
-  const api = m.api.map((a) => fmt(a.routePath, a.pattern));
-  if (pages.length === 0 && api.length === 0) return "No routes found (is this a denext app dir?).";
-  return `Pages (${pages.length}):\n${pages.join("\n") || "  (none)"}\n\n` +
-    `API routes (${api.length}):\n${api.join("\n") || "  (none)"}`;
-}
-
 /** Format one dev event as a single line. */
 function formatEvent(e: DevEvent): string {
   const dur = e.durationMs != null ? ` ${e.durationMs}ms` : "";
@@ -255,7 +239,11 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         kind: { type: "string", enum: [...GENERATE_KINDS], description: GENERATE_KIND_LIST },
-        name: { type: "string", description: "Route/component/action name (optional for docker)." },
+        name: {
+          type: "string",
+          description: "Route/component/action/migration name (optional for docker, seed and " +
+            "ci, where it overrides the detected flavor).",
+        },
         dir: { type: "string", description: "Project directory (default: current directory)." },
         force: { type: "boolean", description: "Overwrite files that already exist." },
         dryRun: { type: "boolean", description: "Plan only: print what would be written." },
@@ -316,7 +304,9 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: { dir: { type: "string", description: "Project directory (default: .)" } },
     },
-    run: async (args) => ({ text: await listRoutes(projectDir(args.dir)) }),
+    run: async (args) => ({
+      text: formatRouteListText(await collectRoutes(projectDir(args.dir))),
+    }),
   },
   {
     name: "denext_dev_logs",

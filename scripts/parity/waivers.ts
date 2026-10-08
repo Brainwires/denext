@@ -25,6 +25,12 @@ export interface Waiver {
   pattern?: string;
   /** Categories to suppress; omit to suppress every category. */
   categories?: Category[];
+  /**
+   * For a `MEMBER_MISSING` finding: the members this waiver covers. The finding is waived only
+   * when every missing member is listed, so a member that goes missing later still fails.
+   * Omit to cover any members.
+   */
+  members?: string[];
   /** Why this deviation is intentional (required). */
   reason: string;
 }
@@ -151,18 +157,25 @@ export const WAIVERS: Waiver[] = [
   },
 ];
 
-/** Whether a given finding is covered by a waiver. */
+/**
+ * Whether a given finding is covered by a waiver.
+ *
+ * @param members A `MEMBER_MISSING` finding's missing members (checked against a waiver's
+ *   `members` list).
+ */
 export function isWaived(
   specifier: string,
   symbol: string,
   category: Category,
   waivers: Waiver[] = WAIVERS,
+  members: readonly string[] = [],
 ): boolean {
   return waivers.some((w) => {
     if (w.specifier && w.specifier !== specifier) return false;
     if (w.categories && !w.categories.includes(category)) return false;
     if (w.symbol && w.symbol !== symbol) return false;
     if (w.pattern && !new RegExp(w.pattern).test(symbol)) return false;
+    if (w.members && !members.every((m) => w.members!.includes(m))) return false;
     return true;
   });
 }

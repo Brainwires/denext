@@ -20,6 +20,13 @@
  * aged-but-still-live session with a fresh lifetime — but only on a path that still owns
  * its response (see its doc comment).
  *
+ * **Absolute ceiling.** However often it slides, a session never outlives
+ * `session.maxLifetime` counted from its sign-in (`authTime`): every expiry minted or slid is
+ * capped there, and a read past it answers `null` whatever the payload's `expiresAt` says —
+ * on the cookie and the database strategy alike. A session without `authTime` (issued
+ * before 2.5.0-rc.3) has no ceiling to measure, so it is never slid again and simply ends at
+ * its current expiry.
+ *
  * @module
  */
 
@@ -56,23 +63,41 @@ function normalizeSession(session: AuthSession, maxAge: number): AuthSession {
   };
 }
 
-/** `session` when it is a well-formed, unexpired payload — else null. */
-function liveSession(session: AuthSession | undefined, maxAge: number): AuthSession | null {
-  if (!session || !session.user) return null;
-  return sessionExpired(session) ? null : normalizeSession(session, maxAge);
+/**
+ * The latest expiry a session signed in at `authTime` may carry: `authTime` plus the
+ * absolute `session.maxLifetime`. `Infinity` for a session without `authTime` (pre-2.5.0-rc.3),
+ * which instead never slides (see {@link shouldRefresh}).
+ */
+function ceilingOf(session: Pick<AuthSession, "authTime">, maxLifetime: number): number {
+  return session.authTime === undefined ? Infinity : session.authTime + maxLifetime;
+}
+
+/**
+ * `session` when it is a well-formed payload that is neither expired nor past its absolute
+ * ceiling — else null. The ceiling is checked here, on every read, and not only when an
+ * expiry is minted: a stored record or a `callbacks.session` result can't carry a session
+ * past it.
+ */
+function liveSession(
+  session: AuthSession | undefined,
+  options: ResolvedAuthOptions,
+): AuthSession | null {
+  if (!session || !session.user || sessionExpired(session)) return null;
+  if (ceilingOf(session, options.maxLifetime) * 1000 <= Date.now()) return null;
+  return normalizeSession(session, options.maxAge);
 }
 
 /** Resolve the cookie data to a session: a store lookup, or the stateless payload. */
 async function resolveSession(
   data: CookieData | null,
-  store: SessionStore | undefined,
-  maxAge: number,
+  options: ResolvedAuthOptions,
 ): Promise<AuthSession | null> {
   if (!data) return null;
-  if (!store) return "sid" in data ? null : liveSession(data, maxAge);
+  const store = options.sessionStore;
+  if (!store) return "sid" in data ? null : liveSession(data, options);
   const sid = storeId(data);
   if (!sid) return null; // a stateless cookie is not honored once a store is configured
-  const stored = liveSession(await store.get(sid), maxAge);
+  const stored = liveSession(await store.get(sid), options);
   return stored ? { ...stored, sessionId: sid } : null;
 }
 
@@ -85,7 +110,7 @@ async function resolveSession(
 export async function readAuthSession(config: AuthConfig): Promise<AuthSession | null> {
   const options = resolveAuthOptions(config);
   const session = await getSession<CookieData>(sessionOptions(config));
-  return await resolveSession(session.data, options.sessionStore, options.maxAge);
+  return await resolveSession(session.data, options);
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */
@@ -154,21 +179,26 @@ export async function buildSessionPayload(
   provider: string,
   issue: IssueAuthSessionOptions & { authTime?: number } = {},
 ): Promise<AuthSession> {
-  const maxAge = resolveAuthOptions(config).maxAge;
+  const { maxAge, maxLifetime } = resolveAuthOptions(config);
   const now = Math.floor(Date.now() / 1000);
   const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
+  const authTime = issue.authTime ?? now;
+  // A carried-over `authTime` (a native exchange from a web session) brings its ceiling along.
+  const ceiling = authTime + maxLifetime;
   let payload: AuthSession = {
     user,
     provider,
-    expiresAt: now + lifetime,
+    expiresAt: Math.min(now + lifetime, ceiling),
     v: 2,
     issuedAt: now,
-    authTime: issue.authTime ?? now,
+    authTime,
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];
   if (config.callbacks?.session) {
     payload = sealOwnedFields(await config.callbacks.session(payload), payload);
+    // The callback may shorten the expiry, never lift it past the absolute ceiling.
+    payload.expiresAt = Math.min(payload.expiresAt, ceiling);
   }
   return payload;
 }
@@ -215,7 +245,8 @@ function sessionAge(session: AuthSession, maxAge: number, nowSeconds: number): n
  * Whether `session` may slide forward now: sliding is configured (`session.updateAge`),
  * the session is still live, it has aged past the threshold, and it is fully
  * authenticated — a half-authenticated (`mfaPending`) session is never extended, so the
- * window to finish a second factor can't be slid open indefinitely.
+ * window to finish a second factor can't be slid open indefinitely. A session without
+ * `authTime` has no measurable absolute ceiling, so it is never extended either.
  */
 function shouldRefresh(
   options: ResolvedAuthOptions,
@@ -223,6 +254,7 @@ function shouldRefresh(
   nowMs: number,
 ): boolean {
   if (options.updateAge <= 0 || session.mfaPending) return false;
+  if (session.authTime === undefined) return false;
   if (sessionExpired(session, nowMs)) return false;
   return sessionAge(session, options.maxAge, Math.floor(nowMs / 1000)) >= options.updateAge;
 }
@@ -266,10 +298,11 @@ async function rewriteStored(
 
 /**
  * Sliding expiry: re-issue `session` with a fresh `issuedAt`/`expiresAt` (a full `maxAge`
- * from now) once it has aged past `session.updateAge`, so an active user is never logged
- * out mid-session while an idle one still expires on time. Returns the session unchanged
- * when sliding is off (the default), when the session is expired, half-authenticated, or
- * simply not stale yet — so callers can pass every session through it.
+ * from now, capped at the absolute ceiling `authTime + session.maxLifetime`) once it has aged
+ * past `session.updateAge`, so an active user is never logged out mid-session while an idle
+ * one still expires on time. Returns the session unchanged when sliding is off (the
+ * default), when the session is expired, half-authenticated, or simply not stale yet, or
+ * when the ceiling leaves nothing to extend — so callers can pass every session through it.
  *
  * A store-backed session keeps the **same** `sid` (the record is rewritten in place, and
  * the cookie re-sent to renew its `Max-Age`): rotating it would invalidate the user's
@@ -299,12 +332,15 @@ export async function refreshIfStale(
   const options = resolveAuthOptions(config);
   if (!shouldRefresh(options, session, nowMs)) return session;
   const now = Math.floor(nowMs / 1000);
+  // Never past the absolute ceiling: an active session slides up to it, then ends there.
+  const expiresAt = Math.min(now + options.maxAge, ceilingOf(session, options.maxLifetime));
+  if (expiresAt <= session.expiresAt) return session; // already at the ceiling
   const { sessionId, ...rest } = session;
   const refreshed: AuthSession = {
     ...rest,
     v: 2,
     issuedAt: now,
-    expiresAt: now + options.maxAge,
+    expiresAt,
   };
   const cookie = await getSession<CookieData>(sessionOptions(config));
   if (!options.sessionStore) {

@@ -311,7 +311,8 @@ Deno.test("QR: larger payloads pick larger versions; too long throws", () => {
   assertEquals(encodeQr("x".repeat(60)).length, 4 * 4 + 17);
   assertEquals(encodeQr("y".repeat(150)).length, 8 * 4 + 17); // version info drawn (v7+)
   assertEquals(encodeQr("z".repeat(213)).length, 10 * 4 + 17); // 16-bit count
-  assertThrows(() => encodeQr("w".repeat(214)), RangeError);
+  assertEquals(encodeQr("v".repeat(214)).length, 11 * 4 + 17);
+  assertThrows(() => encodeQr("w".repeat(2332)), RangeError); // past version 40-M
 });
 
 Deno.test("QR: the terminal rendering is two module rows per line inside a quiet zone", () => {

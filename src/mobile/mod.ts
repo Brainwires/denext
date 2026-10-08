@@ -46,7 +46,8 @@
  *   same around a scroll container you already render (`VirtualList`'s `refreshControl`).
  * - {@linkcode checkForUiUpdate} / {@linkcode otaBooted} / {@linkcode otaStatus} /
  *   {@linkcode otaReset}: over-the-air UI updates through the native `DenextOta` plugin
- *   that `denext mobile add-ota` installs; {@linkcode prepareUiUpdate} /
+ *   that `denext mobile add-ota` installs, which re-verifies a downloaded UI whenever it serves
+ *   it ({@linkcode onOtaRejected} hears a refusal); {@linkcode prepareUiUpdate} /
  *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
  *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
  * - Native capabilities, each through its official Capacitor plugin in the shell
@@ -208,6 +209,7 @@ export {
 export {
   applyUiUpdate,
   checkForUiUpdate,
+  onOtaRejected,
   type OtaApplyResult,
   otaBooted,
   type OtaCheckOptions,
@@ -215,6 +217,7 @@ export {
   type OtaErrorCode,
   otaInstallId,
   type OtaPrepareResult,
+  type OtaRejectedEvent,
   otaReset,
   type OtaStatus,
   otaStatus,

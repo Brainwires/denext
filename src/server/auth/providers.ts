@@ -36,7 +36,12 @@ export {
   type OktaOptions,
   slack,
 } from "./providers-presets.ts";
-export { emailOtp, type EmailProviderOptions, magicLink } from "./providers-email.ts";
+export {
+  emailOtp,
+  type EmailProviderOptions,
+  magicLink,
+  type MagicLinkOptions,
+} from "./providers-email.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.
@@ -125,6 +130,11 @@ export interface OidcOptions extends OAuthClientOptions {
   userinfoUrl?: string;
   /** Map claims/userinfo to a user (defaults to standard OIDC claims). */
   profile?: (input: ProfileInput) => AuthUser;
+  /**
+   * `"form_post"` asks the provider to POST the authorization response
+   * (`response_mode=form_post`); default `"query"`. See {@link OAuthProvider.responseMode}.
+   */
+  responseMode?: "query" | "form_post";
 }
 
 /**
@@ -167,6 +177,7 @@ export function oidc(options: OidcOptions): OAuthProvider {
     discovery: !explicit,
     scopes: ["openid", "email", "profile"],
     profile: options.profile,
+    responseMode: options.responseMode,
   }, options);
 }
 

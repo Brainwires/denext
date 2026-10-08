@@ -20,10 +20,16 @@ export const EXPO_RN_BRIDGE = "denext-expo-react-native";
 
 /**
  * The subpaths of a shimmed package that resolve to the same shim (`expo/fetch`). A subpath
- * with a shim of its own is a manifest entry instead (`expo-file-system/legacy`).
+ * with a shim of its own is a manifest entry instead (`expo-file-system/legacy`). SDK 58's
+ * `/next` of the four packages that have one is their main entry again (its `exports` map points
+ * both at `build/index.js`), so it is the main shim.
  */
 const SHIM_SUBPATHS: Readonly<Record<string, readonly string[]>> = {
   "expo": ["fetch"],
+  "expo-calendar": ["next"],
+  "expo-contacts": ["next"],
+  "expo-file-system": ["next"],
+  "expo-media-library": ["next"],
 };
 
 /** The shim name of a manifest module path: `"./haptics.ts"` → `"haptics"`. */

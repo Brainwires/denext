@@ -175,7 +175,7 @@ Deno.test("the database is created owner-only, and stamped with a schema version
     const raw = new DatabaseSync(path, { readOnly: true });
     try {
       const row = raw.prepare("PRAGMA user_version").get() as { user_version: number };
-      assertEquals(Number(row.user_version), 1);
+      assertEquals(Number(row.user_version), 2);
     } finally {
       raw.close();
     }
@@ -344,4 +344,73 @@ Deno.test("a store that cannot be opened is reported, never thrown", () => {
   const done = clearTaskHistory({ path: "/nowhere/tasks.db", openDb: s.open });
   assertEquals(done.cleared, false);
   assert((done.reason ?? "").length > 0, "it says why");
+});
+
+Deno.test("retries: each attempt is a row; a retried failure is not counted as a failure", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    const store = taskHistoryRecorder({ path });
+    const t0 = Date.now() - 10_000;
+    store.record(run({ name: "sync", startedAt: t0, ok: false, attempt: 1, willRetry: true }));
+    store.record(run({ name: "sync", startedAt: t0 + 1, ok: false, attempt: 2, willRetry: true }));
+    store.record(run({ name: "sync", startedAt: t0 + 2, ok: true, attempt: 3, willRetry: false }));
+    store.record(run({ name: "plain", startedAt: t0 + 3, ok: false }));
+    store.close();
+
+    const history = readTaskHistory({ path });
+    assert(history.available, history.reason ?? "");
+    const sync = history.tasks.find((t) => t.task === "sync")!;
+    assertEquals([sync.successes, sync.failures, sync.retries], [1, 0, 2]);
+    const plain = history.tasks.find((t) => t.task === "plain")!;
+    assertEquals([plain.successes, plain.failures, plain.retries], [0, 1, 0]);
+    const feed = history.recent.filter((r) => r.task === "sync");
+    assertEquals(feed.map((r) => [r.attempt, r.willRetry, r.ok]), [
+      [3, false, true],
+      [2, true, false],
+      [1, true, false],
+    ]);
+    assertEquals(history.recent.find((r) => r.task === "plain")?.attempt, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("retries: a version-1 file is read as-is and migrated by the next writer", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    // The schema an earlier denext created (no retry columns, user_version 1).
+    const { DatabaseSync } = await import("node:sqlite");
+    const old = new DatabaseSync(path);
+    old.exec(
+      "CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT NOT NULL, " +
+        "trigger TEXT NOT NULL, started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL, " +
+        "ok INTEGER NOT NULL, detail TEXT); PRAGMA user_version = 1;",
+    );
+    old.prepare("INSERT INTO runs (task, trigger, started_at, duration_ms, ok) VALUES (?,?,?,?,?)")
+      .run("legacy", "schedule", Date.now() - 5000, 3, 0);
+    old.close();
+
+    const before = readTaskHistory({ path });
+    assert(before.available, before.reason ?? "");
+    assertEquals(before.tasks[0].failures, 1);
+    assertEquals(before.tasks[0].retries, 0);
+    assertEquals(before.recent[0].attempt, 1);
+
+    const store = taskHistoryRecorder({ path });
+    store.record(run({ name: "legacy", ok: true, attempt: 2, willRetry: false }));
+    store.close();
+    const after = readTaskHistory({ path });
+    assertEquals(after.tasks[0].retries, 1);
+    const raw = new DatabaseSync(path, { readOnly: true });
+    try {
+      const row = raw.prepare("PRAGMA user_version").get() as { user_version: number };
+      assertEquals(Number(row.user_version), 2);
+    } finally {
+      raw.close();
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

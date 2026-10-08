@@ -1,6 +1,6 @@
 // The packages the React Native gap audit found breaking at import (expo-tracking-transparency,
 // expo-maps, @expo/ui's SwiftUI / Jetpack Compose entry points) plus the new
-// expo-application and expo-auth-session provider shims: React Native mode's resolver sends
+// expo-application and expo-auth-session provider shims and the Expo SDK coverage round's: React Native mode's resolver sends
 // each to its denext/expo shim, and a bundle of an app importing every one of their exports
 // builds and evaluates without throwing. The shims are bundled from source in place of the
 // prebuilt runtime.
@@ -23,6 +23,20 @@ const NEW_SHIMS: Record<string, string[]> = {
   "expo-application": ["applicationId", "nativeApplicationVersion", "getAndroidId"],
   "expo-auth-session/providers/google": ["useAuthRequest", "useIdTokenAuthRequest", "discovery"],
   "expo-auth-session/providers/facebook": ["useAuthRequest", "discovery"],
+  // The Expo SDK coverage round: web-backed shims.
+  "expo-system-ui": ["setBackgroundColorAsync", "getBackgroundColorAsync"],
+  "expo-linear-gradient": ["LinearGradient"],
+  "expo-localization": ["getLocales", "getCalendars", "useLocales", "CalendarIdentifier"],
+  "expo-sensors": ["Accelerometer", "DeviceMotion", "Pedometer", "DeviceSensor"],
+  "expo-speech": ["speak", "stop", "getAvailableVoicesAsync", "VoiceQuality"],
+  "expo-battery": ["getBatteryLevelAsync", "useBatteryLevel", "BatteryState"],
+  "expo-video-thumbnails": ["getThumbnailAsync"],
+  "expo-gl": ["GLView", "getWorkletContext", "GLLoggingOption"],
+  "expo-mail-composer": ["composeAsync", "MailComposerStatus"],
+  "expo-checkbox": ["Checkbox", "default"],
+  "expo-sms": ["sendSMSAsync", "isAvailableAsync"],
+  "expo-mesh-gradient": ["MeshGradientView"],
+  "expo-cellular": ["getCellularGenerationAsync", "CellularGeneration"],
 };
 
 const EXPO_DIR = new URL("../src/expo/", import.meta.url);

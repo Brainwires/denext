@@ -61,8 +61,13 @@ import { createPullQueue, type PullQueue } from "./queue.ts";
 export const REPEAT_HORIZON = 16;
 /** The most notifications this capability keeps scheduled (macOS keeps 64 per app). */
 const MAX_PENDING = 60;
-/** The runtime's limit on a notification's stored data (JSON). */
+/**
+ * The runtime's limits on what a notification carries, in UTF-8 bytes (runtime 2.9.7-denext.12):
+ * its stored data (JSON) and an action id. A click whose tag (256 bytes), data or action id is
+ * larger is dropped by the runtime, so nothing is posted that its click could not bring back.
+ */
 const MAX_DATA_BYTES = 4096;
+const MAX_ACTION_ID_BYTES = 1024;
 /** The longest title / body accepted. */
 const MAX_TEXT = 4096;
 /** The tag prefix of this capability's notifications. */
@@ -268,10 +273,10 @@ export function seriesTimes(series: SeriesSpec, after: number, count: number): n
 /** The stored data for a notification: the meta plus the app's own `data`, within the limit. */
 function storedData(meta: StoredMeta, data: Record<string, unknown>): unknown {
   const full = { denext: meta, data };
-  if (JSON.stringify(full).length <= MAX_DATA_BYTES) return full;
+  if (utf8Bytes(JSON.stringify(full)) <= MAX_DATA_BYTES) return full;
   const lean = { denext: { id: meta.id, ...(meta.r ? { r: meta.r } : {}) }, data };
-  if (JSON.stringify(lean).length <= MAX_DATA_BYTES) return lean;
-  throw invalid("data is too large: a desktop notification stores at most 4 KiB of JSON");
+  if (utf8Bytes(JSON.stringify(lean)) <= MAX_DATA_BYTES) return lean;
+  throw invalid("data is too large: a desktop notification stores at most 4 KiB of JSON (UTF-8)");
 }
 
 /** The meta and app data stored with a scheduled or clicked notification, else `undefined`. */
@@ -303,6 +308,11 @@ function atOf(entry: DesktopScheduledNotification): number {
   return entry.at instanceof Date ? entry.at.getTime() : Number(entry.at ?? 0);
 }
 
+/** The UTF-8 length of `text`: the runtime's limits are bytes, not UTF-16 code units. */
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 /** The action buttons of a category, from the wire. */
 function categoryActions(raw: unknown): DesktopNotificationAction[] {
   if (!Array.isArray(raw)) throw invalid("a category needs an actions array");
@@ -310,6 +320,9 @@ function categoryActions(raw: unknown): DesktopNotificationAction[] {
     const x = record(a, "action");
     if (typeof x.id !== "string" || x.id === "" || typeof x.title !== "string") {
       throw invalid("an action needs a string id and title");
+    }
+    if (utf8Bytes(x.id) > MAX_ACTION_ID_BYTES) {
+      throw invalid(`an action id is at most ${MAX_ACTION_ID_BYTES} bytes (UTF-8)`);
     }
     return { action: x.id, title: x.title };
   });

@@ -73,6 +73,29 @@ export function plistEntry(
   return found && { keyEnd: found.end, value: plistStringAfter(plist, found.end) };
 }
 
+/**
+ * Whether `key` may be written as a plist `<key>`: letters, digits, `_`, `.` and `-` (every key
+ * Apple defines, `com.apple.developer.*` entitlements included). The writers below refuse (null)
+ * anything else, so a key from an app's config can never close the element and inject entries.
+ */
+export function isPlistKey(key: string): boolean {
+  return /^[A-Za-z0-9_.-]+$/.test(key);
+}
+
+/**
+ * Whether `name` may be written as an Android `android:name` (a permission, a `<meta-data>` name):
+ * letters, digits, `_` and `.`. The writers below refuse (null) anything else, so a name from an
+ * app's config can never close the attribute and inject elements.
+ */
+export function isAndroidName(name: string): boolean {
+  return /^[A-Za-z0-9_.]+$/.test(name);
+}
+
+/** `text` with every regular-expression metacharacter escaped, to match it literally. */
+function regexLiteral(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Escape `&`, `<` and `>` for plist / XML text. */
 function xmlText(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -82,7 +105,8 @@ function xmlText(value: string): string {
  * `plist` with the top-level string `key` set to `value`, or null when it has no top-level dict
  * (or the key holds something other than a string). An existing entry is replaced only with
  * `overwrite`; without it, `plist` comes back unchanged. A new entry goes last in the dict.
- * `value` is written as given (escape it first if it may contain markup).
+ * `value` is written as given (escape it first if it may contain markup). Null, too, for a key
+ * that is not a plain plist key name ({@linkcode isPlistKey}).
  */
 export function withPlistString(
   plist: string,
@@ -90,6 +114,7 @@ export function withPlistString(
   value: string,
   overwrite: boolean,
 ): string | null {
+  if (!isPlistKey(key)) return null;
   const top = plistTopDict(plist);
   if (!top) return null;
   const entry = `<key>${key}</key>\n\t<string>${value}</string>`;
@@ -112,9 +137,10 @@ export function withPlistString(
 /**
  * `plist` with the top-level string `key` added as `value` (XML-escaped) unless the key is
  * already there, whatever it holds: an app's own usage description is never replaced. Null
- * without a top-level dict.
+ * without a top-level dict, or for a key that is not a plain plist key name.
  */
 export function withPlistDefault(plist: string, key: string, value: string): string | null {
+  if (!isPlistKey(key)) return null;
   const top = plistTopDict(plist);
   if (!top) return null;
   if (top.keys.some((k) => k.name === key)) return plist;
@@ -123,7 +149,7 @@ export function withPlistDefault(plist: string, key: string, value: string): str
 
 /** A `<uses-permission>` (or `-sdk-23`) element naming `permission`. */
 function usesPermission(permission: string): RegExp {
-  const name = permission.replaceAll(".", "\\.");
+  const name = regexLiteral(permission);
   return new RegExp(`<uses-permission(?:-sdk-23)?\\b[^>]*android:name="${name}"`);
 }
 
@@ -131,9 +157,11 @@ function usesPermission(permission: string): RegExp {
  * `manifest` with `<uses-permission android:name="…" />` added before `<application` (with the
  * `<application>` line's indent), unchanged when it already declares `permission`, or null
  * without an `<application` element. `permission` is a full name, e.g.
- * `android.permission.ACCESS_NETWORK_STATE`.
+ * `android.permission.ACCESS_NETWORK_STATE`. Null, too, for a permission that is not a plain
+ * Android name ({@linkcode isAndroidName}).
  */
 export function withManifestPermission(manifest: string, permission: string): string | null {
+  if (!isAndroidName(permission)) return null;
   if (usesPermission(permission).test(manifest)) return manifest;
   const at = manifest.search(/<application\b/);
   if (at < 0) return null;
@@ -146,14 +174,16 @@ export function withManifestPermission(manifest: string, permission: string): st
 
 /** A self-closing `<meta-data android:name="<name>" … />` element. */
 function metaDataElement(name: string): RegExp {
-  return new RegExp(`<meta-data\\b[^>]*android:name="${name.replaceAll(".", "\\.")}"[^>]*/>`);
+  return new RegExp(`<meta-data\\b[^>]*android:name="${regexLiteral(name)}"[^>]*/>`);
 }
 
 /**
  * The `android:value` of the `<meta-data android:name="<name>" … />` element in `manifest`, or
- * undefined when there is no such element (an element without a value reads as `""`).
+ * undefined when there is no such element (an element without a value reads as `""`), or when
+ * `name` is not a plain Android name.
  */
 export function manifestMetaDataValue(manifest: string, name: string): string | undefined {
+  if (!isAndroidName(name)) return undefined;
   const element = metaDataElement(name).exec(manifest)?.[0];
   if (element === undefined) return undefined;
   return /android:value="([^"]*)"/.exec(element)?.[1] ?? "";
@@ -163,9 +193,10 @@ export function manifestMetaDataValue(manifest: string, name: string): string | 
  * `manifest` with `<meta-data android:name="<name>" android:value="<value>" />` set: an existing
  * element with that name is replaced, else one is added on its own line above `</application>`
  * (one indent step deeper than it). Null without `</application>`. `value` is written as given
- * (it must not contain `"`, `<` or `&`).
+ * (it must not contain `"`, `<` or `&`). Null, too, for a `name` that is not a plain Android name.
  */
 export function withManifestMetaData(manifest: string, name: string, value: string): string | null {
+  if (!isAndroidName(name)) return null;
   const element = `<meta-data android:name="${name}" android:value="${value}" />`;
   const existing = metaDataElement(name);
   if (existing.test(manifest)) return manifest.replace(existing, element);
@@ -267,6 +298,7 @@ export function withPlistStringArray(
   key: string,
   values: readonly string[],
 ): string | null {
+  if (!isPlistKey(key)) return null;
   const at = topLevelKey(plist, key);
   if (!at) return null;
   const { top, found } = at;
@@ -334,9 +366,11 @@ export function withPlistUrlScheme(plist: string, scheme: string): string | null
 /**
  * `plist` with the boolean `key` set to `<true/>` inside the top-level dict `dictKey`, merging
  * into that dict (its other keys stay) and adding it when absent. Unchanged when the key is
- * already `<true/>`; null without a top-level dict, or when `dictKey` is not a dict.
+ * already `<true/>`; null without a top-level dict, when `dictKey` is not a dict, or when either
+ * key is not a plain plist key name.
  */
 export function withPlistDictTrue(plist: string, dictKey: string, key: string): string | null {
+  if (!isPlistKey(dictKey) || !isPlistKey(key)) return null;
   const at = topLevelKey(plist, dictKey);
   if (!at) return null;
   const { top, found } = at;
@@ -485,17 +519,18 @@ const APPLICATION_OPEN = /<application\b(?:[^>"]|"[^"]*")*>/;
  * `manifest` with the attribute `name="value"` on its `<application>` element. Unchanged when
  * the element already has that attribute, whatever its value (an app's own setting is kept);
  * null without an `<application>` element. A multi-line open tag gets the attribute on a line
- * of its own, indented like the tag's next line.
+ * of its own, indented like the tag's next line. Null, too, for a `name` that is not a plain
+ * (optionally prefixed) attribute name.
  */
 export function withManifestApplicationAttribute(
   manifest: string,
   name: string,
   value: string,
 ): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$/.test(name)) return null;
   const open = APPLICATION_OPEN.exec(manifest);
   if (!open) return null;
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`\\s${escaped}\\s*=`).test(open[0])) return manifest;
+  if (new RegExp(`\\s${regexLiteral(name)}\\s*=`).test(open[0])) return manifest;
   const at = open.index + "<application".length;
   const nextLine = /^(\r?\n)([ \t]*)/.exec(manifest.slice(at));
   const attribute = `${name}="${xmlText(value)}"`;
@@ -505,9 +540,11 @@ export function withManifestApplicationAttribute(
 
 /**
  * `plist` with the top-level boolean `key` set to `<true/>`: added when absent, a `<false/>`
- * turned to `<true/>`. Null without a top-level dict, or when the key holds a non-boolean.
+ * turned to `<true/>`. Null without a top-level dict, when the key holds a non-boolean, or for a
+ * key that is not a plain plist key name.
  */
 export function withPlistTrue(plist: string, key: string): string | null {
+  if (!isPlistKey(key)) return null;
   const at = topLevelKey(plist, key);
   if (!at) return null;
   if (!at.found) return withTopLevelKey(plist, at.top, key, ["<true/>"]);

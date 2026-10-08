@@ -6,6 +6,7 @@
 
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { mfs } from "./migrate-io.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
@@ -729,7 +730,7 @@ export async function ensureVscodeDeno(dir: string, written: string[]): Promise<
 /** Read a `.vscode/*.json` file (JSONC — VSCode allows comments), or null when absent/invalid. */
 async function readVscodeJson(path: string): Promise<Record<string, unknown> | null> {
   try {
-    return parseJsonc(await Deno.readTextFile(path)) as Record<string, unknown>;
+    return parseJsonc(await mfs.readTextFile(path)) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -742,11 +743,11 @@ async function writeVscodeJson(
   obj: Record<string, unknown>,
   written: string[],
 ): Promise<void> {
-  await Deno.mkdir(vscodeDir, { recursive: true });
+  await mfs.mkdir(vscodeDir, { recursive: true });
   // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
   // (possible in a cloned third-party repo) isn't followed out of tree.
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, JSON.stringify(obj, null, 2) + "\n");
+  await mfs.remove(path).catch(() => {});
+  await mfs.writeTextFile(path, JSON.stringify(obj, null, 2) + "\n");
   written.push(path);
 }
 

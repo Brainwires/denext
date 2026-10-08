@@ -401,7 +401,7 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${body}$`);
 }
 
-Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / libsecret)", () => {
+Deno.test("linux: secure-store adds libsecret, which the runtime loads (libsecret-1-0 / libsecret)", () => {
   assertEquals(META.secureStore, false);
   assert(!debControl(META, "x86_64", 1).includes("libsecret"), "off: no dependency");
   assert(!rpmSpec(META, "/tmp/s", []).includes("libsecret"));
@@ -414,8 +414,9 @@ Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / l
     assertEquals(meta.secureStore, true);
     assertStringIncludes(
       debControl(meta, "x86_64", 1),
-      "Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsecret-tools\n",
+      "Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsecret-1-0\n",
     );
+    assert(!debControl(meta, "x86_64", 1).includes("libsecret-tools"), "no CLI package");
     assertStringIncludes(rpmSpec(meta, "/tmp/s", []), "Requires: libsecret\n");
   }
   const off = packageMetaFrom({}, { desktop: { capabilities: { secureStore: false } } }, "x");

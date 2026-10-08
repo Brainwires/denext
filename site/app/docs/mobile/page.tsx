@@ -81,11 +81,18 @@ export default function Mobile() {
         from <code>about/index.html</code> (or{" "}
         <code>about.html</code>); an app with no denext native plugin gets them from{" "}
         <code>denext mobile add export-routes</code> (<code>denext mobile doctor</code>{" "}
-        flags a shell without them). An iOS bridge written before 3.2.0 lacks the router&apos;s path
-        guard (a request could read files outside the web directory):{" "}
-        <code>denext mobile doctor --store</code> / <code>--release</code> report it as an{" "}
-        <code>export-routes</code> error. Run <code>denext mobile add export-routes</code>{" "}
-        (<code>--force</code> for an edited bridge) and ship a new binary.
+        flags a shell without them). The same native files forward the OS&apos;s low-memory warning
+        to the page (iOS&apos;s <code>didReceiveMemoryWarningNotification</code>, Android&apos;s
+        {" "}
+        <code>onTrimMemory</code> / <code>onLowMemory</code>) as the{" "}
+        <code>denext:memorywarning</code> window event, which React Native mode&apos;s{" "}
+        <code>AppState</code> emits as{" "}
+        <code>memoryWarning</code>; a browser and a Deno Desktop window have no such signal. An iOS
+        bridge written before 3.2.0 lacks the router&apos;s path guard (a request could read files
+        outside the web directory): <code>denext mobile doctor --store</code> /{" "}
+        <code>--release</code> report it as an <code>export-routes</code> error. Run{" "}
+        <code>denext mobile add export-routes</code> (<code>--force</code>{" "}
+        for an edited bridge) and ship a new binary.
       </p>
       <p>
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
@@ -577,8 +584,10 @@ denext mobile add haptics share network secure-store`}
         as the system toast on Android) and <code>action-sheet</code>{" "}
         (<code>@capacitor/action-sheet</code> ^8.1.1:{" "}
         <code>ActionSheetIOS.showActionSheetWithOptions</code>{" "}
-        as a native sheet). None needs a usage string, a permission or a privacy-manifest entry. A
-        new plugin is native code: ship a new app binary afterwards.
+        as a native sheet; it also installs denext&apos;s <code>DenextContextMenu</code>{" "}
+        plugin, whose <code>dismiss</code> closes that sheet for{" "}
+        <code>ActionSheetIOS.dismissActionSheet()</code>). None needs a usage string, a permission
+        or a privacy-manifest entry. A new plugin is native code: ship a new app binary afterwards.
       </p>
 
       <h2 id="keyboard-back-system-bars">Keyboard, back, system bars and safe areas</h2>
@@ -1103,7 +1112,9 @@ public class ChartViewFactory implements DenextNativeViewFactory {
           opens a menu from code and resolves the chosen <code>id</code> (<code>null</code>{" "}
           when dismissed): a <code>UIMenu</code>{" "}
           at the point on iOS 16+ (the edit-menu presentation; an action sheet on iOS 15), the{" "}
-          <code>PopupMenu</code> on Android, the popover elsewhere.
+          <code>PopupMenu</code> on Android, the popover elsewhere. Its <code>signal</code>{" "}
+          option (an <code>AbortSignal</code>) closes the menu, which then resolves{" "}
+          <code>null</code> (a Deno Desktop OS menu is modal and stays).
         </li>
       </ul>
       <p>
@@ -1499,7 +1510,12 @@ if (!result.ok && result.error === "invalid-token") await db.devices.delete(devi
         {" "}
         <code>biometrics</code> and <code>geolocation</code>). On iOS without the plugin it hands
         {" "}
-        <code>app-settings:</code> to the OS; on Android without it, and on the web, it rejects.
+        <code>app-settings:</code>{" "}
+        to the OS; on Android without it, and on the web, it rejects. The Android plugin also starts
+        React Native mode&apos;s <code>Linking.sendIntent(action, extras)</code> (and{" "}
+        <code>expo-linking</code>&apos;s{" "}
+        <code>sendIntent</code>): an activity for any intent action, with React Native&apos;s{" "}
+        <code>{"{ key, value }"}</code> extras.
       </p>
       <ul>
         <li>
@@ -2124,6 +2140,38 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
           shim calls these.
         </li>
       </ul>
+
+      <h2 id="expo-sdk-capabilities">Plugins for the Expo SDK shims</h2>
+      <p>
+        Some <a href="/docs/react-native#expo-apis">Expo SDK shims</a>{" "}
+        call a pinned Capacitor 8 plugin directly, with no <code>denext/mobile</code>{" "}
+        function in between. <code>text-to-speech</code>{" "}
+        (<code>@capacitor-community/text-to-speech</code>) is the OS speech engine behind{" "}
+        <code>expo-speech</code>: the Android WebView has no{" "}
+        <code>speechSynthesis</code>, so the Android shell needs it; elsewhere the shim uses the Web
+        Speech API.
+      </p>
+      <p>
+        The same goes for <code>contacts</code> (<code>@capgo/capacitor-contacts</code>, behind{" "}
+        <code>expo-contacts</code>), <code>calendar</code>{" "}
+        (<code>@ebarooni/capacitor-calendar</code>,{" "}
+        <code>expo-calendar</code>; both write their usage strings and Android permissions),{" "}
+        <code>print</code> (<code>@capgo/capacitor-printer</code>,{" "}
+        <code>expo-print</code>: a WebView cannot open the print dialog by itself),{" "}
+        <code>brightness</code> (<code>@capacitor-community/screen-brightness</code>,{" "}
+        <code>expo-brightness</code>) and <code>intent-launcher</code>{" "}
+        (<code>@capgo/capacitor-intent-launcher</code>,{" "}
+        <code>expo-intent-launcher</code>, Android only).
+      </p>
+      <p>
+        <code>app-config</code>{" "}
+        installs nothing: it writes the native config of a migrated Expo app into the shell, read
+        statically from <code>app.json</code> / <code>app.config.*</code>: usage strings into{" "}
+        <code>Info.plist</code>, <code>android.permissions</code> into the manifest, and the{" "}
+        <code>expo-build-properties</code> deployment target and SDK levels (only ever raised). See
+        {" "}
+        <a href="/docs/react-native#migrating-an-expo-app">Migrating an Expo app</a>.
+      </p>
 
       <h2 id="background-tasks">Background tasks</h2>
       <p>
@@ -2839,17 +2887,51 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           version directory.
         </li>
       </ul>
+      <p>
+        <strong>Re-verification.</strong>{" "}
+        A downloaded UI is verified when it arrives and again whenever the app serves it. Every
+        launch checks the manifest stored with the files before the first page (its signature with
+        the embedded key, and its version recomputed from the file list), and the shell checks each
+        file's SHA-256 and size the first time it serves it in a process (iOS: the bridge's router;
+        Android: the bridge's route processor). Only the files a page actually loads are hashed, so
+        a large UI does not slow the launch. A file changed, added or removed on the device after
+        the download (another app on a rooted or jailbroken device, malware with storage access,
+        corruption) is never served: the version is moved to{" "}
+        <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
+        re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
+        reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}
+        <code>rejected</code>, so the app may download it again. A file that is there but cannot be
+        read right now is not a mismatch: a launch before the first unlock (a silent push or a
+        background task) finds an iOS UI data-protected, and a permission or I/O error looks the
+        same. That request is refused, or, when it is the stored manifest at launch, that launch
+        serves the confirmed or bundled UI (a trial keeps its attempt); nothing is quarantined and
+        the next launch checks again. Shells installed before denext 3.3 (OTA template generation 9)
+        verify only on arrival: re-run <code>denext mobile add-ota</code> and ship a new binary (
+        <code>denext mobile doctor</code> flags them as <code>ota-reverify</code>).
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useEffect } from "denext";
+import { onOtaRejected } from "denext/mobile";
+
+export function OtaWatch() {
+  // Register early (the root layout): the event waits for its first listener.
+  useEffect(() => onOtaRejected(({ version, reason }) => report("ota-tampered", { version, reason })), []);
+  return null;
+}`}
+      </Code>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
         Downgrade protection covers sequenced (v2) releases: a device that never accepted a
         sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
         is the only thing standing between the app and a hostile UI. Rotating the key takes an app
-        release, and a leaked key is valid until then. Downloaded files are verified once, when they
-        arrive: tampering with the app's data directory afterwards (which needs a jailbroken or
-        rooted device, or a debug build) is not detected at the next launch. On iOS, a web content
-        process that dies during a trial is reloaded by Capacitor itself; if that leaves the page
-        blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and the
-        next launch counts it as a failed trial attempt.
+        release, and a leaked key is valid until then. A file already verified in a process is not
+        hashed again until the next launch, so a change made while the app runs is caught then. On
+        iOS the first request for each file hashes it on the main thread (Capacitor's router is
+        synchronous), so a very large file delays its own first load once per process. On iOS, a web
+        content process that dies during a trial is reloaded by Capacitor itself; if that leaves the
+        page blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and
+        the next launch counts it as a failed trial attempt.
       </Callout>
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}

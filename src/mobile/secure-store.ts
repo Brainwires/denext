@@ -209,10 +209,10 @@ async function withStore<T>(
  *   entries.
  * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,
  *   through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret
- *   Service on Linux (gnome-keyring or KWallet, through `secret-tool`). When that store is not
- *   usable (Linux without `secret-tool`, without a Secret Service provider, or with the keyring
- *   locked) the call fails with `backend_unavailable` and says why: a real error, never `null`
- *   and never the plaintext web fallback.
+ *   Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store
+ *   is not usable (Linux without a Secret Service provider, with the keyring locked, or under a
+ *   runtime without its own store) the call fails with `backend_unavailable` and says why: a real
+ *   error, never `null` and never the plaintext web fallback.
  * - **On the web it is NOT secret.** The fallback is a plain IndexedDB database
  *   (`denext-secure-store`) that any script on the origin, and anyone with the device's
  *   browser profile, can read. It keeps a web build working; it does not protect anything.

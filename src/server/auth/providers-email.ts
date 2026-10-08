@@ -36,6 +36,18 @@ export interface EmailProviderOptions {
   allowSignUp?: boolean;
 }
 
+/** Options for {@linkcode magicLink}. */
+export interface MagicLinkOptions extends EmailProviderOptions {
+  /**
+   * Open the link on a confirmation page instead of signing in on the GET: the page shows the
+   * address and a "Sign in" button that POSTs the token to the same URL, which spends it. A
+   * link scanner (a mail gateway that pre-fetches every URL) then can't burn the link, and a
+   * link someone else requested signs nobody in without a click on a page that names the
+   * account. Default `false`: the GET signs in, as in Auth.js.
+   */
+  confirm?: boolean;
+}
+
 /** The adapter methods an email sign-in can't run without. */
 const REQUIRED_ADAPTER_METHODS = [
   "createVerificationToken",
@@ -63,14 +75,16 @@ function emailProvider(
 /**
  * Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`
  * mails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs
- * the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links
- * can spend it — prefer {@linkcode emailOtp} where link scanners are common.
+ * the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches
+ * links can spend it — pass `confirm: true` to open a confirmation page whose button POSTs
+ * the token instead, or prefer {@linkcode emailOtp}.
  *
- * @param options The provider id, display name and sign-up policy.
+ * @param options The provider id, display name, sign-up policy and confirmation page.
  * @returns The configured provider (`id: "email"`, `mode: "magic"`).
  */
-export function magicLink(options: EmailProviderOptions = {}): EmailProvider {
-  return emailProvider("magic", options, { id: "email", name: "Email" });
+export function magicLink(options: MagicLinkOptions = {}): EmailProvider {
+  const provider = emailProvider("magic", options, { id: "email", name: "Email" });
+  return options.confirm ? { ...provider, confirm: true } : provider;
 }
 
 /**

@@ -4,7 +4,12 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { migrateProject } from "../../build/migrate.ts";
+import { type AppIconReport, type MigrateOptions, migrateProject } from "../../build/migrate.ts";
+import {
+  checkMigration,
+  type MigrateCheckReport,
+  type MigrateFinding,
+} from "../../build/migrate-check.ts";
 import { runCodemod } from "../../build/codemod.ts";
 
 /**
@@ -104,6 +109,7 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
     `    tailwind: ${s.tailwindInput ? `detected (${s.tailwindInput})` : "not detected"}` +
       (s.rootId ? ` · mount #${s.rootId}` : ""),
   );
+  reportAppIcon(s.appIcon);
   if (!desktop) return;
   const proxyNote = s.proxy
     ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`
@@ -111,6 +117,12 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
   console.log(
     `    desktop: ${s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"} · ${proxyNote}`,
   );
+  if (s.proxyUnresolved) {
+    console.log(
+      `    ⚠ ${s.proxyUnresolved} builds its proxy in code, so its prefixes could not be read;` +
+        " re-run with --proxy listing every backend prefix (e.g. --proxy /api,/ws)",
+    );
+  }
   console.log(
     s.desktopIcon
       ? "    icon: auto-detected (--icon wired) — override via `spa.desktop.icon`" +
@@ -118,6 +130,19 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
       : "    icon: none (deno desktop default) — set `spa.desktop.icon` in" +
         " denext.config.ts, then re-run migrate to wire --icon",
   );
+}
+
+/** The app icon migrate found for `denext mobile assets` / `mobile build`, and where it went. */
+function reportAppIcon(icon: AppIconReport | undefined): void {
+  if (!icon) return;
+  const where = icon.recorded
+    ? " — recorded as `mobile.icon` in denext.config.ts"
+    : icon.icon && icon.kind !== "config"
+    ? " — denext.config.ts was kept, so set `mobile.icon` there to pin it"
+    : "";
+  const [first, ...rest] = icon.lines;
+  console.log(`    ${first}${where}`);
+  for (const line of rest) console.log(`      ${line}`);
 }
 
 /** What the Remix route-tree transform did. */
@@ -326,8 +351,8 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
   const plist = Object.entries(e.mobile.manualPlist);
   if (plist.length) {
     console.log(
-      "    the app's iOS usage strings — copy them into ios/App/App/Info.plist (mobile add " +
-        "writes only defaults, and only when a key is absent):",
+      "    the app's iOS usage strings — `mobile add app-config` writes them into " +
+        "ios/App/App/Info.plist (each only when the key is absent; a computed one by hand):",
     );
     for (const [k, v] of plist) {
       console.log(`      ${k} = ${v === null ? "(computed in code)" : JSON.stringify(v)}`);
@@ -335,9 +360,13 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
   }
   if (e.mobile.manualPermissions.length) {
     console.log(
-      "    declare in android/app/src/main/AndroidManifest.xml by hand: " +
+      "    Android permissions `mobile add app-config` declares in AndroidManifest.xml: " +
         e.mobile.manualPermissions.join(", "),
     );
+  }
+  e.mobile.manualLinks.forEach((item) => console.log(`    ${item}`));
+  for (const { plugin, note } of e.mobile.unmappedPlugins) {
+    console.log(`    config plugin ${plugin}: ${note}`);
   }
   if (e.tailwindInput) {
     console.log(
@@ -358,6 +387,7 @@ function reportExpo(r: MigrateResult): void {
     `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
   );
   reportExpoConfig(e);
+  reportAppIcon(s.appIcon);
   reportExpoDesktop(e.desktopPackages);
   reportExpoDeps(e.deps);
   reportExpoShell(e);
@@ -391,6 +421,104 @@ function reportFramework(r: MigrateResult, desktop: boolean): void {
   }
 }
 
+/** The migration options the parsed flags select. */
+function migrateOptions(ctx: CommandContext): MigrateOptions {
+  const proxyCsv = ctx.flags.proxy as string | undefined;
+  return {
+    desktop: ctx.flags.desktop === true,
+    backend: ctx.flags.backend as string | undefined,
+    from: ctx.flags.from as string | undefined,
+    proxyPrefixes: proxyCsv ? proxyCsv.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+    denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
+  };
+}
+
+/** Print a list of findings under a heading (nothing when empty). */
+function printFindings(heading: string, list: MigrateFinding[]): void {
+  if (list.length === 0) return;
+  console.log(`\n  ${heading} (${list.length}):`);
+  for (const f of list) console.log(`    · ${f.item}: ${f.reason}`);
+}
+
+/** The human-readable `migrate --check` report. */
+function printCheck(report: MigrateCheckReport): void {
+  console.log(`\n  denext migrate --check  ▸  ${report.target}\n`);
+  if (report.verdict === "blocked") {
+    console.log(`  ✗ blocked: ${report.error}\n`);
+    return;
+  }
+  console.log(`  source: ${report.source}`);
+  console.log(`\n  would change (${report.changes.length}):`);
+  for (const c of report.changes) {
+    console.log(`    ${c.action.padEnd(6)} ${c.path}${c.from ? `  (from ${c.from})` : ""}`);
+  }
+  const d = report.dependencies!;
+  console.log(
+    `\n  dependencies: ${d.aliased.length} aliased to denext · ${d.passthrough.length} npm ` +
+      `passthrough · ${d.dropped.length} dropped · ${d.flagged.length} unsupported`,
+  );
+  if (report.appIcon) {
+    console.log("\n  app icon (for `denext mobile assets` / `mobile build`):");
+    for (const line of report.appIcon.lines) console.log(`    ${line}`);
+  }
+  printFindings("won't migrate", report.wontMigrate);
+  printFindings("review", report.review);
+  const verdict = report.verdict === "ready"
+    ? "ready: nothing is left to do by hand"
+    : "ready with findings: the migration runs; review the items above";
+  console.log(`\n  verdict: ${verdict}`);
+  console.log(`  Nothing was written. To migrate: ${report.command}\n`);
+}
+
+/** Why a Remix app's `--check --codemod` plan names files at their pre-migration paths. */
+const REMIX_CODEMOD_NOTE = "the codemod plan lists files at their current paths; migrate " +
+  "first moves the Remix route modules, and the real run rewrites them at their new paths";
+
+/**
+ * `migrate --check`: run the migration as a dry run and report it. Exits 1 when the migration
+ * would fail. With `--codemod`, the source-import rewrite plan is reported too (dry run).
+ */
+async function runCheck(
+  target: string,
+  options: MigrateOptions,
+  json: boolean,
+  codemod: boolean,
+): Promise<void> {
+  const report = await checkMigration(target, options);
+  const plan = codemod && report.verdict !== "blocked" ? await runCodemod(target) : undefined;
+  // The codemod plan reads the tree as it is now; a Remix migration first moves and rewrites
+  // the route modules, so its paths are the pre-migration ones (the real run rewrites the moved
+  // files at their new paths).
+  const codemodNote = plan && report.source === "remix" ? REMIX_CODEMOD_NOTE : undefined;
+  if (json) console.log(JSON.stringify(checkJson(report, plan, codemodNote), null, 2));
+  else {
+    printCheck(report);
+    if (plan) printCheckCodemod(plan, codemodNote);
+  }
+  if (report.verdict === "blocked") Deno.exit(1);
+}
+
+/** The `--check --json` document: the report, plus the codemod plan (and note) with --codemod. */
+function checkJson(
+  report: MigrateCheckReport,
+  plan: Awaited<ReturnType<typeof runCodemod>> | undefined,
+  note: string | undefined,
+): unknown {
+  if (!plan) return report;
+  return { ...report, codemod: plan, ...(note ? { codemodNote: note } : {}) };
+}
+
+/** The `--check --codemod` plan in the human report, with the Remix note when there is one. */
+function printCheckCodemod(
+  plan: Awaited<ReturnType<typeof runCodemod>>,
+  note: string | undefined,
+): void {
+  console.log("  With --codemod, these source imports would be rewritten:\n");
+  printCodemodPlan(plan);
+  if (note) console.log(`\n  Note: ${note}`);
+  console.log("");
+}
+
 export const migrateCommand: CommandSpec = {
   name: "migrate",
   summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, or React app (config files)",
@@ -401,6 +529,13 @@ export const migrateCommand: CommandSpec = {
       type: "string",
       valueName: "<framework>",
       help: "Force source: next | remix | vite | cra | generic | expo",
+    },
+    {
+      name: "check",
+      type: "boolean",
+      help: "Report what migrate would change and what won't migrate; writes nothing " +
+        "(needs read access, plus --allow-run to evaluate next.config; add --json for the " +
+        "machine-readable report)",
     },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
     {
@@ -437,18 +572,14 @@ export const migrateCommand: CommandSpec = {
   run: async (ctx: CommandContext) => {
     const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
     const json = ctx.global.json;
+    const options = migrateOptions(ctx);
+    if (ctx.flags.check === true) {
+      await runCheck(target, options, json === true, ctx.flags.codemod === true);
+      return;
+    }
     if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
-    const desktop = ctx.flags.desktop === true;
-    const proxyCsv = ctx.flags.proxy as string | undefined;
-    const r = await migrateProject(target, {
-      desktop,
-      backend: ctx.flags.backend as string | undefined,
-      from: ctx.flags.from as string | undefined,
-      proxyPrefixes: proxyCsv
-        ? proxyCsv.split(",").map((s) => s.trim()).filter(Boolean)
-        : undefined,
-      denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
-    });
+    const desktop = options.desktop === true;
+    const r = await migrateProject(target, options);
     if (json) {
       // Machine-readable: the result object only (no banner, no prompts). `--codemod`
       // applies with `--yes`, else reports its plan as a dry run.

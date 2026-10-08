@@ -3,41 +3,41 @@
  * Deno Desktop (see `secureGet`/`secureSet`/`secureDelete` in `src/desktop/native.ts`). Keyed by an
  * app-specific service name + the caller's key.
  *
- * Linux, under denext's pinned runtime 2.9.7-denext.12 and later: the runtime's own secure store
- * (`Deno.desktop.secureStore`: the Secret Service through libsecret, inside the runtime). It refuses
- * with the reason (no provider: "install gnome-keyring" / "enable KWallet's Secret Service"; a
- * locked keyring no one here can unlock, at once; an unlock nobody answers, after the timeout), which
- * this cap passes on as `backend_unavailable`. Items are the ones `secret-tool` writes (attributes
- * `service` and `account`), so values stored by the older path stay readable.
+ * Linux: the runtime's own secure store (`Deno.desktop.secureStore` in denext's pinned runtime: the
+ * Secret Service through libsecret, which the runtime loads at run time, `libsecret-1.so.0`). It
+ * refuses with the reason (no provider: "install gnome-keyring" / "enable KWallet's Secret
+ * Service"; a locked keyring no one here can unlock, at once; an unlock nobody answers, after the
+ * timeout), which this cap passes on as `backend_unavailable`. Items carry the attributes `service`
+ * and `account`, as `secret-tool` writes them. A runtime without that store (the stock runtime) has
+ * no Linux secure store: every call is `backend_unavailable`, never a plain file.
  *
- * Elsewhere the backends are the OS credential CLIs (subprocess, argv — no shell), chosen for safety
- * over raw FFI:
+ * macOS: the runtime's own store when it has one (`Deno.desktop.secureStore` `supported`, denext's
+ * pinned runtime from denext.13): the Keychain, written by the app's own process through
+ * Security.framework, so the item is the app's: the data-protection keychain when the app is signed
+ * with a keychain access group (a provisioning profile), else the login keychain with an access
+ * list naming only the app. Another program of the same user gets macOS's prompt, never the secret.
+ * Items an older denext wrote through `security` (which trust `/usr/bin/security`, so any program
+ * of the user could read them through it) move over on their first read during the first launch
+ * under that store (see `migratingBackend`), so a signed-in user keeps their tokens.
+ *
+ * Otherwise (macOS under an older or the stock runtime, and Windows) the backends are the OS
+ * credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
  * - macOS: `security add/find/delete-generic-password` (the login Keychain). A write runs
  *   `security -i` and sends the command line on STDIN, so the secret is never argv.
- * - Linux on an older runtime: `secret-tool store/lookup/clear` (libsecret / the Secret Service).
- *   The secret is written on STDIN, never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
  *   travels on STDIN as JSON, never argv (PowerShell `-Command` joins trailing argv into the command
  *   text). Verified by the Windows CI (a real PasswordVault set/get/delete round-trip).
  *
  * Values are stored base64-of-UTF-8, so a newline, quote or non-ASCII byte in the value can never
- * corrupt the round-trip or the command. FAIL CLOSED: if the backend is missing (no `security` /
- * `secret-tool`, or no running Secret Service), a write/read is a real error, not a silent success
+ * corrupt the round-trip or the command. FAIL CLOSED: if the backend is missing (no `security`, no
+ * runtime store, or no running Secret Service), a write/read is a real error, not a silent success
  * or a plaintext fallback.
  *
- * NOTE (Linux): `secret-tool` is in `libsecret-tools` (Debian/Ubuntu) or `libsecret` (Fedora), which
- * a stock desktop may not ship. Its failures all exit 1, so they are told apart by stderr (checked
- * against secret-tool 0.21 with gnome-keyring): not found is a silent exit 1; no session bus, no
- * Secret Service provider and a locked collection on a write print `secret-tool: …`. A lookup or
- * clear in a LOCKED collection is silent too, so a silent miss is double-checked with
- * `secret-tool search` (which lists a locked item without its secret): an item there means the
- * keyring is locked. Each of those cases is `backend_unavailable` with the reason, never `null`.
- *
- * NOTE (macOS): `security -i` exits 0 even when a command it read fails, so a write is confirmed
- * by reading the value back. Items written through `security` trust `/usr/bin/security` in their
- * ACL, so another process of the SAME USER that runs `security find-generic-password` can read
- * them without a prompt — the same local-process trust boundary the bridge already accepts (see
- * `bridge.ts` and KNOWN-LIMITATIONS.md).
+ * NOTE (macOS, the `security` path): `security -i` exits 0 even when a command it read fails, so a
+ * write is confirmed by reading the value back. Items written through `security` trust
+ * `/usr/bin/security` in their ACL, so another process of the SAME USER that runs `security
+ * find-generic-password` can read them without a prompt: the reason the runtime's store replaces
+ * this path wherever the runtime has one.
  *
  * Runtime-only (imported by the desktop entry via the caps resolver, never a client bundle).
  *
@@ -48,22 +48,17 @@ import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 
-/** The running OS spelling the command builder branches on. */
+/** The running OS spelling the capability branches on. */
 type Os = "darwin" | "windows" | "linux";
 
 /** Run a credential CLI (argv, no shell; optional stdin; optional abort signal). Injected so tests
- * never touch the OS store. `stderr` tells a Linux backend failure from a miss (see the module). */
+ * never touch the OS store. */
 export type SecureRunner = (
   cmd: string,
   args: string[],
   stdin?: string,
   signal?: AbortSignal,
 ) => Promise<{ code: number; stdout: string; stderr?: string }>;
-
-/** How to install `secret-tool`, for the `backend_unavailable` reason. */
-const SECRET_TOOL_INSTALL = "install libsecret-tools (Debian/Ubuntu) or libsecret (Fedora)";
-/** The reason when no Secret Service answers. */
-const NO_PROVIDER = "no Secret Service provider (gnome-keyring or KWallet)";
 
 /** A credential-CLI invocation: the command, its argv, and optional stdin (the secret, on every OS
  * that writes one). */
@@ -111,9 +106,10 @@ function securityQuote(value: string): string {
 /**
  * The credential-CLI invocation for `op`. Pure + exported so every OS's argv and stdin are
  * unit-tested. The value (already base64) is never argv: it travels on STDIN to macOS
- * (`security -i`), Linux (`secret-tool`) and Windows (`powershell.exe` + WinRT PasswordVault).
+ * (`security -i`) and Windows (`powershell.exe` + WinRT PasswordVault). Linux has no CLI backend:
+ * the runtime's own store serves it.
  *
- * @param os The target OS.
+ * @param os The target OS (macOS or Windows).
  * @param op `get` / `set` / `delete`.
  * @param service The app-specific service name.
  * @param key The account/key.
@@ -121,7 +117,7 @@ function securityQuote(value: string): string {
  * @returns The invocation.
  */
 export function secureStoreCommand(
-  os: Os,
+  os: Exclude<Os, "linux">,
   op: "get" | "set" | "delete",
   service: string,
   key: string,
@@ -134,31 +130,17 @@ export function secureStoreCommand(
       stdin: JSON.stringify({ op, service, key, value: b64 ?? null }),
     };
   }
-  if (os === "darwin") {
-    if (op === "get") {
-      return { cmd: "security", args: ["find-generic-password", "-a", key, "-s", service, "-w"] };
-    }
-    if (op === "delete") {
-      return { cmd: "security", args: ["delete-generic-password", "-a", key, "-s", service] };
-    }
-    // `security -i` reads commands from stdin, so the secret never appears in `ps`.
-    const line = ["add-generic-password", "-U", "-a", securityQuote(key), "-s"]
-      .concat(securityQuote(service), "-w", securityQuote(b64 ?? ""))
-      .join(" ");
-    return { cmd: "security", args: ["-i"], stdin: `${line}\n` };
-  }
-  // linux (secret-tool): the secret travels on stdin, never argv.
   if (op === "get") {
-    return { cmd: "secret-tool", args: ["lookup", "service", service, "account", key] };
+    return { cmd: "security", args: ["find-generic-password", "-a", key, "-s", service, "-w"] };
   }
   if (op === "delete") {
-    return { cmd: "secret-tool", args: ["clear", "service", service, "account", key] };
+    return { cmd: "security", args: ["delete-generic-password", "-a", key, "-s", service] };
   }
-  return {
-    cmd: "secret-tool",
-    args: ["store", "--label", service, "service", service, "account", key],
-    stdin: b64 ?? "",
-  };
+  // `security -i` reads commands from stdin, so the secret never appears in `ps`.
+  const line = ["add-generic-password", "-U", "-a", securityQuote(key), "-s"]
+    .concat(securityQuote(service), "-w", securityQuote(b64 ?? ""))
+    .join(" ");
+  return { cmd: "security", args: ["-i"], stdin: `${line}\n` };
 }
 
 /**
@@ -168,12 +150,27 @@ export function secureStoreCommand(
  * @param err Why the spawn failed.
  * @returns The error.
  */
-export function missingBackendError(cmd: string, err: unknown): DesktopCapError {
-  const notFound = err instanceof Deno.errors.NotFound;
-  const message = cmd === "secret-tool" && notFound
-    ? `the secure store needs secret-tool, which is not installed: ${SECRET_TOOL_INSTALL}`
-    : `the secure-store backend "${cmd}" is not available`;
-  return new DesktopCapError("backend_unavailable", message, { status: 503 });
+export function missingBackendError(cmd: string, _err: unknown): DesktopCapError {
+  return new DesktopCapError(
+    "backend_unavailable",
+    `the secure-store backend "${cmd}" is not available`,
+    { status: 503 },
+  );
+}
+
+/**
+ * The `backend_unavailable` error on Linux when the runtime has no secure store of its own (the
+ * stock runtime): there is no other Linux backend.
+ *
+ * @returns The error.
+ */
+function noLinuxStoreError(): DesktopCapError {
+  return new DesktopCapError(
+    "backend_unavailable",
+    "the secure store on Linux is the Deno Desktop runtime's own (the Secret Service through " +
+      "libsecret), which this runtime does not have: run under denext's pinned runtime",
+    { status: 503 },
+  );
 }
 
 /** The default runner (exported for the real-Keychain test): spawn the CLI, feed `stdin` if given,
@@ -209,46 +206,6 @@ export async function runSecureCli(
 }
 
 /**
- * The `backend_unavailable` error for a failing `secret-tool` run (its stderr, non-empty): no
- * session bus, no Secret Service provider, a locked collection, or another Secret Service error.
- *
- * @param stderr What secret-tool printed.
- * @returns The error.
- */
-export function secretToolError(stderr: string): DesktopCapError {
-  const line = stderr.trim().split("\n")[0].replace(/^secret-tool:\s*/, "").slice(0, 200);
-  let reason: string;
-  if (/not provided by any \.service files|ServiceUnknown|org\.freedesktop\.secrets/i.test(line)) {
-    reason = `${NO_PROVIDER} is running on the session bus`;
-  } else if (/could not connect|autolaunch|DBUS_SESSION_BUS_ADDRESS|session bus/i.test(line)) {
-    reason = `no D-Bus session bus, so ${NO_PROVIDER} can answer`;
-  } else if (/locked/i.test(line)) {
-    reason = "the keyring is locked (unlock it, or sign in to the desktop session)";
-  } else {
-    // The message crosses to the page: no paths (a socket or object path) in it.
-    reason = `the Secret Service failed (${line.replace(/\/[^\s'"]*/g, "…")})`;
-  }
-  return new DesktopCapError("backend_unavailable", `the secure store is unavailable: ${reason}`, {
-    status: 503,
-  });
-}
-
-/** The error for an item that exists but whose collection is locked (a silent lookup / clear). */
-function lockedError(): DesktopCapError {
-  return secretToolError("secret-tool: the collection is locked");
-}
-
-/** The error for a Secret Service that did not answer in time (an unanswered unlock prompt). */
-function noAnswerError(ms: number): DesktopCapError {
-  return new DesktopCapError(
-    "backend_unavailable",
-    `the secure store is unavailable: the Secret Service did not answer within ${ms / 1000} s ` +
-      "(the keyring is probably locked, waiting for an unlock prompt nobody answered)",
-    { status: 503 },
-  );
-}
-
-/**
  * A stored value (base64 of UTF-8) as the page's string; `null` for none, or for a value this cap
  * didn't write (not our base64).
  */
@@ -264,23 +221,28 @@ function decodeStored(stored: string | null): string | null {
 
 /** Options for {@linkcode secureStoreCapability}. */
 export interface SecureStoreDeps {
-  /** The app-specific service name (the keychain "service" / secret-tool `service` attribute). */
+  /** The app-specific service name (the keychain "service" / the Secret Service `service` attribute). */
   readonly service: string;
   /** The OS (defaults to the running one). */
   readonly os?: Os;
   /** The CLI runner (defaults to a real subprocess); tests inject a fake store. */
   readonly run?: SecureRunner;
   /**
-   * Linux: how long the Secret Service may take to answer (default 20 s, under the bridge's 30 s
-   * deadline) before the call fails `backend_unavailable` — a locked keyring whose unlock prompt
-   * nobody answers otherwise just hangs. The runtime's store gets it as its timeout.
+   * The runtime's store (Linux, macOS): how long it may take to answer (default 20 s, under the
+   * bridge's 30 s deadline) before the call fails `backend_unavailable` — a locked keyring whose
+   * unlock prompt nobody answers otherwise just hangs. The runtime's store gets it as its timeout.
    */
   readonly answerTimeoutMs?: number;
   /**
    * The runtime's app API (default `Deno.desktop`): its `secureStore`, when `supported`, is the
-   * Linux backend; tests pass a fake, or `null` for the `secret-tool` path.
+   * Linux and macOS backend; tests pass a fake, or `null` for a runtime without one.
    */
   readonly api?: DesktopAppApi | null;
+  /**
+   * Where a warning goes (default `console.warn`): a legacy item that could not be put back after a
+   * failed move. Never given a value or a key.
+   */
+  readonly warn?: (message: string) => void;
 }
 
 /** The runtime's secure store (`Deno.desktop.secureStore`). */
@@ -319,11 +281,11 @@ function str(value: unknown, name: string): string {
 }
 
 /**
- * Reject a page-supplied key an OS credential CLI could misread: `secret-tool` takes the key as a
- * positional attribute VALUE, where a leading `-` is parsed as an option (getopt), and a control
- * character or NUL would corrupt the argv. (macOS `security -a <key>` is safe — the value follows an
- * option flag — but this is validated uniformly for every backend.) Tool-agnostic, so it does not
- * depend on any one CLI's `--` handling.
+ * Reject a page-supplied key an OS credential CLI could misread: a leading `-` could be parsed as
+ * an option (getopt), and a control character or NUL would corrupt the argv. (macOS `security -a
+ * <key>` is safe — the value follows an option flag — but this is validated uniformly for every
+ * backend, the runtime's store included.) Tool-agnostic, so it does not depend on any one CLI's
+ * `--` handling.
  *
  * @param key The account/key from the page.
  * @returns The key, when safe.
@@ -339,6 +301,344 @@ function safeKey(key: string): string {
   return key;
 }
 
+/** One backend's three operations, on base64 values (see `decodeStored`). */
+interface SecureBackend {
+  get(key: string, signal: AbortSignal): Promise<string | null>;
+  set(key: string, b64: string, signal: AbortSignal): Promise<void>;
+  delete(key: string, signal: AbortSignal): Promise<void>;
+}
+
+/**
+ * The runtime's own store as a backend: every rejection is a capability error
+ * (`runtimeSecureStoreError`).
+ *
+ * @param store The runtime's store.
+ * @param service The app-specific service name.
+ * @param timeout The answer timeout in milliseconds.
+ * @returns The backend.
+ */
+function runtimeBackend(
+  store: RuntimeSecureStore,
+  service: string,
+  timeout: number,
+): SecureBackend {
+  const guard = async <T>(p: () => Promise<T>): Promise<T> => {
+    try {
+      return await p();
+    } catch (err) {
+      throw runtimeSecureStoreError(err);
+    }
+  };
+  return {
+    get: (key) => guard(() => store.get(service, key, { timeout })),
+    set: (key, b64) => guard(() => store.set(service, key, b64, { label: service, timeout })),
+    delete: (key) => guard(() => store.delete(service, key, { timeout })),
+  };
+}
+
+/**
+ * The OS credential CLI as a backend (macOS `security`, Windows PowerShell + PasswordVault).
+ *
+ * @param os The OS.
+ * @param service The app-specific service name.
+ * @param run The CLI runner.
+ * @returns The backend.
+ */
+function cliBackend(os: Exclude<Os, "linux">, service: string, run: SecureRunner): SecureBackend {
+  const exec = (
+    op: "get" | "set" | "delete",
+    key: string,
+    b64: string | undefined,
+    signal: AbortSignal,
+  ) => {
+    const c = secureStoreCommand(os, op, service, key, b64);
+    return run(c.cmd, c.args, c.stdin, signal);
+  };
+  return {
+    get: async (key, signal) => {
+      const { code, stdout } = await exec("get", key, undefined, signal);
+      // Not found (a missing backend already threw).
+      return code === 0 ? stdout.trim() : null;
+    },
+    set: async (key, b64, signal) => {
+      const { code } = await exec("set", key, b64, signal);
+      // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
+      const stored = os === "darwin" && code === 0
+        ? (await exec("get", key, undefined, signal)).stdout.trim() === b64
+        : code === 0;
+      if (!stored) {
+        throw new DesktopCapError("store_failed", "the secure store rejected the write");
+      }
+    },
+    delete: async (key, signal) => {
+      // A non-zero exit (not found) is fine: delete is idempotent.
+      await exec("delete", key, undefined, signal);
+    },
+  };
+}
+
+/**
+ * How long putting a legacy item back may take (`security -i add` plus the read-back): its own
+ * deadline, well inside the bridge's 30 s per-method budget, since the caller's signal may already
+ * be aborted by then.
+ */
+const RESTORE_TIMEOUT_MS = 10_000;
+
+/**
+ * The runtime-store key of the "legacy items moved" marker, one per service. A page can never
+ * name it: `safeKey` refuses a key that starts with `-`.
+ */
+const LEGACY_MOVED_MARKER = "-denext-legacy-security-items-moved";
+
+/** The marker's stored value (base64 of `1`, so it decodes like every other value here). */
+const LEGACY_MOVED_VALUE = "MQ==";
+
+/**
+ * `kSecAttrCreator` of the items the runtime's macOS store writes, as `security` prints it. It
+ * only tells an item the runtime wrote from one an older denext wrote, for the move; it proves
+ * nothing about who wrote it (any program of the user can create an item with that creator).
+ */
+const RUNTIME_ITEM_CREATOR = '"crtr"<uint32>="Lfy1"';
+
+/**
+ * Whether the login keychain holds an item for (`service`, `key`) that the runtime's store did
+ * not write: one an older denext wrote through `security`. Attributes only (`find-generic-password`
+ * without `-w`), which macOS hands out without a prompt.
+ *
+ * @param run The CLI runner.
+ * @param service The app-specific service name.
+ * @param key The account/key.
+ * @param signal Aborts the CLI.
+ * @returns Whether such an item is there.
+ */
+async function legacyItemPresent(
+  run: SecureRunner,
+  service: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const { code, stdout } = await run(
+    "security",
+    ["find-generic-password", "-a", key, "-s", service],
+    undefined,
+    signal,
+  );
+  return code === 0 && !stdout.includes(RUNTIME_ITEM_CREATOR);
+}
+
+/**
+ * Run each key's operations one at a time, in call order: a move (read legacy, delete it, store,
+ * maybe put it back) is several steps, and a concurrent write or delete of the same key between
+ * them could be undone by it, or leave two items.
+ *
+ * @returns `serial(key, op)`: `op` runs once every earlier operation on `key` has settled.
+ */
+function keyQueue(): <T>(key: string, op: () => Promise<T>) => Promise<T> {
+  const tails = new Map<string, Promise<void>>();
+  return (key, op) => {
+    const result = (tails.get(key) ?? Promise.resolve()).then(op);
+    const tail = result.then(() => {}, () => {});
+    tails.set(key, tail);
+    void tail.then(() => {
+      if (tails.get(key) === tail) tails.delete(key);
+    });
+    return result;
+  };
+}
+
+/**
+ * macOS under a runtime with its own store (the Keychain, written by the app's own process, so
+ * only the app may read the item), with the items an older denext wrote through `/usr/bin/security`
+ * moved over: those trust `security`, so any program of the user could read them. On a read miss
+ * the legacy item is read with `security`, stored in the runtime's store, then deleted, so a
+ * signed-in user keeps their tokens. A write or delete removes a legacy item too, so it can never
+ * come back on a later read.
+ *
+ * The move is one-time: any program of the user can plant an item that looks like a legacy one,
+ * and a read miss that adopted it would hand the app a value the app never wrote. So the first
+ * launch under the runtime's store writes a per-service marker into that store
+ * ({@linkcode LEGACY_MOVED_MARKER}); that launch keeps moving the keys its pages read, and every
+ * later launch finds the marker and never adopts a legacy item again (a read miss is a miss, with
+ * no `security` call; a delete touches only the runtime's store). A write never adopts anything
+ * (it stores the page's value), so after the marker it still clears a leftover legacy item that
+ * blocks the runtime's store in the login keychain, keeping the item's value to put back on a
+ * failure. Residual window: during that first launch a planted item for a key the app has not read
+ * yet is still adopted on its first read; legacy items for keys the app does not read during the
+ * first launch are not moved later (they stay in the login keychain, unread). The marker is read
+ * only after the runtime's store has answered for the key (the keychain is unlocked by then);
+ * reads of the runtime's store may show macOS's unlock prompt, so none of this assumes a read is
+ * prompt-free.
+ *
+ * In the login keychain the two can't coexist (one item per service + account): the runtime
+ * refuses to store over an item it didn't write, so the legacy item is deleted first and, when the
+ * store still fails, put back with the value it held (read with `security -w` before the delete),
+ * on a write as on a read: a failed write leaves the old value, never nothing; a legacy item whose
+ * value can't be read is never deleted (the write fails `backend_unavailable` instead). A write
+ * first asks the runtime's store for the key: a read, which may show macOS's unlock prompt for a
+ * locked login keychain; when the user cancels it (or the store can't answer), the write fails
+ * before the legacy item is touched. A put-back that fails is logged (without the key or value). `security` is pointed at a (service, key)
+ * only while the runtime's own item isn't there (`security delete-generic-password` would match it
+ * too). Each key's operations run one at a time (see {@linkcode keyQueue}).
+ *
+ * @param runtime The runtime's store.
+ * @param legacy The `security` CLI.
+ * @param present Whether a legacy item is there (see {@linkcode legacyItemPresent}).
+ * @param warn Where a lost put-back is reported.
+ * @returns The backend.
+ */
+function migratingBackend(
+  runtime: SecureBackend,
+  legacy: SecureBackend,
+  present: (key: string, signal: AbortSignal) => Promise<boolean>,
+  warn: (message: string) => void,
+): SecureBackend {
+  // Keys with no legacy item left, as far as this process knows: no `security` call for them.
+  const settled = new Set<string>();
+  const serial = keyQueue();
+  /**
+   * Whether this launch may still adopt legacy items: the marker was absent when first asked
+   * (this launch then writes it, and stays the moving launch). Asked once per process; a failed
+   * read is asked again on the next call.
+   */
+  let moving: Promise<boolean> | undefined;
+  /** Whether the marker was found (cached; no read): a later launch. */
+  let moved = false;
+  const movingLaunch = (signal: AbortSignal): Promise<boolean> => {
+    if (moving) return moving;
+    const asked = (async () => {
+      if ((await runtime.get(LEGACY_MOVED_MARKER, signal)) !== null) {
+        moved = true;
+        return false;
+      }
+      // A marker that can't be written is written by the next launch instead.
+      await runtime.set(LEGACY_MOVED_MARKER, LEGACY_MOVED_VALUE, signal).catch(() => {});
+      return true;
+    })();
+    moving = asked;
+    asked.catch(() => {
+      if (moving === asked) moving = undefined;
+    });
+    return asked;
+  };
+  /**
+   * Store `b64` in the runtime's store over a legacy item known to be there, holding `kept`
+   * (`null`: it could not be read). When the store fails after the legacy item was deleted to make
+   * room, the item is put back with `kept` and the store's error is thrown.
+   */
+  const replaceLegacy = async (
+    key: string,
+    b64: string,
+    kept: string | null,
+    signal: AbortSignal,
+  ) => {
+    try {
+      // The data-protection keychain: no clash; the legacy copy goes after.
+      await runtime.set(key, b64, signal);
+      await legacy.delete(key, signal);
+    } catch {
+      // The login keychain: the legacy item is in the way.
+      await legacy.delete(key, signal);
+      await storeOrRestore(key, b64, kept, signal);
+    }
+    settled.add(key);
+  };
+  /**
+   * Store `b64` where the legacy item was; on a failure put `kept` back, then throw the store's
+   * error. The put-back runs under its own deadline ({@linkcode RESTORE_TIMEOUT_MS}), not the
+   * caller's `signal`: when the store failed because that signal aborted (the bridge's per-method
+   * timeout), it is already aborted, and `security` would be killed before it put the value back.
+   */
+  const storeOrRestore = async (
+    key: string,
+    b64: string,
+    kept: string | null,
+    signal: AbortSignal,
+  ) => {
+    try {
+      await runtime.set(key, b64, signal);
+    } catch (err) {
+      if (kept !== null) {
+        await legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {
+          warn(
+            "an item an older denext wrote could not be put back after a failed move into the " +
+              "runtime's store; its value is lost",
+          );
+        });
+      }
+      throw err;
+    }
+  };
+  /** A read miss: move a legacy item this cap wrote over, returning its value. */
+  const migrateOnRead = async (key: string, signal: AbortSignal) => {
+    const old = (await present(key, signal)) ? await legacy.get(key, signal) : null;
+    // Not there, or not a value this cap wrote (not our base64): leave it alone.
+    if (old === null || decodeStored(old) === null) {
+      settled.add(key);
+      return null;
+    }
+    // On a failure the user's value stays where it was (the next read retries the move).
+    await replaceLegacy(key, old, old, signal).catch(() => {});
+    return old;
+  };
+  /** A write while a legacy item may be there. */
+  const migrateOnWrite = async (key: string, b64: string, signal: AbortSignal) => {
+    if (!(await present(key, signal))) {
+      await runtime.set(key, b64, signal);
+      settled.add(key);
+      return;
+    }
+    // Can the runtime's store answer at all? (A read: macOS may prompt to unlock the keychain; a
+    // cancel fails the write here.) If not, nothing is touched.
+    await runtime.get(key, signal);
+    const kept = await legacy.get(key, signal);
+    // With nothing to put back, deleting the item to make room could lose it: leave it.
+    if (kept === null) {
+      throw new DesktopCapError(
+        "backend_unavailable",
+        "the secure store could not read the item an older denext wrote for this key, so it was " +
+          "left in place and the write was not made",
+        { status: 503 },
+      );
+    }
+    await replaceLegacy(key, b64, kept, signal);
+  };
+  /** A write in a later launch: the runtime's store first; a legacy item in its way is replaced. */
+  const writeAfterMove = async (key: string, b64: string, signal: AbortSignal) => {
+    try {
+      await runtime.set(key, b64, signal);
+      settled.add(key);
+    } catch {
+      await migrateOnWrite(key, b64, signal);
+    }
+  };
+  return {
+    get: (key, signal) =>
+      serial(key, async () => {
+        const stored = await runtime.get(key, signal);
+        if (stored !== null || settled.has(key)) return stored;
+        // A later launch never adopts a legacy item (it may have been planted).
+        if (!(await movingLaunch(signal))) {
+          settled.add(key);
+          return null;
+        }
+        return migrateOnRead(key, signal);
+      }),
+    set: (key, b64, signal) =>
+      serial(key, () => {
+        if (settled.has(key)) return runtime.set(key, b64, signal);
+        return moved ? writeAfterMove(key, b64, signal) : migrateOnWrite(key, b64, signal);
+      }),
+    delete: (key, signal) =>
+      serial(key, async () => {
+        await runtime.delete(key, signal);
+        // The runtime's item is gone, so `security` can only match a legacy one. A later launch
+        // leaves legacy items alone (a read never adopts them).
+        if (!settled.has(key) && (await movingLaunch(signal))) await legacy.delete(key, signal);
+        settled.add(key);
+      }),
+  };
+}
+
 /**
  * Build the `secureStore` capability.
  *
@@ -350,71 +650,54 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
   const run = deps.run ?? runSecureCli;
   const service = deps.service;
 
-  // One permission descriptor + one read-key preamble, shared by all methods. Linux: the runtime's
-  // store needs an unscoped --allow-sys (the user's keyring is shared by every app); `secret-tool`
-  // is the older runtimes' path.
+  // One permission descriptor + one read-key preamble, shared by all methods. The runtime's store
+  // (Linux; macOS under a runtime that has it) needs an unscoped --allow-sys (the user's keyring
+  // is shared by every app); macOS keeps `security` for runtimes without it and for moving older
+  // items over.
   const permissions: DesktopPermissions = os === "darwin"
-    ? { run: ["security"] }
+    ? { run: ["security"], sys: ["*"] }
     : os === "linux"
-    ? { run: ["secret-tool"], sys: ["*"] }
+    ? { sys: ["*"] }
     : { run: ["powershell.exe"] };
-  /** Linux: the runtime's own secure store, when it has one (2.9.7-denext.12 and later). */
+  const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
+  /** The runtime's own secure store when it has one (`supported`), else `undefined`. */
   const runtimeStore = (): RuntimeSecureStore | undefined => {
-    if (os !== "linux" || deps.api === null) return undefined;
-    const store = (deps.api ?? desktopAppApi())?.secureStore;
+    if (os === "windows") return undefined;
     try {
-      return store?.supported === true ? store : undefined;
+      const candidate = deps.api === null ? undefined : (deps.api ?? desktopAppApi())?.secureStore;
+      return candidate?.supported === true ? candidate : undefined;
     } catch {
       return undefined;
     }
   };
-  const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
-  const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
-  /** Linux: `run`, killed and `backend_unavailable` when the Secret Service does not answer. */
-  const runLinux = async (args: string[], stdin: string | undefined, signal: AbortSignal) => {
-    const late = new AbortController();
-    const timer = setTimeout(() => late.abort(), answerMs);
-    const both = AbortSignal.any([signal, late.signal]);
-    try {
-      const result = await Promise.race([
-        run("secret-tool", args, stdin, both),
-        new Promise<never>((_, reject) =>
-          late.signal.addEventListener("abort", () => reject(noAnswerError(answerMs)))
-        ),
-      ]);
-      return result;
-    } catch (err) {
-      throw late.signal.aborted && !signal.aborted ? noAnswerError(answerMs) : err;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-  const exec = (
-    op: "get" | "set" | "delete",
-    key: string,
-    b64: string | undefined,
-    signal: AbortSignal,
-  ) => {
-    const c = secureStoreCommand(os, op, service, key, b64);
-    if (os === "linux") return runLinux(c.args, c.stdin, signal);
-    return run(c.cmd, c.args, c.stdin, signal);
-  };
+  let migrating: { store: RuntimeSecureStore; backend: SecureBackend } | undefined;
   /**
-   * Linux: a non-zero `secret-tool` exit as a miss (`false`), or a thrown `backend_unavailable`.
-   * A failure prints to stderr; a silent one is a miss unless `search` still lists the item (its
-   * collection is locked: lookup and clear exit 1 silently there).
+   * The backend for this call: Linux, the runtime's store (`backend_unavailable` when the runtime
+   * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
+   * Windows, PowerShell + PasswordVault.
    */
-  const linuxMiss = async (
-    result: { stderr?: string },
-    key: string,
-    signal: AbortSignal,
-  ): Promise<false> => {
-    if (result.stderr?.trim()) throw secretToolError(result.stderr);
-    const probe = await runLinux(["search", "service", service, "account", key], undefined, signal);
-    if (probe.stderr?.trim() && probe.code !== 0) throw secretToolError(probe.stderr);
-    if (probe.stdout.trim() !== "") throw lockedError();
-    return false;
+  const backend = (): SecureBackend => {
+    const store = runtimeStore();
+    if (os === "linux") {
+      if (!store) throw noLinuxStoreError();
+      return runtimeBackend(store, service, answerMs);
+    }
+    const cli = cliBackend(os, service, run);
+    if (!store) return cli;
+    if (migrating?.store !== store) {
+      migrating = {
+        store,
+        backend: migratingBackend(
+          runtimeBackend(store, service, answerMs),
+          cli,
+          (key, signal) => legacyItemPresent(run, service, key, signal),
+          deps.warn ?? ((m) => console.warn(`denext desktop secureStore (${service}): ${m}`)),
+        ),
+      };
+    }
+    return migrating.backend;
   };
+  const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
 
   return {
     name: "secureStore",
@@ -423,24 +706,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          const store = runtimeStore();
-          if (store) {
-            let b64: string | null;
-            try {
-              b64 = await store.get(service, key, { timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return decodeStored(b64);
-          }
-          const result = await exec("get", key, undefined, ctx.signal);
-          const { code, stdout } = result;
-          if (code !== 0) {
-            // Linux: a backend failure throws; else not found (a missing backend already threw).
-            if (os === "linux") await linuxMiss(result, key, ctx.signal);
-            return null;
-          }
-          return decodeStored(stdout);
+          return decodeStored(await backend().get(key, ctx.signal));
         },
       },
       set: {
@@ -448,47 +714,15 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         handler: async (args, ctx) => {
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
-          const b64 = bytesToBase64(new TextEncoder().encode(value));
-          const store = runtimeStore();
-          if (store) {
-            try {
-              await store.set(service, key, b64, { label: service, timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return { ok: true };
-          }
-          const result = await exec("set", key, b64, ctx.signal);
-          const { code } = result;
-          if (os === "linux" && code !== 0 && result.stderr?.trim()) {
-            throw secretToolError(result.stderr);
-          }
-          // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
-          const stored = os === "darwin" && code === 0
-            ? (await exec("get", key, undefined, ctx.signal)).stdout.trim() === b64
-            : code === 0;
-          if (!stored) {
-            throw new DesktopCapError("store_failed", "the secure store rejected the write");
-          }
+          await backend().set(key, bytesToBase64(new TextEncoder().encode(value)), ctx.signal);
           return { ok: true };
         },
       },
       delete: {
         permissions,
         handler: async (args, ctx) => {
-          // a non-zero (not found) is fine — delete is idempotent — unless the backend failed
           const key = keyArg(args);
-          const store = runtimeStore();
-          if (store) {
-            try {
-              await store.delete(service, key, { timeout: answerMs });
-            } catch (err) {
-              throw runtimeSecureStoreError(err);
-            }
-            return { ok: true };
-          }
-          const result = await exec("delete", key, undefined, ctx.signal);
-          if (os === "linux" && result.code !== 0) await linuxMiss(result, key, ctx.signal);
+          await backend().delete(key, ctx.signal);
           return { ok: true };
         },
       },

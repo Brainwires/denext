@@ -176,6 +176,15 @@ export interface ListScrollProps {
   readonly disableIntervalMomentum?: boolean;
   /** Accepted: nested scrolling works on the web without it (Android-only in RN). */
   readonly nestedScrollEnabled?: boolean;
+  /**
+   * Make room for the on-screen keyboard (iOS's `ScrollView` prop): while the keyboard covers
+   * part of the list, that much space is added after the last item (at the bottom, also when
+   * `inverted`), so every item can be scrolled above the keyboard, and a list resting at its
+   * end stays there. The covered part is the keyboard's overlap with the list's own frame;
+   * where the web view resizes around the keyboard (Android, the iOS shell's default) nothing
+   * overlaps and nothing is added. Vertical lists only, as in React Native.
+   */
+  readonly automaticallyAdjustKeyboardInsets?: boolean;
   /** Called with the list's frame on mount and whenever it resizes. */
   readonly onLayout?: (event: LayoutEvent) => void;
   /**
@@ -272,8 +281,43 @@ export interface VirtualizedListProps<T> extends ListScrollProps {
   readonly removeClippedSubviews?: boolean;
   /** Accepted, no effect. */
   readonly debug?: boolean;
+  /**
+   * Accepted, no effect: Android's scroll view keeps its scrollbars from fading with it; on the
+   * web the browser and the OS decide whether scrollbars fade (React Native 0.88 declares it on
+   * `VirtualizedList`, which passes it to its `ScrollView`).
+   */
+  readonly persistentScrollbar?: boolean;
+  /**
+   * Render the scroll view yourself (a `ScrollView`, an `Animated.ScrollView`, a
+   * keyboard-aware one): called with the list's scroll-view props, it returns the element the
+   * items render in; the list gives it its `ref` and its children, as React Native's
+   * `VirtualizedList` does, and that element's scroll node becomes the list's scroller. The
+   * props carry the list's own (`style`, `horizontal`, `refreshControl`, the indicator and
+   * keyboard props) but not the scroll callbacks, `onLayout` or `onContentSizeChange`: the
+   * list reports those itself, so they never fire twice. A component may add its own handlers.
+   */
+  readonly renderScrollComponent?: ((props: ScrollComponentProps) => VNode | null) | null;
   /** Receives the list's ref methods. */
   readonly ref?: Ref<VirtualizedListRef>;
+}
+
+/**
+ * What `renderScrollComponent` receives: the list's props minus the ones the list handles
+ * itself, plus the pull-to-refresh element, the `ref` to attach and the content as `children`.
+ */
+export interface ScrollComponentProps {
+  /** The list's style (the scroll view's). */
+  readonly style?: RNStyle;
+  /** Scroll horizontally. */
+  readonly horizontal?: boolean | null;
+  /** The pull-to-refresh element (the app's, or the default for `onRefresh`), if any. */
+  readonly refreshControl?: VNode | null;
+  /** Attach to the scroll view (the list reads its scroll node from it). */
+  readonly ref: (instance: unknown) => void;
+  /** The list's content. */
+  readonly children: VNodeChild;
+  /** The list's other props. */
+  readonly [prop: string]: unknown;
 }
 
 /** `FlatList`'s props. */
@@ -339,6 +383,19 @@ export interface SectionListProps<T>
   readonly legacyImplementation?: boolean;
   /** Receives the list's ref methods. */
   readonly ref?: Ref<SectionListRef>;
+}
+
+/**
+ * `VirtualizedSectionList`'s props: `SectionList`'s, with each section's `data` read through
+ * `getItem` / `getItemCount` (any data source; arrays when neither is given).
+ */
+export interface VirtualizedSectionListProps<T> extends Omit<SectionListProps<T>, "sections"> {
+  /** The sections; each one's `data` is read with `getItem` / `getItemCount`. */
+  readonly sections: readonly (Omit<SectionData<T>, "data"> & { readonly data: unknown })[];
+  /** Item `index` of a section's `data`. */
+  readonly getItem?: (data: unknown, index: number) => T;
+  /** How many items a section's `data` holds. */
+  readonly getItemCount?: (data: unknown) => number;
 }
 
 /** Options of the `scrollTo*` methods. */

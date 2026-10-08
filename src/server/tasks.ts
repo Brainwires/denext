@@ -19,6 +19,32 @@ export interface TaskContext {
   readonly trigger: "schedule" | "manual";
   /** Aborted on server shutdown (best-effort). */
   readonly signal: AbortSignal;
+  /** Which attempt this is: `1` for the first run, `2` for the first retry, … */
+  readonly attempt: number;
+}
+
+/**
+ * How long to wait before a retry: a number is a fixed delay in ms; the object form picks a
+ * strategy (default `"exponential"`: `delayMs`, then twice that, … capped at `maxDelayMs`).
+ */
+export type TaskBackoff = number | {
+  /** `"fixed"` waits `delayMs` every time; `"exponential"` doubles it per retry. */
+  strategy?: "fixed" | "exponential";
+  /** The first retry's delay in ms (default 1000). */
+  delayMs?: number;
+  /** The longest delay in ms (default 300000 — five minutes; at most 2^31-1, a timer's limit). */
+  maxDelayMs?: number;
+};
+
+/** A task's retry policy ({@linkcode TaskDefinition.retry}). */
+export interface TaskRetry {
+  /**
+   * How many times a failed run is retried (`3` → up to four runs in all). A whole number,
+   * 0 to 100.
+   */
+  attempts: number;
+  /** The wait before each retry (default exponential from 1 s, capped at 5 min). */
+  backoff?: TaskBackoff;
 }
 
 /** A task definition passed to {@linkcode defineTask}. */
@@ -29,6 +55,14 @@ export interface TaskDefinition<R = unknown> {
   schedule?: string | string[];
   /** One-line description (shown by `denext task --list`). */
   description?: string;
+  /**
+   * Retry a failed run: the handler runs again after the backoff, up to `attempts` more times,
+   * and the run settles with the last attempt's outcome. Every attempt is one row in the run
+   * history (`tasks.history`). A scheduled run that is still retrying counts as running, so the
+   * next matching minute does not start a second copy. A retry wait ends early, with the last
+   * error, when the run's signal aborts (shutdown).
+   */
+  retry?: TaskRetry;
 }
 
 /** A task descriptor. Returned by {@linkcode defineTask}; the shape a `tasks/` file default-exports. */
@@ -52,7 +86,70 @@ export function defineTask<R>(def: TaskDefinition<R>): Task<R> {
     const err = cronError(s);
     if (err) throw new Error(`defineTask: ${err}`);
   }
+  if (def.retry !== undefined) retryPolicy(def.retry); // validate up front
   return { ...def, __denextTask: true };
+}
+
+/** The most retries a task may ask for. */
+const MAX_RETRIES = 100;
+/** Default first retry delay, ms. */
+const DEFAULT_RETRY_DELAY = 1000;
+/** Default longest retry delay, ms. */
+const DEFAULT_MAX_RETRY_DELAY = 300_000;
+/** The longest delay a timer can hold: `setTimeout` fires at once past 2^31-1 ms (~24.8 days). */
+const MAX_TIMER_DELAY = 2 ** 31 - 1;
+
+/** A validated retry policy: how many retries, and the wait before retry `n` (1-based). */
+interface RetryPolicy {
+  readonly retries: number;
+  readonly delay: (retry: number) => number;
+}
+
+/** Whether `n` is a finite, non-negative number of ms. */
+function isDelay(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n >= 0;
+}
+
+/** Throw a `defineTask: retry.…` error. */
+function retryError(why: string): never {
+  throw new Error(`defineTask: retry.${why}`);
+}
+
+/**
+ * Validate a {@link TaskRetry} into a policy, or throw.
+ *
+ * @param retry The task's `retry` option.
+ * @returns The policy.
+ */
+function retryPolicy(retry: TaskRetry): RetryPolicy {
+  if (typeof retry !== "object" || retry === null) retryError("must be { attempts, backoff? }");
+  const { attempts } = retry;
+  if (!Number.isInteger(attempts) || attempts < 0 || attempts > MAX_RETRIES) {
+    retryError(`attempts must be a whole number 0..${MAX_RETRIES}`);
+  }
+  return { retries: attempts, delay: backoffDelay(retry.backoff) };
+}
+
+/** The wait before retry `n` (1-based) for a {@link TaskBackoff}, validated. */
+function backoffDelay(backoff: TaskBackoff | undefined): (retry: number) => number {
+  if (typeof backoff === "number") {
+    if (!isDelay(backoff)) retryError("backoff must be a delay in ms (>= 0)");
+    return () => Math.min(backoff, MAX_TIMER_DELAY);
+  }
+  if (backoff !== undefined && (typeof backoff !== "object" || backoff === null)) {
+    retryError("backoff must be a number of ms or { strategy, delayMs, maxDelayMs }");
+  }
+  const { strategy = "exponential", delayMs = DEFAULT_RETRY_DELAY } = backoff ?? {};
+  const max = backoff?.maxDelayMs ?? DEFAULT_MAX_RETRY_DELAY;
+  if (strategy !== "fixed" && strategy !== "exponential") {
+    retryError('backoff.strategy must be "fixed" or "exponential"');
+  }
+  if (!isDelay(delayMs) || !isDelay(max)) retryError("backoff delays must be numbers of ms (>= 0)");
+  // A longer cap would overflow the timer and retry at once, not after the wait.
+  const cap = Math.min(max, MAX_TIMER_DELAY);
+  return strategy === "fixed"
+    ? () => Math.min(delayMs, cap)
+    : (n) => Math.min(delayMs * 2 ** (n - 1), cap);
 }
 
 /** True if `value` came from {@linkcode defineTask}. */
@@ -106,6 +203,10 @@ export interface TaskRunRecord {
   readonly ok: boolean;
   /** An error's head, a string result's tail, or absent. */
   readonly detail?: string;
+  /** Which attempt this was (`1` = the first run); present only for a task with `retry`. */
+  readonly attempt?: number;
+  /** A failed attempt that will be retried; present only for a task with `retry`. */
+  readonly willRetry?: boolean;
 }
 
 /** How much of an error or a string result is kept. */
@@ -139,9 +240,24 @@ function outputTail(text: string): string {
   return text.length <= DETAIL_MAX ? text : text.slice(text.length - DETAIL_MAX);
 }
 
+// Aborted by {@link abortTaskRuns} (server shutdown): every run's signal follows it, so a run
+// started with no signal of its own (`runTask(name)` from a route handler) still sees shutdown.
+let shutdown = new AbortController();
+
+/**
+ * Abort every in-flight task run's signal (server shutdown), then start afresh for runs that
+ * begin later (a dev server re-boot). Not re-exported from `server/mod.ts`: denext's own wiring.
+ */
+export function abortTaskRuns(): void {
+  const current = shutdown;
+  shutdown = new AbortController();
+  current.abort();
+}
+
 /**
  * Run a task by name and return its handler's result. Throws if no such task is registered.
- * Callable from app code (a route handler, an action) to trigger work on demand.
+ * Callable from app code (a route handler, an action) to trigger work on demand. The handler's
+ * `signal` aborts when `opts.signal` does and when the server shuts down.
  */
 export function runTask(
   name: string,
@@ -154,50 +270,131 @@ export function runTask(
       new Error(`runTask: no task named "${name}" (known: ${taskNames().join(", ") || "none"})`),
     );
   }
-  const signal = opts?.signal ?? new AbortController().signal;
+  const signal = opts?.signal ? AbortSignal.any([opts.signal, shutdown.signal]) : shutdown.signal;
   const trigger = opts?.trigger ?? "manual";
   // A handler that throws SYNCHRONOUSLY (a guard clause before its first await) used to throw
   // straight out of `runTask`, despite the declared `Promise<unknown>` — so the scheduler's
   // `.catch(onScheduledError)` never saw it, and it escaped into the timer tick. It also meant a
   // whole class of failure could never be recorded. Converting it to a rejection here makes the
   // function honour its own type.
-  const run = (): Promise<unknown> => {
+  const run = (attempt = 1): Promise<unknown> => {
     try {
-      return Promise.resolve(task.handler({ name, payload, trigger, signal }));
+      return Promise.resolve(task.handler({ name, payload, trigger, signal, attempt }));
     } catch (err) {
       return Promise.reject(err);
     }
   };
-  // No recorder — the default: the handler runs and its promise is returned, nothing more.
-  if (!recorder) return run();
+  // No recorder and no retry — the default: the handler runs and its promise is returned.
+  if (!recorder && !task.retry) return run();
+  if (!task.retry) return recordAttempt(name, trigger, run, undefined);
+  let policy: RetryPolicy;
+  try {
+    policy = retryPolicy(task.retry); // a task registered without `defineTask` is checked here
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  return runWithRetries(name, trigger, signal, run, policy);
+}
 
+/** Whether an attempt is tagged in the record (`undefined` for a task without `retry`). */
+interface AttemptTag {
+  readonly attempt: number;
+  /**
+   * Decides, for a failed attempt, whether it will be retried — after the backoff wait, so an
+   * abort during the wait is recorded as the end of the run, never as a retry that didn't come.
+   */
+  readonly willRetry: () => Promise<boolean>;
+}
+
+/**
+ * Run one attempt, writing its record when a recorder is installed. The promise settles with
+ * exactly the handler's value or exactly its error.
+ */
+function recordAttempt(
+  name: string,
+  trigger: "schedule" | "manual",
+  run: (attempt?: number) => Promise<unknown>,
+  tag: AttemptTag | undefined,
+): Promise<unknown> {
+  if (!recorder && !tag) return run();
   const startedAt = Date.now();
   const began = performance.now();
-  const write = (ok: boolean, detail: string | undefined): void => {
+  const write = (
+    ok: boolean,
+    detail: string | undefined,
+    willRetry: boolean,
+    durationMs = Math.round(performance.now() - began),
+  ): void => {
     try {
       recorder?.({
         name,
         trigger,
         startedAt,
-        durationMs: Math.round(performance.now() - began),
+        durationMs,
         ok,
         ...(detail === undefined ? {} : { detail }),
+        ...(tag ? { attempt: tag.attempt, willRetry } : {}),
       });
     } catch { /* a run is never worth failing over its own bookkeeping */ }
   };
   // `.then(onFulfilled, onRejected)` — not `.catch`, not `.finally`. The two-argument form cannot
   // turn a rejection into a resolution, so the promise still settles with exactly the handler's
   // value or exactly its error.
-  return run().then(
+  return run(tag?.attempt).then(
     (result) => {
-      write(true, typeof result === "string" ? outputTail(result) : undefined);
+      write(true, typeof result === "string" ? outputTail(result) : undefined, false);
       return result;
     },
-    (err) => {
-      write(false, errorHead(err));
+    async (err) => {
+      const durationMs = Math.round(performance.now() - began); // the attempt, not the wait
+      const willRetry = tag ? await tag.willRetry() : false;
+      write(false, errorHead(err), willRetry, durationMs);
       throw err;
     },
   );
+}
+
+/**
+ * Run a task with its retry policy: attempt, and on failure wait the backoff and attempt again,
+ * until one succeeds or the retries run out (the last error is thrown). An abort of `signal`
+ * stops retrying — the pending wait ends at once with the last error.
+ */
+async function runWithRetries(
+  name: string,
+  trigger: "schedule" | "manual",
+  signal: AbortSignal,
+  run: (attempt?: number) => Promise<unknown>,
+  policy: RetryPolicy,
+): Promise<unknown> {
+  for (let attempt = 1;; attempt++) {
+    let retry = false;
+    // Runs when the attempt fails: wait the backoff, unless retries are spent or it aborts.
+    const willRetry = async () => {
+      retry = attempt <= policy.retries && !signal.aborted &&
+        await waitUnlessAborted(policy.delay(attempt), signal);
+      return retry;
+    };
+    try {
+      return await recordAttempt(name, trigger, run, { attempt, willRetry });
+    } catch (err) {
+      if (!retry) throw err;
+    }
+  }
+}
+
+/** Wait `ms`; resolves `false` early when `signal` aborts. */
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // ---- Scheduling ------------------------------------------------------------

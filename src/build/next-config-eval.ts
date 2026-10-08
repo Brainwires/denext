@@ -56,6 +56,13 @@ export interface NextConfigEvalOptions {
   readonly timeoutMs?: number;
 }
 
+/**
+ * The failure reason when the calling process may not spawn the evaluator (it runs without
+ * `--allow-run`). A caller tells it apart from a config that failed to evaluate: the config
+ * itself may be fine, so its keys must not be reported as unportable.
+ */
+export const NEXT_CONFIG_NEEDS_RUN = "couldn't evaluate next.config (needs --allow-run)";
+
 /** The evaluator's answer: the parsed marker line, or why there is none. */
 export type NextConfigEvalResult =
   | { readonly ok: true; readonly value: unknown }
@@ -213,6 +220,10 @@ export async function evalNextConfigProgram(
     output = await child.output();
   } catch (err) {
     if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
+    // Spawning `deno` needs run permission; without it the config was never looked at.
+    if (err instanceof Deno.errors.NotCapable || err instanceof Deno.errors.PermissionDenied) {
+      return { ok: false, reason: NEXT_CONFIG_NEEDS_RUN };
+    }
     return { ok: false, reason: `could not run the evaluator: ${(err as Error).message}` };
   }
   try {

@@ -1,5 +1,6 @@
 // React Native mode's list adapters at build time (see src/react-native/lists/manifest.ts):
-// react-native-web's FlatList / SectionList / VirtualizedList modules load as denext's
+// react-native-web's FlatList / SectionList / VirtualizedList modules (and its vendored
+// VirtualizedSectionList, which the `react-native` entry exposes) load as denext's
 // adapters built over the app's own View / StyleSheet / RefreshControl, and the aliased list
 // packages (`@shopify/flash-list`, `@legendapp/list`) resolve to generated modules that build
 // their components the same way. `reactNative: { lists: "library" }` turns both off.
@@ -22,6 +23,10 @@ const LIST_MODULE = new RegExp(
   })[\\\\/]index\\.js$`,
 );
 
+/** react-native-web's vendored `VirtualizedSectionList` (ES or CommonJS build); 1 is `cjs/`. */
+const VENDOR_SECTION_MODULE =
+  /[\\/]react-native-web[\\/]dist[\\/](cjs[\\/])?vendor[\\/]react-native[\\/]VirtualizedSectionList[\\/]index\.js$/;
+
 /** The primitives each list module takes from its react-native-web siblings. */
 const PRIMITIVES = ["View", "StyleSheet", "RefreshControl"] as const;
 
@@ -32,18 +37,19 @@ const PRIMITIVES = ["View", "StyleSheet", "RefreshControl"] as const;
  *
  * @param name A react-native-web list component (`FlatList`, …).
  * @param cjs Whether the module is from react-native-web's CommonJS build.
+ * @param exportsDir The module's path to react-native-web's `exports/` (default `..`).
  * @returns The module source.
  */
-export function listModuleSource(name: string, cjs: boolean): string {
+export function listModuleSource(name: string, cjs: boolean, exportsDir = ".."): string {
   if (!cjs) {
-    return PRIMITIVES.map((p) => `import ${p} from "../${p}";\n`).join("") +
+    return PRIMITIVES.map((p) => `import ${p} from "${exportsDir}/${p}";\n`).join("") +
       `import { create${name} } from "${OVERLAY}";\n` +
       `export default /* @__PURE__ */ create${name}({ ${PRIMITIVES.join(", ")} });\n`;
   }
   const req = (spec: string) => `require(${JSON.stringify(spec)})`;
   return `"use strict";\nfunction d(m) { return m && m.__esModule ? m.default : m; }\n` +
     `module.exports = ${req(OVERLAY)}.create${name}({ ${
-      PRIMITIVES.map((p) => `${p}: d(${req(`../${p}`)})`).join(", ")
+      PRIMITIVES.map((p) => `${p}: d(${req(`${exportsDir}/${p}`)})`).join(", ")
     } });\n`;
 }
 
@@ -108,6 +114,15 @@ export function listAdaptersPlugin(projectDir: string): esbuild.Plugin {
           resolveDir: dirname(args.path),
         };
       });
+      build.onLoad({ filter: VENDOR_SECTION_MODULE }, (args) => ({
+        contents: listModuleSource(
+          "VirtualizedSectionList",
+          VENDOR_SECTION_MODULE.exec(args.path)![1] !== undefined,
+          "../../../exports",
+        ),
+        loader: "js",
+        resolveDir: dirname(args.path),
+      }));
       build.onResolve({ filter: PACKAGE_FILTER }, (args) => ({
         path: args.path,
         namespace: PACKAGE_NAMESPACE,

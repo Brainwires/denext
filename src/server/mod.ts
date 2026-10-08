@@ -112,7 +112,7 @@ export type {
   SchemaInput,
   SchemaOutput,
 } from "./define-api.ts";
-export { rateLimit, requireSession } from "./api-middleware.ts";
+export { cors, csrf, rateLimit, requireSession } from "./api-middleware.ts";
 // Typed live queries: a validated, gated `useLive` source (`defineSubscription`).
 export { defineSubscription } from "../runtime/define-subscription.ts";
 export type {
@@ -139,7 +139,12 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
-export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
+export type {
+  ApiRateLimitOptions,
+  CsrfDoubleSubmitOptions,
+  CsrfOptions,
+  RequireSessionOptions,
+} from "./api-middleware.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they
@@ -247,6 +252,7 @@ export {
   type AppleAppLinks,
   type AppLinksConfig,
   type CacheConfig,
+  type CdnCacheHeadersConfig,
   type CompiledPattern,
   type CompressConfig,
   type CorsConfig,
@@ -259,6 +265,7 @@ export {
   type DesktopExtraPermissions,
   type DesktopFsConfig,
   type DesktopInstallersConfig,
+  type DesktopLinuxConfig,
   type DesktopMacosConfig,
   type DesktopPasskeysConfig,
   type DesktopShellConfig,
@@ -275,6 +282,7 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   type MdxConfig,
+  type MobileAdaptiveIconConfig,
   type MobileConfig,
   type MobileFlavorConfig,
   type PlatformExtensionsConfig,
@@ -353,7 +361,7 @@ export type { RenderScope } from "../runtime/render-scope.ts";
 // Scheduled/background tasks: define one in `tasks/<name>.ts`, schedule it via `scheduledTasks`
 // in denext.config.ts or a per-task `schedule`, and/or run it on demand (`runTask` / `denext task`).
 export { defineTask, getTask, isTask, registerTask, runTask, taskNames } from "./tasks.ts";
-export type { Task, TaskContext, TaskDefinition } from "./tasks.ts";
+export type { Task, TaskBackoff, TaskContext, TaskDefinition, TaskRetry } from "./tasks.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";
@@ -482,6 +490,7 @@ export type {
   EmailProviderOptions,
   GitLabOptions,
   KeycloakOptions,
+  MagicLinkOptions,
   MicrosoftEntraOptions,
   OAuthClientOptions,
   OidcOptions,
@@ -504,6 +513,8 @@ export type {
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
+  PasskeyChallengeRecord,
+  PasskeyRecord,
   VerificationPurpose,
   VerificationTokenRecord,
   VerificationTokenRef,
@@ -556,12 +567,21 @@ export type {
   SecondFactorResult,
   TotpEnrollment,
 } from "./auth/mfa.ts";
-export { generateTotpSecret, totpAuthUri, verifyTotp } from "./auth/totp.ts";
-export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./auth/totp.ts";
+export { generateTotpSecret, totpAuthUri, totpQrSvg, verifyTotp } from "./auth/totp.ts";
+export type {
+  TotpAuthUriOptions,
+  TotpQrSvgOptions,
+  TotpVerifyOptions,
+  TotpVerifyResult,
+} from "./auth/totp.ts";
+// Passkeys (WebAuthn): the account-settings helpers behind `{basePath}/passkeys`.
+export { deletePasskey, listPasskeys } from "./auth/passkeys.ts";
+export type { PasskeySummary } from "./auth/passkeys.ts";
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
   AccountDeletedPayload,
+  ApiTokenRevokedReason,
   AuthCallbacks,
   AuthConfig,
   AuthCookieConfig,
@@ -571,6 +591,7 @@ export type {
   AuthMfaConfig,
   AuthNativeConfig,
   AuthorizedCallbackInput,
+  AuthPasskeyConfig,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,
@@ -582,6 +603,7 @@ export type {
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
+  SignInFailedReason,
   VerificationRequestParams,
 } from "./auth/types.ts";
 

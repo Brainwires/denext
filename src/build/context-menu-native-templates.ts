@@ -11,6 +11,16 @@
 //   `MainActivity`. `show` opens a `PopupMenu` anchored at the point (submenus as labelled
 //   groups, destructive items in the Material error color, the long-press haptic).
 //
+// Both have `dismiss({ target })`: `"menu"` closes the menu `show` opened (it answers as
+// dismissed), `"sheet"` closes the system action sheet `@capacitor/action-sheet` presents (iOS: a
+// presented `UIAlertController` in the action-sheet style; Android: its
+// `BottomSheetDialogFragment`, tagged `capacitorModalsActionSheet`), whose call is then never
+// answered, as React Native's `ActionSheetIOS.dismissActionSheet()` never calls the callback.
+// They resolve `{ dismissed }`. `denext mobile add action-sheet` installs this plugin for it.
+//
+// Generation 2 added `dismiss`; an unedited generation-1 file is upgraded, and the bump keeps an
+// older denext from rewriting the method away.
+//
 // Edit these as source: they are compiled only in an app (build-checked with xcodebuild and
 // Gradle against Capacitor 8). Every `\``, `\${` and `\\` below is an escaped template-literal
 // character, not part of the Swift/Java.
@@ -23,7 +33,7 @@
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 
 /** The generation of the templates below, stamped into every file the installer writes. */
-export const CONTEXT_MENU_TEMPLATE_VERSION = 1;
+export const CONTEXT_MENU_TEMPLATE_VERSION = 2;
 
 /**
  * A template as the installer writes it: a first line
@@ -69,6 +79,9 @@ import WebKit
 ///   press just landed on. The web view's \`UIContextMenuInteraction\` shows that element's menu
 ///   on the system long press (or a secondary click), lifting a snapshot of the element as the
 ///   preview, and sends \`menuAction\` \`{ token, id }\` for the chosen item.
+/// - \`dismiss({ target })\`: \`"menu"\` closes the menu \`show\` opened (answered as dismissed);
+///   \`"sheet"\` closes a system action sheet another plugin presented (\`@capacitor/action-sheet\`,
+///   for React Native mode's \`ActionSheetIOS.dismissActionSheet()\`). Resolves \`{ dismissed }\`.
 ///
 /// Items are \`{ id, label, systemIcon?, subtitle?, destructive?, disabled?, children? }\`:
 /// \`systemIcon\` is an SF Symbol name and \`children\` a submenu.
@@ -79,7 +92,8 @@ public class DenextContextMenuPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "show", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "arm", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "disarm", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "disarm", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise)
     ]
 
     /// Main-thread only. Owns the interactions on the web view.
@@ -172,6 +186,22 @@ public class DenextContextMenuPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
             call.resolve()
         }
     }
+
+    @objc func dismiss(_ call: CAPPluginCall) {
+        let sheet = call.getString("target") == "sheet"
+        DispatchQueue.main.async {
+            let dismissed = sheet ? self.dismissSystemSheet() : (self.controller?.dismissMenu() ?? false)
+            call.resolve(["dismissed": dismissed])
+        }
+    }
+
+    /// The action sheet another plugin presented over the bridge (\`@capacitor/action-sheet\`).
+    @MainActor private func dismissSystemSheet() -> Bool {
+        guard let sheet = bridge?.viewController?.presentedViewController as? UIAlertController,
+              sheet.preferredStyle == .actionSheet, !sheet.isBeingDismissed else { return false }
+        sheet.dismiss(animated: true)
+        return true
+    }
 }
 
 /// Builds \`UIMenu\` elements from the page's items.
@@ -248,6 +278,9 @@ final class DenextContextMenuController: NSObject, UIContextMenuInteractionDeleg
     /// The armed element whose menu is up (its preview is also the dismissal target).
     private var shown: Armed?
     private var presenter: AnyObject?
+    /// The iOS 15 sheet \`present\` put up, and its answer, for \`dismissMenu()\`.
+    private weak var sheet: UIAlertController?
+    private var sheetComplete: ((String?) -> Void)?
 
     init(webView: WKWebView, send: @escaping (String, String) -> Void) {
         self.webView = webView
@@ -377,6 +410,17 @@ final class DenextContextMenuController: NSObject, UIContextMenuInteractionDeleg
         presentSheet(items: items, title: title, at: point, in: webView, from: viewController, finish: finish)
     }
 
+    /// Close the menu \`present\` put up, answering it as dismissed; false when none is up.
+    func dismissMenu() -> Bool {
+        if #available(iOS 16.0, *), let menus = presenter as? DenextEditMenuPresenter, menus.dismiss() {
+            return true
+        }
+        guard let sheet, let complete = sheetComplete else { return false }
+        sheetComplete = nil
+        sheet.dismiss(animated: true) { complete(nil) }
+        return true
+    }
+
     /// iOS 15: the items as an action sheet (a popover at the point on iPad).
     private func presentSheet(
         items: [[String: Any]],
@@ -404,6 +448,8 @@ final class DenextContextMenuController: NSObject, UIContextMenuInteractionDeleg
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in complete(nil) })
         sheet.popoverPresentationController?.sourceView = webView
         sheet.popoverPresentationController?.sourceRect = CGRect(origin: point, size: .zero)
+        self.sheet = sheet
+        sheetComplete = complete
         viewController.present(sheet, animated: true)
     }
 }
@@ -426,6 +472,14 @@ final class DenextEditMenuPresenter: NSObject, @preconcurrency UIEditMenuInterac
         complete(nil) // a menu still up is answered as dismissed
         pending = (items, title, finish)
         interaction?.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+    }
+
+    /// Close the menu that is up, answering it as dismissed; false when none is.
+    func dismiss() -> Bool {
+        guard pending != nil else { return false }
+        interaction?.dismissMenu()
+        complete(nil)
+        return true
     }
 
     private func complete(_ id: String?) {
@@ -503,6 +557,11 @@ import org.json.JSONObject;
  * ones are drawn in the Material error color, and a submenu's items are listed as a group
  * under a header with its label (so none is ever out of reach). {@code haptic} plays the
  * long-press haptic as the menu opens.
+ *
+ * <p>{@code dismiss({ target })}: {@code "menu"} closes the menu {@code show} opened (answered as
+ * dismissed); {@code "sheet"} closes the system action sheet {@code @capacitor/action-sheet}
+ * shows (its {@code BottomSheetDialogFragment}), for React Native mode's
+ * {@code ActionSheetIOS.dismissActionSheet()}. Resolves {@code { dismissed }}.
  */
 @CapacitorPlugin(name = "DenextContextMenu")
 public class DenextContextMenuPlugin extends Plugin {
@@ -510,9 +569,13 @@ public class DenextContextMenuPlugin extends Plugin {
     /** Material 3's error color (light scheme), for destructive items. */
     private static final int DESTRUCTIVE = Color.rgb(0xb3, 0x26, 0x1e);
 
-    /** The open menu's call (answered once) and its anchor view. */
+    /** The tag {@code @capacitor/action-sheet} shows its sheet fragment under. */
+    private static final String CAPACITOR_ACTION_SHEET = "capacitorModalsActionSheet";
+
+    /** The open menu's call (answered once), its anchor view and the menu. */
     private PluginCall pending;
     private View anchor;
+    private PopupMenu popup;
 
     @PluginMethod
     public void show(PluginCall call) {
@@ -563,7 +626,36 @@ public class DenextContextMenuPlugin extends Plugin {
         // A dismissal also follows a choice; finish() answers only the first.
         popup.setOnDismissListener((PopupMenu menu) -> web.post(() -> finish(null)));
         if (haptic) web.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        this.popup = popup;
         popup.show();
+    }
+
+    @PluginMethod
+    public void dismiss(PluginCall call) {
+        boolean sheet = "sheet".equals(call.getString("target", "menu"));
+        getActivity().runOnUiThread(() -> {
+            JSObject result = new JSObject();
+            result.put("dismissed", sheet ? dismissSheet() : dismissMenu());
+            call.resolve(result);
+        });
+    }
+
+    /** Close the menu {@code show} opened; its dismiss listener answers the call. */
+    private boolean dismissMenu() {
+        PopupMenu open = popup;
+        if (open == null || pending == null) return false;
+        popup = null;
+        open.dismiss();
+        return true;
+    }
+
+    /** Close {@code @capacitor/action-sheet}'s sheet when it is up. */
+    private boolean dismissSheet() {
+        androidx.fragment.app.Fragment sheet =
+            getActivity().getSupportFragmentManager().findFragmentByTag(CAPACITOR_ACTION_SHEET);
+        if (!(sheet instanceof androidx.fragment.app.DialogFragment) || !sheet.isAdded()) return false;
+        ((androidx.fragment.app.DialogFragment) sheet).dismissAllowingStateLoss();
+        return true;
     }
 
     /**
@@ -604,6 +696,7 @@ public class DenextContextMenuPlugin extends Plugin {
     private void finish(String id) {
         PluginCall call = pending;
         pending = null;
+        popup = null;
         if (anchor != null && anchor.getParent() instanceof ViewGroup) {
             ((ViewGroup) anchor.getParent()).removeView(anchor);
         }

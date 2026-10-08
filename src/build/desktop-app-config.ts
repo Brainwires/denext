@@ -6,8 +6,9 @@
 //                            (full-app self-update's baked key) from `desktop.update`,
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
-//   laufey-launch.json       the webview backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`, `inspectable`, `bridgeOrigins`), read at process
+//   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
+//                            `singleInstance`, `inspectable`, `bridgeOrigins`, and on Linux
+//                            `requireSandbox`), read at process
 //                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
 //                            Windows and Linux
@@ -58,6 +59,11 @@ export interface LaufeyLaunchConfig {
    * schemes' every origin, or (the default `app://localhost`, no custom scheme) to none at all.
    */
   readonly bridgeOrigins?: string[];
+  /**
+   * Linux CEF: refuse to start (exit 78) where web content would run without Chromium's sandbox
+   * (`desktop.linux.requireSandbox`). Written only for Linux, and only when `true`.
+   */
+  readonly requireSandbox?: boolean;
 }
 
 /** Where a window is launched from, for {@linkcode desktopInspectable}. */
@@ -77,6 +83,18 @@ export function desktopInspectable(config: unknown, mode: DesktopLaunchMode): bo
   const raw = (config as { desktop?: { inspectable?: unknown } } | undefined)?.desktop
     ?.inspectable;
   return mode === "run" ? raw !== false : raw === true;
+}
+
+/**
+ * Whether the packaged Linux app requires Chromium's sandbox (`desktop.linux.requireSandbox`).
+ *
+ * @param config The project config.
+ * @returns `true` only when set to `true`.
+ */
+export function desktopRequireSandbox(config: unknown): boolean {
+  const desktop = (config as { desktop?: { linux?: { requireSandbox?: unknown } } } | undefined)
+    ?.desktop;
+  return desktop?.linux?.requireSandbox === true;
 }
 
 /** The `desktop.app` block of an untyped config value. */
@@ -230,8 +248,9 @@ async function loadConfigBeside(entryUrl: string): Promise<unknown> {
 }
 
 /**
- * Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the
- * project's `denext.config.ts` (the bridge pinned to the app origin, {@linkcode
+ * Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable` and (on
+ * Linux) `desktop.linux.requireSandbox` in the project's `denext.config.ts` (the bridge pinned to
+ * the app origin, {@linkcode
  * desktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).
  * On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
  *
@@ -252,6 +271,7 @@ export async function writeLaufeyLaunchConfig(
     ...desktopLaunchConfig(config),
     inspectable: desktopInspectable(config, "package"),
     bridgeOrigins: desktopBridgeOrigins(config),
+    ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
   };
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });

@@ -153,6 +153,16 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "mobile add auth-session --scheme …`). On the web it asks for the token / id_token " +
       "directly. A failed exchange is an error response (Expo leaves it unhandled).",
   },
+  "expo-battery": {
+    module: "./battery.ts",
+    pinned: "58.0.3",
+    status: "partial",
+    notes: "The level and charging state over @capacitor/device's getBatteryInfo() in the shell " +
+      "(`denext mobile add device`; polled every 30 s while a listener is subscribed, since the " +
+      "plugin reports no changes) and the Battery Status API (navigator.getBattery(), Chromium) on " +
+      "the web; elsewhere -1 / UNKNOWN, as Expo's web build. Low Power Mode and battery " +
+      "optimisation are not observable: both read false and the low-power listener never fires.",
+  },
   "expo-blur": {
     module: "./blur.ts",
     pinned: "58.0.3",
@@ -160,11 +170,65 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "A CSS backdrop-filter blur with a tint overlay; system material tints map to " +
       "light/dark/default.",
   },
+  "expo-brightness": {
+    module: "./brightness.ts",
+    pinned: "58.0.2",
+    status: "partial",
+    notes: "get/setBrightnessAsync over @capacitor-community/screen-brightness (`denext mobile " +
+      "add brightness`): the screen's level on iOS, the app window's on Android (-1 there until " +
+      "the app sets one). Off Android (iOS and the web) the calls are Expo's there: the system " +
+      "brightness is the screen's, restoreSystemBrightnessAsync and setSystemBrightnessModeAsync " +
+      "do nothing, isUsingSystemBrightnessAsync is false and getSystemBrightnessModeAsync is " +
+      "UNKNOWN. On Android restoreSystemBrightnessAsync lets the window follow the system; the " +
+      "system setting and the brightness mode reject with ERR_UNAVAILABLE (no WRITE_SETTINGS). " +
+      "addBrightnessListener never fires. Outside the shell isAvailableAsync() is false, the " +
+      "level calls reject and the permission is undetermined, as Expo's web build.",
+  },
   "expo-build-properties": {
     module: "./build-properties.ts",
     pinned: "58.0.9",
     status: "stub",
     notes: "A config plugin for native prebuild; withBuildProperties returns the config unchanged.",
+  },
+  "expo-calendar": {
+    module: "./calendar.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "getDefaultCalendarSync",
+      "getSourcesSync",
+      "ExpoCalendarAttendee",
+      "ExpoCalendarEvent.get",
+      "ExpoCalendarEvent.getOccurrenceSync",
+      "ExpoCalendarEvent.openInCalendar",
+      "ExpoCalendarEvent.getAttendees",
+      "ExpoCalendarEvent.createAttendee",
+    ],
+    notes: "Calendars, events and (iOS) reminders over @ebarooni/capacitor-calendar (`denext " +
+      "mobile add calendar`), in the object API (getCalendars \u2192 ExpoCalendar, listEvents, " +
+      "presentPicker, ExpoCalendarEvent / ExpoCalendarReminder) and the legacy function API " +
+      "(working from the main entry, where Expo 58's throw); dates come back as ISO strings. " +
+      "The plugin has no attendee calls, cannot open an event in the calendar app, cannot " +
+      "look an event up by id (getEventAsync needs recurringEventOptions.instanceStartDate) " +
+      "and cannot change a single occurrence: those reject with ERR_UNAVAILABLE. An event's " +
+      "recurrence rule is not reported (recurrenceRule reads null), its time zone cannot be " +
+      "set, and only relative alarms are passed on. createEventInCalendarAsync / " +
+      "addEventWithForm show the native editor: iOS reports saved (with the id) or canceled, " +
+      "Android done. The synchronous getDefaultCalendarSync, getSourcesSync and " +
+      "getOccurrenceSync are omitted (no JSI); off the shell every data call rejects with " +
+      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build. " +
+      "expo-calendar/next is this shim too (SDK 58 points it at the main entry); " +
+      "expo-calendar/legacy is its own, below.",
+  },
+  "expo-calendar/legacy": {
+    module: "./calendar-legacy.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    notes: "Expo's legacy function API (getCalendarsAsync, getEventsAsync, createEventAsync, " +
+      "…, the enums and the permission calls): the same implementation as the main entry's " +
+      "legacy functions, with the same limits (attendees, opening an event in the calendar " +
+      "app and single-occurrence edits reject with ERR_UNAVAILABLE; off the shell every data " +
+      "call does).",
   },
   "expo-camera": {
     module: "./camera.ts",
@@ -188,6 +252,25 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "permission calls live on the Camera object, as in Expo; CameraNativeModule is a " +
       "stand-in that throws when constructed.",
   },
+  "expo-cellular": {
+    module: "./cellular.ts",
+    pinned: "58.0.2",
+    status: "partial",
+    notes: "getCellularGenerationAsync from the Network Information API's effectiveType " +
+      "(Chromium, the Android WebView; UNKNOWN elsewhere or off cellular, including a desktop " +
+      "browser or Deno Desktop, whose connection has no type: Expo's web build reports its " +
+      "speed class there, e.g. 4G on Wi-Fi). The carrier name, ISO " +
+      "country code and mobile country / network codes are null (no WebView or browser API " +
+      "reports them; iOS 16.4+ returns none natively either). The permission calls answer granted.",
+  },
+  "expo-checkbox": {
+    module: "./checkbox.ts",
+    pinned: "58.0.2",
+    status: "full",
+    notes:
+      'A real <input type="checkbox"> (keyboard, screen readers, forms) under a drawn box in ' +
+      "Expo's look: value, disabled, color, onChange (nativeEvent.value) and onValueChange.",
+  },
   "expo-clipboard": {
     module: "./clipboard.ts",
     pinned: "58.0.3",
@@ -210,6 +293,114 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "expoConfig comes from globalThis.__DENEXT_EXPO_CONFIG__ (set it before the bundle " +
       "runs); manifest/manifest2 are null; appOwnership null, executionEnvironment standalone.",
+  },
+  "expo-contacts": {
+    module: "./contacts.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "Container",
+      "shareContactAsync",
+      "writeContactToFileAsync",
+      "presentAccessPickerAsync",
+      "addExistingGroupToContainerAsync",
+      "updateGroupNameAsync",
+      "addExistingContactToGroupAsync",
+      "removeContactFromGroupAsync",
+      "Contact.presentAccessPicker",
+      "Contact.update",
+      "Contact.editWithForm",
+      "Contact.addEmail",
+      "Contact.deleteEmail",
+      "Contact.updateEmail",
+      "Contact.addPhone",
+      "Contact.deletePhone",
+      "Contact.updatePhone",
+      "Contact.addDate",
+      "Contact.getDates",
+      "Contact.deleteDate",
+      "Contact.updateDate",
+      "Contact.addExtraName",
+      "Contact.getExtraNames",
+      "Contact.deleteExtraName",
+      "Contact.updateExtraName",
+      "Contact.addAddress",
+      "Contact.deleteAddress",
+      "Contact.updateAddress",
+      "Contact.addRelation",
+      "Contact.getRelations",
+      "Contact.deleteRelation",
+      "Contact.updateRelation",
+      "Contact.addUrlAddress",
+      "Contact.deleteUrlAddress",
+      "Contact.updateUrlAddress",
+      "Contact.addSocialProfile",
+      "Contact.getSocialProfiles",
+      "Contact.deleteSocialProfile",
+      "Contact.updateSocialProfile",
+      "Contact.addImAddress",
+      "Contact.getImAddresses",
+      "Contact.deleteImAddress",
+      "Contact.updateImAddress",
+      "Contact.getIsFavourite",
+      "Contact.setIsFavourite",
+      "Contact.getMaidenName",
+      "Contact.setMaidenName",
+      "Contact.getNickname",
+      "Contact.setNickname",
+      "Contact.getPhoneticGivenName",
+      "Contact.setPhoneticGivenName",
+      "Contact.getPhoneticMiddleName",
+      "Contact.setPhoneticMiddleName",
+      "Contact.getPhoneticFamilyName",
+      "Contact.setPhoneticFamilyName",
+      "Contact.getDepartment",
+      "Contact.setDepartment",
+      "Contact.getPhoneticCompanyName",
+      "Contact.setPhoneticCompanyName",
+      "Contact.setImage",
+      "Contact.getThumbnail",
+      "Contact.getNonGregorianBirthday",
+      "Contact.setNonGregorianBirthday",
+      "Group.setName",
+      "Group.addContact",
+      "Group.removeContact",
+    ],
+    notes: "The address book over @capgo/capacitor-contacts (`denext mobile add contacts`): the " +
+      "legacy function API in Expo's legacy shapes (0-based birthday month) and the Contact / " +
+      "Group classes for the fields the plugin has: names, company, job title, note, " +
+      "birthday, emails, phones, postal addresses, URLs and the photo (a data: URI); other " +
+      "fields read as empty and item ids are positional. Name / id / group filters and name " +
+      "sorts read the whole list and page in JS; otherwise the plugin pages. Partial writes " +
+      "(updateContactAsync, patch, the setters) read, merge and write the whole record back; " +
+      "on Android the plugin keeps only names, company, job title, note, emails and phones on " +
+      "update. No containers (getDefaultContainerIdAsync / getContainersAsync reject " +
+      "ERR_UNAVAILABLE), no change events (the listener never fires), no iOS 18 access button " +
+      "(ContactAccessButton renders nothing). The legacy functions work from the main entry " +
+      "(Expo 58's throw there). Off the shell every call rejects with ERR_UNAVAILABLE except " +
+      "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false). " +
+      "expo-contacts/next is this shim too (SDK 58 points it at the main entry); " +
+      "expo-contacts/legacy is its own, below.",
+  },
+  "expo-contacts/legacy": {
+    module: "./contacts-legacy.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "shareContactAsync",
+      "writeContactToFileAsync",
+      "presentAccessPickerAsync",
+      "addExistingGroupToContainerAsync",
+      "updateGroupNameAsync",
+      "addExistingContactToGroupAsync",
+      "removeContactFromGroupAsync",
+    ],
+    notes: "Expo's legacy function API in its legacy shapes (getContactsAsync, " +
+      "addContactAsync, presentFormAsync, …; Contact, Group and Container are the legacy " +
+      "record types): the same implementation as the main entry's legacy functions, with the " +
+      "same limits (no containers, the change listener never fires, ContactAccessButton " +
+      "renders nothing; off the shell every call rejects with ERR_UNAVAILABLE except the " +
+      "permissions and isAvailableAsync).",
   },
   "expo-crypto": {
     module: "./crypto.ts",
@@ -264,7 +455,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "(File.pickFileAsync, Directory.pickDirectoryAsync). The legacy top-level functions " +
       "(readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 58's root and here " +
       "alike: each warns and throws Expo's migration error. The legacy API itself " +
-      "(expo-file-system/legacy) is its own shim, below.",
+      "(expo-file-system/legacy) is its own shim, below; expo-file-system/next is this one " +
+      "(SDK 58 points it at the main entry).",
   },
   "expo-file-system/legacy": {
     module: "./file-system-legacy.ts",
@@ -290,6 +482,21 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "(loadAsync / useFonts with [{ fontFamily, fontDefinitions }]) register a FontFace per " +
       "weight / style, checked as Expo checks them (ERR_FONT_API), and unloadAsync's weight / " +
       "style / display options remove only the matching faces.",
+  },
+  "expo-gl": {
+    module: "./gl.ts",
+    pinned: "58.0.3",
+    status: "partial",
+    notes:
+      "GLView is a <canvas> with a WebGL 2 context (WebGL 1 where 2 is missing) sized to its " +
+      "box at the device pixel ratio, handed to onContextCreate with Expo's additions " +
+      "(endFrameEXP a no-op, flushEXP, contextId, texImage2D / texSubImage2D taking an Asset); " +
+      "onContextLost / onContextRestored, webglContextAttributes, msaaSamples (antialias), the " +
+      "ref's takeSnapshotAsync (a blob: URL) and the createContextAsync / destroyContextAsync / " +
+      "takeSnapshotAsync statics. A WebView has no GL on a worklet runtime (getWorkletContext " +
+      "returns undefined, enableExperimentalWorkletSupport is ignored) and no camera textures: " +
+      "createCameraTextureAsync and destroyObjectAsync reject with ERR_UNAVAILABLE. Snapshot " +
+      "flip / rect / framebuffer are ignored (the whole canvas, upright).",
   },
   "expo-glass-effect": {
     module: "./glass-effect.ts",
@@ -340,11 +547,29 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "One image per pick, no crop editor, no video. The picker asks for access itself, " +
       "so the permission calls report granted.",
   },
+  "expo-intent-launcher": {
+    module: "./intent-launcher.ts",
+    pinned: "58.0.3",
+    status: "full",
+    notes: "startActivityAsync / openApplication / getApplicationIconAsync over " +
+      "@capgo/capacitor-intent-launcher (`denext mobile add intent-launcher`), which takes " +
+      "Expo's parameters and returns its result; every ActivityAction value. Android only, as in " +
+      "Expo: in the iOS shell and on the web the calls throw / reject with ERR_UNAVAILABLE.",
+  },
   "expo-keep-awake": {
     module: "./keep-awake.ts",
     pinned: "58.0.3",
     status: "partial",
     notes: "The release listener is never called: the web wake lock is re-acquired on its own.",
+  },
+  "expo-linear-gradient": {
+    module: "./linear-gradient.ts",
+    pinned: "58.0.3",
+    status: "full",
+    notes: "A view with a CSS linear-gradient background, React Native mode's " +
+      "react-native-linear-gradient component: start / end ({ x, y } or [x, y]) are exact (the " +
+      "view measures itself), locations as given. dither (Android) is ignored. A MaskedView whose " +
+      "mask is this gradient becomes a CSS mask-image.",
   },
   "expo-linking": {
     module: "./linking.ts",
@@ -353,7 +578,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "createURL builds <scheme>://… in the native shell and an origin URL on the web; " +
       "openURL takes http(s)/mailto/tel only; unwrapDevLaunchURL is Expo's own pure function; " +
       "openSettings opens the app's settings through " +
-      "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent rejects.",
+      "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent starts the intent in the Android shell " +
+      "through the same plugin and rejects elsewhere.",
   },
   "expo-local-authentication": {
     module: "./local-authentication.ts",
@@ -364,6 +590,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "not_available. cancelAuthenticate resolves without dismissing the prompt; the Android " +
       "prompt's subtitle, description, confirmation and security class are the plugin's own; " +
       "getEnrolledLevelAsync cannot tell a weak Android biometric from a strong one.",
+  },
+  "expo-localization": {
+    module: "./localization.ts",
+    pinned: "58.0.3",
+    status: "full",
+    notes:
+      "getLocales / getCalendars / useLocales / useCalendars from Intl and navigator.languages " +
+      "(the device's settings in the shell's WebView), synchronous as Expo's; the hooks re-render " +
+      "on languagechange. measurementSystem is derived from the region (us / uk / metric, the OS " +
+      "default) where Expo's web build reports null; the currency fields are null, as on Expo's " +
+      "web build (no web API reports a region's currency).",
   },
   "expo-location": {
     module: "./location.ts",
@@ -394,6 +631,16 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "are not provided. " +
       "installWebGeolocationPolyfill does nothing (navigator.geolocation is already there).",
   },
+  "expo-mail-composer": {
+    module: "./mail-composer.ts",
+    pinned: "58.0.3",
+    status: "partial",
+    notes: "composeAsync opens the mail app with a mailto: URL through openExternal (the shell " +
+      "hands it to Mail / the default mail app): recipients, cc, bcc, subject and a plain-text " +
+      "body (an HTML body is sent as its text). Attachments reject with ERR_MAIL_ATTACHMENTS (a " +
+      "mailto: URL cannot carry them; use expo-sharing). The status is always undetermined and " +
+      "getClients() is empty, as on Expo's web build.",
+  },
   "expo-maps": {
     module: "./maps.ts",
     pinned: "58.0.4",
@@ -423,7 +670,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "Album.getSmartAlbums read the plugin's album type (iOS smart albums; Android albums are " +
       "regular); its other getters, deleting, moving, favouriting, " +
       "exeForMetadata and presentPermissionsPicker reject, and no media subtypes are reported. " +
-      "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy.",
+      "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy. " +
+      "expo-media-library/next is this shim too (SDK 58 points it at the main entry).",
   },
   "expo-media-library/legacy": {
     module: "./media-library-legacy.ts",
@@ -435,6 +683,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "data: URL; one page, hasNextPage false). Moving, deleting and favouriting assets, " +
       "getAssetInfoAsync, moments and presentPermissionsPickerAsync reject; the change listener " +
       "never fires.",
+  },
+  "expo-mesh-gradient": {
+    module: "./mesh-gradient.ts",
+    pinned: "58.0.3",
+    status: "partial",
+    notes: "MeshGradientView drawn with CSS: a radial gradient per mesh point (about one cell " +
+      "wide; smoothsColors widens it) over the mesh's average colour, on every platform. An " +
+      "approximation of SwiftUI's MeshGradient, not the same interpolation. resolution and " +
+      "ignoresSafeArea are ignored; with mask the children draw over the gradient instead of " +
+      "masking it. The average colour is computed for hex, rgb() and processColor colours; " +
+      "with named or hsl() colours it is CSS color-mix(), which needs Safari 16.2+ (iOS 16.2+).",
   },
   "expo-navigation-bar": {
     module: "./navigation-bar.ts",
@@ -494,6 +753,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     notes: "onPaste from the DOM paste event (text, or images as blob: URLs).",
   },
+  "expo-print": {
+    module: "./print.ts",
+    pinned: "58.0.5",
+    status: "partial",
+    notes: "printAsync through @capgo/capacitor-printer in the shell (`denext mobile add print`; " +
+      "a WebView cannot print by itself): html, or a uri (data:, http(s) fetched first, or a file " +
+      "path). In a browser, html / uri print from a hidden iframe and otherwise the page " +
+      "(Expo's web behaviour). Page size, margins, orientation and printerUrl are left to the " +
+      "dialog. printToFileAsync (HTML to PDF) and selectPrinterAsync reject with " +
+      "ERR_UNAVAILABLE: neither the plugin nor a browser renders a PDF or lists printers.",
+  },
   "expo-quick-actions": {
     module: "./quick-actions.ts",
     pinned: "6.0.2",
@@ -535,12 +805,46 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "in denext's code, not by a Keychain access control (the plugin has none); without a " +
       "secret store it is refused, never stored. Accessibility options are ignored.",
   },
+  "expo-sensors": {
+    module: "./sensors.ts",
+    pinned: "58.0.2",
+    status: "partial",
+    notes: "Accelerometer (g, Expo's sign), Gyroscope (rad/s) and DeviceMotion (m/s², rotation " +
+      "in radians from deviceorientation, rotationRate in deg/s) from the page's devicemotion / " +
+      "deviceorientation events, converted to Expo's units (its web build does not convert); " +
+      "updates at most once per setUpdateInterval (default 100 ms). requestPermissionsAsync " +
+      "asks for iOS motion access (call it from a tap). Magnetometer / MagnetometerUncalibrated / " +
+      "LightSensor use the Generic Sensor API where the browser exposes it (not in the WebView " +
+      "shells). Barometer and Pedometer have no web API: isAvailableAsync() is false, a watch " +
+      "never fires and getStepCountAsync rejects with ERR_UNAVAILABLE.",
+  },
   "expo-sharing": {
     module: "./sharing.ts",
     pinned: "58.0.13",
     status: "partial",
     notes: "shareAsync shares web links and (through the Web Share API) files; incoming " +
       "shares need a native share extension, so the payload lists are always empty.",
+  },
+  "expo-sms": {
+    module: "./sms.ts",
+    pinned: "58.0.2",
+    status: "partial",
+    notes: "In the iOS / Android shell, sendSMSAsync opens the Messages app by navigating to " +
+      'an sms: URL (recipients and body; the user sends it; no popup to be blocked) and resolves { result: "unknown" } (the app ' +
+      "reports nothing back, as on Android). Attachments reject with ERR_SMS_ATTACHMENTS. " +
+      "Outside the shell isAvailableAsync() is false and sendSMSAsync rejects with " +
+      "ERR_UNAVAILABLE, as Expo's web build.",
+  },
+  "expo-speech": {
+    module: "./speech.ts",
+    pinned: "58.0.3",
+    status: "partial",
+    notes: "The OS speech engine in the shell through @capacitor-community/text-to-speech " +
+      "(`denext mobile add text-to-speech`; required on Android, whose WebView has no " +
+      "speechSynthesis): onStart / onDone / onStopped / onError / onBoundary, voices by " +
+      "voiceURI; pause and resume reject with ERR_UNAVAILABLE (the plugin cannot pause). " +
+      "Elsewhere (browsers, the iOS WKWebView without the plugin) the Web Speech API with every " +
+      "callback and pause / resume. Utterances queue; stop() clears the queue.",
   },
   "expo-sqlite": {
     module: "./sqlite.ts",
@@ -601,6 +905,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "animationSpec, resizeMode and scale are ignored; unstable_getMaterialSymbolSourceAsync " +
       "resolves null.",
   },
+  "expo-system-ui": {
+    module: "./system-ui.ts",
+    pinned: "58.0.5",
+    status: "full",
+    notes: "The root view is the page: setBackgroundColorAsync paints <html> and <body> (what " +
+      "shows behind the app in the shell: overscroll, the keyboard's gap); " +
+      "getBackgroundColorAsync returns the colour last set (#RRGGBB for a hex colour or a " +
+      "processColor number), or null.",
+  },
   "expo-tracking-transparency": {
     module: "./tracking-transparency.ts",
     pinned: "58.0.2",
@@ -647,6 +960,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "volume and playbackRate apply to the HTMLVideoElement only; no thumbnails, subtitles or " +
       "cache; isPictureInPictureSupported() is false. The Android playerBuilderOptions are " +
       "accepted and ignored.",
+  },
+  "expo-video-thumbnails": {
+    module: "./video-thumbnails.ts",
+    pinned: "58.0.2",
+    status: "full",
+    notes: "getThumbnailAsync seeks a <video> to time, draws the frame on a <canvas> and " +
+      "returns a JPEG blob: URL with its size (Expo's web build throws). The video must be " +
+      "readable by the page (same-origin, blob: / data:, the shell's own files, or CORS); " +
+      "headers are sent by fetching the video first. Formats are the WebView's.",
   },
   "expo-web-browser": {
     module: "./web-browser.ts",

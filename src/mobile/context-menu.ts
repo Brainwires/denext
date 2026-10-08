@@ -53,6 +53,11 @@ export interface ContextMenuOptions {
    * {@linkcode useContextMenu} turns it on for a long press).
    */
   readonly haptic?: boolean;
+  /**
+   * Closes the menu when aborted, which then resolves `null`: the in-page popover, and the native
+   * shell's menu (`DenextContextMenu`). A Deno Desktop OS menu is modal and is not closed.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** One item as the native plugin receives it (the JSON the bridge carries). */
@@ -76,6 +81,8 @@ interface ContextMenuPlugin {
     y?: number;
     haptic?: boolean;
   }): Promise<{ selectedId?: string | null } | null>;
+  /** Generation 2 of the plugin: close the open menu (`"menu"`) or a system action sheet. */
+  dismiss?(options: { target: "menu" | "sheet" }): Promise<{ dismissed?: boolean } | null>;
 }
 
 /**
@@ -172,9 +179,11 @@ function showWebContextMenu(
     let settled = false;
     let active = -1;
 
+    const onAbort = () => finish(null);
     const finish = (result: string | null) => {
       if (settled) return;
       settled = true;
+      options.signal?.removeEventListener("abort", onAbort);
       menu.removeEventListener("keydown", onKey);
       doc.removeEventListener("pointerdown", onOutside);
       doc.removeEventListener("keydown", onOutside);
@@ -289,6 +298,7 @@ function showWebContextMenu(
     addItems(menu, items, false);
 
     menu.addEventListener("keydown", onKey);
+    options.signal?.addEventListener("abort", onAbort);
     doc.body!.appendChild(menu);
 
     const first = entries.findIndex((e) => e.enabled);
@@ -303,6 +313,32 @@ function showWebContextMenu(
       doc.addEventListener("keydown", onOutside);
     });
   });
+}
+
+/** The shell's `DenextContextMenu` menu at `(x, y)`; `options.signal` closes it (`dismiss`). */
+async function showNativeMenu(
+  plugin: ContextMenuPlugin,
+  list: readonly ContextMenuItem[],
+  options: ContextMenuOptions,
+  x: number,
+  y: number,
+): Promise<string | null> {
+  const signal = options.signal;
+  const close = () => void plugin.dismiss?.({ target: "menu" })?.catch(() => {});
+  signal?.addEventListener("abort", close);
+  try {
+    const result = await plugin.show({
+      items: nativeMenuItems(list),
+      ...(options.title !== undefined ? { title: options.title } : {}),
+      x,
+      y,
+      ...(options.haptic ? { haptic: true } : {}),
+    });
+    const id = result?.selectedId;
+    return typeof id === "string" ? id : null;
+  } finally {
+    signal?.removeEventListener("abort", close);
+  }
 }
 
 /**
@@ -327,7 +363,9 @@ function showWebContextMenu(
  *   `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it
  *   added when it resolves.
  *
- * Every path renders **every** item, so no menu action is silently dropped.
+ * Every path renders **every** item, so no menu action is silently dropped. Aborting
+ * `options.signal` closes the in-page popover and the shell's native menu (the plugin's
+ * generation-2 `dismiss`), which then resolve `null`.
  *
  * @param items The menu entries (every one is rendered).
  * @param options `x`/`y` or `anchor` for placement, an optional `title`, and `haptic`.
@@ -373,6 +411,7 @@ export async function showContextMenu(
   options: ContextMenuOptions = {},
 ): Promise<string | null> {
   const list = [...items];
+  if (options.signal?.aborted) return null;
   // Deno Desktop: the OS menu through the bridge (lazy, so web/mobile bundles never load it); an
   // `unavailable` answer (capability off, or the stock runtime) runs the popover instead.
   const x = options.x ?? options.anchor?.left ?? 0;
@@ -385,17 +424,7 @@ export async function showContextMenu(
     : undefined;
   if (desktop) return desktop.value;
   const plugin = nativePlugin<ContextMenuPlugin>("DenextContextMenu", ["show"]);
-  if (plugin && list.length > 0) {
-    const result = await plugin.show({
-      items: nativeMenuItems(list),
-      ...(options.title !== undefined ? { title: options.title } : {}),
-      x,
-      y,
-      ...(options.haptic ? { haptic: true } : {}),
-    });
-    const id = result?.selectedId;
-    return typeof id === "string" ? id : null;
-  }
+  if (plugin && list.length > 0) return await showNativeMenu(plugin, list, options, x, y);
   if (options.haptic && list.length > 0 && isNativeShell()) haptic("medium").catch(() => {});
   return await showWebContextMenu(list, options);
 }

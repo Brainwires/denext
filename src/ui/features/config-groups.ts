@@ -67,6 +67,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "trustForwardedHeaders",
     // Response compression: a proxy that compresses in front of the server turns it off.
     "compress",
+    // Shared-cache headers on ISR pages: what a CDN in front may cache.
+    "cdnCacheHeaders",
     // The dev server's origin gate (which non-loopback hosts may load the dev assets).
     "allowedDevOrigins",
   ],

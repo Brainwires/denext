@@ -37,7 +37,7 @@ export interface SessionOptions {
   hostPrefix?: boolean;
   /** Session lifetime in seconds. Default 7 days. */
   maxAge?: number;
-  /** Cookie `SameSite`. Default `"Lax"`. */
+  /** Cookie `SameSite`. Default `"Lax"`. `"None"` always sets `Secure`, which browsers require. */
   sameSite?: "Strict" | "Lax" | "None";
   /** Cookie `Path`. Default `"/"`. Forced to `"/"` when `hostPrefix` is set. */
   path?: string;
@@ -162,8 +162,11 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
       // httpOnly defaults come from cookies().set(); pin sameSite + maxAge. `Secure` is
       // pinned for a __Host- cookie: the prefix REQUIRES it, and leaving it to the
       // x-forwarded-proto detection would let a proxy that omits that header emit a
-      // __Host- cookie the browser silently drops (auth would break, not degrade).
-      store.set(name, token, { maxAge, sameSite, path, ...(hostPrefixed ? { secure: true } : {}) });
+      // __Host- cookie the browser silently drops (auth would break, not degrade). The same
+      // holds for `SameSite=None`, which a browser ignores without `Secure` (RFC 6265bis's
+      // storage model).
+      const secure = hostPrefixed || sameSite === "None";
+      store.set(name, token, { maxAge, sameSite, path, ...(secure ? { secure: true } : {}) });
     },
     clear() {
       current = null;

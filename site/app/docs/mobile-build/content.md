@@ -31,8 +31,7 @@ Every verb takes `--dir <capacitor project>` (default: the current directory), `
 
 ## Icons and splash
 
-`denext mobile assets` reads `assets/icon.png` (or `--icon`), ideally a 1024×1024 or larger
-square, and writes:
+`denext mobile assets` reads one icon, ideally a 1024×1024 or larger square, and writes:
 
 - **iOS**: the App Store icon `AppIcon-512@2x.png` (1024×1024, flattened onto the background as
   RGB, because App Store Connect refuses an icon with an alpha channel), the splash set
@@ -43,15 +42,15 @@ square, and writes:
   `mipmap-anydpi-v26` XML that ties them together, the background colour, and the portrait and
   landscape `splash.png` drawables.
 
-| Source (default)                       | Flag                      | Used for                                                    |
-| -------------------------------------- | ------------------------- | ----------------------------------------------------------- |
-| `assets/icon.png` (or `icon-only.png`) | `--icon`                  | every icon                                                  |
-| `assets/icon-foreground.png`           | `--icon-foreground`       | Android's adaptive foreground, filling the 108dp canvas     |
-| `assets/icon-dark.png`                 | `--icon-dark`             | the iOS 18 dark icon                                        |
-| `assets/splash.png`                    | `--splash`                | the splash, cropped to cover each size (2732×2732 is ideal) |
-| `assets/splash-dark.png`               | `--splash-dark`           | the dark splash                                             |
-| `#ffffff`                              | `--background-color`      | the icon background and a splash without an image           |
-| none                                   | `--dark-background-color` | the dark splash background                                  |
+| Source (default)             | Flag                      | Used for                                                    |
+| ---------------------------- | ------------------------- | ----------------------------------------------------------- |
+| the project's icon (below)   | `--icon`                  | every icon                                                  |
+| `assets/icon-foreground.png` | `--icon-foreground`       | Android's adaptive foreground, filling the 108dp canvas     |
+| `assets/icon-dark.png`       | `--icon-dark`             | the iOS 18 dark icon                                        |
+| `assets/splash.png`          | `--splash`                | the splash, cropped to cover each size (2732×2732 is ideal) |
+| `assets/splash-dark.png`     | `--splash-dark`           | the dark splash                                             |
+| `#ffffff`                    | `--background-color`      | the icon background and a splash without an image           |
+| none                         | `--dark-background-color` | the dark splash background                                  |
 
 Without a splash image, the splash is the icon centred on the background colour. The dark
 variants (an asset catalog `luminosity: dark` appearance on iOS, `drawable-night*` on Android)
@@ -61,6 +60,48 @@ given. `--platform ios|android` limits the output; `--dry-run` lists every file 
 The images are decoded and resized with `@denext/photon` (WebAssembly) and encoded by denext
 itself, so the verb needs no npm package and no ImageMagick. Icons and splash are native
 resources: rebuild the app to see them.
+
+### Where the icon comes from
+
+Without `--icon`, `denext mobile assets` uses the icon the project already has, and the report
+says which one it chose and what it passed over. The first of these wins:
+
+1. **`mobile.icon` in `denext.config.ts`**, with `mobile.backgroundColor`, `mobile.adaptiveIcon`
+   (`foreground`, `backgroundImage`, `monochrome`), `mobile.splashIcon`,
+   `mobile.splashBackgroundColor` and `mobile.darkBackgroundColor`. The config is read
+   statically, never imported; a `mobile.icon` that names a missing file is an error.
+2. **`assets/icon.png`** (or `icon-only.png`, `icon.jpg`, then `resources/`), Capacitor's
+   convention.
+3. **An Expo app config**, in the project or, in a monorepo, a sibling app (`apps/mobile` beside
+   `apps/web`): `icon`, then `ios.icon`, then `android.icon`; `android.adaptiveIcon`'s
+   foreground, background colour or image and monochrome layer; `splash` (or the
+   `expo-splash-screen` plugin's options) for the splash logo and colours. `app.json` is read as
+   JSON and `app.config.ts` / `.js` statically (literals, `const`s, template strings): a value the
+   config computes in code is named in the report and skipped, and the config is never run.
+4. **The web manifest's largest square icon** (`<link rel="manifest">`, else
+   `public/manifest.webmanifest`), with its `background_color`; a `purpose: "maskable"` icon
+   becomes Android's adaptive foreground.
+5. **The apple-touch-icon**: `<link rel="apple-touch-icon">` in `index.html`, else
+   `public/apple-touch-icon.png` (or Next's `app/apple-icon.png`).
+6. **The largest PNG favicon** (`<link rel="icon">`, `public/favicon*.png`, `app/icon.png`).
+
+The App Store icon is 1024×1024 and opaque. A smaller source is still used, upscaled, with a
+warning that names a better one to add (for a monorepo whose Expo config computes its icon:
+export that icon as a PNG and set `mobile.icon`). A transparent icon is flattened onto the
+background colour (the manifest's `background_color`, the Expo adaptive background, or
+`--background-color`), with a warning. Android's adaptive layers come from the Expo config when
+it has them; otherwise the icon is scaled into the adaptive safe zone over the background colour.
+
+`denext migrate` (the Vite / CRA path and `--from expo`) runs the same search and records the
+result as `mobile.icon` (and the colours and layers that came with it) in the generated
+`denext.config.ts`, so later builds use the same icon; the migrate report and
+`migrate --check` print it, and a Capacitor or Expo app with no icon, or one under 1024×1024,
+gets a review item.
+
+`npx cap add` leaves Capacitor's placeholder (the Capacitor logo) as the app icon. `denext mobile
+build` replaces it, for the platform it builds, with icons from the search above (the splash
+too, when that is still the placeholder) and keeps them; `denext mobile doctor --store` reports
+the placeholder as an error.
 
 ## Building
 

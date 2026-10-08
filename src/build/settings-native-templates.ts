@@ -5,7 +5,13 @@
 // - iOS: `ios/App/App/DenextSettingsPlugin.swift`, registered by `DenextBridgeViewController`.
 //   `open()` opens `UIApplication.openSettingsURLString`: the app's own page in Settings.
 // - Android: `dev/denext/settings/DenextSettingsPlugin.java`, registered from `MainActivity`.
-//   `open()` starts `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for the app's package.
+//   `open()` starts `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for the app's package;
+//   `sendIntent({ action, extras? })` starts an activity for any intent action, the native half of
+//   React Native mode's `Linking.sendIntent()` (React Native's `IntentModule.sendIntent`: extras
+//   are `{ key, value }` with a string, number (put as a double) or boolean value).
+//
+// Generation 2 added `sendIntent` (Android); an unedited generation-1 file is upgraded, and the
+// bump keeps an older denext from rewriting the method away.
 //
 // Edit these as source: they are compiled only in an app (against Capacitor 8). Every `\``
 // below is an escaped template-literal character.
@@ -18,7 +24,7 @@
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 
 /** The generation of the templates below, stamped into every file the installer writes. */
-export const SETTINGS_TEMPLATE_VERSION = 1;
+export const SETTINGS_TEMPLATE_VERSION = 2;
 
 /**
  * A template as the installer writes it: a first line
@@ -97,10 +103,13 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Settings;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * The native side of {@code openAppSettings()} from {@code denext/mobile}, reached from the web
@@ -109,7 +118,15 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *
  * <p>{@code open()} starts {@code Settings.ACTION_APPLICATION_DETAILS_SETTINGS} for the app's
  * package: the "App info" screen, where the user can change a permission they refused. Rejects
- * with code {@code unavailable} when no activity handles it.
+ * with code {@code unavailable} when no activity handles it, {@code failed} when Android refuses
+ * to start it.
+ *
+ * <p>{@code sendIntent({ action, extras? })} starts an activity for {@code action} (React
+ * Native's {@code Linking.sendIntent}): each extra is {@code { key, value }}, a string, a number
+ * (put as a double, as React Native does) or a boolean. Rejects with code {@code invalid} for an
+ * empty action or another extra type, {@code unavailable} when no activity handles it, and
+ * {@code failed} when Android refuses to start it (a {@code SecurityException}: an action that
+ * needs a permission the app lacks, such as {@code ACTION_CALL}).
  */
 @CapacitorPlugin(name = "DenextSettings")
 public class DenextSettingsPlugin extends Plugin {
@@ -124,7 +141,60 @@ public class DenextSettingsPlugin extends Plugin {
             call.resolve();
         } catch (ActivityNotFoundException e) {
             call.reject("The app's settings page is unavailable.", "unavailable");
+        } catch (Exception e) {
+            // Never let it escape: Capacitor's Bridge turns a plugin method's exception into a crash.
+            call.reject("The app's settings page could not be opened.", "failed");
         }
+    }
+
+    @PluginMethod
+    public void sendIntent(PluginCall call) {
+        String action = call.getString("action");
+        if (action == null || action.isEmpty()) {
+            call.reject("Invalid Action: " + action + ".", "invalid");
+            return;
+        }
+        Intent intent = new Intent(action);
+        JSArray extras = call.getArray("extras", null);
+        String error = putExtras(intent, extras);
+        if (error != null) {
+            call.reject(error, "invalid");
+            return;
+        }
+        android.app.Activity activity = getActivity();
+        if (activity == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            if (activity != null) activity.startActivity(intent);
+            else getContext().startActivity(intent);
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject("Could not launch Intent with action " + action + ".", "unavailable");
+        } catch (Exception e) {
+            // A SecurityException (ACTION_CALL without CALL_PHONE, an activity that is not
+            // exported) or anything else: React Native's IntentModule catches every exception and
+            // rejects; letting it escape would crash the app through Capacitor's Bridge.
+            call.reject("Could not launch Intent with action " + action + ".", "failed");
+        }
+    }
+
+    /**
+     * Put React Native's intent extras on {@code intent}: {@code { key, value }} each, the value a
+     * string, a number (a double: JavaScript does not say whether it is an integer) or a boolean.
+     * Returns null when every extra was put, else the reason the call is refused.
+     */
+    static String putExtras(Intent intent, JSONArray extras) {
+        if (extras == null) return null;
+        for (int i = 0; i < extras.length(); i++) {
+            JSONObject extra = extras.optJSONObject(i);
+            String key = extra == null ? null : extra.optString("key", null);
+            if (key == null) return "Extra " + i + " has no key.";
+            Object value = extra.opt("value");
+            if (value instanceof String) intent.putExtra(key, (String) value);
+            else if (value instanceof Boolean) intent.putExtra(key, ((Boolean) value).booleanValue());
+            else if (value instanceof Number) intent.putExtra(key, ((Number) value).doubleValue());
+            else return "Extra type for " + key + " not supported.";
+        }
+        return null;
     }
 }
 `,

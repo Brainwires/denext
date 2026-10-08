@@ -177,8 +177,20 @@ export interface RequestContext {
    * `createApp`. `denextAuth`'s same-origin gate accepts an `Origin` exactly equal to it.
    */
   desktopAppOrigin?: string;
+  /**
+   * The app's same-origin allowlist ({@linkcode AppConfig.allowedOrigins} and
+   * {@linkcode AppConfig.canonicalOrigin}), set by `createApp`. The `csrf()` API middleware
+   * applies the same rule Server Actions do with it.
+   */
+  originAllowlist?: { allowedOrigins?: string[]; canonicalOrigin?: string };
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
+  /**
+   * Set when the request's locale was negotiated (`detectLocale`: the `NEXT_LOCALE` cookie or
+   * `Accept-Language`; `localeMiddleware`, next-intl's middleware): the response may differ per
+   * visitor on the same URL, so `cdnCacheHeaders` never marks it public.
+   */
+  localeNegotiated?: boolean;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
   renderScope?: RenderScope;
   /** Routing facts the pipeline resolved (`NextRequest.nextUrl.basePath` / `.locale` read them). */

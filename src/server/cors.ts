@@ -18,9 +18,15 @@
 //   anything else gets none (the browser then refuses to send the request).
 //
 // A route narrows or lifts the app policy with `export const cors = { … } | false` (a
-// complete policy that REPLACES the app's, or `false` for none).
+// complete policy that REPLACES the app's, or `false` for none), and one endpoint does the same
+// with the `cors({ … })` API middleware (`createApi().use(cors({ … }))`), which wins over both
+// for the method it guards — a preflight is matched to the method it asks about.
 
 import type { CorsConfig } from "./config.ts";
+import { apiDefinitionOf } from "./define-api.ts";
+
+/** The symbol under which a `cors()` API middleware carries its resolved policy. */
+export const CORS_POLICY: unique symbol = Symbol.for("denext.api.cors") as never;
 
 /** The methods a preflight approves when the config says nothing. */
 const DEFAULT_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
@@ -163,11 +169,40 @@ export function resolveCors(config: CorsConfig | null | undefined): CorsPolicy |
  * @param mod The loaded route module.
  * @returns The effective policy, or `null` for none.
  */
-export function routeCorsPolicy(app: CorsPolicy | null, mod: unknown): CorsPolicy | null {
+function routeCorsPolicy(app: CorsPolicy | null, mod: unknown): CorsPolicy | null {
   const own = (mod as { cors?: unknown } | null)?.cors;
   if (own === undefined) return app;
   if (own === false || own === null) return null;
   return routePolicies.get(own as object) ?? cacheRoutePolicy(own as CorsConfig);
+}
+
+/**
+ * The policy one request to a route runs under: the `cors()` middleware on the handler for the
+ * request's method (a preflight's `Access-Control-Request-Method`; `HEAD` falls back to `GET`)
+ * when it has one, else {@link routeCorsPolicy}.
+ *
+ * @param app The app-level policy.
+ * @param mod The loaded route module.
+ * @param request The request (a preflight or the actual request).
+ * @returns The effective policy, or `null` for none.
+ */
+export function endpointCorsPolicy(
+  app: CorsPolicy | null,
+  mod: unknown,
+  request: Request,
+): CorsPolicy | null {
+  const method =
+    (isPreflight(request)
+      ? request.headers.get("access-control-request-method") ?? ""
+      : request.method).toUpperCase();
+  const handlers = (mod ?? {}) as Record<string, unknown>;
+  const handler = handlers[method] ?? (method === "HEAD" ? handlers.GET : undefined);
+  const chain = apiDefinitionOf(handler)?.middleware ?? [];
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const own = (chain[i] as unknown as Record<symbol, CorsPolicy | undefined>)[CORS_POLICY];
+    if (own) return own;
+  }
+  return routeCorsPolicy(app, mod);
 }
 
 /** Resolved route policies, keyed by the exported object (a module export is stable). */

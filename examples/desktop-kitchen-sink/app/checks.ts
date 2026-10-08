@@ -67,6 +67,7 @@ import {
   unmaximizeWindow,
   windowCapabilities,
 } from "denext/desktop/window";
+import { tiledReason } from "./geometry.ts";
 
 /** What `kitchen.setup` returns (see `desktop/kitchen.ts`). */
 export interface KitchenSetup {
@@ -188,25 +189,31 @@ async function sizes(): Promise<string> {
 }
 
 /**
- * Why a geometry check cannot pass here, when the compositor overrode the request: the window
- * stays unmaximized yet covers its screen's work area (a tiling window manager such as Sway tiles
- * every window to its slot), so `setWindowBounds` / `maximizeWindow` cannot change it. The runtime
- * reports no tiling fact (`windowCapabilities()` / the session probe), so this reads the outcome.
- * `null` when the window does not fill the screen: a real failure, reported as one.
+ * Why a geometry check cannot pass here, when the compositor overrode the request: a tiling window
+ * manager keeps every window in its slot, so `setWindowSize` / `maximizeWindow` /
+ * `unmaximizeWindow` cannot change it. Sway leaves the window unmaximized; i3 reports it maximized,
+ * so a maximized window is asked to unmaximize once, and one that stays maximized while filling
+ * the work area is tiled (a stacking window manager honours the request, and the failure stands).
+ * The runtime reports no tiling fact (`windowCapabilities()` / the session probe), so this reads
+ * the outcome (`tiledReason` in `geometry.ts`). `null`: a real failure, reported as one.
  */
 async function compositorOwnsGeometry(asked: string): Promise<string | null> {
-  const st = await getWindowState().catch(() => null);
-  const frame = st?.bounds ?? st?.contentBounds;
-  if (!st || !frame || st.maximized || st.fullscreen) return null;
+  let st = await getWindowState().catch(() => null);
+  if (!st) return null;
   const screen = st.screen ?? (await getScreens().catch(() => [])).find((s) => s.isPrimary);
   if (!screen) return null;
-  // 90% in both dimensions: a tiled window loses only the gaps and the bar to the screen.
-  const fills = (r: { width: number; height: number }) =>
-    frame.width >= r.width * 0.9 && frame.height >= r.height * 0.9;
-  if (!fills(screen.workArea) && !fills(screen.bounds)) return null;
-  return `the compositor controls this window's geometry (a tiling window manager): asked ` +
-    `${asked}, the window stays ${frame.width}x${frame.height}, unmaximized, filling the ` +
-    `${screen.workArea.width}x${screen.workArea.height} work area`;
+  let unmaximizeIgnored = false;
+  if (st.maximized && !st.fullscreen) {
+    await unmaximizeWindow().catch(() => {});
+    const end = Date.now() + 1500;
+    do {
+      await sleep(100);
+      st = await getWindowState().catch(() => null);
+    } while (st?.maximized && Date.now() < end);
+    if (!st) return null;
+    unmaximizeIgnored = st.maximized;
+  }
+  return tiledReason(asked, st, screen, { unmaximizeIgnored });
 }
 
 /** Run `step`; when it fails because the compositor owns the geometry, skip with that reason. */
@@ -574,19 +581,22 @@ const windowChecks: Check[] = [
     // clamps a window to the work area, so ask for a size that fits it and assert exactly that.
     const { width, height, why } = await fittingSize(900, 700);
     await setWindowSize(width, height);
-    await unlessTiled(`${width}x${height}`, () =>
-      waitFor(
+    // The window's own report too: under a tiling window manager CEF's page can show the asked
+    // size for a moment before the window manager puts the window back in its slot.
+    await unlessTiled(`${width}x${height}`, async () => {
+      await waitFor(
         () => near(innerWidth, width) && near(innerHeight, height),
         `${width}x${height}`,
         5000,
         sizes,
-      ));
-    const state = await getWindowState();
-    assert(state.contentBounds, "no contentBounds");
-    assert(
-      near(state.contentBounds.width, width),
-      `contentBounds.width ${state.contentBounds.width}`,
-    );
+      );
+      const state = await getWindowState();
+      assert(state.contentBounds, "no contentBounds");
+      assert(
+        near(state.contentBounds.width, width),
+        `contentBounds.width ${state.contentBounds.width}`,
+      );
+    });
     return `${innerWidth}x${innerHeight}${why}`;
   }],
   ["window: minimum / maximum size clamp", async () => {
@@ -629,9 +639,9 @@ const windowChecks: Check[] = [
       () => waitFor(async () => (await getWindowState()).maximized, "maximized"),
     );
     await unmaximizeWindow();
-    await waitFor(
-      async () => !(await getWindowState()).maximized,
+    await unlessTiled(
       "unmaximized",
+      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized"),
     );
     return "ok";
   }],
@@ -1440,6 +1450,44 @@ const appChecks: Check[] = [
         ? `title (${caps.badgeReason})`
         : caps.badgeShows;
       return `badge on ${shows} + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
+    },
+  ],
+  [
+    "app: the session probe reports the CEF sandbox, the file chooser and the cookie store",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (!setup.pinnedRuntime || caps.sandbox === "unknown") {
+        throw new Skip(
+          "this runtime predates the sandbox and file chooser facts (2.9.7-denext.12)",
+        );
+      }
+      // The runner's backend, else CEF's cookie store (only CEF reports one).
+      const cef = setup.backend === "cef" || (setup.backend === null &&
+        (caps.cookieEncryption === "os" || caps.cookieEncryption === "basic"));
+      if (setup.os === "linux" && cef) {
+        assert(
+          ["namespace", "setuid", "chromium", "off"].includes(String(caps.sandbox)),
+          `appCapabilities().sandbox = ${caps.sandbox}`,
+        );
+        assert(caps.sandboxReason, "the runtime says why (sandboxReason)");
+      } else {
+        eq(caps.sandbox, null, "appCapabilities().sandbox off Linux CEF");
+      }
+      if (setup.os === "linux") {
+        assert(
+          caps.fileChooser === "portal" || caps.fileChooser === "gtk",
+          `appCapabilities().fileChooser = ${caps.fileChooser}`,
+        );
+        if (caps.fileChooser === "gtk") assert(caps.fileChooserReason, "why GTK's chooser");
+      } else {
+        eq(caps.fileChooser, null, "appCapabilities().fileChooser off Linux");
+      }
+      // macOS CEF: Chromium's mock keychain, a constant key — obfuscated, never "os".
+      if (setup.os === "darwin" && cef) eq(caps.cookieEncryption, "basic", "macOS CEF cookies");
+      const sandbox = caps.sandbox === null ? "n/a" : `${caps.sandbox} (${caps.sandboxReason})`;
+      return `sandbox ${sandbox}; file chooser ${caps.fileChooser ?? "n/a"}${
+        caps.fileChooserReason ? ` (${caps.fileChooserReason})` : ""
+      }; cookies ${caps.cookieEncryption}`;
     },
   ],
   ["notifications: permission status from the OS", async () => {

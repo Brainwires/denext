@@ -16,6 +16,8 @@ import { createDevApp } from "./dev-server/dev-app.ts";
 import { removeDevInfo, writeDevInfo } from "./dev-server/dev-info.ts";
 import { createDevHandler } from "./dev-server/handler.ts";
 import { createDevLoader } from "./dev-server/loaders.ts";
+import { forgetTaggedClients } from "../runtime/client-reference.ts";
+import { forgetTaggedServers } from "../runtime/server-action.ts";
 import { getManifest } from "./dev-server/manifest.ts";
 import { createDevState, type DevServerOptions, type DevState } from "./dev-server/state.ts";
 import { watch } from "./dev-server/watch.ts";
@@ -113,6 +115,9 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
 
   const st = createDevState(options);
+  // A new session tags its own modules (a module id is a project-relative path's hash).
+  forgetTaggedClients();
+  forgetTaggedServers();
   st.load = createDevLoader(st, () => getManifest(st), () => isCompat(st));
   // A query-less twin used only to tag `"use client"` boundaries, so the tagged module
   // instance matches the (query-less) one a page transitively imports at render.

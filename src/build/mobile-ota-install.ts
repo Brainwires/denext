@@ -209,9 +209,39 @@ async function pinOrigins(
   }
 }
 
+/** Where the report's `kept` and `upgraded` lists stood before one platform's files were written. */
+interface ReportMark {
+  kept: number;
+  upgraded: number;
+}
+
+function markReport(inst: Installer): ReportMark {
+  return { kept: inst.report.kept.length, upgraded: inst.report.upgraded.length };
+}
+
+/**
+ * One platform's OTA files call into each other, and a template generation can add such calls
+ * (generation 9: the bridge's `DenextOtaRouter`, the store's `verifyInstalled`, Android's
+ * `routes()` / `attach`). So when an edited file is kept while the others are upgraded, the app
+ * will not compile: say so, next to the kept file's own manual step.
+ */
+function notePartialUpgrade(inst: Installer, platform: string, since: ReportMark): void {
+  const kept = inst.report.kept.slice(since.kept);
+  const upgraded = inst.report.upgraded.slice(since.upgraded);
+  if (kept.length === 0 || upgraded.length === 0) return;
+  inst.report.manual.push(
+    `${platform}: ${kept.join(", ")} kept while ${upgraded.join(", ")} ` +
+      `${upgraded.length === 1 ? "was" : "were"} upgraded. The OTA files of one template ` +
+      "generation call into each other, so the app will not compile until each kept file is " +
+      "merged with denext's template by hand, or replaced (re-run with --force, then re-apply " +
+      "your edits).",
+  );
+}
+
 async function installIos(inst: Installer): Promise<void> {
   if (!(await hasIosApp(inst))) return;
   const root = inst.opts.dir;
+  const mark = markReport(inst);
   await installBridgeViewController(inst, "ota", {
     needle: "DenextOtaPlugin()",
     step: "make capacitorDidLoad() register the OTA plugin as denext's template does " +
@@ -219,6 +249,7 @@ async function installIos(inst: Installer): Promise<void> {
   });
   const { [BRIDGE_VC_FILE]: _bridge, ...plugin } = OTA_IOS_FILES;
   await writeTemplates(inst, join(root, IOS_APP), plugin, OTA_TEMPLATES);
+  notePartialUpgrade(inst, "iOS", mark);
   await inst.edit(
     join(root, PBXPROJ),
     (t) => addSourceFiles(t, Object.keys(OTA_IOS_FILES), { randomId: inst.opts.randomId }).text,
@@ -246,7 +277,9 @@ async function installIos(inst: Installer): Promise<void> {
 async function installAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   const root = inst.opts.dir;
+  const mark = markReport(inst);
   await writeTemplates(inst, join(root, ANDROID_OTA_DIR), OTA_ANDROID_FILES, OTA_TEMPLATES);
+  notePartialUpgrade(inst, "Android", mark);
   await registerInMainActivity(inst, "ota");
   await embedPublicKey(
     inst,

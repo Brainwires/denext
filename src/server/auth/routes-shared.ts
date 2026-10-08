@@ -266,9 +266,19 @@ export interface Transaction {
 /**
  * Signed, `__Host-`-prefixed, short-lived cookie carrying the OAuth transaction — so it
  * can't be forged or cross-subdomain overwritten (a login-CSRF vector for a plain one).
+ * `crossSite` (a `form_post` provider) makes it `SameSite=None` (and so `Secure`): the
+ * provider's cross-site form POST must carry it back (OAuth 2.0 Form Post Response Mode §2).
+ * That widens only WHEN the cookie is sent, never what it proves — it stays signed, httpOnly
+ * and single-use, and the callback still matches `state` against it and redeems the code
+ * with its PKCE verifier.
  */
-function txSessionOptions(ctx: AuthRouteContext): SessionOptions {
-  return cookieSessionOptions(ctx.config, ctx.options.cookies.transaction, 600);
+function txSessionOptions(ctx: AuthRouteContext, crossSite = false): SessionOptions {
+  const cookie = ctx.options.cookies.transaction;
+  return cookieSessionOptions(
+    ctx.config,
+    crossSite ? { ...cookie, sameSite: "None" } : cookie,
+    600,
+  );
 }
 
 /**
@@ -276,9 +286,14 @@ function txSessionOptions(ctx: AuthRouteContext): SessionOptions {
  *
  * @param ctx The route context.
  * @param tx The transaction to sign and set.
+ * @param options `crossSite: true` for a `form_post` provider (a `SameSite=None` cookie).
  */
-export async function setTx(ctx: AuthRouteContext, tx: Transaction): Promise<void> {
-  const session = await getSession<Transaction>(txSessionOptions(ctx));
+export async function setTx(
+  ctx: AuthRouteContext,
+  tx: Transaction,
+  options: { crossSite?: boolean } = {},
+): Promise<void> {
+  const session = await getSession<Transaction>(txSessionOptions(ctx, options.crossSite));
   await session.set(tx);
 }
 

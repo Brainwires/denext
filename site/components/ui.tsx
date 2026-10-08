@@ -17,6 +17,7 @@ export const NAV: {
       { slug: "routing", label: "Routing" },
       { slug: "migrating", label: "Migrating from Next.js" },
       { slug: "migrating-remix", label: "Migrating from Remix" },
+      { slug: "fixed", label: "Fixed in denext" },
       { slug: "coming-from-react-native", label: "Coming from React Native" },
       { slug: "vs-react-native", label: "denext vs React Native" },
       { slug: "patches", label: "Patching packages" },

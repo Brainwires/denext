@@ -27,6 +27,13 @@ import {
   generateMobileAssets,
 } from "../../build/mobile-assets.ts";
 import {
+  capacitorPlaceholders,
+  formatIconSearch,
+  type IconSearch,
+  type IconSource,
+  resolveIconSource,
+} from "../../build/mobile-icon-source.ts";
+import {
   type BuildCommand,
   type BuildRunner,
   formatBuildPlan,
@@ -97,37 +104,112 @@ async function source(ctx: CommandContext, root: string, flag: string, kind: str
   return pathFlag(ctx, flag) ?? await findAssetSource(root, kind);
 }
 
-/** The asset sources from flags, a flavor's overrides, and the conventional files. */
+/** The asset sources, and the icon search when the icon was not given explicitly. */
+interface ResolvedAssets {
+  readonly spec: AssetSources;
+  readonly search?: IconSearch;
+}
+
+/** Why no icon could be found, with what was passed over. */
+function noIconError(search: IconSearch): Error {
+  const notes = search.notes.map((n) => `\n  note: ${n}`).join("");
+  return new Error(
+    "no icon: pass --icon <png>, set `mobile.icon` in denext.config.ts, or put assets/icon.png " +
+      "(1024×1024 or larger) in the Capacitor project. Nothing usable was found in an Expo app " +
+      "config, the web manifest, an apple-touch-icon or a PNG favicon" + notes,
+  );
+}
+
+/** The background: a flavor's, else `--background-color`, else the source's, else white. */
+function backgroundOf(ctx: CommandContext, flavor?: ResolvedFlavor, found?: IconSource) {
+  const candidates: [string | undefined, string | undefined][] = [
+    [flavor?.config.backgroundColor, `mobile.flavors.${flavor?.name}.backgroundColor`],
+    [str(ctx, "background-color"), "--background-color"],
+    [found?.background, found?.backgroundFrom],
+  ];
+  const [value, from] = candidates.find(([v]) => v !== undefined) ??
+    ["#ffffff", "the default; pass --background-color"];
+  return { background: colorFlag(value!, from ?? "background"), backgroundFrom: from };
+}
+
+/**
+ * The asset sources: flags, a flavor's overrides, else the icon the project already has
+ * (`mobile.icon`, assets/icon.png, an Expo config, the web manifest, apple-touch-icon, a
+ * favicon; see ../../build/mobile-icon-source.ts), and the conventional files.
+ */
 async function assetSources(
   ctx: CommandContext,
   root: string,
   flavor?: ResolvedFlavor,
-): Promise<AssetSources> {
+): Promise<ResolvedAssets> {
   const fromFlavor = (p: string | undefined) => (p === undefined ? undefined : resolve(root, p));
-  const icon = fromFlavor(flavor?.config.icon) ?? await source(ctx, root, "icon", "icon");
-  if (!icon) {
-    throw new Error(
-      "no icon: pass --icon <png>, or put assets/icon.png (1024×1024 or larger) in the Capacitor project",
-    );
-  }
-  const bg = flavor?.config.backgroundColor ?? str(ctx, "background-color") ?? "#ffffff";
-  const darkBg = str(ctx, "dark-background-color");
-  const spec: Record<string, unknown> = {
-    icon,
-    iconForeground: await source(ctx, root, "icon-foreground", "iconForeground"),
-    iconDark: await source(ctx, root, "icon-dark", "iconDark"),
-    splash: fromFlavor(flavor?.config.splash) ?? await source(ctx, root, "splash", "splash"),
-    splashDark: await source(ctx, root, "splash-dark", "splashDark"),
-    background: colorFlag(
-      bg,
-      flavor?.config.backgroundColor
-        ? `mobile.flavors.${flavor.name}.backgroundColor`
-        : "--background-color",
-    ),
-    darkBackground: darkBg === undefined ? undefined : colorFlag(darkBg, "--dark-background-color"),
+  const explicit = pathFlag(ctx, "icon") ?? fromFlavor(flavor?.config.icon);
+  if (explicit) return { spec: await specFor(ctx, root, explicit, flavor) };
+  const search = await resolveIconSource(root);
+  if (!search.source) throw noIconError(search);
+  return { spec: await specFor(ctx, root, search.source.icon, flavor, search), search };
+}
+
+/** The layers and colours a resolved source brings (none for an explicit icon). */
+function foundFields(found: IconSource | undefined, hint: string | undefined) {
+  if (!found) return {};
+  return {
+    iconForeground: found.iconForeground,
+    iconBackgroundImage: found.iconBackgroundImage,
+    iconMonochrome: found.iconMonochrome,
+    splashIcon: found.splashIcon,
+    splashBackground: found.splashBackground &&
+      colorFlag(found.splashBackground, "splash background"),
+    darkBackground: found.darkBackground && colorFlag(found.darkBackground, "dark background"),
+    hint,
   };
-  for (const key of Object.keys(spec)) if (spec[key] === undefined) delete spec[key];
+}
+
+/** The full spec around `icon`: flags first, then the resolved source's fields, then assets/. */
+async function specFor(
+  ctx: CommandContext,
+  root: string,
+  icon: string,
+  flavor?: ResolvedFlavor,
+  search?: IconSearch,
+): Promise<AssetSources> {
+  const found = search?.source ?? undefined;
+  const fields: Record<string, unknown> = foundFields(found, search?.hint);
+  const spec: Record<string, unknown> = {
+    ...fields,
+    icon,
+    iconForeground: await firstOf(
+      pathFlag(ctx, "icon-foreground"),
+      fields.iconForeground as string | undefined,
+      () => findAssetSource(root, "iconForeground"),
+    ),
+    iconDark: await source(ctx, root, "icon-dark", "iconDark"),
+    splash: await firstOf(
+      flavor?.config.splash && resolve(root, flavor.config.splash),
+      undefined,
+      () => source(ctx, root, "splash", "splash"),
+    ),
+    splashDark: await source(ctx, root, "splash-dark", "splashDark"),
+    ...backgroundOf(ctx, flavor, found),
+    ...darkBackgroundFlag(ctx),
+  };
+  for (const key of Object.keys(spec)) if (!spec[key]) delete spec[key];
   return spec as unknown as AssetSources;
+}
+
+/** `a`, else `b`, else what `c` finds. */
+async function firstOf(
+  a: string | undefined,
+  b: string | undefined,
+  c: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  return a ?? b ?? await c();
+}
+
+/** `--dark-background-color`, parsed, when given. */
+function darkBackgroundFlag(ctx: CommandContext) {
+  const flag = str(ctx, "dark-background-color");
+  return flag === undefined ? {} : { darkBackground: colorFlag(flag, "--dark-background-color") };
 }
 
 /** `--platform ios|android` for assets (default both). */
@@ -142,16 +224,72 @@ function assetPlatforms(ctx: CommandContext): AssetPlatform[] | undefined {
 export async function mobileAssets(ctx: CommandContext): Promise<void> {
   const root = capRoot(ctx);
   try {
-    const report = await generateMobileAssets(root, await assetSources(ctx, root), {
+    const { spec, search } = await assetSources(ctx, root);
+    const report = await generateMobileAssets(root, spec, {
       platforms: assetPlatforms(ctx),
       dryRun: ctx.flags["dry-run"] === true,
     });
-    if (ctx.global.json) return console.log(JSON.stringify(report));
+    if (ctx.global.json) {
+      return console.log(JSON.stringify(search ? { ...report, iconSource: search } : report));
+    }
     console.log(`\n  denext mobile assets${report.dryRun ? " --dry-run" : ""}  ▸  ${root}\n`);
+    if (search) {
+      console.log(
+        formatIconSearch(search, { warnSize: false }).map((l) => `  ${l}`).join("\n") + "\n",
+      );
+    }
     console.log(formatAssetsReport(report));
   } catch (err) {
     fail(`denext mobile assets: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Replace Capacitor's placeholder icon (and splash, when it is still the placeholder too) in
+ * `platform`'s native project with the project's own icon, for good: `npx cap add` copies the
+ * Capacitor logo, which App Review rejects and nobody wants on a home screen.
+ *
+ * @param ctx The command context (`--icon` / `--background-color` still apply).
+ * @param root The Capacitor project.
+ * @param platform The platform being built.
+ * @param dryRun Say what would happen, write nothing.
+ * @param log Prints a line.
+ */
+export async function replacePlaceholderIcons(
+  ctx: CommandContext,
+  root: string,
+  platform: MobilePlatform,
+  dryRun: boolean,
+  log: (line: string) => void,
+): Promise<void> {
+  const icons = await capacitorPlaceholders(root, platform, "icon");
+  if (icons.length === 0) return;
+  let resolved: ResolvedAssets;
+  try {
+    resolved = await assetSources(ctx, root);
+  } catch (err) {
+    log(
+      `  warning: ${platform} still has Capacitor's placeholder icon (${icons[0]}), which App ` +
+        `Review rejects: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  const kinds: ("icon" | "splash")[] = ["icon"];
+  if ((await capacitorPlaceholders(root, platform, "splash")).length) kinds.push("splash");
+  const lines = resolved.search
+    ? formatIconSearch(resolved.search, { warnSize: false })
+    : [`icon: ${resolved.spec.icon}`];
+  const report = await generateMobileAssets(root, resolved.spec, {
+    platforms: [platform],
+    kinds,
+    dryRun,
+  });
+  log(
+    `  ${platform} has Capacitor's placeholder ${kinds.join(" and ")}: ${
+      dryRun ? "would replace" : "replaced"
+    } ${report.files.length} files (kept after the build; \`denext mobile assets\` redoes them)`,
+  );
+  for (const l of [...lines, ...report.warnings.map((w) => `warning: ${w}`)]) log(`    ${l}`);
 }
 
 /** Run a command with the terminal attached; `env` is added to the inherited environment. */
@@ -233,7 +371,7 @@ function flavorAssetsWriter(
   const f = opts.flavor;
   if (!f || !(f.config.icon || f.config.splash || f.config.backgroundColor)) return undefined;
   return async (snapshot) => {
-    const spec = await assetSources(ctx, opts.root, f);
+    const { spec } = await assetSources(ctx, opts.root, f);
     const platforms = [opts.platform];
     const plan = await generateMobileAssets(opts.root, spec, { platforms, dryRun: true });
     for (const file of plan.files) await snapshot.save(resolve(opts.root, file.path));
@@ -303,6 +441,7 @@ export async function mobileBuild(
         return console.log(JSON.stringify({ ...plan, commands: plan.commands.map(redacted) }));
       }
       console.log(`\n  denext mobile build ${platform} --dry-run (nothing runs)\n`);
+      await replacePlaceholderIcons(ctx, opts.root, platform, true, (l) => console.log(l));
       return console.log(formatBuildPlan(plan));
     }
     assertHostBuilds(platform);
@@ -314,6 +453,7 @@ export async function mobileBuild(
     if (!ctx.global.json) {
       console.log(`\n  denext mobile build ${platform}\n\n${formatBuildPlan(plan)}`);
     }
+    await replacePlaceholderIcons(ctx, opts.root, platform, false, buildLog(ctx));
     const artifact = await runMobileBuild(plan, opts, {
       run,
       log: (line) => console.log(line),
@@ -330,6 +470,11 @@ export async function mobileBuild(
   } catch (err) {
     fail(`denext mobile build: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** Where build progress lines go: stdout, or stderr when stdout carries `--json`. */
+function buildLog(ctx: CommandContext): (line: string) => void {
+  return ctx.global.json ? (l) => console.error(l) : (l) => console.log(l);
 }
 
 /** A command with its env values replaced by `***` (for --json). */
@@ -452,7 +597,8 @@ export const MOBILE_BUILD_FLAGS: readonly FlagSpec[] = [
     name: "icon",
     type: "string",
     valueName: "<png>",
-    help: "assets: the app icon (default: assets/icon.png)",
+    help:
+      "assets: the app icon (default: the project's own: mobile.icon, assets/icon.png, an Expo app config, the web manifest, the apple-touch-icon)",
   },
   {
     name: "icon-foreground",
@@ -616,7 +762,7 @@ export const MOBILE_BUILD_FLAGS: readonly FlagSpec[] = [
 
 /** The build actions' usage lines. */
 export const MOBILE_BUILD_USAGE =
-  "  denext mobile assets          Every icon and splash from assets/icon.png (+ splash.png)\n" +
+  "  denext mobile assets          Every icon and splash from the project's icon (+ splash.png)\n" +
   "  denext mobile assets --icon logo.png --background-color '#0f172a' --dark-background-color '#000'\n" +
   "                                Icons + splash, dark variants included\n" +
   "  denext mobile build android   Export, cap sync, gradle assembleDebug → dist/mobile/android/*.apk\n" +
@@ -640,8 +786,13 @@ export const MOBILE_BUILD_HELP = "\n" +
   "  (foreground + background colour) and themed (monochrome) launcher icons for every density,\n" +
   "  and the portrait / landscape splash drawables; the dark splash variants (asset catalog\n" +
   "  appearances, drawable-night) when --splash-dark or --dark-background-color is given.\n" +
-  "  Sources default to assets/ (or resources/): icon.png, icon-foreground.png, icon-dark.png,\n" +
-  "  splash.png, splash-dark.png. Decoding and resizing run on @denext/photon (wasm).\n" +
+  "  Without --icon the icon is the project's own, and the report names it: denext.config\n" +
+  "  mobile.icon, assets/icon.png, an Expo app config's icon (a sibling monorepo app's too;\n" +
+  "  app.config.ts is read statically, never run), the web manifest's largest icon, the\n" +
+  "  apple-touch-icon, then the largest PNG favicon. Under 1024² it is upscaled with a warning;\n" +
+  "  transparency is flattened onto the background for iOS. The other sources default to\n" +
+  "  assets/ (or resources/): icon-foreground.png, icon-dark.png, splash.png, splash-dark.png.\n" +
+  "  Decoding and resizing run on @denext/photon (wasm).\n" +
   "\n" +
   "  build: `denext export` (--app, default the Capacitor project; a flavor's env is added),\n" +
   "  the flavor's edits, `npx cap sync <platform>`, then the native build. Without --release:\n" +
@@ -654,8 +805,9 @@ export const MOBILE_BUILD_HELP = "\n" +
   "  build only; --bump increments the build number in the sources. Flavors\n" +
   "  (denext.config mobile.flavors) change the app id, name, server.url and icons for the build\n" +
   "  and are restored afterwards; a killed build is restored by the next one or by\n" +
-  "  `mobile build --restore`. The artifact and a <artifact>.json sidecar land in\n" +
-  "  dist/mobile/<platform>[-<flavor>]/.\n" +
+  "  `mobile build --restore`. Capacitor's placeholder icon (and splash), left by `cap add`, is\n" +
+  "  replaced for good with the project's icon (as `assets` finds it). The artifact and a\n" +
+  "  <artifact>.json sidecar land in dist/mobile/<platform>[-<flavor>]/.\n" +
   "\n" +
   "  submit: checks the artifact (signed, well formed) and the credentials, then uploads: iOS\n" +
   "  with `xcrun altool --upload-app` and the App Store Connect API key, Android through the\n" +

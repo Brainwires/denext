@@ -997,6 +997,25 @@
         "type": "string"
       }
     },
+    "cdnCacheHeaders": {
+      "description": "Send shared-cache headers with ISR pages — **off by default** (opt-in). With `true`, a page served from the ISR cache (and the render that stores it) answers `Cache-Control: public, s-maxage=<seconds it stays fresh>, stale-while-revalidate=31536000` (`public, s-maxage=31536000` for `force-static`), so a CDN in front caches it as long as denext would. Never for a request carrying a `Cookie` or `Authorization`, a response that sets a cookie, a non-200, a dynamic render, a response whose `Cache-Control` middleware or a `headers()` rule already set, or a request a `middleware.ts` matched (`{ evenWithMiddleware: true }` sends it there too).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "evenWithMiddleware": {
+              "description": "Send the header on a request a `middleware.ts` matched too. Off by default: middleware may gate a page on something a shared cache does not key on (an IP allow-list, an auth proxy's header, geolocation, `Accept-Language`), and a CDN would then serve the gated page to everyone. Turn it on only when no matched middleware decides who may see a cached page.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      ],
+      "default": false
+    },
     "compress": {
       "description": "Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/ JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's CPU) only when listed in `{ encodings }` (`{ encodings: [\"br\", \"gzip\"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through `node:zlib`, flushed explicitly; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a flush per chunk, so it still reaches the browser progressively. Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives), a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with `export const compress = false`. Build-time precompressed client bundles (`.gz`) are served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.",
       "anyOf": [
@@ -1097,6 +1116,44 @@
       "description": "Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors (per-flavor app id, name, server URL, icon and splash). See https://denext.dev/docs/mobile-build.",
       "type": "object",
       "properties": {
+        "icon": {
+          "description": "The app icon `denext mobile assets` (and `denext mobile build`, replacing Capacitor's placeholder) generates every size from: a PNG / JPEG / WebP, 1024×1024 or larger, relative to the project. `denext migrate` writes it from the icon the app already has (an Expo app config, the web manifest, the apple-touch-icon). Unset, it is found the same way at each run. `--icon` and a flavor's `icon` take precedence. See https://denext.dev/docs/mobile-build.",
+          "type": "string"
+        },
+        "backgroundColor": {
+          "description": "The icon background, `#rrggbb`: a transparent icon is flattened onto it for iOS (App Store icons have no alpha channel), and it is Android's adaptive background and the splash background. Default `#ffffff`.",
+          "type": "string"
+        },
+        "adaptiveIcon": {
+          "description": "Android adaptive-icon layers (relative to the project).",
+          "type": "object",
+          "properties": {
+            "foreground": {
+              "description": "The foreground layer (a logo on transparency, 108dp canvas); default: the icon, scaled into the 72dp viewport.",
+              "type": "string"
+            },
+            "backgroundImage": {
+              "description": "A full-bleed background image; default: MobileConfig.backgroundColor.",
+              "type": "string"
+            },
+            "monochrome": {
+              "description": "The Android 13 themed-icon layer (its shape is used, in white); default: the foreground.",
+              "type": "string"
+            }
+          }
+        },
+        "splashIcon": {
+          "description": "A logo centred on the splash background (default: the icon).",
+          "type": "string"
+        },
+        "splashBackgroundColor": {
+          "description": "The splash background, `#rrggbb`, when it differs from backgroundColor.",
+          "type": "string"
+        },
+        "darkBackgroundColor": {
+          "description": "The dark-mode splash background, `#rrggbb`; dark splash variants are written with it.",
+          "type": "string"
+        },
         "flavors": {
           "description": "Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`. Names are lowercase letters, digits and `-`.",
           "type": "object",
@@ -1598,6 +1655,16 @@
                   }
                 ]
               }
+            }
+          }
+        },
+        "linux": {
+          "description": "Linux launch settings the package scripts write to the app's `laufey-launch.json`.",
+          "type": "object",
+          "properties": {
+            "requireSandbox": {
+              "description": "Refuse to start where the CEF backend would run web content without Chromium's sandbox: no unprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an AppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The app then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox), …`) and exits with status 78 before the runtime loads. Default `false`: the app starts unsandboxed there and `appCapabilities().sandbox` reads `\"off\"`. The package scripts write it to the Linux bundle's `laufey-launch.json` (`\"requireSandbox\": true`), where `LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.",
+              "type": "boolean"
             }
           }
         },

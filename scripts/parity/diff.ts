@@ -35,6 +35,8 @@ export interface Finding {
   waived: boolean;
   /** Suppressed by the known-gaps ledger — a real, tracked, not-yet-closed deviation. */
   knownGap: boolean;
+  /** A `MEMBER_MISSING` finding's missing members. */
+  members?: string[];
 }
 
 export interface DiffResult {
@@ -127,7 +129,12 @@ function compareSymbol(
   const arity = arityDetail(real, den);
   if (arity) out.push(add("ARITY_MISMATCH", arity));
   const members = missingMembers(real, den);
-  if (members.length) out.push(add("MEMBER_MISSING", `missing member(s): ${members.join(", ")}`));
+  if (members.length) {
+    out.push({
+      ...add("MEMBER_MISSING", `missing member(s): ${members.join(", ")}`),
+      members,
+    });
+  }
   return out;
 }
 
@@ -172,7 +179,7 @@ export function diffSurfaces(
     findings.push(...specifierFindings(real, denSyms), ...extraFindings(real, denSyms));
   }
   for (const f of findings) {
-    f.waived = isWaived(f.specifier, f.symbol, f.category, waivers);
+    f.waived = isWaived(f.specifier, f.symbol, f.category, waivers, f.members);
     if (!f.waived) f.knownGap = knownGaps.has(findingKey(f.specifier, f.symbol, f.category));
   }
   const errors = findings.filter((f) => f.severity === "error" && !f.waived && !f.knownGap);

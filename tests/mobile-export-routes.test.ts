@@ -13,6 +13,7 @@ import { join } from "@std/path";
 import {
   EXPORT_ROUTER_OVERRIDE,
   EXPORT_ROUTER_SWIFT,
+  exportRouterOverride,
   withExportRouter,
 } from "../src/build/bridge-export-router-native-template.ts";
 import {
@@ -36,6 +37,8 @@ const BRIDGE = "ios/App/App/DenextBridgeViewController.swift";
 const ACTIVITY = "android/app/src/main/java/com/example/app/MainActivity.java";
 const CLASS_LINE = "class DenextBridgeViewController: CAPBridgeViewController {\n";
 const ROUTES_REGISTRATION = "        registerPlugin(DenextExportRoutes.class);\n";
+/** The OTA bridge's override: `DenextOtaRouter` wraps the export router and verifies each file. */
+const OTA_ROUTER_OVERRIDE = exportRouterOverride("DenextOtaRouter()");
 
 /** The bridge variants: none, OTA alone, OTA composed, auth-session alone, registering-only. */
 const VARIANTS: readonly (readonly NativeFeature[])[] = [
@@ -64,8 +67,10 @@ Deno.test("export router: every bridge variant overrides router() and carries th
   for (const set of VARIANTS) {
     const label = set.join("+") || "(none)";
     const text = await bridgeViewControllerSource(new Set(set));
-    // The override opens the class body, ahead of any other member.
-    assertStringIncludes(text, CLASS_LINE + EXPORT_ROUTER_OVERRIDE, label);
+    // The override opens the class body, ahead of any other member. The OTA bridge's returns
+    // DenextOtaRouter, which wraps DenextExportRouter (ota-native-templates.ts).
+    const override = set.includes("ota") ? OTA_ROUTER_OVERRIDE : EXPORT_ROUTER_OVERRIDE;
+    assertStringIncludes(text, CLASS_LINE + override, label);
     assertEquals(text.split("override open func router() -> Router {").length, 2, label);
     assertEquals(text.split("struct DenextExportRouter: Router {").length, 2, label);
     assert(text.endsWith(EXPORT_ROUTER_SWIFT), label);
@@ -98,6 +103,10 @@ Deno.test("export router: the Swift routes /route to its page, else the root ind
   // basePath is Capacitor's to set (setAssetPath: the bundled public/ or an OTA directory).
   assertStringIncludes(swift, 'var basePath: String = ""');
   assertStringIncludes(EXPORT_ROUTER_OVERRIDE, "DenextExportRouter()");
+  assertEquals(
+    OTA_ROUTER_OVERRIDE,
+    EXPORT_ROUTER_OVERRIDE.replace("DenextExportRouter()", "DenextOtaRouter()"),
+  );
   // No stray interpolation in the Swift.
   assert(!swift.includes("${") && !EXPORT_ROUTER_OVERRIDE.includes("${"));
 });
@@ -111,7 +120,7 @@ Deno.test("export routes: every MainActivity registers DenextExportRoutes before
   for (const set of sets) {
     const label = set.join("+") || "(none)";
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 4 "), label);
+    assert(text.startsWith("// denext-main-activity-template: 5 "), label);
     const registration = text.indexOf(ROUTES_REGISTRATION);
     const superCall = text.indexOf("super.onCreate(savedInstanceState);");
     assert(registration > 0 && registration < superCall, label);
@@ -263,6 +272,7 @@ async function beforeRouter(text: string): Promise<string> {
   const { family } = marker(text);
   const body = text.slice(text.indexOf("\n") + 1)
     .replace(EXPORT_ROUTER_OVERRIDE, "")
+    .replace(OTA_ROUTER_OVERRIDE, "")
     .replace(EXPORT_ROUTER_SWIFT, "");
   assert(!body.includes("DenextExportRouter"));
   return await renderMarkedTemplate(family, BEFORE_ROUTER[family], body);

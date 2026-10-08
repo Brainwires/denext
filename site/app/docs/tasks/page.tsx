@@ -42,7 +42,8 @@ export default defineTask({
         <code>payload</code> from an on-demand run, how it was triggered (<code>"schedule"</code> or
         {" "}
         <code>"manual"</code>), and an <code>AbortSignal</code>{" "}
-        that fires on server shutdown (best-effort drain). A malformed cron expression in{" "}
+        that fires on server shutdown (best-effort drain), for a <code>runTask()</code>{" "}
+        call that passed no signal of its own too. A malformed cron expression in{" "}
         <code>defineTask</code>{" "}
         throws early, so a bad schedule is caught at import, never silently ignored.
       </p>
@@ -113,6 +114,33 @@ export default {
           custom rather than misdescribing it.
         </li>
       </ul>
+
+      <h2 id="retries">Retries</h2>
+      <Code lang="ts">
+        {`// tasks/sync.ts
+import { defineTask } from "denext/server";
+
+export default defineTask({
+  schedule: "*/15 * * * *",
+  retry: { attempts: 3, backoff: { delayMs: 2_000 } }, // 2 s, 4 s, 8 s
+  handler: async ({ attempt, signal }) => {
+    await pushToWarehouse({ signal }); // attempt is 1 on the first run, 2 on the first retry
+  },
+});`}
+      </Code>
+      <p>
+        A failed run is retried up to <code>attempts</code>{" "}
+        more times, and the run settles with the last attempt's outcome: <code>runTask</code>{" "}
+        resolves with the first success or rejects with the last error. <code>backoff</code>{" "}
+        is a fixed delay in ms (<code>backoff: 500</code>) or{" "}
+        <code>{"{ strategy, delayMs, maxDelayMs }"}</code>; the default is exponential from 1 s,
+        capped at five minutes; any delay is capped at 2^31-1 ms (about 24.8 days), the longest a
+        timer can wait. A scheduled run that is still retrying counts as running, so the overlap
+        rule holds: the next matching minute does not start a second copy. Shutdown aborts the
+        pending wait and the run ends with the last error. Each attempt is its own row in the run
+        history below, numbered, and a failed attempt that was retried does not count as a failure;
+        one whose wait was cut short by shutdown is recorded as the last attempt.
+      </p>
 
       <h2 id="run-history">Run history</h2>
       <p>

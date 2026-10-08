@@ -366,7 +366,7 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
 
 /**
  * The expo fixture: real `expo-haptics` and `expo` packages (which must NOT win), an
- * unshimmed `expo-contacts` (which must resolve normally), and react-native-web for the shims'
+ * unshimmed `expo-task-manager` (which must resolve normally), and react-native-web for the shims'
  * bridge. `denext/expo/*` is stood in for by a plugin, as the prebuilt runtime is in a build.
  */
 const EXPO_FIXTURE: Record<string, string> = {
@@ -388,19 +388,19 @@ const EXPO_FIXTURE: Record<string, string> = {
   "node_modules/expo-file-system/i.js": 'export const File = "REAL_EXPO_FS";\n',
   "node_modules/expo-file-system/legacy.js":
     'export const readAsStringAsync = "REAL_EXPO_FS_LEGACY";\n',
-  "node_modules/expo-contacts/package.json": JSON.stringify({
-    name: "expo-contacts",
+  "node_modules/expo-task-manager/package.json": JSON.stringify({
+    name: "expo-task-manager",
     main: "i.js",
   }),
-  "node_modules/expo-contacts/i.js": 'export const getContactsAsync = "REAL_EXPO_CONTACTS";\n',
+  "node_modules/expo-task-manager/i.js": 'export const defineTask = "REAL_EXPO_TASK_MANAGER";\n',
   "entry.js": `import { impactAsync } from "expo-haptics";
 import { registerRootComponent } from "expo";
 import { fetch } from "expo/fetch";
 import { config } from "expo/config.js";
-import { getContactsAsync } from "expo-contacts";
+import { defineTask } from "expo-task-manager";
 import { readAsStringAsync } from "expo-file-system/legacy";
 import { View } from "denext-expo-react-native";
-export const result = { impactAsync, registerRootComponent, fetch, config, getContactsAsync, readAsStringAsync, View };
+export const result = { impactAsync, registerRootComponent, fetch, config, defineTask, readAsStringAsync, View };
 `,
 };
 
@@ -458,8 +458,8 @@ Deno.test("reactNative bundle: expo-* resolves to its denext/expo shim; unshimme
     "a subpath with its own shim → that shim",
   );
   assertEquals(
-    r.getContactsAsync,
-    "REAL_EXPO_CONTACTS",
+    r.defineTask,
+    "REAL_EXPO_TASK_MANAGER",
     "a package without a shim resolves normally",
   );
   assertEquals(r.View, "RNW_VIEW", "the shims' bridge → react-native-web");

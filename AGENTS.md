@@ -22,6 +22,10 @@ emit correct denext instead of Next.js.
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
+   `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
+   writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
+   `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
+   pinned CLI tasks and every first-party `@denext/*` package together.
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -152,6 +156,12 @@ A plain handler still works and is still typed: return `TypedResponse<T>` / take
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
 (`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP
 responses; a thrown `ApiError(status, code, { data })` is a typed JSON error envelope.
+`createApi().use(…)` stacks middlewares from `denext/server`: `requireSession({ role })`,
+`requireBearer({ scope })`, `rateLimit(…)`, `cors(policy)` (the app `cors` shape, scoped to the
+method it guards: its preflight is answered before `middleware.ts`, and it replaces the route's
+and the app's policy there) and `csrf()` (a cookie-carrying cross-origin mutation is a 403
+`csrf_failed`, the Server Actions rule; `{ doubleSubmit: true }` also wants an `x-csrf-token`
+header echoing its `denext-csrf` cookie).
 
 **Typed live data (validated subscription + server push):**
 
@@ -250,11 +260,21 @@ pass `authConfig` first to be explicit) — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
-emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer). Second factor: an
+emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer);
+`magicLink({ confirm: true })` puts a click-to-confirm page in front of the redeem, so a mail
+scanner's pre-fetch can't spend the link. Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
+`/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
+`passkeysSupported()`) sign in usernameless or complete a pending second factor. An OAuth / OIDC
+provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
 enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
 `/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
-`session.authTime`). Full guide: https://denext.dev/docs/auth
+`session.authTime`); `totpQrSvg(uri)` renders the enrollment QR code as SVG. TOTP secrets are
+sealed at rest under `secret`; with `secret: [current, previous]` a factor sealed under the
+retired one opens and is re-sealed on its next passing check, so keep a retired secret listed until
+then. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
+slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
+(id and owner, never the token). Full guide: https://denext.dev/docs/auth
 
 Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (the proxy's last
 `x-forwarded-for` hop only with `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, else the socket
@@ -365,8 +385,11 @@ prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-no
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
 manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
-Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
-`denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
+Ship without a hosted service: `denext mobile assets` (every icon + splash from one image; with
+no `--icon` it takes `mobile.icon`, `assets/icon.png`, an Expo app config's icon (a sibling
+monorepo app's too, read statically), the web manifest's icon, the apple-touch-icon, then a PNG
+favicon, and says which; `migrate` records it as `mobile.icon`, `mobile build` replaces Capacitor's
+placeholder icon), `denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
 `.ipa` / `.aab` in `dist/mobile/`; flavors in `mobile.flavors`), `denext mobile submit
 ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fastlane keep it:
 `denext mobile add fastlane [--ci]` writes `fastlane/` (Appfile from capacitor.config, Matchfile,
@@ -411,9 +434,11 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing Secret Service provider
-or a locked keyring rejects `backend_unavailable` with the reason — runtime 2.9.7-denext.12 uses
-libsecret itself, older runtimes `secret-tool`) and your `defineDesktopExtension` modules (from
+(macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
+secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
+only; an unsigned build has no protection against another program's writes; Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
+on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
+or a locked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
@@ -427,9 +452,11 @@ is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
 `setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
-reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` from the runtime's probe
-(`"unknown"` before runtime denext.10), and `denext desktop doctor [--linux]` lists what the session lacks,
-with fixes. `registerShortcut(accel, fn)`
+reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
+not OS-protected — always on macOS CEF, Chromium's mock keychain) / `sandbox` / `fileChooser` from the
+runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
+lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
+exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+). `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -465,7 +492,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.11 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.13 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -510,7 +537,10 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
-drive it; `createOtaHandler` from `denext/server` serves the export. An unsigned manifest over
+drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
+re-verified at every launch and on each file's first serve: one changed on the device is refused
+(the bundled UI is served, `onOtaRejected` fires, `otaStatus().tampered` names it), and
+`denext mobile doctor --release` flags a plugin from before re-verification. An unsigned manifest over
 plain `http` is refused beyond loopback. Whether a change can ship over the air:
 `denext mobile fingerprint [--diff old.json] [--write]` hashes the native layer, and
 `denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
@@ -537,7 +567,11 @@ tabs on `denext/navigation`, Reanimated needs no Babel plugin, and popular nativ
 (react-native-webview, -keychain, -permissions, safe-area-context, …) resolve to denext
 implementations (`reactNative: { aliases: { "<pkg>": false } }` restores one).
 `Platform.OS` stays `"web"`; read `Platform.constants.denextShell`. `reactNative.desktopPackage: "react-native-macos" | "react-native-windows"` builds the app's own `react-native` imports as that desktop package. `denext migrate --from expo`
-writes the `deno.json`, the config and a `capacitor.config.ts`, and reports native-only packages.
+writes the `deno.json`, the config and a `capacitor.config.ts`, and reports native-only packages;
+`denext mobile add app-config` carries the app config's usage strings, Android permissions and
+`expo-build-properties` into the shell, and the shims over a plugin have their capability
+(`text-to-speech`, `contacts`, `calendar`, `print`, `brightness`, `intent-launcher`; migrate
+suggests them).
 `denext dev` hot-swaps an edited component with its state kept (Fast Refresh); a top-level
 `requireNativeModule` loads off-device and throws only when called. Native-only SDKs
 (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
@@ -554,6 +588,11 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 ```
 
 Open the connection once at module scope; do writes in Server Actions.
+`denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
+`tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
+Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
+`generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
+routes.
 
 **A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
@@ -562,7 +601,8 @@ tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matc
 weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
 `tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
-14 days); the Cron page of `denext ui` shows it.
+14 days); the Cron page of `denext ui` shows it. `defineTask({ retry: { attempts, backoff } })`
+re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
 
 ```ts
 // tasks/cleanup.ts
@@ -672,7 +712,10 @@ i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features
 `tailwind`, `csp` (strict by default; `frameSrc` / `mediaSrc` / `workerSrc` / `fontSrc` /
 `scriptSrc` / `styleSrc` / `imgSrc` / `connectSrc` opt-ins, e.g. `{ frameSrc:
 ["https://js.stripe.com"] }`), `compress` (gzip, on by default; `{ encodings: ["br", "gzip"] }`
-adds brotli; `false`, or `export const compress = false` in a route), `cors`, `compatibilityMode`,
+adds brotli; `false`, or `export const compress = false` in a route), `cors`, `cdnCacheHeaders`
+(opt-in: ISR pages answer `Cache-Control: public, s-maxage=…` for a CDN, never for a request
+with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
+`{ evenWithMiddleware: true }`), `compatibilityMode`,
 `optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config

@@ -17,6 +17,7 @@
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
 //       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
 //   3. deno task docs:api  — regenerate the in-site API reference
+//   3a. gen:plugin-catalog, docs:mcp, docs:corpus, docs:llms — regenerated from the bumped tree
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
 //   4. deno cache mod.ts   — refresh deno.lock
@@ -399,6 +400,13 @@ async function checkCi(branch: string, dry: boolean): Promise<void> {
   die(`${message}\nrelease aborted BEFORE any change.`);
 }
 
+/**
+ * Generated files the version bump makes stale, in dependency order: the plugin catalog is
+ * built from every packages/* manifest (whose `@denext/denext` range the bump re-points), and
+ * the MCP page is an input of the docs corpus, which feeds llms.txt.
+ */
+export const RELEASE_REGEN_TASKS = ["gen:plugin-catalog", "docs:mcp", "docs:corpus", "docs:llms"];
+
 /** Steps 1–2: version pins (+ the effect example golden) and the CHANGELOG roll. */
 export async function prepareRelease(version: string, dry: boolean): Promise<void> {
   const bump = await bumpVersion(version, { dry });
@@ -445,11 +453,15 @@ async function runGate(): Promise<void> {
   }
   // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.json) and
   // embed the version, so they must be regenerated on the release commit, not after the tag.
-  // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs.
+  // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs. The bump
+  // re-points every packages/* plugin's `@denext/denext` range, and the plugin catalog is
+  // generated from those manifests, so it is regenerated first (cutting 3.3.0 failed the
+  // gate on a stale src/plugin/catalog.json).
   console.log(
-    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:mcp/docs:corpus/docs:llms)…",
+    "\n3a. Regenerating plugin catalog, docs corpus + llms.txt " +
+      "(deno task gen:plugin-catalog/docs:mcp/docs:corpus/docs:llms)…",
   );
-  for (const task of ["docs:mcp", "docs:corpus", "docs:llms"]) {
+  for (const task of RELEASE_REGEN_TASKS) {
     if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
   }
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");

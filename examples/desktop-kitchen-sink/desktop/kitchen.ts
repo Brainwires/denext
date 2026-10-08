@@ -24,7 +24,13 @@
 //   round trip through a loopback page that redirects to the app's callback scheme;
 // - `devtools`, `scheduledTags` read the runtime's DevTools switch and scheduled notifications, and
 //   `synthetic` dispatches an OS event (a notification click, a shortcut press, a menu click) on the
-//   runtime object that would fire it, for the plumbing no unattended test can press.
+//   runtime object that would fire it, for the plumbing no unattended test can press;
+// - `features` reads `Deno.desktop.platformFeatures()` (the runtime's session probe lives in this
+//   process, not in the page) for the report's facts and the drive mode's `probe`;
+// - `driveSetup` / `driveNext` / `driveResult` / `driveEvent` / `driveReady` back the drive mode
+//   (`app/drive/protocol.ts`): a command queue and its answers in a folder, so the manual checks
+//   run with no one at the screen; `nativeDialog` opens the runtime's own file dialog and closes it
+//   through its AbortSignal, so a dialog is exercised without a person to cancel it.
 
 import { defineDesktopExtension } from "denext/desktop";
 import {
@@ -36,6 +42,13 @@ import {
 } from "denext/desktop/updater";
 import { join, resolve, SEPARATOR } from "@std/path";
 import config from "../denext.config.ts";
+import {
+  DRIVE_FILE,
+  type DriveEvent,
+  isDriveId,
+  nextQueueFile,
+  parseDriveCommand,
+} from "../app/drive/protocol.ts";
 
 /** The file the runner writes into the app's data folder before each launch. */
 const RUNNER_FILE = "kitchen-sink-runner.json";
@@ -109,6 +122,37 @@ function trustedPhase(): string {
   if (status.trial) return "trusted-trial";
   if (status.rolledBackFrom || status.version !== "1.0.0") return "trusted-relaunch";
   return "trusted-install";
+}
+
+/** The drive dir of this launch (`null` when drive mode is off, and always under the runner). */
+let driveDir: Promise<string | null> | undefined;
+
+function readDriveDir(dataDir: string): Promise<string | null> {
+  driveDir ??= readRunnerState(dataDir).then(async (runner) => {
+    if (runner) return null;
+    const text = await Deno.readTextFile(join(dataDir, DRIVE_FILE)).catch(() => null);
+    if (text === null) return null;
+    try {
+      const dir = (JSON.parse(text) as { dir?: unknown }).dir;
+      return typeof dir === "string" && dir !== "" ? resolve(dir) : null;
+    } catch {
+      return null;
+    }
+  });
+  return driveDir;
+}
+
+/** The drive dir, or a rejection when drive mode is off. */
+async function requireDriveDir(dataDir: string): Promise<string> {
+  const dir = await readDriveDir(dataDir);
+  if (!dir) throw new TypeError("drive mode is off (no kitchen-sink-drive.json at launch)");
+  return dir;
+}
+
+/** Write `text` to `file` whole: a temporary file renamed over it (a reader never sees half). */
+async function writeWhole(file: string, text: string): Promise<void> {
+  await Deno.writeTextFile(`${file}.tmp`, text);
+  await Deno.rename(`${file}.tmp`, file);
 }
 
 /** The runner's scratch folder (`undefined` outside the window test). */
@@ -259,6 +303,7 @@ export default defineDesktopExtension({
           pid: Deno.pid,
           results: field(args, "results"),
           expected: field(args, "expected"),
+          facts: field(args, "facts") ?? null,
         };
         const file = join(dir, `kitchen-sink-report-${phase}.json`);
         await Deno.mkdir(dir, { recursive: true });
@@ -431,6 +476,119 @@ export default defineDesktopExtension({
         return list.map((n) => n.tag);
       },
     },
+    features: {
+      handler: async () => {
+        const api = desktop();
+        if (typeof api?.platformFeatures !== "function") return { available: false };
+        try {
+          return { available: true, features: await api.platformFeatures() };
+        } catch (err) {
+          return { available: true, error: message(err) };
+        }
+      },
+    },
+    driveSetup: {
+      handler: async (_args, ctx) => {
+        const dir = await readDriveDir(ctx.appSupportDir);
+        return { enabled: dir !== null, dir };
+      },
+    },
+    driveNext: {
+      handler: async (_args, ctx) => {
+        const queue = join(await requireDriveDir(ctx.appSupportDir), "queue");
+        const names = await Array.fromAsync(Deno.readDir(queue), (e) => e.name).catch(() => []);
+        const name = nextQueueFile(names);
+        if (!name) return null;
+        const file = join(queue, name);
+        const text = await Deno.readTextFile(file);
+        await Deno.remove(file);
+        return parseDriveCommand(text, name);
+      },
+    },
+    driveResult: {
+      handler: async (args, ctx) => {
+        const dir = join(await requireDriveDir(ctx.appSupportDir), "results");
+        const id = field(args, "id");
+        if (!isDriveId(id)) throw new TypeError("bad result id");
+        await Deno.mkdir(dir, { recursive: true });
+        await writeWhole(join(dir, `${id}.json`), JSON.stringify(field(args, "result")));
+        return { written: true };
+      },
+    },
+    driveEvent: {
+      handler: async (args, ctx) => {
+        const dir = await requireDriveDir(ctx.appSupportDir);
+        const event: DriveEvent = {
+          at: new Date().toISOString(),
+          event: stringField(args, "event") as DriveEvent["event"],
+          data: field(args, "data") ?? null,
+        };
+        await Deno.writeTextFile(join(dir, "events.jsonl"), `${JSON.stringify(event)}\n`, {
+          append: true,
+        });
+        return { written: true };
+      },
+    },
+    driveReady: {
+      handler: async (args, ctx) => {
+        const dir = await requireDriveDir(ctx.appSupportDir);
+        await writeWhole(
+          join(dir, "ready.json"),
+          JSON.stringify({
+            pid: Deno.pid,
+            href: field(args, "href"),
+            at: new Date().toISOString(),
+          }),
+        );
+        return { written: true };
+      },
+    },
+    nativeDialog: {
+      timeoutMs: 120_000,
+      handler: async (args) => {
+        const dialog = desktop()?.dialog;
+        if (!dialog) return { available: false };
+        const kind = stringField(args, "kind");
+        if (!["open", "save", "folder"].includes(kind)) throw new TypeError(`bad kind ${kind}`);
+        const after = field(args, "cancelAfterMs");
+        const cancelAfterMs = typeof after === "number" && after >= 0
+          ? Math.min(after, 60_000)
+          : 2000;
+        const abort = new AbortController();
+        const timer = setTimeout(
+          () => abort.abort(new Error("cancelled by the driver")),
+          cancelAfterMs,
+        );
+        const started = performance.now();
+        try {
+          const options = {
+            signal: abort.signal,
+            ...(kind === "folder" ? { properties: ["openDirectory"] } : {}),
+            ...(kind === "save" ? { defaultPath: "kitchen-sink-drive.txt" } : {}),
+          };
+          const picked = kind === "save"
+            ? await dialog.showSaveDialog(options)
+            : await dialog.showOpenDialog(options);
+          // A person answered (or cancelled) before the signal fired.
+          return {
+            available: true,
+            kind,
+            outcome: picked === null ? "cancelled" : "picked",
+            picked,
+          };
+        } catch (err) {
+          if (!abort.signal.aborted) throw err;
+          return {
+            available: true,
+            kind,
+            outcome: "closed-by-signal",
+            afterMs: Math.round(performance.now() - started),
+          };
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    },
     synthetic: {
       handler: (args, ctx) => {
         const kind = stringField(args, "kind");
@@ -544,6 +702,17 @@ async function osAuthSessionProbe(): Promise<Record<string, unknown>> {
 /** The pinned runtime's `Deno.desktop`, as far as the harness uses it. */
 interface DesktopApi extends EventTarget {
   devtools?: { enabled?: boolean };
+  /** The session probe (runtime 2.9.7-denext.10 and later). */
+  platformFeatures?: () => unknown;
+  /** The runtime's file dialogs; `signal` closes an open one (runtime 2.9.7-denext.12). */
+  dialog?: {
+    showOpenDialog(
+      options: { signal?: AbortSignal; properties?: string[] },
+    ): Promise<string[] | null>;
+    showSaveDialog(
+      options: { signal?: AbortSignal; defaultPath?: string },
+    ): Promise<string | null>;
+  };
   authSession?: {
     capabilities():
       | { supported: boolean; ephemeral: boolean }

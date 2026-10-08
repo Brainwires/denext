@@ -139,7 +139,10 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `experimental.cacheComponents` still works and dev-warns) — not default-on,
   with its documented bounds in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
-- **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
+- **ISR** (`revalidate` / `force-static`) with stale-while-revalidate, and opt-in **CDN cache
+  headers** (`cdnCacheHeaders: true`): an ISR page answers `public, s-maxage=<fresh seconds>,
+  stale-while-revalidate=…`, never for a credentialed request, a cookie-setting response, a
+  negotiated locale or a request a `middleware.ts` matched.
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory
   LRU fallback; swap in any custom `CacheStore` via `setCacheStore` to share
@@ -195,7 +198,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   **sliding sessions** (`session.updateAge`, `updateAuthSession()`, client
   `useSession().update()` / `refetchInterval`), **events + logger**
   (`signIn`, `signOut`, `signInFailed`, `sessionRevoked`, `createUser`,
-  `linkAccount`, `verificationRequested`, `emailVerified`, `passwordReset` — a throwing handler can never change the HTTP result), a
+  `linkAccount`, `verificationRequested`, `emailVerified`, `passwordReset`,
+  `apiTokenIssued`, `apiTokenRevoked`; `signInFailed.reason` is the closed
+  `SignInFailedReason` union — a throwing handler can never change the HTTP result), a
   configurable **`basePath`** and cookie names, and per-IP rate limits on
   `/auth/signin/*` (20 per 15 min) and `/auth/session` (60 per min), a per-address
   send budget and a per-user second-factor budget on top of the per-credential one.
@@ -210,7 +215,11 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   sends nothing — the next-auth CVE-2022-35924 class); and **TOTP two-factor**
   (RFC 6238 enroll / confirm / disable at `/auth/mfa*`, single-use backup codes
   stored as hashes, a replay-guarded step claim) whose pending step-up reads as
-  signed out everywhere until the second factor, then mints a fresh session. A
+  signed out everywhere until the second factor, then mints a fresh session;
+  **passkeys** (WebAuthn L3 registration + authentication at `/auth/passkey/*`,
+  verified with `crypto.subtle` and an in-house CBOR decoder: ES256 / RS256 / Ed25519,
+  `none` / `packed` attestation, counter clone detection, single-use browser-bound
+  challenges) as a first factor or the second. A
   first email sign-in into an unverified account retires whatever was set up
   without proof of the mailbox (pre-account hijacking). denext ships no mailer:
   every message goes through `sendVerificationRequest`.
@@ -234,7 +243,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
   from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
   (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
-  otherwise. Zero cost when the app defines none.
+  otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
+  failed run (fixed or exponential backoff), each attempt recorded in the run history and the
+  overlap guard holding while a run retries.
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through
@@ -486,9 +497,11 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
 - **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
   on this machine, with a fix for each gap: the pinned runtime and its cache,
-  the `deno` version, and on Linux the session's tray host, Secret Service and
-  lock state, notification server, xdg-desktop-portal versions and systemd user
-  manager. — `src/build/desktop-doctor.ts`.
+  the `deno` version, and on Linux the session's tray host (a StatusNotifierWatcher,
+  or an XEmbed system tray on X11), Secret Service and lock state (and whether a
+  locked keyring needs a password), CEF's cookie store, notification server,
+  xdg-desktop-portal versions and systemd user manager. —
+  `src/build/desktop-doctor.ts`.
 - **The window and the app's chrome** — `denext/desktop/window`: maximize,
   minimize, fullscreen and their events, size, position and limits, the
   displays, title-bar styles, Mica / Acrylic / vibrancy backdrops, a cancelable
@@ -543,7 +556,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`
   modules (Expo SDK 58) over `denext/mobile` and web APIs (haptics,
   secure-store, file-system, sqlite, notifications, auth-session, web-browser,
-  widgets, …), aliased automatically
+  widgets, and contacts / calendar / print / brightness / intent-launcher over
+  pinned Capacitor plugins, …), aliased automatically
   in `reactNative` mode; `denext/expo/manifest` lists each one's status and
   omissions. `registerRootComponent` mounts through `AppRegistry`, so the app's
   own entry is the web entry. — `src/expo/manifest.ts`.
@@ -663,7 +677,9 @@ cache uses Deno's built-in `node:sqlite`.)
   declared `response` schema always runs (a stripping validator is a data-leak guard).
   `createApi().use(mw).define(…)` composes "before" middleware with typed context
   accumulation (auth and rate limiting reject before any schema runs); first-party
-  `requireSession()` and `rateLimit()` ship (`src/server/api-middleware.ts`).
+  `requireSession()`, `rateLimit()`, `cors()` (a per-endpoint CORS policy whose preflight
+  the framework answers) and `csrf()` (the Server Actions same-origin gate, plus an optional
+  double-submit token) ship (`src/server/api-middleware.ts`).
   `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes a route's definition
   for an OpenAPI/docs plugin.
 - **`@denext/openapi`** (`packages/openapi`): the same definitions as an OpenAPI 3.1
@@ -782,11 +798,16 @@ cache uses Deno's built-in `node:sqlite`.)
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
-  (`--template default|minimal`), `generate` (thirteen kinds: `page`, `route`,
+  (`--template default|minimal`), `generate` (sixteen kinds: `page`, `route`,
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-  `middleware`, `task`, `test`, `docker`; the engine takes `force`/`dryRun`),
+  `middleware`, `task`, `test`, `docker`, `migration` (a timestamped SQL file + a
+  `node:sqlite` runner task), `seed`, `ci` (a GitHub Actions workflow); the engine takes
+  `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
-  `dev`, `build`,
+  `routes` (the app's pages and API routes with methods, params and files, as a table or
+  `--json`; no route module is imported), `upgrade` (denext, its CLI tasks and the
+  first-party `@denext/*` packages to versions whose compatibility ranges agree;
+  `--dry-run`/`--check`/`--to`), `dev`, `build`,
   `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`; `test`
   passes `--watch`/`--coverage` through), `analyze` (build + a per-chunk client
   bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`

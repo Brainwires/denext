@@ -16,7 +16,12 @@ import { type RequestContext, runDeferred } from "./request-context.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
-import { type MiddlewareOutcome, redirectResponse, withHeaders } from "./middleware.ts";
+import {
+  middlewareMatched,
+  type MiddlewareOutcome,
+  redirectResponse,
+  withHeaders,
+} from "./middleware.ts";
 import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
@@ -39,7 +44,7 @@ import {
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
-import { isPreflight, preflightResponse, routeCorsPolicy } from "./cors.ts";
+import { endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
 
 /**
  * Path canonicalization (before config rules, middleware, and routing): collapse runs
@@ -145,6 +150,7 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   // Matchers see the locale-stripped path (Next strips the i18n prefix before middleware).
   const outcome = await runner(state.request, resolveLocale(state)?.rest);
   state.dispatchRouteType = "render";
+  state.middlewareMatched = middlewareMatched(outcome);
   // A short-circuit Response still leaves through finalize(): cookies().set() queued in
   // the middleware and the injected header rules must reach the client.
   if (outcome.type === "response") return finalize(state, outcome.response);
@@ -250,6 +256,7 @@ async function dispatchAction(state: RequestState): Promise<Response> {
     trustForwardedHeaders: config.trustForwardedHeaders,
     desktopAppOrigin: config.desktopAppOrigin,
     maxBodyBytes: config.actionMaxBodyBytes,
+    scope: config.actionScope,
     onError: (err) => reportRequestError(config, err, request, pathname, { routeType: "action" }),
   });
   return finalize(state, res);
@@ -445,7 +452,8 @@ function subRequestNotFound(pathname: string): Response {
 
 /**
  * A CORS preflight for an API route is answered here — before middleware — under the route's
- * effective policy (its `export const cors`, else the app's `cors`). A preflight carries no
+ * effective policy (the `cors()` middleware on the asked-about method's handler, else its
+ * `export const cors`, else the app's `cors`). A preflight carries no
  * credentials, so an auth guard in `middleware.ts` would otherwise refuse it and the browser
  * would never send the real, authenticated request. Nothing covers the route → `null`, and the
  * request continues as before (a route's own `OPTIONS` export, or a 405).
@@ -458,7 +466,7 @@ async function answerApiPreflight(state: RequestState): Promise<Response | null>
   const api = matchApi(manifest, locale ? locale.rest : state.pathname);
   if (!api) return null;
   const mod = await state.app.config.load(api.route.filePath);
-  const policy = routeCorsPolicy(state.app.cors ?? null, mod);
+  const policy = endpointCorsPolicy(state.app.cors ?? null, mod, state.request);
   return policy ? finalize(state, preflightResponse(state.request, policy)) : null;
 }
 

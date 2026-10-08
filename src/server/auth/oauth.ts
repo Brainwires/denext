@@ -80,6 +80,8 @@ export interface AuthorizationUrlParams {
   nonce?: string;
   /** Extra provider-specific query params (e.g. `access_type: "offline"`). */
   extra?: Record<string, string>;
+  /** `"form_post"` adds `response_mode=form_post` (OAuth 2.0 Form Post Response Mode §2). */
+  responseMode?: "query" | "form_post";
 }
 
 /**
@@ -99,6 +101,7 @@ export function buildAuthorizationUrl(params: AuthorizationUrlParams): string {
   q.set("code_challenge", params.codeChallenge);
   q.set("code_challenge_method", "S256");
   if (params.nonce) q.set("nonce", params.nonce);
+  if (params.responseMode === "form_post") q.set("response_mode", "form_post");
   for (const [k, v] of Object.entries(params.extra ?? {})) q.set(k, v);
   return url.href;
 }

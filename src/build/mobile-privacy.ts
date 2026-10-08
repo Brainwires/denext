@@ -299,6 +299,17 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   }],
   // @capacitor/app's getInfo() reads the bundle; @capacitor/device is `device` above.
   application: [],
+  // Build-time edits only: nothing of it runs in the app.
+  "app-config": [],
+  // AVSpeechSynthesizer and its voices are not required-reason APIs.
+  "text-to-speech": [],
+  // UIScreen.brightness, UIPrintInteractionController and Android intents: no required-reason API.
+  brightness: [],
+  print: [],
+  "intent-launcher": [],
+  // Contacts and EventKit (EKEvent.creationDate is event metadata, not a file timestamp API).
+  contacts: [],
+  calendar: [],
   // AVPlayer, MapKit and the view layering use no required-reason API.
   "native-views": [],
   "native-map": [],

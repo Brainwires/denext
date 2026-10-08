@@ -24,9 +24,24 @@ export interface ServerActionRef<A extends unknown[], R> {
   readonly denextActionId: string;
 }
 
+type ActionHandler = (...args: unknown[]) => unknown;
+
 // Registry of server-side handlers, keyed by id. Populated only on the server
 // (when a module calls serverAction during import/render); unused in the browser.
-const registry = new Map<string, (...args: unknown[]) => unknown>();
+const registry = new Map<string, ActionHandler>();
+
+// Dev: each platform target's own registrations (`tagServerModules`' `scope`). A target's loader
+// yields its own module instances (its platform files), so the same action id runs another
+// implementation per target. Production registers globally only.
+const scopedRegistries = new Map<string, Map<string, ActionHandler>>();
+
+/** The registry `scope` registers into: the global one for `""`. */
+function registryFor(scope: string): Map<string, ActionHandler> {
+  if (!scope) return registry;
+  let scoped = scopedRegistries.get(scope);
+  if (!scoped) scopedRegistries.set(scope, scoped = new Map());
+  return scoped;
+}
 
 /**
  * Define a server action. Give it a **stable, explicit id** (unique per app) so
@@ -96,12 +111,18 @@ export function describeActionId(id: string): string | undefined {
  * reference, tagging each exported function in place (so it serializes as an
  * action reference when passed as a prop, e.g. `<form action={save}>`). Ids are
  * opaque hashes of `moduleId#exportName` (see {@linkcode actionIdFor}). Idempotent per
- * function.
+ * function; a function already tagged with its id is registered again (into another scope, or
+ * over a previous instance of the module).
  *
  * @param mod The imported `"use server"` module namespace.
  * @param moduleId The module's stable id.
+ * @param scope The registry to register into (dev: a platform target's); `""` is the global one.
  */
-export function tagServerExports(mod: Record<string, unknown>, moduleId: string): void {
+export function tagServerExports(
+  mod: Record<string, unknown>,
+  moduleId: string,
+  scope = "",
+): void {
   for (const [name, value] of Object.entries(mod)) {
     // A `createChannel` export (an object, not a function): assign its id and register it.
     // It is NOT an action — a channel is never HTTP-callable, only subscribed to.
@@ -109,9 +130,13 @@ export function tagServerExports(mod: Record<string, unknown>, moduleId: string)
       if (!value.denextChannelId) registerChannelIfLoaded(actionIdFor(moduleId, name), value);
       continue;
     }
-    if (typeof value !== "function" || isServerAction(value)) continue;
+    if (typeof value !== "function") continue;
     const id = actionIdFor(moduleId, name);
-    registry.set(id, value as (...args: unknown[]) => unknown);
+    // A `serverAction("id", fn)` ref (or one re-exported from another module) keeps its own id.
+    const tagged = (value as { denextActionId?: unknown }).denextActionId;
+    if (tagged !== undefined && tagged !== id) continue;
+    registryFor(scope).set(id, value as ActionHandler);
+    if (tagged !== undefined) continue;
     Object.defineProperty(value, "denextActionId", {
       value: id,
       enumerable: false,
@@ -136,35 +161,63 @@ export function clientActionStub<A extends unknown[], R>(id: string): ServerActi
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
 }
 
-// Server module ids already imported + tagged this process.
+// Server module ids already imported + tagged this process (per scope).
 const taggedServers = new Set<string>();
+// Bumped by forgetTaggedServers: a tagging pass that started before the bump must not mark its
+// (possibly pre-edit) module tagged after the set was cleared.
+let serverTagGeneration = 0;
 
 /**
  * Import each `"use server"` module and auto-register its exports as server
  * references (see {@link tagServerExports}). Safe to call repeatedly; each module
- * is imported at most once per process.
+ * is imported at most once per process and scope (until {@linkcode forgetTaggedServers}).
  *
  * @param servers Map of module id → `{ url }` (the boundary manifest's servers).
+ * @param load The loader to import each module through (default: a bare `import()`).
+ * @param scope The registry to register into: dev passes a platform target, whose loader yields
+ *   its own module instances; `""` (production) is the global registry.
  */
 export async function tagServerModules(
   servers: Iterable<[string, { url: string }]>,
   load?: (url: string) => Promise<unknown>,
+  scope = "",
 ): Promise<void> {
-  await Promise.all(
+  const key = (moduleId: string) => scope ? `${scope}\0${moduleId}` : moduleId;
+  const generation = serverTagGeneration;
+  // Every module is tagged even when another fails to load: one broken module must not leave
+  // the rest unregistered. The first failure is rethrown once all have settled.
+  const results = await Promise.allSettled(
     [...servers].map(async ([moduleId, ref]) => {
-      if (taggedServers.has(moduleId)) return;
+      if (taggedServers.has(key(moduleId))) return;
       const mod = load ? await load(ref.url) : await import(ref.url);
-      tagServerExports(mod as Record<string, unknown>, moduleId);
-      taggedServers.add(moduleId);
+      tagServerExports(mod as Record<string, unknown>, moduleId, scope);
+      // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
+      // instance, so leave it untagged and let the next pass load the current one.
+      if (generation === serverTagGeneration) taggedServers.add(key(moduleId));
     }),
   );
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
-/** Look up a registered server action handler by id (server-side). */
-export function getServerAction(
-  id: string,
-): ((...args: unknown[]) => unknown) | undefined {
-  return registry.get(id);
+/**
+ * Dev: forget which modules were tagged, so the next {@linkcode tagServerModules} loads them
+ * again and registers an edited module's new implementation (an unchanged one loads the same
+ * instance and registers the same functions).
+ */
+export function forgetTaggedServers(): void {
+  serverTagGeneration++;
+  taggedServers.clear();
+}
+
+/**
+ * Look up a registered server action handler by id (server-side).
+ *
+ * @param id The action id.
+ * @param scope Dev: the requesting target's registry, consulted before the global one.
+ */
+export function getServerAction(id: string, scope = ""): ActionHandler | undefined {
+  return (scope ? scopedRegistries.get(scope)?.get(id) : undefined) ?? registry.get(id);
 }
 
 // Action ids explicitly opted in to invocation over the Live WebSocket channel

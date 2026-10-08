@@ -16,6 +16,7 @@ import {
 } from "../src/build/ota-native-templates.ts";
 import { generateOtaKeyPair } from "../src/build/ota-signing.ts";
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
+import { otaTemplatesAt, writtenOtaTemplatesAt } from "./_release-templates.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
 const PBXPROJ = await Deno.readTextFile(
@@ -321,7 +322,7 @@ Deno.test("native templates: Android registers and implements download/activate 
   assertStringIncludes(store, `KEY_STAGED = "staged"`);
   assertStringIncludes(body(store, "synchronized void beginTrial("), ".remove(KEY_STAGED)");
   assertStringIncludes(body(store, "synchronized void reset()"), ".remove(KEY_STAGED)");
-  assert(!body(store, "private File prepareLaunch()").includes("STAGED"));
+  assert(!body(store, "private String prepareLaunch()").includes("STAGED"));
   assert(!body(store, "synchronized File startDirectory()").includes("STAGED"));
 });
 
@@ -507,7 +508,8 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   const trust = init.indexOf("try DenextOtaStore.checkTrust(");
   assert(recompute > 0 && trust > recompute, init);
   assertStringIncludes(init, `code: "integrity"`);
-  assertStringIncludes(init, `signature: manifest["signature"] as? String`);
+  assertStringIncludes(init, `let signature = manifest["signature"] as? String`);
+  assertStringIncludes(init, "signature: signature\n            )");
   assertStringIncludes(store, "$0.path.utf16.lexicographicallyPrecedes($1.path.utf16)");
   assertStringIncludes(store, '.map { "\\($0.path)\\t\\($0.sha256)\\n" }');
   // The signed bytes: v1 without a sequence, v2 with one, v3 with a nativeFingerprint too (the
@@ -602,7 +604,7 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   );
   assertStringIncludes(
     parse,
-    "                minNative,\n                nativeFingerprint\n            ),",
+    "DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint)",
   );
   // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
   assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
@@ -690,39 +692,10 @@ Deno.test("add-ota: a marked template from an earlier generation is upgraded in 
   }
 });
 
-/** Whether this checkout has the release tags (a shallow CI clone may not). */
-async function hasTag(tag: string): Promise<boolean> {
-  try {
-    const out = await new Deno.Command("git", {
-      args: ["rev-parse", "-q", "--verify", `refs/tags/${tag}`],
-    })
-      .output();
-    return out.success;
-  } catch {
-    return false;
-  }
-}
-
-/** The OTA templates as released at `tag` (`git show <tag>:src/build/ota-native-templates.ts`). */
-async function templatesAt(tag: string): Promise<Record<string, string>> {
-  const out = await new Deno.Command("git", {
-    args: ["show", `${tag}:src/build/ota-native-templates.ts`],
-  }).output();
-  const file = await Deno.makeTempFile({ suffix: ".ts" });
-  try {
-    await Deno.writeFile(file, out.stdout);
-    const mod = await import(`file://${file}`);
-    return { ...mod.OTA_IOS_FILES, ...mod.OTA_ANDROID_FILES };
-  } finally {
-    await Deno.remove(file);
-  }
-}
-
 const RELEASE_TAGS = ["v2.7.0", "v2.7.1", "v2.8.0", "v2.8.1", "v2.8.2", "v2.8.3"];
 
 Deno.test({
   name: "add-ota: templates shipped by 2.7.0 … 2.8.3 are recognised and upgraded without --force",
-  ignore: !(await hasTag("v2.8.3")),
   async fn() {
     const sha = async (text: string) =>
       Array.from(
@@ -731,7 +704,7 @@ Deno.test({
       ).join("");
     const seen: Record<string, Set<string>> = {};
     for (const tag of RELEASE_TAGS) {
-      for (const [name, text] of Object.entries(await templatesAt(tag))) {
+      for (const [name, text] of Object.entries(otaTemplatesAt(tag))) {
         (seen[name] ??= new Set()).add(await sha(text));
         assert(await isPristineOtaTemplate(name, text), `${tag} ${name}`);
       }
@@ -744,7 +717,7 @@ Deno.test({
       ),
     );
     // A project installed by 2.8.3 upgrades every template without --force.
-    const old = await templatesAt("v2.8.3");
+    const old = otaTemplatesAt("v2.8.3");
     const dir = await project();
     try {
       for (const name of Object.keys(OTA_IOS_FILES)) {
@@ -770,38 +743,10 @@ Deno.test({
   },
 });
 
-/**
- * The OTA files exactly as `add-ota` wrote them at `tag` (a release with marker lines): the
- * module at that tag, its marker import pointed at this checkout's (unchanged) marker module.
- */
-async function writtenTemplatesAt(
-  tag: string,
-): Promise<{ generation: number; files: Record<string, string> }> {
-  const out = await new Deno.Command("git", {
-    args: ["show", `${tag}:src/build/ota-native-templates.ts`],
-  }).output();
-  const marker = new URL("../src/build/native-template-marker.ts", import.meta.url).href;
-  const source = new TextDecoder().decode(out.stdout)
-    .replace(`from "./native-template-marker.ts"`, `from "${marker}"`);
-  const file = await Deno.makeTempFile({ suffix: ".ts" });
-  try {
-    await Deno.writeTextFile(file, source);
-    const mod = await import(`file://${file}`);
-    const files: Record<string, string> = {};
-    for (const [name, text] of Object.entries({ ...mod.OTA_IOS_FILES, ...mod.OTA_ANDROID_FILES })) {
-      files[name] = await mod.renderOtaTemplate(text as string);
-    }
-    return { generation: mod.OTA_TEMPLATE_VERSION, files };
-  } finally {
-    await Deno.remove(file);
-  }
-}
-
 Deno.test({
   name: "add-ota: generation-3 templates (2.9.0 … 2.10.0-rc.2) upgrade to the current one",
-  ignore: !(await hasTag("v2.10.0-rc.2")),
   async fn() {
-    const { generation, files } = await writtenTemplatesAt("v2.10.0-rc.2");
+    const { generation, files } = writtenOtaTemplatesAt("v2.10.0-rc.2");
     assertEquals(generation, 3);
     assert(OTA_TEMPLATE_VERSION > generation, "bump OTA_TEMPLATE_VERSION when templates change");
     // The templates did change since (the native fingerprint gate, payload v3).
@@ -1097,7 +1042,7 @@ Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
   // Trials: two attempts, a configurable boot timeout.
   assertStringIncludes(store, "static let maxTrialAttempts = 2");
   assertStringIncludes(
-    body(store, "func prepareLaunch()"),
+    body(store, "private func chooseLaunch()"),
     "trialAttempts < DenextOtaStore.maxTrialAttempts",
   );
   assertStringIncludes(body(store, "func beginTrial("), "trialAttempts = 1");
@@ -1182,7 +1127,7 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
   );
   // Trials and the plugin lifecycle.
   assertStringIncludes(
-    body(store, "private File prepareLaunch()"),
+    body(store, "private String prepareLaunch()"),
     "attempts < MAX_TRIAL_ATTEMPTS",
   );
   assertStringIncludes(store, `BOOT_TIMEOUT_META = "dev.denext.ota.BOOT_TIMEOUT"`);
