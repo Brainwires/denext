@@ -23,7 +23,8 @@
 // an object-literal method a `key: _dnxUseCache(…)` property, both keyed on the
 // class/object + method name. A method nested in a function closes over that scope, so
 // the values it reads from there are keyed too (Next's bound arguments) — passed as a
-// `bound` thunk, read per call. Next's rules are build errors here as well: an inline
+// `bound` thunk, read per call. So does one in a module-level loop, `catch` or block: its
+// loop variable, `catch` parameter or block `let`/`const` is bound the same way. Next's rules are build errors here as well: an inline
 // `"use cache"` instance method, and `this` / `super` / `arguments` inside a cached
 // function (a nested non-arrow function rebinds them, so it may use them).
 
@@ -386,13 +387,8 @@ const SCAN_RULES = new Map<string, (n: Node, s: ScopeScan) => void>([
   ["JSXMemberExpression", (n, s) => s.scan(n.object)],
 ]);
 
-/**
- * The names `fn` declares (params, `var`/`let`/`const`, function and class declarations,
- * `catch` bindings — block scoping flattened) and the names it reads but doesn't declare.
- * Nested functions contribute their own free names. Over-reading is the safe direction:
- * an extra bound value only makes the key more specific.
- */
-function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
+/** A fresh scope scan: nested functions contribute their free names, types are skipped. */
+function newScopeScan(): ScopeScan {
   const s: ScopeScan = {
     decls: new Set(),
     refs: new Set(),
@@ -407,6 +403,44 @@ function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
       forEachChild(n, s.scan);
     },
   };
+  return s;
+}
+
+/**
+ * Statements that open a block scope. At module level they are the only scopes a cached
+ * method can close over: a loop variable, a `catch` parameter or a block `let`/`const` has a
+ * value per iteration / block, so it is bound like an enclosing function's local.
+ */
+const BLOCK_SCOPES = new Set([
+  "BlockStatement",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "CatchClause",
+  "SwitchStatement",
+  "StaticBlock",
+]);
+
+/**
+ * The names a scope declares: a function's (see {@link scopeNames}), or every binding a block
+ * statement declares (its loop head, `catch` parameter and statements, nested blocks
+ * flattened — an extra bound name only makes the key more specific).
+ */
+function declaredNames(scope: Node): Set<string> {
+  if (FN_SCOPES.has(scope.type)) return scopeNames(scope).decls;
+  const s = newScopeScan();
+  s.scan(scope);
+  return s.decls;
+}
+
+/**
+ * The names `fn` declares (params, `var`/`let`/`const`, function and class declarations,
+ * `catch` bindings — block scoping flattened) and the names it reads but doesn't declare.
+ * Nested functions contribute their own free names. Over-reading is the safe direction:
+ * an extra bound value only makes the key more specific.
+ */
+function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
+  const s = newScopeScan();
   if (fn.type === "FunctionExpression" && fn.identifier) s.decls.add(fn.identifier.value);
   const { params, body } = fnParts(fn);
   for (const p of params) {
@@ -417,11 +451,11 @@ function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
   return { decls: s.decls, free: new Set([...s.refs].filter((name) => !s.decls.has(name))) };
 }
 
-/** The enclosing-function names `fn` reads, sorted: what its cache key binds. */
+/** The enclosing-scope names `fn` reads, sorted: what its cache key binds. */
 function boundNames(fn: Node, scopes: readonly Node[]): string[] {
   if (scopes.length === 0) return []; // module scope: nothing is closed over per call site
   const outer = new Set<string>();
-  for (const scope of scopes) for (const name of scopeNames(scope).decls) outer.add(name);
+  for (const scope of scopes) for (const name of declaredNames(scope)) outer.add(name);
   return [...scopeNames(fn).free].filter((name) => outer.has(name)).sort();
 }
 
@@ -560,7 +594,7 @@ function namedChild(st: CacheState, node: Node): [Node, string] | null {
 
 /**
  * Walk the module for classes and object literals carrying `"use cache"` methods, at any
- * depth, tracking the enclosing function scopes (`scopes`) a nested one closes over.
+ * depth, tracking the enclosing function and block scopes (`scopes`) a nested one closes over.
  * `owner` names the class/object for the key.
  */
 function visitMethods(
@@ -573,7 +607,9 @@ function visitMethods(
   const named = namedChild(st, node);
   if (named) return visitMethods(st, named[0], scopes, named[1]);
   cacheOwnMembers(st, node, owner, scopes);
-  const inner = FN_SCOPES.has(node.type) ? [...scopes, node] : scopes;
+  const inner = FN_SCOPES.has(node.type) || BLOCK_SCOPES.has(node.type)
+    ? [...scopes, node]
+    : scopes;
   forEachChild(node, (child) => visitMethods(st, child, inner, undefined));
 }
 

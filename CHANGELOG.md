@@ -208,6 +208,12 @@ and this project adheres to
   headers and no body, as React Router's build-time prerender does. On every other page a
   loader reading `request.headers` (or its `clone()`) makes the render dynamic, as `headers()`
   does, so an ISR or PPR page that reads it is never cached for everyone.
+- **A `"use cache"` method in a module-level loop, `catch` or block is keyed on what it closes
+  over.** Its key bound the values of an enclosing function only, so in
+  `for (const tenant of tenants) registry[tenant] = { async get(id) { "use cache"; … } }` every
+  tenant shared one entry and got the first tenant's result. A loop variable, a `catch`
+  parameter and a block `let` / `const` are now bound like a function's locals, also for a
+  method in a function declared inside such a block.
 
 ## [3.3.0] - 2026-10-08
 

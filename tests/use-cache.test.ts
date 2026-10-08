@@ -509,3 +509,84 @@ Deno.test("integration B5: a name-referenced default export caches both ways in"
     },
   );
 });
+
+// Audit 3.4.0 S1: a cached method at module level inside a loop, a `catch` or a block closes over
+// the block-scoped bindings there (a loop variable, a catch parameter, a block `let`/`const`),
+// and those must be in its key — otherwise every tenant of `for (const tenant of …)` shares one
+// entry. The same holds for a function nested inside such a block.
+Deno.test("integration S1: module-level block-scoped bindings are keyed (loop, catch, block)", async () => {
+  type Get = (id: string) => Promise<string>;
+  type Mod = {
+    registry: Record<string, { get: Get }>;
+    arrows: Record<string, { get: Get }>;
+    made: Record<string, { get: Get }>;
+    fromCatch: { get: Get };
+    fromBlock: { get: Get };
+    Static: Record<string, { get: Get }>;
+    calls(): number;
+  };
+  await withTransformed<Mod>(
+    "tenants",
+    `let n = 0;\n` +
+      `const load = (tenant: string, id: string) => { n++; return tenant + ":" + id; };\n` +
+      `export const registry: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["a", "b"]) {\n` +
+      `  registry[tenant] = { async get(id: string) { "use cache"; return load(tenant, id); } };\n` +
+      `}\n` +
+      `export const arrows: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["a", "b"]) arrows[tenant] = { get: async (id: string) => { "use cache"; return load("arrow-" + tenant, id); } };\n` +
+      `export const made: Record<string, unknown> = {};\n` +
+      `for (let i = 0; i < 2; i++) {\n` +
+      `  const tenant = "m" + i;\n` +
+      `  function make() { return { async get(id: string) { "use cache"; return load(tenant, id); } }; }\n` +
+      `  made[tenant] = make();\n` +
+      `}\n` +
+      `export const Static: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["s1", "s2"]) {\n` +
+      `  Static[tenant] = class { static async get(id: string) { "use cache"; return load(tenant, id); } };\n` +
+      `}\n` +
+      `export let fromCatch: unknown;\n` +
+      `try { throw "c1"; } catch (tenant) {\n` +
+      `  fromCatch = { async get(id: string) { "use cache"; return load(String(tenant), id); } };\n` +
+      `}\n` +
+      `export let fromBlock: unknown;\n` +
+      `{ const tenant = "blk"; fromBlock = { async get(id: string) { "use cache"; return load(tenant, id); } }; }\n` +
+      `export function calls() { return n; }\n`,
+    async (mod) => {
+      assertEquals(await inRequest(() => mod.registry.a.get("1")), "a:1");
+      assertEquals(
+        await inRequest(() => mod.registry.b.get("1")),
+        "b:1",
+        "tenant b gets its own entry",
+      );
+      assertEquals(await inRequest(() => mod.registry.a.get("1")), "a:1", "tenant a still hits");
+      assertEquals(await inRequest(() => mod.arrows.a.get("1")), "arrow-a:1");
+      assertEquals(await inRequest(() => mod.arrows.b.get("1")), "arrow-b:1");
+      assertEquals(await inRequest(() => mod.made.m0.get("1")), "m0:1");
+      assertEquals(
+        await inRequest(() => mod.made.m1.get("1")),
+        "m1:1",
+        "a function nested in the block",
+      );
+      assertEquals(await inRequest(() => mod.Static.s1.get("1")), "s1:1");
+      assertEquals(
+        await inRequest(() => mod.Static.s2.get("1")),
+        "s2:1",
+        "a static method in a loop",
+      );
+      assertEquals(await inRequest(() => mod.fromCatch.get("1")), "c1:1");
+      assertEquals(await inRequest(() => mod.fromBlock.get("1")), "blk:1");
+      assertEquals(mod.calls(), 10, "one body run per distinct closure");
+    },
+  );
+});
+
+Deno.test("S1: a module-level loop variable is a bound value of the method's key", async () => {
+  const { code } = await transformUseCache(
+    `const registry = {};\n` +
+      `for (const tenant of ts) registry[tenant] = { async get(id) { "use cache"; return load(tenant, id); } };\n`,
+    MOD,
+  );
+  assertStringIncludes(code, "{ bound: () => [tenant] }");
+  await assertParses(code);
+});
