@@ -639,6 +639,7 @@
     "MiddlewareOutcome:typeAlias",
     "MiddlewareResult:typeAlias",
     "MiddlewareRunner:typeAlias",
+    "MobileAdaptiveIconConfig:interface",
     "MobileConfig:interface",
     "MobileFlavorConfig:interface",
     "ModuleLoader:typeAlias",

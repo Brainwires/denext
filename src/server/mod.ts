@@ -282,6 +282,7 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   type MdxConfig,
+  type MobileAdaptiveIconConfig,
   type MobileConfig,
   type MobileFlavorConfig,
   type PlatformExtensionsConfig,

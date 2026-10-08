@@ -1448,6 +1448,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type MiddlewareOutcome = object | object | object` — The normalized result of running the middleware runner for a request.
 - `type MiddlewareResult = Response | NextCommand | RewriteCommand | void | undefined` — Anything a middleware handler may return: a response, a command, or nothing.
 - `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
+- `interface MobileAdaptiveIconConfig` — Android adaptive-icon layers under MobileConfig.adaptiveIcon.
 - `interface MobileConfig` — Settings for denext mobile build / denext mobile assets (the Capacitor shell).
 - `interface MobileFlavorConfig` — One build flavor of the Capacitor shell under MobileConfig.flavors: what denext mobile build --flavor <name> changes for that build only. Every change is undone when the build ends (the native sources and capacitor.config.* are restored byte for byte).
 - `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).

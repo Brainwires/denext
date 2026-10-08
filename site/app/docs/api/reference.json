@@ -8464,6 +8464,18 @@
           "denextOnly": true
         },
         {
+          "name": "MobileAdaptiveIconConfig",
+          "slug": "MobileAdaptiveIconConfig",
+          "kind": "interface",
+          "signature": "interface MobileAdaptiveIconConfig",
+          "doc": "Android adaptive-icon layers under MobileConfig.adaptiveIcon.",
+          "docFull": "Android adaptive-icon layers under {@link MobileConfig.adaptiveIcon}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MobileConfig",
           "slug": "MobileConfig",
           "kind": "interface",
