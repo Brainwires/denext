@@ -347,6 +347,63 @@ and this project adheres to
   `VITE_HOSTED_APP_CHANNEL=… deno task export`, or a `.env` file — never reached
   `import.meta.env`, where `vite build` inlines it. The generated config now reads each key with
   a `buildEnv("KEY")` helper (`""` when unset or unreadable).
+- **An over-the-air UI that can't be read for a moment is no longer quarantined as tampered.**
+  A launch before the first unlock (a silent push or a `BGTask`) finds a downloaded iOS UI
+  data-protected, and re-verification took the failed read for a changed file: the good UI was
+  moved to `quarantine/`, reported `tampered` and never served again. Both stores now tell an I/O
+  or permission error (the file is there; `NSFileReadNoPermissionError` / `EPERM`, an Android
+  `IOException`) apart from a size or hash mismatch: that request is refused, a launch whose
+  stored manifest can't be read serves the confirmed or bundled UI for that launch only (a trial
+  keeps its attempt), nothing is quarantined, and the next launch checks again. The OTA templates
+  stay generation 9 (it has not shipped): **upgrade note**, a project that ran `denext mobile
+  add-ota` from an unreleased 3.3 build re-runs it to pick up the fix (an unedited file is
+  upgraded in place) and ships a new binary.
+- **`denext mobile add-ota` says when a partial upgrade won't compile, and the doctor flags it.**
+  One generation's OTA files call into each other, so keeping an edited file while the others are
+  upgraded breaks the build; `add-ota` now adds a manual step naming the kept and the upgraded
+  files, and `denext mobile doctor` reports OTA files from different template generations
+  (`ota-generations`, an error) and an Android app that sets its own `RouteProcessor`, which
+  replaces the one that re-verifies a downloaded UI (`android-route-processor`, a warning).
+- **Android `Linking.sendIntent` no longer crashes the app when Android refuses the activity.**
+  `DenextSettings` caught only `ActivityNotFoundException`; a `SecurityException` (`ACTION_CALL`
+  without `CALL_PHONE`, an activity that is not exported) escaped the plugin method and Capacitor's
+  bridge crashed the app. It now rejects (code `failed`), as React Native's `IntentModule` does;
+  `openAppSettings()` likewise.
+- **`expo-calendar/legacy`, `expo-contacts/legacy` and the `/next` subpaths resolve to denext's
+  shims.** Expo 58 exports them, but only `expo-file-system/legacy` and
+  `expo-media-library/legacy` were aliased, so an app importing the others got the real npm
+  package. `denext/expo/calendar/legacy` and `denext/expo/contacts/legacy` are the legacy function
+  APIs (each in the expo parity gate), and `expo-calendar/next`, `expo-contacts/next`,
+  `expo-file-system/next` and `expo-media-library/next` are the main shims, as SDK 58 maps them.
+- **`expo-brightness` matches Expo off Android.** On iOS and the web the Android-only calls
+  rejected or threw (unhandled rejections on iOS); as in Expo they now resolve:
+  `restoreSystemBrightnessAsync` and `setSystemBrightnessModeAsync` do nothing,
+  `isUsingSystemBrightnessAsync` is `false`, `getSystemBrightnessModeAsync` is `UNKNOWN`, and
+  `get/setSystemBrightnessAsync` are the screen's level. A `NaN` level is Expo's `TypeError`, and
+  the web's permission is `undetermined`.
+- **`usePressability` no longer presses twice on older WebKit.** Safari before PointerEvent clicks
+  sends the click that follows a tap without a `pointerType`, which was taken for a keyboard click
+  after the responder had already pressed; the click that trails a release is now part of that
+  press.
+- **React Native mode's `Networking` reports what it claims.** `didReceiveNetworkDataProgress` is
+  emitted (loaded, total) for an incremental base64 / blob response before the whole body; a
+  `{ uri }` request body is the bytes at that URI instead of no body, and any other unknown body
+  fails the request with an error instead of sending nothing; `clearCookies` removes cookies set
+  for a deeper path or a parent domain and reports whether any were actually removed.
+- **`ActionSheetIOS.dismissActionSheet()` no longer drops the choice of a sheet it can't close.**
+  Without `denext mobile add action-sheet`'s `DenextContextMenu` plugin the system sheet stays on
+  screen, but its callback was dropped; the dismiss is now a no-op there and the user's choice
+  still arrives.
+- **Expo shims:** `expo-gl` calls only `onContextCreate` after a context restore (not
+  `onContextRestored` as well), as Expo's web `GLView`; `expo-sms` navigates to the `sms:` URL
+  (which the shell hands to the OS) instead of opening a popup a lost user gesture blocks while
+  the call resolved as if it had opened; `expo-cellular` reports `UNKNOWN` on a desktop browser or
+  in Deno Desktop (whose connection has no type) instead of the link's speed class as `4G`;
+  `expo-checkbox` draws a `processColor` number as a colour; `expo-mesh-gradient` averages hex /
+  `rgb()` / numeric colours itself, so iOS before 16.2 (no `color-mix()`) keeps the background.
+- **Lists:** LegendList's `anchoredEndSpace` recomputes once per batch of measurements instead of
+  once per item (the first layout of a long tail walked it O(n²)); a FlashList benchmark whose
+  scroll pass throws stops its FPS monitor's frame loop and can be started again.
 - **`denext migrate --desktop --backend` no longer drops a Vite proxy built in code without a
   word.** A `vite.config` whose `server.proxy` is computed (T3 Code's
   `Object.fromEntries(PREFIXES.map(…))`) has no literal prefixes to read, so `spa.proxy` fell back

@@ -46,8 +46,11 @@ import { withExportRouter } from "./bridge-export-router-native-template.ts";
  * the stored manifest keeps the signed fields and is checked at every launch (signature and
  * version), and each file's SHA-256 is checked the first time it is served in a process (iOS:
  * `DenextOtaRouter`; Android: the `RouteProcessor` `DenextOta.prepare` installs). A mismatch
- * quarantines the version, falls back to the bundled UI and fires `otaRejected`. The bump keeps
- * an older denext from rewriting the check away.
+ * quarantines the version, falls back to the bundled UI and fires `otaRejected`. A file that is
+ * there but cannot be read right now (a launch before the first unlock, by a silent push or a
+ * BGTask, finds it data-protected; a permission or I/O error) is not a mismatch: that request is
+ * refused (or, for the stored manifest at launch, this launch serves the confirmed or bundled UI)
+ * and nothing is quarantined. The bump keeps an older denext from rewriting the check away.
  */
 export const OTA_TEMPLATE_VERSION = 9;
 
@@ -1094,6 +1097,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// guards with the watchdog. The first call in a process is the launch; a later one (a
     /// second bridge view controller) keeps serving the active UI instead of counting again.
     func prepareLaunch() -> (directory: URL?, trial: Bool) {
+        // Only the launch itself counts a trial attempt (\`chooseLaunch\`).
+        let counted = !launchPrepared
         var choice = chooseLaunch()
         // Re-verify before the first page: the stored manifest's signature and version. A version
         // that fails is quarantined, and the confirmed one (re-verified too) or the bundled UI is
@@ -1102,6 +1107,14 @@ final class DenextOtaStore: @unchecked Sendable {
             do {
                 _ = try installedUi(version)
                 return (versionDirectory(version), choice.trial)
+            } catch let error as OtaError where error.code == DenextOtaStore.unavailableCode {
+                // There but not readable right now (a launch before the first unlock, by a silent
+                // push or a BGTask, finds the files protected): not a change to the UI. Serve
+                // something else for this launch only, give a trial its attempt back, and check
+                // the version again at the next launch. Nothing is quarantined.
+                CAPLog.print("denext OTA: UI \\(version) cannot be read now (\\(error.message)); not serving it this launch.")
+                if choice.trial && counted { trialAttempts = max(0, trialAttempts - 1) }
+                choice = (current.flatMap { $0 != version && hasVersion($0) ? $0 : nil }, false)
             } catch {
                 report(version, reason: error.localizedDescription, serving: false)
                 choice = (current.flatMap { hasVersion($0) ? $0 : nil }, false)
@@ -1164,6 +1177,10 @@ final class DenextOtaStore: @unchecked Sendable {
             case missing
             /// The UI was changed on the device after it was downloaded: never serve it.
             case tampered(String)
+            /// The file is there but cannot be read right now (data protection before the first
+            /// unlock, a permission or I/O error): refuse this request without quarantining, and
+            /// check it again the next time it is asked for.
+            case unavailable
         }
 
         let version: String
@@ -1187,7 +1204,13 @@ final class DenextOtaStore: @unchecked Sendable {
         func check(_ relative: String) -> Verdict {
             if relative == DenextOtaStore.manifestPath {
                 let url = directory.appendingPathComponent(relative, isDirectory: false)
-                guard let data = try? Data(contentsOf: url), DenextOtaStore.sha256Hex(data) == manifestSha256 else {
+                let data: Data?
+                do {
+                    data = try DenextOtaStore.readStored(url)
+                } catch {
+                    return .unavailable
+                }
+                guard let data = data, DenextOtaStore.sha256Hex(data) == manifestSha256 else {
                     return .tampered("\\(relative) changed after it was verified.")
                 }
                 return .serve
@@ -1202,8 +1225,15 @@ final class DenextOtaStore: @unchecked Sendable {
             let known = verified.contains(relative)
             lock.unlock()
             if known { return .serve }
-            guard let digest = DenextOtaStore.digest(of: target, limit: file.size),
-                  digest.0 == file.sha256, digest.1 == file.size else {
+            // Hashed on the calling thread: Capacitor's \`Router.route(for:)\` is synchronous and
+            // runs on the main thread, so the first request for a large file pays for its hash
+            // once per process (later requests are a set lookup).
+            switch DenextOtaStore.storedDigest(of: target, limit: file.size) {
+            case .unreadable:
+                return .unavailable
+            case .digest(let sha256, let size) where sha256 == file.sha256 && size == file.size:
+                break
+            default:
                 return .tampered("\\(relative) does not match the signed manifest.")
             }
             lock.lock()
@@ -1216,11 +1246,12 @@ final class DenextOtaStore: @unchecked Sendable {
     /// Re-verifies the downloaded UI \`version\` in \`directory\` from the manifest stored with its
     /// files: well formed, the same version, the version recomputed from the file list, and with
     /// \`key\` set, a signature that verifies over the stored fields (an \`invalid\` key fails
-    /// closed). Throws \`integrity\` / \`signature\` / \`invalid\`; the files are checked by
-    /// \`InstalledUi.check\` as they are served.
+    /// closed). Throws \`integrity\` / \`signature\` / \`invalid\`, or \`unavailable\` when the
+    /// manifest is there but cannot be read right now (\`readStored\`), which is not a verdict on
+    /// the UI; the files are checked by \`InstalledUi.check\` as they are served.
     static func verifyInstalled(_ directory: URL, version: String, key: PublicKeyConfig) throws -> InstalledUi {
         let url = directory.appendingPathComponent(manifestPath, isDirectory: false)
-        guard let data = try? Data(contentsOf: url),
+        guard let data = try readStored(url),
               let manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               manifest["version"] as? String == version,
               let rawFiles = manifest["files"] as? [Any] else {
@@ -1315,6 +1346,8 @@ final class DenextOtaStore: @unchecked Sendable {
         let verdict: InstalledUi.Verdict
         do {
             verdict = try installedUi(version).check(relative)
+        } catch let error as OtaError where error.code == DenextOtaStore.unavailableCode {
+            return false
         } catch {
             report(version, reason: error.localizedDescription, serving: true)
             return false
@@ -1322,7 +1355,7 @@ final class DenextOtaStore: @unchecked Sendable {
         switch verdict {
         case .serve:
             return true
-        case .missing:
+        case .missing, .unavailable:
             return false
         case .tampered(let reason):
             report(version, reason: reason, serving: true)
@@ -1630,6 +1663,58 @@ final class DenextOtaStore: @unchecked Sendable {
             return nil
         }
         return (hex(hasher.finalize()), size)
+    }
+
+    /// The \`OtaError\` code for a file of a downloaded UI that is there but cannot be read right now.
+    static let unavailableCode = "unavailable"
+
+    /// What reading one stored file of a downloaded UI found.
+    enum StoredDigest {
+        /// Its SHA-256 and size (a size over the limit stops the read early and is reported as is).
+        case digest(String, Int64)
+        /// Nothing there, or not a regular file.
+        case missing
+        /// There, but not readable right now: data protection before the first unlock
+        /// (\`NSFileReadNoPermissionError\` / \`EPERM\`), a permission or an I/O error.
+        case unreadable
+    }
+
+    /// Whether \`url\` is a regular file. Its metadata stays readable while data protection
+    /// keeps its contents locked, so this tells "gone" apart from "locked".
+    private static func isRegularFile(_ url: URL) -> Bool {
+        let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
+        return type == .typeRegular
+    }
+
+    /// The SHA-256 and size of the stored file at \`url\`, read in chunks, telling a file that is
+    /// missing apart from one that cannot be read right now.
+    static func storedDigest(of url: URL, limit: Int64) -> StoredDigest {
+        guard isRegularFile(url) else { return .missing }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return .unreadable }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var size: Int64 = 0
+        do {
+            while let chunk = try handle.read(upToCount: 65_536), !chunk.isEmpty {
+                size += Int64(chunk.count)
+                if size > limit { return .digest("", size) }
+                hasher.update(data: chunk)
+            }
+        } catch {
+            return .unreadable
+        }
+        return .digest(hex(hasher.finalize()), size)
+    }
+
+    /// The bytes of the stored file at \`url\`; nil when it is missing (or not a regular file).
+    /// Throws \`unavailable\` when it is there but cannot be read right now.
+    static func readStored(_ url: URL) throws -> Data? {
+        guard isRegularFile(url) else { return nil }
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            throw OtaError(code: unavailableCode, message: "\\(url.lastPathComponent) cannot be read: \\(error.localizedDescription)")
+        }
     }
 
     /// Streams \`source\` into a new file at \`target\` while hashing it; true when the bytes match
@@ -2648,6 +2733,9 @@ final class DenextOtaStore {
         return 30_000 + size * 1000 / 32_768;
     }
 
+    /** The {@link OtaException} code for a file of a downloaded UI that is there but cannot be read right now. */
+    static final String UNAVAILABLE = "unavailable";
+
     static final class OtaException extends Exception {
 
         final String code;
@@ -3249,6 +3337,8 @@ final class DenextOtaStore {
     @Nullable
     synchronized File startDirectory() {
         String version;
+        // Only the launch itself counts a trial attempt (prepareLaunch).
+        boolean counted = !launchPrepared;
         if (!launchPrepared) {
             launchPrepared = true;
             version = prepareLaunch();
@@ -3267,9 +3357,23 @@ final class DenextOtaStore {
                 started = versionDirectory(version);
                 return started;
             } catch (OtaException ex) {
+                String current = prefs.getString(KEY_CURRENT, null);
+                if (UNAVAILABLE.equals(ex.code)) {
+                    // There but not readable right now (an I/O or permission error, storage not
+                    // available yet): not a change to the UI. Serve something else for this launch
+                    // only, give a trial its attempt back, and check the version again at the next
+                    // launch. Nothing is quarantined.
+                    Logger.warn("denext OTA: UI " + version + " cannot be read now (" + ex.getMessage() + "); not serving it this launch.");
+                    if (launchIsTrial && counted) {
+                        int attempts = prefs.getInt(KEY_TRIAL_ATTEMPTS, 0);
+                        prefs.edit().putInt(KEY_TRIAL_ATTEMPTS, Math.max(0, attempts - 1)).commit();
+                    }
+                    launchIsTrial = false;
+                    version = !version.equals(current) && hasVersion(current) ? current : null;
+                    continue;
+                }
                 report(version, ex.getMessage(), false);
                 launchIsTrial = false;
-                String current = prefs.getString(KEY_CURRENT, null);
                 version = hasVersion(current) ? current : null;
             }
         }
@@ -3327,7 +3431,13 @@ final class DenextOtaStore {
         /** Not a file of this UI, and nothing is there: refuse it (the request fails, as it would). */
         MISSING,
         /** The UI was changed on the device after it was downloaded: never serve it. */
-        TAMPERED
+        TAMPERED,
+        /**
+         * The file is there but cannot be read right now (an I/O or permission error, storage not
+         * available yet): refuse this request without quarantining, and check it again the next
+         * time it is asked for.
+         */
+        UNAVAILABLE
     }
 
     /**
@@ -3359,7 +3469,12 @@ final class DenextOtaStore {
          */
         Verdict check(String relative) {
             if (relative.equals(MANIFEST_PATH)) {
-                byte[] data = readFile(new File(directory, MANIFEST_PATH));
+                byte[] data;
+                try {
+                    data = readStored(new File(directory, MANIFEST_PATH));
+                } catch (OtaException ex) {
+                    return Verdict.UNAVAILABLE;
+                }
                 return data != null && sha256Hex(data).equals(manifestSha256) ? Verdict.SERVE : Verdict.TAMPERED;
             }
             if (!isSafeRelativePath(relative)) {
@@ -3373,11 +3488,11 @@ final class DenextOtaStore {
             if (verified.contains(relative)) {
                 return Verdict.SERVE;
             }
-            if (!matches(target, file)) {
-                return Verdict.TAMPERED;
+            Verdict verdict = compare(target, file);
+            if (verdict == Verdict.SERVE) {
+                verified.add(relative);
             }
-            verified.add(relative);
-            return Verdict.SERVE;
+            return verdict;
         }
 
         /** Whether the signed manifest lists {@code relative}. */
@@ -3391,11 +3506,12 @@ final class DenextOtaStore {
      * with its files: well formed, the same version, the version recomputed from the file list,
      * and with {@code encodedKey} (the {@link #PUBLIC_KEY_META} value) set, a signature that
      * verifies over the stored fields (a key that does not parse fails closed). Throws
-     * {@code integrity} / {@code signature} / {@code invalid}; the files are checked by
-     * {@link InstalledUi#check} as they are served.
+     * {@code integrity} / {@code signature} / {@code invalid}, or {@code unavailable} when the
+     * manifest is there but cannot be read right now ({@link #readStored}), which is not a verdict
+     * on the UI; the files are checked by {@link InstalledUi#check} as they are served.
      */
     static InstalledUi verifyInstalled(File directory, String version, @Nullable String encodedKey) throws OtaException {
-        byte[] data = readFile(new File(directory, MANIFEST_PATH));
+        byte[] data = readStored(new File(directory, MANIFEST_PATH));
         JSONObject manifest = parseManifest(data);
         if (data == null || manifest == null || !version.equals(manifest.opt("version"))) {
             throw new OtaException("integrity", "UI " + version + "'s stored manifest is missing or names another version.");
@@ -3532,7 +3648,9 @@ final class DenextOtaStore {
         try {
             ui = installedUi(version);
         } catch (OtaException ex) {
-            report(version, ex.getMessage(), true);
+            if (!UNAVAILABLE.equals(ex.code)) {
+                report(version, ex.getMessage(), true);
+            }
             return false;
         }
         Verdict verdict = ui.check(relative);
@@ -3841,8 +3959,17 @@ final class DenextOtaStore {
 
     /** Whether the file at {@code path} has {@code file}'s size and SHA-256 (read in chunks). */
     private static boolean matches(File path, ManifestFile file) {
+        return compare(path, file) == Verdict.SERVE;
+    }
+
+    /**
+     * {@link Verdict#SERVE} when the file at {@code path} has {@code file}'s size and SHA-256 (read
+     * in chunks), {@link Verdict#UNAVAILABLE} when it is there but cannot be read right now, else
+     * {@link Verdict#TAMPERED}.
+     */
+    private static Verdict compare(File path, ManifestFile file) {
         if (!path.isFile() || path.length() != file.size) {
-            return false;
+            return Verdict.TAMPERED;
         }
         MessageDigest digest = sha256();
         try (InputStream in = new FileInputStream(path)) {
@@ -3852,9 +3979,9 @@ final class DenextOtaStore {
                 digest.update(buffer, 0, read);
             }
         } catch (IOException ex) {
-            return false;
+            return Verdict.UNAVAILABLE;
         }
-        return hex(digest.digest()).equals(file.sha256);
+        return hex(digest.digest()).equals(file.sha256) ? Verdict.SERVE : Verdict.TAMPERED;
     }
 
     /** Stops the download in flight (from any thread): it fails with code download at its next step. */
@@ -4193,6 +4320,22 @@ final class DenextOtaStore {
             return readAll(input);
         } catch (IOException ex) {
             return null;
+        }
+    }
+
+    /**
+     * The bytes of the stored file {@code file} of a downloaded UI; null when it is missing (or
+     * not a regular file). Throws {@code unavailable} when it is there but cannot be read right now.
+     */
+    @Nullable
+    private static byte[] readStored(File file) throws OtaException {
+        if (!file.isFile()) {
+            return null;
+        }
+        try (InputStream input = new FileInputStream(file)) {
+            return readAll(input);
+        } catch (IOException ex) {
+            throw new OtaException(UNAVAILABLE, file.getName() + " cannot be read: " + ex.getMessage());
         }
     }
 

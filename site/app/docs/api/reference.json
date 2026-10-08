@@ -10366,8 +10366,8 @@
           "slug": "runTask",
           "kind": "function",
           "signature": "runTask(name: string, payload?: unknown, opts?: object): Promise<unknown>",
-          "doc": "Run a task by name and return its handler's result. Throws if no such task is registered. Callable from app code (a route handler, an action) to trigger work on demand.",
-          "docFull": "Run a task by name and return its handler's result. Throws if no such task is registered.\nCallable from app code (a route handler, an action) to trigger work on demand.",
+          "doc": "Run a task by name and return its handler's result. Throws if no such task is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.",
+          "docFull": "Run a task by name and return its handler's result. Throws if no such task is registered.\nCallable from app code (a route handler, an action) to trigger work on demand. The handler's\n`signal` aborts when `opts.signal` does and when the server shuts down.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26680,10 +26680,10 @@
         {
           "name": "getPermissionsAsync",
           "slug": "getPermissionsAsync",
-          "kind": "variable",
-          "signature": "getPermissionsAsync: () => Promise<PermissionResponse>",
-          "doc": "The system-settings permission: none is needed for what works here, so granted.",
-          "docFull": "The system-settings permission: none is needed for what works here, so `granted`.",
+          "kind": "function",
+          "signature": "getPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "The system-settings permission: granted in the shell, undetermined on the web.",
+          "docFull": "The system-settings permission: `granted` in the shell, `undetermined` on the web.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26694,8 +26694,8 @@
           "slug": "getSystemBrightnessAsync",
           "kind": "function",
           "signature": "getSystemBrightnessAsync(): Promise<number>",
-          "doc": "The system brightness: the screen's on iOS (as Expo); not readable on Android.",
-          "docFull": "The system brightness: the screen's on iOS (as Expo); not readable on Android.",
+          "doc": "The system brightness: off Android the screen's, as Expo (getBrightnessAsync); Android's system setting is not readable here.",
+          "docFull": "The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); Android's\nsystem setting is not readable here.",
           "params": [],
           "returns": "0–1.",
           "examples": [],
@@ -26706,10 +26706,10 @@
           "slug": "getSystemBrightnessModeAsync",
           "kind": "function",
           "signature": "getSystemBrightnessModeAsync(): Promise<BrightnessMode>",
-          "doc": "The system brightness mode: not readable here.",
-          "docFull": "The system brightness mode: not readable here.",
+          "doc": "The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; Android's is not readable here (it rejects with ERR_UNAVAILABLE).",
+          "docFull": "The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; Android's is not\nreadable here (it rejects with `ERR_UNAVAILABLE`).",
           "params": [],
-          "returns": "Never: it rejects with ERR_UNAVAILABLE.",
+          "returns": "The mode.",
           "examples": [],
           "denextOnly": false
         },
@@ -26730,10 +26730,10 @@
           "slug": "isUsingSystemBrightnessAsync",
           "kind": "function",
           "signature": "isUsingSystemBrightnessAsync(): Promise<boolean>",
-          "doc": "Whether the system's brightness applies: on Android, the window has no level of its own; on iOS, the app has not changed it (or restored it).",
-          "docFull": "Whether the system's brightness applies: on Android, the window has no level of its own; on\niOS, the app has not changed it (or restored it).",
+          "doc": "Android: whether the app window follows the system brightness (it has no level of its own). Off Android false, as in Expo.",
+          "docFull": "Android: whether the app window follows the system brightness (it has no level of its own).\nOff Android `false`, as in Expo.",
           "params": [],
-          "returns": "Whether the app's own level is unset.",
+          "returns": "Whether the window follows the system.",
           "examples": [],
           "denextOnly": false
         },
@@ -26788,10 +26788,10 @@
         {
           "name": "requestPermissionsAsync",
           "slug": "requestPermissionsAsync",
-          "kind": "variable",
-          "signature": "requestPermissionsAsync: () => Promise<PermissionResponse>",
-          "doc": "Ask for the system-settings permission: none is needed here, so granted.",
-          "docFull": "Ask for the system-settings permission: none is needed here, so `granted`.",
+          "kind": "function",
+          "signature": "requestPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "Ask for the system-settings permission: as getPermissionsAsync.",
+          "docFull": "Ask for the system-settings permission: as {@linkcode getPermissionsAsync}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26802,8 +26802,8 @@
           "slug": "restoreSystemBrightnessAsync",
           "kind": "function",
           "signature": "restoreSystemBrightnessAsync(): Promise<void>",
-          "doc": "Undo the app's brightness: the level from before the app first set one (iOS), or the window following the system again (Android).",
-          "docFull": "Undo the app's brightness: the level from before the app first set one (iOS), or the window\nfollowing the system again (Android).",
+          "doc": "Android: let the app window follow the system brightness again. Off Android it does nothing, as in Expo.",
+          "docFull": "Android: let the app window follow the system brightness again. Off Android it does nothing,\nas in Expo.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26831,8 +26831,8 @@
           "slug": "setSystemBrightnessAsync",
           "kind": "function",
           "signature": "setSystemBrightnessAsync(brightnessValue: number): Promise<void>",
-          "doc": "Set the system brightness: the screen's on iOS (as Expo); not writable on Android.",
-          "docFull": "Set the system brightness: the screen's on iOS (as Expo); not writable on Android.",
+          "doc": "Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); Android's system setting is not writable here.",
+          "docFull": "Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); Android's\nsystem setting is not writable here.",
           "params": [
             {
               "name": "brightnessValue",
@@ -26847,12 +26847,12 @@
           "name": "setSystemBrightnessModeAsync",
           "slug": "setSystemBrightnessModeAsync",
           "kind": "function",
-          "signature": "setSystemBrightnessModeAsync(_brightnessMode: BrightnessMode): Promise<void>",
-          "doc": "Set the system brightness mode: not writable here.",
-          "docFull": "Set the system brightness mode: not writable here.",
+          "signature": "setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>",
+          "doc": "Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; Android's is not writable here (it rejects with ERR_UNAVAILABLE).",
+          "docFull": "Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo;\nAndroid's is not writable here (it rejects with `ERR_UNAVAILABLE`).",
           "params": [
             {
-              "name": "_brightnessMode",
+              "name": "brightnessMode",
               "doc": "The mode."
             }
           ],
@@ -27120,7 +27120,7 @@
           "name": "createAttendeeAsync",
           "slug": "createAttendeeAsync",
           "kind": "function",
-          "signature": "createAttendeeAsync(_eventId: string, _details: Attendee): Promise<string>",
+          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
           "doc": "Add an attendee. Not supported by the plugin.",
           "docFull": "Add an attendee. Not supported by the plugin.",
           "params": [
@@ -27463,13 +27463,17 @@
           "name": "getAttendeesForEventAsync",
           "slug": "getAttendeesForEventAsync",
           "kind": "function",
-          "signature": "getAttendeesForEventAsync(_id: string): Promise<Attendee[]>",
+          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
           "doc": "An event's attendees. The plugin does not read them by event id.",
           "docFull": "An event's attendees. The plugin does not read them by event id.",
           "params": [
             {
               "name": "_id",
               "doc": "The event."
+            },
+            {
+              "name": "_recurringEventOptions",
+              "doc": "Which occurrence (Expo's second argument)."
             }
           ],
           "returns": "Never resolves.",
@@ -28184,6 +28188,1035 @@
       ]
     },
     {
+      "module": "denext/expo/calendar/legacy",
+      "symbols": [
+        {
+          "name": "Alarm",
+          "slug": "Alarm",
+          "kind": "interface",
+          "signature": "interface Alarm",
+          "doc": "An alarm. Only relativeOffset (minutes from the start) reaches the plugin.",
+          "docFull": "An alarm. Only `relativeOffset` (minutes from the start) reaches the plugin.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AlarmLocation",
+          "slug": "AlarmLocation",
+          "kind": "interface",
+          "signature": "interface AlarmLocation",
+          "doc": "Where an alarm triggers.",
+          "docFull": "Where an alarm triggers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AlarmMethod",
+          "slug": "AlarmMethod",
+          "kind": "enum",
+          "signature": "enum AlarmMethod",
+          "doc": "How an alarm alerts (Android).",
+          "docFull": "How an alarm alerts (Android).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Attendee",
+          "slug": "Attendee",
+          "kind": "interface",
+          "signature": "interface Attendee",
+          "doc": "An event attendee.",
+          "docFull": "An event attendee.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AttendeeRole",
+          "slug": "AttendeeRole",
+          "kind": "enum",
+          "signature": "enum AttendeeRole",
+          "doc": "An attendee's role.",
+          "docFull": "An attendee's role.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AttendeeStatus",
+          "slug": "AttendeeStatus",
+          "kind": "enum",
+          "signature": "enum AttendeeStatus",
+          "doc": "An attendee's response.",
+          "docFull": "An attendee's response.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AttendeeType",
+          "slug": "AttendeeType",
+          "kind": "enum",
+          "signature": "enum AttendeeType",
+          "doc": "An attendee's kind.",
+          "docFull": "An attendee's kind.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Availability",
+          "slug": "Availability",
+          "kind": "enum",
+          "signature": "enum Availability",
+          "doc": "An event's free/busy state.",
+          "docFull": "An event's free/busy state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Calendar",
+          "slug": "Calendar",
+          "kind": "interface",
+          "signature": "interface Calendar",
+          "doc": "A calendar (or an iOS reminders list).",
+          "docFull": "A calendar (or an iOS reminders list).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarAccessLevel",
+          "slug": "CalendarAccessLevel",
+          "kind": "enum",
+          "signature": "enum CalendarAccessLevel",
+          "doc": "The current user's access to a calendar (Android).",
+          "docFull": "The current user's access to a calendar (Android).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarDialogParams",
+          "slug": "CalendarDialogParams",
+          "kind": "interface",
+          "signature": "interface CalendarDialogParams",
+          "doc": "Which event a dialog shows.",
+          "docFull": "Which event a dialog shows.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarDialogResultActions",
+          "slug": "CalendarDialogResultActions",
+          "kind": "enum",
+          "signature": "enum CalendarDialogResultActions",
+          "doc": "How a calendar dialog ended.",
+          "docFull": "How a calendar dialog ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarType",
+          "slug": "CalendarType",
+          "kind": "enum",
+          "signature": "enum CalendarType",
+          "doc": "A calendar's kind (iOS).",
+          "docFull": "A calendar's kind (iOS).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createAttendeeAsync",
+          "slug": "createAttendeeAsync",
+          "kind": "function",
+          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
+          "doc": "Add an attendee. Not supported by the plugin.",
+          "docFull": "Add an attendee. Not supported by the plugin.",
+          "params": [
+            {
+              "name": "_eventId",
+              "doc": "The event."
+            },
+            {
+              "name": "_details",
+              "doc": "The attendee."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createCalendarAsync",
+          "slug": "createCalendarAsync",
+          "kind": "function",
+          "signature": "createCalendarAsync(details?: Partial<Calendar>): Promise<string>",
+          "doc": "Create a calendar, or (iOS, entityType: \"reminder\") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.",
+          "docFull": "Create a calendar, or (iOS, `entityType: \"reminder\"`) a reminders list. On Android the\nplugin needs `source.name` (the account) and `ownerAccount`.",
+          "params": [
+            {
+              "name": "details",
+              "doc": "title, color, entityType, sourceId, source, ownerAccount."
+            }
+          ],
+          "returns": "The new id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createEventAsync",
+          "slug": "createEventAsync",
+          "kind": "function",
+          "signature": "createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>",
+          "doc": "Create an event. timeZone, attendees and absolute or location alarms are not passed on.",
+          "docFull": "Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.",
+          "params": [
+            {
+              "name": "calendarId",
+              "doc": "The calendar."
+            },
+            {
+              "name": "eventData",
+              "doc": "The event."
+            }
+          ],
+          "returns": "The new id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createEventInCalendarAsync",
+          "slug": "createEventInCalendarAsync",
+          "kind": "function",
+          "signature": "createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).",
+          "docFull": "Open the system's new-event editor, pre-filled. On iOS the result says whether it was\nsaved (with the new id) or canceled; Android does not report it (`done`, `id: null`).",
+          "params": [
+            {
+              "name": "eventData",
+              "doc": "The pre-filled event (calendarId picks the calendar)."
+            },
+            {
+              "name": "_presentationOptions",
+              "doc": "Ignored."
+            }
+          ],
+          "returns": "The outcome.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createReminderAsync",
+          "slug": "createReminderAsync",
+          "kind": "function",
+          "signature": "createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>",
+          "doc": "Create a reminder.",
+          "docFull": "Create a reminder.",
+          "params": [
+            {
+              "name": "calendarId",
+              "doc": "The reminders list (null: the default list)."
+            },
+            {
+              "name": "reminder",
+              "doc": "The reminder."
+            }
+          ],
+          "returns": "The new id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DayOfTheWeek",
+          "slug": "DayOfTheWeek",
+          "kind": "enum",
+          "signature": "enum DayOfTheWeek",
+          "doc": "A weekday, as Expo numbers it (Sunday is 1).",
+          "docFull": "A weekday, as Expo numbers it (Sunday is 1).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DaysOfTheWeek",
+          "slug": "DaysOfTheWeek",
+          "kind": "interface",
+          "signature": "interface DaysOfTheWeek",
+          "doc": "A weekday of a recurrence.",
+          "docFull": "A weekday of a recurrence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "deleteAttendeeAsync",
+          "slug": "deleteAttendeeAsync",
+          "kind": "function",
+          "signature": "deleteAttendeeAsync(_id: string): Promise<void>",
+          "doc": "Remove an attendee. Not supported by the plugin.",
+          "docFull": "Remove an attendee. Not supported by the plugin.",
+          "params": [
+            {
+              "name": "_id",
+              "doc": "The attendee."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "deleteCalendarAsync",
+          "slug": "deleteCalendarAsync",
+          "kind": "function",
+          "signature": "deleteCalendarAsync(id: string): Promise<void>",
+          "doc": "Delete a calendar (or reminders list) and everything in it.",
+          "docFull": "Delete a calendar (or reminders list) and everything in it.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The calendar."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "deleteEventAsync",
+          "slug": "deleteEventAsync",
+          "kind": "function",
+          "signature": "deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>",
+          "doc": "Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).",
+          "docFull": "Delete an event, one occurrence (`instanceStartDate`) or this and the following ones\n(`futureEvents`).",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The event."
+            },
+            {
+              "name": "recurringEventOptions",
+              "doc": "Which occurrences."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "deleteReminderAsync",
+          "slug": "deleteReminderAsync",
+          "kind": "function",
+          "signature": "deleteReminderAsync(id: string): Promise<void>",
+          "doc": "Delete a reminder.",
+          "docFull": "Delete a reminder.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The reminder."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DialogEventResult",
+          "slug": "DialogEventResult",
+          "kind": "interface",
+          "signature": "interface DialogEventResult",
+          "doc": "How an event dialog ended, and the event's id.",
+          "docFull": "How an event dialog ended, and the event's id.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "editEventInCalendarAsync",
+          "slug": "editEventInCalendarAsync",
+          "kind": "function",
+          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's event editor on an event. Android does not report the outcome (done).",
+          "docFull": "Open the system's event editor on an event. Android does not report the outcome (`done`).",
+          "params": [
+            {
+              "name": "params",
+              "doc": "The event (instanceStartDate is not supported)."
+            },
+            {
+              "name": "_presentationOptions",
+              "doc": "Ignored."
+            }
+          ],
+          "returns": "The outcome.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "EntityTypes",
+          "slug": "EntityTypes",
+          "kind": "enum",
+          "signature": "enum EntityTypes",
+          "doc": "What a calendar holds.",
+          "docFull": "What a calendar holds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Event",
+          "slug": "Event",
+          "kind": "interface",
+          "signature": "interface Event",
+          "doc": "An event.",
+          "docFull": "An event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "EventAccessLevel",
+          "slug": "EventAccessLevel",
+          "kind": "enum",
+          "signature": "enum EventAccessLevel",
+          "doc": "An event's visibility (Android).",
+          "docFull": "An event's visibility (Android).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "EventStatus",
+          "slug": "EventStatus",
+          "kind": "enum",
+          "signature": "enum EventStatus",
+          "doc": "An event's status.",
+          "docFull": "An event's status.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Frequency",
+          "slug": "Frequency",
+          "kind": "enum",
+          "signature": "enum Frequency",
+          "doc": "How often a recurrence repeats.",
+          "docFull": "How often a recurrence repeats.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getAttendeesForEventAsync",
+          "slug": "getAttendeesForEventAsync",
+          "kind": "function",
+          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
+          "doc": "An event's attendees. The plugin does not read them by event id.",
+          "docFull": "An event's attendees. The plugin does not read them by event id.",
+          "params": [
+            {
+              "name": "_id",
+              "doc": "The event."
+            },
+            {
+              "name": "_recurringEventOptions",
+              "doc": "Which occurrence (Expo's second argument)."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getCalendarPermissionsAsync",
+          "slug": "getCalendarPermissionsAsync",
+          "kind": "function",
+          "signature": "getCalendarPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "The calendar permission, without prompting (legacy).",
+          "docFull": "The calendar permission, without prompting (legacy).",
+          "params": [],
+          "returns": "See getCalendarPermissions.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getCalendarsAsync",
+          "slug": "getCalendarsAsync",
+          "kind": "function",
+          "signature": "getCalendarsAsync(entityType?: string): Promise<Calendar[]>",
+          "doc": "The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.",
+          "docFull": "The calendars. On iOS, `entityType` picks event calendars or reminders lists (both when\nomitted; reminders lists only when reminders access allows reading them). Android ignores\nit, as Expo does.",
+          "params": [
+            {
+              "name": "entityType",
+              "doc": "\"event\" or \"reminder\" (iOS)."
+            }
+          ],
+          "returns": "The calendars.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getDefaultCalendarAsync",
+          "slug": "getDefaultCalendarAsync",
+          "kind": "function",
+          "signature": "getDefaultCalendarAsync(): Promise<Calendar>",
+          "doc": "The default calendar for new events (isPrimary: true).",
+          "docFull": "The default calendar for new events (`isPrimary: true`).",
+          "params": [],
+          "returns": "The calendar.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getEventAsync",
+          "slug": "getEventAsync",
+          "kind": "function",
+          "signature": "getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>",
+          "doc": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).",
+          "docFull": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The event."
+            },
+            {
+              "name": "recurringEventOptions",
+              "doc": "instanceStartDate, required here."
+            }
+          ],
+          "returns": "The event.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getEventsAsync",
+          "slug": "getEventsAsync",
+          "kind": "function",
+          "signature": "getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>",
+          "doc": "The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).",
+          "docFull": "The events (occurrences) overlapping `[startDate, endDate]` in the given calendars (all\ncalendars when the list is empty).",
+          "params": [
+            {
+              "name": "calendarIds",
+              "doc": "The calendars."
+            },
+            {
+              "name": "startDate",
+              "doc": "The range's start."
+            },
+            {
+              "name": "endDate",
+              "doc": "The range's end."
+            }
+          ],
+          "returns": "The events.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getReminderAsync",
+          "slug": "getReminderAsync",
+          "kind": "function",
+          "signature": "getReminderAsync(id: string): Promise<Reminder>",
+          "doc": "One reminder.",
+          "docFull": "One reminder.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The reminder."
+            }
+          ],
+          "returns": "The reminder.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getRemindersAsync",
+          "slug": "getRemindersAsync",
+          "kind": "function",
+          "signature": "getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>",
+          "doc": "The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).",
+          "docFull": "The reminders in the given lists (all lists when empty), by status; a date range filters\non the due date (on the completion date for `completed`).",
+          "params": [
+            {
+              "name": "calendarIds",
+              "doc": "The reminders lists."
+            },
+            {
+              "name": "status",
+              "doc": "completed, incomplete, or null for both."
+            },
+            {
+              "name": "startDate",
+              "doc": "The range's start."
+            },
+            {
+              "name": "endDate",
+              "doc": "The range's end."
+            }
+          ],
+          "returns": "The reminders.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getRemindersPermissionsAsync",
+          "slug": "getRemindersPermissionsAsync",
+          "kind": "function",
+          "signature": "getRemindersPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "The reminders permission (legacy).",
+          "docFull": "The reminders permission (legacy).",
+          "params": [],
+          "returns": "See getRemindersPermissions.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getSourceAsync",
+          "slug": "getSourceAsync",
+          "kind": "function",
+          "signature": "getSourceAsync(id: string): Promise<Source>",
+          "doc": "One calendar account.",
+          "docFull": "One calendar account.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The source."
+            }
+          ],
+          "returns": "The source.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getSourcesAsync",
+          "slug": "getSourcesAsync",
+          "kind": "function",
+          "signature": "getSourcesAsync(): Promise<Source[]>",
+          "doc": "The calendar accounts.",
+          "docFull": "The calendar accounts.",
+          "params": [],
+          "returns": "The sources.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isAvailableAsync",
+          "slug": "isAvailableAsync",
+          "kind": "function",
+          "signature": "isAvailableAsync(): Promise<boolean>",
+          "doc": "Whether the calendar API works here: the shell with the plugin installed.",
+          "docFull": "Whether the calendar API works here: the shell with the plugin installed.",
+          "params": [],
+          "returns": "true only there.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "MonthOfTheYear",
+          "slug": "MonthOfTheYear",
+          "kind": "enum",
+          "signature": "enum MonthOfTheYear",
+          "doc": "A month (January is 1).",
+          "docFull": "A month (January is 1).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "OpenEventDialogResult",
+          "slug": "OpenEventDialogResult",
+          "kind": "interface",
+          "signature": "interface OpenEventDialogResult",
+          "doc": "How an \"open event\" dialog ended.",
+          "docFull": "How an \"open event\" dialog ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "openEventInCalendar",
+          "slug": "openEventInCalendar",
+          "kind": "function",
+          "signature": "openEventInCalendar(_id: string): void",
+          "doc": "Open an event in the Android calendar app. The plugin has no such call.",
+          "docFull": "Open an event in the Android calendar app. The plugin has no such call.",
+          "params": [
+            {
+              "name": "_id",
+              "doc": "The event."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "openEventInCalendarAsync",
+          "slug": "openEventInCalendarAsync",
+          "kind": "function",
+          "signature": "openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
+          "doc": "Show an event in the calendar app. The plugin has no such dialog.",
+          "docFull": "Show an event in the calendar app. The plugin has no such dialog.",
+          "params": [
+            {
+              "name": "_params",
+              "doc": "The event."
+            },
+            {
+              "name": "_presentationOptions",
+              "doc": "The presentation."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "OpenEventPresentationOptions",
+          "slug": "OpenEventPresentationOptions",
+          "kind": "interface",
+          "signature": "interface OpenEventPresentationOptions",
+          "doc": "How to present an existing event.",
+          "docFull": "How to present an existing event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Organizer",
+          "slug": "Organizer",
+          "kind": "interface",
+          "signature": "interface Organizer",
+          "doc": "An event's organizer.",
+          "docFull": "An event's organizer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionExpiration",
+          "slug": "PermissionExpiration",
+          "kind": "typeAlias",
+          "signature": "type PermissionExpiration = never | number",
+          "doc": "When a permission expires: \"never\", or a timestamp.",
+          "docFull": "When a permission expires: `\"never\"`, or a timestamp.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionHookOptions",
+          "slug": "PermissionHookOptions",
+          "kind": "typeAlias",
+          "signature": "type PermissionHookOptions<Options> = Options & object",
+          "doc": "Options for a permission hook (createPermissionHook).",
+          "docFull": "Options for a permission hook ({@linkcode createPermissionHook}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionResponse",
+          "slug": "PermissionResponse",
+          "kind": "interface",
+          "signature": "interface PermissionResponse",
+          "doc": "A permission answer, as every Expo permission API returns it.",
+          "docFull": "A permission answer, as every Expo permission API returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionStatus",
+          "slug": "PermissionStatus",
+          "kind": "enum",
+          "signature": "enum PermissionStatus",
+          "doc": "A permission's state, as expo-modules-core reports it.",
+          "docFull": "A permission's state, as `expo-modules-core` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PresentationOptions",
+          "slug": "PresentationOptions",
+          "kind": "interface",
+          "signature": "interface PresentationOptions",
+          "doc": "How to present a dialog (Android).",
+          "docFull": "How to present a dialog (Android).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "RecurrenceRule",
+          "slug": "RecurrenceRule",
+          "kind": "interface",
+          "signature": "interface RecurrenceRule",
+          "doc": "How an event or reminder repeats.",
+          "docFull": "How an event or reminder repeats.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "RecurringEventOptions",
+          "slug": "RecurringEventOptions",
+          "kind": "interface",
+          "signature": "interface RecurringEventOptions",
+          "doc": "Which occurrence(s) of a recurring event a call means.",
+          "docFull": "Which occurrence(s) of a recurring event a call means.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Reminder",
+          "slug": "Reminder",
+          "kind": "interface",
+          "signature": "interface Reminder",
+          "doc": "A reminder (iOS).",
+          "docFull": "A reminder (iOS).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ReminderStatus",
+          "slug": "ReminderStatus",
+          "kind": "enum",
+          "signature": "enum ReminderStatus",
+          "doc": "A reminder's completion state.",
+          "docFull": "A reminder's completion state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "requestCalendarPermissionsAsync",
+          "slug": "requestCalendarPermissionsAsync",
+          "kind": "function",
+          "signature": "requestCalendarPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "Ask for full calendar access (legacy).",
+          "docFull": "Ask for full calendar access (legacy).",
+          "params": [],
+          "returns": "See requestCalendarPermissions.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "requestPermissionsAsync",
+          "slug": "requestPermissionsAsync",
+          "kind": "function",
+          "signature": "requestPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "Ask for full calendar access (legacy, deprecated in Expo).",
+          "docFull": "Ask for full calendar access (legacy, deprecated in Expo).",
+          "params": [],
+          "returns": "See requestCalendarPermissions.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "requestRemindersPermissionsAsync",
+          "slug": "requestRemindersPermissionsAsync",
+          "kind": "function",
+          "signature": "requestRemindersPermissionsAsync(): Promise<PermissionResponse>",
+          "doc": "Ask for reminders access (legacy).",
+          "docFull": "Ask for reminders access (legacy).",
+          "params": [],
+          "returns": "See requestRemindersPermissions.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Source",
+          "slug": "Source",
+          "kind": "interface",
+          "signature": "interface Source",
+          "doc": "A calendar account.",
+          "docFull": "A calendar account.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SourceType",
+          "slug": "SourceType",
+          "kind": "enum",
+          "signature": "enum SourceType",
+          "doc": "A calendar source's kind (iOS).",
+          "docFull": "A calendar source's kind (iOS).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "updateAttendeeAsync",
+          "slug": "updateAttendeeAsync",
+          "kind": "function",
+          "signature": "updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>",
+          "doc": "Change an attendee. Not supported by the plugin.",
+          "docFull": "Change an attendee. Not supported by the plugin.",
+          "params": [
+            {
+              "name": "_id",
+              "doc": "The attendee."
+            },
+            {
+              "name": "_details",
+              "doc": "The fields."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "updateCalendarAsync",
+          "slug": "updateCalendarAsync",
+          "kind": "function",
+          "signature": "updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>",
+          "doc": "Change a calendar's (or reminders list's) title and colour; other fields are ignored.",
+          "docFull": "Change a calendar's (or reminders list's) title and colour; other fields are ignored.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The calendar."
+            },
+            {
+              "name": "details",
+              "doc": "title and/or color."
+            }
+          ],
+          "returns": "The id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "updateEventAsync",
+          "slug": "updateEventAsync",
+          "kind": "function",
+          "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
+          "doc": "Change an event (with futureEvents, this and the following occurrences).",
+          "docFull": "Change an event (with `futureEvents`, this and the following occurrences).",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The event."
+            },
+            {
+              "name": "details",
+              "doc": "The fields to change."
+            },
+            {
+              "name": "recurringEventOptions",
+              "doc": "futureEvents; instanceStartDate is not supported."
+            }
+          ],
+          "returns": "The id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "updateReminderAsync",
+          "slug": "updateReminderAsync",
+          "kind": "function",
+          "signature": "updateReminderAsync(id: string, details?: Reminder): Promise<string>",
+          "doc": "Change a reminder.",
+          "docFull": "Change a reminder.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The reminder."
+            },
+            {
+              "name": "details",
+              "doc": "The fields to change."
+            }
+          ],
+          "returns": "The id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useCalendarPermissions",
+          "slug": "useCalendarPermissions",
+          "kind": "variable",
+          "signature": "useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple",
+          "doc": "Hook form of the calendar permission: [response, request, get].",
+          "docFull": "Hook form of the calendar permission: `[response, request, get]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useRemindersPermissions",
+          "slug": "useRemindersPermissions",
+          "kind": "function",
+          "signature": "useRemindersPermissions(options?: PermissionHookOptions<object>): tuple",
+          "doc": "Hook form of the reminders permission (iOS): [response, request, get].",
+          "docFull": "Hook form of the reminders permission (iOS): `[response, request, get]`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Whether to read (default) or request on mount."
+            }
+          ],
+          "returns": "The response (null until read), a request function and a get function.",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
       "module": "denext/expo/camera",
       "symbols": [
         {
@@ -28654,8 +29687,8 @@
           "slug": "getCellularGenerationAsync",
           "kind": "function",
           "signature": "getCellularGenerationAsync(): Promise<CellularGeneration>",
-          "doc": "The connection's generation, from the Network Information API (its effectiveType is the connection's measured speed class, which is what Expo's web build reports too).",
-          "docFull": "The connection's generation, from the Network Information API (its `effectiveType` is the\nconnection's measured speed class, which is what Expo's web build reports too).",
+          "doc": "The connection's generation, from the Network Information API (its effectiveType is the connection's measured speed class, which is what Expo's web build reports too). Only a cellular connection has one: a connection whose type says otherwise is UNKNOWN, and so is one without a type (a desktop browser or Deno Desktop, where a fast wired or Wi-Fi link reads \"4g\"), except in the Android shell, where the connection is the phone's.",
+          "docFull": "The connection's generation, from the Network Information API (its `effectiveType` is the\nconnection's measured speed class, which is what Expo's web build reports too). Only a\ncellular connection has one: a connection whose `type` says otherwise is `UNKNOWN`, and so is\none without a `type` (a desktop browser or Deno Desktop, where a fast wired or Wi-Fi link\nreads `\"4g\"`), except in the Android shell, where the connection is the phone's.",
           "params": [],
           "returns": "The generation, or UNKNOWN.",
           "examples": [],
@@ -30254,6 +31287,727 @@
           "signature": "interface Subscription",
           "doc": "What Expo's add…Listener functions return.",
           "docFull": "What Expo's `add…Listener` functions return.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "updateContactAsync",
+          "slug": "updateContactAsync",
+          "kind": "function",
+          "signature": "updateContactAsync(contact: object & Partial<ExistingContact>): Promise<string>",
+          "doc": "Change a contact: the given fields replace the stored ones, the rest are kept.",
+          "docFull": "Change a contact: the given fields replace the stored ones, the rest are kept.",
+          "params": [
+            {
+              "name": "contact",
+              "doc": "The id and the fields to change."
+            }
+          ],
+          "returns": "The contact's id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "UrlAddress",
+          "slug": "UrlAddress",
+          "kind": "typeAlias",
+          "signature": "type UrlAddress = object",
+          "doc": "A legacy URL.",
+          "docFull": "A legacy URL.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        }
+      ]
+    },
+    {
+      "module": "denext/expo/contacts/legacy",
+      "symbols": [
+        {
+          "name": "addContactAsync",
+          "slug": "addContactAsync",
+          "kind": "function",
+          "signature": "addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>",
+          "doc": "Add a contact to the default container.",
+          "docFull": "Add a contact to the default container.",
+          "params": [
+            {
+              "name": "contact",
+              "doc": "The contact."
+            },
+            {
+              "name": "_containerId",
+              "doc": "Ignored (the plugin has no containers)."
+            }
+          ],
+          "returns": "The new contact's id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "addContactsChangeListener",
+          "slug": "addContactsChangeListener",
+          "kind": "function",
+          "signature": "addContactsChangeListener(_listener: () => void): EventSubscription",
+          "doc": "Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.",
+          "docFull": "Listen for address-book changes. The plugin reports none, so the listener never fires (as\nin Expo's web build); refresh when the app resumes instead.",
+          "params": [
+            {
+              "name": "_listener",
+              "doc": "Never called."
+            }
+          ],
+          "returns": "A subscription whose remove does nothing.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Address",
+          "slug": "Address",
+          "kind": "typeAlias",
+          "signature": "type Address = object",
+          "doc": "A legacy postal address.",
+          "docFull": "A legacy postal address.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarFormats",
+          "slug": "CalendarFormats",
+          "kind": "enum",
+          "signature": "enum CalendarFormats",
+          "doc": "Calendar formats of a legacy Date.",
+          "docFull": "Calendar formats of a legacy {@linkcode Date}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarFormatType",
+          "slug": "CalendarFormatType",
+          "kind": "typeAlias",
+          "signature": "type CalendarFormatType = CalendarFormats | ${\u001b[0m\u001b[38;5;12mCalendarFormats\u001b[0m}",
+          "doc": "A CalendarFormats member or its string.",
+          "docFull": "A {@linkcode CalendarFormats} member or its string.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Contact",
+          "slug": "Contact",
+          "kind": "typeAlias",
+          "signature": "type Contact = object",
+          "doc": "A legacy contact (Expo's Contact type of the legacy API).",
+          "docFull": "A legacy contact (Expo's `Contact` type of the legacy API).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactAccessButton",
+          "slug": "ContactAccessButton",
+          "kind": "variable",
+          "signature": "ContactAccessButton: ContactAccessButtonComponent",
+          "doc": "iOS 18's ContactAccessButton. The plugin does not provide it, so it renders nothing and isAvailable() is false, as on Android and the web in Expo.",
+          "docFull": "iOS 18's `ContactAccessButton`. The plugin does not provide it, so it renders nothing and\n`isAvailable()` is `false`, as on Android and the web in Expo.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactAccessButtonProps",
+          "slug": "ContactAccessButtonProps",
+          "kind": "typeAlias",
+          "signature": "type ContactAccessButtonProps = object",
+          "doc": "Props of ContactAccessButton (iOS 18's limited-access button).",
+          "docFull": "Props of {@linkcode ContactAccessButton} (iOS 18's limited-access button).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactQuery",
+          "slug": "ContactQuery",
+          "kind": "typeAlias",
+          "signature": "type ContactQuery = object",
+          "doc": "A legacy contact query.",
+          "docFull": "A legacy contact query.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactResponse",
+          "slug": "ContactResponse",
+          "kind": "typeAlias",
+          "signature": "type ContactResponse = object",
+          "doc": "A page of legacy contacts.",
+          "docFull": "A page of legacy contacts.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactSort",
+          "slug": "ContactSort",
+          "kind": "typeAlias",
+          "signature": "type ContactSort = ${\u001b[0m\u001b[38;5;12mSortTypes\u001b[0m}",
+          "doc": "A legacy sort order.",
+          "docFull": "A legacy sort order.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactsPermissionResponse",
+          "slug": "ContactsPermissionResponse",
+          "kind": "typeAlias",
+          "signature": "type ContactsPermissionResponse = PermissionResponse & object",
+          "doc": "A contacts permission answer, with how much of the address book is shared.",
+          "docFull": "A contacts permission answer, with how much of the address book is shared.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactType",
+          "slug": "ContactType",
+          "kind": "typeAlias",
+          "signature": "type ContactType = ContactTypes | ${\u001b[0m\u001b[38;5;12mContactTypes\u001b[0m}",
+          "doc": "A ContactTypes member or its string.",
+          "docFull": "A {@linkcode ContactTypes} member or its string.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContactTypes",
+          "slug": "ContactTypes",
+          "kind": "enum",
+          "signature": "enum ContactTypes",
+          "doc": "Person or company.",
+          "docFull": "Person or company.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Container",
+          "slug": "Container",
+          "kind": "typeAlias",
+          "signature": "type Container = object",
+          "doc": "A legacy container.",
+          "docFull": "A legacy container.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContainerQuery",
+          "slug": "ContainerQuery",
+          "kind": "typeAlias",
+          "signature": "type ContainerQuery = object",
+          "doc": "A legacy container query.",
+          "docFull": "A legacy container query.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContainerType",
+          "slug": "ContainerType",
+          "kind": "typeAlias",
+          "signature": "type ContainerType = ContainerTypes | ${\u001b[0m\u001b[38;5;12mContainerTypes\u001b[0m}",
+          "doc": "A ContainerTypes member or its string.",
+          "docFull": "A {@linkcode ContainerTypes} member or its string.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContainerTypes",
+          "slug": "ContainerTypes",
+          "kind": "enum",
+          "signature": "enum ContainerTypes",
+          "doc": "Kinds of contact container.",
+          "docFull": "Kinds of contact container.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createGroupAsync",
+          "slug": "createGroupAsync",
+          "kind": "function",
+          "signature": "createGroupAsync(name?: string, _containerId?: string): Promise<string>",
+          "doc": "Create a contact group.",
+          "docFull": "Create a contact group.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "Its name."
+            },
+            {
+              "name": "_containerId",
+              "doc": "Ignored (the plugin has no containers)."
+            }
+          ],
+          "returns": "The new group's id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Date",
+          "slug": "Date",
+          "kind": "typeAlias",
+          "signature": "type Date = object",
+          "doc": "A legacy date: month is 0-based, as JavaScript's Date.",
+          "docFull": "A legacy date: `month` is 0-based, as JavaScript's `Date`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Email",
+          "slug": "Email",
+          "kind": "typeAlias",
+          "signature": "type Email = object",
+          "doc": "A legacy email address.",
+          "docFull": "A legacy email address.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ExistingContact",
+          "slug": "ExistingContact",
+          "kind": "typeAlias",
+          "signature": "type ExistingContact = LegacyContact & object",
+          "doc": "A legacy contact with its id.",
+          "docFull": "A legacy contact with its id.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Fields",
+          "slug": "Fields",
+          "kind": "enum",
+          "signature": "enum Fields",
+          "doc": "The legacy API's contact fields (ContactQuery.fields).",
+          "docFull": "The legacy API's contact fields (`ContactQuery.fields`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FieldType",
+          "slug": "FieldType",
+          "kind": "typeAlias",
+          "signature": "type FieldType = Fields | ${\u001b[0m\u001b[38;5;12mFields\u001b[0m}",
+          "doc": "A Fields member or its string.",
+          "docFull": "A {@linkcode Fields} member or its string.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FormOptions",
+          "slug": "FormOptions",
+          "kind": "typeAlias",
+          "signature": "type FormOptions = object",
+          "doc": "Options of a contact form. Only allowsEditing is honoured here.",
+          "docFull": "Options of a contact form. Only `allowsEditing` is honoured here.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getContactByIdAsync",
+          "slug": "getContactByIdAsync",
+          "kind": "function",
+          "signature": "getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>",
+          "doc": "One contact.",
+          "docFull": "One contact.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The contact's id."
+            },
+            {
+              "name": "fields",
+              "doc": "The fields to read; unset reads every field."
+            }
+          ],
+          "returns": "The contact, or undefined when there is none with that id.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getContactsAsync",
+          "slug": "getContactsAsync",
+          "kind": "function",
+          "signature": "getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>",
+          "doc": "A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.",
+          "docFull": "A page of contacts. `pageSize` / `pageOffset` page it, `name` keeps names containing the\ntext, `id` keeps those ids, `groupId` keeps the group's members, `sort` orders by given or\nfamily name, and `fields` limits what is read.",
+          "params": [
+            {
+              "name": "contactQuery",
+              "doc": "The query."
+            }
+          ],
+          "returns": "The page, with whether contacts follow and precede it.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getContainersAsync",
+          "slug": "getContainersAsync",
+          "kind": "function",
+          "signature": "getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
+          "doc": "The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
+          "docFull": "The containers. The plugin has no container ids, so this always rejects with\n`ERR_UNAVAILABLE`.",
+          "params": [
+            {
+              "name": "_containerQuery",
+              "doc": "Ignored."
+            }
+          ],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getDefaultContainerIdAsync",
+          "slug": "getDefaultContainerIdAsync",
+          "kind": "function",
+          "signature": "getDefaultContainerIdAsync(): Promise<string>",
+          "doc": "The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
+          "docFull": "The default container's id. The plugin has no container ids, so this always rejects\nwith `ERR_UNAVAILABLE`.",
+          "params": [],
+          "returns": "Never resolves.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getGroupsAsync",
+          "slug": "getGroupsAsync",
+          "kind": "function",
+          "signature": "getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>",
+          "doc": "The contact groups, optionally only the one with groupId or the ones named groupName.",
+          "docFull": "The contact groups, optionally only the one with `groupId` or the ones named `groupName`.",
+          "params": [
+            {
+              "name": "groupQuery",
+              "doc": "The filter (containerId is ignored)."
+            }
+          ],
+          "returns": "The groups.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getPagedContactsAsync",
+          "slug": "getPagedContactsAsync",
+          "kind": "function",
+          "signature": "getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>",
+          "doc": "getContactsAsync, by its paging name.",
+          "docFull": "{@linkcode getContactsAsync}, by its paging name.",
+          "params": [
+            {
+              "name": "contactQuery",
+              "doc": "The query."
+            }
+          ],
+          "returns": "The page.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "getPermissionsAsync",
+          "slug": "getPermissionsAsync",
+          "kind": "function",
+          "signature": "getPermissionsAsync(): Promise<ContactsPermissionResponse>",
+          "doc": "The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: \"limited\").",
+          "docFull": "The contacts permission, without prompting. Read and write are asked together; `granted`\nmeans both (iOS 18 limited access reads as granted with `accessPrivileges: \"limited\"`).",
+          "params": [],
+          "returns": "The answer; undetermined off the shell, as Expo's web build.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Group",
+          "slug": "Group",
+          "kind": "typeAlias",
+          "signature": "type Group = object",
+          "doc": "A legacy group.",
+          "docFull": "A legacy group.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "GroupQuery",
+          "slug": "GroupQuery",
+          "kind": "typeAlias",
+          "signature": "type GroupQuery = object",
+          "doc": "A legacy group query.",
+          "docFull": "A legacy group query.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "hasContactsAsync",
+          "slug": "hasContactsAsync",
+          "kind": "function",
+          "signature": "hasContactsAsync(): Promise<boolean>",
+          "doc": "Whether the address book has any contact.",
+          "docFull": "Whether the address book has any contact.",
+          "params": [],
+          "returns": "true when it holds at least one.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Image",
+          "slug": "Image",
+          "kind": "typeAlias",
+          "signature": "type Image = object",
+          "doc": "A legacy contact photo.",
+          "docFull": "A legacy contact photo.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "InstantMessageAddress",
+          "slug": "InstantMessageAddress",
+          "kind": "typeAlias",
+          "signature": "type InstantMessageAddress = object",
+          "doc": "A legacy instant-message address (not read here).",
+          "docFull": "A legacy instant-message address (not read here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "isAvailableAsync",
+          "slug": "isAvailableAsync",
+          "kind": "function",
+          "signature": "isAvailableAsync(): Promise<boolean>",
+          "doc": "Whether the address book can be used: the plugin's answer in the shell.",
+          "docFull": "Whether the address book can be used: the plugin's answer in the shell.",
+          "params": [],
+          "returns": "false off the shell or without the plugin.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "onContactsChangeEventName",
+          "slug": "onContactsChangeEventName",
+          "kind": "variable",
+          "signature": "onContactsChangeEventName: onContactsChange",
+          "doc": "The native event name the address-book change listener subscribes to.",
+          "docFull": "The native event name the address-book change listener subscribes to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionExpiration",
+          "slug": "PermissionExpiration",
+          "kind": "typeAlias",
+          "signature": "type PermissionExpiration = never | number",
+          "doc": "When a permission expires: \"never\", or a timestamp.",
+          "docFull": "When a permission expires: `\"never\"`, or a timestamp.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionResponse",
+          "slug": "PermissionResponse",
+          "kind": "interface",
+          "signature": "interface PermissionResponse",
+          "doc": "A permission answer, as every Expo permission API returns it.",
+          "docFull": "A permission answer, as every Expo permission API returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PermissionStatus",
+          "slug": "PermissionStatus",
+          "kind": "enum",
+          "signature": "enum PermissionStatus",
+          "doc": "A permission's state, as expo-modules-core reports it.",
+          "docFull": "A permission's state, as `expo-modules-core` reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PhoneNumber",
+          "slug": "PhoneNumber",
+          "kind": "typeAlias",
+          "signature": "type PhoneNumber = object",
+          "doc": "A legacy phone number.",
+          "docFull": "A legacy phone number.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "presentContactPickerAsync",
+          "slug": "presentContactPickerAsync",
+          "kind": "function",
+          "signature": "presentContactPickerAsync(): Promise<ExistingContact | null>",
+          "doc": "Let the user pick a contact with the system picker.",
+          "docFull": "Let the user pick a contact with the system picker.",
+          "params": [],
+          "returns": "The contact, or null when the picker was cancelled.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "presentFormAsync",
+          "slug": "presentFormAsync",
+          "kind": "function",
+          "signature": "presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>",
+          "doc": "Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.",
+          "docFull": "Show the system contact form: an existing contact (editable unless `allowsEditing` is\n`false`), or a new one prefilled from `contact`.",
+          "params": [
+            {
+              "name": "contactId",
+              "doc": "The contact to show, or null for a new one."
+            },
+            {
+              "name": "contact",
+              "doc": "A new contact's prefilled fields."
+            },
+            {
+              "name": "formOptions",
+              "doc": "Only allowsEditing is honoured."
+            }
+          ],
+          "returns": "When the form is shown (or, for a new contact, closed).",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Relationship",
+          "slug": "Relationship",
+          "kind": "typeAlias",
+          "signature": "type Relationship = object",
+          "doc": "A legacy relationship (not read here).",
+          "docFull": "A legacy relationship (not read here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "removeContactAsync",
+          "slug": "removeContactAsync",
+          "kind": "function",
+          "signature": "removeContactAsync(contactId: string): Promise<void>",
+          "doc": "Delete a contact.",
+          "docFull": "Delete a contact.",
+          "params": [
+            {
+              "name": "contactId",
+              "doc": "The contact's id."
+            }
+          ],
+          "returns": "When it is deleted.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "removeGroupAsync",
+          "slug": "removeGroupAsync",
+          "kind": "function",
+          "signature": "removeGroupAsync(groupId: string): Promise<void>",
+          "doc": "Delete a contact group.",
+          "docFull": "Delete a contact group.",
+          "params": [
+            {
+              "name": "groupId",
+              "doc": "The group's id."
+            }
+          ],
+          "returns": "When it is deleted.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "requestPermissionsAsync",
+          "slug": "requestPermissionsAsync",
+          "kind": "function",
+          "signature": "requestPermissionsAsync(): Promise<ContactsPermissionResponse>",
+          "doc": "Ask for the contacts permission (read and write).",
+          "docFull": "Ask for the contacts permission (read and write).",
+          "params": [],
+          "returns": "The answer; undetermined off the shell, as Expo's web build.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SocialProfile",
+          "slug": "SocialProfile",
+          "kind": "typeAlias",
+          "signature": "type SocialProfile = object",
+          "doc": "A legacy social profile (not read here).",
+          "docFull": "A legacy social profile (not read here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "SortTypes",
+          "slug": "SortTypes",
+          "kind": "enum",
+          "signature": "enum SortTypes",
+          "doc": "Legacy sort orders (ContactQuery.sort).",
+          "docFull": "Legacy sort orders (`ContactQuery.sort`).",
           "params": [],
           "returns": "",
           "examples": [],

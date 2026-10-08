@@ -1,10 +1,12 @@
 /**
  * React Native's `Networking` (`RCTNetworking`, the native module behind its `XMLHttpRequest`)
  * for React Native mode, over `fetch`: `sendRequest` reports through the same events, with the
- * same payloads, React Native's networking module emits (`didReceiveNetworkResponse`,
- * `didReceiveNetworkData` or, with `incrementalUpdates`, `didReceiveNetworkIncrementalData` and
- * `didReceiveNetworkDataProgress`, then `didCompleteNetworkResponse`), so code written against
- * the module (an SSE or streaming client, a network logger) runs unchanged.
+ * same payloads, React Native's networking module emits (`didReceiveNetworkResponse`, then
+ * `didReceiveNetworkData`, or with `incrementalUpdates` `didReceiveNetworkIncrementalData` for a
+ * text response and `didReceiveNetworkDataProgress` (then the whole body) for a base64 or blob
+ * one, then `didCompleteNetworkResponse`), so code written against the module (an SSE or
+ * streaming client, a network logger) runs unchanged. `didSendNetworkData` (upload progress) is
+ * never emitted: `fetch` does not report it.
  *
  * @module
  */
@@ -51,7 +53,8 @@ export interface NetworkingStatic {
   abortRequest(requestId: number): void;
   /**
    * Remove the cookies the page can reach (`document.cookie`; `HttpOnly` ones are the
-   * browser's), then call `callback` with whether any were removed.
+   * browser's), whatever path of the page or domain above it they were set for, then call
+   * `callback` with whether any were actually removed.
    */
   clearCookies(callback: (result: boolean) => void): void;
 }
@@ -67,18 +70,32 @@ function emit(event: NetworkingEvent, ...args: unknown[]): void {
   events.emit(event, args);
 }
 
-/** React Native's request body (`{ string }`, `{ formData }`, a `Blob`, bytes, `{ uri }`). */
-function requestBody(data: unknown): BodyInit | undefined {
+/**
+ * React Native's request body (`{ string }`, `{ formData }`, `{ base64 }`, `{ uri }`, a `Blob`,
+ * bytes). A `{ uri }` body is the bytes at that URI, fetched as a `Blob` (a `blob:`, `data:`,
+ * `file:` or `http(s):` URL the page can read). Any other shape throws, failing the request.
+ */
+async function requestBody(data: unknown): Promise<BodyInit | undefined> {
   if (data === null || data === undefined) return undefined;
   if (typeof data === "string") return data;
   if (typeof Blob !== "undefined" && data instanceof Blob) return data;
   if (typeof FormData !== "undefined" && data instanceof FormData) return data;
   if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return data as BodyInit;
-  const o = data as { string?: string; formData?: FormData; base64?: string };
+  const o = data as { string?: string; formData?: FormData; base64?: string; uri?: string };
   if (typeof o.string === "string") return o.string;
   if (o.formData !== undefined) return o.formData;
   if (typeof o.base64 === "string") return Uint8Array.from(atob(o.base64), (c) => c.charCodeAt(0));
-  return undefined;
+  if (typeof o.uri === "string") {
+    const file = await fetch(o.uri);
+    if (!file.ok) {
+      throw new Error(`Could not read the request body from ${o.uri} (${file.status}).`);
+    }
+    return await file.blob();
+  }
+  throw new TypeError(
+    "Unsupported request body: expected a string, Blob, FormData, bytes, or { string }, " +
+      "{ formData }, { base64 } or { uri }.",
+  );
 }
 
 /** A response's headers as an object. */
@@ -120,6 +137,40 @@ async function streamBody(id: number, res: Response): Promise<void> {
   if (tail) emit("didReceiveNetworkIncrementalData", id, tail, loaded, total);
 }
 
+/**
+ * Read a base64 / blob body in chunks, reporting `didReceiveNetworkDataProgress` (loaded,
+ * total) for each as React Native does with `incrementalUpdates`, then the whole body.
+ */
+async function progressBody(
+  id: number,
+  res: Response,
+  type: NetworkingResponseType,
+): Promise<void> {
+  const total = Number(res.headers.get("content-length") ?? -1);
+  const reader = res.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    if (!reader) break;
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    emit("didReceiveNetworkDataProgress", id, loaded, total);
+  }
+  const bytes = new Uint8Array(loaded);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  if (type === "base64") emit("didReceiveNetworkData", id, toBase64(bytes));
+  else {
+    const mime = res.headers.get("content-type") ?? "";
+    emit("didReceiveNetworkData", id, new Blob([bytes], mime ? { type: mime } : undefined));
+  }
+}
+
 /** Read the whole body as `responseType` and report it. */
 async function wholeBody(id: number, res: Response, type: NetworkingResponseType): Promise<void> {
   if (type === "base64") {
@@ -132,6 +183,7 @@ async function wholeBody(id: number, res: Response, type: NetworkingResponseType
 async function run(
   id: number,
   init: RequestInit,
+  data: unknown,
   url: string,
   responseType: NetworkingResponseType,
   incremental: boolean,
@@ -146,9 +198,12 @@ async function run(
     }, timeout)
     : undefined;
   try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
+    const body = await requestBody(data);
+    if (!inflight.has(id)) return; // aborted while the body was read
+    const res = await fetch(url, { ...init, body, signal: controller.signal });
     emit("didReceiveNetworkResponse", id, res.status, headersOf(res), res.url || url);
     if (incremental && responseType === "text") await streamBody(id, res);
+    else if (incremental) await progressBody(id, res, responseType);
     else await wholeBody(id, res, responseType);
     if (inflight.has(id)) emit("didCompleteNetworkResponse", id, "", false);
   } catch (err) {
@@ -159,6 +214,23 @@ async function run(
     clearTimeout(timer);
     inflight.delete(id);
   }
+}
+
+/** The paths (`/`, `/a`, `/a/`, …) and domains (none, the host, its parents) a page's cookies may have. */
+function cookieScopes(): { paths: string[]; domains: (string | undefined)[] } {
+  const location = (globalThis as { location?: { pathname?: string; hostname?: string } })
+    .location;
+  const paths = ["/"];
+  let prefix = "";
+  for (const segment of (location?.pathname ?? "/").split("/").filter(Boolean)) {
+    prefix += `/${segment}`;
+    paths.push(prefix, `${prefix}/`);
+  }
+  const domains: (string | undefined)[] = [undefined];
+  const labels = (location?.hostname ?? "").split(".").filter(Boolean);
+  // The host and each parent above the top-level label (a cookie cannot be set for a TLD).
+  for (let i = 0; i < labels.length - 1; i++) domains.push(labels.slice(i).join("."));
+  return { paths, domains };
 }
 
 /**
@@ -188,10 +260,9 @@ export const Networking: NetworkingStatic = {
     const init: RequestInit = {
       method,
       headers,
-      body: requestBody(data),
       credentials: withCredentials ? "include" : "same-origin",
     };
-    queueMicrotask(() => void run(id, init, url, responseType, incrementalUpdates, timeout));
+    queueMicrotask(() => void run(id, init, data, url, responseType, incrementalUpdates, timeout));
   },
   abortRequest(requestId) {
     const controller = inflight.get(requestId);
@@ -200,12 +271,23 @@ export const Networking: NetworkingStatic = {
   },
   clearCookies(callback) {
     const doc = (globalThis as { document?: { cookie?: string } }).document;
-    const names = (doc?.cookie ?? "").split(";").map((c) => c.split("=")[0].trim()).filter(
-      Boolean,
-    );
-    for (const name of names) {
-      doc!.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    const read = () =>
+      (doc?.cookie ?? "").split(";").map((c) => c.split("=")[0].trim()).filter(Boolean);
+    const before = read();
+    if (doc) {
+      // A cookie is removed only by naming the path and domain it was set with, which
+      // `document.cookie` does not tell: try every path above the page and every domain above
+      // its host (and none, for a host-only cookie).
+      const { paths, domains } = cookieScopes();
+      for (const name of new Set(before)) {
+        for (const path of paths) {
+          for (const domain of domains) {
+            doc.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${path}` +
+              (domain ? `; domain=${domain}` : "");
+          }
+        }
+      }
     }
-    callback(names.length > 0);
+    callback(read().length < before.length);
   },
 };

@@ -2900,9 +2900,13 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
         re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
         reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}
-        <code>rejected</code>, so the app may download it again. Shells installed before denext 3.3
-        (OTA template generation 9) verify only on arrival: re-run{" "}
-        <code>denext mobile add-ota</code> and ship a new binary (
+        <code>rejected</code>, so the app may download it again. A file that is there but cannot be
+        read right now is not a mismatch: a launch before the first unlock (a silent push or a
+        background task) finds an iOS UI data-protected, and a permission or I/O error looks the
+        same. That request is refused, or, when it is the stored manifest at launch, that launch
+        serves the confirmed or bundled UI (a trial keeps its attempt); nothing is quarantined and
+        the next launch checks again. Shells installed before denext 3.3 (OTA template generation 9)
+        verify only on arrival: re-run <code>denext mobile add-ota</code> and ship a new binary (
         <code>denext mobile doctor</code> flags them as <code>ota-reverify</code>).
       </p>
       <Code lang="tsx">
@@ -2923,9 +2927,11 @@ export function OtaWatch() {
         is the only thing standing between the app and a hostile UI. Rotating the key takes an app
         release, and a leaked key is valid until then. A file already verified in a process is not
         hashed again until the next launch, so a change made while the app runs is caught then. On
-        iOS, a web content process that dies during a trial is reloaded by Capacitor itself; if that
-        leaves the page blank, the watchdog rolls it back. On Android, a renderer crash takes the
-        app down, and the next launch counts it as a failed trial attempt.
+        iOS the first request for each file hashes it on the main thread (Capacitor's router is
+        synchronous), so a very large file delays its own first load once per process. On iOS, a web
+        content process that dies during a trial is reloaded by Capacitor itself; if that leaves the
+        page blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and
+        the next launch counts it as a failed trial attempt.
       </Callout>
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}

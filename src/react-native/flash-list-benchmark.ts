@@ -256,7 +256,12 @@ async function runBenchmark(
 ): Promise<BenchmarkResult> {
   const monitor = new JSFPSMonitor();
   monitor.startTracking();
-  for (let i = 0; i < repeat; i++) await pass();
+  try {
+    for (let i = 0; i < repeat; i++) await pass();
+  } catch (err) {
+    monitor.stopAndGetData(); // a failed pass must not leave the frame loop counting
+    throw err;
+  }
   const js = monitor.stopAndGetData();
   const result: BenchmarkResult = {
     js,
@@ -283,10 +288,8 @@ function useBenchmarkRunner(
     cancellableRef.current = cancellable;
     validate();
     setRunning(true);
-    run(cancellable).then((result) => {
-      callback(result);
-      setRunning(false);
-    });
+    // A failed run still ends (another can start); its error is not swallowed.
+    run(cancellable).then(callback).finally(() => setRunning(false));
   }, [callback, isBenchmarkRunning, ...deps]);
   useEffect(() => {
     if (params.startManually) return;

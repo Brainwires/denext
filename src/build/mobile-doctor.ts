@@ -995,30 +995,124 @@ const OTA_REVERIFY_MARKERS = {
   ],
 } as const;
 
+/** A finding's message and fix (its check and level come from {@linkcode perOtaPlatform}). */
+type OtaIssue = Pick<MobileDoctorFinding, "message" | "fix">;
+
+/**
+ * An error-level check (`store` and `release`) over each platform with an OTA plugin:
+ * `inspect` returns the platform's issue, or null.
+ */
+function perOtaPlatform(
+  id: string,
+  inspect: (p: MobileProject, platform: keyof typeof OTA_STORES) => Promise<OtaIssue | null>,
+): Check {
+  return {
+    id,
+    profiles: ["store", "release"],
+    applies: async (p) => (await otaPlatforms(p)).length > 0,
+    run: async (p) => {
+      const findings: MobileDoctorFinding[] = [];
+      for (const platform of await otaPlatforms(p)) {
+        const issue = await inspect(p, platform);
+        if (issue) findings.push({ check: id, level: "error", ...issue });
+      }
+      return findings;
+    },
+  };
+}
+
 /**
  * An OTA plugin from before re-verification: it checks a downloaded UI once, when it arrives, so
  * a file changed on the device afterwards (a rooted or jailbroken device, malware with storage
  * access, corruption) is served at every launch.
  */
-const otaReverify: Check = {
-  id: "ota-reverify",
+const otaReverify: Check = perOtaPlatform("ota-reverify", async (p, platform) => {
+  for (const [file, marker] of OTA_REVERIFY_MARKERS[platform]) {
+    if ((await readText(join(p.root, file)))?.includes(marker)) continue;
+    return {
+      message: `${platform}: the over-the-air UI plugin predates re-verification: a downloaded ` +
+        "UI is checked only when it arrives, so a file changed on the device afterwards is served",
+      fix: "run `denext mobile add-ota` (an unedited plugin is upgraded; an edited one needs " +
+        "`--force` or the changes merged by hand); then ship a new binary",
+    };
+  }
+  return null;
+});
+
+/** The OTA template files `denext mobile add-ota` writes, per platform (the bridge aside). */
+const OTA_TEMPLATE_FILES = {
+  iOS: ["ios/App/App/DenextOtaPlugin.swift", OTA_STORES.iOS],
+  Android: [
+    "android/app/src/main/java/dev/denext/ota/DenextOta.java",
+    "android/app/src/main/java/dev/denext/ota/DenextOtaPlugin.java",
+    OTA_STORES.Android,
+  ],
+} as const;
+
+/** The template generation on a file's `denext-ota-template` marker line, or null without one. */
+function otaGeneration(text: string | null): number | null {
+  const marker = text === null ? null : /^\/\/ denext-ota-template: (\d+) sha256=/.exec(text);
+  return marker ? Number(marker[1]) : null;
+}
+
+/**
+ * OTA files from different template generations on one platform: a generation can add calls
+ * from one file into another (generation 9: `DenextOtaRouter`, `verifyInstalled`, `routes()`), so
+ * an edited file kept by a later `add-ota` while the others were upgraded does not compile. An
+ * edited file keeps the marker line it was written with, which tells its generation.
+ */
+const otaGenerations: Check = perOtaPlatform("ota-generations", async (p, platform) => {
+  const generations = new Map<string, number>();
+  for (const file of OTA_TEMPLATE_FILES[platform]) {
+    const generation = otaGeneration(await readText(join(p.root, file)));
+    if (generation !== null) generations.set(file.slice(file.lastIndexOf("/") + 1), generation);
+  }
+  if (new Set(generations.values()).size < 2) return null;
+  const listed = [...generations].map(([name, generation]) => `${name} ${generation}`);
+  return {
+    message: `${platform}: the over-the-air UI files come from different template ` +
+      `generations (${listed.join(", ")}); one generation's files call into each ` +
+      "other, so the app does not compile (or misses a check) until they match",
+    fix: "merge denext's current template into the edited file by hand, or re-run " +
+      "`denext mobile add-ota --force` and re-apply your edits",
+  };
+});
+
+/** Every Java / Kotlin source of the Android app outside denext's OTA package, as text. */
+async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
+  const out: { path: string; text: string }[] = [];
+  for (const base of ["android/app/src/main/java", "android/app/src/main/kotlin"]) {
+    const dir = join(root, base);
+    if (!(await isDir(dir))) continue;
+    for await (const e of walk(dir, { includeDirs: false, exts: [".java", ".kt"] })) {
+      const rel = posixRelative(root, e.path);
+      if (rel.includes("/dev/denext/ota/")) continue;
+      out.push({ path: rel, text: await Deno.readTextFile(e.path) });
+    }
+  }
+  return out;
+}
+
+/**
+ * An Android app that sets its own `RouteProcessor`: Capacitor's bridge holds one, and the OTA
+ * plugin's (installed by `DenextOta.prepare`) is what re-verifies each file of a downloaded UI as
+ * it is served. Another one set after it replaces it, and the files are served unchecked.
+ */
+const androidRouteProcessor: Check = {
+  id: "android-route-processor",
   profiles: ["store", "release"],
-  applies: async (p) => (await otaPlatforms(p)).length > 0,
+  applies: async (p) => (await otaPlatforms(p)).includes("Android"),
   run: async (p) => {
     const findings: MobileDoctorFinding[] = [];
-    for (const platform of await otaPlatforms(p)) {
-      let current = true;
-      for (const [file, marker] of OTA_REVERIFY_MARKERS[platform]) {
-        if (!(await readText(join(p.root, file)))?.includes(marker)) current = false;
-      }
-      if (current) continue;
+    for (const source of await androidAppSources(p.root)) {
+      if (!/\bsetRouteProcessor\s*\(/.test(source.text)) continue;
       findings.push({
-        check: "ota-reverify",
-        level: "error",
-        message: `${platform}: the over-the-air UI plugin predates re-verification: a downloaded ` +
-          "UI is checked only when it arrives, so a file changed on the device afterwards is served",
-        fix: "run `denext mobile add-ota` (an unedited plugin is upgraded; an edited one needs " +
-          "`--force` or the changes merged by hand); then ship a new binary",
+        check: "android-route-processor",
+        level: "warning",
+        message: `Android: ${source.path} sets its own RouteProcessor, which replaces the one ` +
+          "the over-the-air UI plugin installs: a downloaded UI's files are then served without " +
+          "re-verification",
+        fix: "drop the call and leave the bridge's route processor to `DenextOta.prepare`",
       });
     }
     return findings;
@@ -1050,6 +1144,8 @@ const CHECKS: readonly Check[] = [
   fastlane,
   otaSigning,
   otaReverify,
+  otaGenerations,
+  androidRouteProcessor,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

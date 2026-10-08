@@ -1496,10 +1496,14 @@ function noAttendees<T>(name: string): Promise<T> {
  * An event's attendees. The plugin does not read them by event id.
  *
  * @param _id The event.
+ * @param _recurringEventOptions Which occurrence (Expo's second argument).
  * @returns Never resolves.
  * @throws `ERR_UNAVAILABLE`, always.
  */
-export function getAttendeesForEventAsync(_id: string): Promise<Attendee[]> {
+export function getAttendeesForEventAsync(
+  _id: string,
+  _recurringEventOptions?: RecurringEventOptions,
+): Promise<Attendee[]> {
   return noAttendees("getAttendeesForEventAsync");
 }
 
@@ -1511,7 +1515,10 @@ export function getAttendeesForEventAsync(_id: string): Promise<Attendee[]> {
  * @returns Never resolves.
  * @throws `ERR_UNAVAILABLE`, always.
  */
-export function createAttendeeAsync(_eventId: string, _details: Attendee): Promise<string> {
+export function createAttendeeAsync(
+  _eventId: string,
+  _details?: Partial<Attendee>,
+): Promise<string> {
   return noAttendees("createAttendeeAsync");
 }
 

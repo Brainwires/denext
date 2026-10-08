@@ -118,12 +118,15 @@ import org.json.JSONObject;
  *
  * <p>{@code open()} starts {@code Settings.ACTION_APPLICATION_DETAILS_SETTINGS} for the app's
  * package: the "App info" screen, where the user can change a permission they refused. Rejects
- * with code {@code unavailable} when no activity handles it.
+ * with code {@code unavailable} when no activity handles it, {@code failed} when Android refuses
+ * to start it.
  *
  * <p>{@code sendIntent({ action, extras? })} starts an activity for {@code action} (React
  * Native's {@code Linking.sendIntent}): each extra is {@code { key, value }}, a string, a number
  * (put as a double, as React Native does) or a boolean. Rejects with code {@code invalid} for an
- * empty action or another extra type, and {@code unavailable} when no activity handles it.
+ * empty action or another extra type, {@code unavailable} when no activity handles it, and
+ * {@code failed} when Android refuses to start it (a {@code SecurityException}: an action that
+ * needs a permission the app lacks, such as {@code ACTION_CALL}).
  */
 @CapacitorPlugin(name = "DenextSettings")
 public class DenextSettingsPlugin extends Plugin {
@@ -138,6 +141,9 @@ public class DenextSettingsPlugin extends Plugin {
             call.resolve();
         } catch (ActivityNotFoundException e) {
             call.reject("The app's settings page is unavailable.", "unavailable");
+        } catch (Exception e) {
+            // Never let it escape: Capacitor's Bridge turns a plugin method's exception into a crash.
+            call.reject("The app's settings page could not be opened.", "failed");
         }
     }
 
@@ -163,6 +169,11 @@ public class DenextSettingsPlugin extends Plugin {
             call.resolve();
         } catch (ActivityNotFoundException e) {
             call.reject("Could not launch Intent with action " + action + ".", "unavailable");
+        } catch (Exception e) {
+            // A SecurityException (ACTION_CALL without CALL_PHONE, an activity that is not
+            // exported) or anything else: React Native's IntentModule catches every exception and
+            // rejects; letting it escape would crash the app through Capacitor's Bridge.
+            call.reject("Could not launch Intent with action " + action + ".", "failed");
         }
     }
 

@@ -213,24 +213,25 @@ Deno.test("dismissActionSheet (shell): the native menu of a sheet with disabled 
   }
 });
 
-Deno.test("dismissActionSheet (shell): without the generation-2 plugin nothing native is called", async () => {
-  const sheet = pendingPlugin("showActions");
-  try {
-    await inShell(
-      "ios",
-      { ActionSheet: sheet.plugin, DenextContextMenu: { show: () => {} } },
-      async () => {
+Deno.test("dismissActionSheet (shell): a system sheet nothing can close stays open and keeps its answer", async () => {
+  // Without DenextContextMenu's generation-2 dismiss (or without the plugin at all) the system
+  // sheet cannot be closed from the page: it stays on screen, so the user's choice must still
+  // reach the callback instead of being dropped.
+  for (const menu of [{ DenextContextMenu: { show: () => {} } }, {}]) {
+    const sheet = pendingPlugin("showActions");
+    try {
+      await inShell("ios", { ActionSheet: sheet.plugin, ...menu }, async () => {
         const picked: number[] = [];
         ActionSheetIOS.showActionSheetWithOptions({ options: ["A"] }, (i) => void picked.push(i));
         await settle();
         ActionSheetIOS.dismissActionSheet(); // must not throw
         sheet.answers[0]({ index: 0 });
         await settle();
-        assertEquals(picked, []);
-      },
-    );
-  } finally {
-    resetActionSheetIOSForTesting();
+        assertEquals(picked, [0]);
+      });
+    } finally {
+      resetActionSheetIOSForTesting();
+    }
   }
 });
 

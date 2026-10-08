@@ -18,6 +18,7 @@
  * @module
  */
 
+import { gradientColor } from "../react-native-compat/linear-gradient.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { hostView, viewStyle } from "./internal/common.ts";
@@ -37,8 +38,8 @@ export interface CheckboxProps {
   value?: boolean;
   /** Whether it ignores input (default `false`). */
   disabled?: boolean;
-  /** The checked fill and the border colour. */
-  color?: string;
+  /** The checked fill and the border colour: a CSS colour or a `processColor` number. */
+  color?: string | number;
   /** Called with the change event (`event.nativeEvent.value` is the new value). */
   onChange?: (event: { nativeEvent: CheckboxEvent }) => void;
   /** Called with the new value. */
@@ -57,14 +58,33 @@ const CHECK_MARK = 'url("data:image/svg+xml,' +
 /** Expo's default checked colour. */
 const CHECKED = "#009688";
 
-/** The drawn box's style for the state. */
-function boxStyle(value: boolean, disabled: boolean, color?: string): Record<string, unknown> {
-  let border = color ?? (value ? CHECKED : "#657786");
-  let fill = value ? color ?? CHECKED : "#fff";
+/** The border and fill colours for the state (`disabled` greys them over `color`). */
+function boxColors(
+  value: boolean,
+  disabled: boolean,
+  color: string | undefined,
+): { border: string; fill: string } {
   if (disabled) {
-    border = value ? "#AAB8C2" : "#CCD6DD";
-    if (value) fill = "#AAB8C2";
+    return value ? { border: "#AAB8C2", fill: "#AAB8C2" } : { border: "#CCD6DD", fill: "#fff" };
   }
+  return {
+    border: color ?? (value ? CHECKED : "#657786"),
+    fill: value ? color ?? CHECKED : "#fff",
+  };
+}
+
+/** The drawn box's style for the state. */
+function boxStyle(
+  value: boolean,
+  disabled: boolean,
+  tint?: string | number,
+): Record<string, unknown> {
+  // A processColor number (0xAARRGGBB) becomes a CSS colour; a string is one already.
+  const { border, fill } = boxColors(
+    value,
+    disabled,
+    tint == null ? undefined : gradientColor(tint),
+  );
   return {
     position: "absolute",
     inset: 0,

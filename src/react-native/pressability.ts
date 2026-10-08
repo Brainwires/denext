@@ -7,7 +7,8 @@
  * `delayLongPress` (500 ms by default, counted from the press in), and on release `onPressOut`
  * (held until the press has lasted `minPressDuration`, 130 ms by default, or `delayPressOut`)
  * then `onPress` unless a long press took it. A pointer's click is the responder's; a click
- * without a pointer (the keyboard, assistive technology) presses directly.
+ * without a pointer (the keyboard, assistive technology) presses directly, except the one that
+ * trails a responder release (older WebKit's click has no `pointerType`): that is the same press.
  *
  * @module
  */
@@ -92,6 +93,8 @@ export interface PressabilityEventHandlers {
 /** React Native's defaults. */
 const LONG_PRESS_DELAY = 500;
 const MIN_PRESS_DURATION = 130;
+/** How long after a responder release its trailing click may arrive (ms). */
+const TRAILING_CLICK_WINDOW = 1000;
 
 /** React Native's `normalizeDelay`. */
 function delay(value: number | null | undefined, min = 0, fallback = 0): number {
@@ -111,6 +114,8 @@ class Pressability {
   #longTimer: ReturnType<typeof setTimeout> | undefined;
   #hoverTimer: ReturnType<typeof setTimeout> | undefined;
   #hovered = false;
+  /** When the last responder release happened, until its trailing click (if any) arrives. */
+  #releasedAt: number | undefined;
   readonly handlers: PressabilityEventHandlers;
 
   constructor(config: PressabilityConfig) {
@@ -186,6 +191,7 @@ class Pressability {
     this.#cancel(this.#longTimer);
     this.#state = "idle";
     if (was === "idle") return;
+    this.#releasedAt = Date.now();
     if (was === "pending") this.#activate(event);
     this.#deactivate(event);
     const { onLongPress, onPress } = this.config;
@@ -218,7 +224,12 @@ class Pressability {
       onClick: (event) => {
         const pointer = (event?.nativeEvent as { pointerType?: unknown } | undefined)
           ?.pointerType;
+        // The click a responder release is followed by belongs to that press; older WebKit's
+        // carries no pointerType, so it is told apart by arriving right after the release.
+        const released = this.#releasedAt;
+        this.#releasedAt = undefined;
         if (typeof pointer === "string" && pointer !== "") return; // the responder's press
+        if (released !== undefined && Date.now() - released <= TRAILING_CLICK_WINDOW) return;
         if (event?.currentTarget !== event?.target) {
           event?.stopPropagation?.();
           return;

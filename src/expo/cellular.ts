@@ -1,7 +1,8 @@
 /**
  * `expo-cellular` for denext: what a page can know of the cellular connection. The generation
  * comes from the Network Information API's `effectiveType` (Chromium, the Android shell's
- * WebView) and is `UNKNOWN` elsewhere; the carrier, its country and its network codes are not
+ * WebView) on a cellular connection and is `UNKNOWN` elsewhere (a desktop's speed class is not
+ * a generation); the carrier, its country and its network codes are not
  * readable from a WebView or a browser, so they are null (Expo's web answers; iOS 16.4+
  * reports none of them natively either). Reading needs no permission: the permission calls
  * answer `granted`.
@@ -16,6 +17,7 @@
  * @module
  */
 
+import { nativePlatform } from "../mobile/bridge.ts";
 import {
   NOT_NEEDED_PERMISSION,
   type PermissionExpiration,
@@ -51,7 +53,10 @@ const GENERATIONS: Readonly<Record<string, CellularGeneration>> = {
 
 /**
  * The connection's generation, from the Network Information API (its `effectiveType` is the
- * connection's measured speed class, which is what Expo's web build reports too).
+ * connection's measured speed class, which is what Expo's web build reports too). Only a
+ * cellular connection has one: a connection whose `type` says otherwise is `UNKNOWN`, and so is
+ * one without a `type` (a desktop browser or Deno Desktop, where a fast wired or Wi-Fi link
+ * reads `"4g"`), except in the Android shell, where the connection is the phone's.
  *
  * @returns The generation, or `UNKNOWN`.
  */
@@ -60,9 +65,10 @@ export function getCellularGenerationAsync(): Promise<CellularGeneration> {
     navigator?: { connection?: { effectiveType?: string; type?: string } };
   }).navigator;
   const connection = nav?.connection;
-  if (!connection || (connection.type && connection.type !== "cellular")) {
-    return Promise.resolve(CellularGeneration.UNKNOWN);
-  }
+  const cellular = connection?.type
+    ? connection.type === "cellular"
+    : connection !== undefined && nativePlatform() === "android";
+  if (!connection || !cellular) return Promise.resolve(CellularGeneration.UNKNOWN);
   return Promise.resolve(GENERATIONS[connection.effectiveType ?? ""] ?? CellularGeneration.UNKNOWN);
 }
 

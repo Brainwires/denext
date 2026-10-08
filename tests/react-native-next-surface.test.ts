@@ -6,7 +6,7 @@
 // .isDisableAnimations`, and the `LogBox` / `LayoutAnimation` / `UIManager` members
 // react-native-web lacks. The entry wiring is in react-native-core-build.test.ts.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../src/jsx/types.ts";
@@ -191,6 +191,7 @@ async function networkLog(
     "didReceiveNetworkResponse",
     "didReceiveNetworkData",
     "didReceiveNetworkIncrementalData",
+    "didReceiveNetworkDataProgress",
     "didCompleteNetworkResponse",
   ].map((e) => Networking.addListener(e as never, (args) => void log.push([e, args])));
   try {
@@ -285,9 +286,102 @@ Deno.test("Networking.clearCookies: removes the page's cookies, reports whether 
     let result: boolean | null = null;
     Networking.clearCookies((r) => (result = r));
     assertEquals(result, true);
-    assertEquals(written.map((w) => w.split("=")[0]), ["a", "b"]);
+    assertEquals([...new Set(written.map((w) => w.split("=")[0]))], ["a", "b"]);
     Networking.clearCookies((r) => (result = r));
     assertEquals(result, false);
+  });
+});
+
+Deno.test("Networking.sendRequest: incremental base64 / blob responses report didReceiveNetworkDataProgress", async () => {
+  const chunks = ["hel", "lo"];
+  const body = () =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(new TextEncoder().encode(chunk));
+        c.close();
+      },
+    });
+  const log = await networkLog(
+    () => Promise.resolve(new Response(body(), { headers: { "content-length": "5" } })),
+    async (send) => {
+      send({ responseType: "base64", incremental: true });
+      await settle();
+    },
+  );
+  const id = log[0][1][0];
+  assertEquals(log.slice(1), [
+    // React Native: progress (loaded, total) as the bytes arrive, then the whole body.
+    ["didReceiveNetworkDataProgress", [id, 3, 5]],
+    ["didReceiveNetworkDataProgress", [id, 5, 5]],
+    ["didReceiveNetworkData", [id, btoa("hello")]],
+    ["didCompleteNetworkResponse", [id, "", false]],
+  ]);
+});
+
+Deno.test("Networking.sendRequest: a { uri } body is that file's bytes; an unknown body fails clearly", async () => {
+  const seen: Array<{ url: string; body: unknown }> = [];
+  const log = await networkLog(
+    (url, init) => {
+      seen.push({ url, body: init?.body });
+      return Promise.resolve(new Response(url === "blob:file" ? "filedata" : "ok"));
+    },
+    async (send) => {
+      send({ method: "POST", url: "https://x.test/up", data: { uri: "blob:file" } });
+      await settle();
+      send({ method: "POST", url: "https://x.test/bad", data: { stream: {} } });
+      await settle();
+    },
+  );
+  assertEquals(seen.map((s) => s.url), ["blob:file", "https://x.test/up"]);
+  assert(seen[1].body instanceof Blob);
+  assertEquals(await (seen[1].body as Blob).text(), "filedata");
+  const failed = log.filter(([e]) => e === "didCompleteNetworkResponse").at(-1)!;
+  assertStringIncludes(failed[1][1] as string, "Unsupported request body");
+  assertEquals(seen.length, 2, "the request with an unknown body is never sent");
+});
+
+/** A `document.cookie` that keeps each cookie under its name, path and domain. */
+function cookieJar(sticky: string[] = []) {
+  const jar = new Map<string, { name: string; path: string; domain: string }>();
+  const set = (name: string, path: string, domain = "") =>
+    jar.set(`${name}|${path}|${domain}`, { name, path, domain });
+  const document = {
+    get cookie() {
+      return [...jar.values()].map((c) => `${c.name}=1`).join("; ");
+    },
+    set cookie(v: string) {
+      const [pair, ...attrs] = v.split(";").map((p) => p.trim());
+      const name = pair.split("=")[0];
+      const attr = (k: string) =>
+        attrs.find((a) => a.toLowerCase().startsWith(`${k}=`))?.slice(k.length + 1) ?? "";
+      if (!/expires=Thu, 01 Jan 1970/.test(v) || sticky.includes(name)) return;
+      jar.delete(`${name}|${attr("path") || "/"}|${attr("domain").replace(/^\./, "")}`);
+    },
+  };
+  return { document, set, jar };
+}
+
+Deno.test("Networking.clearCookies: removes cookies set under a deeper path or the parent domain", async () => {
+  const { document, set, jar } = cookieJar();
+  set("root", "/");
+  set("scoped", "/app");
+  set("shared", "/", "x.test");
+  const location = { pathname: "/app/page", hostname: "app.x.test" };
+  await withGlobals({ document, location }, () => {
+    let result: boolean | null = null;
+    Networking.clearCookies((r) => (result = r));
+    assertEquals([...jar.values()].map((c) => c.name), []);
+    assertEquals(result, true);
+  });
+});
+
+Deno.test("Networking.clearCookies: reports false when no cookie could be removed", async () => {
+  const { document, set } = cookieJar(["pinned"]);
+  set("pinned", "/");
+  await withGlobals({ document, location: { pathname: "/", hostname: "x.test" } }, () => {
+    let result: boolean | null = null;
+    Networking.clearCookies((r) => (result = r));
+    assertEquals(result, false, "the cookie is still there");
   });
 });
 
@@ -409,6 +503,35 @@ Deno.test("usePressability: clicks — a pointer's is the responder's, the keybo
     return h("i", null);
   }, null));
   await none.unmount();
+});
+
+Deno.test("usePressability: older WebKit's pointerless click after a release is the same press", async () => {
+  await withTimers(async (advance) => {
+    const { calls, handlers, screen } = await pressable({});
+    const target = {};
+    // Safari before PointerEvent clicks: the click that follows a tap carries no pointerType.
+    const click = () => handlers().onClick({ nativeEvent: {}, currentTarget: target, target });
+    handlers().onResponderGrant({});
+    advance(20);
+    handlers().onResponderRelease({});
+    click();
+    assertEquals(
+      calls,
+      ["in", "press"],
+      "the click after the responder's press is not a second one",
+    );
+    advance(200);
+    // A later click with no gesture behind it (the keyboard, assistive technology) presses.
+    click();
+    assertEquals(calls, ["in", "press", "out", "press"]);
+    // A long press's trailing click does not press either.
+    handlers().onResponderGrant({});
+    advance(600);
+    handlers().onResponderRelease({});
+    click();
+    assertEquals(calls, ["in", "press", "out", "press", "in", "long", "out"]);
+    await screen.unmount();
+  });
 });
 
 // ---- VirtualizedSectionList ------------------------------------------------------------------

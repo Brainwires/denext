@@ -5,7 +5,9 @@
 // served in a process (iOS: `DenextOtaRouter` in front of the asset handler; Android: the
 // `RouteProcessor` `DenextOta.prepare` gives the bridge). A file changed, added or removed on the
 // device after the download quarantines the version, the shell falls back to its bundled UI and
-// the page hears `otaRejected`.
+// the page hears `otaRejected`. A file that is there but cannot be read right now (a launch before
+// the first unlock finds it data-protected; a permission or I/O error) is only refused: the
+// version is kept and checked again later.
 //
 // The native halves are compiled and RUN where the toolchains exist: the Java templates against
 // plain-JDK stand-ins for Android / Capacitor / org.json (javac + java), the Swift store on macOS
@@ -24,6 +26,7 @@ import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 import { writtenOtaTemplatesAt } from "./_release-templates.ts";
 import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
+import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 
 const FIXTURES = new URL("./fixtures/ota-reverify/", import.meta.url);
 const fixture = (path: string) => new URL(path, FIXTURES).pathname;
@@ -240,6 +243,110 @@ Deno.test("OTA re-verification: the doctor needs both halves per platform", asyn
   }
 });
 
+Deno.test("OTA templates: a partial upgrade that keeps an edited file says it will not compile, and the doctor flags it", async () => {
+  const dir = await project();
+  try {
+    await addOtaToProject({ dir });
+    // An earlier, unedited store (any generation's marker over its own body) beside an edited
+    // plugin; on Android an earlier entry point beside an edited store.
+    const write = async (rel: string, text: string) =>
+      await Deno.writeTextFile(join(dir, rel), text);
+    const read = async (rel: string) => await Deno.readTextFile(join(dir, rel));
+    await write(
+      `${IOS_DIR}/DenextOtaStore.swift`,
+      await renderMarkedTemplate("ota", 8, "// store 8\n"),
+    );
+    await write(
+      `${IOS_DIR}/DenextOtaPlugin.swift`,
+      (await read(`${IOS_DIR}/DenextOtaPlugin.swift`)) + "// mine\n",
+    );
+    await write(
+      `${ANDROID_DIR}/DenextOta.java`,
+      await renderMarkedTemplate("ota", 8, "// entry 8\n"),
+    );
+    await write(
+      `${ANDROID_DIR}/DenextOtaStore.java`,
+      (await read(`${ANDROID_DIR}/DenextOtaStore.java`)) + "// mine\n",
+    );
+
+    const mixed = await runMobileDoctor({ root: dir, profile: "store" });
+    const found = mixed.findings.filter((f) => f.check === "ota-generations");
+    assertEquals(found.map((f) => f.message.split(":")[0]), ["iOS", "Android"]);
+    assert(found.every((f) => f.level === "error"));
+    assertStringIncludes(
+      found[0].message,
+      `DenextOtaPlugin.swift ${OTA_TEMPLATE_VERSION}, DenextOtaStore.swift 8`,
+    );
+    assertStringIncludes(found[0].fix, "--force");
+
+    const report = await addOtaToProject({ dir });
+    assertEquals(report.kept, [
+      `${IOS_DIR}/DenextOtaPlugin.swift`,
+      `${ANDROID_DIR}/DenextOtaStore.java`,
+    ]);
+    const note = (platform: string) => report.manual.find((m) => m.startsWith(`${platform}: `));
+    assertStringIncludes(
+      note("iOS") ?? "",
+      `iOS: ${IOS_DIR}/DenextOtaPlugin.swift kept while ${IOS_DIR}/DenextOtaStore.swift was upgraded.`,
+    );
+    assertStringIncludes(note("iOS") ?? "", "will not compile");
+    assertStringIncludes(
+      note("Android") ?? "",
+      `Android: ${ANDROID_DIR}/DenextOtaStore.java kept while ${ANDROID_DIR}/DenextOta.java was upgraded.`,
+    );
+    // An edit kept with nothing else upgraded (the files already match) is no partial upgrade.
+    const again = await addOtaToProject({ dir });
+    assertEquals(
+      again.manual.filter((m) => m.startsWith("iOS: ") || m.startsWith("Android: ")),
+      [],
+    );
+    // Edited files of the current generation are of one generation: no finding.
+    const same = await runMobileDoctor({ root: dir, profile: "release" });
+    assertEquals(same.findings.filter((f) => f.check === "ota-generations"), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("OTA doctor: an Android app that sets its own RouteProcessor turns re-verification off", async () => {
+  const dir = await project();
+  try {
+    await addOtaToProject({ dir });
+    const clean = await runMobileDoctor({ root: dir, profile: "release" });
+    assert(clean.checks.includes("android-route-processor"));
+    // The OTA package's own call (DenextOta.prepare) is the one that should be there.
+    assertEquals(clean.findings.filter((f) => f.check === "android-route-processor"), []);
+    const custom = "android/app/src/main/java/com/example/app/AppRoutes.kt";
+    await Deno.writeTextFile(
+      join(dir, custom),
+      "package com.example.app\n\nfun install(builder: Bridge.Builder) {\n    builder.setRouteProcessor(MyRoutes())\n}\n",
+    );
+    const flagged = await runMobileDoctor({ root: dir, profile: "store" });
+    const found = flagged.findings.filter((f) => f.check === "android-route-processor");
+    assertEquals(found.length, 1);
+    assertEquals(found[0].level, "warning");
+    assertStringIncludes(found[0].message, custom);
+    assertStringIncludes(found[0].message, "without re-verification");
+    // No Android OTA plugin: nothing to turn off.
+    const none = await project();
+    try {
+      await Deno.writeTextFile(
+        join(none, custom.replace("AppRoutes.kt", "AppRoutes.java")),
+        "setRouteProcessor(x);",
+      );
+      assert(
+        !(await runMobileDoctor({ root: none, profile: "release" })).checks.includes(
+          "android-route-processor",
+        ),
+      );
+    } finally {
+      await Deno.remove(none, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 // ---- the native halves, compiled and run -----------------------------------------------------
 
 const has = (tool: string, args = ["-version"]): boolean => {
@@ -297,6 +404,24 @@ const SHARED_CHECKS = [
   "a fresh download of a quarantined version is served again",
 ];
 
+/**
+ * The checks for a file that is there but cannot be read right now (data protection before the
+ * first unlock, an I/O or permission error): refused, never quarantined, checked again later.
+ * Both harnesses make the file unreadable with its permissions, which root ignores.
+ */
+const UNREADABLE_CHECKS = [
+  "unreadable: the UI is served while its files can be read",
+  "a file that cannot be read is refused",
+  "a file that cannot be read does not quarantine the UI",
+  "once it can be read it is checked again and served",
+  "the stored manifest that cannot be read is refused to the page",
+  "a launch whose stored manifest cannot be read serves the bundled UI",
+  "a stored manifest that cannot be read does not quarantine the UI",
+  "a pending UI that cannot be read is not tried this launch and keeps its trial",
+  "the next launch that can read it tries it",
+];
+const IS_ROOT = Deno.build.os !== "windows" && Deno.uid() === 0;
+
 /** Asserts a harness's output: every line ok, the shared checks all present, a clean tally. */
 function assertHarness(output: string, platform: string): void {
   const lines = output.trim().split("\n");
@@ -304,6 +429,9 @@ function assertHarness(output: string, platform: string): void {
   assertEquals(failed, [], `${platform}:\n${output}`);
   const passed = new Set(lines.filter((l) => l.startsWith("ok ")).map((l) => l.slice(3)));
   for (const name of SHARED_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
+  if (!IS_ROOT) {
+    for (const name of UNREADABLE_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
+  }
   assertEquals(lines.at(-1), "done 0");
 }
 

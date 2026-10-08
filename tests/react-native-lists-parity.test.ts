@@ -343,6 +343,40 @@ Deno.test("FlashList useBenchmark: scrolls a FlashList to its end and back, repo
   });
 });
 
+Deno.test("FlashList useBenchmark: a pass that throws stops the FPS monitor and the run", async () => {
+  await withClock(async (_tick, frames) => {
+    const errors: unknown[] = [];
+    const onError = (event: PromiseRejectionEvent) => {
+      event.preventDefault();
+      errors.push(event.reason);
+    };
+    globalThis.addEventListener("unhandledrejection", onError);
+    let bench: { startBenchmark: () => void; isBenchmarkRunning: boolean } | null = null;
+    // A list whose measurement throws mid-run (a ref that went stale, a broken adapter).
+    const broken = {
+      props: { data: items(10) },
+      getWindowSize: () => {
+        throw new Error("gone");
+      },
+    };
+    function Bench(): VNode {
+      bench = useBenchmark({ current: broken } as never, () => {}, { startManually: true });
+      return h("i", null);
+    }
+    try {
+      const screen = await render(h(Bench, null));
+      await act(() => bench!.startBenchmark());
+      await act(() => new Promise((r) => setTimeout(r, 0)));
+      assertEquals(frames.queue.size, 0, "no frame loop left counting after the failure");
+      assertEquals(bench!.isBenchmarkRunning, false, "another run can start");
+      assertEquals(errors.map((e) => (e as Error).message), ["gone"], "the failure surfaces");
+      await screen.unmount();
+    } finally {
+      globalThis.removeEventListener("unhandledrejection", onError);
+    }
+  });
+});
+
 Deno.test("FlashList useFlatListBenchmark: scrolls to targetOffset and back; empty data throws", async () => {
   await withClock(async (tick, frames) => {
     const results: BenchmarkResult[] = [];
@@ -451,6 +485,26 @@ Deno.test("LegendList anchoredEndSpace: unknown sizes wait for measurement; then
     assertEquals(ready.at(-1), { anchorIndex: 38, anchorKey: "m38", size: 600 });
     assertEquals(endRoom(screen), 600);
     assertEquals(sizes, [600]);
+    await screen.unmount();
+  });
+});
+
+Deno.test("LegendList anchoredEndSpace: a batch of first measurements is one pass, not one per item", async () => {
+  await withRO(async () => {
+    const n = 200;
+    let lookups = 0;
+    const screen = await render(h(LegendList as never, {
+      data: items(n),
+      // Counts the anchored-space walk: it asks each item from the anchor to the end.
+      getFixedItemSize: () => void lookups++,
+      anchoredEndSpace: { anchorIndex: 0 },
+      renderItem: ({ item }: { item: Item }) => row(item),
+    }));
+    lookups = 0;
+    await measureAll(() => 20);
+    // Every item from the anchor on is mounted and measured at once: n reports. Recomputing the
+    // space for each would walk the n items n times (O(n²)).
+    assert(lookups <= 4 * n, `${lookups} lookups for ${n} items`);
     await screen.unmount();
   });
 });

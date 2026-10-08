@@ -105,12 +105,24 @@ interface SheetDismisser {
   dismiss(options: { target: "menu" | "sheet" }): Promise<unknown>;
 }
 
+/** A sheet `showActionSheetWithOptions` opened that has not answered. */
+interface OpenSheet {
+  /** Closes it. */
+  readonly controller: AbortController;
+  /** Whether it is `@capacitor/action-sheet`'s system sheet (closable only through DenextContextMenu). */
+  readonly system: boolean;
+}
+
 /**
- * The sheets `showActionSheetWithOptions` opened that have not answered, oldest first: each one's
- * controller closes it. `dismissActionSheet()` closes the last, as React Native closes the
- * topmost.
+ * The sheets `showActionSheetWithOptions` opened that have not answered, oldest first.
+ * `dismissActionSheet()` closes the last, as React Native closes the topmost.
  */
-const openSheets: AbortController[] = [];
+const openSheets: OpenSheet[] = [];
+
+/** denext's `DenextContextMenu` plugin's `dismiss`, when the shell has it (generation 2). */
+function sheetDismisser(): SheetDismisser | undefined {
+  return nativePlugin<SheetDismisser>("DenextContextMenu", ["dismiss"]);
+}
 
 /** The destructive indices, as a set. */
 function destructiveSet(options: ActionSheetIOSOptions): ReadonlySet<number> {
@@ -133,8 +145,7 @@ async function showNative(
   // @capacitor/action-sheet has no dismiss: denext's DenextContextMenu closes its sheet, whose
   // call then never answers (the callback is not called, as in React Native).
   signal.addEventListener("abort", () => {
-    const dismisser = nativePlugin<SheetDismisser>("DenextContextMenu", ["dismiss"]);
-    dismisser?.dismiss({ target: "sheet" }).catch(() => {});
+    sheetDismisser()?.dismiss({ target: "sheet" }).catch(() => {});
   });
   const result = await plugin.showActions({
     ...(options.title ? { title: options.title } : {}),
@@ -197,18 +208,25 @@ async function showAsDialog(options: ActionSheetIOSOptions, signal: AbortSignal)
   return result.index ?? dismissedIndex(options);
 }
 
+/** `@capacitor/action-sheet`, when `options` would show in it (no disabled options to draw). */
+function systemSheet(options: ActionSheetIOSOptions): ActionSheetPlugin | undefined {
+  if ((options.disabledButtonIndices?.length ?? 0) > 0 || nativePlatform() === "web") return;
+  return nativePlugin<ActionSheetPlugin>("ActionSheet", ["showActions"]);
+}
+
 /** Show `options` the best way available here; resolves the chosen index. */
-function showSheet(options: ActionSheetIOSOptions, signal: AbortSignal): Promise<number> {
-  const plugin = nativePlatform() === "web"
-    ? undefined
-    : nativePlugin<ActionSheetPlugin>("ActionSheet", ["showActions"]);
+function showSheet(
+  options: ActionSheetIOSOptions,
+  system: ActionSheetPlugin | undefined,
+  signal: AbortSignal,
+): Promise<number> {
   if ((options.disabledButtonIndices?.length ?? 0) > 0) return showMenu(options, signal);
-  return plugin ? showNative(plugin, options, signal) : showAsDialog(options, signal);
+  return system ? showNative(system, options, signal) : showAsDialog(options, signal);
 }
 
 /** Test hook: forget every open sheet (closing each). */
 export function resetActionSheetIOSForTesting(): void {
-  for (const sheet of openSheets.splice(0)) sheet.abort();
+  for (const sheet of openSheets.splice(0)) sheet.controller.abort();
 }
 
 /**
@@ -229,8 +247,9 @@ export function resetActionSheetIOSForTesting(): void {
  * - `dismissActionSheet()`: closes the topmost sheet still open, without calling its callback
  *   (as React Native): the in-page dialog or menu, the shell's `DenextContextMenu` menu, and the
  *   system sheet of `@capacitor/action-sheet` through denext's `DenextContextMenu` plugin (which
- *   `denext mobile add action-sheet` installs). A no-op when none is open. A system dialog
- *   (`@capacitor/dialog`, the shell without `action-sheet`) cannot be closed from the page.
+ *   `denext mobile add action-sheet` installs). A no-op when none is open. Without that plugin
+ *   the system sheet cannot be closed from the page: it stays open and its callback still gets
+ *   the user's choice (a no-op, rather than a sheet on screen whose answer is dropped).
  *
  * The tint colours and `userInterfaceStyle` are accepted and not applied.
  *
@@ -252,7 +271,8 @@ export const ActionSheetIOS: ActionSheetIOSStatic = {
     if (typeof callback !== "function") {
       throw new TypeError("ActionSheetIOS.showActionSheetWithOptions: a callback is required");
     }
-    const sheet = new AbortController();
+    const system = systemSheet(options);
+    const sheet: OpenSheet = { controller: new AbortController(), system: system !== undefined };
     openSheets.push(sheet);
     const answer = (index: number) => {
       const at = openSheets.indexOf(sheet);
@@ -261,7 +281,10 @@ export const ActionSheetIOS: ActionSheetIOSStatic = {
       openSheets.splice(at, 1);
       callback(index);
     };
-    showSheet(options, sheet.signal).then(answer, () => answer(dismissedIndex(options)));
+    showSheet(options, system, sheet.controller.signal).then(
+      answer,
+      () => answer(dismissedIndex(options)),
+    );
   },
   showShareActionSheetWithOptions(options, failureCallback, successCallback) {
     Share.share({
@@ -282,6 +305,10 @@ export const ActionSheetIOS: ActionSheetIOSStatic = {
     );
   },
   dismissActionSheet() {
-    openSheets.pop()?.abort();
+    const top = openSheets.at(-1);
+    // A system sheet the shell cannot close stays on screen: keep waiting for its answer.
+    if (!top || (top.system && !sheetDismisser())) return;
+    openSheets.pop();
+    top.controller.abort();
   },
 };

@@ -8,7 +8,7 @@
  * The canvas is sized to its layout box at the device pixel ratio (and follows resizes, as the
  * native drawing buffer does). The ref's `takeSnapshotAsync` encodes the canvas (a `blob:`
  * URL in `uri` and `localUri`). Context loss calls `onContextLost`, a restore re-creates the
- * context and calls `onContextCreate` again.
+ * context and calls `onContextCreate` again (not `onContextRestored`, as in Expo's web build).
  *
  * Not available (a WebView has no API for them): GL on a worklet / UI runtime
  * (`enableExperimentalWorkletSupport`; `getWorkletContext` returns undefined), camera textures
@@ -136,7 +136,10 @@ export interface GLViewProps {
   enableExperimentalWorkletSupport?: boolean;
   /** Called with the canvas. */
   nativeRef_EXPERIMENTAL?(callback: ComponentOrHandle | HTMLCanvasElement | null): unknown;
-  /** Called when the context is restored after a loss. */
+  /**
+   * Accepted for Expo's types and never called, as in Expo's web GLView: after a loss the new
+   * context goes to `onContextCreate`.
+   */
   onContextRestored?: (gl?: ExpoWebGLRenderingContext) => void;
   /** Called when the context is lost. */
   onContextLost?: () => void;
@@ -295,10 +298,9 @@ export function GLView(props: GLViewProps): VNode {
       live.current.gl = undefined;
       live.current.props.onContextLost?.();
     };
-    const onRestored = () => {
-      startContext(live.current);
-      live.current.props.onContextRestored?.(live.current.gl);
-    };
+    // As Expo's web GLView: a restore re-creates the context and hands it to onContextCreate
+    // (onContextRestored is never called there).
+    const onRestored = () => startContext(live.current);
     canvas.addEventListener("webglcontextlost", onLost);
     canvas.addEventListener("webglcontextrestored", onRestored);
     startContext(live.current);

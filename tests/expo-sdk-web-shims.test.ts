@@ -99,6 +99,15 @@ Deno.test("expo-mesh-gradient: a radial layer per point over the average colour"
   assertEquals(style.flex, 1);
   const empty = MeshGradientView({ columns: 0, rows: 0 });
   assertEquals((empty.props as Any).style.backgroundImage, undefined);
+  // Colours it can read (hex, rgb(), processColor numbers) average in JS: no color-mix(), which
+  // Safari before 16.2 (iOS 15 / 16.0–16.1 WebViews) does not parse.
+  const hex = MeshGradientView({
+    columns: 2,
+    rows: 1,
+    points: [[0, 0], [1, 0]],
+    colors: ["#ff0000", 0xff0000ff],
+  });
+  assertEquals((hex.props as Any).style.backgroundColor, "rgba(128,0,128,1)");
 });
 
 // ---- expo-checkbox -------------------------------------------------------------------------
@@ -123,6 +132,11 @@ Deno.test("expo-checkbox: a real checkbox input reporting onChange and onValueCh
   const [, drawnChecked] = (checked.props as Any).children;
   assertEquals(drawnChecked.props.style.backgroundColor, "#AAB8C2");
   assert(String(drawnChecked.props.style.backgroundImage).startsWith('url("data:image/svg+xml'));
+  // A processColor number (Expo's ColorValue) is a CSS colour once drawn, not a raw number.
+  const numeric = Checkbox({ value: true, color: 0xff4630eb as never });
+  const [, drawnNumeric] = (numeric.props as Any).children;
+  assertEquals(drawnNumeric.props.style.backgroundColor, "rgba(70,48,235,1)");
+  assertEquals(drawnNumeric.props.style.border, "2px solid rgba(70,48,235,1)");
 });
 
 // ---- expo-localization ---------------------------------------------------------------------
@@ -250,6 +264,21 @@ Deno.test("expo-cellular: the generation from the Network Information API, carri
       );
     },
   );
+  // A desktop browser (or Deno Desktop) reports effectiveType without a connection type: its
+  // speed class ("4g" on a fast wired or Wi-Fi link) is not a cellular generation.
+  await withGlobals({ navigator: { connection: { effectiveType: "4g" } } }, async () => {
+    assertEquals(
+      await Cellular.getCellularGenerationAsync(),
+      Cellular.CellularGeneration.UNKNOWN,
+    );
+  });
+  // In the Android shell, a connection without a type is the phone's: trusted.
+  await inShell("android", {}, async () => {
+    assertEquals(
+      await Cellular.getCellularGenerationAsync(),
+      Cellular.CellularGeneration.CELLULAR_4G,
+    );
+  }, { navigator: { connection: { effectiveType: "4g" } } });
   assertEquals(await Cellular.getCarrierNameAsync(), null);
   assertEquals(await Cellular.getIsoCountryCodeAsync(), null);
   assertEquals((await Cellular.requestPermissionsAsync()).granted, true);
@@ -346,8 +375,15 @@ Deno.test("expo-mail-composer: a mailto: URL through openExternal; attachments r
 Deno.test("expo-sms: the Messages app through an sms: URL in the shell; unavailable on the web", async () => {
   assertEquals(await SMS.isAvailableAsync(), false);
   await assertRejects(() => SMS.sendSMSAsync("1", "x"), Error, "not available here");
+  // The page navigates to the sms: URL, which the shell hands to the OS (as it does a tapped
+  // sms: link). A popup (window.open) is blocked without a user gesture, which an awaited call
+  // has lost, and the blocked popup would still have resolved as if the app had opened.
   const opened: string[] = [];
-  const open = (url: string) => void opened.push(url);
+  const popups: string[] = [];
+  const globals = {
+    location: { assign: (url: string) => void opened.push(url) },
+    open: (url: string) => (popups.push(url), null),
+  };
   await inShell("ios", {}, async () => {
     assertEquals(await SMS.isAvailableAsync(), true);
     assertEquals(await SMS.sendSMSAsync(["+15551234", "5556789"], "On my way"), {
@@ -359,9 +395,14 @@ Deno.test("expo-sms: the Messages app through an sms: URL in the shell; unavaila
       Error,
       "cannot carry attachments",
     );
-  }, { open });
-  await inShell("android", {}, () => SMS.sendSMSAsync("5551234", "a b"), { open });
+  }, globals);
+  await inShell("android", {}, () => SMS.sendSMSAsync("5551234", "a b"), globals);
   assertEquals(opened, ["sms:+15551234,5556789&body=On%20my%20way", "sms:5551234?body=a%20b"]);
+  assertEquals(popups, [], "no popup to be blocked");
+  // Nowhere to navigate: a rejection, not a success.
+  await inShell("ios", {}, async () => {
+    await assertRejects(() => SMS.sendSMSAsync("1", "x"), Error, "could not open");
+  }, { location: undefined });
 });
 
 // ---- expo-speech ---------------------------------------------------------------------------
@@ -552,6 +593,7 @@ Deno.test("expo-gl: GLView hands onContextCreate a WebGL 2 context with Expo's a
   const created: Any[] = [];
   let handle: GLViewHandle | null = null;
   const asked: Any[] = [];
+  const lifecycle: string[] = [];
   const ctx = fakeGl(null);
   // The fake DOM has no WebGL: give its elements getContext / toBlob for this test.
   const proto = FakeElement.prototype as Any;
@@ -568,6 +610,8 @@ Deno.test("expo-gl: GLView hands onContextCreate a WebGL 2 context with Expo's a
         msaaSamples: 0,
         ref: (r: GLViewHandle | null) => void (handle = r),
         onContextCreate: (gl: Any) => created.push(gl),
+        onContextLost: () => void lifecycle.push("lost"),
+        onContextRestored: () => void lifecycle.push("restored"),
       })
     );
     await settle();
@@ -591,6 +635,12 @@ Deno.test("expo-gl: GLView hands onContextCreate a WebGL 2 context with Expo's a
     await assertRejects(() => handle!.createCameraTextureAsync(null), Error, "not available");
     assertEquals(getWorkletContext(1), undefined);
     assertEquals(GLView.defaultProps.msaaSamples, 4);
+    // A lost context, then restored: Expo's web GLView calls onContextLost, then
+    // onContextCreate with the new context, and never onContextRestored.
+    canvas.dispatch("webglcontextlost");
+    canvas.dispatch("webglcontextrestored");
+    assertEquals(lifecycle, ["lost"]);
+    assertEquals(created.length, 2, "onContextCreate again after the restore");
     root.unmount();
     flushSync();
     assertEquals(ctx.calls.at(-1), "lost", "unmounting releases the context");

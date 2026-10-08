@@ -250,3 +250,155 @@ ${javaPutExtras()}
     }
   },
 });
+
+/**
+ * The slice of Android and Capacitor 8 the whole plugin compiles against, as plain-JDK stand-ins:
+ * the activity's `startActivity` throws whatever the harness sets, as Android does for an action
+ * nothing handles (`ActivityNotFoundException`) or one the app may not start (`SecurityException`,
+ * e.g. `ACTION_CALL` without `CALL_PHONE`).
+ */
+const PLUGIN_STUBS: Record<string, string> = {
+  "org/json/JSONObject.java": STUBS["org/json/JSONObject.java"],
+  "org/json/JSONArray.java": STUBS["org/json/JSONArray.java"],
+  "android/content/ActivityNotFoundException.java": `package android.content;
+public class ActivityNotFoundException extends RuntimeException {
+    public ActivityNotFoundException(String message) { super(message); }
+}
+`,
+  "android/content/Intent.java": `package android.content;
+public class Intent {
+    public static final int FLAG_ACTIVITY_NEW_TASK = 0x10000000;
+    public final String action;
+    public Intent(String action) { this.action = action; }
+    public Intent setData(android.net.Uri uri) { return this; }
+    public Intent addFlags(int flags) { return this; }
+    public Intent putExtra(String k, String v) { return this; }
+    public Intent putExtra(String k, boolean v) { return this; }
+    public Intent putExtra(String k, double v) { return this; }
+}
+`,
+  "android/content/Context.java": `package android.content;
+public class Context {
+    public static RuntimeException failure;
+    public final java.util.List<String> started = new java.util.ArrayList<>();
+    public String getPackageName() { return "com.example.app"; }
+    public void startActivity(Intent intent) {
+        if (failure != null) throw failure;
+        started.add(intent.action);
+    }
+}
+`,
+  "android/app/Activity.java": `package android.app;
+public class Activity extends android.content.Context {}
+`,
+  "android/net/Uri.java": `package android.net;
+public class Uri {
+    public static Uri fromParts(String scheme, String part, String fragment) { return new Uri(); }
+}
+`,
+  "android/provider/Settings.java": `package android.provider;
+public final class Settings {
+    public static final String ACTION_APPLICATION_DETAILS_SETTINGS = "android.settings.APPLICATION_DETAILS_SETTINGS";
+}
+`,
+  "com/getcapacitor/JSArray.java": `package com.getcapacitor;
+public class JSArray extends org.json.JSONArray {
+    public JSArray() { super(new java.util.ArrayList<>()); }
+}
+`,
+  "com/getcapacitor/Plugin.java": `package com.getcapacitor;
+public class Plugin {
+    public android.app.Activity activity = new android.app.Activity();
+    public android.content.Context getContext() { return activity; }
+    public android.app.Activity getActivity() { return activity; }
+}
+`,
+  "com/getcapacitor/PluginCall.java": `package com.getcapacitor;
+public class PluginCall {
+    public final String action;
+    public String outcome = "pending";
+    public PluginCall(String action) { this.action = action; }
+    public String getString(String key) { return "action".equals(key) ? action : null; }
+    public JSArray getArray(String key, JSArray fallback) { return fallback; }
+    public void resolve() { outcome = "resolved"; }
+    public void reject(String message, String code) { outcome = "rejected " + code + ": " + message; }
+}
+`,
+  "com/getcapacitor/PluginMethod.java": `package com.getcapacitor;
+public @interface PluginMethod {}
+`,
+  "com/getcapacitor/annotation/CapacitorPlugin.java": `package com.getcapacitor.annotation;
+public @interface CapacitorPlugin { String name(); }
+`,
+};
+
+Deno.test({
+  name:
+    "DenextSettings (Android): sendIntent rejects, never throws, when Android refuses the activity (compiled)",
+  ignore: IGNORE_WITHOUT_JDK,
+  async fn() {
+    requireJdk();
+    const dir = await Deno.makeTempDir({ prefix: "denext_send_intent_plugin_" });
+    try {
+      for (const [path, text] of Object.entries(PLUGIN_STUBS)) {
+        await Deno.mkdir(join(dir, path, ".."), { recursive: true });
+        await Deno.writeTextFile(join(dir, path), text);
+      }
+      const plugin = join(dir, "dev/denext/settings", ANDROID_FILE);
+      await Deno.mkdir(join(plugin, ".."), { recursive: true });
+      await Deno.writeTextFile(plugin, SETTINGS_ANDROID_FILES[ANDROID_FILE]);
+      await Deno.writeTextFile(
+        join(dir, "dev/denext/settings/Harness.java"),
+        `package dev.denext.settings;
+import android.content.ActivityNotFoundException;
+import android.content.Context;
+import com.getcapacitor.PluginCall;
+public final class Harness {
+    static void run(String label, RuntimeException failure, boolean open) {
+        Context.failure = failure;
+        PluginCall call = new PluginCall("android.intent.action.CALL");
+        try {
+            if (open) new DenextSettingsPlugin().open(call);
+            else new DenextSettingsPlugin().sendIntent(call);
+            System.out.println(label + ": " + call.outcome);
+        } catch (RuntimeException e) {
+            // Capacitor's Bridge turns an exception escaping a plugin method into a crash.
+            System.out.println(label + ": threw " + e.getClass().getSimpleName());
+        }
+    }
+    public static void main(String[] args) {
+        run("started", null, false);
+        run("nothing handles it", new ActivityNotFoundException("none"), false);
+        run("not permitted", new SecurityException("Permission Denial"), false);
+        run("open, not permitted", new SecurityException("Permission Denial"), true);
+    }
+}
+`,
+      );
+      const sources = [...Object.keys(PLUGIN_STUBS), `dev/denext/settings/${ANDROID_FILE}`]
+        .map((p) => join(dir, p));
+      sources.push(join(dir, "dev/denext/settings/Harness.java"));
+      const compile = await new Deno.Command("javac", {
+        args: ["-nowarn", "-d", join(dir, "classes"), ...sources],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(compile.success, new TextDecoder().decode(compile.stderr));
+      const run = await new Deno.Command("java", {
+        args: ["-cp", join(dir, "classes"), "dev.denext.settings.Harness"],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(run.success, new TextDecoder().decode(run.stderr));
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split("\n"), [
+        "started: resolved",
+        "nothing handles it: rejected unavailable: Could not launch Intent with action android.intent.action.CALL.",
+        // React Native's IntentModule catches every exception and rejects with the same message.
+        "not permitted: rejected failed: Could not launch Intent with action android.intent.action.CALL.",
+        "open, not permitted: rejected failed: The app's settings page could not be opened.",
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

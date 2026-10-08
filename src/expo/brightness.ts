@@ -3,17 +3,20 @@
  * `@capacitor-community/screen-brightness` (`denext mobile add brightness`). As in Expo, iOS
  * sets the screen's brightness while the app runs and Android sets the app window's.
  *
- * - `restoreSystemBrightnessAsync` puts back the level from before the app first changed it
- *   (iOS) or lets the window follow the system again (Android).
- * - The system-wide calls: on iOS `get/setSystemBrightnessAsync` are the screen's (as in Expo);
- *   on Android, writing the system setting and its mode (`WRITE_SETTINGS`) is not available and
- *   rejects with `ERR_UNAVAILABLE`, as do the mode calls on iOS (Android-only in Expo).
+ * - Off Android (iOS and the web) the calls behave as Expo's do there: the system brightness is
+ *   the screen's (`get/setSystemBrightnessAsync` are `get/setBrightnessAsync`), and the
+ *   Android-only calls resolve: `restoreSystemBrightnessAsync` and
+ *   `setSystemBrightnessModeAsync` do nothing, `isUsingSystemBrightnessAsync` is `false` and
+ *   `getSystemBrightnessModeAsync` is `BrightnessMode.UNKNOWN`.
+ * - On Android `restoreSystemBrightnessAsync` lets the window follow the system again; writing
+ *   the system setting and reading or writing its mode (`WRITE_SETTINGS`) is not available and
+ *   rejects with `ERR_UNAVAILABLE` (setting the mode to `UNKNOWN` is a no-op, as in Expo).
  * - On Android `getBrightnessAsync()` reads `-1` until the app sets a level (the window follows
  *   the system, whose level the plugin does not report).
  * - `addBrightnessListener` never fires (the plugin reports no changes).
  *
- * Outside the shell `isAvailableAsync()` is `false` and the calls reject with `ERR_UNAVAILABLE`,
- * as on Expo's web build.
+ * Outside the shell `isAvailableAsync()` is `false`, the level calls reject with
+ * `ERR_UNAVAILABLE` and the permission is `undetermined`, as on Expo's web build.
  *
  * @example
  * ```ts
@@ -30,10 +33,12 @@ import { nativePlatform } from "../mobile/bridge.ts";
 import { nativePlugin } from "../mobile/plugin.ts";
 import {
   createEmitter,
+  createPermissionHook,
   NOT_NEEDED_PERMISSION,
   type PermissionExpiration,
   type PermissionHookOptions,
   type PermissionResponse,
+  permissionResponse,
   PermissionStatus,
   type Subscription,
   unavailable,
@@ -83,15 +88,14 @@ function required(call: string): ScreenBrightnessPlugin {
   return p;
 }
 
-/** The level from before the app first changed it (iOS), for the restore. */
-let original: number | undefined;
+/** Whether this is the Android shell (Expo's Android-only calls do something only there). */
+const onAndroid = (): boolean => nativePlatform() === "android";
 
-/** A level clamped to 0–1. */
-function level(value: number): number {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    throw new TypeError("brightnessValue must be a number between 0 and 1");
-  }
-  return Math.max(0, Math.min(1, value));
+/** A level clamped to 0–1, as Expo clamps it (`NaN` is its `TypeError`). */
+function level(value: number, call: string): number {
+  const clamped = Math.max(0, Math.min(value, 1));
+  if (Number.isNaN(clamped)) throw new TypeError(`${call} cannot be called with ${value}`);
+  return clamped;
 }
 
 /**
@@ -120,76 +124,68 @@ export async function getBrightnessAsync(): Promise<number> {
  */
 export async function setBrightnessAsync(brightnessValue: number): Promise<void> {
   const p = required("setBrightnessAsync");
-  const value = level(brightnessValue);
-  if (original === undefined && nativePlatform() === "ios") {
-    original = (await p.getBrightness()).brightness;
-  }
-  await p.setBrightness({ brightness: value });
+  await p.setBrightness({ brightness: level(brightnessValue, "setBrightnessAsync") });
 }
 
 /**
- * The system brightness: the screen's on iOS (as Expo); not readable on Android.
+ * The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); Android's
+ * system setting is not readable here.
  *
  * @returns 0–1.
  */
 export async function getSystemBrightnessAsync(): Promise<number> {
-  if (nativePlatform() !== "ios") {
-    throw unavailable(
-      "expo-brightness",
-      "getSystemBrightnessAsync",
-      "Android's system setting is not readable here; use getBrightnessAsync.",
-    );
-  }
-  return await getBrightnessAsync();
+  if (!onAndroid()) return await getBrightnessAsync();
+  throw unavailable(
+    "expo-brightness",
+    "getSystemBrightnessAsync",
+    "Android's system setting is not readable here; use getBrightnessAsync.",
+  );
 }
 
 /**
- * Set the system brightness: the screen's on iOS (as Expo); not writable on Android.
+ * Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); Android's
+ * system setting is not writable here.
  *
  * @param brightnessValue 0–1.
  */
 export async function setSystemBrightnessAsync(brightnessValue: number): Promise<void> {
-  if (nativePlatform() !== "ios") {
-    throw unavailable(
-      "expo-brightness",
-      "setSystemBrightnessAsync",
-      "Android's system setting (WRITE_SETTINGS) is not writable here; use setBrightnessAsync.",
-    );
-  }
-  await setBrightnessAsync(brightnessValue);
+  const value = level(brightnessValue, "setSystemBrightnessAsync");
+  if (!onAndroid()) return await setBrightnessAsync(value);
+  throw unavailable(
+    "expo-brightness",
+    "setSystemBrightnessAsync",
+    "Android's system setting (WRITE_SETTINGS) is not writable here; use setBrightnessAsync.",
+  );
 }
 
 /**
- * Undo the app's brightness: the level from before the app first set one (iOS), or the window
- * following the system again (Android).
+ * Android: let the app window follow the system brightness again. Off Android it does nothing,
+ * as in Expo.
  */
 export async function restoreSystemBrightnessAsync(): Promise<void> {
-  const p = required("restoreSystemBrightnessAsync");
-  if (nativePlatform() === "android") return await p.setBrightness({ brightness: -1 });
-  if (original !== undefined) {
-    await p.setBrightness({ brightness: original });
-    original = undefined;
-  }
+  if (!onAndroid()) return;
+  await required("restoreSystemBrightnessAsync").setBrightness({ brightness: -1 });
 }
 
 /**
- * Whether the system's brightness applies: on Android, the window has no level of its own; on
- * iOS, the app has not changed it (or restored it).
+ * Android: whether the app window follows the system brightness (it has no level of its own).
+ * Off Android `false`, as in Expo.
  *
- * @returns Whether the app's own level is unset.
+ * @returns Whether the window follows the system.
  */
 export async function isUsingSystemBrightnessAsync(): Promise<boolean> {
-  const p = required("isUsingSystemBrightnessAsync");
-  if (nativePlatform() === "android") return (await p.getBrightness()).brightness < 0;
-  return original === undefined;
+  if (!onAndroid()) return false;
+  return (await required("isUsingSystemBrightnessAsync").getBrightness()).brightness < 0;
 }
 
 /**
- * The system brightness mode: not readable here.
+ * The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; Android's is not
+ * readable here (it rejects with `ERR_UNAVAILABLE`).
  *
- * @returns Never: it rejects with `ERR_UNAVAILABLE`.
+ * @returns The mode.
  */
 export function getSystemBrightnessModeAsync(): Promise<BrightnessMode> {
+  if (!onAndroid()) return Promise.resolve(BrightnessMode.UNKNOWN);
   return Promise.reject(
     unavailable(
       "expo-brightness",
@@ -200,11 +196,13 @@ export function getSystemBrightnessModeAsync(): Promise<BrightnessMode> {
 }
 
 /**
- * Set the system brightness mode: not writable here.
+ * Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo;
+ * Android's is not writable here (it rejects with `ERR_UNAVAILABLE`).
  *
- * @param _brightnessMode The mode.
+ * @param brightnessMode The mode.
  */
-export function setSystemBrightnessModeAsync(_brightnessMode: BrightnessMode): Promise<void> {
+export function setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void> {
+  if (!onAndroid() || brightnessMode === BrightnessMode.UNKNOWN) return Promise.resolve();
   return Promise.reject(
     unavailable(
       "expo-brightness",
@@ -214,12 +212,21 @@ export function setSystemBrightnessModeAsync(_brightnessMode: BrightnessMode): P
   );
 }
 
-/** The system-settings permission: none is needed for what works here, so `granted`. */
-export const getPermissionsAsync: () => Promise<PermissionResponse> = NOT_NEEDED_PERMISSION.get;
+/**
+ * The system-settings permission: `granted` in the shell (none is needed for what works there),
+ * `undetermined` on the web, as Expo's web build.
+ */
+function brightnessPermission(): Promise<PermissionResponse> {
+  return nativePlatform() === "web"
+    ? Promise.resolve(permissionResponse(PermissionStatus.UNDETERMINED))
+    : NOT_NEEDED_PERMISSION.get();
+}
 
-/** Ask for the system-settings permission: none is needed here, so `granted`. */
-export const requestPermissionsAsync: () => Promise<PermissionResponse> =
-  NOT_NEEDED_PERMISSION.request;
+/** The system-settings permission: `granted` in the shell, `undetermined` on the web. */
+export const getPermissionsAsync: () => Promise<PermissionResponse> = brightnessPermission;
+
+/** Ask for the system-settings permission: as {@linkcode getPermissionsAsync}. */
+export const requestPermissionsAsync: () => Promise<PermissionResponse> = brightnessPermission;
 
 /** Hook form of the permission: `[response, request, get]`. */
 export const usePermissions: (
@@ -228,7 +235,7 @@ export const usePermissions: (
   PermissionResponse | null,
   () => Promise<PermissionResponse>,
   () => Promise<PermissionResponse>,
-] = NOT_NEEDED_PERMISSION.hook;
+] = createPermissionHook({ getMethod: brightnessPermission, requestMethod: brightnessPermission });
 
 /** The brightness listeners (the plugin reports no changes, so none is ever called). */
 const listeners = createEmitter<BrightnessEvent>();

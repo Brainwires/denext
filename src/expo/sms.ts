@@ -1,6 +1,7 @@
 /**
- * `expo-sms` for denext: in the Capacitor shell, the device's Messages app opened with an
- * `sms:` URL (recipients and body filled in; the user sends it). The app reports nothing back,
+ * `expo-sms` for denext: in the Capacitor shell, the device's Messages app opened by navigating
+ * to an `sms:` URL (recipients and body filled in; the user sends it), which the shell hands to
+ * the OS. The app reports nothing back,
  * so the result is always `unknown` (Expo's Android answer). Attachments are not supported:
  * an `sms:` URL cannot carry them, so the call rejects with `ERR_SMS_ATTACHMENTS`.
  *
@@ -86,9 +87,18 @@ export async function sendSMSAsync(
     );
   }
   const list = (Array.isArray(addresses) ? addresses : [addresses]).filter(Boolean);
-  // The shell hands an sms: navigation to the OS (WKWebView's / Android's external-scheme
-  // handling); denext/mobile's openExternal accepts only web, mail and phone links.
-  globalThis.open(smsUrl(list, message ?? "", platform === "ios"), "_blank");
+  // The page navigates to the sms: URL, and the shell hands that navigation to the OS (as it does
+  // a tapped sms: link: Capacitor's navigation policy opens a foreign scheme externally and
+  // cancels it, so the page stays). Not window.open: without a user gesture, which an awaited
+  // call has lost, a popup is blocked silently and the call would resolve as if it had opened.
+  const location = (globalThis as { location?: { assign?(url: string): void } }).location;
+  if (typeof location?.assign !== "function") {
+    throw new CodedError(
+      "ERR_UNAVAILABLE",
+      "denext/expo: expo-sms could not open the Messages app: there is no page to navigate.",
+    );
+  }
+  location.assign(smsUrl(list, message ?? "", platform === "ios"));
   await Promise.resolve();
   return { result: "unknown" };
 }

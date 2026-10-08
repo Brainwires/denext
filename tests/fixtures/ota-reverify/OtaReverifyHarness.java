@@ -385,6 +385,54 @@ public final class OtaReverifyHarness {
         check("a pending UI that fails re-verification is not tried", store.startDirectory() == null && !DenextOtaStore.launchIsTrial);
         check("its trial is cleared", app.prefs.getString("pending", null) == null);
 
+        // ---- a file that cannot be read right now ---------------------------------------------------
+        // An I/O or permission error (or storage that is not available yet) is not a change to the
+        // UI: refuse the read, keep the version, and check it again later.
+        app = new App(new File(work, "locked"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        app.prefs.values.put("current", version);
+        events.clear();
+        store = launch(app);
+        check("unreadable: the UI is served while its files can be read", dir.equals(store.startDirectory()));
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        File lockedFile = new File(dir, "app.js");
+        boolean canLock = lockedFile.setReadable(false, false) && !lockedFile.canRead();
+        if (!canLock) {
+            // Running as root: permissions do not stop a read, so there is nothing to observe.
+            lockedFile.setReadable(true, false);
+            System.out.println("skip unreadable files (root ignores permissions)");
+        } else {
+            check("a file that cannot be read is refused", refused(store, dir, "/app.js"));
+            check(
+                "a file that cannot be read does not quarantine the UI",
+                call(store, "tampered") == null && version.equals(app.prefs.getString("current", null)) && lockedFile.exists() && events.isEmpty()
+            );
+            lockedFile.setReadable(true, false);
+            check("once it can be read it is checked again and served", served(store, dir, "/app.js"));
+            File lockedManifest = new File(dir, "_denext/ota.json");
+            lockedManifest.setReadable(false, false);
+            check("the stored manifest that cannot be read is refused to the page", refused(store, dir, "/_denext/ota.json") && call(store, "tampered") == null);
+            store = launch(app);
+            check("a launch whose stored manifest cannot be read serves the bundled UI", store.startDirectory() == null);
+            check(
+                "a stored manifest that cannot be read does not quarantine the UI",
+                call(store, "tampered") == null && version.equals(app.prefs.getString("current", null)) && lockedManifest.exists()
+            );
+            app.prefs.values.put("pending", version);
+            app.prefs.values.put("trialAttempts", 1);
+            store = launch(app);
+            check(
+                "a pending UI that cannot be read is not tried this launch and keeps its trial",
+                store.startDirectory() == null && !DenextOtaStore.launchIsTrial &&
+                    version.equals(app.prefs.getString("pending", null)) && app.prefs.getInt("trialAttempts", 0) == 1
+            );
+            lockedManifest.setReadable(true, false);
+            store = launch(app);
+            check("the next launch that can read it tries it", dir.equals(store.startDirectory()) && DenextOtaStore.launchIsTrial);
+        }
+
         // ---- unsigned (no key embedded): the files are still checked -------------------------------
         app = new App(new File(work, "unsigned"), null);
         launch(app).startDirectory();

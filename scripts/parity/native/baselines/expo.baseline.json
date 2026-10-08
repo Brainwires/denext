@@ -67,7 +67,7 @@
     "expo-widgets": "58.0.11",
     "@expo/ui": "58.0.11"
   },
-  "capturedAt": "2026-10-07T17:53:36.243Z",
+  "capturedAt": "2026-10-07T23:55:38.713Z",
   "surfaces": [
     {
       "specifier": "expo",
@@ -3289,6 +3289,701 @@
       }
     },
     {
+      "specifier": "expo-calendar/legacy",
+      "resolved": true,
+      "symbols": {
+        "createEventInCalendarAsync": {
+          "name": "createEventInCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openEventInCalendarAsync": {
+          "name": "openEventInCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "editEventInCalendarAsync": {
+          "name": "editEventInCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCalendarsAsync": {
+          "name": "getCalendarsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createCalendarAsync": {
+          "name": "createCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateCalendarAsync": {
+          "name": "updateCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteCalendarAsync": {
+          "name": "deleteCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getEventsAsync": {
+          "name": "getEventsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getEventAsync": {
+          "name": "getEventAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createEventAsync": {
+          "name": "createEventAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateEventAsync": {
+          "name": "updateEventAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteEventAsync": {
+          "name": "deleteEventAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAttendeesForEventAsync": {
+          "name": "getAttendeesForEventAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAttendeeAsync": {
+          "name": "createAttendeeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateAttendeeAsync": {
+          "name": "updateAttendeeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getDefaultCalendarAsync": {
+          "name": "getDefaultCalendarAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAttendeeAsync": {
+          "name": "deleteAttendeeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRemindersAsync": {
+          "name": "getRemindersAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 4,
+              "requiredArity": 4,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getReminderAsync": {
+          "name": "getReminderAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createReminderAsync": {
+          "name": "createReminderAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateReminderAsync": {
+          "name": "updateReminderAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteReminderAsync": {
+          "name": "deleteReminderAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getSourcesAsync": {
+          "name": "getSourcesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getSourceAsync": {
+          "name": "getSourceAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openEventInCalendar": {
+          "name": "openEventInCalendar",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCalendarPermissionsAsync": {
+          "name": "getCalendarPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRemindersPermissionsAsync": {
+          "name": "getRemindersPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestCalendarPermissionsAsync": {
+          "name": "requestCalendarPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestRemindersPermissionsAsync": {
+          "name": "requestRemindersPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "DayOfTheWeek": {
+          "name": "DayOfTheWeek",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Friday",
+            "Monday",
+            "Saturday",
+            "Sunday",
+            "Thursday",
+            "Tuesday",
+            "Wednesday"
+          ]
+        },
+        "MonthOfTheYear": {
+          "name": "MonthOfTheYear",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "April",
+            "August",
+            "December",
+            "February",
+            "January",
+            "July",
+            "June",
+            "March",
+            "May",
+            "November",
+            "October",
+            "September"
+          ]
+        },
+        "CalendarDialogResultActions": {
+          "name": "CalendarDialogResultActions",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "canceled",
+            "deleted",
+            "done",
+            "responded",
+            "saved"
+          ]
+        },
+        "useCalendarPermissions": {
+          "name": "useCalendarPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useRemindersPermissions": {
+          "name": "useRemindersPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "EntityTypes": {
+          "name": "EntityTypes",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "EVENT",
+            "REMINDER"
+          ]
+        },
+        "Frequency": {
+          "name": "Frequency",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DAILY",
+            "MONTHLY",
+            "WEEKLY",
+            "YEARLY"
+          ]
+        },
+        "Availability": {
+          "name": "Availability",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BUSY",
+            "FREE",
+            "NOT_SUPPORTED",
+            "TENTATIVE",
+            "UNAVAILABLE"
+          ]
+        },
+        "CalendarType": {
+          "name": "CalendarType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BIRTHDAYS",
+            "CALDAV",
+            "EXCHANGE",
+            "LOCAL",
+            "SUBSCRIBED",
+            "UNKNOWN"
+          ]
+        },
+        "EventStatus": {
+          "name": "EventStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CANCELED",
+            "CONFIRMED",
+            "NONE",
+            "TENTATIVE"
+          ]
+        },
+        "SourceType": {
+          "name": "SourceType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BIRTHDAYS",
+            "CALDAV",
+            "EXCHANGE",
+            "LOCAL",
+            "MOBILEME",
+            "SUBSCRIBED"
+          ]
+        },
+        "AttendeeRole": {
+          "name": "AttendeeRole",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ATTENDEE",
+            "CHAIR",
+            "NONE",
+            "NON_PARTICIPANT",
+            "OPTIONAL",
+            "ORGANIZER",
+            "PERFORMER",
+            "REQUIRED",
+            "SPEAKER",
+            "UNKNOWN"
+          ]
+        },
+        "AttendeeStatus": {
+          "name": "AttendeeStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ACCEPTED",
+            "COMPLETED",
+            "DECLINED",
+            "DELEGATED",
+            "INVITED",
+            "IN_PROCESS",
+            "NONE",
+            "PENDING",
+            "TENTATIVE",
+            "UNKNOWN"
+          ]
+        },
+        "AttendeeType": {
+          "name": "AttendeeType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "GROUP",
+            "NONE",
+            "OPTIONAL",
+            "PERSON",
+            "REQUIRED",
+            "RESOURCE",
+            "ROOM",
+            "UNKNOWN"
+          ]
+        },
+        "AlarmMethod": {
+          "name": "AlarmMethod",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ALARM",
+            "ALERT",
+            "DEFAULT",
+            "EMAIL",
+            "SMS"
+          ]
+        },
+        "EventAccessLevel": {
+          "name": "EventAccessLevel",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CONFIDENTIAL",
+            "DEFAULT",
+            "PRIVATE",
+            "PUBLIC"
+          ]
+        },
+        "CalendarAccessLevel": {
+          "name": "CalendarAccessLevel",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CONTRIBUTOR",
+            "EDITOR",
+            "FREEBUSY",
+            "NONE",
+            "OVERRIDE",
+            "OWNER",
+            "READ",
+            "RESPOND",
+            "ROOT"
+          ]
+        },
+        "ReminderStatus": {
+          "name": "ReminderStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "COMPLETED",
+            "INCOMPLETE"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-camera",
       "resolved": true,
       "symbols": {
@@ -4435,6 +5130,540 @@
             "LastName",
             "None",
             "UserDefault"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-contacts/legacy",
+      "resolved": true,
+      "symbols": {
+        "ContactAccessButton": {
+          "name": "ContactAccessButton",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isAvailable",
+            "prototype"
+          ]
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasContactsAsync": {
+          "name": "hasContactsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "shareContactAsync": {
+          "name": "shareContactAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getContactsAsync": {
+          "name": "getContactsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPagedContactsAsync": {
+          "name": "getPagedContactsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getContactByIdAsync": {
+          "name": "getContactByIdAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addContactAsync": {
+          "name": "addContactAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateContactAsync": {
+          "name": "updateContactAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeContactAsync": {
+          "name": "removeContactAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "writeContactToFileAsync": {
+          "name": "writeContactToFileAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentFormAsync": {
+          "name": "presentFormAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addExistingGroupToContainerAsync": {
+          "name": "addExistingGroupToContainerAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createGroupAsync": {
+          "name": "createGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "updateGroupNameAsync": {
+          "name": "updateGroupNameAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeGroupAsync": {
+          "name": "removeGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addExistingContactToGroupAsync": {
+          "name": "addExistingContactToGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeContactFromGroupAsync": {
+          "name": "removeContactFromGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getGroupsAsync": {
+          "name": "getGroupsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentContactPickerAsync": {
+          "name": "presentContactPickerAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getDefaultContainerIdAsync": {
+          "name": "getDefaultContainerIdAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getContainersAsync": {
+          "name": "getContainersAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentAccessPickerAsync": {
+          "name": "presentAccessPickerAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addContactsChangeListener": {
+          "name": "addContactsChangeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "onContactsChangeEventName": {
+          "name": "onContactsChangeEventName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "Fields": {
+          "name": "Fields",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Addresses",
+            "Birthday",
+            "Company",
+            "ContactType",
+            "Dates",
+            "Department",
+            "Emails",
+            "ExtraNames",
+            "FirstName",
+            "ID",
+            "Image",
+            "ImageAvailable",
+            "InstantMessageAddresses",
+            "IsFavorite",
+            "JobTitle",
+            "LastName",
+            "MaidenName",
+            "MiddleName",
+            "Name",
+            "NamePrefix",
+            "NameSuffix",
+            "Nickname",
+            "NonGregorianBirthday",
+            "Note",
+            "PhoneNumbers",
+            "PhoneticFirstName",
+            "PhoneticLastName",
+            "PhoneticMiddleName",
+            "RawImage",
+            "Relationships",
+            "SocialProfiles",
+            "UrlAddresses"
+          ]
+        },
+        "CalendarFormats": {
+          "name": "CalendarFormats",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Buddhist",
+            "Chinese",
+            "Coptic",
+            "EthiopicAmeteAlem",
+            "EthiopicAmeteMihret",
+            "Gregorian",
+            "Hebrew",
+            "ISO8601",
+            "Indian",
+            "Islamic",
+            "IslamicCivil",
+            "IslamicTabular",
+            "IslamicUmmAlQura",
+            "Japanese",
+            "Persian",
+            "RepublicOfChina"
+          ]
+        },
+        "ContainerTypes": {
+          "name": "ContainerTypes",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CardDAV",
+            "Exchange",
+            "Local",
+            "Unassigned"
+          ]
+        },
+        "SortTypes": {
+          "name": "SortTypes",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "FirstName",
+            "LastName",
+            "None",
+            "UserDefault"
+          ]
+        },
+        "ContactTypes": {
+          "name": "ContactTypes",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Company",
+            "Person"
           ]
         }
       }

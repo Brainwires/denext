@@ -861,7 +861,7 @@ function useLegendExtras(
     engine: {
       endSpace: anchor.size,
       snapRows,
-      onItemMeasured: reports ? itemReporter(latest, keyOf, anchor.update) : undefined,
+      onItemMeasured: reports ? itemReporter(latest, keyOf, anchor.schedule) : undefined,
     },
     list: {
       ...snapProps(props),
@@ -909,8 +909,9 @@ function relayout(
 }
 
 /**
- * The engine's measurement reports: `anchoredEndSpace` recomputes, and `onItemSizeChanged`
- * hears each item whose size changed (every item of a grid row).
+ * The engine's measurement reports: `anchoredEndSpace` recomputes (once per batch: `update` is
+ * the coalescing `schedule`), and `onItemSizeChanged` hears each item whose size changed (every
+ * item of a grid row).
  */
 function itemReporter(
   latest: LegendLatest,

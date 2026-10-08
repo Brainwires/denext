@@ -252,13 +252,15 @@ interface AnchorState {
 
 /**
  * Hook: `anchoredEndSpace` — the trailing space, recomputed after each commit and whenever the
- * returned `update` runs (an item measured, the list resized), with LegendList's
- * `onSizeChanged` / `onReady` calls.
+ * returned `update` runs (the list resized) or `schedule` does (an item measured), with
+ * LegendList's `onSizeChanged` / `onReady` calls. Each recompute walks the items from the
+ * anchor to the end, so `schedule` coalesces a batch of measurement reports (every item of a
+ * first layout at once) into one recompute, on the next microtask.
  */
 export function useAnchoredEndSpace(
   core: { readonly current: CoreHandle | null },
   inputs: AnchorInputs,
-): { size: number; update: () => void } {
+): { size: number; update: () => void; schedule: () => void } {
   const [size, setSize] = useState(0);
   const latest = useRef(inputs);
   latest.current = inputs;
@@ -289,8 +291,19 @@ export function useAnchoredEndSpace(
       cfg?.onReady?.({ anchorIndex: index, anchorKey: r.anchorKey, size: r.size });
     }
   }, [core]);
+  const schedule = useMemo(() => {
+    let queued = false;
+    return () => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        update();
+      });
+    };
+  }, [update]);
   useLayoutEffect(update);
-  return { size: inputs.props.anchoredEndSpace ? size : 0, update };
+  return { size: inputs.props.anchoredEndSpace ? size : 0, update, schedule };
 }
 
 /** The data rows from the anchor to the end (kept mounted, as LegendList renders them always). */

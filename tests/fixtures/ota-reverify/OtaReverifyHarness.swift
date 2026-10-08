@@ -160,6 +160,47 @@ do {
     check("a pending UI that fails re-verification is not tried", launch.directory == nil && !launch.trial)
     check("its trial is cleared", store.pending == nil)
 
+    // ---- a file that cannot be read right now -------------------------------------------------
+    // A launch before the first unlock (a silent push, a BGTask) finds the files there but
+    // unreadable (data protection); a permission or I/O error looks the same. That is not a
+    // change to the UI: refuse the read, keep the version, and check it again later.
+    let locked = try device("locked", manifest: storedManifest(signature: sign(key)))
+    store = locked.launch(key: signed)
+    heard = []
+    store.setTamperHandler { version, _, serving in heard.append("\(version) \(serving)") }
+    check("unreadable: the UI is served while its files can be read", store.prepareLaunch().directory?.path == locked.dir.path)
+    let lockedFile = locked.dir.appendingPathComponent("app.js").path
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: lockedFile)
+    check("a file that cannot be read is refused", !locked.admit(store, "/app.js"))
+    drain()
+    check(
+        "a file that cannot be read does not quarantine the UI",
+        store.tampered == nil && store.current == version && fm.fileExists(atPath: lockedFile) && heard.isEmpty
+    )
+    try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockedFile)
+    check("once it can be read it is checked again and served", locked.admit(store, "/app.js"))
+    let lockedManifest = locked.dir.appendingPathComponent(DenextOtaStore.manifestPath).path
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: lockedManifest)
+    check("the stored manifest that cannot be read is refused to the page", !locked.admit(store, "/_denext/ota.json") && store.tampered == nil)
+    store = locked.launch(key: signed)
+    check("a launch whose stored manifest cannot be read serves the bundled UI", store.prepareLaunch().directory == nil)
+    check(
+        "a stored manifest that cannot be read does not quarantine the UI",
+        store.tampered == nil && store.current == version && fm.fileExists(atPath: lockedManifest)
+    )
+    locked.defaults.set(version, forKey: "denext.ota.pending")
+    locked.defaults.set(1, forKey: "denext.ota.trialAttempts")
+    let lockedTrial = locked.launch(key: signed).prepareLaunch()
+    check(
+        "a pending UI that cannot be read is not tried this launch and keeps its trial",
+        lockedTrial.directory == nil && !lockedTrial.trial &&
+            locked.defaults.string(forKey: "denext.ota.pending") == version &&
+            locked.defaults.integer(forKey: "denext.ota.trialAttempts") == 1
+    )
+    try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockedManifest)
+    let unlocked = locked.launch(key: signed).prepareLaunch()
+    check("the next launch that can read it tries it", unlocked.directory?.path == locked.dir.path && unlocked.trial)
+
     // ---- unsigned (no key embedded): the files are still checked -----------------------------
     let unsigned = try device("unsigned", manifest: storedManifest(signature: nil))
     store = unsigned.launch(key: .unset)

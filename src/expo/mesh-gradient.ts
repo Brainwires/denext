@@ -5,7 +5,9 @@
  * elsewhere). It follows the points and colours (and their changes), on every platform; it is
  * an approximation of SwiftUI's `MeshGradient`, not the same interpolation. `smoothsColors`
  * widens the blend; `resolution` and `ignoresSafeArea` are ignored; with `mask` the children
- * are drawn over the gradient rather than masking it.
+ * are drawn over the gradient rather than masking it. The average colour under the layers is
+ * computed here for hex, `rgb()` and `processColor` colours; with others (named, `hsl()`) it is
+ * CSS `color-mix()`, which Safari 16.2+ (iOS 16.2+) needs.
  *
  * @example
  * ```ts
@@ -60,8 +62,38 @@ function pct(n: number): string {
   return `${Math.round(n * 1000) / 10}%`;
 }
 
-/** The average of CSS colours, as `color-mix()` (the browser blends; equal weights). */
+/** `#rgb[a]` / `#rrggbb[aa]` / `rgb[a](r, g, b[, a])` as channels (0–255, alpha 0–1), or null. */
+function channels(color: string): [number, number, number, number] | null {
+  const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(color.trim());
+  if (hex) {
+    const d = hex[1].length <= 4 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
+    const byte = (i: number) => parseInt(d.slice(i, i + 2), 16);
+    return [byte(0), byte(2), byte(4), d.length === 8 ? byte(6) / 255 : 1];
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i
+    .exec(color.trim());
+  if (!rgb) return null;
+  return [
+    Number(rgb[1]),
+    Number(rgb[2]),
+    Number(rgb[3]),
+    rgb[4] === undefined ? 1 : Number(rgb[4]),
+  ];
+}
+
+/**
+ * The average of CSS colours (equal weights). Colours it can read (hex, `rgb()` / `rgba()`, which
+ * `processColor` numbers become) are averaged here, as `rgba()`; any other (a named colour,
+ * `hsl()`, …) is left to the browser as `color-mix()`, which Safari before 16.2 does not parse
+ * (the background colour is then missing; the radial layers still draw).
+ */
 function average(colors: readonly string[]): string {
+  const parsed = colors.map(channels);
+  if (parsed.every((c) => c !== null)) {
+    const mean = (i: number) => parsed.reduce((sum, c) => sum + c![i], 0) / parsed.length;
+    const alpha = Math.round(mean(3) * 1000) / 1000;
+    return `rgba(${Math.round(mean(0))},${Math.round(mean(1))},${Math.round(mean(2))},${alpha})`;
+  }
   return colors.slice(1).reduce(
     (mix, color, i) => `color-mix(in srgb, ${mix}, ${color} ${pct(1 / (i + 2))})`,
     colors[0],

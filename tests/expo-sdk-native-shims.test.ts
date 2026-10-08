@@ -55,27 +55,37 @@ Deno.test("expo-intent-launcher: Expo's parameters through the plugin, Android o
 
 // ---- expo-brightness -----------------------------------------------------------------------
 
-Deno.test("expo-brightness: the screen's level on iOS (restorable), the window's on Android", async () => {
-  assertEquals(await Brightness.isAvailableAsync(), false);
-  await assertRejects(() => Brightness.getBrightnessAsync(), Error, "not available here");
+Deno.test("expo-brightness: the screen's level on iOS, the window's on Android", async () => {
   let level = 0.3;
+  const sets: number[] = [];
   const ios = {
     getBrightness: () => Promise.resolve({ brightness: level }),
     setBrightness: ({ brightness }: { brightness: number }) => {
       level = brightness;
+      sets.push(brightness);
       return Promise.resolve();
     },
   };
   await inShell("ios", { ScreenBrightness: ios }, async () => {
     assertEquals(await Brightness.isAvailableAsync(), true);
-    assertEquals(await Brightness.isUsingSystemBrightnessAsync(), true);
     await Brightness.setBrightnessAsync(1.5); // clamped
     assertEquals(level, 1);
     assertEquals(await Brightness.getSystemBrightnessAsync(), 1, "iOS: the screen's, as Expo");
+    await Brightness.setSystemBrightnessAsync(0.4); // iOS: the screen's, as Expo
+    assertEquals(sets, [1, 0.4]);
+    // Expo's Android-only calls resolve off Android: no-op, false, UNKNOWN, no-op.
+    assertEquals(await Brightness.restoreSystemBrightnessAsync(), undefined);
     assertEquals(await Brightness.isUsingSystemBrightnessAsync(), false);
-    await Brightness.restoreSystemBrightnessAsync();
-    assertEquals(level, 0.3, "the level from before the app changed it");
-    await assertRejects(() => Brightness.getSystemBrightnessModeAsync(), Error, "not readable");
+    assertEquals(
+      await Brightness.getSystemBrightnessModeAsync(),
+      Brightness.BrightnessMode.UNKNOWN,
+    );
+    assertEquals(
+      await Brightness.setSystemBrightnessModeAsync(Brightness.BrightnessMode.AUTOMATIC),
+      undefined,
+    );
+    assertEquals(sets, [1, 0.4], "none of them touched the screen");
+    assertEquals((await Brightness.requestPermissionsAsync()).granted, true);
   });
   const android = fakePlugin(["setBrightness", "getBrightness"], {
     getBrightness: { brightness: -1 },
@@ -85,13 +95,47 @@ Deno.test("expo-brightness: the screen's level on iOS (restorable), the window's
     await Brightness.setBrightnessAsync(0.8);
     await Brightness.restoreSystemBrightnessAsync();
     await assertRejects(() => Brightness.setSystemBrightnessAsync(0.5), Error, "WRITE_SETTINGS");
+    await assertRejects(() => Brightness.getSystemBrightnessModeAsync(), Error, "not readable");
+    // UNKNOWN is a no-op on Android too, as in Expo.
+    await Brightness.setSystemBrightnessModeAsync(Brightness.BrightnessMode.UNKNOWN);
     assertEquals(android.calls.filter(([m]) => m === "setBrightness").map(([, a]) => a), [
       { brightness: 0.8 },
       { brightness: -1 },
     ]);
   });
-  assertEquals((await Brightness.requestPermissionsAsync()).granted, true);
   Brightness.addBrightnessListener(() => {}).remove();
+});
+
+Deno.test("expo-brightness: on the web, as Expo's web build (only the level calls reject)", async () => {
+  assertEquals(await Brightness.isAvailableAsync(), false);
+  await assertRejects(() => Brightness.getBrightnessAsync(), Error, "not available here");
+  await assertRejects(() => Brightness.setBrightnessAsync(0.5), Error, "not available here");
+  // Expo: getSystemBrightnessAsync is getBrightnessAsync off Android, which rejects here.
+  const system = await assertRejects(() => Brightness.getSystemBrightnessAsync());
+  assertEquals((system as { code?: string }).code, "ERR_UNAVAILABLE");
+  // The Android-only calls never reject off Android (no unhandled rejections on iOS / the web).
+  assertEquals(await Brightness.restoreSystemBrightnessAsync(), undefined);
+  assertEquals(await Brightness.isUsingSystemBrightnessAsync(), false);
+  assertEquals(await Brightness.getSystemBrightnessModeAsync(), Brightness.BrightnessMode.UNKNOWN);
+  assertEquals(
+    await Brightness.setSystemBrightnessModeAsync(Brightness.BrightnessMode.MANUAL),
+    undefined,
+  );
+  // Expo's web permission: undetermined.
+  const permission = await Brightness.getPermissionsAsync();
+  assertEquals([permission.status, permission.granted], ["undetermined", false]);
+  // A value that is not a number is Expo's TypeError, wherever it runs.
+  await inShell(
+    "ios",
+    { ScreenBrightness: fakePlugin(["setBrightness", "getBrightness"]).plugin },
+    async () => {
+      await assertRejects(
+        () => Brightness.setBrightnessAsync(Number.NaN),
+        TypeError,
+        "setBrightnessAsync cannot be called with NaN",
+      );
+    },
+  );
 });
 
 // ---- expo-print ----------------------------------------------------------------------------

@@ -176,11 +176,13 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     notes: "get/setBrightnessAsync over @capacitor-community/screen-brightness (`denext mobile " +
       "add brightness`): the screen's level on iOS, the app window's on Android (-1 there until " +
-      "the app sets one). restoreSystemBrightnessAsync restores the level from before the app's " +
-      "first change (iOS) or lets the window follow the system (Android). The system calls are " +
-      "the screen's on iOS; Android's system setting and the brightness mode reject with " +
-      "ERR_UNAVAILABLE (no WRITE_SETTINGS), and addBrightnessListener never fires. Outside the " +
-      "shell isAvailableAsync() is false and the calls reject, as Expo's web build.",
+      "the app sets one). Off Android (iOS and the web) the calls are Expo's there: the system " +
+      "brightness is the screen's, restoreSystemBrightnessAsync and setSystemBrightnessModeAsync " +
+      "do nothing, isUsingSystemBrightnessAsync is false and getSystemBrightnessModeAsync is " +
+      "UNKNOWN. On Android restoreSystemBrightnessAsync lets the window follow the system; the " +
+      "system setting and the brightness mode reject with ERR_UNAVAILABLE (no WRITE_SETTINGS). " +
+      "addBrightnessListener never fires. Outside the shell isAvailableAsync() is false, the " +
+      "level calls reject and the permission is undetermined, as Expo's web build.",
   },
   "expo-build-properties": {
     module: "./build-properties.ts",
@@ -214,7 +216,19 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "addEventWithForm show the native editor: iOS reports saved (with the id) or canceled, " +
       "Android done. The synchronous getDefaultCalendarSync, getSourcesSync and " +
       "getOccurrenceSync are omitted (no JSI); off the shell every data call rejects with " +
-      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build.",
+      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build. " +
+      "expo-calendar/next is this shim too (SDK 58 points it at the main entry); " +
+      "expo-calendar/legacy is its own, below.",
+  },
+  "expo-calendar/legacy": {
+    module: "./calendar-legacy.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    notes: "Expo's legacy function API (getCalendarsAsync, getEventsAsync, createEventAsync, " +
+      "…, the enums and the permission calls): the same implementation as the main entry's " +
+      "legacy functions, with the same limits (attendees, opening an event in the calendar " +
+      "app and single-occurrence edits reject with ERR_UNAVAILABLE; off the shell every data " +
+      "call does).",
   },
   "expo-camera": {
     module: "./camera.ts",
@@ -243,7 +257,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "58.0.2",
     status: "partial",
     notes: "getCellularGenerationAsync from the Network Information API's effectiveType " +
-      "(Chromium, the Android WebView; UNKNOWN elsewhere or off cellular). The carrier name, ISO " +
+      "(Chromium, the Android WebView; UNKNOWN elsewhere or off cellular, including a desktop " +
+      "browser or Deno Desktop, whose connection has no type: Expo's web build reports its " +
+      "speed class there, e.g. 4G on Wi-Fi). The carrier name, ISO " +
       "country code and mobile country / network codes are null (no WebView or browser API " +
       "reports them; iOS 16.4+ returns none natively either). The permission calls answer granted.",
   },
@@ -362,7 +378,29 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "ERR_UNAVAILABLE), no change events (the listener never fires), no iOS 18 access button " +
       "(ContactAccessButton renders nothing). The legacy functions work from the main entry " +
       "(Expo 58's throw there). Off the shell every call rejects with ERR_UNAVAILABLE except " +
-      "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false).",
+      "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false). " +
+      "expo-contacts/next is this shim too (SDK 58 points it at the main entry); " +
+      "expo-contacts/legacy is its own, below.",
+  },
+  "expo-contacts/legacy": {
+    module: "./contacts-legacy.ts",
+    pinned: "58.0.6",
+    status: "partial",
+    omitted: [
+      "shareContactAsync",
+      "writeContactToFileAsync",
+      "presentAccessPickerAsync",
+      "addExistingGroupToContainerAsync",
+      "updateGroupNameAsync",
+      "addExistingContactToGroupAsync",
+      "removeContactFromGroupAsync",
+    ],
+    notes: "Expo's legacy function API in its legacy shapes (getContactsAsync, " +
+      "addContactAsync, presentFormAsync, …; Contact, Group and Container are the legacy " +
+      "record types): the same implementation as the main entry's legacy functions, with the " +
+      "same limits (no containers, the change listener never fires, ContactAccessButton " +
+      "renders nothing; off the shell every call rejects with ERR_UNAVAILABLE except the " +
+      "permissions and isAvailableAsync).",
   },
   "expo-crypto": {
     module: "./crypto.ts",
@@ -417,7 +455,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "(File.pickFileAsync, Directory.pickDirectoryAsync). The legacy top-level functions " +
       "(readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 58's root and here " +
       "alike: each warns and throws Expo's migration error. The legacy API itself " +
-      "(expo-file-system/legacy) is its own shim, below.",
+      "(expo-file-system/legacy) is its own shim, below; expo-file-system/next is this one " +
+      "(SDK 58 points it at the main entry).",
   },
   "expo-file-system/legacy": {
     module: "./file-system-legacy.ts",
@@ -631,7 +670,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "Album.getSmartAlbums read the plugin's album type (iOS smart albums; Android albums are " +
       "regular); its other getters, deleting, moving, favouriting, " +
       "exeForMetadata and presentPermissionsPicker reject, and no media subtypes are reported. " +
-      "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy.",
+      "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy. " +
+      "expo-media-library/next is this shim too (SDK 58 points it at the main entry).",
   },
   "expo-media-library/legacy": {
     module: "./media-library-legacy.ts",
@@ -652,7 +692,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "wide; smoothsColors widens it) over the mesh's average colour, on every platform. An " +
       "approximation of SwiftUI's MeshGradient, not the same interpolation. resolution and " +
       "ignoresSafeArea are ignored; with mask the children draw over the gradient instead of " +
-      "masking it.",
+      "masking it. The average colour is computed for hex, rgb() and processColor colours; " +
+      "with named or hsl() colours it is CSS color-mix(), which needs Safari 16.2+ (iOS 16.2+).",
   },
   "expo-navigation-bar": {
     module: "./navigation-bar.ts",
@@ -788,8 +829,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./sms.ts",
     pinned: "58.0.2",
     status: "partial",
-    notes: "In the iOS / Android shell, sendSMSAsync opens the Messages app with an sms: URL " +
-      '(recipients and body; the user sends it) and resolves { result: "unknown" } (the app ' +
+    notes: "In the iOS / Android shell, sendSMSAsync opens the Messages app by navigating to " +
+      'an sms: URL (recipients and body; the user sends it; no popup to be blocked) and resolves { result: "unknown" } (the app ' +
       "reports nothing back, as on Android). Attachments reject with ERR_SMS_ATTACHMENTS. " +
       "Outside the shell isAvailableAsync() is false and sendSMSAsync rejects with " +
       "ERR_UNAVAILABLE, as Expo's web build.",
