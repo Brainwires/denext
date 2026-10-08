@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`"use cache"` works on methods and on a name-referenced `export default function`.** A
+  static class method becomes a cached static field and an object-literal method a cached
+  property, keyed on the class or object, the method name and the arguments, as in Next.js; a
+  method nested in a function also keys on the values it reads from that scope (Next's bound
+  arguments). An `export default function load() { "use cache" }` that the module calls by name
+  is cached on both paths. Next.js's rules come with it as build errors: an inline
+  `"use cache"` instance method, a cached getter or setter, and `this` / `super` / `arguments`
+  inside a cached function.
 - **`<ViewTransition>` animates same-page updates, as React 19.2's does.** A commit made only of
   Transition work — a `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal —
   now runs inside `document.startViewTransition` when a wrapped element enters, exits, is shared

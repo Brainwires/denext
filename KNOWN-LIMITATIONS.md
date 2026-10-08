@@ -48,8 +48,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   flushed); its late `<title>`/`<meta>` stays inline.
 - **`searchParams` read outside a hole with `cacheKeyParams` set** can reflect another request;
   a whole-body cache refuses to store such a render, a PPR shell relies on the hole.
-- **The `use cache` transform rewrites top-level functions and `const` arrows only.** On a
-  method or a name-referenced `export default function` the directive is inert; hoist the body.
 
 ### Typed API, Live and GraphQL
 

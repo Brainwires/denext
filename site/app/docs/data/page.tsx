@@ -202,6 +202,17 @@ export default {
         <code>cacheTag</code>. Partial Prerendering serves a cached static shell with per-request
         dynamic holes.
       </p>
+      <p>
+        The directive goes at the top of a module (every function it declares is cached) or first in
+        a function body: a function declaration, a <code>const</code> arrow, an{" "}
+        <code>export default function</code>{" "}
+        (referenced by name or not), a static class method or an object-literal method. A method
+        keys on its class or object, its name and its arguments; one nested in another function also
+        keys on the values it reads from that function's scope. As in Next.js, an inline{" "}
+        <code>"use cache"</code> instance method is a build error, and so is <code>this</code>,{" "}
+        <code>super</code> or <code>arguments</code>{" "}
+        inside a cached function: its result is shared by every caller.
+      </p>
       <Callout kind="note">
         Cache Components and PPR are a stable <strong>opt-in</strong>{" "}
         (off unless you set the flag — caching is a choice, not a default). The legacy{" "}

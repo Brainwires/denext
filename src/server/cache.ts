@@ -929,7 +929,8 @@ function reviveStaleUseCache(
  *
  * @param id A stable key prefix (module id + function name).
  * @param fn The original (directive-bearing) function.
- * @param options Optional transform-supplied fallback `profile` and static `tags`.
+ * @param options Optional transform-supplied fallback `profile` and static `tags`, and
+ *   `bound` — the closed-over values (read per call) a nested method's key also covers.
  * @returns A wrapper with `fn`'s signature, always returning a Promise.
  */
 let debugCacheFlag: boolean | null = null;
@@ -945,25 +946,40 @@ function debugCache(): boolean {
   return debugCacheFlag;
 }
 
+/**
+ * What a `"use cache"` entry keys on besides its id: the call's arguments, plus — for a
+ * method that closes over enclosing-scope values — those values (Next.js's bound
+ * arguments), read at call time: the same values the body reads.
+ */
+function cachedCallKeyArgs(args: unknown[], bound: (() => unknown[]) | undefined): unknown[] {
+  return bound ? [args, bound()] : [args];
+}
+
 export function __useCache<A extends unknown[], R>(
   id: string,
   fn: (...args: A) => R | Promise<R>,
-  options: { profile?: string | CacheLifeProfile; tags?: string[] } = {},
+  options: {
+    profile?: string | CacheLifeProfile;
+    tags?: string[];
+    bound?: () => unknown[];
+  } = {},
 ): (...args: A) => Promise<R> {
   const staticTags = options.tags ?? [];
+  const bound = options.bound;
   return async (...args: A): Promise<R> => {
     // Arguments that don't survive JSON (a component's `children` element tree, a
     // function prop) can't key an entry: their serialization drops exactly what tells two
     // calls apart, so every page under a cached layout would share one entry. React keys
     // those as opaque references; here the call runs uncached (its `cacheTag`s still
     // reach the page) — the cheap-and-correct choice until reference keys exist.
-    if (!isJsonSafe(args)) {
+    const keyArgs = cachedCallKeyArgs(args, bound);
+    if (!isJsonSafe(keyArgs)) {
       if (debugCache()) console.error(`[cache] ${id} BYPASS (non-serializable arguments)`);
       const { value, entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
       collectTags(entry.tags);
       return value;
     }
-    const key = safeKey([id, args]);
+    const key = safeKey([id, ...keyArgs]);
     collectTags(staticTags);
     const hit = lookupLive(key) ?? await lookupData(key);
     if (debugCache()) {
