@@ -26,7 +26,7 @@ export interface ViteEmittedFile {
 }
 
 /** A `generateBundle` hook: a function, or Rollup's `{ handler }` object form. */
-type GenerateBundleHook =
+export type GenerateBundleHook =
   | ((this: ViteEmitterContext, options: unknown, bundle: unknown, isWrite: boolean) => unknown)
   | {
     handler: (

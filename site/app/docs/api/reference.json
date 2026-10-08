@@ -11047,6 +11047,18 @@
           "denextOnly": true
         },
         {
+          "name": "SpaTanstackRouterConfig",
+          "slug": "SpaTanstackRouterConfig",
+          "kind": "interface",
+          "signature": "interface SpaTanstackRouterConfig",
+          "doc": "TanStack Router build settings under SpaConfig.tanstackRouter.",
+          "docFull": "TanStack Router build settings under {@link SpaConfig.tanstackRouter}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "specificity",
           "slug": "specificity",
           "kind": "function",

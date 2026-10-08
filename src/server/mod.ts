@@ -297,6 +297,7 @@ export {
   type SpaConfig,
   type SpaDesktopConfig,
   type SpaProxyConfig,
+  type SpaTanstackRouterConfig,
   type TailwindConfig,
   type TasksConfig,
 } from "./config.ts";
