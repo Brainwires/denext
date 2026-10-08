@@ -470,9 +470,16 @@ function runUnmountCleanups(fiber: Fiber): void {
   }
 }
 
-/** Remove a host/text fiber's node from the DOM, if it is attached. */
+/**
+ * Remove a host/text fiber's node from the DOM, if it is attached. An adopted singleton (the
+ * page's `<html>`/`<body>`) stays, but loses the attributes and listeners its props set, as
+ * React releases a singleton — so the next root layout starts from a clean element.
+ */
 function removeHostNode(fiber: Fiber): void {
   const dom = fiber.stateNode;
+  if (fiber.tag === "singleton") {
+    return applyProps(dom as Element, fiber, fiber.vnode.props ?? {}, {}, onErrorFor(fiber), false);
+  }
   if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
     dom.parentNode.removeChild(dom);
   }

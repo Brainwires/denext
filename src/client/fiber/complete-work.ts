@@ -89,15 +89,15 @@ function completeHost(wip: Fiber): void {
 
 /**
  * A singleton (an adopted `<html>`/`<head>`/`<body>`, see begin-work.ts): its props become the
- * page element's attributes — set on mount (hydration included: equal values are no-ops), diffed
- * on update like a host. It never creates or re-syncs DOM; its children live in the container.
+ * page element's attributes in the commit's mutation phase — on mount too (hydration included:
+ * equal values are no-ops), so they land after a replaced layout's singleton cleared its own
+ * (deletions commit first). It never creates or re-syncs DOM; its children live in the container.
  */
 function completeSingleton(wip: Fiber): void {
-  const props = wip.vnode.props ?? {};
-  if (wip.alternate === null) {
-    applyProps(wip.stateNode as Element, wip, {}, props, onErrorFor(wip), false);
-    if (props.ref != null) wip.flags |= RefAttach;
-  } else if (hostPropsChanged(wip.alternate.vnode.props, props)) wip.flags |= Update;
+  if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
+  if (wip.alternate === null || hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) {
+    wip.flags |= Update;
+  }
 }
 
 function completeText(wip: Fiber): void {

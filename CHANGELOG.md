@@ -75,6 +75,12 @@ and this project adheres to
   its `value` or `defaultValue` names, `multiple` included; a later `defaultValue` change never
   moves a `<textarea>` / `<select>`. On the server, a controlled `value` / `checked` now wins over
   the default instead of rendering both (`<input value="v" value="d">`), as ReactDOMServer does.
+- **A client root layout's `<html>` / `<body>` attributes go when the layout does.** The page's
+  own elements the layout adopts now lose the attributes and listeners its props set when it
+  unmounts or a soft navigation switches to another root layout, as React releases them, so the
+  new layout starts from clean elements instead of the old one's classes. The new layout's
+  attributes are applied in the commit, after the old ones are cleared, and an `on*` handler on
+  `<body>` no longer throws.
 - **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
   document tags now adopt the page's own elements (React's host singletons): their attributes
   follow the layout's props on the real `<html>` / `<body>`, including later updates, and the
