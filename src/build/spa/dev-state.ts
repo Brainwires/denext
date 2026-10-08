@@ -81,6 +81,11 @@ export interface SpaDevState {
   unbundledReady: Promise<boolean> | null;
   unbundledCss: string | null;
   unbundledCssGen: number;
+  /**
+   * Settles once the config's plugins are set up and their prepare steps ran (see
+   * dev-plugins.ts): a bundle waits on it, since it may import what a step generates.
+   */
+  pluginsReady: Promise<void>;
 }
 
 /**
@@ -112,6 +117,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     unbundledReady: null,
     unbundledCss: null,
     unbundledCssGen: -1,
+    pluginsReady: Promise.resolve(),
   };
 }
 
@@ -151,7 +157,8 @@ async function buildGeneration(st: SpaDevState, gen: number): Promise<string> {
 export function ensureBuilt(st: SpaDevState): Promise<string> {
   if (st.devDir) return Promise.resolve(st.devDir);
   if (st.building) return st.building;
-  st.building = buildGeneration(st, st.generation).finally(() => {
+  const gen = st.generation;
+  st.building = st.pluginsReady.then(() => buildGeneration(st, gen)).finally(() => {
     st.building = null;
   });
   return st.building;
@@ -178,6 +185,7 @@ export function broadcastUpdate(st: SpaDevState, urls: string[]): void {
 export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
   return st.unbundledReady ??= (async () => {
     if (!st.unbundledOptIn) return false;
+    await st.pluginsReady; // the module graph may import what a prepare step generates
     const { paths, entryPath } = st;
     // React Native mode: react-native → react-native-web and the rest of its resolvers run in
     // the loop's dependency bundle; it needs the compat (react→denext) runtime.
