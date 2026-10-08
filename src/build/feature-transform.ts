@@ -60,7 +60,7 @@ function featureBindings(body: Node[]): Set<string> {
  * walk is not scope-precise, so a name shadowed in one scope is dropped from folding everywhere in
  * the module (conservative — the un-folded call reads the seeded value, which is correct).
  */
-function shadowedNames(body: Node[], importNames: Set<string>): Set<string> {
+export function shadowedNames(body: Node[], importNames: Set<string>): Set<string> {
   const bound = new Set<string>();
   const note = (pat: Node | undefined) => pat && collectPatternNames(pat, bound);
   for (const item of body) {

@@ -19,11 +19,15 @@ const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate";
 /**
  * A basename that carries a content hash: a split chunk (`chunk-<hash>.js`), a `<name>-<hash>.ext`
  * asset, or a self-hosted font — named by a hash of its source URL alone (`<base36>.woff2`).
+ * The `<hash>` is hex, or esbuild's `[hash]` — exactly 8 upper-case base32 characters, which
+ * `deno bundle`'s split modules (`lazy-VXRX55NY.js`) and esbuild's file-loader / `?url` assets
+ * (`logo-QWERTY23.svg`) carry. Upper case only, so an ordinary lower-case name never reads as one.
  */
-function isContentHashed(rel: string): boolean {
+export function isContentHashed(rel: string): boolean {
   const base = rel.slice(rel.lastIndexOf("/") + 1);
   return /^chunk-[a-z0-9_-]+\.js$/i.test(base) ||
     /[-.][0-9a-f]{8,}\.[a-z0-9]+$/i.test(base) ||
+    /^[^/]+-[A-Z2-7]{8}\.[a-z0-9]+$/.test(base) ||
     /^[a-z0-9]{5,}\.(woff2?|ttf|otf|eot)$/i.test(base);
 }
 

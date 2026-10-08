@@ -7,6 +7,7 @@
 
 import { remixCodegen as cg } from "@denext/denext/plugin-kit";
 import { dirname, join, relative } from "@std/path";
+import { prerenderExports } from "./prerender.ts";
 import type { RouteNode } from "./route-tree.ts";
 
 /** What one route node produced on disk (absolute paths). */
@@ -35,6 +36,10 @@ export interface GenerateOptions {
   nodes: RouteNode[];
   /** `root.tsx`'s path (absolute), or null when the app has none. */
   rootFile: string | null;
+  /** React Router's SPA mode (`ssr: false`): route components render in the browser only. */
+  spa?: boolean;
+  /** The URLs `react-router.config.ts`'s `prerender` lists (see `prerender.ts`). */
+  prerender?: string[] | null;
 }
 
 /** The generated siblings a wrapper imports — relative to the OUTPUT dir already. */
@@ -67,12 +72,14 @@ export async function generateRoutes(
     return dir;
   };
   if (opts.rootFile) {
+    // The root renders on the server even in SPA mode (React Router prerenders it as the
+    // app shell); its own clientLoader, if any, follows the usual hydration rules.
     claim(ROOT_ID);
     out.set(ROOT_ID, await generateRoot(opts.rootFile, opts.outDir));
   }
   for (const node of opts.nodes) {
     claim(node.id);
-    out.set(node.id, await generateNode(node, join(opts.appDir, node.file), opts.outDir));
+    out.set(node.id, await generateNode(node, join(opts.appDir, node.file), opts));
   }
   // Prune output dirs whose route no longer exists (a renamed/deleted route) so `.denext`
   // doesn't accumulate stale modules across route churn.
@@ -103,8 +110,9 @@ function slug(id: string): string {
 async function generateNode(
   node: RouteNode,
   file: string,
-  outDir: string,
+  opts: GenerateOptions,
 ): Promise<GeneratedRoute> {
+  const outDir = opts.outDir;
   const source = await Deno.readTextFile(file);
   const parts = await cg.analyzeModule(source);
   const dir = join(outDir, slug(node.id));
@@ -127,7 +135,11 @@ async function generateNode(
   ) {
     await writeIfChanged(
       join(dir, clientFile),
-      rebase(cg.clientModuleSource(parts, dataFile, role, false, true), srcDir, dir),
+      rebase(
+        cg.clientModuleSource(parts, dataFile, role, false, true, { spa: opts.spa }),
+        srcDir,
+        dir,
+      ),
     );
   }
   if (!parts.hasDefault) {
@@ -138,7 +150,8 @@ async function generateNode(
   }
   result.wrapper = join(dir, `${role}.tsx`);
   const wrapper = role === "page"
-    ? cg.pageWrapperSource(node.id, parts, clientFile, dataFile)
+    ? cg.pageWrapperSource(node.id, parts, clientFile, dataFile) +
+      prerenderExports(node, opts.prerender ?? null)
     : cg.layoutWrapperSource(node.id, parts, clientFile, dataFile);
   await writeIfChanged(result.wrapper, wrapper);
   if (parts.hasErrorBoundary || parts.hasCatchBoundary) {

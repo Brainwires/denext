@@ -6,7 +6,8 @@
 //   2. request handling — claim a request the core App Router didn't match and
 //      serve it with a distinct render path (e.g. a Pages Router with its own
 //      `_app`/`_document`/`getServerSideProps` pipeline);
-//   3. build steps — emit the plugin's own client bundles/assets at build time.
+//   3. build steps — emit the plugin's own client bundles/assets at build and export time
+//      (`emitFile` publishes a generated file at the site root, like Vite's `this.emitFile`).
 //
 // Everything a plugin renders it does with denext's PUBLIC exports (JSX runtime,
 // `react-dom/server`, `denext/client`, `renderDocument`) — the core only routes
@@ -17,8 +18,10 @@ import type { DenextConfig } from "../server/config.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
+import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts";
+import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 import type { CommandSpec } from "../cli/command.ts";
-import { globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
+import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
 export type PluginMode = "dev" | "build" | "prod" | "export";
@@ -33,18 +36,23 @@ export type PluginRequestHandler = (
   request: Request,
 ) => Response | null | undefined | Promise<Response | null | undefined>;
 
-/** A build-time step that emits the plugin's client bundles/assets into `outDir`. */
+/**
+ * A build-time step that emits the plugin's client bundles/assets into `outDir`, and publishes
+ * generated files at the site root with {@linkcode PluginBuildContext.emitFile}. Runs at
+ * `denext build` and at `denext export` (App Router, SPA and Pages Router alike).
+ */
 export type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>;
 
 /**
  * A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is
  * bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a
- * {@linkcode PluginBuildStep} (which runs only at `denext build`), a prepare step runs in **both**
+ * {@linkcode PluginBuildStep} (which runs only at `denext build` / `export`), a prepare step runs in **both**
  * lifecycles: once at `denext build` and once at `denext dev` startup, and again during dev whenever
  * a file under its {@linkcode PrepareStepOptions.watch} globs changes — so its generated output stays
- * live as you edit. Same {@linkcode PluginBuildContext} as a build step.
+ * live as you edit. Its {@linkcode PluginPrepareContext} is a build step's context without the
+ * emit seam: a prepare step generates inputs, not published output.
  */
-export type PluginPrepareStep = (context: PluginBuildContext) => void | Promise<void>;
+export type PluginPrepareStep = (context: PluginPrepareContext) => void | Promise<void>;
 
 /** Options for {@linkcode PluginContext.addPrepareStep}. */
 export interface PrepareStepOptions {
@@ -62,8 +70,8 @@ export interface PrepareStepOptions {
  */
 export type PluginTeardown = () => void | Promise<void>;
 
-/** Context passed to a {@linkcode PluginBuildStep}. */
-export interface PluginBuildContext {
+/** Context passed to a {@linkcode PluginPrepareStep} (and the base of a build step's). */
+export interface PluginPrepareContext {
   /** Absolute project root (the dir holding `denext.config.*`). */
   readonly projectRoot: string;
   /** Absolute App Router scan root (`app/` or `src/app/`) — avoid colliding with it. */
@@ -73,6 +81,44 @@ export interface PluginBuildContext {
   /** The resolved project config. */
   readonly config: DenextConfig;
 }
+
+/** A generated file a build step publishes with {@linkcode PluginBuildContext.emitFile}. */
+export interface EmittedAsset {
+  /**
+   * Where the file is served, relative to the site root, `/`-separated:
+   * `"third-party-licenses.json"` is served at `/third-party-licenses.json`, `"meta/build.json"`
+   * at `/meta/build.json`. An absolute path, a `..` segment or a backslash is refused.
+   */
+  readonly fileName: string;
+  /** The file's contents: text (written as UTF-8) or bytes. */
+  readonly source: string | Uint8Array;
+}
+
+/** Context passed to a {@linkcode PluginBuildStep}. */
+export interface PluginBuildContext extends PluginPrepareContext {
+  /**
+   * Publish a generated file at the site root: the build-time analogue of a Vite plugin's
+   * `this.emitFile({ type: "asset", fileName, source })` from `generateBundle`. In
+   * `denext export` the file lands in the export directory (next to `public/`'s files, after
+   * them, so an emitted file replaces a same-named public one); in `denext build` it lands in
+   * `<outDir>/emitted/`, which `denext start` serves at the same URL, ahead of `public/`.
+   * Resolves once the file is written. Rejects a path outside the site root and one the build
+   * publishes itself: `index.html`, denext's own output under `_denext/` (`client/`, `pages/`,
+   * `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the `spa.assetsDir` directory and,
+   * in an export, any file the build already wrote there (a rendered page, a client chunk).
+   */
+  emitFile(asset: EmittedAsset): Promise<void>;
+  /**
+   * The modules bundled into the client output, as absolute paths (a module esbuild loaded from
+   * a virtual namespace keeps its `namespace:path` id), when this build knows them: a SPA built
+   * on the esbuild path (npm React, `compatibilityMode`, React Native mode) collects them while
+   * plugins are configured. `undefined` everywhere else — read it as "unknown", not "none".
+   */
+  readonly clientModules?: readonly string[];
+}
+
+/** Where `denext build` writes emitted files, under the build output dir; `start` serves it. */
+export const EMITTED_DIR = "emitted";
 
 /** The seams a plugin's {@linkcode DenextPlugin.setup} may extend. */
 export interface PluginContext {
@@ -221,9 +267,147 @@ export function getPluginRequestHandler():
   };
 }
 
-/** Run every plugin-registered build step in registration order. */
-export async function runPluginBuildSteps(context: PluginBuildContext): Promise<void> {
-  for (const step of buildSteps) await step(context);
+/** Options for {@linkcode runPluginBuildSteps}: where emitted files go, and what the build knows. */
+export interface RunBuildStepsOptions {
+  /**
+   * The published root {@linkcode PluginBuildContext.emitFile} writes under: an export's staging
+   * dir. Default `<outDir>/emitted` (a `denext build`, served by `denext start`).
+   */
+  readonly emitDir?: string;
+  /** The client bundle's modules, when the build collected them. */
+  readonly clientModules?: readonly string[];
+  /**
+   * The files the build already wrote under `emitDir` (relative, `/`-separated, lower-cased, as
+   * {@linkcode listBuiltFiles} returns them): `emitFile` refuses to replace one.
+   */
+  readonly builtFiles?: ReadonlySet<string>;
+}
+
+/** Whether any plugin registered a build step (so a build can skip work only steps need). */
+export function hasPluginBuildSteps(): boolean {
+  return buildSteps.length > 0;
+}
+
+/**
+ * The directories under `_denext/` the build fills itself: the client output (App Router and SPA),
+ * the Pages Router client bundles (`PAGES_PREFIX`) and the self-hosted fonts (`FONTS_PUBLIC_PREFIX`).
+ */
+const RESERVED_EMIT_DIRS = ["_denext/client", "_denext/pages", "_denext/fonts"];
+
+/**
+ * The single files the build writes: the HTML shell and, under `_denext/`, the OTA manifest, the
+ * platform stamp and the bundled `desktop.preload`.
+ */
+const RESERVED_EMIT_FILES = new Set(
+  ["index.html", OTA_MANIFEST_PATH, OTA_PLATFORM_PATH, DESKTOP_PRELOAD_FILE].map((f) =>
+    f.toLowerCase()
+  ),
+);
+
+/** True when `name` is the directory `dir` or a path inside it. */
+const inDir = (name: string, dir: string) => name === dir || name.startsWith(`${dir}/`);
+
+/**
+ * True when `fileName` is a path the build publishes itself, which a build step may not replace:
+ * the HTML shell (`index.html`), denext's own output under `_denext/` (the client, Pages Router and
+ * font directories, the OTA manifest, the platform stamp and the desktop preload) and a SPA's
+ * `spa.assetsDir` client directory. Compared without case (a case-insensitive file system
+ * would write over them). The rest of `_denext/` is open (`@denext/htmx` publishes its runtime at
+ * `_denext/htmx/htmx.min.js`).
+ */
+function reservedEmitPath(fileName: string, config: DenextConfig): boolean {
+  const name = fileName.toLowerCase();
+  if (RESERVED_EMIT_FILES.has(name) || RESERVED_EMIT_DIRS.some((dir) => inDir(name, dir))) {
+    return true;
+  }
+  const assetsDir = config.spa?.assetsDir?.replace(/^\/+|\/+$/g, "").toLowerCase();
+  return !!assetsDir && inDir(name, assetsDir);
+}
+
+/**
+ * Every file under `root`, relative and `/`-separated, lower-cased (a case-insensitive file system
+ * maps `About.html` onto `about.html`): the files a build wrote, which
+ * {@linkcode RunBuildStepsOptions.builtFiles} keeps a build step from replacing. Empty when `root`
+ * does not exist.
+ */
+export async function listBuiltFiles(root: string): Promise<Set<string>> {
+  const files = new Set<string>();
+  const visit = async (dir: string, prefix: string): Promise<void> => {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = await Array.fromAsync(Deno.readDir(dir));
+    } catch (err) {
+      if (err instanceof Deno.errors.NotFound) return;
+      throw err;
+    }
+    for (const entry of entries) {
+      const rel = `${prefix}${entry.name}`;
+      if (entry.isDirectory) await visit(join(dir, entry.name), `${rel}/`);
+      else files.add(rel.toLowerCase());
+    }
+  };
+  await visit(root, "");
+  return files;
+}
+
+/**
+ * The absolute path `fileName` is written to under `root`, refusing anything that could leave it
+ * (an absolute path, a `..` segment, a backslash, an empty name) or replace the build's own
+ * output ({@link reservedEmitPath}, or a file in `builtFiles`).
+ */
+function emittedPath(
+  root: string,
+  fileName: string,
+  config: DenextConfig,
+  builtFiles?: ReadonlySet<string>,
+): string {
+  const segments = fileName.split("/");
+  if (
+    fileName.length === 0 || fileName.includes("\\") || fileName.startsWith("/") ||
+    /^[A-Za-z]:/.test(fileName) ||
+    segments.some((s) => s === "" || s === "." || s === "..")
+  ) {
+    throw new Error(
+      `denext: emitFile refused ${JSON.stringify(fileName)}: a fileName is a relative, ` +
+        "/-separated path inside the site root (no leading /, no . or .. segments, no backslash)",
+    );
+  }
+  if (reservedEmitPath(fileName, config)) {
+    throw new Error(
+      `denext: emitFile refused ${JSON.stringify(fileName)}: the build publishes it itself ` +
+        "(the HTML shell index.html, its output under _denext/ and the spa.assetsDir client " +
+        "directory)",
+    );
+  }
+  if (builtFiles?.has(fileName.toLowerCase())) {
+    throw new Error(
+      `denext: emitFile refused ${JSON.stringify(fileName)}: the build already wrote that file`,
+    );
+  }
+  return join(root, ...segments);
+}
+
+/**
+ * Run every plugin-registered build step in registration order, each with an
+ * {@linkcode PluginBuildContext.emitFile} that publishes into `options.emitDir`.
+ */
+export async function runPluginBuildSteps(
+  context: PluginPrepareContext,
+  options: RunBuildStepsOptions = {},
+): Promise<void> {
+  if (buildSteps.length === 0) return;
+  const emitDir = options.emitDir ?? join(context.outDir, EMITTED_DIR);
+  const full: PluginBuildContext = {
+    ...context,
+    clientModules: options.clientModules,
+    emitFile: async ({ fileName, source }) => {
+      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles);
+      await Deno.mkdir(dirname(dest), { recursive: true });
+      if (typeof source === "string") await Deno.writeTextFile(dest, source);
+      else await Deno.writeFile(dest, source);
+    },
+  };
+  for (const step of buildSteps) await step(full);
 }
 
 /**
@@ -231,7 +415,7 @@ export async function runPluginBuildSteps(context: PluginBuildContext): Promise<
  * once at `denext dev` startup. A step that throws is caught and logged so one plugin's codegen
  * failure can't abort the build or the dev boot.
  */
-export async function runPluginPrepareSteps(context: PluginBuildContext): Promise<void> {
+export async function runPluginPrepareSteps(context: PluginPrepareContext): Promise<void> {
   for (const { step } of prepareSteps) {
     try {
       await step(context);
@@ -283,7 +467,7 @@ export function getPluginPrepareWatchDirs(projectRoot: string): string[] {
  * `watch` globs never re-runs here (it only ran at startup).
  */
 export async function runMatchingPrepareSteps(
-  context: PluginBuildContext,
+  context: PluginPrepareContext,
   changedPaths: readonly string[],
 ): Promise<boolean> {
   let ran = false;

@@ -117,6 +117,19 @@ function getHook(kind: number): HookCell {
 }
 
 /**
+ * Set while the commit PARKS the queued effects of a hidden `<Activity>` subtree (see
+ * `parkEffects` in commit.ts): an entry run then records its setup as the cell's disconnected
+ * `reconnect` thunk instead of running it, so the effect first mounts when the Activity is
+ * revealed — React 19.2 mounts no effect inside a hidden Activity.
+ */
+let parking = false;
+
+/** Turn effect parking on/off (commit.ts, around a hidden Activity's queued entries). */
+export function setParkingEffects(on: boolean): void {
+  parking = on;
+}
+
+/**
  * Queue an effect for `cell` when its deps changed. Under a StrictMode subtree in
  * development, a mount effect is immediately unmounted and remounted (setup →
  * cleanup → setup) to surface missing cleanup, matching React.
@@ -147,10 +160,17 @@ function scheduleEffect(
   // Offscreen reconnect thunk and performs the StrictMode double-invoke.
   const entry: CommitEffect = (() => {
     cell.deps = nextDeps;
-    mount();
     // Remember how to rebuild this effect after an Offscreen hide tore it down.
     // Insertion effects are excluded — they aren't part of the offscreen cycle.
-    if (offscreenAware) cell.reconnect = mount;
+    if (offscreenAware) {
+      cell.reconnect = mount;
+      // Inside a hidden <Activity>: mount nothing now; the reveal reconnects it.
+      if (parking) {
+        cell.disconnected = true;
+        return;
+      }
+    }
+    mount();
     if (strictMount) {
       if (typeof cell.cleanup === "function") cell.cleanup();
       mount();
@@ -222,9 +242,14 @@ function storeSubscriptionEffect(
     cell.cleanup = subscribe(notify);
   };
   const entry: CommitEffect = (() => {
-    mount();
     cell.reconnect = mount;
     cell.deps = [subscribe];
+    // Inside a hidden <Activity>: subscribe on reveal, not now (see `parking`).
+    if (parking) {
+      cell.disconnected = true;
+      return;
+    }
+    mount();
     notify();
   }) as CommitEffect;
   entry.cleanup = () => {

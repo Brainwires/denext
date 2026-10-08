@@ -19,6 +19,7 @@ import type { RouteManifest, SegmentLevel } from "../src/router/manifest.ts";
 import type { PageProps } from "../src/server/types.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
+import { hydratedFlight } from "./helpers/streamed-flight.ts";
 
 /**
  * A one-page manifest. `levels` (a root segment level, as the scanner produces for any
@@ -536,7 +537,7 @@ Deno.test("Flight path: redirect() inside a streamed hole streams the redirect; 
   queueMicrotask(() => resolveData("x"));
   const html = await res.text();
   assertEquals(holeContent(html), '<meta http-equiv="refresh" content="0;url=/login">');
-  const flightJson = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html)![1];
+  const flightJson = JSON.stringify(hydratedFlight(html));
   assert(!flightJson.includes(`"$":"$"`), "the hole is filled (with nothing) in the tail Flight");
 });
 
@@ -577,6 +578,6 @@ Deno.test("Flight path: notFound() inside a streamed hole carries the not-found 
   const html = await res.text();
   const hole = holeContent(html);
   assert(hole !== null && hole.includes("<h1>404</h1>"), "the built-in UI streamed into the hole");
-  const flightJson = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html)![1];
+  const flightJson = JSON.stringify(hydratedFlight(html));
   assertStringIncludes(flightJson, "This page could not be found.", "hydration sees the same UI");
 });

@@ -156,6 +156,15 @@ internal design choice with no observable difference lives in
   sides; `server-only` in the client bundle is still a build error, and the runtime
   `clientOnly()` guard still throws on the server.
 
+## Remix and React Router
+
+- **A `clientLoader`'s `serverLoader()` doesn't make its own request on a navigation.** denext
+  navigates by rendering the target route on the server, so the server `loader` runs with that
+  render and `serverLoader()` resolves its result. React Router calls the server loader only
+  when the client loader asks for it. A route a navigation brings in also renders (its server
+  data, or its `HydrateFallback` when it hydrates) before its `clientLoader` settles, where
+  React Router holds the previous page until it does.
+
 ## Browser behaviour
 
 - **On iOS/iPadOS WebKit, denext patches `Element.prototype`'s scroll members** (default on;
@@ -201,6 +210,14 @@ internal design choice with no observable difference lives in
   `denext mobile build`, `denext desktop build` / `package`). Packages in `node_modules` keep
   their own resolution: their `.ios.js` files are not picked, since they call native modules. A
   Pages Router app (`@denext/pages-router`) takes the `web` target's files only.
+
+## Lists
+
+- **`lists: "denext"`'s LegendList is `VirtualList`'s engine, not LegendList's.** An item
+  size estimate is always confirmed by measuring the rendered item, and the scroll element
+  carries the engine's inline `height: 100%`: a `style` height, or a class with a max height, sizes it, where
+  the real DOM build's element has no inline height. It applies to apps on npm React (the
+  esbuild build path); a denext-native app uses `VirtualList` directly.
 
 ## Security posture — safe defaults
 

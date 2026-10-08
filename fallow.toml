@@ -25,6 +25,7 @@ ignoreDependencies = [
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
   "@std/yaml", # deno.json: jsr:@std/yaml@^1.0.0 — compose round-trip parse (src/build/compose-edit.ts)
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
+  "@tanstack/router-plugin", # deno.json: npm:@tanstack/router-plugin — spa.tanstackRouter's route splitter (build-time)
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
   # Workspace packages and examples import the published framework by its JSR name
@@ -148,6 +149,13 @@ entry = [
   # importing the npm package they stand in for, so each export is that package's public API
   # (the `src/expo/*` shims are entry points through deno.json's exports).
   "src/react-native-compat/*.ts",
+  # `lists: "denext"`'s DOM list modules (src/build/dom-lists.ts): prebuilt runtime entries
+  # (`denext/lists/<name>`) an app reaches by importing the package they stand in for
+  # (`@legendapp/list/react`), so each export is that package's public API.
+  "src/lists/*.ts",
+  # SPA mode's deferred-mount runtime: the build's island rewrite imports it by URL
+  # (`denext/spa-island`, src/build/spa-islands.ts), never app code.
+  "src/spa-island.ts",
   # The next-compat stand-ins a LIBRARY reaches through `next/router` / `next/compat/router`:
   # prebuilt runtime entries (`runtimeEntryPoints` in src/build/next-compat.ts), loaded by URL.
   "src/compat/next/router.ts",

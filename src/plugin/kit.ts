@@ -37,10 +37,12 @@
 // in {@link https://denext.dev/docs/plugins | the plugin guide}.
 export type {
   DenextPlugin,
+  EmittedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,
   PluginMode,
+  PluginPrepareContext,
   PluginPrepareStep,
   PluginRequestHandler,
   PluginTeardown,
@@ -49,6 +51,15 @@ export type {
 } from "../server/mod.ts";
 // For the `addCommand` seam (contribute a `denext <verb>`).
 export type { CommandContext, CommandSpec } from "../cli/command.ts";
+
+// For running a Vite plugin's `generateBundle` emitter (`this.emitFile`) as a build step.
+export { viteEmitterPlugin } from "./vite-emitter.ts";
+export type {
+  GenerateBundleHook,
+  ViteEmittedFile,
+  ViteEmitterContext,
+  VitePluginLike,
+} from "./vite-emitter.ts";
 
 // ── Route matching ─────────────────────────────────────────────────────────
 // Parse denext route patterns and match request paths against them — the reusable

@@ -200,6 +200,35 @@ denext mobile add haptics share secure-store`}
         experimental.
       </Callout>
 
+      <h3 id="migrate-enable-capacitor">An existing app: migrate --enable-capacitor</h3>
+      <p>
+        <code>denext migrate --enable-capacitor</code>{" "}
+        gives an app you are migrating (a Vite, CRA or generic SPA, a Next App Router app, or an
+        Expo app) the same shell: a <code>capacitor.config.ts</code>{" "}
+        (<code>--app-id</code>, else an existing config, the Expo app config,{" "}
+        <code>desktop.app.identifier</code> or a placeholder from the package name),{" "}
+        <code>spa.precompress: false</code>, <code>mobile.icon</code>, the <code>mobile:*</code>
+        {" "}
+        tasks and the native build outputs in{" "}
+        <code>.gitignore</code>. It installs the pinned Capacitor 8 packages with the project&apos;s
+        package manager (as dev dependencies, without the project&apos;s lifecycle scripts), and
+        with <code>--platform ios,android</code> exports and runs{" "}
+        <code>npx cap add</code>, which run the project&apos;s own build code. What it cannot know
+        (a hosted / remote mode switch in the build env, a backend URL a phone can reach, CORS for
+        {" "}
+        <code>capacitor://localhost</code> and <code>https://localhost</code>) is listed for review;
+        {" "}
+        <code>--check</code> shows the whole plan.{" "}
+        <a href="/docs/migrating#3c-adding-an-ios--android-target---enable-capacitor">
+          Migrating › Adding an iOS / Android target
+        </a>{" "}
+        has the details.
+      </p>
+      <Code lang="bash">
+        {`denext migrate apps/web --enable-capacitor --app-id com.example.web --platform ios
+cd apps/web && deno task mobile:build:ios --team <TEAM_ID>`}
+      </Code>
+
       <h2 id="live-reload-on-a-device">Live reload on a device</h2>
       <p>
         During development the app can load straight from <code>denext dev</code>{" "}

@@ -2,6 +2,7 @@ import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import {
   displayHost,
   installDrainDeadline,
+  isContentHashed,
   serveWithPortFallback,
 } from "../src/server/serve-utils.ts";
 
@@ -142,4 +143,39 @@ Deno.test("serveWithPortFallback: a signal wires the drain deadline (no hang on 
   await server.finished; // resolves once drained
   await delay(60); // well past the 30ms deadline
   assert(!timedOut, "a clean drain cancels the deadline (no forced exit)");
+});
+
+Deno.test("isContentHashed: esbuild / deno bundle `name-HASH` names, never an unhashed name", () => {
+  for (
+    const hashed of [
+      "chunk-AB12CD34.js", // esbuild's shared chunk
+      "chunk-ab12cd34.js",
+      "lazy-VXRX55NY.js", // `deno bundle`'s split module: base32, not hex
+      "assets/lazy-VXRX55NY.js",
+      "logo-QWERTY23.svg", // a `?url` / file-loader asset
+      "assets/inter-latin-WX2Y4Z6A.woff2",
+      "route-ABCDEFGH.css", // an all-letter base32 hash
+      "app-0123abcd.js", // hex
+      "inter-0123456789ab.woff2",
+      "k3j4h5g6.woff2", // a self-hosted font
+    ]
+  ) assert(isContentHashed(hashed), hashed);
+  for (
+    const plain of [
+      "index.js",
+      "index.css",
+      "app_home.js",
+      "my-component.js",
+      "vendor-react.js",
+      "page-about.js",
+      "blog__catchall_slug.js",
+      "logo.svg",
+      "lazy-vxrx55ny.js", // lowercase: not a base32 hash
+      "lazy-VXRX55N.js", // 7 characters
+      "lazy-VXRX55NYZ.js", // 9 characters
+      "lazy-VXRX55N1.js", // 1 is not base32
+      "-VXRX55NY.js", // no name
+      "unbundled.css",
+    ]
+  ) assert(!isContentHashed(plain), plain);
 });

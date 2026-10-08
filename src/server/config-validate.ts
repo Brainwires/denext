@@ -508,6 +508,81 @@ function validateSpaOta(ota: unknown, fail: Fail): void {
   if (ota !== undefined && typeof ota !== "boolean") fail("spa.ota", "must be a boolean");
 }
 
+/** `spa.viteManifest`: a boolean when present. */
+function validateSpaViteManifest(value: unknown, fail: Fail): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    fail("spa.viteManifest", "must be a boolean");
+  }
+}
+
+/** The keys of `spa.tanstackRouter` (a typo would silently turn code-splitting off). */
+const TANSTACK_ROUTER_KEYS = ["autoCodeSplitting", "routesDirectory", "generatedRouteTree"];
+
+/** `spa.tanstackRouter`: `{ autoCodeSplitting?: boolean, routesDirectory?, generatedRouteTree? }`. */
+function validateSpaTanstackRouter(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("spa.tanstackRouter", "must be an object (e.g. `{ autoCodeSplitting: true }`)");
+    return;
+  }
+  const v = value as Record<string, unknown>;
+  const unknown = Object.keys(v).find((key) => !TANSTACK_ROUTER_KEYS.includes(key));
+  if (unknown !== undefined) {
+    fail(
+      `spa.tanstackRouter.${unknown}`,
+      `is not a known option (${TANSTACK_ROUTER_KEYS.join(", ")})`,
+    );
+  }
+  if (v.autoCodeSplitting !== undefined && typeof v.autoCodeSplitting !== "boolean") {
+    fail("spa.tanstackRouter.autoCodeSplitting", "must be a boolean");
+  }
+  validateOptionalPath("spa.tanstackRouter.routesDirectory", v.routesDirectory, fail);
+  validateOptionalPath("spa.tanstackRouter.generatedRouteTree", v.generatedRouteTree, fail);
+}
+
+/** An optional project-relative path: a non-empty string when present. */
+function validateOptionalPath(field: string, value: unknown, fail: Fail): void {
+  if (value !== undefined && (typeof value !== "string" || value === "")) {
+    fail(field, "must be a non-empty path relative to the project root");
+  }
+}
+
+/**
+ * The top-level directories the client may not move under: denext's own endpoints and files
+ * (`_denext`), the web's well-known URIs (app links) and the `spa.viteManifest` manifest
+ * (`.vite`). Compared without case (a case-insensitive file system would merge them).
+ */
+const RESERVED_ASSETS_ROOTS = new Set(["_denext", ".well-known", ".vite"]);
+
+/**
+ * `spa.assetsDir` normalized: the slash-separated directory without leading or trailing
+ * slashes, or null when it is not a plain relative directory. Each segment is letters, digits,
+ * `_`, `.` or `-`, and never `.` / `..`; a directory under `_denext`, `.well-known` or `.vite`
+ * is refused (denext's own endpoints, the web's well-known URIs and Vite's manifest live there).
+ *
+ * @param value The configured directory (`"assets"`, `"/static/js/"`).
+ * @returns The normalized directory (`"assets"`, `"static/js"`), or null.
+ */
+export function normalizeSpaAssetsDir(value: string): string | null {
+  const dir = value.replace(/^\/+|\/+$/g, "");
+  const segments = dir.split("/");
+  const valid = dir !== "" && !RESERVED_ASSETS_ROOTS.has(segments[0].toLowerCase()) &&
+    segments.every((s) => /^[\w.-]+$/.test(s) && s !== "." && s !== "..");
+  return valid ? dir : null;
+}
+
+/** `spa.assetsDir`: a plain relative directory when present. */
+function validateSpaAssetsDir(dir: unknown, fail: Fail): void {
+  if (dir === undefined) return;
+  if (typeof dir !== "string" || normalizeSpaAssetsDir(dir) === null) {
+    fail(
+      "spa.assetsDir",
+      'must be a relative directory of letters, digits, "_", "." and "-" segments, not under ' +
+        '_denext, .well-known or .vite (e.g. "assets")',
+    );
+  }
+}
+
 type Proxy = NonNullable<NonNullable<DenextConfig["spa"]>["proxy"]>;
 
 /** `spa.proxy.prefixes`: a non-empty array of "/"-rooted path strings. */
@@ -889,6 +964,13 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** `lists` names the engine of the DOM list packages: `"denext"` or `"library"`. */
+function validateLists(value: unknown, fail: Fail): void {
+  if (value !== undefined && value !== "denext" && value !== "library") {
+    fail("lists", 'must be "denext" or "library"');
+  }
+}
+
 /** `platformExtensions` is a boolean or `{ native?: boolean, osFiles?: boolean }`. */
 function validatePlatformExtensions(value: unknown, fail: Fail): void {
   if (value === undefined || typeof value === "boolean") return;
@@ -1127,7 +1209,11 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMode(config, fail);
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
+  validateSpaViteManifest(config.spa?.viteManifest, fail);
+  validateSpaTanstackRouter(config.spa?.tanstackRouter, fail);
+  validateSpaAssetsDir(config.spa?.assetsDir, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, fail);

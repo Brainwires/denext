@@ -12,8 +12,9 @@ import {
 } from "../../server/serve-utils.ts";
 import { serveStatic } from "../../server/static.ts";
 import { createAppLinksHandler } from "../../server/app-links.ts";
+import { EMITTED_DIR } from "../../plugin/mod.ts";
 import { resolveProject } from "../paths.ts";
-import { CLIENT_PREFIX, SHELL_FILE, wantsShell } from "./shared.ts";
+import { CLIENT_PREFIX, SHELL_FILE, spaClientPrefix, wantsShell } from "./shared.ts";
 
 export interface SpaProdServerOptions {
   projectDir: string;
@@ -32,14 +33,16 @@ function shellResponse(request: Request, shell: string): Response {
 }
 
 /**
- * Serve a built SPA (`denext build` output): client assets under `/_denext/client/`,
- * `public/` assets, and the HTML shell for every navigation (history-API fallback).
+ * Serve a built SPA (`denext build` output): client assets under `/_denext/client/` (or
+ * `/<spa.assetsDir>/`),
+ * `public/` assets, the files plugins emitted at build, and the HTML shell for every navigation (history-API fallback).
  */
 export async function startSpaProdServer(
   options: SpaProdServerOptions,
 ): Promise<Deno.HttpServer> {
   const paths = await resolveProject(options.projectDir);
   const clientDir = join(paths.outDir, "client");
+  const emittedDir = join(paths.outDir, EMITTED_DIR);
   const shellPath = join(clientDir, SHELL_FILE);
   let shell: string;
   try {
@@ -57,15 +60,24 @@ export async function startSpaProdServer(
   // the shell and uncompressed `public/` files are encoded per request; the precompressed
   // client bundles already carry a Content-Encoding and pass through untouched.
   const encodings = compressEncodings(paths.config?.compress);
+  const prefix = spaClientPrefix(paths.config?.spa);
 
   const serveLocal = async (request: Request, url: URL, secure: boolean): Promise<Response> => {
-    if (url.pathname.startsWith(CLIENT_PREFIX)) {
-      const rel = "/" + url.pathname.slice(CLIENT_PREFIX.length);
-      return serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
+    if (url.pathname.startsWith(prefix)) {
+      const rel = "/" + url.pathname.slice(prefix.length);
+      const asset = await serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
+      // `spa.assetsDir` shares its directory with `public/` (as Vite's `assets/` does): a path
+      // the build does not hold falls through to the public files below.
+      if (asset.status !== 404 || prefix === CLIENT_PREFIX) return asset;
+      await asset.body?.cancel();
     }
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(paths.publicDir, url.pathname, accEnc, request);
-    if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
+    // The files plugin build steps published with `emitFile` at build, then `public/` (an
+    // emitted file replaces a same-named public one, as in an export).
+    for (const dir of [emittedDir, paths.publicDir]) {
+      const pub = await serveStatic(dir, url.pathname, accEnc, request);
+      if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
+    }
     const res = wantsShell(request, url.pathname)
       ? shellResponse(request, shell)
       : new Response("not found", { status: 404 });

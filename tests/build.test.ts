@@ -163,3 +163,50 @@ Deno.test("prodMinify: production builds minify unless DENEXT_NO_MINIFY is set",
     else Deno.env.set("DENEXT_NO_MINIFY", prev);
   }
 });
+
+Deno.test("appRendersDocumentTags: a document tag in the app's code, not in a comment", async () => {
+  const { appRendersDocumentTags } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-doc-tags-" });
+  try {
+    const app = join(dir, "app");
+    await Deno.mkdir(app);
+    // examples/hello's layout: denext supplies the document, and a comment says so.
+    await Deno.writeTextFile(
+      join(app, "layout.tsx"),
+      "// denext supplies <html>/<head>/<body>; a layout renders the in-body chrome.\n" +
+        "/**\n * <body> is not ours\n */\n" +
+        'export default ({ children }) => <div class="app">{children}</div>;\n',
+    );
+    assertEquals(await appRendersDocumentTags(dir), false, "comments don't count");
+    await Deno.writeTextFile(
+      join(app, "layout.tsx"),
+      'export default ({ children }) => <html lang="en"><body>{children}</body></html>;\n',
+    );
+    assertEquals(await appRendersDocumentTags(dir), true, "a JSX root layout counts");
+    await Deno.writeTextFile(
+      join(app, "layout.tsx"),
+      'export default (p) => h("body", null, p.children);\n',
+    );
+    assertEquals(await appRendersDocumentTags(dir), true, "an h() call counts");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generateRouteEntry: the host-singleton install is on unless a scan cleared it", () => {
+  const route: PageRoute = {
+    kind: "page",
+    pattern: parsePattern("x"),
+    routePath: "/x",
+    filePath: "/app/x/page.tsx",
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+  };
+  assertStringIncludes(generateRouteEntry(route), "installSingletonSupport();");
+  assert(!generateRouteEntry(route, { usesSingletons: false }).includes("installSingletonSupport"));
+});

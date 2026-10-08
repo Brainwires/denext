@@ -376,6 +376,8 @@ export interface GenerateRouteEntryOptions {
   usesActivity?: boolean;
   /** Install `<ViewTransition>` support. Default `false`. */
   usesViewTransition?: boolean;
+  /** Install host-singleton support (a client root layout's document tags). Default `true`. */
+  usesSingletons?: boolean;
   /**
    * The route files' DevTools metadata (`__dnxMeta(…)` calls plus their import, from
    * `routeDevMeta`), appended after the `registerFamily` calls. Honoured ONLY for a bundled
@@ -400,14 +402,17 @@ export function generateRouteEntry(
   const { classImport, classInstall, classBoot } = classSupportBlock(opts.classRuntime ?? "lazy");
   const { activityImport, activityInstall } = activitySupportBlock(opts.usesActivity ?? false);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(opts.usesViewTransition ?? false);
+  const { singletonImport, singletonInstall } = singletonSupportBlock(opts.usesSingletons ?? true);
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(opts.instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${classImport}${activityImport}${vtImport}${refreshImport}${routeEntryImports(route, slots)}
-${refreshReg}${classInstall}${activityInstall}${vtInstall}
+${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}${
+    routeEntryImports(route, slots)
+  }
+${refreshReg}${classInstall}${activityInstall}${vtInstall}${singletonInstall}
 async function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -545,6 +550,27 @@ export function appUsesViewTransition(
 }
 
 /**
+ * Whether any source file under `rootDir` renders a document tag (`<html>`, `<head>`, `<body>`)
+ * — the build-time signal that decides if the generated entry installs the host-singleton
+ * runtime (see {@linkcode singletonSupportBlock}): only a root layout rendered by client code puts
+ * one under the page container, and an app can't render one without writing it (JSX, or an
+ * `h("html", …)` / `createElement("body", …)` call). Comment-only lines are skipped, so a note
+ * like "denext supplies <html>/<body>" doesn't count. A server root layout trips it too (the scan
+ * can't tell); that only keeps a runtime the app may not need, never drops one it does.
+ */
+export function appRendersDocumentTags(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  const tag = /<(?:html|head|body)[\s>]|\(\s*["'](?:html|head|body)["']/;
+  return scanAppSources(
+    rootDir,
+    (c) => tag.test(c.split("\n").filter((l) => !/^\s*(?:\/\/|\/?\*)/.test(l)).join("\n")),
+    extraFiles,
+  );
+}
+
+/**
  * Fast Refresh (dev only) for the Flight entry: register each client island's exports as
  * a family so an edited island preserves state. Two modes:
  *  - bundled: the whole flight entry is re-imported on refresh, so it registers each
@@ -590,7 +616,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -682,6 +708,23 @@ function activitySupportBlock(
 }
 
 /**
+ * The host-singleton runtime (a client root layout's `<html>`/`<head>`/`<body>` adopt the page's
+ * own elements; singleton-support.ts) is installed into the reconciler seam unless a build scan
+ * ({@linkcode appRendersDocumentTags}) found no document tag in the app — so an app whose
+ * document denext or a server layout supplies tree-shakes it out. On by default: only a caller
+ * that scanned the app drops it.
+ */
+function singletonSupportBlock(
+  usesSingletons: boolean,
+): { singletonImport: string; singletonInstall: string } {
+  if (!usesSingletons) return { singletonImport: "", singletonInstall: "" };
+  return {
+    singletonImport: `import { installSingletonSupport } from "denext/client-runtime";\n`,
+    singletonInstall: "installSingletonSupport();\n",
+  };
+}
+
+/**
  * The `<ViewTransition>` per-element marking runtime is installed into the reconciler seam
  * (view-transition-support.ts) ONLY when the app uses `<ViewTransition>` — so an app that
  * never renders one never references `installViewTransitionSupport` and `deno bundle`
@@ -754,7 +797,8 @@ function flightMain(catchBody: string, classBoot: string): string {
   if (!el || !flightEl) return;
   let flight;
   try {
-    flight = JSON.parse(flightEl.textContent || "null");
+    // A streamed document sent each Suspense hole and deferred value as its own chunk.
+    flight = await readStreamedFlight(document, JSON.parse(flightEl.textContent || "null"));
   } catch {
     return;
   }
@@ -809,6 +853,7 @@ export function generateFlightEntry(
   usesActivity = false,
   usesViewTransition = false,
   features: Record<string, boolean> = {},
+  usesSingletons = true,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -824,12 +869,13 @@ export function generateFlightEntry(
   const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
+  const { singletonImport, singletonInstall } = singletonSupportBlock(usesSingletons);
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
-${liveImport}${classImport}${activityImport}${vtImport}${refreshImport}
+${liveImport}${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}
 ${
     featureSeedBlock(features)
-  }${classInstall}${activityInstall}${vtInstall}const registry = new Map();
+  }${classInstall}${activityInstall}${vtInstall}${singletonInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
 // both as client references (radix exports the latter), so both must resolve here. An island
 // from an npm package's CommonJS build (what the server bundle resolves) arrives as
@@ -952,6 +998,12 @@ export interface BundleOptions {
    */
   usesViewTransition?: boolean;
   /**
+   * Whether the app renders a document tag (from an {@linkcode appRendersDocumentTags} scan).
+   * When false, the generated entry omits `installSingletonSupport()` so `deno bundle`
+   * tree-shakes the host-singleton runtime out. Defaults to `true`: only a scanned build drops it.
+   */
+  usesSingletons?: boolean;
+  /**
    * Compile-time feature flags (`features`) to seed on the CLIENT for the native
    * `deno bundle` path (which has no esbuild `define`). Baked into the flight entry so an
    * un-folded `feature()` call reads the configured value instead of the empty default. Only
@@ -991,6 +1043,7 @@ export function bundleFlightEntry(
       opts.usesActivity ?? false,
       opts.usesViewTransition ?? false,
       opts.features ?? {},
+      opts.usesSingletons ?? true,
     ),
     {
       configPath: opts.configPath,
@@ -1121,6 +1174,9 @@ export async function prepareConfig(
     // And for `denext/class-runtime`: the generated entry loads the class-component
     // runtime on demand (a page that renders a class), so function-only apps bundle none.
     "denext/class-runtime": frameworkFileUrl("src/class-runtime.ts"),
+    // SPA mode's `client:*` deferred mounts: the build's island rewrite imports `SpaIsland`
+    // from it (spa-islands.ts), so only an app with a directive bundles it.
+    "denext/spa-island": frameworkFileUrl("src/spa-island.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.
@@ -1690,6 +1746,7 @@ export function bundleRoute(
       classRuntime: opts.classRuntime,
       usesActivity: opts.usesActivity,
       usesViewTransition: opts.usesViewTransition,
+      usesSingletons: opts.usesSingletons,
       devMetaFooter: opts.devMetaFooter,
     }),
     opts,

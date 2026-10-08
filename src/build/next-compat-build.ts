@@ -132,6 +132,11 @@ export interface BuildNextCompatModulesOptions {
    * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
+   * VirtualList-backed modules (see dom-lists.ts).
+   */
+  domLists?: boolean;
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -215,6 +220,7 @@ export async function buildNextCompatModules(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    domLists: options.domLists,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
@@ -304,6 +310,11 @@ export interface BuildNextCompatClientOptions {
    * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
+   * VirtualList-backed modules (see dom-lists.ts).
+   */
+  domLists?: boolean;
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -364,6 +375,7 @@ export async function buildNextCompatClientEntries(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
     // Actions first (stubbed, never instrumented), then the caller's plugins. Public type is
@@ -419,6 +431,11 @@ export interface BuildNextCompatFlightOptions {
    * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
+   * VirtualList-backed modules (see dom-lists.ts).
+   */
+  domLists?: boolean;
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -445,6 +462,11 @@ export interface BuildNextCompatFlightOptions {
    * `installViewTransitionSupport()` and the marking runtime is dropped. Defaults to `false`.
    */
   usesViewTransition?: boolean;
+  /**
+   * Whether the app renders a document tag (build scan). When false, the generated entry omits
+   * `installSingletonSupport()` and the host-singleton runtime is dropped. Defaults to `true`.
+   */
+  usesSingletons?: boolean;
   /**
    * The target's platform files for the app's own modules. Forwarded to
    * {@link BundleNextCompatModulesOptions.appPlatform}.
@@ -505,6 +527,8 @@ export async function buildNextCompatFlightEntry(
       options.classRuntime ?? "lazy",
       options.usesActivity ?? false,
       options.usesViewTransition ?? false,
+      {},
+      options.usesSingletons ?? true,
     ),
   );
   await bundleNextCompatModules({
@@ -519,6 +543,7 @@ export async function buildNextCompatFlightEntry(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
     assets: options.assets,

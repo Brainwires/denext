@@ -5,6 +5,7 @@ import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
+import { transformSpaIslands } from "../spa-islands.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
 import { generateServerStub } from "../client-imports.ts";
@@ -150,6 +151,47 @@ async function actionStub(st: UnbundledState, abs: string): Promise<string> {
   return generateServerStub(serverModuleIdFor(st.opts.appDir, url), await staticExportNames(abs));
 }
 
+/**
+ * The build's source transforms, so dev matches a build: `feature("KEY")` folded (values, not
+ * DCE; only with `features`), and in SPA mode `client:*` component elements rewritten to
+ * deferred mounts. Best-effort: a throwing transform leaves the source as it was (a module that
+ * does not parse is identity in both, so a throw is an internal failure), and says so once per
+ * module, since the dev page then differs from a build.
+ */
+async function buildTransforms(st: UnbundledState, abs: string, written: string): Promise<string> {
+  let src = written;
+  const features = st.opts.features;
+  if (features && Object.keys(features).length > 0) {
+    try {
+      const folded = await transformFeatures(src, features);
+      if (folded.changed) src = folded.code;
+    } catch (err) {
+      warnTransformFailed("feature() fold", abs, err, "the flags read at runtime");
+    }
+  }
+  if (st.opts.spaIslands) {
+    try {
+      const islands = await transformSpaIslands(src);
+      if (islands.changed) src = islands.code;
+    } catch (err) {
+      warnTransformFailed("client:* rewrite", abs, err, "the elements mount eagerly");
+    }
+  }
+  return src;
+}
+
+/** The (transform, module) pairs already reported, so an edit loop warns once. */
+const warnedTransforms = new Set<string>();
+
+/** Report a best-effort transform that threw on `abs` (once per transform and module). */
+function warnTransformFailed(what: string, abs: string, err: unknown, effect: string): void {
+  const key = `${what}\0${abs}`;
+  if (warnedTransforms.has(key)) return;
+  warnedTransforms.add(key);
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn(`denext dev: the ${what} failed on ${abs} (${effect}): ${msg}`);
+}
+
 /** esbuild plugin: load `abs` (+ footer), externalize + rewrite every import it makes. */
 function moduleRewritePlugin(
   st: UnbundledState,
@@ -167,16 +209,11 @@ function moduleRewritePlugin(
       // other import is externalized — so this fires once.
       build.onLoad({ filter: /.*/ }, async (args) => {
         if (args.path !== abs) return null;
-        let src = loaded.source ?? await Deno.readTextFile(abs);
-        // Fold `feature("KEY")` calls so dev matches a build (values, not DCE). Only when the
-        // app configured `features`; a throwing fold leaves the source as written.
-        const features = st.opts.features;
-        if (features && Object.keys(features).length > 0) {
-          try {
-            const folded = await transformFeatures(src, features);
-            if (folded.changed) src = folded.code;
-          } catch { /* best-effort — bundle the module as written */ }
-        }
+        const src = await buildTransforms(
+          st,
+          abs,
+          loaded.source ?? await Deno.readTextFile(abs),
+        );
         return {
           contents: src + footer,
           loader: loaderFor(abs, st.opts.reactNative !== undefined),

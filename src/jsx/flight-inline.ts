@@ -12,8 +12,11 @@
 
 import type { FlightNode, FlightValue } from "./render-to-flight.ts";
 
-/** Value tags that are live on the client: a component, a host element, an action, a handler. */
-const LIVE_VALUE_TAGS = new Set(["a", "b", "c", "ch", "e", "h"]);
+/**
+ * Value tags that are live on the client: a component, a host element, an action, a handler —
+ * and a deferred value still streaming (`vh`), whose resolved value may be any of them.
+ */
+const LIVE_VALUE_TAGS = new Set(["a", "b", "c", "ch", "e", "h", "vh"]);
 
 /**
  * Whether a serialized prop value holds something only a hydrated root can make live. Codec

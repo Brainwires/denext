@@ -417,17 +417,28 @@ async function serveFallback(
     const claimed = await config.matchExternal(request);
     if (claimed) return finalize(state, claimed);
   }
-  if (config.publicDir && isReadMethod(request)) {
-    const asset = await serveStatic(
-      config.publicDir,
-      pathname,
-      request.headers.get("accept-encoding") ?? undefined,
-      request,
-    );
-    if (asset) return finalize(state, asset);
+  if (!isReadMethod(request)) return finalize(state, notFound(pathname));
+  const asset = await serveStaticDirs(request, pathname, [config.emittedDir, config.publicDir]);
+  if (asset) return finalize(state, asset);
+  return serveNotFoundPage(state, manifest);
+}
+
+/**
+ * The first of `dirs` holding `pathname` as a static file: the files plugin build steps
+ * published (`emitFile`) at build, then `public/` — so an emitted file replaces a same-named
+ * public one, as it does in an export. Unset dirs are skipped.
+ */
+async function serveStaticDirs(
+  request: Request,
+  pathname: string,
+  dirs: readonly (string | undefined)[],
+): Promise<Response | null> {
+  const encoding = request.headers.get("accept-encoding") ?? undefined;
+  for (const dir of dirs) {
+    const asset = dir ? await serveStatic(dir, pathname, encoding, request) : null;
+    if (asset) return asset;
   }
-  if (isReadMethod(request)) return serveNotFoundPage(state, manifest);
-  return finalize(state, notFound(pathname));
+  return null;
 }
 
 /** The reserved `/_denext/*` RPC endpoints dispatched before routing: actions and the batch. */

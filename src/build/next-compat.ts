@@ -20,6 +20,7 @@
  * @module
  */
 
+import { domListsPlugin } from "./dom-lists.ts";
 import {
   missingVariantMessage,
   type PlatformResolution,
@@ -264,6 +265,11 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // React Native mode's FlashList / LegendList shims (see react-native-lists.ts).
     "react-native-flash-list": u("src/react-native/flash-list.ts"),
     "react-native-legend-list": u("src/react-native/legend-list.ts"),
+    // `@legendapp/list/react` (the DOM build) on VirtualList, with `lists: "denext"` (see
+    // dom-lists.ts).
+    "lists-legend-list": u("src/lists/legend-list.ts"),
+    // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
+    "spa-island": u("src/spa-island.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -700,6 +706,10 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/react-native": "react-native.js",
   "denext/react-native/flash-list": "react-native-flash-list.js",
   "denext/react-native/legend-list": "react-native-legend-list.js",
+  // `lists: "denext"`: `@legendapp/list/react` (see dom-lists.ts).
+  "denext/lists/legend-list": "lists-legend-list.js",
+  // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
+  "denext/spa-island": "spa-island.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
@@ -1201,6 +1211,11 @@ export interface BundleNextCompatModulesOptions {
    */
   optimizePackageImports?: readonly string[];
   /**
+   * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
+   * VirtualList-backed modules (see dom-lists.ts).
+   */
+  domLists?: boolean;
+  /**
    * Extensions probed AHEAD of the defaults when an extensionless import is resolved — both
    * relative/alias imports and package subpaths (with {@link resolveAllNodeModules}). React
    * Native mode passes `[".web.tsx", ".web.ts", ".web.jsx", ".web.js"]` so a module's web
@@ -1282,14 +1297,27 @@ function cssUrlPath(
 const EMIT_ASSET_RE =
   /\.(?:svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|pdf)$/;
 
-/** FNV-1a over bytes (asset content hash for emitted file names). */
-function hashBytes(bytes: Uint8Array): string {
-  let h = 2166136261 >>> 0;
+/** esbuild's `[hash]` alphabet (RFC 4648 base32). */
+const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/**
+ * A content hash for an emitted file name in esbuild's `[hash]` shape — 8 base32 characters
+ * (40 bits of two FNV-1a passes) — so a `name-HASH.ext` asset reads as content-hashed to the
+ * immutable-cache check (`isContentHashed`) and to a server written for a Vite build.
+ */
+function hash8(bytes: Uint8Array): string {
+  let a = 2166136261 >>> 0;
+  let b = 0x9747b28c;
   for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = Math.imul(h, 16777619) >>> 0;
+    a = Math.imul(a ^ bytes[i], 16777619) >>> 0;
+    b = Math.imul(b ^ bytes[i], 16777619) >>> 0;
   }
-  return h.toString(36);
+  // 32 bits of `a` and the low 8 of `b`: eight 5-bit digits.
+  let out = "";
+  for (let i = 0; i < 6; i++) out += BASE32[(a >>> (27 - 5 * i)) & 31];
+  out += BASE32[((a & 3) << 3) | ((b >>> 5) & 7)];
+  out += BASE32[b & 31];
+  return out;
 }
 
 /**
@@ -1303,7 +1331,7 @@ async function emitAsset(
   ext = extname(srcPath),
 ): Promise<string> {
   const base = basename(srcPath, extname(srcPath)).replace(/[^\w.-]+/g, "_");
-  const file = `${base}-${hashBytes(bytes)}${ext}`;
+  const file = `${base}-${hash8(bytes)}${ext}`;
   const dir = join(assets.emitDir!, "assets");
   await Deno.mkdir(dir, { recursive: true });
   const target = join(dir, file);
@@ -2183,7 +2211,7 @@ async function compatPlugins(
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
   let plugins: esbuild.Plugin[] = [
-    ...(options.extraPlugins ?? []),
+    ...leadingPlugins(options),
     envPoisonPlugin(deno),
     ...(deno ? [frameworkUrlExternalPlugin()] : []),
     googleFontsPlugin(),
@@ -2205,6 +2233,12 @@ async function compatPlugins(
     }));
   }
   return plugins;
+}
+
+/** The caller's plugins, then `lists: "denext"`'s DOM list aliases (when on). */
+function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin[] {
+  const lists = options.domLists ? [domListsPlugin(options.platform ?? "browser")] : [];
+  return [...(options.extraPlugins ?? []), ...lists];
 }
 
 /**

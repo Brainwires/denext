@@ -218,9 +218,19 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       ctx.addRequestHandler(handle);
 
       // Build step (seam 3): pre-bundle every route's client entry, then prerender
-      // static (`getStaticProps`) pages to disk for `denext start` to serve.
+      // static (`getStaticProps`) pages to disk for `denext start` to serve — and for a
+      // Pages Router app's `denext export`, which copies them into out/. A hybrid app (app/ +
+      // pages/) exports through the App Router, whose out/ never takes these files: the step
+      // has nothing to publish there, so it does not run (and cannot fail that export).
       if (bundler) {
-        ctx.addBuildStep(async ({ outDir }) => {
+        ctx.addBuildStep(async ({ outDir, appDir }) => {
+          if (ctx.mode === "export" && await isDir(appDir)) {
+            console.warn(
+              "[@denext/pages-router] a static export of an app with app/ covers the App Router; " +
+                "its pages/ routes are served by `denext start`.",
+            );
+            return;
+          }
           const { entryByRoute, cssByRoute } = await bundler.prebuild(outDir);
           await prerenderStaticPages({
             scan: await getScan(),

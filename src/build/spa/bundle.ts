@@ -6,9 +6,10 @@ import {
   platformResolution,
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
-import { join, toFileUrl } from "@std/path";
+import { join, resolve, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
 import {
+  domListsEnabled,
   featureFlags,
   momentumSafeScrollEnabled,
   nodeResolveEnabled,
@@ -16,6 +17,7 @@ import {
   type SpaConfig,
 } from "../../server/config.ts";
 import {
+  appRendersDocumentTags,
   appUsesActivity,
   appUsesViewTransition,
   bundleSourceFiles,
@@ -28,14 +30,28 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
+import {
+  spaIslandsTransform,
+  spaSourceTransform,
+  spaSourceTransformPlugin,
+} from "../spa-compiler-plugin.ts";
+import { spaIslandRedirects, spaIslandSources } from "../spa-islands.ts";
+import { tanstackCodeSplitPlugin } from "../tanstack-code-split.ts";
 import { spaFeatureFold } from "./features.ts";
 import { spaNativeRefresh } from "../refresh-modules.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
+import {
+  CLIENT_PREFIX,
+  ENTRY_FILE,
+  generateSpaEntry,
+  spaClientPrefix,
+  STYLE_FILE,
+} from "./shared.ts";
+import { CHUNK_ERROR_SEED, wrapDynamicImports } from "./chunk-error.ts";
+import { hasPluginBuildSteps } from "../../plugin/mod.ts";
 
 type DependencyGroups = Partial<
   Record<
@@ -172,6 +188,7 @@ async function bundleCompatSpa(
   minify: boolean,
   dev: boolean,
   platform: Platform,
+  modules?: string[],
 ): Promise<void> {
   const config = paths.config!;
   const spa = config.spa!;
@@ -193,8 +210,11 @@ async function bundleCompatSpa(
       __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
     },
     // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
-    // prefixed with the path the SPA servers already serve them at.
-    assets: { publicPath: CLIENT_PREFIX },
+    // prefixed with the path the SPA servers already serve them at. With `spa.assetsDir` (Vite's
+    // `build.assetsDir`) they sit beside the chunks as `name-HASH.ext`, as Vite places them.
+    assets: spa.assetsDir === undefined
+      ? { publicPath: CLIENT_PREFIX }
+      : { publicPath: spaClientPrefix(spa), assetNames: "[name]-[hash]" },
     // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve — denext
     // resolves these straight from node_modules (front-runs the loader).
     catalogPackages: await pnpmCatalogPackages(paths.projectDir),
@@ -206,12 +226,14 @@ async function bundleCompatSpa(
     // Barrel imports of `optimizePackageImports` packages → their defining modules (lucide's
     // barrel + `dynamicIconImports` otherwise put every icon chunk on the startup path).
     optimizePackageImports: optimizePackageImportsList(config),
+    // `lists: "denext"`: `@legendapp/list/react` on denext's VirtualList (dom-lists.ts).
+    domLists: domListsEnabled(config),
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,
     extraPlugins: withPluginsFirst(
-      rn?.plugins,
-      spaBundlePlugins(paths.projectDir, dev, paths.config),
+      leadingPlugins(rn?.plugins, modules, paths.projectDir),
+      spaBundlePlugins(paths.projectDir, dev, paths.config, await usesSpaIslands(paths)),
     ),
     platformExtensions: rn?.platformExtensions,
     // The target's platform files (`BigButton.ios.tsx`) for the app's own modules.
@@ -224,6 +246,37 @@ async function bundleCompatSpa(
   if (!dev) await stopNextCompat();
 }
 
+/**
+ * Record every module the bundle contains into `sink` (absolute paths; a module from a virtual
+ * namespace keeps its `namespace:path` id) — what a plugin build step reads as `clientModules`.
+ */
+function moduleCollectorPlugin(sink: string[], cwd: string): esbuild.Plugin {
+  return {
+    name: "denext-client-modules",
+    setup(build) {
+      build.initialOptions.metafile = true;
+      build.onEnd((result) => {
+        for (const id of Object.keys(result.metafile?.inputs ?? {})) {
+          sink.push(
+            /^[a-z][\w+.-]*:/i.test(id) && !/^[a-z]:[\\/]/i.test(id) ? id : resolve(cwd, id),
+          );
+        }
+      });
+    },
+  };
+}
+
+/** React Native mode's plugins, then the client-module collector when `modules` is wanted. */
+function leadingPlugins(
+  rn: esbuild.Plugin[] | undefined,
+  modules: string[] | undefined,
+  projectDir: string,
+): esbuild.Plugin[] {
+  const out = [...(rn ?? [])];
+  if (modules) out.push(moduleCollectorPlugin(modules, projectDir));
+  return out;
+}
+
 /** `first` ahead of `rest`; `rest` itself (possibly undefined) when there is nothing first. */
 function withPluginsFirst(
   first: esbuild.Plugin[] | undefined,
@@ -234,9 +287,10 @@ function withPluginsFirst(
 
 /**
  * The extra esbuild onLoad plugins for a SPA bundle: in DEV, Fast Refresh family
- * registrations (front-runs the deno-loader); in PROD, the source transforms the app enabled —
- * the auto-memo compiler (`reactCompiler`) and/or the feature-flag fold
- * (`features`), chained in one plugin. All transform only first-party app source
+ * registrations (front-runs the deno-loader); in PROD, TanStack Router's route code-splitting
+ * (`spa.tanstackRouter.autoCodeSplitting`) and the source transforms the app enabled — the
+ * auto-memo compiler (`reactCompiler`) and/or the feature-flag fold (`features`), chained in one
+ * plugin. All transform only first-party app source
  * and are omitted otherwise so nothing extra runs. (Dev keeps the untransformed fast-rebuild +
  * Fast Refresh; these are prod optimizations.)
  */
@@ -244,10 +298,27 @@ function spaBundlePlugins(
   projectDir: string,
   dev: boolean,
   config: ProjectPaths["config"],
+  islands: boolean,
 ): esbuild.Plugin[] | undefined {
+  if (dev && islands) return [spaRefreshPlugin(projectDir, spaIslandsTransform)];
   if (dev) return [spaRefreshPlugin(projectDir)];
-  const plugin = spaSourceTransformPlugin(projectDir, config);
-  return plugin ? [plugin] : undefined;
+  const plugins: esbuild.Plugin[] = [];
+  // TanStack Router `autoCodeSplitting`: ahead of the source transforms, which it applies itself
+  // to the route modules it answers (esbuild runs only the first `onLoad` that answers).
+  const tanstack = config?.spa?.tanstackRouter;
+  if (tanstack?.autoCodeSplitting === true) {
+    plugins.push(
+      tanstackCodeSplitPlugin(projectDir, tanstack, spaSourceTransform(config, islands)),
+    );
+  }
+  const plugin = spaSourceTransformPlugin(projectDir, config, islands);
+  if (plugin) plugins.push(plugin);
+  return plugins.length > 0 ? plugins : undefined;
+}
+
+/** Whether the app's own source carries a `client:*` directive (then it is rewritten). */
+async function usesSpaIslands(paths: ProjectPaths): Promise<boolean> {
+  return (await spaIslandSources(paths.projectDir)).length > 0;
 }
 
 /**
@@ -269,6 +340,11 @@ async function bundleNativeSpa(
   // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
   // (dev folds no features, so the two never substitute the same module).
   const refresh = dev ? await spaNativeRefresh(paths.projectDir) : null;
+  // `client:*` component elements → deferred mounts, over the fold's / refresh's copies.
+  const islands = await spaIslandRedirects(paths.projectDir, {
+    ...fold.importMap,
+    ...refresh?.importMap,
+  });
   try {
     const bundle = await bundleSourceFiles(fold.seed + entrySource, {
       configPath: paths.configPath,
@@ -280,13 +356,14 @@ async function bundleNativeSpa(
       // server, so it has no action stubs: a `"use server"` module it reaches fails the bundle.
       projectDir: paths.projectDir,
       redirects: await projectPlatformRedirects(paths.projectDir, paths.config, platform),
-      rewritten: { ...fold.importMap, ...refresh?.importMap },
+      rewritten: { ...fold.importMap, ...refresh?.importMap, ...islands.importMap },
       dev,
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
   } finally {
     await fold.cleanup();
     await refresh?.cleanup();
+    await islands.cleanup();
   }
 }
 
@@ -295,7 +372,8 @@ async function bundleNativeSpa(
  * chunks) into `clientDir` as `index.js`, and — when the app has CSS reachable from the
  * entry graph — `index.css`.
  *
- * @returns Whether a stylesheet was emitted (so the caller can `<link>` it).
+ * @returns Whether a stylesheet was emitted (so the caller can `<link>` it), and — when a
+ *   plugin registered a build step and the bundle went through esbuild — the modules it holds.
  */
 export async function bundleSpaInto(
   paths: ProjectPaths,
@@ -304,7 +382,7 @@ export async function bundleSpaInto(
   minify: boolean,
   dev = false,
   platform: Platform = "web",
-): Promise<{ hasStyles: boolean }> {
+): Promise<{ hasStyles: boolean; modules?: readonly string[] }> {
   const spa = paths.config!.spa!;
   const cssRoots = await spaCssRoots(paths, entryPath);
   const css = await spaCss(paths, cssRoots, minify);
@@ -313,15 +391,19 @@ export async function bundleSpaInto(
   // that can render class components, which a source scan wouldn't see. `<Activity>`/
   // `<ViewTransition>` are denext-only APIs the app itself must name, so a source scan detects
   // them precisely (and keeps their runtimes out of a bundle that never uses them).
-  const [scannedActivity, viewTransition] = await Promise.all([
+  const [scannedActivity, viewTransition, singletons] = await Promise.all([
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
+    appRendersDocumentTags(paths.projectDir, [entryPath]),
   ]);
   // React Native mode's Expo Router navigators keep hidden stack screens in an `Activity`.
   const activity = scannedActivity || reactNativeOptions(paths.config) !== null;
   // The opt-out seed is an import, not a statement: `main.tsx` is imported statically and may
   // call `createRoot` while it evaluates, before any statement of this entry has run.
-  const entrySource = momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +
+  // Production: the chunk-load error handler, installed ahead of the app (the rewritten
+  // `import()` calls look it up when they fail; see chunk-error.ts).
+  const entrySource = (dev ? "" : CHUNK_ERROR_SEED) +
+    momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +
     generateSpaEntry(
       toFileUrl(entryPath).href,
       dev,
@@ -330,6 +412,7 @@ export async function bundleSpaInto(
         classComponents: paths.config?.classComponents ?? true,
         activity,
         viewTransition,
+        singletons,
         expoRouterLinks: await usesExpoRouter(paths),
         reactNative: reactNativeOptions(paths.config) !== null,
       },
@@ -345,14 +428,19 @@ export async function bundleSpaInto(
         "(node_modules/react, or set `compatibilityMode: true`).",
     );
   }
+  // The client modules a plugin build step reads (`clientModules`), collected only when one
+  // is registered (esbuild's metafile is otherwise not built).
+  const modules = compat && !dev && hasPluginBuildSteps() ? [] as string[] : undefined;
   if (compat) {
-    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform);
+    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform, modules);
   } else {
     await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
   }
-  if (!css) return { hasStyles: false };
+  // A split chunk that fails to load dispatches `vite:preloadError` / `denext:chunkError`.
+  if (!dev) await wrapDynamicImports(clientDir, spaClientPrefix(spa));
+  if (!css) return { hasStyles: false, modules };
   const text = await extractRouteCss(cssRoots, css);
-  if (text.trim().length === 0) return { hasStyles: false };
+  if (text.trim().length === 0) return { hasStyles: false, modules };
   await Deno.writeTextFile(join(clientDir, STYLE_FILE), text);
-  return { hasStyles: true };
+  return { hasStyles: true, modules };
 }

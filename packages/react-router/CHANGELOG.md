@@ -3,6 +3,24 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [0.2.0]
+
+- **The route-module client APIs run.** `clientLoader` (with `serverLoader()`, and
+  `clientLoader.hydrate`), `clientAction` (with `serverAction()`) and `HydrateFallback` work as
+  in React Router v7 framework mode: a hydrating client loader renders the route's
+  `HydrateFallback` on the server, then loads in the browser; a navigation and every
+  revalidation run it; a client action handles the route's submissions.
+- **`ssr: false` is SPA mode:** routes render their `HydrateFallback` on the server and their
+  component in the browser (the root still renders as the shell). It no longer warns.
+- **`prerender` is applied:** a listed static route becomes `force-static`, and a dynamic
+  route's listed params its `generateStaticParams` (what `denext export` writes). `true` lists
+  every static path, and the function form gets them as `getStaticPaths()`.
+- **Fixed:** a route module that imports `useActionData` or `useMatches` itself no longer fails
+  to load (`Identifier 'useActionData' has already been declared`): the generated boundary
+  imports its own copies under private names.
+- Requires denext 3.4.0 (`useClientRouteData` / `useClientRouteAction` in `denext/remix`). The
+  `@denext/denext` range moves to `^3.4.0` when this publishes, which waits for core 3.4.0.
+
 ## [0.1.1]
 
 - No code change. `RouteOptions.id` / `caseSensitive` are documented (JSR's "has docs for

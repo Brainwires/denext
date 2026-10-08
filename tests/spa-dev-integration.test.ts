@@ -4,15 +4,39 @@
 // driven with `fetch`. The SPA has NO app/ directory — every navigation gets the HTML
 // shell (history-API fallback) and the client graph is served unbundled.
 //
-// Target app: examples/spa.
+// Target app: a private copy of examples/spa. Other test files boot SPA dev servers on
+// examples/spa in the same parallel pass, and every dev server publishes (and on close removes)
+// `<project>/.denext/dev.json` — on a shared directory the dev.json step read another
+// server's origin, or none.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { copy } from "@std/fs";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
 import { generateSpaEntry } from "../src/build/spa/shared.ts";
 import { fsUrlPath } from "../src/build/dev-unbundled/state.ts";
 
 const SPA = fromFileUrl(new URL("../examples/spa", import.meta.url));
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../", import.meta.url));
+
+/** Copy examples/spa (without its `.denext/`) to a temp dir, with absolute `denext*` imports. */
+async function copySpa(): Promise<string> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_dev_" }));
+  for await (const entry of Deno.readDir(SPA)) {
+    if (entry.name !== ".denext") await copy(join(SPA, entry.name), join(dir, entry.name));
+  }
+  const p = join(dir, "deno.json");
+  const cfg = JSON.parse(await Deno.readTextFile(p)) as {
+    imports: Record<string, string>;
+    lint?: unknown;
+  };
+  for (const [k, v] of Object.entries(cfg.imports)) {
+    if (v.startsWith("../")) cfg.imports[k] = toFileUrl(join(FRAMEWORK_ROOT, v.slice(6))).href;
+  }
+  delete cfg.lint;
+  await Deno.writeTextFile(p, JSON.stringify(cfg, null, 2));
+  return dir;
+}
 
 /** Fetch, retrying a transient 500 from a cold esbuild build (first-run dep prebundle). */
 async function okFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -25,7 +49,7 @@ async function okFetch(url: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
-type Ctx = { origin: string };
+type Ctx = { origin: string; dir: string };
 
 async function stepShell({ origin }: Ctx): Promise<void> {
   const res = await fetch(origin + "/");
@@ -57,8 +81,8 @@ async function stepEntry({ origin }: Ctx): Promise<void> {
   );
 }
 
-async function stepFsMain({ origin }: Ctx): Promise<void> {
-  const res = await okFetch(origin + fsUrlPath(join(SPA, "src/main.tsx")));
+async function stepFsMain({ origin, dir }: Ctx): Promise<void> {
+  const res = await okFetch(origin + fsUrlPath(join(dir, "src/main.tsx")));
   assertEquals(res.status, 200);
   assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
   await res.text();
@@ -92,7 +116,7 @@ async function stepMissingAsset404({ origin }: Ctx): Promise<void> {
   await res.body?.cancel();
 }
 
-async function stepDevLog({ origin }: Ctx): Promise<void> {
+async function stepDevLog({ origin, dir }: Ctx): Promise<void> {
   const post = await fetch(origin + "/_denext/dev-log", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -109,11 +133,11 @@ async function stepDevLog({ origin }: Ctx): Promise<void> {
   const messages = state.events.map((e: { message: string }) => e.message);
   assert(messages.includes("[resource] failed to load module script /x.js"), messages.join("|"));
   assert(messages.includes("hello from the page"), messages.join("|"));
-  assertEquals(state.projectDir, SPA);
+  assertEquals(state.projectDir, dir);
 }
 
-async function stepDevJson({ origin }: Ctx): Promise<void> {
-  const info = JSON.parse(await Deno.readTextFile(join(SPA, ".denext", "dev.json")));
+async function stepDevJson({ origin, dir }: Ctx): Promise<void> {
+  const info = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "dev.json")));
   assertEquals(info.origin, origin);
   assertEquals(info.pid, Deno.pid);
 }
@@ -123,8 +147,9 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
-  const server = await startSpaDevOnDir(SPA, { DENEXT_DEV_TYPECHECK: "0" });
-  const ctx: Ctx = { origin: server.origin };
+  const dir = await copySpa();
+  const server = await startSpaDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" });
+  const ctx: Ctx = { origin: server.origin, dir };
 
   try {
     await t.step(
@@ -153,6 +178,7 @@ Deno.test({
     await t.step("SPA dev publishes .denext/dev.json for the MCP tools", () => stepDevJson(ctx));
   } finally {
     await server.close();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
 

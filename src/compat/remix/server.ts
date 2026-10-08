@@ -15,7 +15,8 @@
 
 import { h } from "../../../mod.ts";
 import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../../server/session.ts";
-import { currentContext } from "../../server/request-context.ts";
+import { currentContext, headers as requestHeaders } from "../../server/request-context.ts";
+import type { RequestContext } from "../../server/request-context.ts";
 import {
   EXPOSE_ERROR,
   isControlSignal,
@@ -238,11 +239,34 @@ type Unwrapped<V> = V extends DataWithResponseInit<infer D> ? D
 /** A Remix `action` export. */
 export type ActionFunction = (args: ActionFunctionArgs) => unknown | Promise<unknown>;
 
-/** Build the `{ request, params, context }` a loader/action receives. */
+/**
+ * The `request` a loader receives. Its URL and method are the live request's; its headers are
+ * read through denext's `headers()`, so a loader that reads them makes the render dynamic (never
+ * cached for everyone, a PPR hole), exactly as a Server Component calling `headers()` does.
+ *
+ * Under `dynamic = "force-static"` (React Router's `prerender`) the page is rendered once and
+ * served to every visitor, so the loader gets what React Router's build-time prerender gets: the
+ * URL alone — no headers (no `Cookie`), no body. Outside a request (export) it is the same.
+ */
+function loaderRequest(ctx: RequestContext | undefined): Request {
+  if (!ctx) return new Request("http://localhost/"); // export/prerender fallback (no live request)
+  if (ctx.segmentConfig?.dynamic === "force-static") return new Request(ctx.request.url);
+  const request = new Request(ctx.request.url, {
+    method: ctx.request.method,
+    signal: ctx.request.signal,
+  });
+  // The object's own headers stay empty, so `new Request(request)` / `fetch(request)` carry none
+  // unseen; `request.headers` and `request.clone()` read the live ones as a dynamic read.
+  Object.defineProperties(request, {
+    headers: { get: () => requestHeaders(), enumerable: true, configurable: true },
+    clone: { value: () => loaderRequest(ctx), configurable: true, writable: true },
+  });
+  return request;
+}
+
+/** Build the `{ request, params, context }` a loader receives. */
 async function loaderArgs(params: Record<string, string>): Promise<LoaderFunctionArgs> {
-  const ctx = currentContext();
-  const request = ctx?.request ??
-    new Request("http://localhost/"); // export/prerender fallback (no live request)
+  const request = loaderRequest(currentContext());
   return { request, params, context: await loadContext(request, params) };
 }
 

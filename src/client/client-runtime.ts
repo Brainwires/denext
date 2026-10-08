@@ -23,6 +23,8 @@ export {
   flightClientIds,
   parseFlight,
 } from "./flight-client.ts";
+// A streamed Flight document's tree: the shell + each hole / deferred value as it streamed.
+export { readStreamedFlight } from "./streamed-flight.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
 // Class components: `installClassSupport` lives in its own entrypoint, `denext/class-runtime`
@@ -38,6 +40,10 @@ export { installActivitySupport } from "./fiber/activity-runtime.ts";
 // marking runtime into the reconciler seam ONLY when the app uses `<ViewTransition>` — so an
 // app that never renders one drops this re-export (and the marking logic) via tree-shaking.
 export { installViewTransitionSupport } from "./fiber/view-transition-runtime.ts";
+// Host singletons: the entry emits `installSingletonSupport()` ONLY when the app's sources render
+// a document tag (a client root layout's `<html>`/`<body>` adopt the page's own elements), so an
+// app whose document denext or a server layout supplies drops it via tree-shaking.
+export { installSingletonSupport } from "./fiber/singleton-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev DevTools metadata: the per-component source position + hook names the dev

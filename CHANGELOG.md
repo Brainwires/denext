@@ -8,6 +8,353 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-08
+
+### Added
+
+- **`lists: "denext"` runs LegendList's DOM build on `VirtualList`.** With the new top-level
+  `lists: "denext"`, an app on npm React (the esbuild build path) has every
+  `@legendapp/list/react` import (its own and its packages') resolve to a `LegendList` built
+  from React Native mode's adapter over DOM elements, in SPA mode and on the App Router (server
+  render, the bundled builds and the unbundled dev loop alike), so the app gets the engine with
+  no code change; a denext-native app uses `VirtualList` directly. `className` / `contentContainerClassName` and the other
+  DOM attributes land on the scroll element, the ref's scroll-view getters and `refScrollView`
+  return the element, and `contentInsetEndAdjustment` / `contentInset`'s end add room after the
+  last item. The lists parity gate gains the DOM build (`@legendapp/list/react` 3.4.0, none
+  missing). `"library"`, the default, keeps the real package.
+- **LegendList's `getState().listen` and `listenToPosition` call back** (React Native mode and
+  the DOM build): `totalSize`, `headerSize`, `footerSize`, `anchoredEndSpaceSize`, the at-end /
+  at-start flags, `lastItemKeys`, `numContainers`, `otherAxisSize`, `readyToRender` and an item's
+  position are reported after each commit, scroll frame and measurement when they change; before,
+  every listener was a no-op.
+- **`client:*` directives in SPA mode: deferred mount + code split.** The island syntax of a
+  Flight route (`client:load` / `idle` / `visible` / `interaction` / `media` / `only`) now has a
+  SPA meaning: the build rewrites each directive element of the app's own modules (both bundler
+  paths, the bundled dev build and the unbundled dev loop) to `denext/spa-island`'s
+  `SpaIsland`, which renders the element's new `client:placeholder` (or an empty element) until
+  the trigger, then imports the component and mounts it with the element's props. When the
+  directive elements are a component's only use its static import is dropped, so its module is a
+  chunk of its own. The triggers are the Flight islands' own (`setLazyScheduler`, the dev island
+  timeline); a failed import throws to the nearest error boundary; an app with no directive
+  bundles none of it.
+- **`VirtualList`'s `scrollerProps`**: more attributes and event handlers for the scroll element
+  (`id`, `data-*`, `onKeyDown`, …).
+- **Remix `defer()` data streams per boundary.** On a streamed Flight page each deferred value is
+  sent as its own `<script type="application/json" data-dnx-v>` chunk the moment it resolves,
+  and each Suspense boundary's Flight subtree (`data-dnx-f`) beside its HTML, so an early
+  `<Await>`'s data is on the wire before a slow one resolves; the trailing `#__denext_flight`
+  is now the shell tree with those holes left in place, and the browser entry puts the chunks
+  back (`readStreamedFlight` from `denext/client-runtime`) before it hydrates. A buffered
+  document still carries the complete tree.
+- **`@denext/react-router` 0.2.0 runs a route module's browser half.** `clientLoader` (with
+  `serverLoader()` and `clientLoader.hydrate`), `clientAction` (with `serverAction()`) and
+  `HydrateFallback` work as in React Router v7 framework mode: a hydrating client loader renders
+  the `HydrateFallback` on the server and loads in the browser, a navigation and every
+  revalidation run it, and a client action handles the route's submissions. `ssr: false` is SPA
+  mode (route components render in the browser only), and `prerender` becomes segment config
+  (`force-static` for a listed static route, `generateStaticParams` for a dynamic one's listed
+  params). The runtime is `denext/remix`'s new `useClientRouteData` / `useClientRouteAction`,
+  which the generated route boundary calls; an app keeps exporting the React Router names.
+- **`"use cache"` works on methods and on a name-referenced `export default function`.** A
+  static class method becomes a cached static field and an object-literal method a cached
+  property, keyed on the class or object, the method name and the arguments, as in Next.js; a
+  method nested in a function also keys on the values it reads from that scope (Next's bound
+  arguments). An `export default function load() { "use cache" }` that the module calls by name
+  is cached on both paths. Next.js's rules come with it as build errors: an inline
+  `"use cache"` instance method, a cached getter or setter, and `this` / `super` / `arguments`
+  inside a cached function.
+- **`<ViewTransition>` animates same-page updates, as React 19.2's does.** A commit made only of
+  Transition work — a `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal —
+  now runs inside `document.startViewTransition` when a wrapped element enters, exits, is shared
+  (a `name` that leaves one place and enters another: `share` on both sides), or updates (its
+  content changed, or a reorder moved its box; an unmoved one is cancelled). Urgent updates never
+  animate. The outgoing side is named before the browser's old-state capture, the incoming side
+  after the commit, and the stamps are cleared when it finishes; when nothing outside a boundary
+  changed, the root's cross-fade is cancelled. Unnamed boundaries get an automatic name (a
+  `<ViewTransition>` without props now marks its child too), the `default` class prop applies
+  when a trigger's own is unset, `"auto"` / `"none"` work as in React, and two mounted boundaries
+  with the same `name` warn in development. Without the View Transitions API the commit applies
+  directly. The runtime stays behind the `<ViewTransition>` import gate.
+- **`denext migrate --enable-capacitor` gives a migrated app an iOS / Android target**, the way
+  `--desktop` gives it a desktop one: a Vite / CRA / generic SPA, a Next App Router app (its
+  static export) or an Expo app. It writes `capacitor.config.ts` (`--app-id`, else an existing
+  Capacitor config, the Expo app config, `desktop.app.identifier`, or a placeholder from the
+  package name with a review item; `appName` from the title; `webDir: "out"`),
+  `spa.precompress: false` and `mobile.icon`, the `mobile:sync` / `mobile:ios` /
+  `mobile:android` / `mobile:build:ios` / `mobile:build:android` tasks and `.gitignore` lines for
+  the native build outputs. It then installs the pinned Capacitor 8 packages the app lacks as dev
+  dependencies with the app's package manager and `--ignore-scripts` (it prints the command when
+  there is no lockfile), and with `--platform ios,android` exports and runs `npx cap add`. What it
+  cannot know is listed for review: build-time mode switches (`VITE_HOSTED_APP_CHANNEL`), backend
+  addresses a phone cannot reach, relative requests and the desktop-only `spa.proxy`, CORS for
+  `capacitor://localhost` / `https://localhost`, and an App Router app's route handlers, Server
+  Actions and `export-routes`. `--check` lists the files, the commands and the review items. A
+  Pages Router or Remix-family app is reported as not covered. The Expo path writes its shell
+  through the same code, so its `mobile:*` tasks now run the app's installed Capacitor CLI
+  (`npx cap`) when a package manager installed it, and the denext CLI outside the app's
+  `node_modules`, as the other migrated tasks do.
+- **TanStack Router route code-splitting in SPA builds (`spa.tanstackRouter`).**
+  `{ autoCodeSplitting: true }` runs `@tanstack/router-plugin`'s splitter (its compiler, a
+  build-time npm tool) in `denext build` / `export` on the esbuild path: each file route's
+  component, loader and error/pending/not-found components move into their own chunk, loaded
+  when the route is visited, and the route tree is regenerated as the Vite plugin does. The
+  package's own esbuild adapter splits nothing (it never runs the route generator), so denext
+  hosts its Vite plugins instead. `denext migrate` sets it from a vite.config whose
+  `tanstackRouter()` has `autoCodeSplitting: true`; `examples/tanstack-router` now uses it.
+- **Chunk-load errors dispatch `vite:preloadError` in SPA builds.** When a split chunk fails to
+  load (a 404 after a deploy or an OTA update), a production SPA bundle dispatches a cancelable
+  `vite:preloadError` event on `window` with the error as `event.payload`, plus a
+  `denext:chunkError` alias, and rethrows unless a listener called `preventDefault()` (the
+  import then resolves to `undefined`), as Vite's preload helper does. Both bundle paths; the
+  App Router's shared runtime is unchanged.
+- **Plugin build steps publish files with `emitFile`.** A `PluginBuildContext` gains
+  `emitFile({ fileName, source })`, Vite's `this.emitFile` for assets: the file lands at the
+  export's root, or in `<outDir>/emitted/`, which `denext start` serves (an emitted file wins
+  over a same-named `public/` file in both), and `clientModules` lists the client bundle's
+  modules on the SPA esbuild path. `viteEmitterPlugin(vitePlugin)` (`denext/plugin-kit`) runs a
+  Vite plugin's `generateBundle` emitter unchanged as a build step, and `denext migrate` wires
+  one imported from the app's own module (others are listed for review). Prepare steps now
+  take a `PluginPrepareContext` (the same fields, without the emit seam).
+- **`spa.viteManifest: true` writes a Vite-shaped `.vite/manifest.json`** into the static
+  export, one `{ file }` entry per content-hashed client file, for a server that reads Vite's
+  manifest to serve those files as `immutable`. The unhashed entry and stylesheet are not listed,
+  nor is any file copied in from `public/`.
+- **`spa.assetsDir`, Vite's `build.assetsDir`.** `"assets"` moves a SPA's client output (entry,
+  stylesheet, split chunks, imported assets) from `/_denext/client/` to `/assets/`: `denext
+  export` writes it to `out/assets/`, `denext start` and `denext dev` serve it there (a
+  `public/assets/` file is served behind the build's, and the dev origin gate covers the
+  directory), and the shell, `modulepreload` links, the chunk-error rewrite, the OTA manifest
+  and `.vite/manifest.json` follow it. Content-hashed files are `name-HASH.ext` with an
+  8-character hash (`?url` assets sit beside the chunks, as under Vite), the shape a server
+  written for a Vite build serves as `immutable`. `denext migrate` sets it from a Vite app's
+  `build.assetsDir`, else `"assets"`. Unset, the layout is unchanged.
+- **`denext/jsx-directives`: the `client:*` props for apps typed by `@types/react`.** It exports
+  `ClientDirectives<Placeholder>`, the directive keys and `client:placeholder`; an app whose
+  `tsc` reads React's JSX types adds them to React's `Attributes` with a two-line
+  `client-directives.d.ts` (see SPA mode › Deferred mounts). denext's own JSX types now take the
+  keys from the same interface.
+
+### Changed
+
+- **Plugin build steps run at `denext export` too**, on the App Router and SPA paths (they ran
+  only at `denext build` and in a Pages Router export), and a SPA now sets up its configured
+  plugins and runs their prepare and build steps; before, SPA mode ignored `plugins`.
+- **Assets an App Router build emits for `?url` and bare asset imports are named
+  `name-HASH.ext` with esbuild's 8-character base32 hash** (they had a variable-length base36
+  one), so the immutable-cache check recognizes them.
+- **Smaller shared client runtime.** The host-singleton logic (a client root layout's
+  `<html>` / `<body>`) is installed by the generated entry only when a build scan finds a document
+  tag in the app's sources (dev and unscanned paths keep it), Remix `defer()` value-hole
+  substitution is a chunk loaded only for a document that streamed a deferred value, and two
+  constant tables are packed: `examples/hello`'s shared chunks went from 65,514 to 64,924 B and a
+  Flight app's `flight.js` from 3,075 to 2,572 B. `readStreamedFlight` from
+  `denext/client-runtime` now returns a Promise (see Breaking). (3.4.0 correctness audit.)
+
+### Fixed
+
+- **Content-hashed files with esbuild's base32 hash are served as `immutable`.** The server's
+  hash check recognized `chunk-*.js` and hex hashes only, so a `deno bundle` split module
+  (`lazy-VXRX55NY.js`) and a `?url` or file-loader asset (`logo-QWERTY23.svg`) were served
+  with revalidation. A `-` followed by exactly eight upper-case base32 characters now counts;
+  lower-case names never do.
+- **LegendList's `getState().contentLength` is the whole scroll content** (React Native mode, and
+  the DOM build): the header, the items, the footer and the room after them, as LegendList
+  reports it, read from the scroll element's scroll size. It was the items alone, off by the
+  header, so a chat that subtracts `scroll` and `scrollLength` from it to find the gap below the
+  last row (T3 Code's timeline) got it wrong. `listen("totalSize")` still reports the items'
+  total.
+- **`defaultValue` / `defaultChecked` fill a client-rendered form, as in react-dom.** An
+  `<input defaultValue>` mounted on the client (not hydrated) wrote a `defaultvalue` attribute
+  and the field stayed empty. Now an `<input>` takes them through its `defaultValue` /
+  `defaultChecked` properties (its `value` / `checked` attributes, shown until the user edits
+  it), a `<textarea>` takes its default once at mount, and a new `<select>` selects the options
+  its `value` or `defaultValue` names, `multiple` included; a later `defaultValue` change never
+  moves a `<textarea>` / `<select>`. On the server, a controlled `value` / `checked` now wins over
+  the default instead of rendering both (`<input value="v" value="d">`), as ReactDOMServer does.
+- **A client root layout's `<html>` / `<body>` attributes go when the layout does.** The page's
+  own elements the layout adopts now lose the attributes and listeners its props set when it
+  unmounts or a soft navigation switches to another root layout, as React releases them, so the
+  new layout starts from clean elements instead of the old one's classes. The new layout's
+  attributes are applied in the commit, after the old ones are cleared, and an `on*` handler on
+  `<body>` no longer throws. Only what the layout set is taken back: a class or attribute a
+  script added (next-themes' theme class, a theme toggle) stays, and `className` is applied
+  token by token. Hydration writes only the props the page does not already reflect, and with
+  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (next-themes'
+  `<html suppressHydrationWarning>`); without it the client value wins. (3.4.0 correctness
+  audit.)
+- **A React Router root with a `Layout` export and an `App` that only returns `<Outlet/>`
+  renders its routes.** A hook-free root becomes a server root layout; its `return <Outlet/>;`
+  was generated as `return {children};` (an object, rendered as `<undefined>`) and the `Layout`
+  export was dropped. The app now renders inside `Layout`, with the outlet as `<>{children}</>`
+  (`@denext/react-router` and `denext migrate --from remix`).
+- **`denext dev` serves a project's `denext/` alias into a local checkout as the framework.** An
+  app whose `deno.json` maps `denext/` to a denext checkout (the e2e fixtures do) had
+  `denext/devtools` & co. served through `@fs` as its own modules since the platform-files alias
+  work: a second runtime beside the dependency chunk's, which broke a library's ref callback
+  (react-native-gesture-handler's `GestureDetector` in React Native mode). An alias into the
+  framework checkout is a dependency again; the app's own aliases are unchanged.
+- **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
+  document tags now adopt the page's own elements (React's host singletons): their attributes
+  follow the layout's props on the real `<html>` / `<body>`, including later updates, and the
+  layout's content hydrates the server markup where the parser left it. Before, hydration
+  mismatched at `<html>` and re-created the whole page inside the page container.
+- **A hidden `<Activity>` mounts no effects, as React 19.2's doesn't.** Content that mounts (or is
+  added) while hidden is pre-rendered and kept hidden, but its `useEffect` / `useLayoutEffect` /
+  store subscriptions first run when it is revealed — before, a subtree that mounted hidden ran its
+  effects once and kept them connected. An update to hidden content is pre-rendered at transition
+  priority (never in the urgent pass), so revealing it is instant. State is kept, effects are
+  cleaned up again on hide, and the server still omits hidden content from the HTML.
+- **`denext migrate` ignores what `deno task desktop` and Capacitor write into the project.**
+  The generated `.gitignore` now lists `/*.app/` (the bundle `deno task desktop` writes, under
+  any `desktop.app.name`) with `--desktop`, and the native build outputs (`ios/App/build/`,
+  `android/app/build/`, the web assets `cap sync` copies in, …) for a Capacitor target, Expo
+  included.
+- **`denext migrate --denext-local-path` no longer overrides the app's own dependencies.** It
+  copied every `jsr:` / `npm:` entry of the checkout's import map into the app's, including
+  `"effect": "npm:effect@^3"` (there for `@denext/effect`), which shadowed an app on Effect 4
+  through a `catalog:` range. It now maps only what denext's own runtime source imports, and
+  never a package the app depends on itself.
+- **The desktop and SPA docs show the `desktop.ts` `migrate --desktop` writes**, with its
+  `resolveDesktopCapabilities` spread; they still said a migrated entry lacked it.
+- **The unbundled dev loop no longer resolves an npm specifier named like an `Object.prototype`
+  key** (`constructor`, `toString`, `__proto__`) to the prototype's value; the alias and runtime
+  tables are read by own key only.
+- **`denext migrate` reports a Vite emitter called with a template literal that reads a
+  vite.config value** (``stampPlugin(`${dir}/stamp.txt`)``). The `${…}` was blanked with the
+  string, so the call was carried into `denext.config.ts`, where the value does not exist, and
+  the build failed.
+- **A buffered Flight page keeps its Remix `defer()` values.** A page with a deferred value but
+  no Suspense hole is served buffered; its tail was drained as if streaming, so the value's chunk
+  was discarded and the client hydrated the `{"$":"vh"}` placeholder instead of the data. The
+  buffered tail now carries the resolved values. (3.4.0 correctness audit.)
+- **`root.render()` updates the DOM before it returns in an app that uses `<ViewTransition>`.**
+  A Suspense retry marks the root's pending work as an animatable reveal; a `root.render()` before
+  the retry flushed joined that work and its commit waited for a view transition's update
+  callback (a Flight soft navigation then rebooted resumability against the old DOM). An element
+  update is urgent now, and a retry on the transition lane no longer leaves the mark set for a
+  later render. (3.4.0 correctness audit.)
+- **A commit that throws inside a view transition's update callback reaches the root's error
+  handling** (`onUncaughtError`, else the global error handler) and settles a time-sliced
+  transition's `isPending`; it was only logged, and `isPending` stayed true. (3.4.0 correctness
+  audit.)
+- **A hidden `<Activity>` forgets the elements removed while it stays hidden**; a long-hidden list
+  kept every element it ever had. (3.4.0 correctness audit.)
+- **SPA `denext dev` sets plugins up and runs their prepare steps** at startup, and re-runs a step
+  when a file under its `watch` globs changes, then rebuilds and reloads, as App Router dev does;
+  only `denext build` / `export` did, so generated inputs (content-collections' types) were
+  missing in SPA dev. (3.4.0 correctness audit.)
+- **`spa.assetsDir`: the build's file wins over a same-named `public/` file** in `denext dev` (the
+  bundled loop) and in the export, as `denext start` already served it; the export's `public/`
+  copy overwrote the client entry. A `viteEmitterPlugin`'s synthetic entry chunk is named under
+  `spa.assetsDir` too. (3.4.0 correctness audit.)
+- **First-party plugins under `denext export`:** `@denext/openapi` 0.3.1 publishes the document
+  at its `path` (not with `expose: "dev"`), `@denext/graphql` 0.2.1 writes no SDL,
+  `@denext/pages-router` 0.11.1 skips its prebuild and prerender in a hybrid (app/ + pages/)
+  export, whose `out/` never took them (a failing `pages/` build failed the export), and
+  `@denext/htmx` 2.0.13 publishes its runtime into the export at its `path` (the default
+  `/_denext/htmx/htmx.min.js` included). (3.4.0 correctness audit.)
+
+### Security
+
+- **A `@denext/react-router` `prerender` page no longer caches one visitor's data for everyone.**
+  `prerender` makes a listed route `force-static`, which empties `cookies()` and `headers()`, but
+  a React Router (or Remix) loader read the live request through its `request` argument, so a
+  root loader that read the `Cookie` header put the first visitor's data in the page cache that
+  every later visitor was served. Under `force-static` a loader now gets the URL alone, with no
+  headers and no body, as React Router's build-time prerender does. On every other page a
+  loader reading `request.headers` (or its `clone()`) makes the render dynamic, as `headers()`
+  does, so an ISR or PPR page that reads it is never cached for everyone.
+- **A `"use cache"` method in a module-level loop, `catch` or block is keyed on what it closes
+  over.** Its key bound the values of an enclosing function only, so in
+  `for (const tenant of tenants) registry[tenant] = { async get(id) { "use cache"; … } }` every
+  tenant shared one entry and got the first tenant's result. A loop variable, a `catch`
+  parameter and a block `let` / `const` are now bound like a function's locals, also for a
+  method in a function declared inside such a block.
+- **`denext migrate --enable-capacitor` no longer runs a Yarn project's install scripts.** npm,
+  pnpm and bun installed the Capacitor packages with `--ignore-scripts`, but Yarn ran without it
+  (Yarn Berry rejects the flag), so the project's `postinstall` / `prepare` ran. Yarn now runs
+  with `npm_config_ignore_scripts=true` (Yarn 1) and `YARN_ENABLE_SCRIPTS=0` (Berry), and the
+  printed command carries them. The migrate docs now say that `--platform` runs the project's
+  export and `npx cap add`, which execute the project's own code.
+- **The browser reads streamed Flight chunks only where the server puts them.** The entry took
+  every `script[data-dnx-f]` / `script[data-dnx-v]` in the document, so one inside page content
+  (user HTML rendered into the page) could fill a Suspense hole or a deferred value. It now
+  reads only direct children of `<body>`, where the server streams them.
+- **A plugin's `emitFile` can't replace the build's own output.** It refuses `index.html` (the
+  HTML shell), denext's output under `_denext/` (`client/`, `pages/`, `fonts/`, `ota.json`,
+  `platform.txt`, `desktop-preload.js`) and the `spa.assetsDir` directory, compared without
+  case, and in an export any file the build already wrote there (a rendered page, a client
+  chunk; a same-named `public/` file can still be replaced). The rest of `_denext/` stays open,
+  so `@denext/htmx` 2.0.13 publishes its runtime at its default `/_denext/htmx/htmx.min.js`
+  again. An App Router export now runs the build steps before writing the app-links files and
+  the desktop preload, as a SPA export does, so those are the build's.
+- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`.** Only the bare `_denext` was
+  refused; a directory under it, or under the app-links or Vite-manifest directories, would have
+  mixed the client with what those paths serve.
+- **`@tanstack/router-plugin`, which denext runs at build time, is pinned to an exact version**
+  (1.168.42) instead of a `^` range.
+
+### Breaking
+
+Upgrade notes for 3.4. Plugin authors:
+
+- **A prepare step takes a `PluginPrepareContext`** (`PluginPrepareStep` is
+  `(context: PluginPrepareContext) => …`): the build context's fields without `emitFile` /
+  `clientModules`. A step annotated `(ctx: PluginBuildContext) => …` and passed to
+  `addPrepareStep` no longer type-checks under `strictFunctionTypes`; type it
+  `PluginPrepareContext` (or leave the parameter unannotated).
+- **`PluginBuildContext` has a required `emitFile`**, so a context a plugin's own tests build by
+  hand no longer compiles; add `emitFile: () => Promise.resolve()` (or a recorder).
+- **Build steps run at `denext export` too** (App Router and SPA), not only at `denext build`,
+  and **SPA mode now runs `plugins`**: setup, prepare steps (at build, export and `denext dev`
+  startup) and build steps. A step that assumed a `denext build` output directory, or a plugin
+  listed in a SPA config that was inert until now, runs; check it does the right thing there.
+  The first-party plugins skip or redirect their output under `denext export`:
+  `@denext/graphql` writes no SDL, `@denext/openapi` publishes the document at its `path`
+  (nothing with `expose: "dev"`), `@denext/pages-router` skips its prerender in a hybrid
+  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime into the export at its
+  `path` (the default `/_denext/htmx/htmx.min.js` included).
+- **`emitFile` refuses the build's own paths:** `index.html`, denext's output under `_denext/`
+  (`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`) and the
+  `spa.assetsDir` directory (compared without case), and in an export any file the build already
+  wrote (a rendered page, a client chunk). Other `_denext/` paths are open to plugins.
+  Apps:
+- **App Router `?url` and bare asset imports are named `name-HASH8.ext`** (esbuild's 8-character
+  base32 hash, was a variable-length base36 one), and the server's content-hash check
+  (`isContentHashed`) now also counts a `-` plus eight upper-case base32 characters, so more
+  files are served `immutable`. Anything that matched the old asset names (a CDN rule, a
+  test) needs the new shape.
+- **New `"use cache"` build errors, as in Next.js:** an inline `"use cache"` instance method, a
+  cached getter or setter, and `this` / `super` / `arguments` inside a cached function fail the
+  build where the directive used to be inert or silently wrong. Move the body to a static
+  method or a function that takes what it needs as arguments.
+- **A name-referenced `export default function` with `"use cache"` becomes a `const`**, so it is
+  no longer hoisted: a call before its declaration at module top level, or through an import
+  cycle that runs first, now throws a `ReferenceError` (temporal dead zone) where it used to run,
+  uncached. Call it after the module has evaluated.
+- **A `@denext/react-router` `prerender` (force-static) page's loader gets the URL alone**, a
+  request with no headers and no body, as React Router's build-time prerender does; on other
+  pages a loader that reads `request.headers` makes the render dynamic (never cached for
+  everyone), as `headers()` does.
+- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`** (a config error at load), and
+  `spa.viteManifest` / `spa.tanstackRouter` are validated too: a non-boolean `viteManifest`, a
+  non-object `tanstackRouter` or an unknown key in it is an error.
+- **Behaviour changes, as React 19.2 and ReactDOMServer do:** a `<ViewTransition>` without props
+  now stamps its child (`data-dnx-vt`) and takes part in same-page transitions; a hidden
+  `<Activity>` runs no effects for content that mounts while hidden (they run when it is
+  revealed); on the server a controlled `value` / `checked` wins over `defaultValue` /
+  `defaultChecked` instead of rendering both.
+- **Streamed Flight:** `#__denext_flight` on a streamed page is now the shell tree with holes,
+  the deferred values and Suspense subtrees arriving as `script[data-dnx-v]` / `[data-dnx-f]`
+  chunks; only the server's own chunks (direct children of `<body>`) are read.
+  `readStreamedFlight` from `denext/client-runtime` returns a Promise. Code that parsed
+  `#__denext_flight` itself, or called `readStreamedFlight` synchronously, must change.
+- **A client root layout's `<html>` / `<body>` keep what scripts set:** hydration keeps the
+  attributes a pre-hydration script added (next-themes' theme class), and under
+  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (without it the
+  client value wins); an unmount or a root-layout switch removes only the attributes the layout
+  set.
+
 ## [3.3.0] - 2026-10-08
 
 ### Breaking
@@ -11683,7 +12030,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.3.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.0...development
+[3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0
 [3.1.0]: https://jsr.io/@denext/denext@3.1.0

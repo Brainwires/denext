@@ -30,16 +30,33 @@ transform:
 Loaders and actions, `meta`, `links`, `ErrorBoundary` (with `useRouteError` /
 `isRouteErrorResponse`), the root `Layout` export, and the `Route.ComponentProps`
 props contract (`loaderData` / `actionData` / `params` / `matches` as component
-props) all work.
+props) all work, and so do the client data APIs below.
+
+## Client data APIs
+
+A route module's browser half runs as in React Router v7:
+
+- **`clientLoader`** runs in the browser; its result is the route's loader data, and
+  `serverLoader()` hands it the server loader's data. On the first load it runs only when it
+  hydrates (`clientLoader.hydrate = true`, or the route has no server `loader`), with the
+  route's **`HydrateFallback`** rendered on the server until it settles. A route a navigation
+  brings in, and every revalidation, runs it.
+- **`clientAction`** runs for the route's `<Form>` / `useSubmit` / same-route fetcher
+  submissions; `serverAction()` runs the server `action`.
+- **`ssr: false`** in `react-router.config.ts` is SPA mode: every route renders its
+  `HydrateFallback` (or nothing) on the server and its component in the browser; the root
+  still renders as the app shell.
+- **`prerender`** (`true`, a path list, or a function given `getStaticPaths()`) becomes
+  segment config: a listed static route is `force-static` (rendered once, then cached), a
+  dynamic route's listed params its `generateStaticParams` (written by `denext export`). The
+  loaders of a `force-static` page get the URL alone (no headers, no body), as React Router's
+  build-time prerender does, since one render is served to everyone.
 
 ## Limitations
 
-- **Server rendering only.** `clientLoader` / `clientAction` / `HydrateFallback`
-  are not run; loaders/actions run on the server. `react-router.config.ts`
-  `ssr: false` (RR's SPA mode) is not this plugin — use denext's `mode: "spa"`
-  for a pure SPA.
-- **`prerender`** in `react-router.config.ts` is not applied; denext prerenders
-  static routes itself.
+- **`serverLoader()` on a navigation** resolves the data the navigation already fetched:
+  denext renders the target route on the server, so its server `loader` runs with that render
+  instead of on demand, and the route renders before its `clientLoader` settles.
 - **Route typegen** (`import type { Route } from "./+types/…"`) is type-only and
   erases at runtime, so the app runs without it; generate the `+types` with React
   Router's own `typegen` if you type-check against them.

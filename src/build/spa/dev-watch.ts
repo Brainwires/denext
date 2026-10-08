@@ -166,6 +166,18 @@ export function watch(st: SpaDevState): void {
   const ignored = (p: string): boolean =>
     p.startsWith(paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
+  watchBatches(watcher, ignored, (batch) => void flushBatch(st, batch, framework));
+}
+
+/**
+ * Hand `onBatch` each burst of `watcher`'s paths that `ignored` lets through, once 60 ms pass
+ * without another (the paths of one burst accumulate, de-duplicated). Ends when the watcher closes.
+ */
+export function watchBatches(
+  watcher: Deno.FsWatcher,
+  ignored: (path: string) => boolean,
+  onBatch: (batch: string[]) => void,
+): void {
   let debounce: ReturnType<typeof setTimeout> | undefined;
   const pending = new Set<string>();
   (async () => {
@@ -178,7 +190,7 @@ export function watch(st: SpaDevState): void {
         debounce = setTimeout(() => {
           const batch = [...pending];
           pending.clear();
-          void flushBatch(st, batch, framework);
+          onBatch(batch);
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }

@@ -70,9 +70,15 @@ export default {
   with a history-API fallback, and can `export` / package it as a static desktop
   app. Use it to host an existing Vite-style SPA on denext's toolchain.
 - **`spa`** — `SpaConfig` (required when `mode: "spa"`). Fields: `entry` (the
-  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`,
-  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell), and
-  `desktop` (desktop-packaging options). See [SPA mode](/docs/spa).
+  client entry file, required), `rootId`, `title`, `head`, `loading`, `lang`, `env`,
+  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell),
+  `precompress`, `ota`, `viteManifest` (write a Vite-shaped `.vite/manifest.json`
+  of the export's content-hashed files), `assetsDir` (Vite's `build.assetsDir`: serve
+  and export the client under `/assets/` instead of `/_denext/client/`; not under
+  `_denext`, `.well-known` or `.vite`),
+  `tanstackRouter` (`{ autoCodeSplitting }`:
+  split TanStack Router routes into their own chunks), and `desktop`
+  (desktop-packaging options). See [SPA mode](/docs/spa).
 
 ## Images
 
@@ -332,7 +338,8 @@ export default {
 
 - **`plugins`** — `DenextPlugin[]`. denext plugins (e.g. a Pages Router, or
   htmx). Each is set up once before routes are scanned and may contribute
-  routes, claim requests, emit build assets, generate inputs the app imports
+  routes, claim requests, emit build assets (and publish files at the site root
+  with `emitFile`, at build and export), generate inputs the app imports
   (prepare steps, live in dev), register a teardown, and add CLI verbs. Apps
   with no plugins pay nothing.
 
@@ -491,6 +498,11 @@ every `--platform` target included.
   `exports` — the reason `denext migrate` never rewrites `package.json`. Set
   `false` to force app deps back through Deno's strict `npm:` loader (escape
   hatch).
+- **`lists`** — `"denext" | "library"` (default `"library"`). `"denext"` runs
+  `@legendapp/list/react` (LegendList's DOM build), imported by the app or its packages, on
+  denext's `VirtualList` with LegendList's props, ref methods and cell hooks, in SPA mode and
+  on the App Router. See [LegendList on the web](/docs/lists#legendlist-on-the-web). React
+  Native mode's own list packages are `reactNative.lists`.
 - **`momentumSafeScroll`** — `boolean` (**default on**). In iOS WebKit (Safari,
   WKWebView, Capacitor) any programmatic scroll write during a touch fling
   (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and

@@ -307,8 +307,52 @@ export interface SpaConfig {
    * holds a PKCS#8 PEM (`denext ota keygen`), the manifest is also signed.
    */
   ota?: boolean;
+  /**
+   * Write a Vite-shaped build manifest, `.vite/manifest.json`, into the static export: one
+   * entry per content-hashed client file (`"_denext/client/chunk-AB12CD34.js": { "file":
+   * "_denext/client/chunk-AB12CD34.js" }`, under {@link assetsDir} when set), the shape Vite's
+   * `build.manifest` writes. A server written for a Vite build reads it to learn which files
+   * are safe to serve as `immutable`. The entry `index.js` and `index.css` keep their names
+   * across builds and are not listed, nor is any `public/` file. Default `false`.
+   */
+  viteManifest?: boolean;
+  /**
+   * Where the client output (entry, stylesheet, split chunks, imported assets) is served and
+   * exported, as Vite's `build.assetsDir`: `"assets"` serves it from `/assets/` and writes it to
+   * `out/assets/`, with content-hashed files named `name-HASH.ext` (an 8-character hash), the
+   * shape a server written for a Vite build expects. A `public/` file at the same path is served
+   * behind the build's. Unset, the client lives under `/_denext/client/`. A directory under
+   * `_denext`, `.well-known` or `.vite` is refused. `denext migrate` sets it from a Vite app's
+   * `build.assetsDir` (`"assets"` by default).
+   */
+  assetsDir?: string;
+  /**
+   * TanStack Router file-based routing: with `autoCodeSplitting: true` a production build splits
+   * each route file's `component` (and loader, error/pending/not-found components) into its own
+   * chunk loaded on navigation, as `@tanstack/router-plugin`'s `autoCodeSplitting` does under
+   * Vite. Applies on the esbuild path (npm React / `compatibilityMode`); `denext dev` bundles
+   * routes unsplit. `denext migrate` carries it from a `vite.config` that sets it.
+   */
+  tanstackRouter?: SpaTanstackRouterConfig;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
+}
+
+/** TanStack Router build settings under {@link SpaConfig.tanstackRouter}. */
+export interface SpaTanstackRouterConfig {
+  /** Split each route's components into their own lazily loaded chunks. Default `false`. */
+  autoCodeSplitting?: boolean;
+  /**
+   * The route files' directory, relative to the project root. Default: `tsr.config.json`'s
+   * `routesDirectory`, else `./src/routes`.
+   */
+  routesDirectory?: string;
+  /**
+   * The generated route tree, relative to the project root (rewritten at build, as the Vite
+   * plugin does). Default: `tsr.config.json`'s `generatedRouteTree`, else
+   * `./src/routeTree.gen.ts`.
+   */
+  generatedRouteTree?: string;
 }
 
 /**
@@ -1574,6 +1618,17 @@ export interface DenextConfig {
    */
   momentumSafeScroll?: boolean;
   /**
+   * Which engine runs the DOM list packages. `"denext"`: `@legendapp/list/react` (LegendList's
+   * DOM build), imported by the app or by its packages, runs on denext's `VirtualList` with
+   * LegendList's props, ref methods (`scrollToEnd`, `scrollToIndex`, `getState`, …) and cell
+   * hooks, in SPA mode and on the App Router (server render included); the app's source stays
+   * unchanged. `"library"` (the default): the real package. Applies to apps that use npm React
+   * (the esbuild build path). React Native mode's own list packages are `reactNative.lists`.
+   *
+   * @default "library"
+   */
+  lists?: "denext" | "library";
+  /**
    * Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to
    * `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package,
    * `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The
@@ -1859,6 +1914,11 @@ export interface ExperimentalConfig {
  */
 export function momentumSafeScrollEnabled(config: DenextConfig | null | undefined): boolean {
   return config?.momentumSafeScroll !== false;
+}
+
+/** Whether the DOM list packages run on denext's `VirtualList` (`lists: "denext"`). */
+export function domListsEnabled(config: DenextConfig | null | undefined): boolean {
+  return config?.lists === "denext";
 }
 
 /**

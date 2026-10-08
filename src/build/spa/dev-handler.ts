@@ -7,7 +7,7 @@ import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
-import { SPA_DEV_RELOAD } from "./dev-reload-script.ts";
+import { spaDevReloadScript } from "./dev-reload-script.ts";
 import {
   ensureBuilt,
   ensureUnbundled,
@@ -21,6 +21,7 @@ import {
   ENTRY_FILE,
   escapeHtml,
   RELOAD_PATH,
+  spaClientPrefix,
   spaShellHtml,
   STYLE_FILE,
   wantsShell,
@@ -33,8 +34,15 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** A client asset (the entry bundle, a split chunk, the stylesheet) from the current build. */
-async function serveClientAsset(st: SpaDevState, pathname: string): Promise<Response> {
+/**
+ * A client asset (the entry bundle, a split chunk, the stylesheet) from the current build;
+ * `pathname` is under `prefix` (`spa.assetsDir`'s, or `/_denext/client/`).
+ */
+async function serveClientAsset(
+  st: SpaDevState,
+  pathname: string,
+  prefix: string,
+): Promise<Response> {
   let dir: string;
   try {
     dir = await ensureBuilt(st);
@@ -45,7 +53,7 @@ async function serveClientAsset(st: SpaDevState, pathname: string): Promise<Resp
     });`;
     return new Response(body, { status: 500, headers: jsHeaders });
   }
-  const asset = await serveStatic(dir, "/" + pathname.slice(CLIENT_PREFIX.length));
+  const asset = await serveStatic(dir, "/" + pathname.slice(prefix.length));
   if (asset) {
     asset.headers.set("cache-control", "no-store");
     return asset;
@@ -84,10 +92,11 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
+  const prefix = spaClientPrefix(st.spa);
   const html = await spaShellHtml({
     spa: st.spa,
-    scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
-    styleHref: st.hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
+    scriptSrc: `${prefix}${ENTRY_FILE}`,
+    styleHref: st.hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
     devScriptSrc: DEV_RELOAD_JS_PATH,
     reactNativeRootStyle: rnRootStyle,
   });
@@ -121,20 +130,27 @@ export function createSpaDevHandler(st: SpaDevState): (request: Request) => Prom
   return async (request) => pinDevPlatform(request, await handle(request));
 }
 
+/** Whether `pathname` is a dev endpoint or a client asset (behind the dev origin gate). */
+function gatedPath(pathname: string, prefix: string): boolean {
+  return pathname.startsWith("/_denext/") || pathname.startsWith(prefix);
+}
+
 /** {@linkcode createSpaDevHandler}'s routing, before the platform cookie. */
 function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Response> {
   const allowed = st.options.allowedDevOrigins ?? [];
+  const prefix = spaClientPrefix(st.spa);
+  const reloadScript = spaDevReloadScript(prefix);
   return async (request) => {
     const url = new URL(request.url);
     // Same Host/Origin gate as the app dev server (DNS-rebinding defense): the reload stream,
-    // the unbundled module graph (transformed project source) and the client assets must not
-    // be reachable from a foreign origin.
-    if (url.pathname.startsWith("/_denext/") && !devOriginAllowed(request, url, allowed)) {
+    // the unbundled module graph (transformed project source) and the client assets — under
+    // `spa.assetsDir` too — must not be reachable from a foreign origin.
+    if (gatedPath(url.pathname, prefix) && !devOriginAllowed(request, url, allowed)) {
       return new Response("forbidden", { status: 403 });
     }
     if (url.pathname === RELOAD_PATH) return sseStream(st.reloadClients);
     if (url.pathname === DEV_RELOAD_JS_PATH) {
-      return new Response(SPA_DEV_RELOAD, { headers: jsHeaders });
+      return new Response(reloadScript, { headers: jsHeaders });
     }
     // The dev black box, as on the App Router dev server: the page's console capture posts
     // here, and `denext_dev_logs` reads it back.
@@ -148,11 +164,62 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
     }
     const unbundled = await serveUnbundled(st, request, url);
     if (unbundled) return unbundled;
-    if (url.pathname.startsWith(CLIENT_PREFIX)) return serveClientAsset(st, url.pathname);
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
-    if (pub) return pub;
-    if (wantsShell(request, url.pathname)) return serveShell(st, request);
-    return new Response("not found", { status: 404 });
+    return await serveFile(st, request, url, prefix);
   };
+}
+
+/**
+ * Under `spa.assetsDir`, the bundled loop's file at `pathname` (it wins over a public one), or
+ * null: not in the bundle, or the unbundled loop is the page's client (no bundle to ask).
+ */
+async function bundleFirst(
+  st: SpaDevState,
+  pathname: string,
+  prefix: string,
+): Promise<Response | null> {
+  if (await ensureUnbundled(st)) return null;
+  const asset = await serveClientAsset(st, pathname, prefix);
+  if (asset.status !== 404) return asset;
+  await asset.body?.cancel();
+  return null;
+}
+
+/**
+ * The file a request for `url` gets ahead of the plain client lookup: under `spa.assetsDir`, the
+ * bundle's (see {@link bundleFirst}) and then a public one; outside the client prefix, a public
+ * file; under `/_denext/client/`, nothing (the client lookup answers it).
+ */
+async function bundleOrPublic(
+  st: SpaDevState,
+  request: Request,
+  url: URL,
+  prefix: string,
+  client: boolean,
+): Promise<Response | null> {
+  const shared = client && prefix !== CLIENT_PREFIX;
+  const built = shared ? await bundleFirst(st, url.pathname, prefix) : null;
+  if (built || (client && !shared)) return built;
+  const accEnc = request.headers.get("accept-encoding") ?? undefined;
+  return await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
+}
+
+/**
+ * A client asset under `prefix`, a `public/` file, or the shell for a navigation. Under
+ * `spa.assetsDir` the client shares its directory with `public/` (Vite's `assets/`): where the
+ * bundle is the page's client (the bundled loop) a path it holds is the bundle's, as `denext
+ * start` and the export serve it, and a public file answers the rest. The unbundled loop serves
+ * the page from its module graph, so there a public file is served without building the bundle.
+ */
+async function serveFile(
+  st: SpaDevState,
+  request: Request,
+  url: URL,
+  prefix: string,
+): Promise<Response> {
+  const client = url.pathname.startsWith(prefix);
+  const local = await bundleOrPublic(st, request, url, prefix, client);
+  if (local) return local;
+  if (client) return serveClientAsset(st, url.pathname, prefix);
+  if (wantsShell(request, url.pathname)) return serveShell(st, request);
+  return new Response("not found", { status: 404 });
 }

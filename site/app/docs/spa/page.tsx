@@ -180,9 +180,151 @@ const u = new URL("./asset.bin", import.meta.url); // emitted + rewritten`}
           <strong>Route codegen</strong> (e.g. TanStack Router): run it out-of-band —{" "}
           <code>tsr generate</code> in a <code>prebuild</code> step, <code>tsr watch</code>{" "}
           alongside <code>denext dev</code>. <code>examples/tanstack-router</code>{" "}
-          in the repo is a stock file-based TanStack Router app wired this way.
+          in the repo is a stock file-based TanStack Router app wired this way. With{" "}
+          <code>spa.tanstackRouter</code> set (below), <code>denext build</code> and{" "}
+          <code>export</code> regenerate the route tree themselves, as the Vite plugin does.
         </li>
       </ul>
+
+      <h2>Vite build parity</h2>
+      <p>
+        Five things a Vite build does that a migrated app may rely on. All apply to{" "}
+        <code>denext build</code> and <code>denext export</code>; <code>denext dev</code>{" "}
+        does not code-split, emit, or write a manifest.
+      </p>
+
+      <h3>
+        Asset paths — <code>spa.assetsDir</code>
+      </h3>
+      <p>
+        A Vite build puts its JavaScript, CSS and imported assets under <code>assets/</code>{" "}
+        (<code>build.assetsDir</code>) with names like{" "}
+        <code>index-BxY4Q2c7.js</code>, and a server written for it may serve only paths of that
+        shape as long-lived. <code>spa.assetsDir</code> does the same: the client is written to{" "}
+        <code>out/assets/</code> and served from <code>/assets/</code> (by <code>denext start</code>
+        {" "}
+        and <code>denext dev</code> too) instead of{" "}
+        <code>/_denext/client/</code>, and each content-hashed file is named{" "}
+        <code>name-HASH.ext</code> with an 8-character hash (<code>chunk-AB12CD34.js</code>,{" "}
+        <code>logo-QWERTY23.svg</code>):
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: {
+  entry: "./src/main.tsx",
+  assetsDir: "assets",
+}`}
+      </Code>
+      <p>
+        The entry keeps its stable name (<code>assets/index.js</code>, revalidated rather than
+        cached). Files in <code>public/assets/</code> share the directory, behind the build's own.
+        {" "}
+        <code>denext migrate</code> sets it to the Vite app's <code>build.assetsDir</code>{" "}
+        (<code>"assets"</code> by default). Unset, nothing moves.
+      </p>
+
+      <h3>
+        Route code-splitting — <code>spa.tanstackRouter</code>
+      </h3>
+      <p>
+        TanStack Router's <code>autoCodeSplitting</code>{" "}
+        moves each file route's component (and its loader, error, pending and not-found components)
+        into its own chunk that the router fetches when the route is visited, so the startup bundle
+        holds only the router and the route tree. denext runs the same splitter (
+        <code>@tanstack/router-plugin</code>'s compiler, a build-time tool) on the npm-React path:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: {
+  entry: "./src/main.tsx",
+  tanstackRouter: {
+    autoCodeSplitting: true,
+    // routesDirectory / generatedRouteTree: default to tsr.config.json, else ./src/routes
+  },
+}`}
+      </Code>
+      <p>
+        <code>denext migrate</code> sets it when vite.config's <code>tanstackRouter()</code> has
+        {" "}
+        <code>autoCodeSplitting: true</code>.
+      </p>
+
+      <h3>
+        Chunk-load errors — <code>vite:preloadError</code>
+      </h3>
+      <p>
+        After a deploy (or an over-the-air update) replaces the content-hashed chunks, a tab still
+        running the old entry can ask for a chunk that is gone. As in a Vite build, the failed
+        dynamic import dispatches a cancelable <code>vite:preloadError</code> event on{" "}
+        <code>window</code> with the error as <code>event.payload</code>, and a{" "}
+        <code>denext:chunkError</code> event of the same shape. Call <code>preventDefault()</code>
+        {" "}
+        to suppress the error (the import then resolves to{" "}
+        <code>undefined</code>) — typically to reload once onto the new build:
+      </p>
+      <Code lang="ts">
+        {`addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  if (!sessionStorage.getItem("reloaded")) {
+    sessionStorage.setItem("reloaded", "1");
+    location.reload();
+  }
+});`}
+      </Code>
+      <p>
+        Without a listener that prevents it, the import rejects with the original error, as before.
+        It covers every split chunk of a production SPA bundle (both bundlers); it adds nothing to
+        an App Router app.
+      </p>
+
+      <h3>Files a plugin emits</h3>
+      <p>
+        A Vite plugin that writes a generated file from <code>generateBundle</code>{" "}
+        (a licence list, a version stamp) has a denext equivalent: a plugin build step's{" "}
+        <code>emitFile</code>, which publishes the file at the site root — in the export, and from
+        {" "}
+        <code>denext start</code>{" "}
+        after a build. An existing Vite plugin of that kind runs unchanged through{" "}
+        <code>viteEmitterPlugin</code>:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+import type { DenextConfig } from "denext/server";
+import { viteEmitterPlugin } from "denext/plugin-kit";
+import { licensesPlugin } from "./scripts/licenses.ts";
+
+export default {
+  mode: "spa",
+  plugins: [viteEmitterPlugin(licensesPlugin({ fileName: "third-party-licenses.json" }))],
+  spa: { entry: "./src/main.tsx" },
+} satisfies DenextConfig;`}
+      </Code>
+      <p>
+        <code>denext migrate</code>{" "}
+        writes this for an emitter imported from the app's own module; one it cannot carry over
+        (other build hooks, values from vite.config) is listed for review. See{" "}
+        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>.
+      </p>
+
+      <h3>
+        Build manifest — <code>spa.viteManifest</code>
+      </h3>
+      <p>
+        A server written for a Vite build may read <code>.vite/manifest.json</code>{" "}
+        to learn which files are content-hashed and can be served as <code>immutable</code>.{" "}
+        <code>{"spa: { viteManifest: true }"}</code>{" "}
+        writes one into the export, in Vite's shape, listing every content-hashed file under{" "}
+        <code>_denext/client/</code> (or <code>spa.assetsDir</code>):
+      </p>
+      <Code lang="json">
+        {`{
+  "assets/chunk-AB12CD34.js": { "file": "assets/chunk-AB12CD34.js" }
+}`}
+      </Code>
+      <p>
+        The entry (<code>index.js</code>) and stylesheet (<code>index.css</code>) keep their names
+        across builds, so they are not listed; nor is any file from <code>public/</code>.
+      </p>
 
       <h2>Styling</h2>
       <p>
@@ -241,17 +383,19 @@ export default {
       </p>
       <Code lang="tsx">
         {`// desktop.ts — generated by \`denext migrate --desktop\`
-import { runDesktop } from "denext/desktop";
+import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import config from "./denext.config.ts";
 
-await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`}
+await runDesktop({
+  importMetaUrl: import.meta.url,
+  proxy: config.spa?.proxy,
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+});`}
       </Code>
       <p>
-        To serve native capabilities (<code>denext desktop add</code>) from this window, also spread
-        {" "}
-        <code>{"...(await resolveDesktopCapabilities(config, { base: import.meta.url }))"}</code>
-        {" "}
-        into <code>runDesktop</code>, as a <code>denext create --desktop</code> entry does; see{" "}
+        The <code>resolveDesktopCapabilities</code> spread serves the native capabilities{" "}
+        <code>denext desktop add</code> enables from this window, as a{" "}
+        <code>denext create --desktop</code> entry does; see{" "}
         <a href="/docs/desktop#desktop-capabilities">Desktop apps › Native capabilities</a>.
       </p>
       <Code lang="bash">
@@ -325,6 +469,38 @@ spa: { desktop: { icon: "./assets/app-icon.png" } }`}
         Reproduce it with <code>deno run -A bench.ts</code> in the <code>examples/spa</code>{" "}
         example. (React Compiler does not change this — it is a re-render optimization, not a size
         one; the difference is a runtime story.)
+      </p>
+
+      <h2>Deferred mounts with client:* directives</h2>
+      <p>
+        The <a href="/docs/islands">island directives</a>{" "}
+        work in a SPA too, with the meaning a SPA can give them: the component mounts, and its code
+        loads, only when the trigger fires. <code>&lt;Chart client:visible data={"{d}"} /&gt;</code>
+        {" "}
+        renders a placeholder (<code>client:placeholder</code>, or an empty element) until it nears
+        the viewport, then imports{" "}
+        <code>Chart</code>'s module — a chunk of its own when nothing else imports it — and mounts
+        it. Use it for heavy panels and widgets most visits never open: a diagram renderer, a diff
+        viewer, a settings page, a chart. The same syntax runs on an App Router route, where it
+        defers hydration instead. See{" "}
+        <a href="/docs/islands#in-spa-mode-deferred-mounts">In SPA mode: deferred mounts</a>.
+      </p>
+      <p>
+        denext's own JSX types admit the directives on every element. An app whose type check reads
+        {" "}
+        <code>@types/react</code> instead (a migrated app's <code>tsc</code>) adds them to React's
+        {" "}
+        <code>Attributes</code> with a two-line file its type check includes (with{" "}
+        <code>deno check</code>, list it in <code>compilerOptions.types</code>):
+      </p>
+      <Code lang="ts">
+        {`// client-directives.d.ts
+import type { ClientDirectives } from "denext/jsx-directives";
+declare module "react" { interface Attributes extends ClientDirectives<import("react").ReactNode> {} }`}
+      </Code>
+      <p>
+        The augmentation lives in the app because a published package may not change another
+        package's types; <code>denext/jsx-directives</code> exports only the shape.
       </p>
 
       <h2>What it does not do</h2>

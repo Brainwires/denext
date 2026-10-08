@@ -169,10 +169,12 @@ export type { RouteSynthesizer } from "../router/manifest.ts";
 export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
+  EmittedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,
   PluginMode,
+  PluginPrepareContext,
   PluginPrepareStep,
   PluginRequestHandler,
   PluginTeardown,
@@ -295,6 +297,7 @@ export {
   type SpaConfig,
   type SpaDesktopConfig,
   type SpaProxyConfig,
+  type SpaTanstackRouterConfig,
   type TailwindConfig,
   type TasksConfig,
 } from "./config.ts";

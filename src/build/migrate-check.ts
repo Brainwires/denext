@@ -60,6 +60,12 @@ export interface MigrateCheckReport {
    * (`icon` null: none), for an SPA / Expo migration.
    */
   appIcon?: { icon: string | null; kind: string | null; size?: string; lines: string[] };
+  /**
+   * The commands `denext migrate` would run after writing (`--enable-capacitor`: the package
+   * install, and with `--platform` the export and `npx cap add`), including ones it would only
+   * print for the user to run.
+   */
+  commands?: string[];
   /** How the app's dependencies are handled; null when blocked. */
   dependencies: Pick<MigrateResult, "aliased" | "passthrough" | "dropped" | "flagged"> | null;
   /** Why the migration would fail (verdict `blocked`). */
@@ -91,11 +97,22 @@ function migrateCommandLine(options: MigrateOptions): string {
   if (options.desktop) parts.push("--desktop");
   if (options.backend) parts.push(`--backend ${options.backend}`);
   if (options.proxyPrefixes?.length) parts.push(`--proxy ${options.proxyPrefixes.join(",")}`);
+  parts.push(...capacitorFlags(options));
   if (options.denextLocalPath) {
     const path = options.denextLocalPath;
     parts.push(`--denext-local-path ${/[\s"'$`\\]/.test(path) ? JSON.stringify(path) : path}`);
   }
   return parts.join(" ");
+}
+
+/** The `--enable-capacitor` flags of a migrate command line. */
+function capacitorFlags(options: MigrateOptions): string[] {
+  if (!options.capacitor) return [];
+  return [
+    "--enable-capacitor",
+    ...(options.appId ? [`--app-id ${options.appId}`] : []),
+    ...(options.platforms?.length ? [`--platform ${options.platforms.join(",")}`] : []),
+  ];
 }
 
 /** Dependencies migrate flags as unrunnable. */
@@ -259,6 +276,11 @@ function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
   }];
 }
 
+/** File-emitting Vite plugins migrate could not carry into denext.config.ts. */
+function viteEmitterFindings(r: MigrateResult): MigrateFinding[] {
+  return r.spa?.viteEmitterReview ?? [];
+}
+
 /** A Capacitor / Expo app with no icon to generate the native icons from, or a small one. */
 function appIconFindings(r: MigrateResult): MigrateFinding[] {
   const icon = r.spa?.appIcon;
@@ -275,23 +297,35 @@ function appIconFindings(r: MigrateResult): MigrateFinding[] {
   }];
 }
 
+/** The Capacitor target's review items, or why `--enable-capacitor` did not apply. */
+function capacitorFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
+  if (r.capacitorSkipped) {
+    return { wont: [{ item: "--enable-capacitor", reason: r.capacitorSkipped }], review: [] };
+  }
+  return { wont: [], review: r.capacitor?.review ?? [] };
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
   const expo = expoFindings(r);
+  const cap = capacitorFindings(r);
   return {
     wont: [
       ...dependencyFindings(r),
       ...existingConfigFindings(r),
       ...next.wont,
       ...expo.wont,
+      ...cap.wont,
     ],
     review: [
       ...next.review,
       ...spaProxyFindings(r),
+      ...viteEmitterFindings(r),
       ...transformFindings(r),
       ...expo.review,
       ...appIconFindings(r),
+      ...cap.review,
     ],
   };
 }
@@ -333,6 +367,7 @@ export async function checkMigration(
     source: migrateSource(r),
     verdict: wont.length || review.length ? "review" : "ready",
     changes: run.changes.map(({ content: _content, ...c }) => c),
+    ...(r.capacitor ? { commands: r.capacitor.steps.map((s) => s.line) } : {}),
     wontMigrate: wont,
     review,
     ...(r.spa?.appIcon

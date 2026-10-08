@@ -1,11 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { renderToFlightStream } from "../src/jsx/render-to-flight-stream.ts";
+import { renderFlightShell, renderToFlightStream } from "../src/jsx/render-to-flight-stream.ts";
 import { streamToString } from "../src/jsx/render-to-stream.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
+import { hydratedFlight as assembled, streamedChunks } from "./helpers/streamed-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -34,6 +35,11 @@ function DeferIsland(_props: { loaderData?: unknown }): VNode {
 const deferMod = { DeferIsland };
 tagClientExports(deferMod as Record<string, unknown>, "c_defer");
 
+/** The hydrated tree, typed loosely for field checks. */
+function hydratedFlight(html: string): { $?: string; t?: string } {
+  return assembled(html) as { $?: string; t?: string };
+}
+
 async function Slow(): Promise<VNode> {
   await Promise.resolve();
   return h("p", null, "slow-content", h(Island, {}));
@@ -57,11 +63,11 @@ Deno.test("renderToFlightStream streams HTML shell then fills the Flight payload
   assertStringIncludes(html, `<template data-dnx-r="dnx0">`); // streamed content
   assertStringIncludes(html, "slow-content");
 
-  // The trailing Flight island exists and has NO unfilled holes; the boundary's
-  // client island is present as a reference.
-  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
-  assert(m, "flight island present");
-  const flight = JSON.parse(m![1]);
+  // The boundary's Flight subtree streamed as its own chunk, next to its template.
+  assert(streamedChunks(html, "data-dnx-f").has("dnx0"), "the hole's Flight streamed");
+  // What the browser hydrates has NO unfilled holes; the boundary's client island is
+  // present as a reference.
+  const flight = hydratedFlight(html);
   const json = JSON.stringify(flight);
   assert(!json.includes(`"$":"$"`), "no unfilled Suspense holes remain");
   assertStringIncludes(json, "c_isl#Island"); // client ref survived into flight
@@ -274,6 +280,39 @@ Deno.test("streaming: a hole-less Flight route is buffered (cache-friendly), not
   assert(flightAt !== -1 && entryAt !== -1 && flightAt < entryAt, "flight precedes the entry");
 });
 
+Deno.test("streaming: a hole-less Flight route keeps its deferred (defer()) values when buffered", async () => {
+  // A deferred value with no Suspense hole leaves `hasHoles` false, so the page is buffered.
+  // The buffered drain must resolve the value holes into the tail Flight: draining with
+  // `streamData` on sent the `data-dnx-v` chunks into the discarding sink and returned the
+  // shell tree with its `{"$":"vh"}` placeholders, so the client hydrated those instead.
+  const filePath = "/app/page.tsx";
+  const manifest = flightManifest(filePath, new Map());
+  const slow = new Promise((r) => setTimeout(() => r({ items: [1, 2, 3] }), 0));
+  const shell = await renderFlightShell(h(DeferIsland, { loaderData: { critical: "now", slow } }));
+  assert(!shell.hasHoles, "a deferred value alone is not a Suspense hole: the buffered branch");
+  await shell.streamHoles({ enqueue() {} } as never, new TextEncoder(), undefined, false);
+  const Page = () => h(DeferIsland, { loaderData: { critical: "now", slow } });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(fp === filePath ? { default: Page } : undefined),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    flightRoutes: new Set(["/f"]),
+    streaming: true,
+  });
+  const res = await app(new Request("http://localhost/f"));
+  assertEquals(res.status, 200);
+  const body = await res.text();
+  assert(!body.includes("data-dnx-v"), "buffered: no streamed value chunk");
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(body);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assert(!json.includes(`"$":"vh"`), `no unfilled value hole in the buffered tail: ${json}`);
+  assertStringIncludes(json, `"items":[1,2,3]`);
+  assertStringIncludes(json, `"critical":"now"`);
+});
+
 // ---- deferred (Remix `defer()`) props on the streaming Flight path ------------
 
 Deno.test("renderToFlightStream: a deferred (promise) prop resolves into the tail Flight, not {}", async () => {
@@ -287,11 +326,8 @@ Deno.test("renderToFlightStream: a deferred (promise) prop resolves into the tai
 
   const html = await streamToString(renderToFlightStream(tree));
   assertStringIncludes(html, "defer-island"); // shell painted the boundary
-  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
-  assert(m, "flight island present");
-  const flight = JSON.parse(m![1]);
-  const json = JSON.stringify(flight);
-  assert(!json.includes(`"$":"vh"`), "no unfilled value holes remain in the tail");
+  const json = JSON.stringify(hydratedFlight(html));
+  assert(!json.includes(`"$":"vh"`), "no unfilled value holes remain once assembled");
   assertStringIncludes(json, `"items":[1,2,3]`); // resolved deferred value crossed
   assertStringIncludes(json, `"critical":"now"`); // critical data alongside it
 });
@@ -320,6 +356,56 @@ Deno.test("renderToFlightStream: the shell flushes before a slow deferred prop s
   assertStringIncludes(rest, `"ok":true`);
 });
 
+Deno.test("renderToFlightStream: each deferred value's data streams as it resolves, before a slow one", async () => {
+  // Remix `defer()` streaming, per boundary: a fast deferred field's data — and the
+  // `<Await>`-style boundary that renders it — reach the wire while a slow field is still
+  // pending, instead of the whole Flight payload waiting for the slowest one.
+  let resolveSlow!: (v: unknown) => void;
+  const slow = new Promise((r) => (resolveSlow = r));
+  const fast = Promise.resolve({ reviews: ["great"] });
+  async function FastPanel(): Promise<VNode> {
+    return h("p", { class: "fast" }, (await fast).reviews[0]);
+  }
+  async function SlowPanel(): Promise<VNode> {
+    return h("p", { class: "slow" }, String(((await slow) as { n: number }).n));
+  }
+  const tree = h(
+    "main",
+    null,
+    h(DeferIsland, { loaderData: { fast, slow } }),
+    h(Suspense, { fallback: h("i", null, "fast…"), children: h(FastPanel, {}) }),
+    h(Suspense, { fallback: h("i", null, "slow…"), children: h(SlowPanel, {}) }),
+  );
+  const reader = renderToFlightStream(tree).getReader();
+  const dec = new TextDecoder();
+  let early = "";
+  // Read until the fast field's data chunk arrives — the slow promise is STILL pending.
+  while (!/data-dnx-v="dnxv0">\{"reviews":\["great"\]\}/.test(early)) {
+    const { value, done } = await reader.read();
+    assert(!done, "the stream must not end while the slow field is pending");
+    early += dec.decode(value);
+  }
+  assertStringIncludes(early, `<template data-dnx-r="dnx0"><p class="fast">great</p>`);
+  assert(streamedChunks(early, "data-dnx-f").has("dnx0"), "the fast boundary's Flight streamed");
+  assert(!early.includes(`data-dnx-v="dnxv1"`), "the slow field has no data yet");
+  assert(!early.includes(`id="__denext_flight"`), "the tail waits for the slow boundary");
+
+  resolveSlow({ n: 7 });
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += dec.decode(value);
+  }
+  assertStringIncludes(rest, `data-dnx-v="dnxv1">{"n":7}`);
+  assertStringIncludes(rest, `<template data-dnx-r="dnx1"><p class="slow">7</p>`);
+  // The browser reassembles the complete tree: both deferred values in the boundary's props.
+  const json = JSON.stringify(hydratedFlight(early + rest));
+  assert(!json.includes(`"$":"vh"`) && !json.includes(`"$":"$"`), "nothing left unfilled");
+  assertStringIncludes(json, `"fast":{"reviews":["great"]}`);
+  assertStringIncludes(json, `"slow":{"n":7}`);
+});
+
 Deno.test("renderToFlightStream: a REJECTED deferred prop resolves to an error marker", async () => {
   // A rejected `defer()` field must not vanish to `null` (which `<Await>` would render as
   // ordinary children). It resolves to the plain `__dnxAwaitError` marker in the tail so the
@@ -327,9 +413,7 @@ Deno.test("renderToFlightStream: a REJECTED deferred prop resolves to an error m
   const boom = new Promise((_, rej) => setTimeout(() => rej(new Error("loader boom")), 0));
   const tree = h(DeferIsland, { loaderData: { slow: boom } });
   const html = await streamToString(renderToFlightStream(tree));
-  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
-  assert(m, "flight island present");
-  const json = JSON.stringify(JSON.parse(m![1]));
+  const json = JSON.stringify(hydratedFlight(html));
   assertStringIncludes(json, `"__dnxAwaitError":true`);
   assertStringIncludes(json, `"message":"loader boom"`);
   assert(!json.includes(`"$":"vh"`), "no unfilled value hole remains");
@@ -382,9 +466,7 @@ Deno.test("renderToFlightStream: a deferred value inside a Map/Set prop fills it
   });
 
   const html = await streamToString(renderToFlightStream(tree));
-  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
-  assert(m, "flight island present");
-  const json = JSON.stringify(JSON.parse(m![1]));
+  const json = JSON.stringify(hydratedFlight(html));
   assert(!json.includes(`"$":"vh"`), "no unfilled value holes remain inside Map/Set");
   assertStringIncludes(json, `{"$":"S","v":["now","late"]}`);
   assertStringIncludes(json, `{"$":"M","v":[["a","late"]]}`);

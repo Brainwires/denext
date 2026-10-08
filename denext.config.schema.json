@@ -160,6 +160,32 @@
           "description": "Stamp the static export for over-the-air UI updates: `denext export` writes `_denext/ota.json` (every file's path, SHA-256 and size, plus a `version` hashed over them) into the export directory as its last step. A Capacitor shell with the `DenextOta` plugin (`denext mobile add-ota`) reads the bundled copy to know which UI it ships, and `checkForUiUpdate` from `denext/mobile` compares a server's copy against it. Default `false`. `*.gz` siblings are never listed. When the `DENEXT_OTA_SIGNING_KEY` env var holds a PKCS#8 PEM (`denext ota keygen`), the manifest is also signed.",
           "type": "boolean"
         },
+        "viteManifest": {
+          "description": "Write a Vite-shaped build manifest, `.vite/manifest.json`, into the static export: one entry per content-hashed client file (`\"_denext/client/chunk-AB12CD34.js\": { \"file\": \"_denext/client/chunk-AB12CD34.js\" }`, under assetsDir when set), the shape Vite's `build.manifest` writes. A server written for a Vite build reads it to learn which files are safe to serve as `immutable`. The entry `index.js` and `index.css` keep their names across builds and are not listed, nor is any `public/` file. Default `false`.",
+          "type": "boolean"
+        },
+        "assetsDir": {
+          "description": "Where the client output (entry, stylesheet, split chunks, imported assets) is served and exported, as Vite's `build.assetsDir`: `\"assets\"` serves it from `/assets/` and writes it to `out/assets/`, with content-hashed files named `name-HASH.ext` (an 8-character hash), the shape a server written for a Vite build expects. A `public/` file at the same path is served behind the build's. Unset, the client lives under `/_denext/client/`. A directory under `_denext`, `.well-known` or `.vite` is refused. `denext migrate` sets it from a Vite app's `build.assetsDir` (`\"assets\"` by default).",
+          "type": "string"
+        },
+        "tanstackRouter": {
+          "description": "TanStack Router file-based routing: with `autoCodeSplitting: true` a production build splits each route file's `component` (and loader, error/pending/not-found components) into its own chunk loaded on navigation, as `@tanstack/router-plugin`'s `autoCodeSplitting` does under Vite. Applies on the esbuild path (npm React / `compatibilityMode`); `denext dev` bundles routes unsplit. `denext migrate` carries it from a `vite.config` that sets it.",
+          "type": "object",
+          "properties": {
+            "autoCodeSplitting": {
+              "description": "Split each route's components into their own lazily loaded chunks. Default `false`.",
+              "type": "boolean"
+            },
+            "routesDirectory": {
+              "description": "The route files' directory, relative to the project root. Default: `tsr.config.json`'s `routesDirectory`, else `./src/routes`.",
+              "type": "string"
+            },
+            "generatedRouteTree": {
+              "description": "The generated route tree, relative to the project root (rewritten at build, as the Vite plugin does). Default: `tsr.config.json`'s `generatedRouteTree`, else `./src/routeTree.gen.ts`.",
+              "type": "string"
+            }
+          }
+        },
         "desktop": {
           "description": "`deno desktop` packaging settings (used when building the desktop app).",
           "type": "object",
@@ -1087,6 +1113,14 @@
       "description": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset — default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch fling (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and virtualized lists (LegendList, react-virtuoso, TanStack Virtual) issue exactly such writes to compensate for rows measured taller or shorter than estimated. The client runtime therefore defers those writes during a gesture (see `installMomentumSafeScroll` in `denext/mobile`) and applies them in one step once the scroller comes to rest.",
       "type": "boolean",
       "default": true
+    },
+    "lists": {
+      "description": "Which engine runs the DOM list packages. `\"denext\"`: `@legendapp/list/react` (LegendList's DOM build), imported by the app or by its packages, runs on denext's `VirtualList` with LegendList's props, ref methods (`scrollToEnd`, `scrollToIndex`, `getState`, …) and cell hooks, in SPA mode and on the App Router (server render included); the app's source stays unchanged. `\"library\"` (the default): the real package. Applies to apps that use npm React (the esbuild build path). React Native mode's own list packages are `reactNative.lists`.",
+      "enum": [
+        "denext",
+        "library"
+      ],
+      "default": "library"
     },
     "platformExtensions": {
       "description": "Platform-specific files: an import of `./BigButton` (or `./BigButton.tsx`) resolves to `BigButton.ios.tsx` in the iOS export, `BigButton.desktop.tsx` in a desktop package, `BigButton.web.tsx` on the web, and to the plain file where a target has no variant. The probe order per target (most specific first): web `.web`; ios `.ios` → `.mobile` → `.web`; android `.android` → `.mobile` → `.web`; macos / windows / linux the OS → `.desktop` → `.web`. Applies to the app's own modules (packages in `node_modules` keep their own resolution). `{ native: true }` also probes React Native's `.native` after the OS on ios and android (off by default: `.native` files are usually native code, which a WebView cannot run). In React Native mode the app's `.ios` / `.android` files are native code too, so they are not probed unless `{ osFiles: true }`. `false` turns platform files off. See https://denext.dev/docs/platform-files.",

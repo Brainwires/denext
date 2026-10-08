@@ -5,6 +5,7 @@
 // fail loudly on the mistakes a migration is likely to make.
 
 import type { RouteConfig, RouteConfigEntry } from "../routes.ts";
+import type { PrerenderConfig } from "./prerender.ts";
 
 /** The subset of `react-router.config.ts` denext honors. */
 export interface ReactRouterConfig {
@@ -12,10 +13,17 @@ export interface ReactRouterConfig {
   appDirectory?: string;
   /** URL prefix the app is served under (→ denext `basePath`). */
   basename?: string;
-  /** Server-render (default true). `false` is RR's SPA mode — not what this plugin serves. */
+  /**
+   * Server-render route components (default true). `false` is RR's SPA mode: every route
+   * renders its `HydrateFallback` on the server and its component in the browser.
+   */
   ssr?: boolean;
-  /** Static prerender list / resolver — noted, not applied (denext prerenders static routes itself). */
-  prerender?: boolean | string[] | (() => unknown);
+  /**
+   * URLs to prerender: `true` (every static path), a list, or a function given
+   * `getStaticPaths()`. A listed static route renders once and is cached; a dynamic route's
+   * listed params are its `generateStaticParams` (what `denext export` writes).
+   */
+  prerender?: PrerenderConfig;
 }
 
 /**

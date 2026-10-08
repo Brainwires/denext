@@ -9,9 +9,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **`<Script strategy="worker">` runs on the main thread** (as `afterInteractive`). denext ships
   no Partytown-style DOM-proxying worker runtime; self-host Partytown if you need one.
-- **A root layout rendered by client code re-creates `<html>`/`<body>` once on hydration.**
-  denext owns the document tags; keep the root layout a Server Component (its attributes are
-  moved onto the real tags) or render only the in-body chrome.
 - **A library's npm `"use client"` files are found by resolving its packages as the server bundle
   does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
   bundle resolves packages differently, so a package's own client components may render on the
@@ -26,10 +23,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
 - **`captureOwnerStack()` and `cacheSignal()` return `null`** (owner stacks are in denext's
   DevTools; there is no client cache scope).
-- **`<Activity>` mounted hidden runs its effects once and is not server-rendered.** denext tears
-  effects down only on a visible → hidden transition.
-- **`<ViewTransition>` animates navigation commits only.** A same-page add/remove/reorder is not
-  animated; names must be unique among live elements; elsewhere it needs the View Transitions API.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).
@@ -39,15 +32,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 ### Islands, resumability and Cache Components
 
 - **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate
-  as one root; `client:only` skips SSR by definition.
+  as one root; `client:only` skips SSR by definition. In SPA mode the directives defer the
+  component's mount and split its code instead (no server HTML to keep inert): only for a
+  component imported by name, not a member tag or a module-level `hydrate` default; a component
+  also used without a directive stays in the main bundle; `client:interaction` needs a
+  `client:placeholder` to interact with.
 - **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
   outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
   flushed); its late `<title>`/`<meta>` stays inline.
 - **`searchParams` read outside a hole with `cacheKeyParams` set** can reflect another request;
   a whole-body cache refuses to store such a render, a PPR shell relies on the hole.
-- **The `use cache` transform rewrites top-level functions and `const` arrows only.** On a
-  method or a name-referenced `export default function` the directive is inert; hoist the body.
 
 ### Typed API, Live and GraphQL
 
@@ -121,15 +116,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 
+### Lists (`lists: "denext"`)
+
+- **LegendList's DOM build on `VirtualList` ignores a few props:** `waitForInitialLayout` and
+  `itemsAreEqual` have no effect, `adaptiveRender` is always `"normal"`, and the start insets of
+  `contentInset` (`top` / `left`) add no room before the first item (its end does).
+
 ### Remix and React Router
 
-- **Deferred data is whole-at-end:** `<Await>` content streams, but the Flight payload is emitted
-  once every boundary resolves.
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **`@denext/react-router` renders on the server only:** `clientLoader` / `clientAction` /
-  `HydrateFallback`, `ssr: false` and `prerender` are not applied.
 - **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
   client); non-SQLite datasources need their own driver adapter.
 

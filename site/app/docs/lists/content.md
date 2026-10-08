@@ -752,7 +752,8 @@ changes:
   `Animated.FlatList` get them too.
 - `@shopify/flash-list` (v2).
 - `@legendapp/list` and `@legendapp/list/react-native`. `@legendapp/list/react`, the DOM
-  build, stays the real package.
+  build, stays the real package unless the top-level `lists: "denext"` is set (see
+  [LegendList on the web](#legendlist-on-the-web)).
 
 The adapters render with the app's own react-native-web `View`, `StyleSheet` and
 `RefreshControl`, so `style`, `contentContainerStyle`, `columnWrapperStyle` and the header
@@ -843,6 +844,52 @@ For a single list, import react-native-web's original FlatList directly:
 `import FlatList from "react-native-web/dist/vendor/react-native/FlatList"`. This is a deep
 path, stable in react-native-web 0.19 to 0.21. The scroll benchmark runs both engines in one
 app this way (`rnw-flatlist-denext` against `rnw-flatlist-rnw`).
+
+## LegendList on the web
+
+An app that uses `@legendapp/list/react` (LegendList's DOM build) runs it on this engine with
+one config line and no code changes, in SPA mode and on the App Router (the server render
+too):
+
+```ts
+// denext.config.ts
+export default {
+  lists: "denext", // default: "library" (the real package)
+};
+```
+
+Every `@legendapp/list/react` import, the app's own and its packages', resolves to a
+`LegendList` built from the same adapter React Native mode uses, over plain DOM elements. The
+props, ref methods and cell hooks are LegendList 3.4's; `deno task parity:native` checks them
+against the pinned package (`@legendapp/list/react#LegendList`, none missing). What the web
+build adds over the React Native one:
+
+- `className` and `contentContainerClassName` style the scroll element and the content
+  container; `style`, `contentContainerStyle` and the header and footer styles are CSS objects.
+- The other DOM attributes (`id`, `data-*`, `aria-*`, `tabIndex`, event handlers such as
+  `onKeyDown`) land on the scroll element.
+- `getScrollableNode()`, `getNativeScrollRef()`, `getAnimatableRef()`, `getScrollResponder()`
+  and `refScrollView` give the scroll element itself.
+- `contentInsetEndAdjustment` and the end of `contentInset` add room after the last item.
+
+Chat lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
+`maintainScrollAtEnd` (with `maintainScrollAtEndThreshold` and its `{ animated }` form) follows
+new items and size changes while the view is at the end, `alignItemsAtEnd` bottom-aligns a
+short conversation, and `anchoredEndSpace` keeps a sent message at the top while the reply
+streams in. The ref's `scrollToEnd`, `scrollToIndex`, `scrollToOffset`, `scrollToItem` and
+`scrollIndexIntoView` return promises, and `getState()` reports the scroll position, the
+visible range and each item's position and size. Its `listen` calls back with `totalSize`,
+`headerSize`, `footerSize`, `anchoredEndSpaceSize`, `isAtEnd`, `isAtStart`, `isNearEnd`,
+`isNearStart`, `isWithinMaintainScrollAtEndThreshold`, `lastItemKeys`, `numContainers`,
+`otherAxisSize`, `readyToRender` and `activeStickyIndex` when they change, and
+`listenToPosition` with an item's position; the other listener types never call back.
+
+The differences from the real DOM build: the engine's own (estimates are confirmed by
+measuring, `waitForInitialLayout` and `itemsAreEqual` have no effect, `adaptiveRender` is always
+`"normal"`), the start insets of `contentInset` have no effect, and the scroll element carries
+the engine's inline `height: 100%` (a `style` height, or a class with a max height, still sizes
+it). The switch applies to apps on npm React (the esbuild build path); a denext-native app uses
+`VirtualList` directly.
 
 ## Limitations
 

@@ -494,7 +494,7 @@ Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar/swagger lo
 function applyOpenapi(
   options: Parameters<typeof openapi>[0] = {},
   config: Partial<DenextConfig> = {},
-  mode: "prod" | "dev" = "prod",
+  mode: "prod" | "dev" | "export" = "prod",
 ) {
   return applyPlugins({
     projectRoot: join(ROOT, "my-project"),
@@ -509,7 +509,7 @@ function applyOpenapi(
 async function setup(
   options: Parameters<typeof openapi>[0] = {},
   config: Partial<DenextConfig> = {},
-  mode: "prod" | "dev" = "prod",
+  mode: "prod" | "dev" | "export" = "prod",
 ) {
   resetPlugins();
   await applyOpenapi(options, config, mode);
@@ -1037,5 +1037,43 @@ Deno.test("emitTypes: the ApiSchema types createApiClient from another module (d
     assertEquals(code, 0, new TextDecoder().decode(stderr));
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Whether `path` exists. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test("openapi plugin: a static export publishes the document at its URL, not in .denext", async () => {
+  // A static export has no request handler: the document lands where `denext start` serves it
+  // (emitFile), so the static site answers /openapi.json too. The .denext artifact is a build's.
+  const outDir = await Deno.makeTempDir({ prefix: "denext_openapi_export_" });
+  const emitDir = join(outDir, "site");
+  try {
+    await setup({ path: "/spec/openapi.json" }, {}, "export");
+    await runPluginBuildSteps(
+      { projectRoot: ROOT, appDir: APP_DIR, outDir, config: {} as DenextConfig },
+      { emitDir },
+    );
+    const doc = JSON.parse(await Deno.readTextFile(join(emitDir, "spec", "openapi.json")));
+    assertEquals(Object.keys(doc.paths).length, 3);
+    assertEquals(await exists(join(outDir, "openapi.json")), false, "no .denext artifact");
+    // `expose: "dev"` hides the endpoints from a production server; the export follows it.
+    await Deno.remove(emitDir, { recursive: true });
+    await setup({ expose: "dev" }, {}, "export");
+    await runPluginBuildSteps(
+      { projectRoot: ROOT, appDir: APP_DIR, outDir, config: {} as DenextConfig },
+      { emitDir },
+    );
+    assertEquals(await exists(join(emitDir, "openapi.json")), false);
+  } finally {
+    resetPlugins();
+    await Deno.remove(outDir, { recursive: true });
   }
 });

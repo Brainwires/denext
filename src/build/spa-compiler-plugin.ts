@@ -21,9 +21,10 @@ import type { ProjectPaths } from "./paths.ts";
 import { transformModule } from "./compiler.ts";
 import { transformFeatures } from "./feature-transform.ts";
 import { firstPartyTsxPlugin } from "./spa-onload.ts";
+import { transformSpaIslands } from "./spa-islands.ts";
 
 /** A per-module source transform: `(source, absPath) → new source | null` (null = unchanged). */
-type SourceTransform = (source: string, path: string) => Promise<string | null>;
+export type SourceTransform = (source: string, path: string) => Promise<string | null>;
 
 /**
  * The auto-memo compiler as a per-module transform. `absolutize: false` — the in-place onLoad
@@ -47,24 +48,51 @@ function featureFoldTransform(features: Record<string, boolean>): SourceTransfor
   };
 }
 
+/** SPA mode's `client:*` rewrite as a per-module transform (deferred mounts, split chunks). */
+export async function spaIslandsTransform(source: string): Promise<string | null> {
+  const { code, changed } = await transformSpaIslands(source);
+  return changed ? code : null;
+}
+
 /**
- * An esbuild plugin applying denext's enabled SPA source transforms (auto-memo compiler and/or
- * feature-flag fold) to the app's own first-party component modules as they load. Returns
- * `undefined` when neither is enabled, so nothing extra runs.
+ * An esbuild plugin applying denext's enabled SPA source transforms (the `client:*` island
+ * rewrite, the auto-memo compiler and/or the feature-flag fold) to the app's own first-party
+ * component modules as they load. Returns `undefined` when none is enabled, so nothing extra
+ * runs.
  *
  * @param projectDir Absolute project root — only first-party source under it is transformed.
  * @param config The resolved denext config (gates each transform).
+ * @param islands The app carries a `client:*` directive (runs the island rewrite first).
  */
 export function spaSourceTransformPlugin(
   projectDir: string,
   config: ProjectPaths["config"],
+  islands = false,
 ): esbuild.Plugin | undefined {
-  const transforms: SourceTransform[] = [];
+  const transform = spaSourceTransform(config, islands);
+  if (!transform) return undefined;
+  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, transform);
+}
+
+/**
+ * The enabled SPA source transforms (auto-memo compiler, then the feature-flag fold) chained into
+ * one `(source, absPath) → new source | null` transform, or `undefined` when neither is on. A
+ * plugin that claims a module's `onLoad` itself (esbuild runs only the first `onLoad` that
+ * answers) applies this to its own output, so the module is not left untransformed.
+ *
+ * @param config The resolved denext config (gates each transform).
+ * @param islands The app carries a `client:*` directive (runs the island rewrite first).
+ */
+export function spaSourceTransform(
+  config: ProjectPaths["config"],
+  islands = false,
+): SourceTransform | undefined {
+  const transforms: SourceTransform[] = islands ? [spaIslandsTransform] : [];
   if (reactCompilerEnabled(config)) transforms.push(autoMemoTransform());
   const features = featureFlags(config);
   if (Object.keys(features).length > 0) transforms.push(featureFoldTransform(features));
   if (transforms.length === 0) return undefined;
-  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, async (source, path) => {
+  return async (source, path) => {
     let out = source;
     let any = false;
     for (const t of transforms) {
@@ -75,5 +103,5 @@ export function spaSourceTransformPlugin(
       }
     }
     return any ? out : null;
-  });
+  };
 }

@@ -2,7 +2,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
+import { EMITTED_DIR, runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import {
   assertPlatformFilesResolve,
@@ -14,6 +14,7 @@ import {
 import { platformResolution, projectPlatformRedirects } from "../platform-extensions.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import {
+  appRendersDocumentTags,
   appUsesActivity,
   appUsesClassComponents,
   appUsesViewTransition,
@@ -26,9 +27,14 @@ import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
-/** Plugin build steps (e.g. a Pages Router bundling its own client entries). */
-export function pluginBuildSteps(paths: ProjectPaths): Promise<void> {
-  return runPluginBuildSteps({
+/**
+ * Plugin build steps (e.g. a Pages Router bundling its own client entries). The files they
+ * publish with `emitFile` land in `<outDir>/emitted/` (emptied first, so a file a step no
+ * longer emits is not served on), which `denext start` serves ahead of `public/`.
+ */
+export async function pluginBuildSteps(paths: ProjectPaths): Promise<void> {
+  await Deno.remove(join(paths.outDir, EMITTED_DIR), { recursive: true }).catch(() => {});
+  await runPluginBuildSteps({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
     outDir: paths.outDir,
@@ -135,6 +141,9 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
   // renders `<ViewTransition>` (a build scan).
   const usesViewTransition = await appUsesViewTransition(projectDir, outside);
+  // Gate the host-singleton runtime: install it only when the app renders a document tag (a
+  // client root layout's `<html>`/`<body>` adopt the page's own elements).
+  const usesSingletons = await appRendersDocumentTags(projectDir, outside);
   return {
     projectDir,
     paths,
@@ -158,6 +167,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     classRuntime,
     usesActivity,
     usesViewTransition,
+    usesSingletons,
     compatServerModules: {},
   };
 }

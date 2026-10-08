@@ -67,14 +67,17 @@ Deno.test("B1: named default export function is wrapped", async () => {
   assertStringIncludes(code, "export default _dnxUseCache(");
 });
 
-Deno.test("B1: a name-referenced default export is left untouched (correctness)", async () => {
-  // `Page` is referenced by another statement, so demoting it to an expression
-  // would break that reference — the transform must bail.
-  const { changed } = await transformUseCache(
+Deno.test("B1: a name-referenced default export is cached and keeps its binding", async () => {
+  // `Page` is referenced by another statement: the wrapper re-binds the name and
+  // exports it as the default, so both the reference and the default are the cache.
+  const { code, changed } = await transformUseCache(
     `export default async function Page(){ "use cache"; return 1; }\nconsole.log(Page.name);`,
     MOD,
   );
-  assertEquals(changed, false);
+  assert(changed);
+  await assertParses(code);
+  assertStringIncludes(code, "const Page = _dnxUseCache(");
+  assertStringIncludes(code, "export { Page as default }");
 });
 
 Deno.test("B1: module-top directive caches every top-level function", async () => {
@@ -349,4 +352,241 @@ Deno.test("B3: a stale non-serializable result revives into the live store, not 
     assertEquals((await f()).n, 2, "and it stays a fresh hit — not re-revalidated");
     assertEquals(ctx2.deferred.length, 0, "no new revive was queued for a fresh live entry");
   });
+});
+
+// ---- B5: methods (class static / object literal) and `this` rules ------------------
+
+Deno.test("B5: a static class method is cached, keyed on class + method", async () => {
+  const { code, changed } = await transformUseCache(
+    `export class Repo {\n  static async get(id: string): Promise<string> { "use cache"; return id; }\n}`,
+    MOD,
+  );
+  assert(changed);
+  await assertParses(code);
+  assertStringIncludes(code, "static get = _dnxUseCache(");
+  const ids = [...code.matchAll(/_dnxUseCache\("([^"]+)"/g)].map((m) => m[1]);
+  assertEquals(ids.length, 1);
+  assertStringIncludes(ids[0], "#Repo.get");
+});
+
+Deno.test("B5: an object-literal method is cached, keyed on object + key", async () => {
+  const { code, changed } = await transformUseCache(
+    `export const api = {\n  async get(id) { "use cache"; return id; },\n  ["x-y"]: async (q) => { "use cache"; return q; },\n  plain() { return 1; },\n};`,
+    MOD,
+  );
+  assert(changed);
+  await assertParses(code);
+  assertStringIncludes(code, "get: _dnxUseCache(");
+  const ids = [...code.matchAll(/_dnxUseCache\("([^"]+)"/g)].map((m) => m[1]);
+  assertEquals(ids.length, 2, "the plain method stays a method");
+  assertStringIncludes(ids[0], "#api.get");
+  assert(ids[0] !== ids[1]);
+});
+
+Deno.test("B5: an inline `use cache` instance method is a build error (as in Next.js)", async () => {
+  await assertRejects(
+    () => transformUseCache(`export class A { async m() { "use cache"; return 1; } }`, MOD),
+    Error,
+    'It is not allowed to define inline "use cache" annotated class instance methods',
+  );
+});
+
+Deno.test("B5: `this`, `super` and `arguments` are build errors in a cached function", async () => {
+  for (
+    const [src, expr] of [
+      [`export const o = { async m() { "use cache"; return this.x; } };`, "this"],
+      [
+        `class B { static n() { return 1; } }\nexport class C extends B { static async m() { "use cache"; return super.n(); } }`,
+        "super",
+      ],
+      [`export async function f() { "use cache"; return arguments.length; }`, "arguments"],
+      [`export async function g() { "use cache"; const h = () => this; return h(); }`, "this"],
+    ]
+  ) {
+    await assertRejects(
+      () => transformUseCache(src, MOD),
+      Error,
+      `"use cache" functions cannot use \`${expr}\``,
+    );
+  }
+  // A nested (non-arrow) function rebinds `this`/`arguments`: allowed, like Next.js.
+  const { changed } = await transformUseCache(
+    `export async function f() { "use cache"; return [1].map(function () { return arguments.length + (this ? 1 : 0); }); }`,
+    MOD,
+  );
+  assert(changed);
+});
+
+Deno.test("B5: `__useCache` keys on bound (closed-over) values", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let n = 0;
+  let prefix = "a";
+  const f = __useCache("m#bound", (k: string) => Promise.resolve(`${prefix}${k}${++n}`), {
+    bound: () => [prefix],
+  });
+  const ctx = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx, async () => {
+    assertEquals(await f("k"), "ak1");
+    assertEquals(await f("k"), "ak1", "same bound value: a hit");
+    prefix = "b";
+    assertEquals(await f("k"), "bk2", "a different bound value is a different entry");
+  });
+});
+
+/** Transform `src` as `name.ts` in a temp dir, import it and hand the module to `run`. */
+async function withTransformed<M>(
+  name: string,
+  src: string,
+  run: (mod: M) => Promise<void>,
+): Promise<void> {
+  setCacheStore(inMemoryCacheStore());
+  const dir = await Deno.makeTempDir();
+  try {
+    const url = toFileUrl(`${dir}/${name}.ts`).href;
+    const { code, changed } = await transformUseCache(src, url);
+    assert(changed);
+    const outPath = `${dir}/${name}.transformed.ts`;
+    await Deno.writeTextFile(outPath, code);
+    await run(await import(toFileUrl(outPath).href) as M);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+/** Run `fn` inside a fresh request context. */
+function inRequest<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithContext(createRequestContext(new Request("http://x/")), fn);
+}
+
+Deno.test("integration B5: static, object and factory methods cache across requests", async () => {
+  type Mod = {
+    Repo: { get(k: string): Promise<string> };
+    api: { get(k: string): Promise<string> };
+    make(p: string): { get(k: string): Promise<string> };
+    calls(): number;
+  };
+  await withTransformed<Mod>(
+    "methods",
+    `let n = 0;\n` +
+      `export class Repo { static async get(k: string) { "use cache"; n++; return "r" + k; } }\n` +
+      `export const api = { async get(k: string) { "use cache"; n++; return "o" + k; } };\n` +
+      `export function make(p: string) {\n` +
+      `  return { async get(k: string) { "use cache"; n++; return p + k; } };\n` +
+      `}\n` +
+      `export function calls() { return n; }\n`,
+    async (mod) => {
+      assertEquals(await inRequest(() => mod.Repo.get("1")), "r1");
+      assertEquals(await inRequest(() => mod.Repo.get("1")), "r1");
+      assertEquals(mod.calls(), 1, "the static method's body ran once across requests");
+      assertEquals(await inRequest(() => mod.api.get("1")), "o1");
+      assertEquals(await inRequest(() => mod.api.get("1")), "o1");
+      assertEquals(mod.calls(), 2, "the object method's body ran once across requests");
+      assertEquals(await inRequest(() => mod.make("a").get("1")), "a1");
+      assertEquals(await inRequest(() => mod.make("a").get("1")), "a1");
+      assertEquals(mod.calls(), 3, "a fresh factory object with the same closure is a hit");
+      assertEquals(await inRequest(() => mod.make("b").get("1")), "b1", "closure is in the key");
+      assertEquals(mod.calls(), 4);
+    },
+  );
+});
+
+Deno.test("integration B5: a name-referenced default export caches both ways in", async () => {
+  type Mod = {
+    default(k: string): Promise<string>;
+    viaName(k: string): Promise<string>;
+    calls(): number;
+  };
+  await withTransformed<Mod>(
+    "page",
+    `let n = 0;\n` +
+      `export default async function load(k: string) { "use cache"; n++; return "v" + k; }\n` +
+      `export const viaName = (k: string) => load(k);\n` +
+      `export function calls() { return n; }\n`,
+    async (mod) => {
+      assertEquals(await inRequest(() => mod.default("1")), "v1");
+      assertEquals(await inRequest(() => mod.viaName("1")), "v1");
+      assertEquals(mod.calls(), 1, "the default and the named reference share one entry");
+    },
+  );
+});
+
+// Audit 3.4.0 S1: a cached method at module level inside a loop, a `catch` or a block closes over
+// the block-scoped bindings there (a loop variable, a catch parameter, a block `let`/`const`),
+// and those must be in its key — otherwise every tenant of `for (const tenant of …)` shares one
+// entry. The same holds for a function nested inside such a block.
+Deno.test("integration S1: module-level block-scoped bindings are keyed (loop, catch, block)", async () => {
+  type Get = (id: string) => Promise<string>;
+  type Mod = {
+    registry: Record<string, { get: Get }>;
+    arrows: Record<string, { get: Get }>;
+    made: Record<string, { get: Get }>;
+    fromCatch: { get: Get };
+    fromBlock: { get: Get };
+    Static: Record<string, { get: Get }>;
+    calls(): number;
+  };
+  await withTransformed<Mod>(
+    "tenants",
+    `let n = 0;\n` +
+      `const load = (tenant: string, id: string) => { n++; return tenant + ":" + id; };\n` +
+      `export const registry: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["a", "b"]) {\n` +
+      `  registry[tenant] = { async get(id: string) { "use cache"; return load(tenant, id); } };\n` +
+      `}\n` +
+      `export const arrows: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["a", "b"]) arrows[tenant] = { get: async (id: string) => { "use cache"; return load("arrow-" + tenant, id); } };\n` +
+      `export const made: Record<string, unknown> = {};\n` +
+      `for (let i = 0; i < 2; i++) {\n` +
+      `  const tenant = "m" + i;\n` +
+      `  function make() { return { async get(id: string) { "use cache"; return load(tenant, id); } }; }\n` +
+      `  made[tenant] = make();\n` +
+      `}\n` +
+      `export const Static: Record<string, unknown> = {};\n` +
+      `for (const tenant of ["s1", "s2"]) {\n` +
+      `  Static[tenant] = class { static async get(id: string) { "use cache"; return load(tenant, id); } };\n` +
+      `}\n` +
+      `export let fromCatch: unknown;\n` +
+      `try { throw "c1"; } catch (tenant) {\n` +
+      `  fromCatch = { async get(id: string) { "use cache"; return load(String(tenant), id); } };\n` +
+      `}\n` +
+      `export let fromBlock: unknown;\n` +
+      `{ const tenant = "blk"; fromBlock = { async get(id: string) { "use cache"; return load(tenant, id); } }; }\n` +
+      `export function calls() { return n; }\n`,
+    async (mod) => {
+      assertEquals(await inRequest(() => mod.registry.a.get("1")), "a:1");
+      assertEquals(
+        await inRequest(() => mod.registry.b.get("1")),
+        "b:1",
+        "tenant b gets its own entry",
+      );
+      assertEquals(await inRequest(() => mod.registry.a.get("1")), "a:1", "tenant a still hits");
+      assertEquals(await inRequest(() => mod.arrows.a.get("1")), "arrow-a:1");
+      assertEquals(await inRequest(() => mod.arrows.b.get("1")), "arrow-b:1");
+      assertEquals(await inRequest(() => mod.made.m0.get("1")), "m0:1");
+      assertEquals(
+        await inRequest(() => mod.made.m1.get("1")),
+        "m1:1",
+        "a function nested in the block",
+      );
+      assertEquals(await inRequest(() => mod.Static.s1.get("1")), "s1:1");
+      assertEquals(
+        await inRequest(() => mod.Static.s2.get("1")),
+        "s2:1",
+        "a static method in a loop",
+      );
+      assertEquals(await inRequest(() => mod.fromCatch.get("1")), "c1:1");
+      assertEquals(await inRequest(() => mod.fromBlock.get("1")), "blk:1");
+      assertEquals(mod.calls(), 10, "one body run per distinct closure");
+    },
+  );
+});
+
+Deno.test("S1: a module-level loop variable is a bound value of the method's key", async () => {
+  const { code } = await transformUseCache(
+    `const registry = {};\n` +
+      `for (const tenant of ts) registry[tenant] = { async get(id) { "use cache"; return load(tenant, id); } };\n`,
+    MOD,
+  );
+  assertStringIncludes(code, "{ bound: () => [tenant] }");
+  await assertParses(code);
 });

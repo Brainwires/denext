@@ -3,7 +3,7 @@
 
 import { dirname, fromFileUrl, join, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { frameworkImports } from "../bundle.ts";
+import { frameworkImports, frameworkRoot } from "../bundle.ts";
 import {
   DENEXT_RUNTIME_FILES,
   libraryReactFile,
@@ -118,6 +118,9 @@ export async function firstPartyResolver(
   return (spec) => resolveWith(aliases, spec, importerAbs, probe, st.opts.projectDir);
 }
 
+/** The framework checkout's root (a path ending in a separator; a URL when it runs remotely). */
+const FRAMEWORK_ROOT = frameworkRoot();
+
 /** {@link resolveFirstParty} against an already loaded alias table. */
 function resolveWith(
   aliases: ImportAliases,
@@ -134,12 +137,14 @@ function resolveWith(
     hit = probe(resolve(dirname(importerAbs), spec));
   } else {
     // The alias first, then the target's platform file for the file it names. A folder alias
-    // (`~/`) is the app's wherever it points; a file alias (`#button`) only inside the project
-    // (`denext` mapped to a checkout is the framework, served as a dependency).
+    // (`~/`) is the app's wherever it points, except into the framework; a file alias
+    // (`#button`) only inside the project. `denext` / `denext/` mapped to a checkout is the
+    // framework, served as a dependency: through `@fs` it would load a second runtime.
     const exact = aliases.some(([key]) => key === spec);
     const url = resolveImportAlias(spec, aliases) ?? resolveImportAlias(spec + "/", aliases);
     const path = url?.startsWith("file:") ? fromFileUrl(url).replace(/[\\/]$/, "") : null;
-    if (path && (!exact || path.startsWith(resolve(projectDir) + SEPARATOR))) hit = probe(path);
+    const inProject = path?.startsWith(resolve(projectDir) + SEPARATOR);
+    if (path && (inProject || (!exact && !path.startsWith(FRAMEWORK_ROOT)))) hit = probe(path);
   }
   return hit ? norm(hit) : null;
 }
@@ -159,6 +164,17 @@ function noteNpm(st: UnbundledState, spec: string, names?: Iterable<string>): st
 }
 
 /**
+ * `table[key]` when `key` is the table's own key, else undefined: a plain object would answer
+ * `constructor` / `__proto__` / `toString` with its prototype's.
+ */
+function ownValue(
+  table: Readonly<Record<string, string>> | undefined,
+  key: string,
+): string | undefined {
+  return table && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+/**
  * The dev URL for a non-first-party specifier in compat mode: react-family and
  * `next/*` → the prebuilt runtime under {@link DEP_PREFIX}; `denext/*` → the same
  * runtime; an npm package → the on-demand npm bundle under {@link NPM_PREFIX}.
@@ -169,6 +185,7 @@ export function compatDepUrl(
   spec: string,
   names?: Iterable<string>,
 ): string | null {
+  spec = ownValue(st.opts.specAliases, spec) ?? spec;
   const runtime = runtimeDepUrl(spec);
   if (runtime !== undefined) return runtime;
   if (/^(node:|data:|https?:)/.test(spec)) return null;
@@ -208,7 +225,7 @@ export function runtimeDepUrl(spec: string): string | null | undefined {
   }
   // The compat runtime also prebuilds `denext/navigation`, the `denext/expo/*` shims and React
   // Native mode's overlay, which the shared inventory (native @dep too) does not list.
-  const dfile = DENEXT_RUNTIME_FILE[spec] ?? DENEXT_RUNTIME_FILES[spec];
+  const dfile = ownValue(DENEXT_RUNTIME_FILE, spec) ?? ownValue(DENEXT_RUNTIME_FILES, spec);
   if (dfile) return `${DEP_PREFIX}${dfile}`;
   if (spec === "denext") return `${DEP_PREFIX}react.js`; // bare denext API == the react shim
   return undefined;

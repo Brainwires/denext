@@ -420,6 +420,11 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
   /** Inline style of the outer element (give it a height when the list scrolls itself). */
   readonly style?: Readonly<Record<string, string | number>>;
   /**
+   * More attributes and event handlers of the outer element (`id`, `data-*`, `tabIndex`,
+   * `onKeyDown`, …); the list's own `class`, `style` and `ref` win over these.
+   */
+  readonly scrollerProps?: Readonly<Record<string, unknown>>;
+  /**
    * Snap points (CSS scroll snap), React Native's way: every `interval` px (`snapToInterval`,
    * aligned by `align`, `snapToAlignment`) or at `offsets` (`snapToOffsets`), with `stop:
    * "always"` for one snap point per fling (`decelerationRate="fast"`). Offsets are content

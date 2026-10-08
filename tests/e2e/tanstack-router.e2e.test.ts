@@ -3,7 +3,9 @@
 // `denext build` → `denext start` — then a real Chromium: the shell mounts `#app`, the
 // router renders the home route, a <Link> click is a same-document navigation, a deep URL
 // gets the history-API fallback shell and renders its route, and an unknown URL renders
-// TanStack's not-found UI. Locks the reconciler fix this example surfaced: a Suspense
+// TanStack's not-found UI. The example builds with `spa.tanstackRouter.autoCodeSplitting`, so
+// every route above loads its component from its own chunk (asserted on the build output).
+// Locks the reconciler fix this example surfaced: a Suspense
 // boundary that suspended on mount (TanStack's class CatchBoundary waiting on the lazy
 // class runtime) must still reveal after a parent re-render in the pending window.
 //
@@ -11,7 +13,7 @@
 // `deno task test:e2e`. Skipped automatically if the install can't reach npm.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   assertNoConsoleErrors,
   collectConsoleErrors,
@@ -55,6 +57,20 @@ Deno.test({
         assertStringIncludes(await deep.text(), '<div id="app">');
       },
     );
+
+    await t.step("autoCodeSplitting: route components live in their own chunks", async () => {
+      const entry = await (await fetch(server.origin + "/_denext/client/index.js")).text();
+      const about = "turns a Vite + TanStack Router app into exactly this shape";
+      assert(!entry.includes(about), "the About route's component is not in the entry");
+      const client = join(EXAMPLE, ".denext", "client");
+      let found = false;
+      for await (const e of Deno.readDir(client)) {
+        if (e.name.endsWith(".js") && e.name !== "index.js") {
+          found ||= (await Deno.readTextFile(join(client, e.name))).includes(about);
+        }
+      }
+      assert(found, "a split chunk holds the About route's component");
+    });
 
     const browser = await launchBrowser();
     try {

@@ -82,12 +82,12 @@ await runDesktop({
 });`}
       </Code>
       <p>
-        An entry written before 2.11 (or by <code>denext migrate --desktop</code>, which writes{" "}
-        <code>{"runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy })"}</code>)
-        has no <code>resolveDesktopCapabilities</code> spread, so every capability answers{" "}
+        <code>denext migrate --desktop</code> writes the same entry, plus{" "}
+        <code>proxy: config.spa?.proxy</code>{" "}
+        to reverse-proxy a backend. An entry written before 2.11 has no{" "}
+        <code>resolveDesktopCapabilities</code> spread, so every capability answers{" "}
         <code>unavailable</code>{" "}
-        and the page keeps its web path; add the spread to serve the ones you enable. To
-        reverse-proxy a backend, pass <code>proxy: config.spa?.proxy</code> too.
+        and the page keeps its web path; add the spread to serve the ones you enable.
       </p>
       <p>
         <code>runDesktop</code> resolves once the server is up to{" "}

@@ -219,12 +219,14 @@ export function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
  * parents. Same `HasEffect` pruning as {@link collectInsertionEffects}. NOTE: this must
  * be run while the flags are still live — `commitRoot` collects the list BEFORE
  * `clearCommittedFlags`, then runs the effects after — because the layout/passive phase
- * itself happens after the flag reset.
+ * itself happens after the flag reset. Fibers under a hidden `<Activity>` (its pre-rendered
+ * content) go to `parked` instead: React mounts no effect there until it is revealed.
  */
-export function collectEffects(fiber: Fiber, out: Fiber[]): void {
+export function collectEffects(fiber: Fiber, out: Fiber[], parked: Fiber[] = out): void {
   if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
+  if (fiber.tag === "activity" && fiber.offscreen === true) out = parked;
   if ((fiber.subtreeFlags & HasEffect) !== 0) {
-    for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
+    for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out, parked);
   }
   if (fiber.tag !== "component" || (fiber.flags & HasEffect) === 0) return;
   if (

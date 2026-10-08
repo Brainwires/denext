@@ -37,10 +37,15 @@ export interface SuspenseListState {
   snapshot: boolean[];
 }
 
-/** Fiber tags — the recursive reconciler's 8 kinds plus the synthetic root. */
+/**
+ * Fiber tags — the recursive reconciler's 8 kinds plus the synthetic root and `singleton`: a
+ * root layout's `<html>`/`<head>`/`<body>` rendered inside the page container, which adopts the
+ * page's own element (see `documentTagElement` in begin-work.ts) instead of creating one.
+ */
 export type FiberTag =
   | "root"
   | "host"
+  | "singleton"
   | "text"
   | "component"
   | "fragment"

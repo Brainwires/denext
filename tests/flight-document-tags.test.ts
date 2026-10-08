@@ -6,6 +6,7 @@
 // The HTML itself is unchanged.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import "./helpers/singleton-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { createApp } from "../src/server/app.ts";
@@ -21,6 +22,8 @@ import type { HeadCollector } from "../src/jsx/render-to-string.ts";
 import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 import type { Component, VNode, VNodeChildren } from "../src/jsx/types.ts";
 import { makeDom } from "./helpers/dom.ts";
+import { useState } from "../src/runtime/hooks.ts";
+import { hydratedFlight } from "./helpers/streamed-flight.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -99,7 +102,8 @@ Deno.test("hydrating the peeled tree adopts the parsed DOM (no mismatch, same no
     '<style>p{color:red}</style><nav><button type="button">0</button></nav><p>hi</p>',
   );
 
-  // The unpeeled tree (what the server emitted before) cannot adopt it.
+  // The unpeeled tree (what the server emitted before the peel, and what a root layout rendered
+  // by client code still renders) adopts it too: its <html>/<body> are the page's own (singletons).
   const unpeeled: FlightNode = {
     $: "h",
     t: "html",
@@ -113,7 +117,99 @@ Deno.test("hydrating the peeled tree adopts the parsed DOM (no mismatch, same no
     onRecoverableError: () => unpeeledMismatches++,
   });
   flushSync();
-  assert(unpeeledMismatches > 0, "the unpeeled tree mismatched at <html>");
+  assertEquals(unpeeledMismatches, 0, "the unpeeled tree adopts the parsed DOM too");
+  assert((again as Any).childNodes[1] === moved.get("nav"), "…keeping the server <nav>");
+});
+
+// ---- A root layout rendered by CLIENT code (a "use client" layout) -------------------------
+
+/** A client root layout: its <html>/<body> attributes follow state, its body hosts the page. */
+function clientLayout(theme: string, children: VNodeChildren): VNode {
+  return h(
+    "html",
+    { lang: "fr", className: theme, suppressHydrationWarning: true },
+    h("head", null, h("style", null, "p{color:red}")),
+    h(
+      "body",
+      { className: "b", "data-theme": theme },
+      h("nav", null, h("button", { type: "button" }, "0")),
+      children,
+    ),
+  );
+}
+
+Deno.test("a client-rendered root layout hydrates in place: same nodes, no mismatch, attributes on the real tags", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  (doc.body as Any).appendChild(container);
+  // The server hoisted the layout's document-tag attributes onto the real tags (see the tests
+  // below); the layout is `suppressHydrationWarning`, so hydration leaves them as the page has them.
+  (doc.documentElement as Any).setAttribute("lang", "fr");
+  (doc.documentElement as Any).setAttribute("class", "dark");
+  (doc.body as Any).setAttribute("class", "b");
+  (doc.body as Any).setAttribute("data-theme", "dark");
+  // The parsed server DOM: the browser dropped the nested <html>/<head>/<body>, kept the rest.
+  createRoot(container as Any).render(
+    [
+      h("style", null, "p{color:red}"),
+      h("nav", null, h("button", { type: "button" }, "0")),
+      h("p", null, "hi"),
+    ] as unknown as VNode,
+  );
+  flushSync();
+  const before = [...(container as Any).childNodes];
+  const live = doc.createElement("div"); // a fresh page container in the SAME document
+  (doc.body as Any).appendChild(live);
+  for (const n of before) (live as Any).appendChild(n);
+  (doc.body as Any).removeChild(container);
+
+  let setTheme: (t: string) => void = () => {};
+  function Layout(): VNode {
+    const [theme, set] = useState("dark");
+    setTheme = set;
+    return clientLayout(theme, h("p", null, "hi"));
+  }
+  let mismatches = 0;
+  hydrateRoot(live as Any, h(Layout as Component, null), {
+    onRecoverableError: () => mismatches++,
+  });
+  flushSync();
+  assertEquals(mismatches, 0, "the client layout's tree matched the parsed DOM");
+  assertEquals(
+    [...(live as Any).childNodes],
+    before,
+    "every server node was adopted, none re-created",
+  );
+  assertEquals(
+    (live as Any).innerHTML,
+    '<style>p{color:red}</style><nav><button type="button">0</button></nav><p>hi</p>',
+    "no <html>/<head>/<body> element was created inside the page container",
+  );
+  const html = doc.documentElement as Any;
+  const body = doc.body as Any;
+  assertEquals(html.getAttribute("lang"), "fr", "the layout's attributes land on the real <html>");
+  assertEquals(html.getAttribute("class"), "dark");
+  assertEquals(body.getAttribute("class"), "b");
+  assertEquals((html.childNodes as Any[]).filter((n) => n.tagName === "BODY").length, 1);
+
+  setTheme("light"); // a state change re-renders the layout: the real tags are updated in place
+  flushSync();
+  assertEquals(html.getAttribute("class"), "light");
+  assertEquals(body.getAttribute("data-theme"), "light");
+  assertEquals([...(live as Any).childNodes], before, "and the page content is untouched");
+});
+
+Deno.test("a client root layout rendered fresh (no server markup) puts its content in the container", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  (doc.body as Any).appendChild(container);
+  createRoot(container as Any).render(clientLayout("dark", h("p", null, "page")));
+  flushSync();
+  assertEquals(
+    (container as Any).innerHTML,
+    '<style>p{color:red}</style><nav><button type="button">0</button></nav><p>page</p>',
+  );
+  assertEquals((doc.documentElement as Any).getAttribute("class"), "dark");
 });
 
 // ---- Every document path the server emits a Flight tree on ---------------------------------
@@ -171,8 +267,9 @@ function makeApp(
 }
 
 /** The `#__denext_flight` JSON of a document. */
+/** The Flight tree the browser hydrates from `body`, as JSON (streamed chunks put back). */
 function inlined(body: string): string {
-  return /<script id="__denext_flight" type="application\/json">(.*?)<\/script>/s.exec(body)![1];
+  return JSON.stringify(hydratedFlight(body));
 }
 
 const plainPage = () => h("p", null, "page");

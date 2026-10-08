@@ -14,8 +14,9 @@ deno task build && deno task start
 ```
 
 `deno task routes` regenerates `src/routeTree.gen.ts` after you add or rename a route file
-(the TanStack Router CLI, run out-of-band — the Vite plugin that did this on the fly has no
-role under denext). The generated file is committed and excluded from `deno fmt`/`deno lint`.
+(the TanStack Router CLI, run out-of-band beside `denext dev`). `denext build` / `export`
+regenerate it too, as the Vite plugin's build does, because the example code-splits its routes
+(below). The generated file is committed and excluded from `deno fmt`/`deno lint`.
 
 ## What it shows
 
@@ -29,6 +30,10 @@ role under denext). The generated file is committed and excluded from `deno fmt`
   and throws `notFound()` for an unknown id; `__root.tsx` owns the global not-found UI.
 - **npm from `node_modules`** — `nodeModulesDir: "manual"` + `package.json`: the router
   resolves from the installed tree, the same as a pnpm/npm project after `denext migrate`.
+- **Route code-splitting** — `spa.tanstackRouter: { autoCodeSplitting: true }` runs
+  `@tanstack/router-plugin`'s splitter in the production build (`build` / `export`): each
+  route's component is its own chunk, fetched when the route is visited, so the startup bundle
+  holds only the router and the route tree. `denext dev` bundles the routes unsplit.
 
 ## Migration vs. this example
 
@@ -38,13 +43,16 @@ untouched and its source unchanged. What migrate writes:
 - `denext.config.ts` — `mode: "spa"`, `compatibilityMode: true`, `spa.entry`/`title` from
   `index.html`, `spa.rootId` when the app mounts somewhere other than `#root` (read from the
   entry's `getElementById`), the `tailwind` block pointing at whichever stylesheet imports
-  Tailwind (`src/styles.css` in TanStack's scaffold), and `spa.loading`/`spa.head` boot content.
+  Tailwind (`src/styles.css` in TanStack's scaffold), `spa.loading`/`spa.head` boot content,
+  and `spa.tanstackRouter: { autoCodeSplitting: true }` when vite.config's `tanstackRouter()`
+  sets it.
 - `deno.json` — the `react`/`react-dom` aliases to denext, tsconfig `paths` as import-map
   aliases, `nodeModulesDir: "manual"` when a lockfile is present.
 - Dropped: `vite`, `@vitejs/plugin-react`, `@tailwindcss/vite`, `@tanstack/router-plugin`,
-  `@tanstack/devtools-vite` (Vite plugins with no role under denext). Kept: the runtime
-  (`@tanstack/react-router`, devtools) and `@tanstack/router-cli` — run `tsr generate` (or
-  `tsr watch` beside `denext dev`) instead of the Vite plugin.
+  `@tanstack/devtools-vite` (Vite plugins with no role under denext; denext runs the router
+  plugin's splitter itself). Kept: the runtime (`@tanstack/react-router`, devtools) and
+  `@tanstack/router-cli` — run `tsr generate` (or `tsr watch` beside `denext dev`) instead of
+  the Vite plugin.
 
 This in-repo copy differs only in pointing `denext` at the checkout (`../../mod.ts`) and in
 the `workspace: []` key in `deno.json` (it lives inside the denext repo's workspace without

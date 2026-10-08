@@ -12,8 +12,11 @@ import { CLIENT_PREFIX, RELOAD_PATH } from "./shared.ts";
  * root under refresh) — hook state survives, no page reload. A `reload` event
  * (entry/config edit, or any refresh failure) is a full reload. `css` re-links the
  * stylesheets; `update:<json>` is the per-module HMR frame (unbundled loop).
+ *
+ * @param clientPrefix The URL prefix the entry bundle is served under (`spa.assetsDir`'s).
  */
-export const SPA_DEV_RELOAD = consoleCaptureScript(DEV_LOG_PATH) + `(function(){
+export function spaDevReloadScript(clientPrefix: string): string {
+  return consoleCaptureScript(DEV_LOG_PATH) + `(function(){
   // Belt and braces: the generated SPA dev entry sets this first (it must, so the
   // DevTools panel mounts before the app does), but this script runs on the plain shell
   // too — a page whose entry failed to load should still report itself as dev.
@@ -48,7 +51,7 @@ export const SPA_DEV_RELOAD = consoleCaptureScript(DEV_LOG_PATH) + `(function(){
   function refresh(){
     markHmr();
     try {
-      var s = document.querySelector('script[type=module][src*="${CLIENT_PREFIX}"]');
+      var s = document.querySelector('script[type=module][src*="${clientPrefix}"]');
       if (!s) return reload();
       var u = new URL(s.getAttribute("src"), location.href);
       if (u.origin !== location.origin) return reload();
@@ -88,3 +91,7 @@ export const SPA_DEV_RELOAD = consoleCaptureScript(DEV_LOG_PATH) + `(function(){
     };
   } catch (_) {}
 })();`;
+}
+
+/** The dev live-reload client for the default client prefix (`/_denext/client/`). */
+export const SPA_DEV_RELOAD = spaDevReloadScript(CLIENT_PREFIX);

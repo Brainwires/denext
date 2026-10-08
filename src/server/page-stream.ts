@@ -117,14 +117,17 @@ async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<
 
 /**
  * No holes: drain the Flight tail (nothing is enqueued) so the complete buffered Flight
- * document — identical to the buffered Flight path — can embed it inline.
+ * document — identical to the buffered Flight path — can embed it inline. `streamData` is
+ * off: a deferred (`defer()`) value is not a hole, so with it on its `data-dnx-v` chunk
+ * went into the discarding sink and the tail kept the unfilled `{"$":"vh"}` placeholder;
+ * off, the tail resolves the values and fills the tree.
  */
 function drainFlightTail(
   flightShell: NonNullable<PageFlightShellResult["flightShell"]>,
   signal: AbortSignal | undefined,
 ) {
   const sink = { enqueue() {} } as unknown as ReadableStreamDefaultController<Uint8Array>;
-  return flightShell.streamHoles(sink, new TextEncoder(), signal);
+  return flightShell.streamHoles(sink, new TextEncoder(), signal, false);
 }
 
 /**

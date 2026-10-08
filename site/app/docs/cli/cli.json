@@ -735,6 +735,23 @@
           "description": "Also scaffold a desktop entry"
         },
         {
+          "name": "enable-capacitor",
+          "type": "boolean",
+          "description": "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo)"
+        },
+        {
+          "name": "app-id",
+          "type": "string",
+          "valueName": "<id>",
+          "description": "With --enable-capacitor: the app id (reverse-DNS, e.g. com.example.app); else derived from the desktop identifier or the package name"
+        },
+        {
+          "name": "platform",
+          "type": "string",
+          "valueName": "<ios,android>",
+          "description": "With --enable-capacitor: export, then run `npx cap add` for these platforms"
+        },
+        {
           "name": "backend",
           "type": "string",
           "valueName": "<url>",

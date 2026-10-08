@@ -24,6 +24,11 @@ emit correct denext instead of Next.js.
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
+   `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
+   ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
+   the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
+   app's package manager, and review items for what it can't know (a hosted-mode env switch, a
+   backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
    `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
    pinned CLI tasks and every first-party `@denext/*` package together.
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
@@ -84,6 +89,10 @@ export function Counter() {
 
 Branch on a value in JSX with `choose` from `denext` (Lit-style, lazy; own keys only):
 `choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null)`.
+
+In SPA mode a `client:*` directive defers the mount and code-splits the component:
+`<Chart client:visible client:placeholder={<Spinner />} />` (`load`/`idle`/`visible`/`interaction`/
+`media`/`only`); under `@types/react`, `ClientDirectives` from `denext/jsx-directives` types them.
 
 **A route handler (API):**
 
@@ -416,7 +425,8 @@ Docs: https://denext.dev/docs/platform-files
 **A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
-`denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. Docs:
+`denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
+makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Docs:
 https://denext.dev/docs/lists
 
 **Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
@@ -443,8 +453,8 @@ or a locked keyring rejects `backend_unavailable` with the reason) and your `def
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
-`runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
-call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
+`runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
+add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
 buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
@@ -720,9 +730,17 @@ with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 
+SPA Vite build parity (`denext migrate` sets what vite.config had): `spa.assetsDir: "assets"`
+serves and exports the client under `/assets/` as `name-HASH8.ext`; `spa.viteManifest: true`
+writes `.vite/manifest.json`; `spa.tanstackRouter: { autoCodeSplitting: true }` splits routes;
+a failed chunk load dispatches cancelable `vite:preloadError` (+ `denext:chunkError`); a plugin
+build step's `emitFile()` (or `viteEmitterPlugin(vitePlugin)`) publishes files at the site root.
+
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
-`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
+`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets at build and export;
+its `emitFile({ fileName, source })` publishes a file at the site root like Vite's
+`this.emitFile`, and `viteEmitterPlugin(vitePlugin)` runs a Vite `generateBundle` emitter as one),
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb). Declare it as `plugins: [myPlugin()]`. See
@@ -742,7 +760,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `nodeResolve` were removed in 3.0 and are a config error.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
-  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
+  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking

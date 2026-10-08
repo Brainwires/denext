@@ -266,8 +266,21 @@ Deno.test("generateSpaEntry (prod): seam installs ride a data: import AHEAD of t
     "no install statement is left at the top level (it would run after the app)",
   );
   assert(
-    !generateSpaEntry("file:///x.tsx", false, null, { classComponents: false })
+    !generateSpaEntry("file:///x.tsx", false, null, { classComponents: false, singletons: false })
       .includes("data:"),
     "nothing to install → no seam import",
+  );
+});
+
+Deno.test("generateSpaEntry: the host-singleton runtime installs unless a scan cleared it", () => {
+  // On by default (a caller that did not scan keeps it); the build's scan clears it for an app
+  // that renders no document tag, so its bundle tree-shakes the runtime out.
+  assertStringIncludes(
+    generateSpaEntry("file:///x.tsx", false, null, {}),
+    "installSingletonSupport();",
+  );
+  assert(
+    !generateSpaEntry("file:///x.tsx", false, null, { singletons: false })
+      .includes("installSingletonSupport"),
   );
 });

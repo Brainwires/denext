@@ -78,6 +78,6 @@ export default async function Photo({ params }: { params: { id: string } }) {
   then clears it when the transition finishes.
 - `addTransitionType("nav-forward")` feeds `startViewTransition({ types })`, and an
   `enter={{ "nav-forward": "slide-left", default: "fade" }}` map resolves against it.
-- It works on every soft-nav path (Flight, isomorphic, full-HTML). Only **navigation**
-  commits are wrapped — a same-page state toggle is not animated (see
-  [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md)).
+- It works on every soft-nav path (Flight, isomorphic, full-HTML), and on same-page updates
+  made in a Transition (`startTransition`, `useDeferredValue`, a Suspense reveal): an element
+  that enters, exits or moves animates, as with React 19.2. An urgent update is not animated.

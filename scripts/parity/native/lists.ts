@@ -10,10 +10,14 @@
 //     • @shopify/flash-list 2.3.2: `FlashListProps` (its own plus SCROLL_PROPS), `FlashListRef`,
 //       and the package's runtime exports;
 //     • @legendapp/list 3.4.0 (`/react-native`): `LegendListProps` (its own plus SCROLL_PROPS),
-//       `LegendListRef`, and the entry's runtime exports.
+//       `LegendListRef`, and the entry's runtime exports;
+//     • @legendapp/list 3.4.0 (`/react`, the DOM build `lists: "denext"` takes over): its
+//       `LegendListProps` (its own plus SCROLL_PROPS and `className`), `LegendListRef`, and the
+//       entry's runtime exports.
 //   ACTUAL (offline): the adapters' prop and ref interfaces (`deno doc` over
-//     src/react-native/lists/types.ts, flash-list.ts and legend-list.ts, `extends` / `Omit`
-//     resolved) and the shims' exports from src/react-native/lists/manifest.ts.
+//     src/react-native/lists/types.ts, flash-list.ts, legend-list.ts and src/lists/legend-list.ts,
+//     `extends` / `Omit` resolved), the shims' exports from src/react-native/lists/manifest.ts,
+//     and the DOM module's own exports.
 //
 // A name the real side has and the adapter lacks fails the gate unless it is in
 // baselines/lists.known-gaps.json (`parity:native:gaps -- lists` rewrites it), matches the
@@ -34,6 +38,8 @@ const PINS: Record<string, string> = {
   "react-native-web": "0.21.2",
   "@shopify/flash-list": LIST_PACKAGES["@shopify/flash-list"].pinned,
   "@legendapp/list": LIST_PACKAGES["@legendapp/list"].pinned,
+  // The DOM build's props extend React's `HTMLAttributes`; without React's types they collapse.
+  "@types/react": "19.3.0",
 };
 
 /**
@@ -94,7 +100,10 @@ export interface ListGap {
 }
 
 /** The adapter interfaces and shim entries each target is compared with. */
-const DENEXT: Record<string, { file: string; props?: string; ref?: string; pkg?: string }> = {
+const DENEXT: Record<
+  string,
+  { file: string; props?: string; ref?: string; pkg?: string; module?: string }
+> = {
   "react-native#FlatList": {
     file: "src/react-native/lists/types.ts",
     props: "FlatListProps",
@@ -122,6 +131,12 @@ const DENEXT: Record<string, { file: string; props?: string; ref?: string; pkg?:
     ref: "LegendListRef",
   },
   "@legendapp/list": { file: "", pkg: "@legendapp/list" },
+  "@legendapp/list/react#LegendList": {
+    file: "src/lists/legend-list.ts",
+    props: "LegendListDomProps",
+    ref: "LegendListDomRef",
+  },
+  "@legendapp/list/react": { file: "", module: "src/lists/legend-list.ts" },
 };
 
 // ── ACTUAL: denext's interfaces (deno doc) ─────────────────────────────────────────────
@@ -129,16 +144,34 @@ const DENEXT: Record<string, { file: string; props?: string; ref?: string; pkg?:
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** Every interface declared in `files`, by name. */
-// fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
-async function interfaces(root: string, files: string[]): Promise<Map<string, Json>> {
+/** `deno doc --json` over `files`. */
+async function denoDoc(root: string, files: string[]): Promise<Json> {
   const out = await new Deno.Command(Deno.execPath(), {
     args: ["doc", "--json", ...files.map((f) => `${root}/${f}`)],
     stdout: "piped",
     stderr: "piped",
   }).output();
   if (out.code !== 0) throw new Error(new TextDecoder().decode(out.stderr));
-  const doc = JSON.parse(new TextDecoder().decode(out.stdout));
+  return JSON.parse(new TextDecoder().decode(out.stdout));
+}
+
+/** The value exports (functions and variables, re-exports included) of one module. */
+export async function moduleValueExports(root: string, file: string): Promise<string[]> {
+  const doc = await denoDoc(root, [file]);
+  const names = new Set<string>();
+  for (const node of Object.values(doc.nodes ?? {}) as Json[]) {
+    for (const sym of node.symbols ?? []) {
+      const kinds = (sym.declarations ?? []).map((d: Json) => d.kind);
+      if (kinds.includes("function") || kinds.includes("variable")) names.add(sym.name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** Every interface declared in `files`, by name. */
+// fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
+async function interfaces(root: string, files: string[]): Promise<Map<string, Json>> {
+  const doc = await denoDoc(root, files);
   const map = new Map<string, Json>();
   for (const node of Object.values(doc.nodes ?? {}) as Json[]) {
     for (const sym of node.symbols ?? []) {
@@ -196,9 +229,12 @@ export async function denextListSurfaces(root: string): Promise<Record<string, L
   const all = await interfaces(root, files);
   const out: Record<string, ListSurface> = {};
   for (const [target, d] of Object.entries(DENEXT)) {
-    out[target] = d.pkg
-      ? { exports: shimExports(d.pkg) }
-      : { props: [...membersOf(d.props!, all)], methods: [...membersOf(d.ref!, all)] };
+    if (d.module) out[target] = { exports: await moduleValueExports(root, d.module) };
+    else if (d.pkg) out[target] = { exports: shimExports(d.pkg) };
+    else {out[target] = {
+        props: [...membersOf(d.props!, all)],
+        methods: [...membersOf(d.ref!, all)],
+      };}
   }
   return out;
 }
@@ -390,6 +426,7 @@ async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
     flashProps: `${nm}/@shopify/flash-list/dist/FlashListProps.d.ts`,
     flashRef: `${nm}/@shopify/flash-list/dist/FlashListRef.d.ts`,
     legend: `${nm}/@legendapp/list/react-native.d.ts`,
+    legendDom: `${nm}/@legendapp/list/react.d.ts`,
   };
   const program = ts.createProgram(Object.values(files), {
     strict: true,
@@ -437,6 +474,12 @@ async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
       methods: members(files.legend, "LegendListRef"),
     },
     "@legendapp/list": { exports: valueExports(files.legend) },
+    // The DOM build's `className` comes from React's `HTMLAttributes` (not its own file).
+    "@legendapp/list/react#LegendList": {
+      props: [...props(files.legendDom, "LegendListProps", /@legendapp/), "className"].sort(),
+      methods: members(files.legendDom, "LegendListRef"),
+    },
+    "@legendapp/list/react": { exports: valueExports(files.legendDom) },
   };
 }
 
@@ -452,6 +495,7 @@ export async function refreshLists(root: string): Promise<void> {
       "react-native": PINS["react-native"],
       "@shopify/flash-list": PINS["@shopify/flash-list"],
       "@legendapp/list": PINS["@legendapp/list"],
+      "@types/react": PINS["@types/react"],
     };
     await Deno.writeTextFile(
       `${dir}/package.json`,

@@ -5,10 +5,11 @@ import { bubbleLanes, hostNamespace } from "./fiber-utils.ts";
 import { claimText, isHydrating, popHydrationCursor } from "./hydration.ts";
 import { onErrorFor } from "./boundaries.ts";
 
-import { applyProps } from "../dom-props.ts";
+import { applyProps, initSelect } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { documentForFiber } from "./state.ts";
+import { getSingletonSupport } from "./singleton-support.ts";
 import {
   bubbleFlags,
   childrenDom,
@@ -39,7 +40,7 @@ function createHostInstance(wip: Fiber): Element {
  * identity, like applyProps' own per-prop `oldValue === value` guard — so a `false` here
  * means applyProps would change nothing (it would only re-register identical listeners).
  */
-function hostPropsChanged(
+export function hostPropsChanged(
   prev: Record<string, unknown> | null | undefined,
   next: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -70,7 +71,8 @@ function completeHost(wip: Fiber): void {
   // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
   // — a ref callback must fire at commit (after the node is placed), never during this render
   // phase — and flag the fiber so the commit attaches it (see `RefAttach`).
-  if (wip.stateNode == null) wip.stateNode = createHostInstance(wip);
+  const fresh = wip.stateNode == null;
+  if (fresh) wip.stateNode = createHostInstance(wip);
   const props = wip.vnode.props ?? {};
   applyProps(wip.stateNode as Element, wip, {}, props, onErrorFor(wip), false);
   if (props.ref != null) wip.flags |= RefAttach;
@@ -79,6 +81,9 @@ function completeHost(wip: Fiber): void {
   if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
     syncChildren(wip.stateNode as Element, childrenDom(wip));
   }
+  // A new `<select>` picks its option once the options are in it (hydration keeps the
+  // server's — or the user's — selection).
+  if (fresh && wip.vnode.type === "select") initSelect(wip.stateNode as Element, props);
   stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
   wip.flags |= Placement;
 }
@@ -110,6 +115,9 @@ export function completeWork(wip: Fiber): void {
   switch (wip.tag) {
     case "host":
       completeHost(wip);
+      break;
+    case "singleton": // an adopted document tag (singleton-support.ts)
+      getSingletonSupport()!.complete(wip);
       break;
     case "text":
       completeText(wip);

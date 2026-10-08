@@ -22,6 +22,11 @@ deno task dev          # http://localhost:3000
 - **a resource route** — `/api/health` is a `loader`-only module returning `Response.json`.
 - **a thrown Response** — `/boom`'s loader throws `new Response("teapot", { status: 418 })`,
   which reaches the route's `ErrorBoundary` and sets the document status.
+- **the client data APIs** — `/client` has a `clientLoader` (with `hydrate = true` and a
+  `HydrateFallback`) that calls `serverLoader()`, and a `clientAction` that calls
+  `serverAction()`.
+- **`prerender`** — `react-router.config.ts` lists `/about`, so its generated page is
+  `force-static`.
 
 ## Migration vs. this example
 
@@ -33,7 +38,5 @@ framework checkout); the route components are unchanged either way.
 
 ## Known limits (from `../../packages/react-router`)
 
-Server render only — `clientLoader` / `clientAction` / `HydrateFallback` are not run;
-`react-router.config.ts` `ssr: false` (SPA) is not supported (use denext `mode: "spa"`);
-`prerender` config is noted, not applied (denext prerenders static routes itself); `+types`
-typegen is type-only.
+`+types` typegen is type-only. On a client navigation `serverLoader()` resolves the data the
+navigation already fetched with the route (the server loader runs with the server render).

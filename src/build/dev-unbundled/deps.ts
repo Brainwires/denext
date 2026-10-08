@@ -97,6 +97,17 @@ function runtimeExternalPlugin(st: UnbundledState): esbuild.Plugin {
   return {
     name: "denext-runtime-external",
     setup(build) {
+      // A package's import of an aliased specifier (`lists: "denext"`) → its runtime module.
+      const aliased = Object.keys(st.opts.specAliases ?? {});
+      if (aliased.length > 0) {
+        const filter = new RegExp(
+          `^(?:${aliased.map((s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join("|")})$`,
+        );
+        build.onResolve({ filter }, (args) => {
+          const u = compatDepUrl(st, args.path);
+          return u ? { path: u, external: true } : null;
+        });
+      }
       build.onResolve(
         {
           filter:

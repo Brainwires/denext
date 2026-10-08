@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- **A static export publishes the document at its URL.** `denext export` now runs plugin build
+  steps; there the step publishes the document with `emitFile` at the plugin's `path` (default
+  `/openapi.json`), so the static site serves it where `denext start` does, and writes no
+  `.denext/openapi.json` artifact. With `expose: "dev"` an export publishes nothing, as a
+  production server would. The docs page renders per request and is not exported. `denext build`
+  still writes `outFile` into the build output.
+
 ## 0.3.0
 
 - Pre-release hardening of `emitTypes` (found by the 2.4.2 audit): `ApiSchema.params` are always

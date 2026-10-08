@@ -23,7 +23,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -55,7 +55,7 @@
       "exports": [
         "."
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -77,14 +77,14 @@
     },
     {
       "name": "@denext/graphql",
-      "version": "0.2.0",
-      "spec": "jsr:@denext/graphql@^0.2.0",
+      "version": "0.2.1",
+      "spec": "jsr:@denext/graphql@^0.2.1",
       "exports": [
         ".",
         "./command",
         "./subscriptions"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -215,14 +215,14 @@
     },
     {
       "name": "@denext/htmx",
-      "version": "2.0.11",
-      "spec": "jsr:@denext/htmx@^2.0.11",
+      "version": "2.0.13",
+      "spec": "jsr:@denext/htmx@^2.0.13",
       "exports": [
         ".",
         "./command",
         "./types"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -268,15 +268,15 @@
     },
     {
       "name": "@denext/openapi",
-      "version": "0.3.0",
-      "spec": "jsr:@denext/openapi@^0.3.0",
+      "version": "0.3.1",
+      "spec": "jsr:@denext/openapi@^0.3.1",
       "exports": [
         ".",
         "./command",
         "./spec",
         "./types"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -426,8 +426,8 @@
     },
     {
       "name": "@denext/pages-router",
-      "version": "0.11.0",
-      "spec": "jsr:@denext/pages-router@^0.11.0",
+      "version": "0.11.1",
+      "spec": "jsr:@denext/pages-router@^0.11.1",
       "exports": [
         ".",
         "./client-runtime",
@@ -436,7 +436,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -470,14 +470,14 @@
     },
     {
       "name": "@denext/react-router",
-      "version": "0.1.1",
-      "spec": "jsr:@denext/react-router@^0.1.1",
+      "version": "0.2.0",
+      "spec": "jsr:@denext/react-router@^0.2.0",
       "exports": [
         ".",
         "./dom",
         "./routes"
       ],
-      "denext": "^3.3.0",
+      "denext": "^3.4.0",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

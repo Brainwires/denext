@@ -7,7 +7,11 @@ import { fromFileUrl, join } from "@std/path";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { ensureDir } from "@std/fs";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
-import { momentumSafeScrollEnabled, nodeResolveEnabled } from "../../server/config.ts";
+import {
+  domListsEnabled,
+  momentumSafeScrollEnabled,
+  nodeResolveEnabled,
+} from "../../server/config.ts";
 import { generateRouteEntry, routeServerModules } from "../bundle.ts";
 import {
   buildNextCompatClientEntries,
@@ -40,6 +44,7 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     mdxOptions: st.paths.config?.mdx,
     optimizePackageImports: optimizePackageImportsList(st.paths.config),
+    domLists: domListsEnabled(st.paths.config),
     useCache: resolveCacheComponents(st.paths.config),
     cssImportMap,
     // The web target's platform files (`.web.tsx`), server and client bundles alike.

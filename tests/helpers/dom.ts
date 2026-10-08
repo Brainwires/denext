@@ -162,6 +162,34 @@ export class FakeElement extends FakeNode {
     this.attributes.delete(name);
   }
 
+  /** `defaultValue` reflects an `<input>`'s `value` attribute (a `<textarea>`'s text). */
+  // fallow-ignore-next-line unused-class-member -- the reconciler sets it through the DOM
+  set defaultValue(v: string) {
+    if (this.tagName === "TEXTAREA") this.textContent = String(v);
+    else this.setAttribute("value", String(v));
+  }
+  /** `defaultChecked` reflects the `checked` attribute. */
+  // fallow-ignore-next-line unused-class-member -- the reconciler sets it through the DOM
+  set defaultChecked(v: boolean) {
+    if (v) this.setAttribute("checked", "");
+    else this.removeAttribute("checked");
+  }
+
+  /** A `<select>`'s options: its descendant `<option>`s (through `<optgroup>`s). */
+  // fallow-ignore-next-line unused-class-member -- the reconciler reads it through the DOM
+  get options(): FakeElement[] {
+    const out: FakeElement[] = [];
+    const walk = (n: FakeNode) => {
+      for (const c of n.childNodes) {
+        if (!(c instanceof FakeElement)) continue;
+        if (c.tagName === "OPTION") out.push(c);
+        else walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
+
   /** No-op focus (the panel focuses its search box; tests just need it not to throw). */
   focus(): void {}
 

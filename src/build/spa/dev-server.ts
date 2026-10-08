@@ -7,6 +7,7 @@ import { displayHost, serveWithPortFallback } from "../../server/serve-utils.ts"
 import { createSpaDevHandler } from "./dev-handler.ts";
 import { createSpaDevState, type SpaDevServerOptions } from "./dev-state.ts";
 import { watch } from "./dev-watch.ts";
+import { startSpaDevPlugins } from "./dev-plugins.ts";
 import { removeDevInfo, writeDevInfo } from "../dev-server/dev-info.ts";
 import { withDevTokenGate, withDevTokenParam } from "../dev-server/dev-token.ts";
 
@@ -14,6 +15,7 @@ import { withDevTokenGate, withDevTokenParam } from "../dev-server/dev-token.ts"
 export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer {
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
   const st = createSpaDevState(options);
+  startSpaDevPlugins(st);
   watch(st);
   const handler = createSpaDevHandler(st);
   // Response compression (config `compress`, default on), as in `denext dev` for the App

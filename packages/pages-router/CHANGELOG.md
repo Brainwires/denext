@@ -3,6 +3,14 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.11.1
+
+- **A hybrid app's static export skips the Pages Router build step.** `denext export` of an app
+  with both `app/` and `pages/` is the App Router's, and its `out/` never takes the prerendered
+  `pages/` output: the step no longer prebundles and prerenders there (a failing `pages/` build
+  no longer fails the export), and a note says those routes are served by `denext start`. A
+  Pages Router app's export (no `app/`) is unchanged.
+
 ## 0.11.0 — denext 3.2.0 compatibility
 
 - Requires denext ≥ 3.2.0.

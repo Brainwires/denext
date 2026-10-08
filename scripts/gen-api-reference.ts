@@ -42,6 +42,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/navigation", file: `${ROOT}src/navigation/mod.ts` },
   { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
   { module: "denext/feature", file: `${ROOT}src/feature.ts` },
+  { module: "denext/jsx-directives", file: `${ROOT}src/jsx-directives.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
   ...(await expoEntries()),
 ];

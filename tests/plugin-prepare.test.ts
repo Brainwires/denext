@@ -4,7 +4,7 @@ import { assert, assertEquals } from "@std/assert";
 import {
   applyPlugins,
   getPluginPrepareWatchDirs,
-  type PluginBuildContext,
+  type PluginPrepareContext,
   resetPlugins,
   runMatchingPrepareSteps,
   runPluginPrepareSteps,
@@ -14,7 +14,7 @@ import type { DenextPlugin } from "../src/plugin/mod.ts";
 import { join } from "@std/path";
 
 const ROOT = "/proj";
-const ctx: PluginBuildContext = {
+const ctx: PluginPrepareContext = {
   projectRoot: ROOT,
   appDir: "/proj/app",
   outDir: "/proj/.denext",

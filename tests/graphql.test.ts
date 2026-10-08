@@ -69,7 +69,7 @@ const schema = createSchema<{ viewer?: string }>({
 async function setup(
   options: Partial<Parameters<typeof graphql>[0]> = {},
   config: Partial<DenextConfig> = {},
-  mode: "dev" | "prod" = "prod",
+  mode: "dev" | "prod" | "export" = "prod",
 ) {
   resetPlugins();
   setChannelTransport(inMemoryChannelTransport());
@@ -549,4 +549,19 @@ Deno.test("denext graphql: sdl (stdout / --out) and diff", async () => {
     threw = (e as Error).message;
   }
   assertEquals(threw, "unknown graphql action: nope");
+});
+
+Deno.test("graphql plugin: a static export writes no SDL (a server artifact) and runs no introspection", async () => {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_graphql_export_" });
+  try {
+    await setup({}, {}, "export");
+    await runPluginBuildSteps(
+      { projectRoot: "/tmp/proj", appDir: "/tmp/proj/app", outDir, config: {} as DenextConfig },
+      { emitDir: join(outDir, "site") },
+    );
+    assertEquals([...Deno.readDirSync(outDir)].map((e) => e.name), []);
+  } finally {
+    resetPlugins();
+    await Deno.remove(outDir, { recursive: true });
+  }
 });

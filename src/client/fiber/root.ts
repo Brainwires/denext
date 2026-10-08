@@ -1,6 +1,7 @@
 // Public API: createRoot / hydrateRoot / createPortal / flushSync / act, plus the dev
 // Fast Refresh root retention. Wires the render entry points into the scheduler.
 
+import { getViewTransitionSupport } from "./view-transition-support.ts";
 import { activeRoots, currentDocument, fiberToRoot } from "./state.ts";
 import type { RootHandle } from "./state.ts";
 import { walk } from "./fiber-utils.ts";
@@ -155,14 +156,20 @@ function registerRoot(
   return handle;
 }
 
-/** Render `vnode` into a root synchronously. */
+/**
+ * Render `vnode` into a root synchronously. A new element is urgent work: it clears any
+ * pending reveal mark (a Suspense retry not yet flushed), so the commit it joins is never
+ * held for a view transition's update callback — `root.render` returns with the DOM updated.
+ */
 function renderInto(handle: RootHandle, vnode: VNode): void {
+  handle.reveal = false;
   handle.pendingElement = vnode;
   renderRoot(handle, SyncLane);
 }
 
 /** Unmount a root's whole tree, then drop the root from scheduling and DevTools. */
 function unmountRoot(handle: RootHandle): void {
+  getViewTransitionSupport()?.flush(); // a commit awaiting its view transition lands first
   for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
   handle.current.child = null;
   activeRoots.delete(handle);

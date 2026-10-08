@@ -225,79 +225,21 @@ export function omitsAttrValue(prop: string, value: unknown, tag?: string): bool
  * Style properties that take a unitless number (React's `isUnitlessNumber`, keyed by the
  * style-object key): a raw number is NOT given a `px` suffix.
  */
-const UNITLESS_STYLE = /* @__PURE__ */ new Set([
-  "animationIterationCount",
-  "aspectRatio",
-  "borderImageOutset",
-  "borderImageSlice",
-  "borderImageWidth",
-  "boxFlex",
-  "boxFlexGroup",
-  "boxOrdinalGroup",
-  "columnCount",
-  "columns",
-  "flex",
-  "flexGrow",
-  "flexPositive",
-  "flexShrink",
-  "flexNegative",
-  "flexOrder",
-  "gridArea",
-  "gridRow",
-  "gridRowEnd",
-  "gridRowSpan",
-  "gridRowStart",
-  "gridColumn",
-  "gridColumnEnd",
-  "gridColumnSpan",
-  "gridColumnStart",
-  "fontWeight",
-  "lineClamp",
-  "lineHeight",
-  "opacity",
-  "order",
-  "orphans",
-  "scale",
-  "tabSize",
-  "widows",
-  "zIndex",
-  "zoom",
-  "fillOpacity",
-  "floodOpacity",
-  "stopOpacity",
-  "strokeDasharray",
-  "strokeDashoffset",
-  "strokeMiterlimit",
-  "strokeOpacity",
-  "strokeWidth",
-  "MozAnimationIterationCount",
-  "MozBoxFlex",
-  "MozBoxFlexGroup",
-  "MozLineClamp",
-  "msAnimationIterationCount",
-  "msFlex",
-  "msZoom",
-  "msFlexGrow",
-  "msFlexNegative",
-  "msFlexOrder",
-  "msFlexPositive",
-  "msFlexShrink",
-  "msGridColumn",
-  "msGridColumnSpan",
-  "msGridRow",
-  "msGridRowSpan",
-  "WebkitAnimationIterationCount",
-  "WebkitBoxFlex",
-  "WebKitBoxFlexGroup",
-  "WebkitBoxOrdinalGroup",
-  "WebkitColumnCount",
-  "WebkitColumns",
-  "WebkitFlex",
-  "WebkitFlexGrow",
-  "WebkitFlexPositive",
-  "WebkitFlexShrink",
-  "WebkitLineClamp",
-]);
+const UNITLESS_STYLE = /* @__PURE__ */ new Set(
+  // One space-separated string: a fraction of an array literal's bytes in every bundle.
+  ("animationIterationCount aspectRatio borderImageOutset borderImageSlice borderImageWidth " +
+    "boxFlex boxFlexGroup boxOrdinalGroup columnCount columns flex flexGrow flexPositive " +
+    "flexShrink flexNegative flexOrder gridArea gridRow gridRowEnd gridRowSpan gridRowStart " +
+    "gridColumn gridColumnEnd gridColumnSpan gridColumnStart fontWeight lineClamp lineHeight " +
+    "opacity order orphans scale tabSize widows zIndex zoom fillOpacity floodOpacity " +
+    "stopOpacity strokeDasharray strokeDashoffset strokeMiterlimit strokeOpacity strokeWidth " +
+    "MozAnimationIterationCount MozBoxFlex MozBoxFlexGroup MozLineClamp " +
+    "msAnimationIterationCount msFlex msZoom msFlexGrow msFlexNegative msFlexOrder " +
+    "msFlexPositive msFlexShrink msGridColumn msGridColumnSpan msGridRow msGridRowSpan " +
+    "WebkitAnimationIterationCount WebkitBoxFlex WebKitBoxFlexGroup WebkitBoxOrdinalGroup " +
+    "WebkitColumnCount WebkitColumns WebkitFlex WebkitFlexGrow WebkitFlexPositive " +
+    "WebkitFlexShrink WebkitLineClamp").split(" "),
+);
 
 /**
  * A style-object key as its CSS property name (React's `hyphenateStyleName`): custom

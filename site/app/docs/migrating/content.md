@@ -160,9 +160,12 @@ confirmation prompt), or run the standalone `denext codemod` later.
 > compat layer still loads your npm React libraries from it.)
 
 `migrate` also writes a `.gitignore` for the artifacts it generates —
-`.denext/` (build cache), `out/` (the static export), and (with `--desktop`)
-`desktop-icon.png` — creating the file if absent and appending only the missing
-lines (it never reorders or removes your entries).
+`.denext/` (build cache), `out/` (the static export), with `--desktop`
+`desktop-icon.png` and `/*.app/` (the bundle `deno task desktop` writes into the
+project), and with a Capacitor target the native build outputs (`ios/App/build/`,
+`android/app/build/`, the web assets `cap sync` copies in, …) — creating the file
+if absent and appending only the missing lines (it never reorders or removes your
+entries).
 
 > **npm specifier caveat.** Deno's managed npm resolution binds an npm package's
 > _internal_ `import "react"` to real npm React, not to an import-map alias.
@@ -203,6 +206,22 @@ deno run -A jsr:@denext/denext/cli migrate apps/web \
   --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws
 ```
 
+From the Vite config it also carries the asset directory and two build plugins over (the
+config is read, never run):
+
+- `build.assetsDir` becomes `spa.assetsDir` (`"assets"`, Vite's default, when it is unset), so
+  the built files keep the `/assets/name-HASH.ext` paths a server written for the Vite build
+  serves ([SPA mode › Vite build parity](/docs/spa#vite-build-parity)).
+- TanStack Router's `tanstackRouter({ autoCodeSplitting: true })` becomes
+  `spa.tanstackRouter: { autoCodeSplitting: true }`, so route components stay out of the
+  startup chunk ([SPA mode › Vite build parity](/docs/spa#vite-build-parity)).
+- A plugin that emits a file from `generateBundle` (`this.emitFile({ type: "asset", … })`),
+  imported from your own module, is wired into `denext.config.ts` as
+  `viteEmitterPlugin(<the same call>)` from `denext/plugin-kit`, so the file still lands in the
+  build and the export. An emitter that also uses other build hooks, is declared inline in
+  vite.config, or is called with values from vite.config is listed for review instead (in the
+  summary and in `denext migrate --check`).
+
 The same SPA path also detects a **Create React App** (a `react-scripts` dep, or
 a `public/index.html` with React) and a **generic React SPA** (React plus a root
 `index.html`, no Vite/CRA/Next) — seeding `spa.env` from
@@ -211,6 +230,61 @@ a `public/index.html` with React) and a **generic React SPA** (React plus a root
 
 > Migrating from Remix? That is a route-tree transform, not a SPA import — see
 > [Migrating from Remix](/docs/migrating-remix).
+
+---
+
+## 3c. Adding an iOS / Android target (`--enable-capacitor`)
+
+`--enable-capacitor` gives any migrated app a [Capacitor](/docs/mobile) target,
+the way `--desktop` gives it a desktop one. It covers the SPA path (Vite, CRA,
+generic), a **Next App Router** app (whose static export the shell bundles) and an
+Expo app; a Pages Router or Remix / React Router app is reported as not covered.
+
+```sh
+deno run -A jsr:@denext/denext/cli migrate apps/web --enable-capacitor \
+  --app-id com.example.web --platform ios
+```
+
+It writes, beside the usual files:
+
+- **`capacitor.config.ts`**: `appId` from `--app-id`, else an existing Capacitor
+  config, the Expo app config, `desktop.app.identifier`, or (a placeholder, with a
+  review item) the package name (`@acme/web` → `com.acme.web`); `appName` from the
+  page title (the package name for App Router); `webDir: "out"`. A hand-authored
+  `capacitor.config.*` is kept, and a `webDir` other than `out` is a review item.
+- **the config keys the shell needs**: `spa.precompress: false` (the webview loads
+  files as they are; the App Router export never precompresses) and `mobile.icon`,
+  the app icon `denext mobile assets` / `mobile build` generate from.
+- **`deno task` entries**: `mobile:sync` (export, stamp the OTA manifest,
+  `cap sync`), `mobile:ios` / `mobile:android` (open the IDE) and
+  `mobile:build:ios` / `mobile:build:android` (`denext mobile build`).
+- **`.gitignore`** lines for the native build outputs.
+
+Then it installs the pinned Capacitor 8 packages it lacks (`@capacitor/cli`,
+`core`, and the platforms') as dev dependencies with the project's package manager
+without running the project's lifecycle scripts (a monorepo's own `prepare`, a
+`postinstall`): npm, pnpm and bun get `--ignore-scripts`, e.g.
+`pnpm add -D --ignore-scripts @capacitor/cli@^8.5.2 …`, and Yarn, which rejects
+that flag in Berry, runs with `npm_config_ignore_scripts=true` (Yarn 1) and
+`YARN_ENABLE_SCRIPTS=0` (Berry) in its environment. With no lockfile it does not
+pick a manager for you: it prints the command. With `--platform ios,android` it
+also exports once and runs `npx cap add` for each platform that has no folder yet;
+without it, `cap add` is yours to run.
+
+`--platform` runs the project's own code by design: the export builds the app
+(its `vite.config.ts`, plugins and build-time imports) and `npx cap add` runs the
+installed Capacitor CLI, which reads `capacitor.config.ts`. Use it only on a
+checkout you would build anyway; `--check` lists the commands without running them.
+
+What migrate cannot know is listed for review: a build-time switch the phone build
+may need set differently (an env key such as `VITE_HOSTED_APP_CHANNEL`), backend
+addresses a phone cannot reach (`VITE_HTTP_URL` pointing at localhost), relative
+requests and the desktop-only `spa.proxy` (the shell serves the app from
+`capacitor://localhost` / `https://localhost`), CORS for those two origins on the
+backend, and for an App Router app its route handlers and Server Actions (they
+need a server) and `denext mobile add export-routes`. `denext migrate --check
+--enable-capacitor` shows all of it, the files and the commands, without writing
+or running anything.
 
 ---
 

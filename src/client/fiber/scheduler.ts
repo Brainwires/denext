@@ -162,6 +162,7 @@ export function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   }
   const handle = rootHandleOf(fiber);
   if (!handle) return;
+  if (lane & SyncLane) handle.reveal = false; // urgent work joins it: no longer a pure reveal
   handle.pendingLanes |= lane;
   if (duringRender) return; // picked up by the render-again loop
   if (lane & TransitionLane) scheduleTransitionFlush();

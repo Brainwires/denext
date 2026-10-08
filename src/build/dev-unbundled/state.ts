@@ -41,6 +41,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_mobile": "src/mobile/mod.ts",
   // VirtualMasonry — a client-only subpath of its own (VirtualList users bundle none of it).
   "denext_virtual-masonry": "src/virtual-masonry.ts",
+  // SPA mode's `client:*` deferred mounts: the island rewrite's import (spa-islands.ts).
+  "denext_spa-island": "src/spa-island.ts",
 };
 
 /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */
@@ -56,6 +58,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  "denext/spa-island": "spa-island.js",
 };
 
 const WINDOWS = Deno.build.os === "windows";
@@ -155,6 +158,17 @@ export interface UnbundledDevOptions {
   instrumentationClient?: string | null;
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
   momentumSafeScroll?: boolean;
+  /**
+   * SPA mode: rewrite each module's `client:*` component elements to deferred mounts
+   * (spa-islands.ts), as the SPA build does.
+   */
+  spaIslands?: boolean;
+  /**
+   * compat: package specifiers served as a prebuilt runtime module instead of from the npm
+   * bundle (`lists: "denext"` maps `@legendapp/list/react` → `denext/lists/legend-list`), for
+   * the app's own imports and for the npm bundle's packages alike.
+   */
+  specAliases?: Readonly<Record<string, string>>;
   /**
    * SPA mode: the app's single client entry (absolute path to `main.tsx`). When set,
    * {@link ENTRY_PATH} (with no `?p=`) serves a per-module SPA entry that imports the

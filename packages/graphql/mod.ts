@@ -304,7 +304,9 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       });
 
       const outFile = options.outFile ?? "schema.graphql";
-      if (outFile !== false) {
+      // The SDL is a server artifact (a static export serves no GraphQL endpoint), so an export
+      // writes none — and runs no introspection that could fail it.
+      if (outFile !== false && ctx.mode !== "export") {
         ctx.addBuildStep(async ({ outDir }) => {
           const dest = join(outDir, outFile);
           await Deno.mkdir(join(dest, ".."), { recursive: true });

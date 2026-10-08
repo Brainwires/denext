@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.13
+
+- **A static export publishes the runtime at the default `/_denext/htmx/htmx.min.js` again.**
+  denext 3.4 reserves only its own output under `/_denext/` for `emitFile`, so the build step
+  publishes the runtime at any `path`, and the 2.0.12 hint for the default path is gone.
+
+## 2.0.12
+
+- **The runtime reaches a static export at a `path` outside `/_denext/`.** The build step
+  publishes `htmx.min.js` with `emitFile` at the plugin's `path`, so `denext export` serves it
+  from the site root; it used to be written under `.denext/`, where an export never picked it
+  up. denext reserves `/_denext/` for its own output, so at the default path an export prints how
+  to ship the runtime (`htmx({ path: "/htmx/htmx.min.js" })` and the same `src` on `<Htmx/>`)
+  instead; `denext start` serves the default path from the plugin's handler, as before. On a
+  denext without `emitFile` (before 3.4) the step writes under the build output as before.
+
 ## 2.0.11
 
 - Requires denext ≥ 2.0.0-rc.7: the plugin no longer imports `FRAGMENT` from the `denext/server` barrel (removed there in rc.7), so it links against rc.7's trimmed public surface.

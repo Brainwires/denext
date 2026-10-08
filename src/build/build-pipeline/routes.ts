@@ -79,6 +79,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       classRuntime: ctx.classRuntime,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      usesSingletons: ctx.usesSingletons,
     }),
   }));
   if (globalError) {
@@ -172,6 +173,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,
+    usesSingletons: ctx.usesSingletons,
     // Seed the feature-flag map on the native client (no esbuild `define` here), so an
     // un-folded feature() call agrees with the seeded server render.
     features: featureFlags(ctx.paths.config),
