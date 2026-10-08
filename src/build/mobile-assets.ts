@@ -66,16 +66,28 @@ export interface AssetSources {
   readonly icon: string;
   /** Android's adaptive foreground (a logo on transparency, 108dp canvas); default: the icon. */
   readonly iconForeground?: string;
+  /** Android's adaptive background image (108dp, full bleed); default: the background colour. */
+  readonly iconBackgroundImage?: string;
+  /** Android 13's themed-icon layer (a silhouette is made of it); default: the foreground. */
+  readonly iconMonochrome?: string;
   /** The dark-appearance icon (iOS 18); none when omitted. */
   readonly iconDark?: string;
   /** The splash (a square, ideally 2732²); default: the icon centred on the background. */
   readonly splash?: string;
+  /** The logo centred on the splash background when there is no splash image; default: the icon. */
+  readonly splashIcon?: string;
   /** The dark splash; default when `darkBackground` is set: the icon on it. */
   readonly splashDark?: string;
   /** The icon and splash background. */
   readonly background: Rgb;
+  /** Where {@linkcode AssetSources.background} came from, for the transparency warning. */
+  readonly backgroundFrom?: string;
+  /** The splash background, when it differs from the icon's; default: `background`. */
+  readonly splashBackground?: Rgb;
   /** The dark splash background; dark variants are written only with it or `splashDark`. */
   readonly darkBackground?: Rgb;
+  /** What to add for a sharper icon, named in the warning when the icon is under 1024². */
+  readonly hint?: string;
 }
 
 /** Which platforms to write. */
@@ -190,7 +202,7 @@ async function splashRaster(
   if (image) return flatten(await coverInto(await src.load(image), width, height), background);
   const canvas = solid(width, height, background);
   const box = Math.round(Math.min(width, height) * SPLASH_ICON_RATIO);
-  const icon = await src.fitted(src.spec.icon, box);
+  const icon = await src.fitted(src.spec.splashIcon ?? src.spec.icon, box);
   drawOver(canvas, icon, (width - box) >> 1, (height - box) >> 1);
   return canvas;
 }
@@ -241,7 +253,7 @@ function iosIconJobs(src: Sources): Job[] {
 function iosSplashJobs(src: Sources): Job[] {
   const { spec } = src;
   const variants: { suffix: string; image?: string; bg: Rgb; dark: boolean }[] = [
-    { suffix: "", image: spec.splash, bg: spec.background, dark: false },
+    { suffix: "", image: spec.splash, bg: spec.splashBackground ?? spec.background, dark: false },
   ];
   if (spec.splashDark || spec.darkBackground) {
     variants.push({
@@ -328,14 +340,34 @@ function androidIconJobs(src: Sources): Job[] {
         path: `${dir}/ic_launcher_monochrome.png`,
         what: "themed icon (Android 13+)",
         size: `${layer}×${layer}`,
-        make: async () => await encodePng(silhouette(await foreground(src, layer))),
+        make: async () =>
+          await encodePng(
+            silhouette(
+              spec.iconMonochrome
+                ? await src.fitted(spec.iconMonochrome, layer)
+                : await foreground(src, layer),
+            ),
+          ),
       },
     );
+    const backgroundImage = spec.iconBackgroundImage;
+    if (backgroundImage) {
+      jobs.push({
+        path: `${dir}/ic_launcher_background.png`,
+        what: "adaptive background",
+        size: `${layer}×${layer}`,
+        make: async () =>
+          await encodePng(await coverInto(await src.load(backgroundImage), layer, layer)),
+      });
+    }
   }
+  const background = spec.iconBackgroundImage
+    ? "@mipmap/ic_launcher_background"
+    : "@color/ic_launcher_background";
   const adaptive = new TextEncoder().encode(
     `<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-  <background android:drawable="@color/ic_launcher_background" />
+  <background android:drawable="${background}" />
   <foreground android:drawable="@mipmap/ic_launcher_foreground" />
   <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>
@@ -367,7 +399,7 @@ function androidIconJobs(src: Sources): Job[] {
 function androidSplashJobs(src: Sources): Job[] {
   const { spec } = src;
   const variants: { night: string; image?: string; bg: Rgb }[] = [
-    { night: "", image: spec.splash, bg: spec.background },
+    { night: "", image: spec.splash, bg: spec.splashBackground ?? spec.background },
   ];
   if (spec.splashDark || spec.darkBackground) {
     variants.push({
@@ -395,19 +427,49 @@ function androidSplashJobs(src: Sources): Job[] {
   return jobs;
 }
 
-/** Size warnings for the sources (too small to look sharp at the largest output). */
-async function sourceWarnings(src: Sources): Promise<string[]> {
-  const { spec } = src;
+/** Whether any pixel of `r` is not fully opaque. */
+function hasTransparency(r: Raster): boolean {
+  for (let i = 3; i < r.px.length; i += 4) if (r.px[i] !== 255) return true;
+  return false;
+}
+
+/** The icon's warnings: not square, under 1024² (upscaled), transparent (flattened for iOS). */
+function iconWarnings(
+  spec: AssetSources,
+  icon: Raster,
+  platforms: readonly AssetPlatform[],
+): string[] {
+  const size = `${icon.width}×${icon.height}`;
   const warnings: string[] = [];
-  const icon = await src.load(spec.icon);
-  if (icon.width !== icon.height) {
-    warnings.push(`the icon is ${icon.width}×${icon.height}; it is stretched to a square`);
-  }
+  if (icon.width !== icon.height) warnings.push(`the icon is ${size}; it is stretched to a square`);
   if (Math.min(icon.width, icon.height) < 1024) {
     warnings.push(
-      `the icon is ${icon.width}×${icon.height}; 1024×1024 or larger looks sharp everywhere`,
+      `the icon is ${size}: it is UPSCALED to the 1024×1024 App Store icon and will look ` +
+        "soft. For a sharp icon, " +
+        (spec.hint ?? "pass --icon a 1024×1024 PNG (or save one as assets/icon.png)"),
     );
   }
+  if (platforms.includes("ios") && hasTransparency(icon)) {
+    const from = spec.backgroundFrom ? ` (${spec.backgroundFrom})` : "";
+    warnings.push(
+      `the icon has transparent pixels: the iOS icon is flattened onto ` +
+        `${hexOf(spec.background)}${from}, since App Store icons cannot have an alpha ` +
+        "channel. Use an opaque icon, or set the background colour you want",
+    );
+  }
+  return warnings;
+}
+
+/**
+ * Warnings about the sources: an icon under 1024² (upscaled for the App Store), one with
+ * transparency (flattened, since App Store icons have no alpha), and small splashes.
+ */
+async function sourceWarnings(
+  src: Sources,
+  platforms: readonly AssetPlatform[],
+): Promise<string[]> {
+  const { spec } = src;
+  const warnings = iconWarnings(spec, await src.load(spec.icon), platforms);
   for (const path of [spec.splash, spec.splashDark]) {
     if (!path) continue;
     const s = await src.load(path);
@@ -418,6 +480,23 @@ async function sourceWarnings(src: Sources): Promise<string[]> {
     }
   }
   return warnings;
+}
+
+/** The jobs for each platform and kind asked for. */
+function assetJobs(
+  src: Sources,
+  platforms: readonly AssetPlatform[],
+  kinds: readonly ("icon" | "splash")[],
+): Job[] {
+  const makers: Record<string, (src: Sources) => Job[]> = {
+    "ios:icon": iosIconJobs,
+    "ios:splash": iosSplashJobs,
+    "android:icon": androidIconJobs,
+    "android:splash": androidSplashJobs,
+  };
+  return (["ios", "android"] as const).flatMap((p) =>
+    platforms.includes(p) ? kinds.flatMap((k) => makers[`${p}:${k}`](src)) : []
+  );
 }
 
 /** Whether `root/<dir>` exists as a directory. */
@@ -434,14 +513,19 @@ async function hasDir(root: string, dir: string): Promise<boolean> {
  *
  * @param root The Capacitor project (with `ios/` and / or `android/`).
  * @param spec The sources and colours.
- * @param opts `platforms` limits the output; `dryRun` lists the files and writes nothing.
+ * @param opts `platforms` limits the output; `kinds` to the icons or the splash (default
+ *   both); `dryRun` lists the files and writes nothing.
  * @returns What was (or would be) written, and warnings about the sources.
  * @throws {Error} When a source cannot be read or decoded, or no native project exists.
  */
 export async function generateMobileAssets(
   root: string,
   spec: AssetSources,
-  opts: { platforms?: readonly AssetPlatform[]; dryRun?: boolean } = {},
+  opts: {
+    platforms?: readonly AssetPlatform[];
+    kinds?: readonly ("icon" | "splash")[];
+    dryRun?: boolean;
+  } = {},
 ): Promise<AssetsReport> {
   const wanted = opts.platforms ?? ["ios", "android"];
   const platforms: AssetPlatform[] = [];
@@ -454,11 +538,8 @@ export async function generateMobileAssets(
     );
   }
   const src = new Sources(spec);
-  const warnings = await sourceWarnings(src);
-  const jobs = [
-    ...(platforms.includes("ios") ? [...iosIconJobs(src), ...iosSplashJobs(src)] : []),
-    ...(platforms.includes("android") ? [...androidIconJobs(src), ...androidSplashJobs(src)] : []),
-  ];
+  const warnings = await sourceWarnings(src, platforms);
+  const jobs = assetJobs(src, platforms, opts.kinds ?? ["icon", "splash"]);
   if (!opts.dryRun) {
     for (const job of jobs) {
       const path = join(root, job.path);

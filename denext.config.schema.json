@@ -1116,6 +1116,44 @@
       "description": "Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors (per-flavor app id, name, server URL, icon and splash). See https://denext.dev/docs/mobile-build.",
       "type": "object",
       "properties": {
+        "icon": {
+          "description": "The app icon `denext mobile assets` (and `denext mobile build`, replacing Capacitor's placeholder) generates every size from: a PNG / JPEG / WebP, 1024×1024 or larger, relative to the project. `denext migrate` writes it from the icon the app already has (an Expo app config, the web manifest, the apple-touch-icon). Unset, it is found the same way at each run. `--icon` and a flavor's `icon` take precedence. See https://denext.dev/docs/mobile-build.",
+          "type": "string"
+        },
+        "backgroundColor": {
+          "description": "The icon background, `#rrggbb`: a transparent icon is flattened onto it for iOS (App Store icons have no alpha channel), and it is Android's adaptive background and the splash background. Default `#ffffff`.",
+          "type": "string"
+        },
+        "adaptiveIcon": {
+          "description": "Android adaptive-icon layers (relative to the project).",
+          "type": "object",
+          "properties": {
+            "foreground": {
+              "description": "The foreground layer (a logo on transparency, 108dp canvas); default: the icon, scaled into the 72dp viewport.",
+              "type": "string"
+            },
+            "backgroundImage": {
+              "description": "A full-bleed background image; default: MobileConfig.backgroundColor.",
+              "type": "string"
+            },
+            "monochrome": {
+              "description": "The Android 13 themed-icon layer (its shape is used, in white); default: the foreground.",
+              "type": "string"
+            }
+          }
+        },
+        "splashIcon": {
+          "description": "A logo centred on the splash background (default: the icon).",
+          "type": "string"
+        },
+        "splashBackgroundColor": {
+          "description": "The splash background, `#rrggbb`, when it differs from backgroundColor.",
+          "type": "string"
+        },
+        "darkBackgroundColor": {
+          "description": "The dark-mode splash background, `#rrggbb`; dark splash variants are written with it.",
+          "type": "string"
+        },
         "flavors": {
           "description": "Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`. Names are lowercase letters, digits and `-`.",
           "type": "object",

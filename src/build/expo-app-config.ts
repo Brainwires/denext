@@ -245,10 +245,38 @@ export interface ExpoAppConfig {
   linkDomains: string[];
   /** The statically known subset the app reads at run time (`expo-constants`). */
   runtimeConfig: Record<string, unknown>;
+  /** The app icon, adaptive-icon layers and splash the config names. */
+  icons: ExpoIcons;
   /** Fields that depend on code (`ios.bundleIdentifier`, …) and could not be read. */
   unresolved: string[];
   /** Notes for the report. */
   notes: string[];
+}
+
+/**
+ * The icon fields of an Expo app config, as written (paths relative to the app directory), for
+ * `denext mobile assets`' icon-source resolver (./mobile-icon-source.ts).
+ */
+export interface ExpoIcons {
+  /** `icon`: the app icon for every platform. */
+  icon?: string;
+  /** `ios.icon` (a PNG, or an Icon Composer `.icon` folder the resolver cannot rasterize). */
+  iosIcon?: string;
+  /** `android.icon`: the legacy launcher icon. */
+  androidIcon?: string;
+  /** `android.adaptiveIcon`: the adaptive layers. */
+  adaptive: {
+    foregroundImage?: string;
+    backgroundColor?: string;
+    backgroundImage?: string;
+    monochromeImage?: string;
+  };
+  /** `splash`, else the `expo-splash-screen` plugin's options. */
+  splash: { image?: string; backgroundColor?: string; darkBackgroundColor?: string };
+  /** The top-level `backgroundColor`. */
+  backgroundColor?: string;
+  /** Icon fields the config computes in code (`icon`, `android.adaptiveIcon.foregroundImage`, …). */
+  unresolved: string[];
 }
 
 /** The config files Expo reads, in its order of precedence. */
@@ -534,6 +562,7 @@ export async function readExpoAppConfig(dir: string): Promise<ExpoAppConfig> {
       buildPropertiesOf(at(json, ["plugins"])),
     linkDomains: [...new Set(both("ios", "associatedDomains").flatMap(applinksHost))],
     runtimeConfig: runtimeSubset(json, d),
+    icons: iconsOf(d, json),
     unresolved: [...new Set(unresolved)],
     notes,
   };
@@ -569,4 +598,44 @@ function runtimeSubset(
     if (v !== undefined) out[key] = v;
   }
   return out;
+}
+
+/** The static options of the `expo-splash-screen` plugin entry in `value`, or undefined. */
+function splashPluginOptions(value: unknown): Record<string, unknown> | undefined {
+  const list = Array.isArray(value) ? value : [];
+  const entry = list.find((e) => Array.isArray(e) && e[0] === "expo-splash-screen");
+  const options = Array.isArray(entry) ? known(entry[1]) : undefined;
+  return options && typeof options === "object" ? options as Record<string, unknown> : undefined;
+}
+
+/** The icon fields: the dynamic config's where it sets them, else app.json's. */
+function iconsOf(
+  dynamic: Record<string, unknown> | null,
+  json: Record<string, unknown> | null,
+): ExpoIcons {
+  const unresolved: string[] = [];
+  const get = (...path: string[]) => str(pick(dynamic, json, path, unresolved));
+  const plugin = splashPluginOptions(at(dynamic, ["plugins"])) ??
+    splashPluginOptions(at(json, ["plugins"]));
+  const dark = plugin?.dark as Record<string, unknown> | undefined;
+  const icons: ExpoIcons = {
+    icon: get("icon"),
+    iosIcon: get("ios", "icon"),
+    androidIcon: get("android", "icon"),
+    adaptive: {
+      foregroundImage: get("android", "adaptiveIcon", "foregroundImage"),
+      backgroundColor: get("android", "adaptiveIcon", "backgroundColor"),
+      backgroundImage: get("android", "adaptiveIcon", "backgroundImage"),
+      monochromeImage: get("android", "adaptiveIcon", "monochromeImage"),
+    },
+    splash: {
+      image: get("splash", "image") ?? str(plugin?.image),
+      backgroundColor: get("splash", "backgroundColor") ?? str(plugin?.backgroundColor),
+      darkBackgroundColor: str(dark?.backgroundColor),
+    },
+    backgroundColor: get("backgroundColor"),
+    unresolved: [],
+  };
+  icons.unresolved = [...new Set(unresolved)];
+  return icons;
 }

@@ -29,6 +29,7 @@ import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
 import { manifestMetaDataValue } from "./mobile-native-config.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
+import { capacitorPlaceholders } from "./mobile-icon-source.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -649,34 +650,58 @@ async function androidRes(root: string, prefix: string, name: string): Promise<b
 const ASSET_FIX = "generate every size from one 1024×1024 icon and a splash image (e.g. " +
   "`npx @capacitor/assets generate`), then rebuild";
 
+const PLACEHOLDER_FIX = "run `denext mobile assets` (it takes `mobile.icon`, an Expo app " +
+  "config's icon, the web manifest's icon or the apple-touch-icon; `--icon <png>` names one), " +
+  "then rebuild — `denext mobile build` also replaces the placeholder itself";
+
+/** The finding for a platform whose launcher icon is still Capacitor's placeholder. */
+async function placeholderIcon(
+  root: string,
+  platform: "ios" | "android",
+): Promise<MobileDoctorFinding[]> {
+  const files = await capacitorPlaceholders(root, platform, "icon");
+  if (files.length === 0) return [];
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: `${files[0]}${files.length > 1 ? ` (and ${files.length - 1} more)` : ""} is ` +
+      "still Capacitor's placeholder icon (the Capacitor logo), which App Review rejects " +
+      "(guideline 2.1, placeholder content) and which ships as the app's home-screen icon",
+    fix: PLACEHOLDER_FIX,
+  }];
+}
+
+/** The iOS App Store icon: missing, or still the placeholder. */
+async function iosIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
+  if (!p.hasIos) return [];
+  const icons = await catalogImages(join(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"));
+  if (icons && icons.length > 0) return await placeholderIcon(p.root, "ios");
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: "ios/App/App/Assets.xcassets/AppIcon.appiconset has no icon image",
+    fix: ASSET_FIX,
+  }];
+}
+
+/** The Android launcher icon: missing, or still the placeholder. */
+async function androidIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
+  if (!p.hasAndroid) return [];
+  if (await androidRes(p.root, "mipmap", "ic_launcher")) {
+    return await placeholderIcon(p.root, "android");
+  }
+  return [{
+    check: "app-icons",
+    level: "error",
+    message: "android/app/src/main/res has no mipmap*/ic_launcher icon",
+    fix: ASSET_FIX,
+  }];
+}
+
 const appIcons: Check = {
   id: "app-icons",
   profiles: ["store"],
-  run: async (p) => {
-    const out: MobileDoctorFinding[] = [];
-    if (p.hasIos) {
-      const icons = await catalogImages(
-        join(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"),
-      );
-      if (!icons || icons.length === 0) {
-        out.push({
-          check: "app-icons",
-          level: "error",
-          message: "ios/App/App/Assets.xcassets/AppIcon.appiconset has no icon image",
-          fix: ASSET_FIX,
-        });
-      }
-    }
-    if (p.hasAndroid && !(await androidRes(p.root, "mipmap", "ic_launcher"))) {
-      out.push({
-        check: "app-icons",
-        level: "error",
-        message: "android/app/src/main/res has no mipmap*/ic_launcher icon",
-        fix: ASSET_FIX,
-      });
-    }
-    return out;
-  },
+  run: async (p) => [...await iosIconFindings(p), ...await androidIconFindings(p)],
 };
 
 const splash: Check = {

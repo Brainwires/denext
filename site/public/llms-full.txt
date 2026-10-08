@@ -389,8 +389,11 @@ prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-no
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
 manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
-Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
-`denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
+Ship without a hosted service: `denext mobile assets` (every icon + splash from one image; with
+no `--icon` it takes `mobile.icon`, `assets/icon.png`, an Expo app config's icon (a sibling
+monorepo app's too, read statically), the web manifest's icon, the apple-touch-icon, then a PNG
+favicon, and says which; `migrate` records it as `mobile.icon`, `mobile build` replaces Capacitor's
+placeholder icon), `denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
 `.ipa` / `.aab` in `dist/mobile/`; flavors in `mobile.flavors`), `denext mobile submit
 ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fastlane keep it:
 `denext mobile add fastlane [--ci]` writes `fastlane/` (Appfile from capacitor.config, Matchfile,

@@ -55,6 +55,11 @@ export interface MigrateCheckReport {
   wontMigrate: MigrateFinding[];
   /** What migrates but needs a human look or a follow-up step. */
   review: MigrateFinding[];
+  /**
+   * The app icon `denext mobile assets` / `mobile build` would use and where it was found
+   * (`icon` null: none), for an SPA / Expo migration.
+   */
+  appIcon?: { icon: string | null; kind: string | null; size?: string; lines: string[] };
   /** How the app's dependencies are handled; null when blocked. */
   dependencies: Pick<MigrateResult, "aliased" | "passthrough" | "dropped" | "flagged"> | null;
   /** Why the migration would fail (verdict `blocked`). */
@@ -254,6 +259,22 @@ function spaProxyFindings(r: MigrateResult): MigrateFinding[] {
   }];
 }
 
+/** A Capacitor / Expo app with no icon to generate the native icons from, or a small one. */
+function appIconFindings(r: MigrateResult): MigrateFinding[] {
+  const icon = r.spa?.appIcon;
+  if (!icon?.mobile) return [];
+  if (icon.icon) {
+    const warning = icon.lines.find((l) => l.startsWith("warning: "));
+    return warning ? [{ item: `app icon ${icon.icon}`, reason: warning.slice(9) }] : [];
+  }
+  return [{
+    item: "app icon",
+    reason: "none found (no mobile.icon, Expo icon, web manifest icon, apple-touch-icon or PNG " +
+      "favicon); add a 1024×1024 PNG and set `mobile.icon` to it in denext.config.ts, or the " +
+      "native app keeps Capacitor's placeholder icon",
+  }];
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
@@ -265,7 +286,13 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...next.wont,
       ...expo.wont,
     ],
-    review: [...next.review, ...spaProxyFindings(r), ...transformFindings(r), ...expo.review],
+    review: [
+      ...next.review,
+      ...spaProxyFindings(r),
+      ...transformFindings(r),
+      ...expo.review,
+      ...appIconFindings(r),
+    ],
   };
 }
 
@@ -308,6 +335,16 @@ export async function checkMigration(
     changes: run.changes.map(({ content: _content, ...c }) => c),
     wontMigrate: wont,
     review,
+    ...(r.spa?.appIcon
+      ? {
+        appIcon: {
+          icon: r.spa.appIcon.icon,
+          kind: r.spa.appIcon.kind,
+          ...(r.spa.appIcon.size ? { size: r.spa.appIcon.size } : {}),
+          lines: r.spa.appIcon.lines,
+        },
+      }
+      : {}),
     dependencies: {
       aliased: r.aliased,
       passthrough: r.passthrough,

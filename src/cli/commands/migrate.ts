@@ -4,7 +4,7 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { type MigrateOptions, migrateProject } from "../../build/migrate.ts";
+import { type AppIconReport, type MigrateOptions, migrateProject } from "../../build/migrate.ts";
 import {
   checkMigration,
   type MigrateCheckReport,
@@ -109,6 +109,7 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
     `    tailwind: ${s.tailwindInput ? `detected (${s.tailwindInput})` : "not detected"}` +
       (s.rootId ? ` · mount #${s.rootId}` : ""),
   );
+  reportAppIcon(s.appIcon);
   if (!desktop) return;
   const proxyNote = s.proxy
     ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`
@@ -129,6 +130,19 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
       : "    icon: none (deno desktop default) — set `spa.desktop.icon` in" +
         " denext.config.ts, then re-run migrate to wire --icon",
   );
+}
+
+/** The app icon migrate found for `denext mobile assets` / `mobile build`, and where it went. */
+function reportAppIcon(icon: AppIconReport | undefined): void {
+  if (!icon) return;
+  const where = icon.recorded
+    ? " — recorded as `mobile.icon` in denext.config.ts"
+    : icon.icon && icon.kind !== "config"
+    ? " — denext.config.ts was kept, so set `mobile.icon` there to pin it"
+    : "";
+  const [first, ...rest] = icon.lines;
+  console.log(`    ${first}${where}`);
+  for (const line of rest) console.log(`      ${line}`);
 }
 
 /** What the Remix route-tree transform did. */
@@ -373,6 +387,7 @@ function reportExpo(r: MigrateResult): void {
     `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
   );
   reportExpoConfig(e);
+  reportAppIcon(s.appIcon);
   reportExpoDesktop(e.desktopPackages);
   reportExpoDeps(e.deps);
   reportExpoShell(e);
@@ -442,6 +457,10 @@ function printCheck(report: MigrateCheckReport): void {
     `\n  dependencies: ${d.aliased.length} aliased to denext · ${d.passthrough.length} npm ` +
       `passthrough · ${d.dropped.length} dropped · ${d.flagged.length} unsupported`,
   );
+  if (report.appIcon) {
+    console.log("\n  app icon (for `denext mobile assets` / `mobile build`):");
+    for (const line of report.appIcon.lines) console.log(`    ${line}`);
+  }
   printFindings("won't migrate", report.wontMigrate);
   printFindings("review", report.review);
   const verdict = report.verdict === "ready"

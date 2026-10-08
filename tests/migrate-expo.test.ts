@@ -467,6 +467,7 @@ Deno.test("expoMobilePlan: nothing to add → no command", () => {
     plugins: [],
     linkDomains: [],
     runtimeConfig: {},
+    icons: { adaptive: {}, splash: {}, unresolved: [] },
     unresolved: [],
     notes: [],
   });
@@ -549,6 +550,7 @@ const NO_CONFIG = {
   plugins: [],
   linkDomains: [],
   runtimeConfig: {},
+  icons: { adaptive: {}, splash: {}, unresolved: [] },
   unresolved: [],
   notes: [],
 };

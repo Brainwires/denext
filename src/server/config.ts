@@ -335,8 +335,41 @@ export interface MobileFlavorConfig {
   env?: Record<string, string>;
 }
 
+/** Android adaptive-icon layers under {@link MobileConfig.adaptiveIcon}. */
+export interface MobileAdaptiveIconConfig {
+  /** The foreground layer (a logo on transparency, 108dp canvas); default: the icon, scaled into the 72dp viewport. */
+  foreground?: string;
+  /** A full-bleed background image; default: {@link MobileConfig.backgroundColor}. */
+  backgroundImage?: string;
+  /** The Android 13 themed-icon layer (its shape is used, in white); default: the foreground. */
+  monochrome?: string;
+}
+
 /** Settings for `denext mobile build` / `denext mobile assets` (the Capacitor shell). */
 export interface MobileConfig {
+  /**
+   * The app icon `denext mobile assets` (and `denext mobile build`, replacing Capacitor's
+   * placeholder) generates every size from: a PNG / JPEG / WebP, 1024×1024 or larger, relative
+   * to the project. `denext migrate` writes it from the icon the app already has (an Expo app
+   * config, the web manifest, the apple-touch-icon). Unset, it is found the same way at each
+   * run. `--icon` and a flavor's `icon` take precedence. See
+   * {@link https://denext.dev/docs/mobile-build}.
+   */
+  icon?: string;
+  /**
+   * The icon background, `#rrggbb`: a transparent icon is flattened onto it for iOS (App Store
+   * icons have no alpha channel), and it is Android's adaptive background and the splash
+   * background. Default `#ffffff`.
+   */
+  backgroundColor?: string;
+  /** Android adaptive-icon layers (relative to the project). */
+  adaptiveIcon?: MobileAdaptiveIconConfig;
+  /** A logo centred on the splash background (default: the icon). */
+  splashIcon?: string;
+  /** The splash background, `#rrggbb`, when it differs from {@link backgroundColor}. */
+  splashBackgroundColor?: string;
+  /** The dark-mode splash background, `#rrggbb`; dark splash variants are written with it. */
+  darkBackgroundColor?: string;
   /**
    * Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`.
    * Names are lowercase letters, digits and `-`.

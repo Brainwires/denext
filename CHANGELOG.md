@@ -55,6 +55,22 @@ and this project adheres to
 
 ### Added
 
+- **A Capacitor app gets the icon it already has, automatically.** With no `--icon`,
+  `denext mobile assets` takes `mobile.icon` from `denext.config.ts` (new, with
+  `mobile.backgroundColor`, `mobile.adaptiveIcon`, `mobile.splashIcon`,
+  `mobile.splashBackgroundColor` and `mobile.darkBackgroundColor`), then `assets/icon.png`, then
+  an Expo app config in the project or a sibling monorepo app (`icon`, `android.adaptiveIcon`,
+  `splash`; `app.config.ts` is read statically and a computed value is reported, never run), then
+  the web manifest's largest square icon (a maskable one as the adaptive foreground, with
+  `background_color`), the apple-touch-icon and the largest PNG favicon, and reports which one it
+  chose and why it passed the others over. An icon under 1024×1024 is upscaled with a warning
+  naming a better source, and a transparent one is flattened onto the background with a warning.
+  `denext mobile build` replaces Capacitor's placeholder icon (and splash) for the platform it
+  builds, `denext mobile doctor --store` reports the placeholder as an error, and `denext migrate`
+  (the Vite / CRA path and `--from expo`) records the chosen icon as `mobile.icon`, prints it in
+  its report and `--check`, and adds a review item for a Capacitor or Expo app that has none (or
+  only one under 1024×1024).
+
 - **TOTP secrets are encrypted at rest.** The MFA layer seals each secret before any adapter
   stores it — AES-256-GCM under a key HKDF-SHA-256-derived from the auth `secret` (a dedicated
   label; a random 96-bit nonce per seal; the user id bound in as additional data) — as

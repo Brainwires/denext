@@ -24,6 +24,12 @@ import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
+import {
+  formatIconSearch,
+  type IconSearch,
+  mobileIconConfig,
+  resolveIconSource,
+} from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
   capacitorConfigSource,
@@ -315,7 +321,25 @@ export interface SpaMigrateInfo {
   desktopWritten: boolean;
   /** The `--icon` file the desktop task uses (always `desktop-icon.png` — composed by `export` from `spa.desktop.icon` or an auto-detected web icon); undefined when no icon was detected at migrate time. */
   desktopIcon?: string;
+  /** The app icon migrate found for a mobile build, recorded as `mobile.icon` (see {@link AppIconReport}). */
+  appIcon?: AppIconReport;
   nodeModulesDir: "manual" | "auto";
+}
+
+/** The app icon migrate found (or did not) for `denext mobile assets` / `mobile build`. */
+export interface AppIconReport {
+  /** The icon, relative to the project (`./public/apple-touch-icon.png`); null when none was found. */
+  icon: string | null;
+  /** The rule that picked it (`expo`, `manifest`, `apple-touch-icon`, …). */
+  kind: string | null;
+  /** Its pixel size (`180×180`). */
+  size?: string;
+  /** The project is a Capacitor / Expo app, so a missing icon needs a look. */
+  mobile: boolean;
+  /** `mobile.icon` (and its layers) was written into the generated denext.config.ts. */
+  recorded: boolean;
+  /** The report lines: the source, a size warning, what was passed over. */
+  lines: string[];
 }
 
 /** Result of a migration run (for the CLI to print). */
@@ -1859,6 +1883,8 @@ function spaConfigSource(o: {
   desktopPackages?: readonly string[];
   /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
   noPrecompress?: boolean;
+  /** The `mobile` block pinning the app icon migrate found, and the source it came from. */
+  mobileIcon?: { config: Record<string, unknown>; from: string };
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
@@ -1894,6 +1920,7 @@ function spaConfigSource(o: {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
+    mobileIconLines(o.mobileIcon) +
     (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
@@ -1916,6 +1943,82 @@ function spaConfigSource(o: {
       : "") +
     `  },\n` +
     `} satisfies DenextConfig;\n`;
+}
+
+/** A plain value as TypeScript source: identifier keys unquoted, nested objects inline. */
+function tsValue(value: unknown): string {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value).map(([k, v]) =>
+      `${/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)}: ${tsValue(v)}`
+    );
+    return `{ ${entries.join(", ")} }`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * The generated config's `mobile` block: the app icon `denext mobile assets` and
+ * `denext mobile build` generate from, pinned so a later build does not pick another.
+ */
+function mobileIconLines(m: { config: Record<string, unknown>; from: string } | undefined): string {
+  if (!m) return "";
+  const fields = Object.entries(m.config).map(([k, v]) => `    ${k}: ${tsValue(v)},\n`).join("");
+  return `  // The app icon \`denext mobile assets\` / \`mobile build\` generate from (found by migrate\n` +
+    `  // in ${m.from}); point it at a 1024×1024 PNG for a sharp App Store icon.\n` +
+    `  mobile: {\n${fields}  },\n`;
+}
+
+/** What {@linkcode migrateAppIcon} found: the report, and the config facts that record it. */
+interface MigratedIcon {
+  report: AppIconReport;
+  /** Spread into the config facts: `mobileIcon` when there is an icon to record. */
+  facts: { mobileIcon?: { config: Record<string, unknown>; from: string } };
+}
+
+/** No icon to record: the report alone. */
+function noIcon(mobile: boolean, lines: string[]): MigratedIcon {
+  return { report: { icon: null, kind: null, mobile, recorded: false, lines }, facts: {} };
+}
+
+/** The report, saying whether `mobile.icon` landed in a config migrate wrote. */
+function appIconInfo(icon: MigratedIcon, configWritten: boolean): AppIconReport {
+  return { ...icon.report, recorded: configWritten && icon.facts.mobileIcon !== undefined };
+}
+
+/**
+ * Find the app icon for the migrated app, and the `mobile` config that records it.
+ *
+ * @param dir The project.
+ * @param mobile The project is a Capacitor / Expo app.
+ * @returns The report, and the config block when an icon was found.
+ */
+async function migrateAppIcon(
+  dir: string,
+  mobile: boolean,
+): Promise<MigratedIcon> {
+  let search: IconSearch;
+  try {
+    search = await resolveIconSource(dir);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return noIcon(mobile, [`icon source: ${message}`]);
+  }
+  const s = search.source;
+  const lines = formatIconSearch(search);
+  if (!s) return noIcon(mobile, lines);
+  const config = mobileIconConfig(dir, s);
+  return {
+    report: {
+      icon: config.icon as string,
+      kind: s.kind,
+      size: `${s.width}×${s.height}`,
+      mobile,
+      recorded: false,
+      lines,
+    },
+    // A `mobile.icon` already in the project's config is not written again.
+    facts: s.kind === "config" ? {} : { mobileIcon: { config, from: s.from } },
+  };
 }
 
 /**
@@ -2455,11 +2558,15 @@ async function migrateSpaProject(
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
   const facts = await spaSourceFacts(dir, deps, options, source);
+  const icon = await migrateAppIcon(
+    dir,
+    await anyExists(dir, ["capacitor.config.ts", "capacitor.config.json", "capacitor.config.js"]),
+  );
 
   const nodeModulesDir = manual ? "manual" : "auto";
   const files = await writeSpaProjectFiles(
     dir,
-    facts,
+    { ...facts, ...icon.facts },
     imports,
     nodeModulesDir,
     R,
@@ -2472,6 +2579,7 @@ async function migrateSpaProject(
     configWritten: files.configWritten,
     desktopWritten: files.desktopWritten,
     desktopIcon: files.desktopIcon,
+    appIcon: appIconInfo(icon, files.configWritten),
     nodeModulesDir,
   });
 }
@@ -2590,6 +2698,7 @@ async function migrateExpoProject(
       written,
     );
   }
+  const icon = await migrateAppIcon(dir, true);
   const facts = {
     entry: entry.entry,
     title,
@@ -2599,6 +2708,7 @@ async function migrateExpoProject(
     reactNative: true,
     desktopPackages,
     noPrecompress: true,
+    ...icon.facts,
   };
   const configWritten = await writeIfWritable(
     join(dir, "denext.config.ts"),
@@ -2646,6 +2756,7 @@ async function migrateExpoProject(
       tailwind: false,
       configWritten,
       desktopWritten: false,
+      appIcon: appIconInfo(icon, configWritten),
       nodeModulesDir,
     },
     expo: {
