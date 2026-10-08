@@ -26,10 +26,12 @@ Upgrade notes for 3.4. Plugin authors:
   The first-party plugins skip or redirect their output under `denext export`:
   `@denext/graphql` writes no SDL, `@denext/openapi` publishes the document at its `path`
   (nothing with `expose: "dev"`), `@denext/pages-router` skips its prerender in a hybrid
-  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime only at a `path` outside
-  `/_denext/` (this may change while the `emitFile` reservation is narrowed).
-- **`emitFile` refuses the build's own paths:** `index.html`, anything under `_denext/` and the
-  `spa.assetsDir` directory (compared without case).
+  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime into the export at its
+  `path` (the default `/_denext/htmx/htmx.min.js` included).
+- **`emitFile` refuses the build's own paths:** `index.html`, denext's output under `_denext/`
+  (`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`) and the
+  `spa.assetsDir` directory (compared without case), and in an export any file the build already
+  wrote (a rendered page, a client chunk). Other `_denext/` paths are open to plugins.
 
 Apps:
 
@@ -310,8 +312,8 @@ Apps:
   at its `path` (not with `expose: "dev"`), `@denext/graphql` 0.2.1 writes no SDL,
   `@denext/pages-router` 0.11.1 skips its prebuild and prerender in a hybrid (app/ + pages/)
   export, whose `out/` never took them (a failing `pages/` build failed the export), and
-  `@denext/htmx` 2.0.12 publishes its runtime at a `path` outside `/_denext/` (at the default
-  path an export says how to ship it). (3.4.0 correctness audit.)
+  `@denext/htmx` 2.0.13 publishes its runtime into the export at its `path` (the default
+  `/_denext/htmx/htmx.min.js` included). (3.4.0 correctness audit.)
 
 ### Security
 
@@ -340,8 +342,13 @@ Apps:
   (user HTML rendered into the page) could fill a Suspense hole or a deferred value. It now
   reads only direct children of `<body>`, where the server streams them.
 - **A plugin's `emitFile` can't replace the build's own output.** It refuses `index.html` (the
-  HTML shell), anything under `_denext/` (the client and denext's files) and the
-  `spa.assetsDir` directory, compared without case.
+  HTML shell), denext's output under `_denext/` (`client/`, `pages/`, `fonts/`, `ota.json`,
+  `platform.txt`, `desktop-preload.js`) and the `spa.assetsDir` directory, compared without
+  case, and in an export any file the build already wrote there (a rendered page, a client
+  chunk; a same-named `public/` file can still be replaced). The rest of `_denext/` stays open,
+  so `@denext/htmx` 2.0.13 publishes its runtime at its default `/_denext/htmx/htmx.min.js`
+  again. An App Router export now runs the build steps before writing the app-links files and
+  the desktop preload, as a SPA export does, so those are the build's.
 - **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`.** Only the bare `_denext` was
   refused; a directory under it, or under the app-links or Vite-manifest directories, would have
   mixed the client with what those paths serve.

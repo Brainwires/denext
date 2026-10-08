@@ -10,6 +10,7 @@ import { join } from "@std/path";
 import {
   applyPlugins,
   type DenextPlugin,
+  listBuiltFiles,
   type PluginBuildContext,
   resetPlugins,
   runPluginBuildSteps,
@@ -104,9 +105,11 @@ Deno.test("emitFile: refuses a path that could leave the site root", async () =>
   }
 });
 
-// Audit 3.4.0 N2: a build step may not replace what the build itself publishes — the client
-// output (`_denext/…`, or `spa.assetsDir`) and the HTML shell (`index.html`).
-Deno.test("emitFile: refuses the client output and the HTML shell", async () => {
+// Audit 3.4.0 N2: a build step may not replace what the build itself publishes — its output
+// under `_denext/` (the client, Pages Router and font directories, the OTA manifest, the platform
+// stamp, the desktop preload), the `spa.assetsDir` client directory and the HTML shell
+// (`index.html`). The rest of `_denext/` is open: `@denext/htmx` publishes its runtime there.
+Deno.test("emitFile: refuses the build's own output and the HTML shell, not the rest of _denext/", async () => {
   resetPlugins();
   const tmp = await Deno.makeTempDir({ prefix: "denext_emit_reserved_" });
   try {
@@ -114,12 +117,28 @@ Deno.test("emitFile: refuses the client output and the HTML shell", async () => 
       "index.html",
       "INDEX.HTML",
       "_denext/client/index.js",
+      "_denext/client/x.js",
+      "_denext/client",
       "_denext/ota.json",
+      "_denext/platform.txt",
+      "_denext/desktop-preload.js",
+      "_denext/pages/about.js",
+      "_denext/fonts/inter.woff2",
       "_DENEXT/client/x.js",
+      "_Denext/OTA.json",
       "assets/index-ABCD1234.js",
       "Assets/x.css",
+      "assets",
     ];
-    const allowed = ["sub/index.html", "assets-extra/x.js", "denext/x.js", "licenses.json"];
+    const allowed = [
+      "sub/index.html",
+      "assets-extra/x.js",
+      "denext/x.js",
+      "licenses.json",
+      "_denext/htmx/htmx.min.js",
+      "_denext/client-extra/x.js",
+      "_denext/ota.json.bak",
+    ];
     const refused: string[] = [];
     await register({
       name: "reserved-emitter",
@@ -147,6 +166,47 @@ Deno.test("emitFile: refuses the client output and the HTML shell", async () => 
     for (const fileName of allowed) {
       assertEquals(await Deno.readTextFile(join(tmp, "site", fileName)), "ok");
     }
+  } finally {
+    resetPlugins();
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("emitFile: refuses a file the build already wrote (builtFiles), without case", async () => {
+  resetPlugins();
+  const tmp = await Deno.makeTempDir({ prefix: "denext_emit_built_" });
+  try {
+    const site = join(tmp, "site");
+    await Deno.mkdir(join(site, "about"), { recursive: true });
+    await Deno.writeTextFile(join(site, "about", "index.html"), "page");
+    await Deno.writeTextFile(join(site, "Robots.txt"), "build");
+    const builtFiles = await listBuiltFiles(site);
+    assertEquals([...builtFiles].sort(), ["about/index.html", "robots.txt"]);
+    assertEquals((await listBuiltFiles(join(tmp, "missing"))).size, 0);
+    const refused: string[] = [];
+    await register({
+      name: "overwriter",
+      setup(ctx) {
+        ctx.addBuildStep(async (b) => {
+          for (const fileName of ["about/index.html", "ABOUT/Index.html", "robots.txt"]) {
+            await assertRejects(
+              () => b.emitFile({ fileName, source: "plugin" }),
+              Error,
+              "the build already wrote that file",
+            );
+            refused.push(fileName);
+          }
+          await b.emitFile({ fileName: "about/extra.txt", source: "plugin" });
+        });
+      },
+    });
+    await runPluginBuildSteps(
+      { projectRoot: tmp, appDir: tmp, outDir: tmp, config: {} },
+      { emitDir: site, builtFiles },
+    );
+    assertEquals(refused.length, 3);
+    assertEquals(await Deno.readTextFile(join(site, "about", "index.html")), "page");
+    assertEquals(await Deno.readTextFile(join(site, "about", "extra.txt")), "plugin");
   } finally {
     resetPlugins();
     await Deno.remove(tmp, { recursive: true });
@@ -296,6 +356,47 @@ Deno.test({
     );
     assertEquals(JSON.parse(served), { modules: null });
     assertEquals(robots, "emitted");
+  } finally {
+    resetPlugins();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "emitFile, App Router export: a build step cannot overwrite a page the export rendered",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  resetPlugins();
+  const overwriter = `{
+  name: "overwriter",
+  setup(ctx) {
+    ctx.addBuildStep(async (b) => {
+      try {
+        await b.emitFile({ fileName: "about/index.html", source: "plugin" });
+      } catch (err) {
+        await b.emitFile({ fileName: "refused.txt", source: String(err) });
+      }
+    });
+  },
+}`;
+  const dir = await project(
+    "denext_emit_overwrite_",
+    `export default { plugins: [${overwriter}] };\n`,
+    {
+      "app/page.tsx": `export default function Page() { return <h1>home</h1>; }\n`,
+      "app/about/page.tsx": `export default function About() { return <h1>about page</h1>; }\n`,
+    },
+  );
+  try {
+    await staticExport(dir);
+    const page = await Deno.readTextFile(join(dir, "out", "about", "index.html"));
+    assert(page.includes("about page"), "the rendered page survives");
+    assert(
+      (await Deno.readTextFile(join(dir, "out", "refused.txt"))).includes(
+        "the build already wrote that file",
+      ),
+    );
   } finally {
     resetPlugins();
     await Deno.remove(dir, { recursive: true });

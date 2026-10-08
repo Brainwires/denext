@@ -18,6 +18,8 @@ import type { DenextConfig } from "../server/config.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
+import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts";
+import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 import type { CommandSpec } from "../cli/command.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
@@ -101,7 +103,9 @@ export interface PluginBuildContext extends PluginPrepareContext {
    * them, so an emitted file replaces a same-named public one); in `denext build` it lands in
    * `<outDir>/emitted/`, which `denext start` serves at the same URL, ahead of `public/`.
    * Resolves once the file is written. Rejects a path outside the site root and one the build
-   * publishes itself: `index.html`, anything under `_denext/` and the `spa.assetsDir` directory.
+   * publishes itself: `index.html`, denext's own output under `_denext/` (`client/`, `pages/`,
+   * `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the `spa.assetsDir` directory and,
+   * in an export, any file the build already wrote there (a rendered page, a client chunk).
    */
   emitFile(asset: EmittedAsset): Promise<void>;
   /**
@@ -272,6 +276,11 @@ export interface RunBuildStepsOptions {
   readonly emitDir?: string;
   /** The client bundle's modules, when the build collected them. */
   readonly clientModules?: readonly string[];
+  /**
+   * The files the build already wrote under `emitDir` (relative, `/`-separated, lower-cased, as
+   * {@linkcode listBuiltFiles} returns them): `emitFile` refuses to replace one.
+   */
+  readonly builtFiles?: ReadonlySet<string>;
 }
 
 /** Whether any plugin registered a build step (so a build can skip work only steps need). */
@@ -280,24 +289,78 @@ export function hasPluginBuildSteps(): boolean {
 }
 
 /**
+ * The directories under `_denext/` the build fills itself: the client output (App Router and SPA),
+ * the Pages Router client bundles (`PAGES_PREFIX`) and the self-hosted fonts (`FONTS_PUBLIC_PREFIX`).
+ */
+const RESERVED_EMIT_DIRS = ["_denext/client", "_denext/pages", "_denext/fonts"];
+
+/**
+ * The single files the build writes: the HTML shell and, under `_denext/`, the OTA manifest, the
+ * platform stamp and the bundled `desktop.preload`.
+ */
+const RESERVED_EMIT_FILES = new Set(
+  ["index.html", OTA_MANIFEST_PATH, OTA_PLATFORM_PATH, DESKTOP_PRELOAD_FILE].map((f) =>
+    f.toLowerCase()
+  ),
+);
+
+/** True when `name` is the directory `dir` or a path inside it. */
+const inDir = (name: string, dir: string) => name === dir || name.startsWith(`${dir}/`);
+
+/**
  * True when `fileName` is a path the build publishes itself, which a build step may not replace:
- * the HTML shell (`index.html`), denext's client output and files (`_denext/…`) and a SPA's
+ * the HTML shell (`index.html`), denext's own output under `_denext/` (the client, Pages Router and
+ * font directories, the OTA manifest, the platform stamp and the desktop preload) and a SPA's
  * `spa.assetsDir` client directory. Compared without case (a case-insensitive file system
- * would write over them).
+ * would write over them). The rest of `_denext/` is open (`@denext/htmx` publishes its runtime at
+ * `_denext/htmx/htmx.min.js`).
  */
 function reservedEmitPath(fileName: string, config: DenextConfig): boolean {
   const name = fileName.toLowerCase();
-  if (name === "index.html" || name.startsWith("_denext/")) return true;
+  if (RESERVED_EMIT_FILES.has(name) || RESERVED_EMIT_DIRS.some((dir) => inDir(name, dir))) {
+    return true;
+  }
   const assetsDir = config.spa?.assetsDir?.replace(/^\/+|\/+$/g, "").toLowerCase();
-  return !!assetsDir && name.startsWith(`${assetsDir}/`);
+  return !!assetsDir && inDir(name, assetsDir);
+}
+
+/**
+ * Every file under `root`, relative and `/`-separated, lower-cased (a case-insensitive file system
+ * maps `About.html` onto `about.html`): the files a build wrote, which
+ * {@linkcode RunBuildStepsOptions.builtFiles} keeps a build step from replacing. Empty when `root`
+ * does not exist.
+ */
+export async function listBuiltFiles(root: string): Promise<Set<string>> {
+  const files = new Set<string>();
+  const visit = async (dir: string, prefix: string): Promise<void> => {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = await Array.fromAsync(Deno.readDir(dir));
+    } catch (err) {
+      if (err instanceof Deno.errors.NotFound) return;
+      throw err;
+    }
+    for (const entry of entries) {
+      const rel = `${prefix}${entry.name}`;
+      if (entry.isDirectory) await visit(join(dir, entry.name), `${rel}/`);
+      else files.add(rel.toLowerCase());
+    }
+  };
+  await visit(root, "");
+  return files;
 }
 
 /**
  * The absolute path `fileName` is written to under `root`, refusing anything that could leave it
  * (an absolute path, a `..` segment, a backslash, an empty name) or replace the build's own
- * output ({@link reservedEmitPath}).
+ * output ({@link reservedEmitPath}, or a file in `builtFiles`).
  */
-function emittedPath(root: string, fileName: string, config: DenextConfig): string {
+function emittedPath(
+  root: string,
+  fileName: string,
+  config: DenextConfig,
+  builtFiles?: ReadonlySet<string>,
+): string {
   const segments = fileName.split("/");
   if (
     fileName.length === 0 || fileName.includes("\\") || fileName.startsWith("/") ||
@@ -312,7 +375,13 @@ function emittedPath(root: string, fileName: string, config: DenextConfig): stri
   if (reservedEmitPath(fileName, config)) {
     throw new Error(
       `denext: emitFile refused ${JSON.stringify(fileName)}: the build publishes it itself ` +
-        "(the HTML shell index.html, _denext/ and the spa.assetsDir client directory)",
+        "(the HTML shell index.html, its output under _denext/ and the spa.assetsDir client " +
+        "directory)",
+    );
+  }
+  if (builtFiles?.has(fileName.toLowerCase())) {
+    throw new Error(
+      `denext: emitFile refused ${JSON.stringify(fileName)}: the build already wrote that file`,
     );
   }
   return join(root, ...segments);
@@ -332,7 +401,7 @@ export async function runPluginBuildSteps(
     ...context,
     clientModules: options.clientModules,
     emitFile: async ({ fileName, source }) => {
-      const dest = emittedPath(emitDir, fileName, context.config);
+      const dest = emittedPath(emitDir, fileName, context.config, options.builtFiles);
       await Deno.mkdir(dirname(dest), { recursive: true });
       if (typeof source === "string") await Deno.writeTextFile(dest, source);
       else await Deno.writeFile(dest, source);

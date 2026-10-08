@@ -210,53 +210,34 @@ Deno.test("htmx plugin matches the app-relative path under a basePath (the pipel
 
 Deno.test("htmx plugin emits the runtime into the export output", async () => {
   // emitFile: a static export serves it from its root; a build's lands in <outDir>/emitted,
-  // which `denext start` serves at the same URL. The path must be outside /_denext/, which
-  // denext reserves for its own output.
-  resetPlugins();
-  const outDir = await Deno.makeTempDir({ prefix: "denext_htmx_" });
-  const site = join(outDir, "site");
-  const ctx = {
-    projectRoot: "/tmp/proj",
-    appDir: "/tmp/proj/app",
-    outDir,
-    config: { plugins: [htmx()] } as DenextConfig,
-  };
-  try {
-    await applyHtmx({}, "export", { path: "/htmx/htmx.min.js" });
-    await runPluginBuildSteps(ctx, { emitDir: site });
-    const stat = await Deno.stat(join(site, "htmx", "htmx.min.js"));
-    assert(stat.isFile && stat.size > 1000, "runtime was published at the export root");
+  // which `denext start` serves at the same URL. The default path is under /_denext/, which
+  // emitFile accepts: denext reserves only its own output there (client/, pages/, …).
+  const variants: { path?: string }[] = [{}, { path: "/htmx/htmx.min.js" }];
+  for (const options of variants) {
     resetPlugins();
-    await applyHtmx({}, "build", { path: "/htmx/htmx.min.js" });
-    await runPluginBuildSteps(ctx);
-    const built = await Deno.stat(join(outDir, "emitted", "htmx", "htmx.min.js"));
-    assert(built.isFile, "a build's emitted file is served by `denext start`");
-  } finally {
-    resetPlugins();
-    await Deno.remove(outDir, { recursive: true });
-  }
-});
-
-Deno.test("htmx plugin: an export at the default /_denext/ path warns instead of failing", async () => {
-  resetPlugins();
-  const outDir = await Deno.makeTempDir({ prefix: "denext_htmx_reserved_" });
-  const warn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (...a: unknown[]) => warnings.push(a.join(" "));
-  try {
-    await applyHtmx({}, "export");
-    await runPluginBuildSteps({
+    const outDir = await Deno.makeTempDir({ prefix: "denext_htmx_" });
+    const site = join(outDir, "site");
+    const rel = (options.path ?? "/_denext/htmx/htmx.min.js").split("/").filter(Boolean);
+    const ctx = {
       projectRoot: "/tmp/proj",
       appDir: "/tmp/proj/app",
       outDir,
-      config: { plugins: [htmx()] } as DenextConfig,
-    }, { emitDir: join(outDir, "site") });
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0], "set htmx({ path })");
-  } finally {
-    console.warn = warn;
-    resetPlugins();
-    await Deno.remove(outDir, { recursive: true });
+      config: { plugins: [htmx(options)] } as DenextConfig,
+    };
+    try {
+      await applyHtmx({}, "export", options);
+      await runPluginBuildSteps(ctx, { emitDir: site });
+      const stat = await Deno.stat(join(site, ...rel));
+      assert(stat.isFile && stat.size > 1000, "runtime was published at the export root");
+      resetPlugins();
+      await applyHtmx({}, "build", options);
+      await runPluginBuildSteps(ctx);
+      const built = await Deno.stat(join(outDir, "emitted", ...rel));
+      assert(built.isFile, "a build's emitted file is served by `denext start`");
+    } finally {
+      resetPlugins();
+      await Deno.remove(outDir, { recursive: true });
+    }
   }
 });
 

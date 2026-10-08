@@ -160,23 +160,13 @@ export function htmx(options: HtmxOptions = {}): DenextPlugin {
       });
 
       // Build/export: publish the runtime at its URL with `emitFile`, so a static export (no
-      // server handler in play) serves it as a plain file from its root. denext reserves
-      // `/_denext/` for the build's own output, so the default path can't be published there:
-      // `denext start` serves it from the handler above, and an export says how to ship it. A
-      // core before `emitFile` (3.3) had no published root: the step writes under `outDir`.
+      // server handler in play) serves it as a plain file from its root, and `denext start`
+      // serves a build's copy from the emitted files. A core before `emitFile` (3.3) had no
+      // published root: the step writes under `outDir`.
       ctx.addBuildStep(async ({ outDir, emitFile }) => {
         const fileName = servePath.split("/").filter(Boolean).join("/");
         if (typeof emitFile !== "function") return await writeUnder(outDir, fileName);
-        if (!fileName.toLowerCase().startsWith("_denext/")) {
-          return await emitFile({ fileName, source: await readRuntime() });
-        }
-        if (ctx.mode === "export") {
-          console.warn(
-            `[@denext/htmx] a static export can't publish the runtime at ${servePath} (denext ` +
-              "reserves /_denext/ for its own output): set htmx({ path }) outside it, e.g. " +
-              '"/htmx/htmx.min.js", with the same `src` on <Htmx/>.',
-          );
-        }
+        await emitFile({ fileName, source: await readRuntime() });
       });
 
       // Contribute the `denext htmx` verb (info / eject).

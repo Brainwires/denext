@@ -132,8 +132,10 @@ To publish a generated file **at the site root** — the build-time analogue of 
 file lands in the export directory; in `denext build` it lands in `<outDir>/emitted/`, which
 `denext start` serves at the same URL. An emitted file replaces a same-named `public/` file in
 both. A `fileName` is a relative, `/`-separated path (no `..`, no leading `/`), and never one
-the build publishes itself: the HTML shell `index.html`, anything under `_denext/`, or the
-`spa.assetsDir` client directory:
+the build publishes itself: the HTML shell `index.html`, denext's output under `_denext/`
+(`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the
+`spa.assetsDir` client directory or, in an export, a file the build already wrote (a rendered
+page). Other `_denext/` paths are yours (`@denext/htmx` publishes `_denext/htmx/htmx.min.js`):
 
 ```ts
 ctx.addBuildStep(async ({ emitFile, clientModules }) => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.13
+
+- **A static export publishes the runtime at the default `/_denext/htmx/htmx.min.js` again.**
+  denext 3.4 reserves only its own output under `/_denext/` for `emitFile`, so the build step
+  publishes the runtime at any `path`, and the 2.0.12 hint for the default path is gone.
+
 ## 2.0.12
 
 - **The runtime reaches a static export at a `path` outside `/_denext/`.** The build step

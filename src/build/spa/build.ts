@@ -29,6 +29,7 @@ import { writeDesktopPreload } from "../desktop-preload.ts";
 import { setupPlugins } from "../pipeline-shared.ts";
 import {
   EMITTED_DIR,
+  listBuiltFiles,
   type PluginPrepareContext,
   runPluginBuildSteps,
   runPluginPrepareSteps,
@@ -201,10 +202,16 @@ export async function exportSpa(
     const viteManifest: ViteManifest | null = spa.viteManifest === true
       ? await collectViteManifest(staging, spaClientPrefix(spa))
       : null;
+    // What the build wrote (the shell, the client): no build step may replace it.
+    const builtFiles = await listBuiltFiles(staging);
     await copyPublic(paths.publicDir, staging, clientRel);
     // Plugin build steps, after `public/`: a file published with `emitFile` lands at the
     // export's root (replacing a same-named public file, as a Vite-emitted asset does).
-    await runPluginBuildSteps(pluginContext(paths), { emitDir: staging, clientModules });
+    await runPluginBuildSteps(pluginContext(paths), {
+      emitDir: staging,
+      clientModules,
+      builtFiles,
+    });
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
     // `desktop.preload`: one classic script the desktop runtime inlines first into every page.
     await writeDesktopPreload(paths, staging);

@@ -2,7 +2,12 @@
 
 import { copy, ensureDir, walk } from "@std/fs";
 import { join } from "@std/path";
-import { EMITTED_DIR, runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
+import {
+  EMITTED_DIR,
+  listBuiltFiles,
+  runPluginBuildSteps,
+  runPluginPrepareSteps,
+} from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -81,6 +86,15 @@ async function exportPagesRouter(
     outDir: paths.outDir,
     config: paths.config ?? {},
   }, { emitDir: emitted });
+  // The plugin's own step prerendered the pages, so a collision is found after the steps ran: an
+  // emitted file may not replace a prerendered page (the client bundles are reserved outright).
+  const prerendered = await listBuiltFiles(join(paths.outDir, "pages-static"));
+  const collision = [...await listBuiltFiles(emitted)].find((file) => prerendered.has(file));
+  if (collision) {
+    throw new Error(
+      `denext: emitFile refused ${JSON.stringify(collision)}: the build already wrote that file`,
+    );
+  }
   await writeViaStaging(outDir, async (staging) => {
     // Prerendered HTML (+ props.json for soft-nav) → site root; client bundles →
     // `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML); `public/` → site root.
