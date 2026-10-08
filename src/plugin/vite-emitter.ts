@@ -12,6 +12,7 @@
 // resolveId, configureServer, …) — `denext migrate` flags plugins that rely on those.
 
 import type { DenextPlugin, PluginBuildContext } from "./mod.ts";
+import { normalizeSpaAssetsDir } from "../server/config-validate.ts";
 
 /** A Rollup `emitFile` argument (only `type: "asset"` with a `fileName` is supported). */
 export interface ViteEmittedFile {
@@ -68,9 +69,16 @@ function appliesToBuild(apply: VitePluginLike["apply"]): boolean {
   return apply !== "serve";
 }
 
-/** The synthetic Rollup bundle handed to the hook (see the module doc). */
+/**
+ * The synthetic Rollup bundle handed to the hook (see the module doc). Its entry chunk is named
+ * where the client entry is published: under `spa.assetsDir` when set (Vite's `build.assetsDir`),
+ * else `_denext/client/`.
+ */
 function syntheticBundle(build: PluginBuildContext): Record<string, unknown> {
-  const fileName = "_denext/client/index.js";
+  const assetsDir = build.config.spa?.assetsDir;
+  const dir = (assetsDir === undefined ? null : normalizeSpaAssetsDir(assetsDir)) ??
+    "_denext/client";
+  const fileName = `${dir}/index.js`;
   const modules = Object.fromEntries((build.clientModules ?? []).map((id) => [id, {}]));
   return {
     [fileName]: {

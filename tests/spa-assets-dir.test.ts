@@ -341,3 +341,65 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// `spa.assetsDir` shares its directory with `public/` (Vite's `assets/`). When both hold a path,
+// the build's file is served everywhere — `denext start`, `denext dev` (the bundled loop, where
+// the bundle is the client) and the static export — and the public file never replaces it.
+Deno.test({
+  name: "spa.assetsDir: a public/ file at a build path loses to the build in export, dev and start",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const PUBLIC = "// public/assets/index.js";
+  const dir = await spaFixture(false, `, assetsDir: "assets"`);
+  try {
+    await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), PUBLIC);
+    await staticExport(dir);
+    const exported = await Deno.readTextFile(join(dir, "out", "assets", "index.js"));
+    assert(exported !== PUBLIC, "export: the build's entry stays");
+    assert(
+      (await Deno.stat(join(dir, "out", "assets", "custom-ABCD2345.txt"))).isFile,
+      "export: other public files still merge in",
+    );
+
+    const dev = await startSpaDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" }, { unbundled: false });
+    try {
+      const res = await fetch(dev.origin + "/assets/index.js");
+      assertEquals(res.status, 200);
+      assert((await res.text()) !== PUBLIC, "dev: the bundle's entry is served");
+      const pub = await fetch(dev.origin + "/assets/custom-ABCD2345.txt");
+      assertEquals(await pub.text(), "public", "dev: a public-only file is still served");
+    } finally {
+      await dev.close();
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "spa.assetsDir: denext start serves the build's file over a same-named public one",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const dir = await builtProject();
+  await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), "// public");
+  const controller = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
+  const server = await startSpaProdServer({
+    projectDir: dir,
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: controller.signal,
+    onListen: resolve,
+  });
+  const { hostname, port } = await promise;
+  try {
+    const res = await fetch(`http://${hostname}:${port}/assets/index.js`);
+    assertEquals(await res.text(), "console.log(1);");
+  } finally {
+    controller.abort();
+    await server.finished;
+    await Deno.remove(dir, { recursive: true });
+  }
+});

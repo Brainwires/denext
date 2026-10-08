@@ -252,11 +252,23 @@ function restoreElement(el: Element): void {
   offscreenPrevStyle.delete(el);
 }
 
+/** The hidden elements still in `dom`; one removed while hidden is forgotten. */
+function stillHidden(hidden: Element[] | undefined, dom: (Element | Text)[]): Element[] {
+  const live = new Set<Node>(dom);
+  const els: Element[] = [];
+  for (const el of hidden ?? []) {
+    if (live.has(el)) els.push(el);
+    else offscreenPrevStyle.delete(el);
+  }
+  return els;
+}
+
 /**
  * Hide the primary DOM. The first hide also disconnects its effects — a timer or
  * subscription registered in the hidden subtree must stop while it's offscreen (state in
  * useState/useRef cells is untouched, so it survives the reveal). A later commit while
- * still hidden (a hidden `<Activity>` gained a child) hides only the elements it added.
+ * still hidden (a hidden `<Activity>` gained a child) hides only the elements it added, and
+ * forgets the ones it removed: a long-hidden list would otherwise keep every element it ever had.
  */
 function hideOffscreenPrimary(f: Fiber): void {
   const first = f.hiddenEls == null;
@@ -266,7 +278,7 @@ function hideOffscreenPrimary(f: Fiber): void {
     collectDom(c, dom);
     if (first) disconnectEffects(c);
   }
-  const els: Element[] = f.hiddenEls ?? [];
+  const els = stillHidden(f.hiddenEls, dom);
   for (const n of dom) {
     if (n.nodeType !== 1 || offscreenPrevStyle.has(n as Element)) continue;
     hideElement(n as Element);

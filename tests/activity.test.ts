@@ -8,7 +8,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import "./helpers/activity-runtime.ts";
-import { h } from "../src/jsx/jsx-runtime.ts";
+import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { Activity } from "../src/runtime/react-extras.ts";
 import { useEffect, useLayoutEffect, useState } from "../src/runtime/hooks.ts";
 import { render } from "../src/testing/mod.ts";
@@ -249,4 +249,39 @@ Deno.test("without the offscreen runtime installed, Activity is a transparent pa
     h(Activity, { children: h("span", { "data-testid": "c" }, "pass") }),
   );
   assertEquals(screen.getByTestId("c").textContent, "pass");
+});
+
+Deno.test("a hidden Activity forgets the elements removed while it stays hidden", async () => {
+  // Each commit while hidden adds the elements it inserted to the boundary's hidden list; the
+  // ones a later commit removed stayed in it (and kept their style snapshot) until the reveal.
+  const { activeRoots } = await import("../src/client/fiber/state.ts");
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let setItems: (ids: string[]) => void = () => {};
+  function List() {
+    const [ids, set] = useState(["a", "b"]);
+    setItems = set;
+    return h(Fragment, null, ids.map((id) => h("p", { key: id }, id)));
+  }
+  createRoot(container as Any).render(h(Activity, { mode: "hidden", children: h(List, {}) }));
+  flushSync();
+  for (let i = 0; i < 5; i++) {
+    setItems([`x${i}`]);
+    flushSync();
+  }
+  // deno-lint-ignore no-explicit-any
+  let activity: any = null;
+  const visit = (f: Any) => {
+    for (let c = f; c; c = c.sibling) {
+      if (c.tag === "activity") activity = c;
+      if (c.child) visit(c.child);
+    }
+  };
+  for (const handle of activeRoots) {
+    if (handle.container === (container as Any)) visit(handle.current);
+  }
+  assert(activity, "found the Activity fiber");
+  assertEquals(activity.hiddenEls.length, 1, "only the element still in the subtree");
+  assertEquals((container as Any).childNodes.length, 1);
+  assert(hidden((container as Any).childNodes[0]), "and it is hidden");
 });

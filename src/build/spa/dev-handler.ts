@@ -169,9 +169,46 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
 }
 
 /**
+ * Under `spa.assetsDir`, the bundled loop's file at `pathname` (it wins over a public one), or
+ * null: not in the bundle, or the unbundled loop is the page's client (no bundle to ask).
+ */
+async function bundleFirst(
+  st: SpaDevState,
+  pathname: string,
+  prefix: string,
+): Promise<Response | null> {
+  if (await ensureUnbundled(st)) return null;
+  const asset = await serveClientAsset(st, pathname, prefix);
+  if (asset.status !== 404) return asset;
+  await asset.body?.cancel();
+  return null;
+}
+
+/**
+ * The file a request for `url` gets ahead of the plain client lookup: under `spa.assetsDir`, the
+ * bundle's (see {@link bundleFirst}) and then a public one; outside the client prefix, a public
+ * file; under `/_denext/client/`, nothing (the client lookup answers it).
+ */
+async function bundleOrPublic(
+  st: SpaDevState,
+  request: Request,
+  url: URL,
+  prefix: string,
+  client: boolean,
+): Promise<Response | null> {
+  const shared = client && prefix !== CLIENT_PREFIX;
+  const built = shared ? await bundleFirst(st, url.pathname, prefix) : null;
+  if (built || (client && !shared)) return built;
+  const accEnc = request.headers.get("accept-encoding") ?? undefined;
+  return await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
+}
+
+/**
  * A client asset under `prefix`, a `public/` file, or the shell for a navigation. Under
- * `spa.assetsDir` the client shares its directory with `public/` (Vite's `assets/`), so a public
- * file there is served first, without building the bundle (the unbundled loop never asks for it).
+ * `spa.assetsDir` the client shares its directory with `public/` (Vite's `assets/`): where the
+ * bundle is the page's client (the bundled loop) a path it holds is the bundle's, as `denext
+ * start` and the export serve it, and a public file answers the rest. The unbundled loop serves
+ * the page from its module graph, so there a public file is served without building the bundle.
  */
 async function serveFile(
   st: SpaDevState,
@@ -180,11 +217,8 @@ async function serveFile(
   prefix: string,
 ): Promise<Response> {
   const client = url.pathname.startsWith(prefix);
-  if (!client || prefix !== CLIENT_PREFIX) {
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
-    if (pub) return pub;
-  }
+  const local = await bundleOrPublic(st, request, url, prefix, client);
+  if (local) return local;
   if (client) return serveClientAsset(st, url.pathname, prefix);
   if (wantsShell(request, url.pathname)) return serveShell(st, request);
   return new Response("not found", { status: 404 });

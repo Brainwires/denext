@@ -15,7 +15,12 @@ import "./helpers/view-transition-runtime.ts";
 import "./helpers/activity-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Activity, ViewTransition } from "../src/runtime/react-extras.ts";
-import { startTransition, useDeferredValue, useState } from "../src/runtime/hooks.ts";
+import {
+  startTransition,
+  useDeferredValue,
+  useState,
+  useTransition,
+} from "../src/runtime/hooks.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { addTransitionType } from "../src/client/fiber/view-transition-support.ts";
 import {
@@ -535,4 +540,50 @@ Deno.test("two live <ViewTransition>s with the same name warn in development", (
     errors.some((e) => e.includes("same name") && e.includes("dup-x")),
     `expected a duplicate-name warning; got ${JSON.stringify(errors)}`,
   );
+});
+
+Deno.test("a commit that throws in the view transition's update callback reaches the root's error handling", async () => {
+  // The deferred commit runs inside the browser's update callback, outside the work loop that
+  // would recover from it: a throw there was only logged, and a time-sliced transition's
+  // `isPending` stayed true for good (its settle came after the commit that threw).
+  const env = setup();
+  const errors: unknown[] = [];
+  let set: (v: string) => void = () => {};
+  let go: (fn: () => void) => void = () => {};
+  let pending = false;
+  function App() {
+    const [v, setV] = useState("a");
+    const [isPending, start] = useTransition();
+    set = setV;
+    go = start;
+    pending = isPending;
+    return h(ViewTransition, { update: "u" }, h("p", { "data-testid": "p", "data-v": v }, v));
+  }
+  createRoot(env.container as Any, { onUncaughtError: (e) => errors.push(e) }).render(
+    h(App, null) as VNode,
+  );
+  flushSync();
+  const p = (env.container as Any).childNodes[0];
+  const setAttribute = p.setAttribute.bind(p);
+  let fail = true; // once: a later render's commit of the same props goes through
+  p.setAttribute = (n: string, v: string) => {
+    if (v === "boom" && fail) {
+      fail = false;
+      throw new Error("commit failed");
+    }
+    setAttribute(n, v);
+  };
+  __setManualSlicingForTests(true);
+  try {
+    go(() => set("boom"));
+    let n = 0;
+    while (__pumpForTests() && n < 50) n++;
+  } finally {
+    __setManualSlicingForTests(false);
+  }
+  assertEquals(env.calls.length, 1, "the commit was deferred into a view transition");
+  await tick();
+  assertEquals(errors.map((e) => (e as Error).message), ["commit failed"]);
+  flushSync();
+  assertEquals(pending, false, "the transition settled");
 });

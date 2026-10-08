@@ -1,7 +1,7 @@
 // SPA mode: the production build (`.denext/client/`) and the static export (`out/`).
 
-import { copy, ensureDir } from "@std/fs";
-import { join } from "@std/path";
+import { copy, ensureDir, walk } from "@std/fs";
+import { dirname, join, relative } from "@std/path";
 import { syncDesktopAppConfigAt } from "../desktop-app-config.ts";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
@@ -140,18 +140,34 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-/** Copy the public directory's contents into the output directory. */
-async function copyPublic(publicDir: string, outDir: string): Promise<void> {
+/**
+ * Copy the public directory's contents into the output directory. The client directory
+ * (`clientRel`, e.g. `assets/` under `spa.assetsDir`) may hold public files too, merged in file by
+ * file: one at a path the build wrote stays the build's, as `denext start` and `denext dev` serve
+ * it. Everywhere else a public file is copied over.
+ */
+async function copyPublic(publicDir: string, outDir: string, clientRel: string): Promise<void> {
   try {
     await Deno.stat(publicDir);
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return; // no public/ directory — nothing to copy
     throw err;
   }
+  const clientTop = clientRel.split("/").filter(Boolean)[0];
   // A real per-file copy failure must NOT be swallowed — otherwise `export` would
   // silently ship missing public assets. Only the "no public/ dir" case is benign.
   for await (const entry of Deno.readDir(publicDir)) {
-    await copy(join(publicDir, entry.name), join(outDir, entry.name), { overwrite: true });
+    const from = join(publicDir, entry.name);
+    if (entry.name !== clientTop || !entry.isDirectory) {
+      await copy(from, join(outDir, entry.name), { overwrite: true });
+      continue;
+    }
+    for await (const file of walk(from, { includeDirs: false })) {
+      const dest = join(outDir, entry.name, relative(from, file.path));
+      if (await fileExists(dest)) continue; // the build's file wins
+      await ensureDir(dirname(dest));
+      await copy(file.path, dest);
+    }
   }
 }
 
@@ -185,7 +201,7 @@ export async function exportSpa(
     const viteManifest: ViteManifest | null = spa.viteManifest === true
       ? await collectViteManifest(staging, spaClientPrefix(spa))
       : null;
-    await copyPublic(paths.publicDir, staging);
+    await copyPublic(paths.publicDir, staging, clientRel);
     // Plugin build steps, after `public/`: a file published with `emitFile` lands at the
     // export's root (replacing a same-named public file, as a Vite-emitted asset does).
     await runPluginBuildSteps(pluginContext(paths), { emitDir: staging, clientModules });

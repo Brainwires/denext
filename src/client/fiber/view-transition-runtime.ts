@@ -16,14 +16,23 @@
 // old vs. new side.
 
 import { DNX_VT_ATTR, type ViewTransitionMarker } from "../../runtime/react-extras.ts";
-import { activeRoots, currentDocument } from "./state.ts";
+import { activeRoots, currentDocument, rootHandleOf } from "./state.ts";
+import { anyRootHasLane, scheduleSyncFlush, settleTransitions } from "./scheduler.ts";
+import { reportUncaught } from "./root-callbacks.ts";
 import {
   type ActiveViewTransition,
   setViewTransitionSupport,
   takeTransitionTypes,
 } from "./view-transition-support.ts";
 import { devHydrationActive, walkFlagged } from "./fiber-utils.ts";
-import { ChildDeletion, ChildrenChanged, type Fiber, Placement, Update } from "./fiber.ts";
+import {
+  ChildDeletion,
+  ChildrenChanged,
+  type Fiber,
+  Placement,
+  SyncLane,
+  Update,
+} from "./fiber.ts";
 
 // A `view-transition-name` / `view-transition-class` value is a CSS custom-ident. Only stamp
 // values that ARE one, so a value bound to untrusted data (a shared-element name keyed by an id
@@ -548,14 +557,33 @@ function cancelRootCrossFade(root: HTMLElement | null, plan: Plan): () => void {
   return () => root.style.removeProperty("view-transition-name");
 }
 
+/**
+ * A deferred commit threw — in the transition's update callback or a later {@link flush}, outside
+ * the work loop that recovers a commit failing in place. Settle what the commit would have (a
+ * time-sliced transition's `isPending`, queued sync work), then report the error as the root's
+ * uncaught one: its `onUncaughtError`, else the global error handler, as React's default is.
+ */
+function commitFailed(wipRoot: Fiber, error: unknown): void {
+  if (anyRootHasLane(SyncLane)) scheduleSyncFlush();
+  settleTransitions();
+  const report = (globalThis as { reportError?: (e: unknown) => void }).reportError;
+  if (rootHandleOf(wipRoot)?.onUncaughtError) reportUncaught(wipRoot, error);
+  else if (typeof report === "function") report(error);
+  else console.error("denext: a transition commit failed", error);
+}
+
 /** Hold `run` until the transition's update callback (or {@link flush}); returns the trigger. */
-function deferCommit(run: () => void): () => void {
+function deferCommit(wipRoot: Fiber, run: () => void): () => void {
   let committed = false;
   const commitNow = () => {
     if (committed) return;
     committed = true;
     if (deferred === commitNow) deferred = null;
-    run();
+    try {
+      run();
+    } catch (error) {
+      commitFailed(wipRoot, error);
+    }
   };
   deferred = commitNow;
   return commitNow;
@@ -589,13 +617,13 @@ function startTransition(
  * the outgoing side now, apply the commit + name the incoming side in the update callback, and
  * clear every stamp (and the root's cancelled cross-fade) when the transition finishes.
  */
-function animateCommit(doc: VTDocument, plan: Plan, run: () => void): void {
+function animateCommit(doc: VTDocument, wipRoot: Fiber, plan: Plan, run: () => void): void {
   const types = takeTransitionTypes();
   const out = stamps();
   const before = stampOutgoing(plan, types, out);
   const root = doc.documentElement as HTMLElement | null;
   const restoreRoot = cancelRootCrossFade(root, plan);
-  const commitNow = deferCommit(run);
+  const commitNow = deferCommit(wipRoot, run);
   startTransition(doc, types, () => {
     commitNow();
     stampIncoming(plan, types, out, before, root);
@@ -647,7 +675,7 @@ function commit(wipRoot: Fiber, eligible: boolean, run: () => void): void {
     ? planTransition(wipRoot)
     : null;
   if (plan === null) apply();
-  else animateCommit(doc!, plan, apply);
+  else animateCommit(doc!, wipRoot, plan, apply);
 }
 
 /**

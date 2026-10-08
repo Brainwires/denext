@@ -395,3 +395,31 @@ Deno.test("viteEmitterPlugin: a chunk emit or a nameless asset fails the build w
   }
   resetPlugins();
 });
+
+Deno.test("viteEmitterPlugin: the synthetic entry chunk sits where the client is (spa.assetsDir)", async () => {
+  const { viteEmitterPlugin } = await import("../src/plugin/kit.ts");
+  for (
+    const [spa, expected] of [
+      [undefined, "_denext/client/index.js"],
+      [{ entry: "./src/main.tsx", assetsDir: "assets" }, "assets/index.js"],
+      [{ entry: "./src/main.tsx", assetsDir: "static/js" }, "static/js/index.js"],
+    ] as const
+  ) {
+    resetPlugins();
+    let seen: string[] = [];
+    await register(viteEmitterPlugin({
+      name: "entry-name",
+      generateBundle(_o: unknown, bundle: unknown) {
+        seen = Object.keys(bundle as Record<string, unknown>);
+      },
+    }));
+    await runPluginBuildSteps({
+      projectRoot: "/p",
+      appDir: "/p/app",
+      outDir: "/p/.d",
+      config: (spa ? { mode: "spa", spa } : {}) as DenextConfig,
+    });
+    assertEquals(seen, [expected]);
+  }
+  resetPlugins();
+});
