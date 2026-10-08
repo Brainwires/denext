@@ -239,11 +239,17 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
 
       const outFile = options.outFile ?? "openapi.json";
       if (outFile !== false) {
-        ctx.addBuildStep(async ({ outDir }) => {
+        ctx.addBuildStep(async ({ outDir, emitFile }) => {
+          // A static export has no request handler: publish the document at the URL a server
+          // answers it on (when it does — `expose`), so the static site serves it too. The docs
+          // page renders on request and is not exported. `denext build` writes the artifact.
+          const exporting = ctx.mode === "export";
+          if (exporting && !exposed) return;
           const result = await build();
-          const dest = join(outDir, outFile);
-          await Deno.mkdir(join(dest, ".."), { recursive: true });
-          await Deno.writeTextFile(dest, JSON.stringify(result.document, null, 2) + "\n");
+          const json = JSON.stringify(result.document, null, 2) + "\n";
+          await (exporting
+            ? emitFile({ fileName: specPath.replace(/^\/+/, ""), source: json })
+            : writeArtifact(join(outDir, outFile), json));
           if (result.warnings.length) {
             console.warn(
               `[@denext/openapi] ${result.warnings.length} lint warning(s) — run \`denext openapi lint\``,
@@ -255,6 +261,12 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
       ctx.addCommand(createOpenapiCommand(build));
     },
   };
+}
+
+/** Write the build's document artifact, creating its directory. */
+async function writeArtifact(dest: string, json: string): Promise<void> {
+  await Deno.mkdir(join(dest, ".."), { recursive: true });
+  await Deno.writeTextFile(dest, json);
 }
 
 /** The resolved endpoint config the request handler serves from. */

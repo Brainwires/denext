@@ -77,8 +77,8 @@
     },
     {
       "name": "@denext/graphql",
-      "version": "0.2.0",
-      "spec": "jsr:@denext/graphql@^0.2.0",
+      "version": "0.2.1",
+      "spec": "jsr:@denext/graphql@^0.2.1",
       "exports": [
         ".",
         "./command",
@@ -215,8 +215,8 @@
     },
     {
       "name": "@denext/htmx",
-      "version": "2.0.11",
-      "spec": "jsr:@denext/htmx@^2.0.11",
+      "version": "2.0.12",
+      "spec": "jsr:@denext/htmx@^2.0.12",
       "exports": [
         ".",
         "./command",
@@ -268,8 +268,8 @@
     },
     {
       "name": "@denext/openapi",
-      "version": "0.3.0",
-      "spec": "jsr:@denext/openapi@^0.3.0",
+      "version": "0.3.1",
+      "spec": "jsr:@denext/openapi@^0.3.1",
       "exports": [
         ".",
         "./command",
@@ -426,8 +426,8 @@
     },
     {
       "name": "@denext/pages-router",
-      "version": "0.11.0",
-      "spec": "jsr:@denext/pages-router@^0.11.0",
+      "version": "0.11.1",
+      "spec": "jsr:@denext/pages-router@^0.11.1",
       "exports": [
         ".",
         "./client-runtime",

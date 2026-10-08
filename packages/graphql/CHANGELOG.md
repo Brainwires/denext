@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- **`denext export` writes no SDL.** The `schema.graphql` artifact is a server's: a static export
+  serves no GraphQL endpoint, so the build step does not run there (and an introspection failure
+  can no longer fail an export). `denext build` still writes `outFile`.
+
 ## 0.2.0
 
 - **Query cost budget (`maxCost`).** An opt-in complexity guard against the _multiplicative_

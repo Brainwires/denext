@@ -152,10 +152,16 @@ export function htmx(options: HtmxOptions = {}): DenextPlugin {
         });
       });
 
-      // Build/export: emit the runtime to disk so `denext start` / a static export
-      // serves it as a plain file (no server handler in play for static output).
-      ctx.addBuildStep(async ({ outDir }) => {
-        const dest = join(outDir, ...servePath.split("/").filter(Boolean));
+      // Build/export: publish the runtime at its URL with `emitFile`, so a static export (no
+      // server handler in play) serves it as a plain file from its root, and `denext start`
+      // serves a build's copy from `<outDir>/emitted`. A core before `emitFile` (3.3) had no
+      // published root: the step wrote under `outDir` as it always did.
+      ctx.addBuildStep(async ({ outDir, emitFile }) => {
+        const segments = servePath.split("/").filter(Boolean);
+        if (typeof emitFile === "function") {
+          return await emitFile({ fileName: segments.join("/"), source: await readRuntime() });
+        }
+        const dest = join(outDir, ...segments);
         await Deno.mkdir(join(dest, ".."), { recursive: true });
         await Deno.writeFile(dest, await readRuntime());
       });

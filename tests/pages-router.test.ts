@@ -8,7 +8,14 @@ import { type ClientBundler, PAGES_PREFIX } from "../packages/pages-router/src/c
 import type { PageCache } from "../src/server/mod.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
 import { pagesRouter } from "../packages/pages-router/mod.ts";
-import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
+import type { DenextConfig } from "../src/server/config.ts";
+import type { ModuleLoader } from "../src/server/types.ts";
+import {
+  applyPlugins,
+  getPluginRequestHandler,
+  resetPlugins,
+  runPluginBuildSteps,
+} from "../src/plugin/mod.ts";
 import { runApiRoute } from "../packages/pages-router/src/api.ts";
 import type { ApiModule, ApiResponse } from "../packages/pages-router/src/api.ts";
 import { inMemoryCacheStore, setCacheStore } from "../src/server/cache.ts";
@@ -1041,5 +1048,47 @@ Deno.test("pages API: an early throw with no output still yields a 500 (streamin
     assertEquals(response.status, 500);
   } finally {
     console.error = origErr;
+  }
+});
+
+Deno.test("pagesRouter: a hybrid (app/ + pages/) static export skips the Pages Router build step", async () => {
+  // The App Router export owns a hybrid app's out/: nothing the step wrote to .denext reached it,
+  // and a failing prebuild broke an export that never published its output.
+  const dir = await Deno.makeTempDir({ prefix: "denext_pages_hybrid_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.mkdir(join(dir, "app"));
+    await Deno.mkdir(join(dir, "pages"));
+    // A page whose client bundle cannot build: the prebuild throws if it runs.
+    await Deno.writeTextFile(
+      join(dir, "pages", "index.tsx"),
+      'import "./missing-module.ts";\nexport default () => null;\n',
+    );
+    resetPlugins();
+    const config = { plugins: [pagesRouter()], compatibilityMode: false } as DenextConfig;
+    await applyPlugins({
+      projectRoot: dir,
+      appDir: join(dir, "app"),
+      config,
+      mode: "export",
+      load: (() => Promise.resolve({})) as unknown as ModuleLoader,
+    });
+    const outDir = join(dir, ".denext");
+    await runPluginBuildSteps(
+      { projectRoot: dir, appDir: join(dir, "app"), outDir, config },
+      { emitDir: join(dir, "out") },
+    );
+    for (const sub of ["pages-client", "pages-static"]) {
+      let found = true;
+      try {
+        await Deno.stat(join(outDir, sub));
+      } catch {
+        found = false;
+      }
+      assertEquals(found, false, `${sub} was not written`);
+    }
+  } finally {
+    resetPlugins();
+    await Deno.remove(dir, { recursive: true });
   }
 });

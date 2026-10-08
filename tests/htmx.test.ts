@@ -25,12 +25,15 @@ import {
 
 const noopLoad = (() => Promise.resolve({})) as unknown as ModuleLoader;
 
-function applyHtmx(config: Partial<DenextConfig> = {}) {
+function applyHtmx(
+  config: Partial<DenextConfig> = {},
+  mode: "prod" | "build" | "export" = "prod",
+) {
   return applyPlugins({
     projectRoot: "/tmp/proj",
     appDir: "/tmp/proj/app",
     config: { plugins: [htmx()], ...config } as DenextConfig,
-    mode: "prod",
+    mode,
     load: noopLoad,
   });
 }
@@ -205,20 +208,31 @@ Deno.test("htmx plugin matches the app-relative path under a basePath (the pipel
 // --- plugin: build step + command ------------------------------------------
 
 Deno.test("htmx plugin emits the runtime into the export output", async () => {
+  // emitFile: a static export serves it from its root; a build's lands in <outDir>/emitted,
+  // which `denext start` serves at the same URL.
   resetPlugins();
   const outDir = await Deno.makeTempDir({ prefix: "denext_htmx_" });
+  const site = join(outDir, "site");
   try {
-    await applyHtmx();
+    await applyHtmx({}, "export");
+    await runPluginBuildSteps({
+      projectRoot: "/tmp/proj",
+      appDir: "/tmp/proj/app",
+      outDir,
+      config: { plugins: [htmx()] } as DenextConfig,
+    }, { emitDir: site });
+    const stat = await Deno.stat(join(site, "_denext", "htmx", "htmx.min.js"));
+    assert(stat.isFile && stat.size > 1000, "runtime was published at the export root");
+    resetPlugins();
+    await applyHtmx({}, "build");
     await runPluginBuildSteps({
       projectRoot: "/tmp/proj",
       appDir: "/tmp/proj/app",
       outDir,
       config: { plugins: [htmx()] } as DenextConfig,
     });
-    const stat = await Deno.stat(
-      join(outDir, "_denext", "htmx", "htmx.min.js"),
-    );
-    assert(stat.isFile && stat.size > 1000, "runtime was written to outDir");
+    const built = await Deno.stat(join(outDir, "emitted", "_denext", "htmx", "htmx.min.js"));
+    assert(built.isFile, "a build's emitted file is served by `denext start`");
   } finally {
     resetPlugins();
     await Deno.remove(outDir, { recursive: true });
