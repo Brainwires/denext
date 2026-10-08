@@ -488,6 +488,12 @@ Deno.test({
     assertEquals(server, client, "the SSR and client bundles mint identical asset URLs");
     assert(server[0].startsWith("/_denext/client/assets/logo-") && server[0].endsWith(".png"));
     assert(server[1].startsWith("/_denext/client/assets/styles-") && server[1].endsWith(".css"));
+    // The names carry an esbuild-shaped `-HASH8` the immutable-cache check recognizes.
+    const { isContentHashed } = await import("../src/server/serve-utils.ts");
+    for (const url of server) {
+      assert(/-[A-Z2-7]{8}\.(png|css)$/.test(url), `${url} is name-HASH8.ext`);
+      assert(isContentHashed(url), `${url} is served as immutable`);
+    }
     // The files exist under the client dir, the stylesheet holding the COMPILED css.
     const cssFile = join(clientDir, server[1].slice("/_denext/client/".length));
     assertStringIncludes(await Deno.readTextFile(cssFile), "blue");

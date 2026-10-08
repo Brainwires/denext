@@ -1297,14 +1297,27 @@ function cssUrlPath(
 const EMIT_ASSET_RE =
   /\.(?:svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|pdf)$/;
 
-/** FNV-1a over bytes (asset content hash for emitted file names). */
-function hashBytes(bytes: Uint8Array): string {
-  let h = 2166136261 >>> 0;
+/** esbuild's `[hash]` alphabet (RFC 4648 base32). */
+const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/**
+ * A content hash for an emitted file name in esbuild's `[hash]` shape — 8 base32 characters
+ * (40 bits of two FNV-1a passes) — so a `name-HASH.ext` asset reads as content-hashed to the
+ * immutable-cache check (`isContentHashed`) and to a server written for a Vite build.
+ */
+function hash8(bytes: Uint8Array): string {
+  let a = 2166136261 >>> 0;
+  let b = 0x9747b28c;
   for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = Math.imul(h, 16777619) >>> 0;
+    a = Math.imul(a ^ bytes[i], 16777619) >>> 0;
+    b = Math.imul(b ^ bytes[i], 16777619) >>> 0;
   }
-  return h.toString(36);
+  // 32 bits of `a` and the low 8 of `b`: eight 5-bit digits.
+  let out = "";
+  for (let i = 0; i < 6; i++) out += BASE32[(a >>> (27 - 5 * i)) & 31];
+  out += BASE32[((a & 3) << 3) | ((b >>> 5) & 7)];
+  out += BASE32[b & 31];
+  return out;
 }
 
 /**
@@ -1318,7 +1331,7 @@ async function emitAsset(
   ext = extname(srcPath),
 ): Promise<string> {
   const base = basename(srcPath, extname(srcPath)).replace(/[^\w.-]+/g, "_");
-  const file = `${base}-${hashBytes(bytes)}${ext}`;
+  const file = `${base}-${hash8(bytes)}${ext}`;
   const dir = join(assets.emitDir!, "assets");
   await Deno.mkdir(dir, { recursive: true });
   const target = join(dir, file);
