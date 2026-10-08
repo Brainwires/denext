@@ -102,7 +102,14 @@ function setProp(
     return;
   }
   if (typeof value === "function") return; // non-event function props aren't attrs
-  if (oldValue === value) return;
+  if (oldValue !== value) setValue(el, name, value, oldValue);
+}
+
+/** A changed non-function prop: a form default, a style object, else an attribute. */
+function setValue(el: Element, name: string, value: unknown, oldValue: unknown): void {
+  if (name === "defaultValue" || name === "defaultChecked") {
+    return setFormDefault(el, name, value, oldValue);
+  }
   // Style objects are patched per-property (diffed against the old object) so foreign
   // inline properties — floating-ui's `--available-*`/`--anchor-*` vars, any imperative
   // `element.style` write — survive re-renders. A whole-attribute rewrite would wipe them
@@ -112,6 +119,35 @@ function setProp(
     return patchStyle(el, prev, value as Record<string, unknown>);
   }
   setAttribute(el, name, value);
+}
+
+/**
+ * `defaultValue` / `defaultChecked` (react-dom's ReactDOMInput / ReactDOMTextarea) are never
+ * attributes of their own. An `<input>` takes them through its own properties, which reflect its
+ * `value` / `checked` attributes: the field shows them until the user edits it (an update
+ * re-seeds the attribute, as react-dom's does, and never touches an edited value). A
+ * `<textarea>` takes its default as its value once, at mount (keeping text the user typed before
+ * hydration); a `<select>`'s is {@link initSelect}'s. Other elements drop them.
+ */
+function setFormDefault(el: Element, name: string, value: unknown, oldValue: unknown): void {
+  if (value == null || !(name in el)) return;
+  const field = el as unknown as Record<string, unknown>;
+  if (el.tagName !== "TEXTAREA") field[name] = value;
+  else if (oldValue === undefined) field.value = field.value || String(value);
+}
+
+/**
+ * Select a freshly mounted `<select>`'s options from its `value` (else `defaultValue`), once
+ * its options are in it — react-dom's postMountWrapper. Later `defaultValue` changes don't apply.
+ */
+export function initSelect(el: Element, props: Record<string, unknown>): void {
+  const v = props.value ?? props.defaultValue;
+  if (v == null) return;
+  const want = [v].flat().map(String);
+  for (const o of (el as HTMLSelectElement).options) {
+    const on = want.includes(o.value);
+    if (on || props.multiple) o.selected = on;
+  }
 }
 
 export function applyProps(

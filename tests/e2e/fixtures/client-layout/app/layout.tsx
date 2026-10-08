@@ -19,6 +19,25 @@ export default function RootLayout({ children }: { children: unknown }) {
           theme: {theme}
         </button>
         <main>{children as never}</main>
+        {/* Mounted fresh by the click (not hydrated): form defaults fill the real fields. */}
+        {theme === "dark"
+          ? (
+            <form data-testid="defaults">
+              <input name="t" defaultValue="hello" />
+              <input type="checkbox" name="c" defaultChecked />
+              <textarea name="a" defaultValue="draft" />
+              <select name="s" defaultValue="b">
+                <option value="a">A</option>
+                <option value="b">B</option>
+              </select>
+              <select name="m" multiple defaultValue={["a", "c"]}>
+                <option value="a">A</option>
+                <option value="b">B</option>
+                <option value="c">C</option>
+              </select>
+            </form>
+          )
+          : null}
       </body>
     </html>
   );

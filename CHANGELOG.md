@@ -67,6 +67,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`defaultValue` / `defaultChecked` fill a client-rendered form, as in react-dom.** An
+  `<input defaultValue>` mounted on the client (not hydrated) wrote a `defaultvalue` attribute
+  and the field stayed empty. Now an `<input>` takes them through its `defaultValue` /
+  `defaultChecked` properties (its `value` / `checked` attributes, shown until the user edits
+  it), a `<textarea>` takes its default once at mount, and a new `<select>` selects the options
+  its `value` or `defaultValue` names, `multiple` included; a later `defaultValue` change never
+  moves a `<textarea>` / `<select>`. On the server, a controlled `value` / `checked` now wins over
+  the default instead of rendering both (`<input value="v" value="d">`), as ReactDOMServer does.
 - **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
   document tags now adopt the page's own elements (React's host singletons): their attributes
   follow the layout's props on the real `<html>` / `<body>`, including later updates, and the

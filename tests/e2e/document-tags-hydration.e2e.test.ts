@@ -58,9 +58,18 @@ const APPS = [
     dir: fromFileUrl(new URL("./fixtures/client-layout", import.meta.url)),
     // The layout's own state drives the REAL <html>/<body> attributes (adopted, not re-created
     // inside the page container): toggling it proves hydration happened and reached them.
-    ready: "(document.querySelector('[data-testid=theme]').click(), " +
+    // Clicked until it is dark (a click before hydration does nothing), never back: the click
+    // mounts the form below, which another click would remove again.
+    ready: "(document.documentElement.className === 'dark' || " +
+      "document.querySelector('[data-testid=theme]').click(), " +
       "document.documentElement.className === 'dark' && document.body.dataset.theme === 'dark' && " +
-      "!document.querySelector('#__denext html, #__denext head, #__denext body'))",
+      "!document.querySelector('#__denext html, #__denext head, #__denext body') && " +
+      // The form the click mounts fresh: its defaults fill the real fields (react-dom parity).
+      "(() => { const f = document.querySelector('[data-testid=defaults]'); if (!f) return false; " +
+      "const sel = (n) => Array.from(f.elements[n].selectedOptions, (o) => o.value).join(); " +
+      "return f.elements.t.value === 'hello' && !f.elements.t.hasAttribute('defaultvalue') && " +
+      "f.elements.c.checked && f.elements.a.value === 'draft' && sel('s') === 'b' && " +
+      "sel('m') === 'a,c'; })())",
   },
   {
     name: "examples/notes (a denext-convention layout with a client error boundary)",

@@ -1001,7 +1001,7 @@ export function serializeAttributes(
       if (mark) dnxH += (dnxH ? " " : "") + mark;
       continue;
     }
-    out += attributeFor(rawName, value, tag, custom);
+    out += attributeFor(rawName, value, tag, custom, props);
   }
   if (dnxH) out += ` ${DNX_H_ATTR}="${escapeHtml(dnxH)}"`;
   return out;
@@ -1076,14 +1076,17 @@ function attributeFor(
   value: unknown,
   tag: string | undefined,
   custom: boolean,
+  props: Record<string, unknown>,
 ): string {
   const action = formActionAttribute(rawName, value);
   if (action !== null) return action;
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
   if (typeof value === "function" || typeof value === "symbol" || value == null) return "";
   if (custom) return customElementAttribute(rawName, value, tag);
+  // A default renders only on an `<input>`, and a controlled `value` / `checked` wins over it
+  // (ReactDOMServer's pushInput).
   const seeded = FORM_DEFAULTS[rawName];
-  if (seeded !== undefined && tag !== "input") return "";
+  if (seeded !== undefined && (tag !== "input" || props[seeded] != null)) return "";
   const prop = seeded ?? rawName;
   const booleanName = booleanAttrName(prop);
   if (booleanName !== undefined) return value ? ` ${booleanName}=""` : "";
