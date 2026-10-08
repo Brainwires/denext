@@ -26,8 +26,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
 - **`captureOwnerStack()` and `cacheSignal()` return `null`** (owner stacks are in denext's
   DevTools; there is no client cache scope).
-- **`<Activity>` mounted hidden runs its effects once and is not server-rendered.** denext tears
-  effects down only on a visible → hidden transition.
+- **A class component inside a hidden `<Activity>` still runs `componentDidMount`**, and a hidden
+  subtree's refs stay attached; function components' effects are not mounted until it is shown.
 - **`<ViewTransition>` animates navigation commits only.** A same-page add/remove/reorder is not
   animated; names must be unique among live elements; elsewhere it needs the View Transitions API.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config

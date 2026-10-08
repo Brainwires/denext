@@ -31,6 +31,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A hidden `<Activity>` mounts no effects, as React 19.2's doesn't.** Content that mounts (or is
+  added) while hidden is pre-rendered and kept hidden, but its `useEffect` / `useLayoutEffect` /
+  store subscriptions first run when it is revealed — before, a subtree that mounted hidden ran its
+  effects once and kept them connected. An update to hidden content is pre-rendered at transition
+  priority (never in the urgent pass), so revealing it is instant. State is kept, effects are
+  cleaned up again on hide, and the server still omits hidden content from the HTML.
 - **`denext migrate` ignores what `deno task desktop` and Capacitor write into the project.**
   The generated `.gitignore` now lists `/*.app/` (the bundle `deno task desktop` writes, under
   any `desktop.app.name`) with `--desktop`, and the native build outputs (`ios/App/build/`,

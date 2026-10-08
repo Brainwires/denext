@@ -15,6 +15,7 @@ import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef, updateRef } from "../dom-props.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
+import { getActivitySupport } from "./activity-support.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -196,12 +197,15 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   // clearCommittedFlags (next) zeroes them, but the layout/passive phase runs after it. The
   // collected list is just fiber references; running the effects later is unaffected.
   const layoutFibers: Fiber[] = [];
-  collectEffects(wipRoot, layoutFibers);
+  const parked: Fiber[] = [];
+  collectEffects(wipRoot, layoutFibers, parked);
   clearCommittedFlags(wipRoot);
   // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
   //     urgently (display:none, kept mounted so its state survives), and restore it on
   //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
   if (takeOffscreen()) walk(wipRoot, applyOffscreenVisibility);
+  // Effects under a hidden <Activity> are parked (mounted on reveal) by its gated runtime.
+  if (parked.length > 0) getActivitySupport()!.park(parked);
   commitLayoutEffects(layoutFibers);
   // 5b. Profiler onRender.
   if (anyProfiler) fireProfilers(wipRoot);
@@ -246,20 +250,22 @@ function restoreElement(el: Element): void {
 }
 
 /**
- * First hide: hide the primary DOM AND disconnect its effects — a timer or subscription
- * registered in the hidden subtree must stop while it's offscreen (state in
- * useState/useRef cells is untouched, so it survives the reveal).
+ * Hide the primary DOM. The first hide also disconnects its effects — a timer or
+ * subscription registered in the hidden subtree must stop while it's offscreen (state in
+ * useState/useRef cells is untouched, so it survives the reveal). A later commit while
+ * still hidden (a hidden `<Activity>` gained a child) hides only the elements it added.
  */
 function hideOffscreenPrimary(f: Fiber): void {
+  const first = f.hiddenEls == null;
   const dom: (Element | Text)[] = [];
   let c = f.child;
   for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
     collectDom(c, dom);
-    disconnectEffects(c);
+    if (first) disconnectEffects(c);
   }
-  const els: Element[] = [];
+  const els: Element[] = f.hiddenEls ?? [];
   for (const n of dom) {
-    if (n.nodeType !== 1) continue;
+    if (n.nodeType !== 1 || offscreenPrevStyle.has(n as Element)) continue;
     hideElement(n as Element);
     els.push(n as Element);
   }
@@ -284,8 +290,8 @@ function applyOffscreenVisibility(f: Fiber): void {
   if (f.tag !== "suspense" && f.tag !== "activity") return;
   const shouldHide = f.offscreen === true && f.primaryCount != null &&
     (f.tag !== "suspense" || f.showingFallback === true);
-  if (shouldHide && f.hiddenEls == null) hideOffscreenPrimary(f);
-  else if (!shouldHide && f.hiddenEls != null) revealOffscreenPrimary(f);
+  if (shouldHide) hideOffscreenPrimary(f);
+  else if (f.hiddenEls != null) revealOffscreenPrimary(f);
 }
 
 /**
@@ -372,7 +378,7 @@ function fireProfilers(root: Fiber): void {
  * cleanup with its own setup would let sibling B's setup run before sibling A's
  * cleanup, breaking a shared-resource handoff.
  */
-function runCommitEffects(
+export function runCommitEffects(
   fibers: Fiber[],
   take: (f: Fiber) => CommitEffect[] | undefined,
 ): void {

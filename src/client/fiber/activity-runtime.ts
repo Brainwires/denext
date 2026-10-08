@@ -13,15 +13,49 @@
 
 import type { Fiber } from "./fiber.ts";
 import type { VNodeChildren } from "../../jsx/types.ts";
-import { TransitionLane } from "./fiber.ts";
+import { NoLane, TransitionLane } from "./fiber.ts";
 import { reconcileChildren } from "./reconcile-children.ts";
 import { noteOffscreen } from "./state.ts";
-import { scheduleUpdateLane } from "./scheduler.ts";
+import { renderLanes, scheduleUpdateLane } from "./scheduler.ts";
 import { revealOffscreenChildren } from "./begin-work.ts";
 import { setActivitySupport } from "./activity-support.ts";
+import { runCommitEffects } from "./commit.ts";
+import { setParkingEffects } from "./hooks-dispatcher.ts";
 
 function activityChildren(wip: Fiber): VNodeChildren {
   return (wip.vnode.props?.children ?? null) as VNodeChildren;
+}
+
+/**
+ * The hidden half of {@link beginActivity}. Mounting straight into hidden: defer the child
+ * pre-render to a transition pass so it never blocks the initial (visible) paint — render
+ * nothing this pass; the deferred pass (alternate now set) renders + hides the subtree.
+ */
+function beginHidden(wip: Fiber): Fiber | null {
+  if (wip.alternate === null) {
+    reconcileChildren(wip, null, wip.host, wip.boundary, wip.inherited);
+    scheduleUpdateLane(wip, TransitionLane);
+    return null;
+  }
+  reconcileChildren(wip, activityChildren(wip), wip.host, wip.boundary, wip.inherited);
+  // The whole subtree is the hidden primary, rendered at low priority (React's Offscreen
+  // lane): an urgent pass keeps a committed child mounted-as-is — begin-work skips a
+  // `hidden` fiber, preserving its committed subtree and NOT consuming its lanes — and
+  // defers a child whose props changed to a transition pass, which pre-renders it so a
+  // reveal is instant. A freshly-mounted child renders this pass to create its DOM. The
+  // commit hides the DOM and parks the subtree's effects (none mount while hidden).
+  const lowPriority = (renderLanes & TransitionLane) !== NoLane;
+  let count = 0;
+  for (let c = wip.child; c !== null; c = c.sibling) {
+    count++;
+    const old = c.alternate;
+    c.hidden = !lowPriority && old !== null;
+    if (c.hidden && old!.vnode.props !== c.vnode.props) scheduleUpdateLane(c, TransitionLane);
+  }
+  wip.primaryCount = count;
+  wip.offscreen = true;
+  noteOffscreen(); // so the commit pass hides the primary DOM + parks/disconnects effects
+  return wip.child;
 }
 
 /**
@@ -35,28 +69,7 @@ function beginActivity(wip: Fiber): Fiber | null {
     ? "hidden"
     : "visible";
 
-  if (mode === "hidden") {
-    // Mounting straight into hidden: defer the child pre-render to a transition pass so it
-    // never blocks the initial (visible) paint — render nothing this pass. The deferred
-    // pass (alternate now set) renders + hides the subtree below.
-    if (wip.alternate === null) {
-      reconcileChildren(wip, null, wip.host, wip.boundary, wip.inherited);
-      scheduleUpdateLane(wip, TransitionLane);
-      return null;
-    }
-    reconcileChildren(wip, activityChildren(wip), wip.host, wip.boundary, wip.inherited);
-    // The whole subtree is the hidden primary. A child that already committed (a visible →
-    // hidden flip) is kept mounted-as-is — begin-work skips a `hidden` fiber, preserving its
-    // committed subtree and NOT consuming its lanes. A freshly-mounted child renders once
-    // this pass to create its DOM, which the commit then hides.
-    let count = 0;
-    for (let c = wip.child; c !== null; c = c.sibling) count++;
-    wip.primaryCount = count;
-    wip.offscreen = true;
-    for (let c = wip.child; c !== null; c = c.sibling) c.hidden = c.alternate !== null;
-    noteOffscreen(); // so the commit pass hides the primary DOM + disconnects its effects
-    return wip.child;
-  }
+  if (mode === "hidden") return beginHidden(wip);
 
   reconcileChildren(wip, activityChildren(wip), wip.host, wip.boundary, wip.inherited);
   // Reveal (hidden → visible): un-hide the preserved children, force them to render live, and
@@ -67,10 +80,30 @@ function beginActivity(wip: Fiber): Fiber | null {
 }
 
 /**
+ * Park the queued layout + passive effects of fibers under a hidden `<Activity>` (the commit
+ * collects them apart): each entry records its setup as a disconnected `reconnect` instead of
+ * running it, so the effect first mounts when the Activity is revealed — React 19.2 mounts no
+ * effect in hidden content.
+ */
+function park(fibers: Fiber[]): void {
+  setParkingEffects(true);
+  try {
+    runCommitEffects(fibers, (f) => {
+      const es = (f.pendingEffects ?? []).concat(f.passiveEffects ?? []);
+      f.pendingEffects = [];
+      f.passiveEffects = [];
+      return es;
+    });
+  } finally {
+    setParkingEffects(false);
+  }
+}
+
+/**
  * Install the Activity offscreen scheduler into the reconciler seam. Emitted by the
  * generated entry (via `denext/client-runtime`) only when the app uses `Activity`; the dev
  * server and tests install it directly. Idempotent.
  */
 export function installActivitySupport(): void {
-  setActivitySupport({ begin: beginActivity });
+  setActivitySupport({ begin: beginActivity, park });
 }

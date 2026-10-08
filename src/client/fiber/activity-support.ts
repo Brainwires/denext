@@ -12,6 +12,8 @@ import type { Fiber } from "./fiber.ts";
 export interface ActivitySupport {
   /** Begin an `activity` fiber: reconcile + apply the offscreen (hide/reveal) dance. */
   begin(wip: Fiber): Fiber | null;
+  /** Park the queued effects of fibers under a hidden Activity: they mount on reveal. */
+  park(fibers: Fiber[]): void;
 }
 
 let support: ActivitySupport | null = null;
