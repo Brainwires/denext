@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { renderToFlightStream } from "../src/jsx/render-to-flight-stream.ts";
+import { renderFlightShell, renderToFlightStream } from "../src/jsx/render-to-flight-stream.ts";
 import { streamToString } from "../src/jsx/render-to-stream.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -278,6 +278,39 @@ Deno.test("streaming: a hole-less Flight route is buffered (cache-friendly), not
   const flightAt = body.indexOf(`id="__denext_flight"`);
   const entryAt = body.indexOf("/_denext/entry.js");
   assert(flightAt !== -1 && entryAt !== -1 && flightAt < entryAt, "flight precedes the entry");
+});
+
+Deno.test("streaming: a hole-less Flight route keeps its deferred (defer()) values when buffered", async () => {
+  // A deferred value with no Suspense hole leaves `hasHoles` false, so the page is buffered.
+  // The buffered drain must resolve the value holes into the tail Flight: draining with
+  // `streamData` on sent the `data-dnx-v` chunks into the discarding sink and returned the
+  // shell tree with its `{"$":"vh"}` placeholders, so the client hydrated those instead.
+  const filePath = "/app/page.tsx";
+  const manifest = flightManifest(filePath, new Map());
+  const slow = new Promise((r) => setTimeout(() => r({ items: [1, 2, 3] }), 0));
+  const shell = await renderFlightShell(h(DeferIsland, { loaderData: { critical: "now", slow } }));
+  assert(!shell.hasHoles, "a deferred value alone is not a Suspense hole: the buffered branch");
+  await shell.streamHoles({ enqueue() {} } as never, new TextEncoder(), undefined, false);
+  const Page = () => h(DeferIsland, { loaderData: { critical: "now", slow } });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(fp === filePath ? { default: Page } : undefined),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    flightRoutes: new Set(["/f"]),
+    streaming: true,
+  });
+  const res = await app(new Request("http://localhost/f"));
+  assertEquals(res.status, 200);
+  const body = await res.text();
+  assert(!body.includes("data-dnx-v"), "buffered: no streamed value chunk");
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(body);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assert(!json.includes(`"$":"vh"`), `no unfilled value hole in the buffered tail: ${json}`);
+  assertStringIncludes(json, `"items":[1,2,3]`);
+  assertStringIncludes(json, `"critical":"now"`);
 });
 
 // ---- deferred (Remix `defer()`) props on the streaming Flight path ------------
