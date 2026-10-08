@@ -182,6 +182,106 @@ export default function Chart() { /* … */ }
         server HTML stays inert until its own strategy fires, and the enclosing island adopts the
         nested one's DOM without re-hydrating it.
       </Callout>
+      <h2>In SPA mode: deferred mounts</h2>
+      <p>
+        A <a href="/docs/spa">SPA</a>{" "}
+        has no server render, so there is no HTML to keep inert. The same directives there defer the
+        component's <em>mount</em>, and its code: the build rewrites each <code>client:*</code>{" "}
+        element of the app's own modules, and when those elements are a component's only use, its
+        module becomes a chunk of its own, fetched when the trigger fires. Until then the element
+        renders its <code>client:placeholder</code> (or an empty element).
+      </p>
+      <Code lang="tsx">
+        {`import Mermaid from "./Mermaid.tsx";
+import { DiffPanel } from "./DiffPanel.tsx";
+
+export function Thread({ diagram, diff }) {
+  return (
+    <>
+      <Mermaid client:visible source={diagram} />
+      <DiffPanel
+        client:interaction
+        client:placeholder={<button type="button">Show the diff</button>}
+        diff={diff}
+      />
+    </>
+  );
+}`}
+      </Code>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Directive</th>
+              <th>In a SPA the component mounts when…</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>client:load</code>, <code>client:only</code>
+              </td>
+              <td>Immediately (its chunk still loads on its own).</td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:idle</code>
+              </td>
+              <td>The main thread is idle.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:visible</code>
+              </td>
+              <td>The placeholder comes within 200px of the viewport.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:media="(…)"</code>
+              </td>
+              <td>The media query matches.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:interaction</code>
+              </td>
+              <td>
+                The first pointer, key, focus or touch event inside the placeholder (give it a{" "}
+                <code>client:placeholder</code>{" "}
+                to interact with). The triggering event is not replayed: the placeholder is not the
+                component's DOM.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The component gets the element's other props and children, and later renders update it as
+        usual. A failed chunk import throws to the nearest error boundary. Only a component imported
+        by name (default or named) is deferred; a member tag (<code>
+          &lt;UI.Chart client:visible /&gt;
+        </code>), a module-level <code>export const hydrate</code>{" "}
+        default and an element whose name an inner scope re-binds mount eagerly. A component that is
+        also used without a directive, or referenced as a value, keeps its static import: its
+        directive elements still defer their mount, but its code stays in the main bundle. An app
+        with no directive bundles none of this. In an npm-React app, TypeScript learns the
+        attributes from a declaration of your own:
+      </p>
+      <Code lang="ts">
+        {`// client-directives.d.ts
+import "react";
+declare module "react" {
+  interface Attributes {
+    "client:load"?: boolean;
+    "client:idle"?: boolean;
+    "client:visible"?: boolean;
+    "client:interaction"?: boolean;
+    "client:media"?: string;
+    "client:only"?: boolean;
+    "client:placeholder"?: React.ReactNode;
+  }
+}`}
+      </Code>
       <p>
         Islands are a <a href="/docs/rendering">rendering-strategy</a>{" "}
         feature of the client/server (Flight) boundary — any App Router app with a{" "}

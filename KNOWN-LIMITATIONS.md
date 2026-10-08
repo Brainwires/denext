@@ -41,7 +41,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 ### Islands, resumability and Cache Components
 
 - **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate
-  as one root; `client:only` skips SSR by definition.
+  as one root; `client:only` skips SSR by definition. In SPA mode the directives defer the
+  component's mount and split its code instead (no server HTML to keep inert): only for a
+  component imported by name, not a member tag or a module-level `hydrate` default; a component
+  also used without a directive stays in the main bundle; `client:interaction` needs a
+  `client:placeholder` to interact with and does not replay the triggering event.
 - **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
   outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have

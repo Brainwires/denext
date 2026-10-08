@@ -5,6 +5,7 @@ import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
+import { transformSpaIslands } from "../spa-islands.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
 import { generateServerStub } from "../client-imports.ts";
@@ -150,6 +151,29 @@ async function actionStub(st: UnbundledState, abs: string): Promise<string> {
   return generateServerStub(serverModuleIdFor(st.opts.appDir, url), await staticExportNames(abs));
 }
 
+/**
+ * The build's source transforms, so dev matches a build: `feature("KEY")` folded (values, not
+ * DCE; only with `features`), and in SPA mode `client:*` component elements rewritten to
+ * deferred mounts. Best-effort: a throwing transform leaves the source as it was.
+ */
+async function buildTransforms(st: UnbundledState, written: string): Promise<string> {
+  let src = written;
+  const features = st.opts.features;
+  if (features && Object.keys(features).length > 0) {
+    try {
+      const folded = await transformFeatures(src, features);
+      if (folded.changed) src = folded.code;
+    } catch { /* best-effort — bundle the module as written */ }
+  }
+  if (st.opts.spaIslands) {
+    try {
+      const islands = await transformSpaIslands(src);
+      if (islands.changed) src = islands.code;
+    } catch { /* best-effort — the elements mount eagerly */ }
+  }
+  return src;
+}
+
 /** esbuild plugin: load `abs` (+ footer), externalize + rewrite every import it makes. */
 function moduleRewritePlugin(
   st: UnbundledState,
@@ -167,16 +191,7 @@ function moduleRewritePlugin(
       // other import is externalized — so this fires once.
       build.onLoad({ filter: /.*/ }, async (args) => {
         if (args.path !== abs) return null;
-        let src = loaded.source ?? await Deno.readTextFile(abs);
-        // Fold `feature("KEY")` calls so dev matches a build (values, not DCE). Only when the
-        // app configured `features`; a throwing fold leaves the source as written.
-        const features = st.opts.features;
-        if (features && Object.keys(features).length > 0) {
-          try {
-            const folded = await transformFeatures(src, features);
-            if (folded.changed) src = folded.code;
-          } catch { /* best-effort — bundle the module as written */ }
-        }
+        const src = await buildTransforms(st, loaded.source ?? await Deno.readTextFile(abs));
         return {
           contents: src + footer,
           loader: loaderFor(abs, st.opts.reactNative !== undefined),

@@ -135,6 +135,12 @@ export declare namespace JSX {
     "client:media"?: boolean | string;
     /** Render on the client only, skipping SSR entirely (`client:only`). */
     "client:only"?: boolean;
+    /**
+     * SPA mode: what a `client:*` element renders until its trigger mounts the component
+     * (and what `client:interaction` listens on). A Flight route ignores it: the island's
+     * server HTML is its placeholder.
+     */
+    "client:placeholder"?: VNodeChild;
   }
   /**
    * Intrinsic elements: common tags carry real per-element prop typing (from the

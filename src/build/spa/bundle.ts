@@ -29,7 +29,12 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { spaSourceTransform, spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
+import {
+  spaIslandsTransform,
+  spaSourceTransform,
+  spaSourceTransformPlugin,
+} from "../spa-compiler-plugin.ts";
+import { spaIslandRedirects, spaIslandSources } from "../spa-islands.ts";
 import { tanstackCodeSplitPlugin } from "../tanstack-code-split.ts";
 import { spaFeatureFold } from "./features.ts";
 import { spaNativeRefresh } from "../refresh-modules.ts";
@@ -218,7 +223,7 @@ async function bundleCompatSpa(
     cssImportMap: css?.importMap,
     extraPlugins: withPluginsFirst(
       leadingPlugins(rn?.plugins, modules, paths.projectDir),
-      spaBundlePlugins(paths.projectDir, dev, paths.config),
+      spaBundlePlugins(paths.projectDir, dev, paths.config, await usesSpaIslands(paths)),
     ),
     platformExtensions: rn?.platformExtensions,
     // The target's platform files (`BigButton.ios.tsx`) for the app's own modules.
@@ -283,18 +288,27 @@ function spaBundlePlugins(
   projectDir: string,
   dev: boolean,
   config: ProjectPaths["config"],
+  islands: boolean,
 ): esbuild.Plugin[] | undefined {
+  if (dev && islands) return [spaRefreshPlugin(projectDir, spaIslandsTransform)];
   if (dev) return [spaRefreshPlugin(projectDir)];
   const plugins: esbuild.Plugin[] = [];
   // TanStack Router `autoCodeSplitting`: ahead of the source transforms, which it applies itself
   // to the route modules it answers (esbuild runs only the first `onLoad` that answers).
   const tanstack = config?.spa?.tanstackRouter;
   if (tanstack?.autoCodeSplitting === true) {
-    plugins.push(tanstackCodeSplitPlugin(projectDir, tanstack, spaSourceTransform(config)));
+    plugins.push(
+      tanstackCodeSplitPlugin(projectDir, tanstack, spaSourceTransform(config, islands)),
+    );
   }
-  const plugin = spaSourceTransformPlugin(projectDir, config);
+  const plugin = spaSourceTransformPlugin(projectDir, config, islands);
   if (plugin) plugins.push(plugin);
   return plugins.length > 0 ? plugins : undefined;
+}
+
+/** Whether the app's own source carries a `client:*` directive (then it is rewritten). */
+async function usesSpaIslands(paths: ProjectPaths): Promise<boolean> {
+  return (await spaIslandSources(paths.projectDir)).length > 0;
 }
 
 /**
@@ -316,6 +330,11 @@ async function bundleNativeSpa(
   // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
   // (dev folds no features, so the two never substitute the same module).
   const refresh = dev ? await spaNativeRefresh(paths.projectDir) : null;
+  // `client:*` component elements → deferred mounts, over the fold's / refresh's copies.
+  const islands = await spaIslandRedirects(paths.projectDir, {
+    ...fold.importMap,
+    ...refresh?.importMap,
+  });
   try {
     const bundle = await bundleSourceFiles(fold.seed + entrySource, {
       configPath: paths.configPath,
@@ -327,13 +346,14 @@ async function bundleNativeSpa(
       // server, so it has no action stubs: a `"use server"` module it reaches fails the bundle.
       projectDir: paths.projectDir,
       redirects: await projectPlatformRedirects(paths.projectDir, paths.config, platform),
-      rewritten: { ...fold.importMap, ...refresh?.importMap },
+      rewritten: { ...fold.importMap, ...refresh?.importMap, ...islands.importMap },
       dev,
     });
     await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
   } finally {
     await fold.cleanup();
     await refresh?.cleanup();
+    await islands.cleanup();
   }
 }
 

@@ -24,6 +24,16 @@ and this project adheres to
   at-start flags, `lastItemKeys`, `numContainers`, `otherAxisSize`, `readyToRender` and an item's
   position are reported after each commit, scroll frame and measurement when they change; before,
   every listener was a no-op.
+- **`client:*` directives in SPA mode: deferred mount + code split.** The island syntax of a
+  Flight route (`client:load` / `idle` / `visible` / `interaction` / `media` / `only`) now has a
+  SPA meaning: the build rewrites each directive element of the app's own modules (both bundler
+  paths, the bundled dev build and the unbundled dev loop) to `denext/spa-island`'s
+  `SpaIsland`, which renders the element's new `client:placeholder` (or an empty element) until
+  the trigger, then imports the component and mounts it with the element's props. When the
+  directive elements are a component's only use its static import is dropped, so its module is a
+  chunk of its own. The triggers are the Flight islands' own (`setLazyScheduler`, the dev island
+  timeline); a failed import throws to the nearest error boundary; an app with no directive
+  bundles none of it.
 - **`VirtualList`'s `scrollerProps`**: more attributes and event handlers for the scroll element
   (`id`, `data-*`, `onKeyDown`, …).
 

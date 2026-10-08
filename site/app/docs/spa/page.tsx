@@ -440,6 +440,21 @@ spa: { desktop: { icon: "./assets/app-icon.png" } }`}
         one; the difference is a runtime story.)
       </p>
 
+      <h2>Deferred mounts with client:* directives</h2>
+      <p>
+        The <a href="/docs/islands">island directives</a>{" "}
+        work in a SPA too, with the meaning a SPA can give them: the component mounts, and its code
+        loads, only when the trigger fires. <code>&lt;Chart client:visible data={"{d}"} /&gt;</code>
+        {" "}
+        renders a placeholder (<code>client:placeholder</code>, or an empty element) until it nears
+        the viewport, then imports{" "}
+        <code>Chart</code>'s module — a chunk of its own when nothing else imports it — and mounts
+        it. Use it for heavy panels and widgets most visits never open: a diagram renderer, a diff
+        viewer, a settings page, a chart. The same syntax runs on an App Router route, where it
+        defers hydration instead. See{" "}
+        <a href="/docs/islands#in-spa-mode-deferred-mounts">In SPA mode: deferred mounts</a>.
+      </p>
+
       <h2>What it does not do</h2>
       <ul>
         <li>

@@ -200,6 +200,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       spaEntry: entryPath,
       // `lists: "denext"`: `@legendapp/list/react` → denext's VirtualList-backed module.
       specAliases: domListsEnabled(paths.config) ? domListAliases() : undefined,
+      // `client:*` component elements become deferred mounts (spa-islands.ts), as in a build.
+      spaIslands: true,
       // Each target's platform files for the app's own modules (`web` unless the page names one).
       resolvePlatform: (platform) => platformResolution(paths.config, platform),
       // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).

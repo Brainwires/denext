@@ -153,6 +153,9 @@ entry = [
   # (`denext/lists/<name>`) an app reaches by importing the package they stand in for
   # (`@legendapp/list/react`), so each export is that package's public API.
   "src/lists/*.ts",
+  # SPA mode's deferred-mount runtime: the build's island rewrite imports it by URL
+  # (`denext/spa-island`, src/build/spa-islands.ts), never app code.
+  "src/spa-island.ts",
   # The next-compat stand-ins a LIBRARY reaches through `next/router` / `next/compat/router`:
   # prebuilt runtime entries (`runtimeEntryPoints` in src/build/next-compat.ts), loaded by URL.
   "src/compat/next/router.ts",

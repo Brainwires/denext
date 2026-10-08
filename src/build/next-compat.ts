@@ -268,6 +268,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // `@legendapp/list/react` (the DOM build) on VirtualList, with `lists: "denext"` (see
     // dom-lists.ts).
     "lists-legend-list": u("src/lists/legend-list.ts"),
+    // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
+    "spa-island": u("src/spa-island.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -706,6 +708,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/react-native/legend-list": "react-native-legend-list.js",
   // `lists: "denext"`: `@legendapp/list/react` (see dom-lists.ts).
   "denext/lists/legend-list": "lists-legend-list.js",
+  // SPA mode's `client:*` deferred mounts (see spa-islands.ts).
+  "denext/spa-island": "spa-island.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
