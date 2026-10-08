@@ -2,7 +2,7 @@
 // route tree it builds: RR7's own examples — nested layouts, prefixes, index routes, dynamic,
 // splat and optional segments, `relative()` — resolve to the ids and full patterns RR gives them.
 
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { index, layout, prefix, relative, route } from "../packages/react-router/routes.ts";
 import { join } from "@std/path";
 import { generateRoutes } from "../packages/react-router/src/generate.ts";
@@ -10,6 +10,11 @@ import {
   resolveReactRouterConfig,
   resolveRouteConfig,
 } from "../packages/react-router/src/load-config.ts";
+import {
+  matchPattern,
+  prerenderExports,
+  resolvePrerenderPaths,
+} from "../packages/react-router/src/prerender.ts";
 import {
   buildRouteTree,
   expandOptionalSegments,
@@ -244,3 +249,71 @@ async function dirExists(p: string): Promise<boolean> {
     return false;
   }
 }
+
+// ── react-router.config.ts `prerender` → denext segment config ─────────────────
+
+Deno.test("prerender: paths resolve from true / a list / a getStaticPaths function", async () => {
+  const nodes = buildRouteTree([
+    index("routes/home.tsx"),
+    route("about", "routes/about.tsx"),
+    route("docs/:lang?/intro", "routes/intro.tsx"),
+    route("teams/:id", "routes/team.tsx"),
+  ]);
+  assertEquals(await resolvePrerenderPaths(undefined, nodes), null);
+  assertEquals(await resolvePrerenderPaths(false, nodes), null);
+  assertEquals(await resolvePrerenderPaths(true, nodes), [
+    "/",
+    "/about",
+    "/docs/intro",
+  ]);
+  assertEquals(await resolvePrerenderPaths(["about/", "/teams/1?x"], nodes), [
+    "/about",
+    "/teams/1",
+  ]);
+  assertEquals(
+    await resolvePrerenderPaths(
+      (
+        { getStaticPaths },
+      ) => [...getStaticPaths().filter((p) => p !== "/"), "/teams/2"],
+      nodes,
+    ),
+    ["/about", "/docs/intro", "/teams/2"],
+  );
+  await assertRejects(
+    () => resolvePrerenderPaths((() => "nope") as never, nodes),
+    Error,
+    "`prerender` must be",
+  );
+});
+
+Deno.test("prerender: a listed static route is force-static; listed params feed generateStaticParams", () => {
+  const nodes = buildRouteTree([
+    route("about", "routes/about.tsx"),
+    route("teams/:id", "routes/team.tsx"),
+    route("files/*", "routes/files.tsx"),
+    route("contact", "routes/contact.tsx"),
+  ]);
+  const byFile = (f: string) => nodes.find((n) => n.file === f)!;
+  const paths = ["/about", "/teams/1", "/teams/a%20b", "/files/x/y.txt"];
+  assertStringIncludes(
+    prerenderExports(byFile("routes/about.tsx"), paths),
+    'export const dynamic = "force-static";',
+  );
+  assertStringIncludes(
+    prerenderExports(byFile("routes/team.tsx"), paths),
+    'return [{"id":"1"},{"id":"a b"}];',
+  );
+  assertStringIncludes(
+    prerenderExports(byFile("routes/files.tsx"), paths),
+    'return [{"splat":["x","y.txt"]}];',
+  );
+  assertEquals(
+    prerenderExports(byFile("routes/contact.tsx"), paths),
+    "",
+    "not listed",
+  );
+  assertEquals(prerenderExports(byFile("routes/about.tsx"), null), "");
+  assertEquals(matchPattern("teams/:id", "/teams"), null);
+  assertEquals(matchPattern("teams/:id", "/teams/1/x"), null);
+  assertEquals(matchPattern("", "/"), {});
+});

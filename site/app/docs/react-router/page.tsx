@@ -69,18 +69,38 @@ export default { plugins: [reactRouter()] };`}
         files are the source of truth.
       </Callout>
 
+      <h2>Client data: clientLoader, clientAction, HydrateFallback</h2>
+      <p>
+        A route module's browser half runs as in React Router v7. A <code>clientLoader</code>{" "}
+        runs in the browser and its result is the route's loader data; <code>serverLoader()</code>
+        {" "}
+        hands it the server loader's data. On the first load it runs only when it hydrates —{" "}
+        <code>clientLoader.hydrate = true</code>, or the route has no server <code>loader</code>
+        {" "}
+        — and the route renders its <code>HydrateFallback</code>{" "}
+        on the server until it settles. A route a navigation brings in, and every revalidation, runs
+        it. A <code>clientAction</code> runs for the route's <code>&lt;Form&gt;</code>,{" "}
+        <code>useSubmit</code> and same-route fetcher submissions; <code>serverAction()</code>{" "}
+        runs the server <code>action</code>.
+      </p>
+      <p>
+        <code>react-router.config.ts</code> <code>ssr: false</code>{" "}
+        is React Router's SPA mode: every route renders its <code>HydrateFallback</code>{" "}
+        (or nothing) on the server and its component in the browser; the root still renders as the
+        app shell. <code>prerender</code> (<code>true</code>, a path list, or a function given{" "}
+        <code>getStaticPaths()</code>) maps to segment config: a listed static route is{" "}
+        <code>force-static</code>{" "}
+        (rendered once, then cached), and a dynamic route's listed params become its{" "}
+        <code>generateStaticParams</code>, which <code>denext export</code> writes as files.
+      </p>
+
       <h2>Limitations</h2>
       <ul>
         <li>
-          <strong>Server rendering only.</strong> <code>clientLoader</code>,{" "}
-          <code>clientAction</code> and <code>HydrateFallback</code>{" "}
-          are not run — loaders and actions run on the server.
-        </li>
-        <li>
-          <code>react-router.config.ts</code> <code>ssr: false</code>{" "}
-          (RR's SPA mode) is not this plugin — use denext's <code>mode: "spa"</code>{" "}
-          for a pure client app; <code>prerender</code>{" "}
-          is not applied (denext prerenders static routes itself).
+          On a client navigation, <code>serverLoader()</code>{" "}
+          resolves the data the navigation already fetched: the server loader runs with the route's
+          server render rather than on demand, and the route renders before its{" "}
+          <code>clientLoader</code> settles (React Router waits).
         </li>
         <li>
           Route typegen (<code>import type &#123; Route &#125; from "./+types/…"</code>) is

@@ -128,8 +128,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **`@denext/react-router` renders on the server only:** `clientLoader` / `clientAction` /
-  `HydrateFallback`, `ssr: false` and `prerender` are not applied.
 - **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
   client); non-SQLite datasources need their own driver adapter.
 

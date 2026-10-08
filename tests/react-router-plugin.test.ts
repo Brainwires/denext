@@ -214,3 +214,201 @@ Deno.test("react-router plugin: routes.ts → generated wrappers → the core Ap
     await Deno.remove(root, { recursive: true });
   }
 });
+
+/** Write `files` (app-relative) under `<root>/app`, plus `react-router.config.ts` when given. */
+async function writeFiles(
+  root: string,
+  files: Record<string, string>,
+): Promise<void> {
+  for (const [rel, code] of Object.entries(files)) {
+    const path = rel === "react-router.config.ts" ? join(root, rel) : join(root, "app", rel);
+    await Deno.mkdir(join(path, ".."), { recursive: true });
+    await Deno.writeTextFile(path, code);
+  }
+}
+
+/** Build an app from `files` through the plugin and hand its handler + manifest to `run`. */
+async function withRrApp(
+  files: Record<string, string>,
+  run: (
+    app: (req: Request) => Promise<Response>,
+    root: string,
+  ) => Promise<void>,
+): Promise<void> {
+  resetPlugins();
+  const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
+  await Deno.mkdir(tmpBase, { recursive: true });
+  const root = await Deno.makeTempDir({ dir: tmpBase, prefix: "rr7c_" });
+  try {
+    await writeFiles(root, files);
+    await applyPlugins({
+      projectRoot: root,
+      appDir: join(root, "app"),
+      config: { plugins: [reactRouter()] },
+      mode: "build",
+      load: defaultLoader,
+    });
+    const manifest = await scanRoutes(join(root, "app"));
+    const app = createApp({ getManifest: () => manifest, load: defaultLoader });
+    await run(app, root);
+  } finally {
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+const CLIENT_ROOT = `import { Outlet, useRouteError } from "react-router";
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body data-app="rr7c">{children}</body></html>;
+}
+export default function App() {
+  return <Outlet />;
+}
+export function ErrorBoundary() {
+  return <p id="root-error">{String(useRouteError())}</p>;
+}
+`;
+
+Deno.test("react-router plugin: clientLoader / clientAction / HydrateFallback reach the boundary", async () => {
+  await withRrApp({
+    "root.tsx": CLIENT_ROOT,
+    "routes.ts": `import { route } from ${JSON.stringify(DSL)};
+export default [
+  route("hydrating", "routes/hydrating.tsx"),
+  route("lazy", "routes/lazy.tsx"),
+  route("client-only", "routes/client-only.tsx"),
+];
+`,
+    "routes/hydrating.tsx": `export function loader() {
+  return { from: "server" };
+}
+export async function clientLoader({ serverLoader }: { serverLoader: () => Promise<{ from: string }> }) {
+  return { from: (await serverLoader()).from + "+client" };
+}
+clientLoader.hydrate = true as const;
+export function HydrateFallback() {
+  return <p id="fallback">loading in the browser</p>;
+}
+export default function Hydrating({ loaderData }: { loaderData: { from: string } }) {
+  return <p id="hydrating">{loaderData.from}</p>;
+}
+`,
+    "routes/lazy.tsx": `export function loader() {
+  return { from: "server" };
+}
+export async function clientLoader() {
+  return { from: "client" };
+}
+export async function clientAction({ serverAction }: { serverAction: () => Promise<unknown> }) {
+  return await serverAction();
+}
+export function action() {
+  return { ok: true };
+}
+export default function Lazy({ loaderData }: { loaderData: { from: string } }) {
+  return <p id="lazy">{loaderData.from}</p>;
+}
+`,
+    "routes/client-only.tsx": `export async function clientLoader() {
+  return { from: "client" };
+}
+export default function ClientOnly({ loaderData }: { loaderData: { from: string } }) {
+  return <p id="client-only">{loaderData.from}</p>;
+}
+`,
+  }, async (app, root) => {
+    // A hydrating clientLoader: the server renders the HydrateFallback, not the component.
+    const hydrating = await (await app(new Request("http://localhost/hydrating"))).text();
+    assertStringIncludes(
+      hydrating,
+      '<p id="fallback">loading in the browser</p>',
+    );
+    assert(
+      !hydrating.includes('id="hydrating"'),
+      "the component waits for the browser",
+    );
+    // Without `hydrate`, the first load renders the server loader's data.
+    const lazy = await (await app(new Request("http://localhost/lazy"))).text();
+    assertStringIncludes(lazy, '<p id="lazy">server</p>');
+    // No server loader: the clientLoader hydrates; with no fallback nothing renders yet.
+    const clientOnly = await app(new Request("http://localhost/client-only"));
+    assertEquals(clientOnly.status, 200);
+    assert(!(await clientOnly.text()).includes('id="client-only"'));
+
+    const dir = join(root, ".denext", "react-router");
+    const hydratingClient = await Deno.readTextFile(
+      join(dir, "routes__hydrating", "page.client.tsx"),
+    );
+    assertStringIncludes(
+      hydratingClient,
+      "clientLoader.hydrate = true",
+      "kept with its export",
+    );
+    assertStringIncludes(hydratingClient, "useClientRouteData({");
+    const lazyClient = await Deno.readTextFile(
+      join(dir, "routes__lazy", "page.client.tsx"),
+    );
+    assertStringIncludes(
+      lazyClient,
+      "useClientRouteAction(props.id, props.formAction",
+    );
+    // The page's POST still runs the server action (a no-JS form submission).
+    const form = new FormData();
+    form.set("x", "1");
+    const posted = await app(
+      new Request("http://localhost/lazy", { method: "POST", body: form }),
+    );
+    assertEquals(await posted.json(), { ok: true });
+  });
+});
+
+Deno.test("react-router plugin: `ssr: false` renders HydrateFallbacks; `prerender` sets segment config", async () => {
+  await withRrApp({
+    "react-router.config.ts": `export default { ssr: false, prerender: ["/about", "/teams/7"] };\n`,
+    "root.tsx": CLIENT_ROOT,
+    "routes.ts": `import { route } from ${JSON.stringify(DSL)};
+export default [
+  route("about", "routes/about.tsx"),
+  route("teams/:id", "routes/team.tsx"),
+];
+`,
+    "routes/about.tsx": `export function HydrateFallback() {
+  return <p id="about-fallback">spa shell</p>;
+}
+export default function About() {
+  return <p id="about">about</p>;
+}
+`,
+    "routes/team.tsx": `export function loader({ params }: { params: { id: string } }) {
+  return { id: params.id };
+}
+export default function Team({ loaderData }: { loaderData: { id: string } }) {
+  return <p id="team">{loaderData.id}</p>;
+}
+`,
+  }, async (app, root) => {
+    const about = await (await app(new Request("http://localhost/about")))
+      .text();
+    assertStringIncludes(about, '<p id="about-fallback">spa shell</p>');
+    assert(
+      !about.includes('<p id="about">'),
+      "SPA mode: the component renders in the browser",
+    );
+    const team = await (await app(new Request("http://localhost/teams/7")))
+      .text();
+    assert(
+      !team.includes('<p id="team">'),
+      "SPA mode: no server-rendered route component",
+    );
+
+    const dir = join(root, ".denext", "react-router");
+    const aboutPage = await Deno.readTextFile(
+      join(dir, "routes__about", "page.tsx"),
+    );
+    assertStringIncludes(aboutPage, 'export const dynamic = "force-static";');
+    const teamPage = await Deno.readTextFile(
+      join(dir, "routes__team", "page.tsx"),
+    );
+    assertStringIncludes(teamPage, 'return [{"id":"7"}];');
+  });
+});

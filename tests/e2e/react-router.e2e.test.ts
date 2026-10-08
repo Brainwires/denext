@@ -1,7 +1,8 @@
 // Networked e2e for examples/react-router: a React Router v7 framework-mode app on denext via
 // @denext/react-router, end to end through the real CLI — `denext build` → `denext start` —
 // asserting loader data (as prop AND via useLoaderData), a pathless layout, a dynamic route, a
-// Form action, a resource route, a thrown Response → ErrorBoundary (418), and a 404.
+// Form action, a resource route, a thrown Response → ErrorBoundary (418), a 404, and — in a
+// real browser — a hydrating clientLoader (HydrateFallback first) and a clientAction.
 //
 // Drives the CLI as a subprocess to mirror the other example e2es (the plugin generates route
 // wrappers into .denext/react-router at build time). Zero npm, so no offline-degrade branch.
@@ -10,7 +11,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { runDeno, startCliServer } from "./harness.ts";
+import { launchBrowser, pollFor, runDeno, startCliServer } from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/react-router", import.meta.url));
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
@@ -69,6 +70,38 @@ Deno.test({
 
     await t.step("unknown path 404s", async () => {
       assertEquals((await fetch(server.origin + "/nope")).status, 404);
+    });
+
+    await t.step("prerender: a listed static route is force-static", async () => {
+      const about = await Deno.readTextFile(
+        EXAMPLE + "/.denext/react-router/routes__about/page.tsx",
+      );
+      assertStringIncludes(about, 'export const dynamic = "force-static";');
+      assertStringIncludes(await (await fetch(server.origin + "/about")).text(), 'id="about"');
+    });
+
+    await t.step("clientLoader.hydrate: the server renders the HydrateFallback", async () => {
+      const html = await (await fetch(server.origin + "/client")).text();
+      assertStringIncludes(html, 'id="client-fallback"');
+      assert(!html.includes('id="client"'), "the component waits for the clientLoader");
+    });
+
+    await t.step("in the browser: clientLoader data, then a clientAction", async () => {
+      const browser = await launchBrowser();
+      try {
+        const page = await browser.newPage(server.origin + "/client");
+        await pollFor(
+          page,
+          `document.getElementById("client")?.textContent === "server loader + clientLoader"`,
+        );
+        await page.evaluate(`document.getElementById("save").click()`);
+        await pollFor(
+          page,
+          `document.getElementById("saved")?.textContent === "hello (via clientAction)"`,
+        );
+      } finally {
+        await browser.close();
+      }
     });
   } finally {
     await server.close();

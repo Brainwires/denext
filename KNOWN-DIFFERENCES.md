@@ -156,6 +156,15 @@ internal design choice with no observable difference lives in
   sides; `server-only` in the client bundle is still a build error, and the runtime
   `clientOnly()` guard still throws on the server.
 
+## Remix and React Router
+
+- **A `clientLoader`'s `serverLoader()` doesn't make its own request on a navigation.** denext
+  navigates by rendering the target route on the server, so the server `loader` runs with that
+  render and `serverLoader()` resolves its result. React Router calls the server loader only
+  when the client loader asks for it. A route a navigation brings in also renders (its server
+  data, or its `HydrateFallback` when it hydrates) before its `clientLoader` settles, where
+  React Router holds the previous page until it does.
+
 ## Browser behaviour
 
 - **On iOS/iPadOS WebKit, denext patches `Element.prototype`'s scroll members** (default on;

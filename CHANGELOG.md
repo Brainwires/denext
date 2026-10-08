@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/react-router` 0.2.0 runs a route module's browser half.** `clientLoader` (with
+  `serverLoader()` and `clientLoader.hydrate`), `clientAction` (with `serverAction()`) and
+  `HydrateFallback` work as in React Router v7 framework mode: a hydrating client loader renders
+  the `HydrateFallback` on the server and loads in the browser, a navigation and every
+  revalidation run it, and a client action handles the route's submissions. `ssr: false` is SPA
+  mode (route components render in the browser only), and `prerender` becomes segment config
+  (`force-static` for a listed static route, `generateStaticParams` for a dynamic one's listed
+  params). The runtime is `denext/remix`'s new `useClientRouteData` / `useClientRouteAction`,
+  which the generated route boundary calls; an app keeps exporting the React Router names.
 - **`"use cache"` works on methods and on a name-referenced `export default function`.** A
   static class method becomes a cached static field and an object-literal method a cached
   property, keyed on the class or object, the method name and the arguments, as in Next.js; a

@@ -6,7 +6,9 @@
 // route-synthesizer seam — so Flight, streaming, per-segment boundaries, soft navigation,
 // ISR and Fast Refresh all come from denext itself. Loaders, actions, `meta`, `links`,
 // `ErrorBoundary`, the root `Layout` export and the `Route.ComponentProps` props contract run
-// on the `denext/remix` runtime (RR7's framework API is Remix's).
+// on the `denext/remix` runtime (RR7's framework API is Remix's), as do the browser half —
+// `clientLoader` / `clientAction` / `HydrateFallback` — and `react-router.config.ts`'s
+// `ssr: false` (SPA mode) and `prerender`.
 //
 //   // denext.config.ts
 //   import { reactRouter } from "@denext/react-router";
@@ -15,11 +17,13 @@
 import type { DenextPlugin, PluginContext } from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
 import { generateRoutes } from "./src/generate.ts";
+import { resolvePrerenderPaths } from "./src/prerender.ts";
 import { resolveReactRouterConfig, resolveRouteConfig } from "./src/load-config.ts";
 import { synthesizeRoutes } from "./src/manifest.ts";
 import { buildRouteTree } from "./src/route-tree.ts";
 
 export type { ReactRouterConfig } from "./src/load-config.ts";
+export type { PrerenderConfig } from "./src/prerender.ts";
 export type { RouteNode } from "./src/route-tree.ts";
 export type { RouteConfig, RouteConfigEntry } from "./routes.ts";
 
@@ -57,11 +61,6 @@ export function reactRouter(options: ReactRouterOptions = {}): DenextPlugin {
       const appDir = join(ctx.projectRoot, options.appDirectory ?? rrConfig.appDirectory);
       const routesFile = join(appDir, options.routesFile ?? "routes.ts");
       if (!(await exists(routesFile))) return; // not an RR framework app — nothing to do
-      if (rrConfig.ssr === false) {
-        console.warn(
-          "denext/react-router: react-router.config `ssr: false` (RR's SPA mode) is not what this plugin serves — routes are server-rendered; use denext's `mode: \"spa\"` for a pure SPA.",
-        );
-      }
       const rootFile = await firstExisting(appDir, ROOT_FILES);
       const outDir = join(ctx.projectRoot, ".denext", "react-router");
 
@@ -70,7 +69,9 @@ export function reactRouter(options: ReactRouterOptions = {}): DenextPlugin {
       ctx.addRouteSynthesizer(async (manifest) => {
         const entries = await resolveRouteConfig(await ctx.load(routesFile), routesFile);
         const nodes = buildRouteTree(entries);
-        const generated = await generateRoutes({ appDir, outDir, nodes, rootFile });
+        const prerender = await resolvePrerenderPaths(rrConfig.prerender, nodes);
+        const spa = rrConfig.ssr === false;
+        const generated = await generateRoutes({ appDir, outDir, nodes, rootFile, spa, prerender });
         synthesizeRoutes(manifest, nodes, generated);
       });
     },

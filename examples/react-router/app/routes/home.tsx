@@ -25,6 +25,9 @@ export default function Home({ loaderData }: { loaderData: { greeting: string } 
         <li>
           <a href="/boom">/boom</a> (throws → ErrorBoundary)
         </li>
+        <li>
+          <a href="/client">/client</a> (clientLoader / clientAction / HydrateFallback)
+        </li>
       </ul>
     </main>
   );

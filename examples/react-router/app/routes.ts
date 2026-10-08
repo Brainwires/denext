@@ -17,4 +17,5 @@ export default [
   ]),
   route("api/health", "routes/api/health.ts"),
   route("boom", "routes/boom.tsx"),
+  route("client", "routes/client.tsx"),
 ];

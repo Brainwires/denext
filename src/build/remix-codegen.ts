@@ -143,6 +143,12 @@ export interface ModuleParts {
    * component AND the ErrorBoundary — the migrated root boundary renders through it.
    */
   hasLayoutExport: boolean;
+  /** A `clientLoader` export (React Router v7 / Remix ≥ 2.4): loads in the browser. */
+  hasClientLoader: boolean;
+  /** A `clientAction` export: submissions run in the browser. */
+  hasClientAction: boolean;
+  /** A `HydrateFallback` export: rendered while a hydrating `clientLoader` runs. */
+  hasHydrateFallback: boolean;
 }
 
 // ── AST substrate (swc): top-level items, bound names, free identifiers ────────
@@ -532,6 +538,9 @@ function emptyParts(): ModuleParts {
     hasCatchBoundary: false,
     hasShouldRevalidate: false,
     hasLayoutExport: false,
+    hasClientLoader: false,
+    hasClientAction: false,
+    hasHydrateFallback: false,
   };
 }
 
@@ -591,12 +600,46 @@ function classifyExport(parts: ModuleParts, decl: Node, itemCode: string): void 
     if (flag) parts[flag] = true;
     return;
   }
+  pushClient(parts, itemCode, decl);
+  markClientExports(parts, names);
+}
+
+/** A client-side statement: kept in the client module, its references seed the helpers. */
+function pushClient(parts: ModuleParts, itemCode: string, node: Node): void {
   parts.clientStatements.push(itemCode);
   parts.clientOrder.push(parts.cursor);
-  addFree(parts.clientFree, decl, parts.clientTypeOnly);
-  if (names.includes("Layout")) parts.hasLayoutExport = true;
-  if (names.includes("ErrorBoundary")) parts.hasErrorBoundary = true;
-  if (names.includes("CatchBoundary")) parts.hasCatchBoundary = true;
+  addFree(parts.clientFree, node, parts.clientTypeOnly);
+}
+
+/** The route-module client exports the generated boundary composes, by export name. */
+const CLIENT_FLAG: Record<string, keyof ModuleParts> = {
+  Layout: "hasLayoutExport",
+  ErrorBoundary: "hasErrorBoundary",
+  CatchBoundary: "hasCatchBoundary",
+  clientLoader: "hasClientLoader",
+  clientAction: "hasClientAction",
+  HydrateFallback: "hasHydrateFallback",
+};
+
+/** Flag the client exports among `names` (see {@link CLIENT_FLAG}). */
+function markClientExports(parts: ModuleParts, names: string[]): void {
+  for (const name of names) {
+    const flag = Object.hasOwn(CLIENT_FLAG, name) ? CLIENT_FLAG[name] : undefined;
+    if (flag) (parts as unknown as Record<string, boolean>)[flag] = true;
+  }
+}
+
+/**
+ * `clientLoader.hydrate = true` (React Router's way to run a client loader on hydration): a
+ * statement that configures a client export belongs with it in the client module, not
+ * among the helpers (which a split includes only when it references their names).
+ */
+function configuresClientExport(item: Node): boolean {
+  const e = item.type === "ExpressionStatement" ? item.expression : null;
+  const target = e?.type === "AssignmentExpression" ? e.left : null;
+  const object = target?.type === "MemberExpression" ? target.object : null;
+  return object?.type === "Identifier" &&
+    (object.value === "clientLoader" || object.value === "clientAction");
 }
 
 /** Classify one top-level item into imports / server / client / helpers. */
@@ -624,10 +667,18 @@ function classifyItem(parts: ModuleParts, item: Node, itemCode: string): void {
       parts.clientOrder.push(parts.cursor);
       return;
     default:
-      // A plain top-level declaration (function/const/class) or a type → a helper,
-      // included per split only where referenced.
-      pushHelper(parts, itemCode, declaredNames(item), item);
+      classifyPlainItem(parts, item, itemCode);
   }
+}
+
+/**
+ * A top-level item that isn't an import or export: a statement configuring a client export
+ * goes with it; any other declaration (function/const/class) or type is a helper, included
+ * per split only where referenced.
+ */
+function classifyPlainItem(parts: ModuleParts, item: Node, itemCode: string): void {
+  if (configuresClientExport(item)) return pushClient(parts, itemCode, item);
+  pushHelper(parts, itemCode, declaredNames(item), item);
 }
 
 /**
@@ -759,6 +810,7 @@ export function clientModuleSource(
   role: "page" | "layout",
   root = false,
   rr7 = false,
+  options: ClientModuleOptions = {},
 ): string {
   const { clientStmts, userName } = delocalizedClientStatements(parts, root);
   // Include only the helpers the client body references (transitively) — a server-only
@@ -785,13 +837,8 @@ export function clientModuleSource(
     ].map((st) => rewriteRemixImports(st).trim()).join("\n\n");
     return `"use client";\n${GEN_HEADER}${plain}\n`;
   }
-  const runtime = ["RemixRouteProvider"];
-  if (rr7) runtime.push("useActionData", "useMatches");
-  if (role === "layout") runtime.push("OutletProvider");
-  if (parts.hasErrorBoundary || parts.hasCatchBoundary) runtime.push("RemixErrorProvider");
-  for (const tag of ["DocumentBody", "DocumentHead", "DocumentHtml"]) {
-    if (bodyText.includes(`<${tag}`)) runtime.push(tag);
-  }
+  const client = rr7 ? clientExports(parts, options) : null;
+  const runtime = boundaryRuntime(parts, role, rr7, client, bodyText);
   const body = [
     ...usedImports(parts.imports, bodyText, referenced),
     ...serverTypeImports(parts, bodyText, dataFile),
@@ -799,8 +846,102 @@ export function clientModuleSource(
     ...bodyStatements,
   ].map((s) => rewriteRemixImports(s).trim()).join("\n\n");
   return `"use client";\n${GEN_HEADER}${body}\n\n${
-    boundarySource(userName, role, root && parts.hasLayoutExport, rr7)
+    boundarySource(userName, role, root && parts.hasLayoutExport, rr7, client)
   }${errorBoundaryExport(parts)}\n`;
+}
+
+/** The React Router v7 hooks a boundary imports (props contract, client data APIs). */
+function rr7Runtime(rr7: boolean, client: ClientExports | null): string[] {
+  if (!rr7) return [];
+  const names = ["useActionData", "useMatches"];
+  if (client) names.push("useClientRouteData");
+  if (client?.action) names.push("useClientRouteAction");
+  return names;
+}
+
+/** The `denext/remix` names a route's client boundary imports. */
+function boundaryRuntime(
+  parts: ModuleParts,
+  role: "page" | "layout",
+  rr7: boolean,
+  client: ClientExports | null,
+  bodyText: string,
+): string[] {
+  const runtime = ["RemixRouteProvider", ...rr7Runtime(rr7, client)];
+  if (role === "layout") runtime.push("OutletProvider");
+  if (parts.hasErrorBoundary || parts.hasCatchBoundary) runtime.push("RemixErrorProvider");
+  for (const tag of ["DocumentBody", "DocumentHead", "DocumentHtml"]) {
+    if (bodyText.includes(`<${tag}`)) runtime.push(tag);
+  }
+  return runtime;
+}
+
+/** Options of {@link clientModuleSource}. */
+export interface ClientModuleOptions {
+  /**
+   * React Router's SPA mode (`ssr: false`): the route component renders in the browser
+   * only — its `HydrateFallback` (or nothing) on the server.
+   */
+  spa?: boolean;
+}
+
+/** The route-module client data exports the generated boundary composes. */
+interface ClientExports {
+  loader: boolean;
+  action: boolean;
+  fallback: boolean;
+  serverLoader: boolean;
+  spa: boolean;
+}
+
+/** A route's client data exports, or null when it has none and isn't in SPA mode. */
+function clientExports(parts: ModuleParts, options: ClientModuleOptions): ClientExports | null {
+  const spa = options.spa === true;
+  if (!parts.hasClientLoader && !parts.hasClientAction && !spa) return null;
+  return {
+    loader: parts.hasClientLoader,
+    action: parts.hasClientAction,
+    fallback: parts.hasHydrateFallback,
+    serverLoader: parts.hasLoader,
+    spa,
+  };
+}
+
+/**
+ * The boundary's client data hooks (`clientLoader` / `clientAction` / `HydrateFallback`,
+ * SPA mode): the statements that open its body, the loader-data and form-action
+ * expressions it renders with, and the element it renders while a hydrating load runs.
+ */
+function clientBoundaryParts(client: ClientExports | null): {
+  setup: string;
+  data: string;
+  formAction: string;
+  /** The `HydrateFallback` element, `""` for none (render nothing), null without hooks. */
+  fallback: string | null;
+} {
+  if (!client) {
+    return { setup: "", data: "props.loaderData", formAction: "props.formAction", fallback: null };
+  }
+  const loader = client.loader ? "\n    clientLoader," : "";
+  const spa = client.spa ? "\n    spa: true," : "";
+  const setup = `  const __client = useClientRouteData({
+    id: props.id,
+    loaderData: props.loaderData,
+    params: props.params,${loader}
+    hasServerLoader: ${client.serverLoader},
+    hasHydrateFallback: ${client.fallback},${spa}
+  });
+${
+    client.action
+      ? "  const __formAction = useClientRouteAction(props.id, props.formAction, props.params, clientAction);\n"
+      : ""
+  }`;
+  return {
+    setup,
+    data: "__client.data",
+    formAction: client.action ? "__formAction" : "props.formAction",
+    fallback: client.fallback ? "<HydrateFallback />" : "",
+  };
 }
 
 /** Delocalize the user's default component so the generated boundary can wrap it. */
@@ -861,21 +1002,31 @@ function boundarySource(
   role: "page" | "layout",
   viaLayout = false,
   rr7 = false,
+  client: ClientExports | null = null,
 ): string {
+  const hooks = clientBoundaryParts(client);
   // Remix renders the root's `Layout` export around the page component (and around the
   // ErrorBoundary): `<Layout><App/></Layout>`. React Router v7 also hands the component its
   // data as PROPS (`Route.ComponentProps`: loaderData, actionData, params, matches).
   const userProps = rr7
-    ? ` loaderData={props.loaderData} actionData={useActionData()} params={props.params} matches={useMatches()}`
+    ? ` loaderData={${hooks.data}} actionData={__actionData} params={props.params} matches={__matches}`
     : "";
-  const user = viaLayout
-    ? `<Layout><${userName}${userProps} /></Layout>`
-    : `<${userName}${userProps} />`;
-  const inner = role === "layout"
+  // Hooks run unconditionally at the top (the fallback branch must not skip them).
+  const rr7Hooks = rr7
+    ? "  const __actionData = useActionData();\n  const __matches = useMatches();\n"
+    : "";
+  const withLayout = (el: string) => viaLayout ? `<Layout>${el}</Layout>` : el;
+  const user = withLayout(`<${userName}${userProps} />`);
+  const route = role === "layout"
     ? `      <OutletProvider outlet={props.children}>\n` +
       `        ${user}\n` +
       `      </OutletProvider>`
     : `      ${user}`;
+  // While a hydrating client loader runs, the route renders its `HydrateFallback` instead.
+  const fallback = viaLayout ? `<Layout>${hooks.fallback || "{null}"}</Layout>` : hooks.fallback;
+  const inner = hooks.fallback === null
+    ? route
+    : `      {__client.fallback ? ${fallback || "null"} : (\n  ${route}\n      )}`;
   return `export default function __RemixRouteBoundary(props: {
   id: string;
   loaderData: unknown;
@@ -884,13 +1035,13 @@ function boundarySource(
   formAction?: (formData: FormData) => Promise<unknown>;
   children?: unknown;
 }) {
-  return (
+${rr7Hooks}${hooks.setup}  return (
     <RemixRouteProvider
       id={props.id}
-      loaderData={props.loaderData}
+      loaderData={${hooks.data}}
       params={props.params}
       handle={props.handle}
-      formAction={props.formAction}
+      formAction={${hooks.formAction}}
     >
 ${inner}
     </RemixRouteProvider>
