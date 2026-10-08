@@ -6,8 +6,7 @@ import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
-import { assembleStreamedFlight } from "../src/jsx/flight-holes.ts";
-import type { FlightNode, FlightValue } from "../src/jsx/render-to-flight.ts";
+import { hydratedFlight as assembled, streamedChunks } from "./helpers/streamed-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -36,27 +35,9 @@ function DeferIsland(_props: { loaderData?: unknown }): VNode {
 const deferMod = { DeferIsland };
 tagClientExports(deferMod as Record<string, unknown>, "c_defer");
 
-/** The JSON chunks a streamed document sent under `attr`, by id. */
-function streamedChunks<T>(html: string, attr: string): Map<string, T> {
-  const re = new RegExp(
-    `<script type="application/json" ${attr}="([^"]+)">([\\s\\S]*?)</script>`,
-    "g",
-  );
-  return new Map([...html.matchAll(re)].map((m) => [m[1], JSON.parse(m[2]) as T]));
-}
-
-/**
- * The Flight tree the browser hydrates: `#__denext_flight` with the hole and deferred-value
- * chunks the document streamed put back (what the entry's `readStreamedFlight` does).
- */
-function hydratedFlight(html: string) {
-  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
-  assert(m, "flight island present");
-  return assembleStreamedFlight(
-    JSON.parse(m![1]),
-    streamedChunks<FlightNode>(html, "data-dnx-f"),
-    streamedChunks<FlightValue>(html, "data-dnx-v"),
-  ) as { $?: string; t?: string };
+/** The hydrated tree, typed loosely for field checks. */
+function hydratedFlight(html: string): { $?: string; t?: string } {
+  return assembled(html) as { $?: string; t?: string };
 }
 
 async function Slow(): Promise<VNode> {

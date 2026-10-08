@@ -22,6 +22,7 @@ import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 import type { Component, VNode, VNodeChildren } from "../src/jsx/types.ts";
 import { makeDom } from "./helpers/dom.ts";
 import { useState } from "../src/runtime/hooks.ts";
+import { hydratedFlight } from "./helpers/streamed-flight.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -260,8 +261,9 @@ function makeApp(
 }
 
 /** The `#__denext_flight` JSON of a document. */
+/** The Flight tree the browser hydrates from `body`, as JSON (streamed chunks put back). */
 function inlined(body: string): string {
-  return /<script id="__denext_flight" type="application\/json">(.*?)<\/script>/s.exec(body)![1];
+  return JSON.stringify(hydratedFlight(body));
 }
 
 const plainPage = () => h("p", null, "page");
