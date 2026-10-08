@@ -92,6 +92,7 @@ ctx.addRouteSynthesizer(async (manifest) => {
 Use this when your routes render through denext's **normal** App Router path — the
 lightest case is to clone an existing route under a new path (see
 [`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases), which aliases `/home` to `/`).
+A [SPA](/docs/spa) has no route manifest, so its route synthesizers are not called.
 
 ### Seam 2 — claim requests (a distinct render path)
 
@@ -110,7 +111,9 @@ ctx.addRequestHandler(async (request) => {
 });
 ```
 
-Core routes always win, so a plugin never shadows an App Router page.
+Core routes always win, so a plugin never shadows an App Router page. Request handlers run
+under the App Router's `denext dev` and `denext start`; a [SPA](/docs/spa)'s servers serve the
+shell and its files and do not call them.
 
 ### Seam 3 — build steps
 
@@ -153,8 +156,8 @@ one chunk whose `modules` are `clientModules`. Other Vite hooks are not run.
 `ctx.addPrepareStep(fn, { watch })` registers a step that generates inputs the app then
 imports — types, a data artifact. Unlike a build step (which runs only at `denext build` and
 `denext export`),
-a prepare step runs in **both** lifecycles: once at `denext build` and once at `denext dev`
-startup, and again in dev whenever a file under its `watch` globs changes — so its generated
+a prepare step runs in **both** lifecycles: once at `denext build` / `denext export` and once
+at `denext dev` startup (App Router and SPA alike), and again in dev whenever a file under its `watch` globs changes — so its generated
 output stays live as you edit. Its context is a build step's without `emitFile` /
 `clientModules` (`PluginPrepareContext`): a prepare step generates inputs, not published
 output. This is the seam

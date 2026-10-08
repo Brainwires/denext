@@ -8,6 +8,67 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+Upgrade notes for 3.4. Plugin authors:
+
+- **A prepare step takes a `PluginPrepareContext`** (`PluginPrepareStep` is
+  `(context: PluginPrepareContext) => …`): the build context's fields without `emitFile` /
+  `clientModules`. A step annotated `(ctx: PluginBuildContext) => …` and passed to
+  `addPrepareStep` no longer type-checks under `strictFunctionTypes`; type it
+  `PluginPrepareContext` (or leave the parameter unannotated).
+- **`PluginBuildContext` has a required `emitFile`**, so a context a plugin's own tests build by
+  hand no longer compiles; add `emitFile: () => Promise.resolve()` (or a recorder).
+- **Build steps run at `denext export` too** (App Router and SPA), not only at `denext build`,
+  and **SPA mode now runs `plugins`**: setup, prepare steps (at build, export and `denext dev`
+  startup) and build steps. A step that assumed a `denext build` output directory, or a plugin
+  listed in a SPA config that was inert until now, runs; check it does the right thing there.
+  The first-party plugins skip or redirect their output under `denext export`:
+  `@denext/graphql` writes no SDL, `@denext/openapi` publishes the document at its `path`
+  (nothing with `expose: "dev"`), `@denext/pages-router` skips its prerender in a hybrid
+  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime only at a `path` outside
+  `/_denext/` (this may change while the `emitFile` reservation is narrowed).
+- **`emitFile` refuses the build's own paths:** `index.html`, anything under `_denext/` and the
+  `spa.assetsDir` directory (compared without case).
+
+Apps:
+
+- **App Router `?url` and bare asset imports are named `name-HASH8.ext`** (esbuild's 8-character
+  base32 hash, was a variable-length base36 one), and the server's content-hash check
+  (`isContentHashed`) now also counts a `-` plus eight upper-case base32 characters, so more
+  files are served `immutable`. Anything that matched the old asset names (a CDN rule, a
+  test) needs the new shape.
+- **New `"use cache"` build errors, as in Next.js:** an inline `"use cache"` instance method, a
+  cached getter or setter, and `this` / `super` / `arguments` inside a cached function fail the
+  build where the directive used to be inert or silently wrong. Move the body to a static
+  method or a function that takes what it needs as arguments.
+- **A name-referenced `export default function` with `"use cache"` becomes a `const`**, so it is
+  no longer hoisted: a call before its declaration at module top level, or through an import
+  cycle that runs first, now throws a `ReferenceError` (temporal dead zone) where it used to run,
+  uncached. Call it after the module has evaluated.
+- **A `@denext/react-router` `prerender` (force-static) page's loader gets the URL alone**, a
+  request with no headers and no body, as React Router's build-time prerender does; on other
+  pages a loader that reads `request.headers` makes the render dynamic (never cached for
+  everyone), as `headers()` does.
+- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`** (a config error at load), and
+  `spa.viteManifest` / `spa.tanstackRouter` are validated too: a non-boolean `viteManifest`, a
+  non-object `tanstackRouter` or an unknown key in it is an error.
+- **Behaviour changes, as React 19.2 and ReactDOMServer do:** a `<ViewTransition>` without props
+  now stamps its child (`data-dnx-vt`) and takes part in same-page transitions; a hidden
+  `<Activity>` runs no effects for content that mounts while hidden (they run when it is
+  revealed); on the server a controlled `value` / `checked` wins over `defaultValue` /
+  `defaultChecked` instead of rendering both.
+- **Streamed Flight:** `#__denext_flight` on a streamed page is now the shell tree with holes,
+  the deferred values and Suspense subtrees arriving as `script[data-dnx-v]` / `[data-dnx-f]`
+  chunks; only the server's own chunks (direct children of `<body>`) are read.
+  `readStreamedFlight` from `denext/client-runtime` returns a Promise. Code that parsed
+  `#__denext_flight` itself, or called `readStreamedFlight` synchronously, must change.
+- **A client root layout's `<html>` / `<body>` keep what scripts set:** hydration keeps the
+  attributes a pre-hydration script added (next-themes' theme class), and under
+  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (without it the
+  client value wins); an unmount or a root-layout switch removes only the attributes the layout
+  set.
+
 ### Added
 
 - **`lists: "denext"` runs LegendList's DOM build on `VirtualList`.** With the new top-level
@@ -145,9 +206,8 @@ and this project adheres to
   tag in the app's sources (dev and unscanned paths keep it), Remix `defer()` value-hole
   substitution is a chunk loaded only for a document that streamed a deferred value, and two
   constant tables are packed: `examples/hello`'s shared chunks went from 65,514 to 64,924 B and a
-  Flight app's `flight.js` from 3,075 to 2,572 B. **Possibly breaking** (for the Breaking list):
-  `readStreamedFlight` from `denext/client-runtime` now returns a Promise. (3.4.0 correctness
-  audit.)
+  Flight app's `flight.js` from 3,075 to 2,572 B. `readStreamedFlight` from
+  `denext/client-runtime` now returns a Promise (see Breaking). (3.4.0 correctness audit.)
 
 ### Fixed
 
@@ -219,8 +279,8 @@ and this project adheres to
   key** (`constructor`, `toString`, `__proto__`) to the prototype's value; the alias and runtime
   tables are read by own key only.
 - **`denext migrate` reports a Vite emitter called with a template literal that reads a
-  vite.config value** (`stampPlugin(\` ${dir}/stamp.txt\`)`). The `${…}`was blanked with the
-  string, so the call was carried into`denext.config.ts`, where the value does not exist, and
+  vite.config value** (``stampPlugin(`${dir}/stamp.txt`)``). The `${…}` was blanked with the
+  string, so the call was carried into `denext.config.ts`, where the value does not exist, and
   the build failed.
 - **A buffered Flight page keeps its Remix `defer()` values.** A page with a deferred value but
   no Suspense hole is served buffered; its tail was drained as if streaming, so the value's chunk
