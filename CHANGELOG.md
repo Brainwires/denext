@@ -8,68 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Breaking
-
-Upgrade notes for 3.4. Plugin authors:
-
-- **A prepare step takes a `PluginPrepareContext`** (`PluginPrepareStep` is
-  `(context: PluginPrepareContext) => …`): the build context's fields without `emitFile` /
-  `clientModules`. A step annotated `(ctx: PluginBuildContext) => …` and passed to
-  `addPrepareStep` no longer type-checks under `strictFunctionTypes`; type it
-  `PluginPrepareContext` (or leave the parameter unannotated).
-- **`PluginBuildContext` has a required `emitFile`**, so a context a plugin's own tests build by
-  hand no longer compiles; add `emitFile: () => Promise.resolve()` (or a recorder).
-- **Build steps run at `denext export` too** (App Router and SPA), not only at `denext build`,
-  and **SPA mode now runs `plugins`**: setup, prepare steps (at build, export and `denext dev`
-  startup) and build steps. A step that assumed a `denext build` output directory, or a plugin
-  listed in a SPA config that was inert until now, runs; check it does the right thing there.
-  The first-party plugins skip or redirect their output under `denext export`:
-  `@denext/graphql` writes no SDL, `@denext/openapi` publishes the document at its `path`
-  (nothing with `expose: "dev"`), `@denext/pages-router` skips its prerender in a hybrid
-  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime into the export at its
-  `path` (the default `/_denext/htmx/htmx.min.js` included).
-- **`emitFile` refuses the build's own paths:** `index.html`, denext's output under `_denext/`
-  (`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`) and the
-  `spa.assetsDir` directory (compared without case), and in an export any file the build already
-  wrote (a rendered page, a client chunk). Other `_denext/` paths are open to plugins.
-
-Apps:
-
-- **App Router `?url` and bare asset imports are named `name-HASH8.ext`** (esbuild's 8-character
-  base32 hash, was a variable-length base36 one), and the server's content-hash check
-  (`isContentHashed`) now also counts a `-` plus eight upper-case base32 characters, so more
-  files are served `immutable`. Anything that matched the old asset names (a CDN rule, a
-  test) needs the new shape.
-- **New `"use cache"` build errors, as in Next.js:** an inline `"use cache"` instance method, a
-  cached getter or setter, and `this` / `super` / `arguments` inside a cached function fail the
-  build where the directive used to be inert or silently wrong. Move the body to a static
-  method or a function that takes what it needs as arguments.
-- **A name-referenced `export default function` with `"use cache"` becomes a `const`**, so it is
-  no longer hoisted: a call before its declaration at module top level, or through an import
-  cycle that runs first, now throws a `ReferenceError` (temporal dead zone) where it used to run,
-  uncached. Call it after the module has evaluated.
-- **A `@denext/react-router` `prerender` (force-static) page's loader gets the URL alone**, a
-  request with no headers and no body, as React Router's build-time prerender does; on other
-  pages a loader that reads `request.headers` makes the render dynamic (never cached for
-  everyone), as `headers()` does.
-- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`** (a config error at load), and
-  `spa.viteManifest` / `spa.tanstackRouter` are validated too: a non-boolean `viteManifest`, a
-  non-object `tanstackRouter` or an unknown key in it is an error.
-- **Behaviour changes, as React 19.2 and ReactDOMServer do:** a `<ViewTransition>` without props
-  now stamps its child (`data-dnx-vt`) and takes part in same-page transitions; a hidden
-  `<Activity>` runs no effects for content that mounts while hidden (they run when it is
-  revealed); on the server a controlled `value` / `checked` wins over `defaultValue` /
-  `defaultChecked` instead of rendering both.
-- **Streamed Flight:** `#__denext_flight` on a streamed page is now the shell tree with holes,
-  the deferred values and Suspense subtrees arriving as `script[data-dnx-v]` / `[data-dnx-f]`
-  chunks; only the server's own chunks (direct children of `<body>`) are read.
-  `readStreamedFlight` from `denext/client-runtime` returns a Promise. Code that parsed
-  `#__denext_flight` itself, or called `readStreamedFlight` synchronously, must change.
-- **A client root layout's `<html>` / `<body>` keep what scripts set:** hydration keeps the
-  attributes a pre-hydration script added (next-themes' theme class), and under
-  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (without it the
-  client value wins); an unmount or a root-layout switch removes only the attributes the layout
-  set.
+## [3.4.0] - 2026-10-08
 
 ### Added
 
@@ -354,6 +293,67 @@ Apps:
   mixed the client with what those paths serve.
 - **`@tanstack/router-plugin`, which denext runs at build time, is pinned to an exact version**
   (1.168.42) instead of a `^` range.
+
+### Breaking
+
+Upgrade notes for 3.4. Plugin authors:
+
+- **A prepare step takes a `PluginPrepareContext`** (`PluginPrepareStep` is
+  `(context: PluginPrepareContext) => …`): the build context's fields without `emitFile` /
+  `clientModules`. A step annotated `(ctx: PluginBuildContext) => …` and passed to
+  `addPrepareStep` no longer type-checks under `strictFunctionTypes`; type it
+  `PluginPrepareContext` (or leave the parameter unannotated).
+- **`PluginBuildContext` has a required `emitFile`**, so a context a plugin's own tests build by
+  hand no longer compiles; add `emitFile: () => Promise.resolve()` (or a recorder).
+- **Build steps run at `denext export` too** (App Router and SPA), not only at `denext build`,
+  and **SPA mode now runs `plugins`**: setup, prepare steps (at build, export and `denext dev`
+  startup) and build steps. A step that assumed a `denext build` output directory, or a plugin
+  listed in a SPA config that was inert until now, runs; check it does the right thing there.
+  The first-party plugins skip or redirect their output under `denext export`:
+  `@denext/graphql` writes no SDL, `@denext/openapi` publishes the document at its `path`
+  (nothing with `expose: "dev"`), `@denext/pages-router` skips its prerender in a hybrid
+  (`app/` + `pages/`) export, and `@denext/htmx` publishes its runtime into the export at its
+  `path` (the default `/_denext/htmx/htmx.min.js` included).
+- **`emitFile` refuses the build's own paths:** `index.html`, denext's output under `_denext/`
+  (`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`) and the
+  `spa.assetsDir` directory (compared without case), and in an export any file the build already
+  wrote (a rendered page, a client chunk). Other `_denext/` paths are open to plugins.
+  Apps:
+- **App Router `?url` and bare asset imports are named `name-HASH8.ext`** (esbuild's 8-character
+  base32 hash, was a variable-length base36 one), and the server's content-hash check
+  (`isContentHashed`) now also counts a `-` plus eight upper-case base32 characters, so more
+  files are served `immutable`. Anything that matched the old asset names (a CDN rule, a
+  test) needs the new shape.
+- **New `"use cache"` build errors, as in Next.js:** an inline `"use cache"` instance method, a
+  cached getter or setter, and `this` / `super` / `arguments` inside a cached function fail the
+  build where the directive used to be inert or silently wrong. Move the body to a static
+  method or a function that takes what it needs as arguments.
+- **A name-referenced `export default function` with `"use cache"` becomes a `const`**, so it is
+  no longer hoisted: a call before its declaration at module top level, or through an import
+  cycle that runs first, now throws a `ReferenceError` (temporal dead zone) where it used to run,
+  uncached. Call it after the module has evaluated.
+- **A `@denext/react-router` `prerender` (force-static) page's loader gets the URL alone**, a
+  request with no headers and no body, as React Router's build-time prerender does; on other
+  pages a loader that reads `request.headers` makes the render dynamic (never cached for
+  everyone), as `headers()` does.
+- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`** (a config error at load), and
+  `spa.viteManifest` / `spa.tanstackRouter` are validated too: a non-boolean `viteManifest`, a
+  non-object `tanstackRouter` or an unknown key in it is an error.
+- **Behaviour changes, as React 19.2 and ReactDOMServer do:** a `<ViewTransition>` without props
+  now stamps its child (`data-dnx-vt`) and takes part in same-page transitions; a hidden
+  `<Activity>` runs no effects for content that mounts while hidden (they run when it is
+  revealed); on the server a controlled `value` / `checked` wins over `defaultValue` /
+  `defaultChecked` instead of rendering both.
+- **Streamed Flight:** `#__denext_flight` on a streamed page is now the shell tree with holes,
+  the deferred values and Suspense subtrees arriving as `script[data-dnx-v]` / `[data-dnx-f]`
+  chunks; only the server's own chunks (direct children of `<body>`) are read.
+  `readStreamedFlight` from `denext/client-runtime` returns a Promise. Code that parsed
+  `#__denext_flight` itself, or called `readStreamedFlight` synchronously, must change.
+- **A client root layout's `<html>` / `<body>` keep what scripts set:** hydration keeps the
+  attributes a pre-hydration script added (next-themes' theme class), and under
+  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (without it the
+  client value wins); an unmount or a root-layout switch removes only the attributes the layout
+  set.
 
 ## [3.3.0] - 2026-10-08
 
@@ -12030,7 +12030,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.3.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.0...development
+[3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0
 [3.1.0]: https://jsr.io/@denext/denext@3.1.0
