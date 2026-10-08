@@ -342,6 +342,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A migrated desktop app takes its name and identifier from `desktop.app`.** The `desktop`
+  task `denext migrate --desktop` writes ran a bare `deno desktop -o "<title>"`, which reads
+  `desktop.app` from deno.json only, so a `desktop.app.name` / `identifier` set in
+  `denext.config.ts` (where the docs put them) was ignored, and every migrated build of an app
+  got the same `com.deno.desktop.<title>` bundle id, sharing one app's storage. `export` now copies
+  `desktop.app` into deno.json for a project with a `desktop.ts` (as `denext desktop run` and the
+  package scripts already did); the generated config sets `desktop.app.name` to the title, and the
+  task no longer passes `-o`. A project migrated earlier keeps its `-o` until it is re-migrated.
 - **A migrated SPA's `spa.env` reads the build environment.** `migrate` wrote every `VITE_*`
   (and `REACT_APP_*`) key as a literal `""`, so a value set at build time —
   `VITE_HOSTED_APP_CHANNEL=… deno task export`, or a `.env` file — never reached

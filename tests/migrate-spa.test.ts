@@ -103,7 +103,9 @@ function assertDesktopTask(task: string): void {
     task.includes("--icon desktop-icon.png"),
     "desktop task wires the composed icon (built by `export`)",
   );
-  assert(/ -o "[^"]+" desktop\.ts$/.test(task), `desktop task names the bundle (-o): ${task}`);
+  // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`, which
+  // `export` fills from denext.config.ts — an `-o` would override the configured name.
+  assert(!/ -o /.test(task) && / desktop\.ts$/.test(task), `desktop task has no -o: ${task}`);
 }
 
 /**
@@ -112,12 +114,13 @@ function assertDesktopTask(task: string): void {
  * the config validator's allow-list.
  */
 async function assertDesktopDenoFlags(dir: string): Promise<void> {
-  const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
-  const m = config.match(/^ {2}desktop: \{ denoFlags: (\[[^\]]*\]) \},$/m);
-  assert(m, `denext.config.ts has a top-level desktop.denoFlags:\n${config}`);
-  const denoFlags = JSON.parse(m[1]);
+  const config = (await import(toFileUrl(join(dir, "denext.config.ts")).href)).default;
+  const { denoFlags, app } = config.desktop;
   assertEquals(denoFlags, ["--node-modules-dir=none", "--exclude-unused-npm"]);
-  validateDenextConfig({ desktop: { denoFlags } });
+  // The bundle's name lives in the config (the title, as the old `-o` had it), so editing
+  // `desktop.app.name` / adding `identifier` renames the app on the next `deno task desktop`.
+  assertEquals(app, { name: "My App" });
+  validateDenextConfig({ desktop: { denoFlags, app } });
 }
 
 Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {

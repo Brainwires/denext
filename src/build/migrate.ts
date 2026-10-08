@@ -1894,7 +1894,7 @@ function spaConfigSource(o: {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
-    (o.desktop ? desktopDenoFlagsLines() : "") +
+    (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
@@ -1919,18 +1919,24 @@ function spaConfigSource(o: {
 }
 
 /**
- * The generated config's `desktop.denoFlags` (a `--desktop` migration): the `deno desktop` flags
- * the `desktop` task bakes, so `denext desktop run | dev | package` pass them too.
- * `--node-modules-dir=none` resolves the desktop runtime's npm deps from Deno's cache (a manual
- * or workspace `node_modules` does not carry them, and `deno desktop` would type-check against it
- * and rewrite the root `package.json`); `--exclude-unused-npm` embeds only the npm packages
- * `desktop.ts` reaches.
+ * The generated config's `desktop` block (a `--desktop` migration). `denoFlags` are the
+ * `deno desktop` flags the `desktop` task bakes, so `denext desktop run | dev | package` pass
+ * them too: `--node-modules-dir=none` resolves the desktop runtime's npm deps from Deno's cache
+ * (a manual or workspace `node_modules` does not carry them, and `deno desktop` would type-check
+ * against it and rewrite the root `package.json`); `--exclude-unused-npm` embeds only the npm
+ * packages `desktop.ts` reaches. `app.name` names the bundle: `export` copies `desktop.app` into
+ * deno.json, where the task's bare `deno desktop` reads the name and the identifier.
  */
-function desktopDenoFlagsLines(): string {
+function desktopConfigLines(appName: string): string {
   const flags = MIGRATED_DESKTOP_DENO_FLAGS.map((f) => JSON.stringify(f)).join(", ");
-  return `  // \`deno desktop\` flags \`denext desktop run | dev | package\` pass before the entry: npm\n` +
-    `  // deps from Deno's cache (not node_modules), and only the npm packages desktop.ts reaches.\n` +
-    `  desktop: { denoFlags: [${flags}] },\n`;
+  return `  desktop: {\n` +
+    `    // \`deno desktop\` flags \`denext desktop run | dev | package\` pass before the entry: npm\n` +
+    `    // deps from Deno's cache (not node_modules), and only the npm packages desktop.ts reaches.\n` +
+    `    denoFlags: [${flags}],\n` +
+    `    // The bundle's name; add \`identifier\` (e.g. "com.example.app") for its bundle id.\n` +
+    `    // \`export\` copies this into deno.json, where \`deno task desktop\` reads it.\n` +
+    `    app: { name: ${JSON.stringify(appName)} },\n` +
+    `  },\n`;
 }
 
 /** The `desktop.denoFlags` a `--desktop` migration writes (and its `desktop` task bakes). */
@@ -2130,7 +2136,6 @@ function spaTasks(
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
-  appName = "app",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2184,16 +2189,16 @@ function spaTasks(
     // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
     // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
     const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
-    // `-o <AppName>`: without it `deno desktop` names the bundle after the entry file
-    // (`desktop.app`, CFBundleName "desktop"). The title becomes the bundle/Dock name.
+    // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`,
+    // which `export` fills from `desktop.app` in denext.config.ts (the generated config sets
+    // `name` to the title). An `-o` would pin the name and leave a configured one unused.
     //
     // The same two resolution flags are written to the config's `desktop.denoFlags`, which
     // `denext desktop run | dev | package` read; this raw `deno desktop` call reads no config,
     // so it keeps them inline.
     tasks.desktop = `deno task export && deno desktop ` +
       `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
-      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} ` +
-      `-o ${JSON.stringify(appName)} desktop.ts`;
+      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} desktop.ts`;
   }
   return tasks;
 }
@@ -2496,7 +2501,7 @@ async function writeSpaProjectFiles(
   const denoJson = spaDenoJson(
     imports,
     nodeModulesDir,
-    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir, desktopAppName(facts.title)),
+    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir),
   );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -2606,7 +2611,7 @@ async function migrateExpoProject(
     written,
   );
   const tasks = {
-    ...spaTasks(false, R.cli, false, nodeModulesDir, desktopAppName(title)),
+    ...spaTasks(false, R.cli, false, nodeModulesDir),
     ...capacitorTasks(R.cli),
   };
   const denoJsonExists = await finishSpaProjectFiles(

@@ -2,11 +2,12 @@
 
 import { copy, ensureDir } from "@std/fs";
 import { join } from "@std/path";
+import { syncDesktopAppConfigAt } from "../desktop-app-config.ts";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
 import type { Platform } from "../platform-extensions.ts";
-import { reactNativeRootStyle } from "../../server/config.ts";
+import { type DenextConfig, reactNativeRootStyle } from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
@@ -162,12 +163,27 @@ export async function exportSpa(
       );
     }
   });
-  // Prepare the desktop app icon when this is a desktop app (a `desktop.ts` entry, or an
-  // explicit `spa.desktop.icon`). Config-driven and done here — in `export`, which the
-  // `deno task desktop` chain runs right before `deno desktop` — so editing
-  // `spa.desktop.icon` and rebuilding changes the icon with no re-migration.
-  if (spa.desktop?.icon || await fileExists(join(paths.projectDir, "desktop.ts"))) {
-    await prepareDesktopIcon(paths.projectDir, spa);
-  }
+  await prepareDesktopExport(paths.projectDir, paths.config);
   return { outDir, pages: 1, skipped: [] };
+}
+
+/**
+ * What the migrated `deno task desktop` (`export && deno desktop … desktop.ts`) needs from
+ * `export` when this is a desktop app (a `desktop.ts` entry, or an explicit `spa.desktop.icon`):
+ * the app icon, and `desktop.app` (name, identifier, origin, deep links) brought into deno.json /
+ * `.deno-desktop/app.json`, which is where a bare `deno desktop` reads them. Config-driven and
+ * done here, right before `deno desktop`, so editing either and rebuilding takes effect with no
+ * re-migration.
+ *
+ * @param projectDir The app's project root.
+ * @param config The resolved project config.
+ */
+export async function prepareDesktopExport(
+  projectDir: string,
+  config: DenextConfig | null,
+): Promise<void> {
+  const spa = config?.spa;
+  const hasEntry = await fileExists(join(projectDir, "desktop.ts"));
+  if (spa?.desktop?.icon || hasEntry) await prepareDesktopIcon(projectDir, spa);
+  if (hasEntry) await syncDesktopAppConfigAt(projectDir, config);
 }
