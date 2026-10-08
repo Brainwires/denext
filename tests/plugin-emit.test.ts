@@ -104,6 +104,55 @@ Deno.test("emitFile: refuses a path that could leave the site root", async () =>
   }
 });
 
+// Audit 3.4.0 N2: a build step may not replace what the build itself publishes — the client
+// output (`_denext/…`, or `spa.assetsDir`) and the HTML shell (`index.html`).
+Deno.test("emitFile: refuses the client output and the HTML shell", async () => {
+  resetPlugins();
+  const tmp = await Deno.makeTempDir({ prefix: "denext_emit_reserved_" });
+  try {
+    const reserved = [
+      "index.html",
+      "INDEX.HTML",
+      "_denext/client/index.js",
+      "_denext/ota.json",
+      "_DENEXT/client/x.js",
+      "assets/index-ABCD1234.js",
+      "Assets/x.css",
+    ];
+    const allowed = ["sub/index.html", "assets-extra/x.js", "denext/x.js", "licenses.json"];
+    const refused: string[] = [];
+    await register({
+      name: "reserved-emitter",
+      setup(ctx) {
+        ctx.addBuildStep(async (b) => {
+          for (const fileName of reserved) {
+            await assertRejects(
+              () => b.emitFile({ fileName, source: "x" }),
+              Error,
+              "emitFile refused",
+            );
+            refused.push(fileName);
+          }
+          for (const fileName of allowed) await b.emitFile({ fileName, source: "ok" });
+        });
+      },
+    });
+    await runPluginBuildSteps({
+      projectRoot: tmp,
+      appDir: tmp,
+      outDir: tmp,
+      config: { spa: { entry: "src/main.tsx", assetsDir: "/assets/" } },
+    }, { emitDir: join(tmp, "site") });
+    assertEquals(refused, reserved);
+    for (const fileName of allowed) {
+      assertEquals(await Deno.readTextFile(join(tmp, "site", fileName)), "ok");
+    }
+  } finally {
+    resetPlugins();
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
 /** The `denext.config.ts` plugin every pipeline test below declares. */
 const EMITTER_PLUGIN = `{
   name: "test-emitter",

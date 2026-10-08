@@ -321,8 +321,9 @@ export interface SpaConfig {
    * exported, as Vite's `build.assetsDir`: `"assets"` serves it from `/assets/` and writes it to
    * `out/assets/`, with content-hashed files named `name-HASH.ext` (an 8-character hash), the
    * shape a server written for a Vite build expects. A `public/` file at the same path is served
-   * behind the build's. Unset, the client lives under `/_denext/client/`. `denext migrate` sets
-   * it from a Vite app's `build.assetsDir` (`"assets"` by default).
+   * behind the build's. Unset, the client lives under `/_denext/client/`. A directory under
+   * `_denext`, `.well-known` or `.vite` is refused. `denext migrate` sets it from a Vite app's
+   * `build.assetsDir` (`"assets"` by default).
    */
   assetsDir?: string;
   /**

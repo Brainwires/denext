@@ -164,6 +164,17 @@ function noteNpm(st: UnbundledState, spec: string, names?: Iterable<string>): st
 }
 
 /**
+ * `table[key]` when `key` is the table's own key, else undefined: a plain object would answer
+ * `constructor` / `__proto__` / `toString` with its prototype's.
+ */
+function ownValue(
+  table: Readonly<Record<string, string>> | undefined,
+  key: string,
+): string | undefined {
+  return table && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+/**
  * The dev URL for a non-first-party specifier in compat mode: react-family and
  * `next/*` → the prebuilt runtime under {@link DEP_PREFIX}; `denext/*` → the same
  * runtime; an npm package → the on-demand npm bundle under {@link NPM_PREFIX}.
@@ -174,7 +185,7 @@ export function compatDepUrl(
   spec: string,
   names?: Iterable<string>,
 ): string | null {
-  spec = st.opts.specAliases?.[spec] ?? spec;
+  spec = ownValue(st.opts.specAliases, spec) ?? spec;
   const runtime = runtimeDepUrl(spec);
   if (runtime !== undefined) return runtime;
   if (/^(node:|data:|https?:)/.test(spec)) return null;
@@ -214,7 +225,7 @@ export function runtimeDepUrl(spec: string): string | null | undefined {
   }
   // The compat runtime also prebuilds `denext/navigation`, the `denext/expo/*` shims and React
   // Native mode's overlay, which the shared inventory (native @dep too) does not list.
-  const dfile = DENEXT_RUNTIME_FILE[spec] ?? DENEXT_RUNTIME_FILES[spec];
+  const dfile = ownValue(DENEXT_RUNTIME_FILE, spec) ?? ownValue(DENEXT_RUNTIME_FILES, spec);
   if (dfile) return `${DEP_PREFIX}${dfile}`;
   if (spec === "denext") return `${DEP_PREFIX}react.js`; // bare denext API == the react shim
   return undefined;

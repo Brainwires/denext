@@ -197,6 +197,13 @@ and this project adheres to
   never a package the app depends on itself.
 - **The desktop and SPA docs show the `desktop.ts` `migrate --desktop` writes**, with its
   `resolveDesktopCapabilities` spread; they still said a migrated entry lacked it.
+- **The unbundled dev loop no longer resolves an npm specifier named like an `Object.prototype`
+  key** (`constructor`, `toString`, `__proto__`) to the prototype's value; the alias and runtime
+  tables are read by own key only.
+- **`denext migrate` reports a Vite emitter called with a template literal that reads a
+  vite.config value** (`stampPlugin(\` ${dir}/stamp.txt\`)`). The `${…}`was blanked with the
+  string, so the call was carried into`denext.config.ts`, where the value does not exist, and
+  the build failed.
 
 ### Security
 
@@ -220,6 +227,18 @@ and this project adheres to
   with `npm_config_ignore_scripts=true` (Yarn 1) and `YARN_ENABLE_SCRIPTS=0` (Berry), and the
   printed command carries them. The migrate docs now say that `--platform` runs the project's
   export and `npx cap add`, which execute the project's own code.
+- **The browser reads streamed Flight chunks only where the server puts them.** The entry took
+  every `script[data-dnx-f]` / `script[data-dnx-v]` in the document, so one inside page content
+  (user HTML rendered into the page) could fill a Suspense hole or a deferred value. It now
+  reads only direct children of `<body>`, where the server streams them.
+- **A plugin's `emitFile` can't replace the build's own output.** It refuses `index.html` (the
+  HTML shell), anything under `_denext/` (the client and denext's files) and the
+  `spa.assetsDir` directory, compared without case.
+- **`spa.assetsDir` refuses `_denext/…`, `.well-known` and `.vite`.** Only the bare `_denext` was
+  refused; a directory under it, or under the app-links or Vite-manifest directories, would have
+  mixed the client with what those paths serve.
+- **`@tanstack/router-plugin`, which denext runs at build time, is pinned to an exact version**
+  (1.168.42) instead of a `^` range.
 
 ## [3.3.0] - 2026-10-08
 

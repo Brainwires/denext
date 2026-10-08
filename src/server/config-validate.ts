@@ -509,18 +509,26 @@ function validateSpaOta(ota: unknown, fail: Fail): void {
 }
 
 /**
+ * The top-level directories the client may not move under: denext's own endpoints and files
+ * (`_denext`), the web's well-known URIs (app links) and the `spa.viteManifest` manifest
+ * (`.vite`). Compared without case (a case-insensitive file system would merge them).
+ */
+const RESERVED_ASSETS_ROOTS = new Set(["_denext", ".well-known", ".vite"]);
+
+/**
  * `spa.assetsDir` normalized: the slash-separated directory without leading or trailing
  * slashes, or null when it is not a plain relative directory. Each segment is letters, digits,
- * `_`, `.` or `-`, and never `.` / `..`; the bare `_denext` is refused (denext's own endpoints
- * live there).
+ * `_`, `.` or `-`, and never `.` / `..`; a directory under `_denext`, `.well-known` or `.vite`
+ * is refused (denext's own endpoints, the web's well-known URIs and Vite's manifest live there).
  *
  * @param value The configured directory (`"assets"`, `"/static/js/"`).
  * @returns The normalized directory (`"assets"`, `"static/js"`), or null.
  */
 export function normalizeSpaAssetsDir(value: string): string | null {
   const dir = value.replace(/^\/+|\/+$/g, "");
-  const valid = dir !== "" && dir !== "_denext" &&
-    dir.split("/").every((s) => /^[\w.-]+$/.test(s) && s !== "." && s !== "..");
+  const segments = dir.split("/");
+  const valid = dir !== "" && !RESERVED_ASSETS_ROOTS.has(segments[0].toLowerCase()) &&
+    segments.every((s) => /^[\w.-]+$/.test(s) && s !== "." && s !== "..");
   return valid ? dir : null;
 }
 
@@ -530,8 +538,8 @@ function validateSpaAssetsDir(dir: unknown, fail: Fail): void {
   if (typeof dir !== "string" || normalizeSpaAssetsDir(dir) === null) {
     fail(
       "spa.assetsDir",
-      'must be a relative directory of letters, digits, "_", "." and "-" segments ' +
-        '(e.g. "assets")',
+      'must be a relative directory of letters, digits, "_", "." and "-" segments, not under ' +
+        '_denext, .well-known or .vite (e.g. "assets")',
     );
   }
 }

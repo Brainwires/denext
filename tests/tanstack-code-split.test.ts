@@ -113,3 +113,16 @@ Deno.test("tanstack hook filters: include / exclude / bare patterns, substring s
   assert(filterAdmits(g, "x"));
   assert(filterAdmits(g, "x"));
 });
+
+// Audit 3.4.0 N5: `@tanstack/router-plugin` is npm code denext runs at build time, so a new
+// release must never reach a build unreviewed: the import map pins one exact version, the one
+// the lock resolves.
+Deno.test("@tanstack/router-plugin is pinned to one exact version", async () => {
+  const root = new URL("../", import.meta.url);
+  const deno = JSON.parse(await Deno.readTextFile(new URL("deno.json", root)));
+  const spec: string = deno.imports["@tanstack/router-plugin"];
+  const m = /^npm:@tanstack\/router-plugin@(\d+\.\d+\.\d+)$/.exec(spec);
+  assert(m, `an exact version, not a range: ${spec}`);
+  const lock = JSON.parse(await Deno.readTextFile(new URL("deno.lock", root)));
+  assertEquals(String(lock.specifiers[spec]).split("_")[0], m[1]);
+});

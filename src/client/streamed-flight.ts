@@ -7,10 +7,14 @@
 import { assembleStreamedFlight } from "../jsx/flight-holes.ts";
 import type { FlightNode, FlightValue } from "../jsx/render-to-flight.ts";
 
-/** Parse every `script[<attr>]` chunk of `doc` into a map keyed by the attribute's value. */
+/**
+ * Parse every `script[<attr>]` chunk of `doc` into a map keyed by the attribute's value. Only a
+ * direct child of `<body>` counts: the server streams each chunk there, after the root, so a
+ * script with the attribute inside page content never fills a hole.
+ */
 function readChunks<T>(doc: ParentNode, attr: string): Map<string, T> {
   const out = new Map<string, T>();
-  for (const el of doc.querySelectorAll(`script[${attr}]`)) {
+  for (const el of doc.querySelectorAll(`body>script[${attr}]`)) {
     const id = el.getAttribute(attr);
     if (!id) continue;
     try {

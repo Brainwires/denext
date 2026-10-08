@@ -167,13 +167,79 @@ const OTHER_BUILD_HOOKS =
 /** Identifiers a carried-over call may use without anything from vite.config. */
 const CALL_GLOBALS = new Set(["new", "URL", "import", "true", "false", "null", "undefined"]);
 
+/** A left-to-right scan of source text, building its string-blanked copy. */
+interface StringScan {
+  readonly src: string;
+  i: number;
+  out: string;
+}
+
+/**
+ * `src` with each string's text blanked to `""`. A template literal's text is blanked too, but
+ * its `${…}` expressions are code and are kept, as `"" + (expr)` (nested templates included).
+ */
+function blankStrings(src: string): string {
+  const s: StringScan = { src, i: 0, out: "" };
+  scanCode(s, false);
+  return s.out;
+}
+
+/** Copy code to the end, or (`nested`, inside `${…}`) up to the `}` that closes it. */
+function scanCode(s: StringScan, nested: boolean): void {
+  let depth = 0;
+  while (s.i < s.src.length) {
+    const c = s.src[s.i];
+    if (c === "}" && nested && depth === 0) return;
+    if (c === "{") depth++;
+    else if (c === "}") depth--;
+    scanToken(s, c);
+  }
+}
+
+/** One code character: a quoted string or a template is consumed whole. */
+function scanToken(s: StringScan, c: string): void {
+  if (c === '"' || c === "'") return skipQuoted(s, c);
+  if (c === "`") return scanTemplate(s);
+  s.out += c;
+  s.i++;
+}
+
+/** Skip a `quote`-delimited string (escapes included), leaving `""` in its place. */
+function skipQuoted(s: StringScan, quote: string): void {
+  for (s.i++; s.i < s.src.length && s.src[s.i] !== quote;) s.i += s.src[s.i] === "\\" ? 2 : 1;
+  s.i++;
+  s.out += '""';
+}
+
+/** A template literal: its text blanked, each `${…}` kept as ` + (expr)`. */
+function scanTemplate(s: StringScan): void {
+  s.out += '""';
+  for (s.i++; s.i < s.src.length && s.src[s.i] !== "`";) templateStep(s);
+  s.i++;
+}
+
+/** One step through a template's text: an escape, a `${…}` expression, or a character. */
+function templateStep(s: StringScan): void {
+  if (s.src[s.i] === "\\") {
+    s.i += 2;
+  } else if (s.src.startsWith("${", s.i)) {
+    s.i += 2;
+    s.out += " + (";
+    scanCode(s, true);
+    s.out += ")";
+    s.i++; // the closing `}`
+  } else {
+    s.i++;
+  }
+}
+
 /**
  * The identifiers `call`'s arguments read that are not globals: string contents, property
- * names after `.` and object keys before `:` are not reads.
+ * names after `.` and object keys before `:` are not reads; a template literal's `${…}` is.
  */
 function freeIdentifiers(call: string): string[] {
   const args = call.slice(call.indexOf("("));
-  const noStrings = args.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+  const noStrings = blankStrings(args);
   const out = new Set<string>();
   for (const m of noStrings.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)(?!\s*:)(?![\w$])/g)) {
     if (!CALL_GLOBALS.has(m[1])) out.add(m[1]);

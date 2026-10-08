@@ -128,7 +128,9 @@ To publish a generated file **at the site root** — the build-time analogue of 
 `this.emitFile({ type: "asset", fileName, source })` — call `emitFile`. In `denext export` the
 file lands in the export directory; in `denext build` it lands in `<outDir>/emitted/`, which
 `denext start` serves at the same URL. An emitted file replaces a same-named `public/` file in
-both. A `fileName` is a relative, `/`-separated path (no `..`, no leading `/`):
+both. A `fileName` is a relative, `/`-separated path (no `..`, no leading `/`), and never one
+the build publishes itself: the HTML shell `index.html`, anything under `_denext/`, or the
+`spa.assetsDir` client directory:
 
 ```ts
 ctx.addBuildStep(async ({ emitFile, clientModules }) => {

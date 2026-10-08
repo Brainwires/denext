@@ -222,3 +222,28 @@ Deno.test("migrate SPA: emitters migrate cannot carry are reported for review (a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// Audit 3.4.0: a template literal's `${…}` is code, not string content. An emitter called with
+// `\`${dir}/stamp.txt\`` reads a vite.config value, so it is reported, not carried over into a
+// denext.config.ts where `dir` does not exist. A template with no expression is still carried.
+Deno.test("migrate SPA: a vite.config value read inside a template literal keeps the emitter for review", async () => {
+  const STAMP = `export const stampPlugin = (f: string) => ({ name: "stamp", ` +
+    `generateBundle() { (this as any).emitFile({ type: "asset", fileName: f, source: "1" }); } });\n`;
+  const dir = await viteApp(
+    `import { stampPlugin, stampPlugin as plainPlugin, stampPlugin as nestedPlugin } ` +
+      `from "./scripts/stamp";\n` +
+      'const dir = "meta";\n' +
+      "export default { plugins: [stampPlugin(`${dir}/stamp.txt`), plainPlugin(`plain.txt`), " +
+      'nestedPlugin(`a${`${"x" + dir}`}b`)] };\n',
+    { "scripts/stamp.ts": STAMP },
+  );
+  try {
+    const r = await migrateProject(dir, {});
+    assertEquals(r.spa?.viteEmitters?.map((e) => e.call), ["plainPlugin(`plain.txt`)"]);
+    const reasons = (r.spa?.viteEmitterReview ?? []).map((f) => f.reason);
+    assertEquals(reasons.length, 2, reasons.join("\n"));
+    for (const reason of reasons) assertStringIncludes(reason, "(dir)");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

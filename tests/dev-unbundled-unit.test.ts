@@ -48,6 +48,22 @@ Deno.test("compatDepUrl maps react/next/denext to the runtime, npm to the dep bu
   assert(st.npmSpecs.has("lodash-es"), "an npm specifier is noted for the on-demand bundle");
 });
 
+// Audit 3.4.0 N4: `specAliases` is a plain object, so an own-key lookup must not reach
+// `Object.prototype` — a bare specifier named `constructor` or `toString` is an npm package.
+Deno.test("compatDepUrl: a specifier named like an Object.prototype key is not aliased", () => {
+  const st = createUnbundledState({
+    projectDir: "/proj",
+    appDir: "/proj/app",
+    configPath: "/proj/deno.json",
+    outDir: "/proj/out",
+    compat: true,
+    specAliases: { "@legendapp/list/react": "legend-list-dom.js" },
+  });
+  for (const spec of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    assertEquals(compatDepUrl(st, spec), `${NPM_PREFIX}${depSlug(spec)}.js`, spec);
+  }
+});
+
 Deno.test("rewriteSpecifier sends a first-party stylesheet to the empty shim, not the JS transform", () => {
   const st = state(false);
   const e: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: false };

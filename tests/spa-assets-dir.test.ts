@@ -209,6 +209,33 @@ Deno.test({
   }
 });
 
+// Audit 3.4.0 N3: the client may not move under a path denext or the web owns: `_denext/…`
+// (denext's endpoints, the OTA manifest), `.well-known/…` (app links) or `.vite/…` (the
+// `spa.viteManifest` manifest).
+Deno.test("spaClientPrefix: _denext/…, .well-known and .vite are refused", () => {
+  for (
+    const bad of [
+      "_denext/x",
+      "/_denext/client/",
+      "_DENEXT/x",
+      ".well-known",
+      ".well-known/js",
+      ".vite",
+      ".vite/x",
+    ]
+  ) {
+    let threw = false;
+    try {
+      spaClientPrefix({ entry: "x", assetsDir: bad });
+    } catch {
+      threw = true;
+    }
+    assert(threw, `assetsDir ${JSON.stringify(bad)} is refused`);
+  }
+  assertEquals(spaClientPrefix({ entry: "x", assetsDir: "static/.vite" }), "/static/.vite/");
+  assertEquals(spaClientPrefix({ entry: "x", assetsDir: "well-known" }), "/well-known/");
+});
+
 Deno.test("collectViteManifest: a custom client prefix is walked and keyed by its own paths", async () => {
   const root = await Deno.makeTempDir({ prefix: "denext_vitemanifest_assetsdir_" });
   try {

@@ -74,7 +74,8 @@ export default {
   `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell),
   `precompress`, `ota`, `viteManifest` (write a Vite-shaped `.vite/manifest.json`
   of the export's content-hashed files), `assetsDir` (Vite's `build.assetsDir`: serve
-  and export the client under `/assets/` instead of `/_denext/client/`),
+  and export the client under `/assets/` instead of `/_denext/client/`; not under
+  `_denext`, `.well-known` or `.vite`),
   `tanstackRouter` (`{ autoCodeSplitting }`:
   split TanStack Router routes into their own chunks), and `desktop`
   (desktop-packaging options). See [SPA mode](/docs/spa).

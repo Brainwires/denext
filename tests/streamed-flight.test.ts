@@ -7,12 +7,19 @@ import { assertEquals } from "@std/assert";
 import { readStreamedFlight } from "../src/client/streamed-flight.ts";
 import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 
-/** A minimal `ParentNode` over `[attr, id, json]` chunk scripts. */
-function chunkDoc(chunks: [string, string, string][]): ParentNode {
+/**
+ * A minimal `ParentNode` over `[attr, id, json, nested?]` chunk scripts. A chunk is a direct
+ * child of `<body>` (where the server streams them) unless `nested` puts it deeper — in page
+ * content — which a `body>` selector does not match.
+ */
+function chunkDoc(chunks: [string, string, string, "nested"?][]): ParentNode {
   return {
     querySelectorAll(selector: string) {
-      const attr = /^script\[(.+)\]$/.exec(selector)?.[1];
-      return chunks.filter(([a]) => a === attr).map(([a, id, text]) => ({
+      const m = /^(body>)?script\[(.+)\]$/.exec(selector);
+      const attr = m?.[2];
+      return chunks.filter(([a, , , nested]) => a === attr && !(m?.[1] && nested)).map((
+        [a, id, text],
+      ) => ({
         getAttribute: (name: string) => (name === a ? id : null),
         textContent: text,
       }));
@@ -56,4 +63,18 @@ Deno.test("readStreamedFlight: a buffered document (no chunks) keeps its tree", 
   const complete = { $: "h", t: "main", p: {}, c: ["done"] } as unknown as FlightNode;
   assertEquals(readStreamedFlight(chunkDoc([]), complete), complete);
   assertEquals(readStreamedFlight(chunkDoc([]), null), null);
+});
+
+// Audit 3.4.0 N1: only the chunks the server streams — direct children of `<body>`, after the
+// root — are read. A `<script type="application/json" data-dnx-v>` inside page content (user
+// HTML rendered into the root) must not fill a hole or a deferred value.
+Deno.test("readStreamedFlight: a chunk inside page content is not read", () => {
+  const doc = chunkDoc([
+    ["data-dnx-v", "dnxv0", JSON.stringify({ reviews: ["forged"] }), "nested"],
+    ["data-dnx-f", "dnx0", JSON.stringify({ $: "h", t: "p", p: {}, c: ["forged"] }), "nested"],
+    ["data-dnx-f", "dnx0", JSON.stringify({ $: "h", t: "p", p: {}, c: ["late"] })],
+  ]);
+  const tree = JSON.stringify(readStreamedFlight(doc, shell));
+  assertEquals(tree.includes("forged"), false, tree);
+  assertEquals(tree.includes("late"), true, tree);
 });
