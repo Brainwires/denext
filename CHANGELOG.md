@@ -140,6 +140,14 @@ and this project adheres to
 - **Assets an App Router build emits for `?url` and bare asset imports are named
   `name-HASH.ext` with esbuild's 8-character base32 hash** (they had a variable-length base36
   one), so the immutable-cache check recognizes them.
+- **Smaller shared client runtime.** The host-singleton logic (a client root layout's
+  `<html>` / `<body>`) is installed by the generated entry only when a build scan finds a document
+  tag in the app's sources (dev and unscanned paths keep it), Remix `defer()` value-hole
+  substitution is a chunk loaded only for a document that streamed a deferred value, and two
+  constant tables are packed: `examples/hello`'s shared chunks went from 65,514 to 64,924 B and a
+  Flight app's `flight.js` from 3,075 to 2,572 B. **Possibly breaking** (for the Breaking list):
+  `readStreamedFlight` from `denext/client-runtime` now returns a Promise. (3.4.0 correctness
+  audit.)
 
 ### Fixed
 
@@ -167,7 +175,12 @@ and this project adheres to
   unmounts or a soft navigation switches to another root layout, as React releases them, so the
   new layout starts from clean elements instead of the old one's classes. The new layout's
   attributes are applied in the commit, after the old ones are cleared, and an `on*` handler on
-  `<body>` no longer throws.
+  `<body>` no longer throws. Only what the layout set is taken back: a class or attribute a
+  script added (next-themes' theme class, a theme toggle) stays, and `className` is applied
+  token by token. Hydration writes only the props the page does not already reflect, and with
+  `suppressHydrationWarning` leaves a mismatched attribute as the page has it (next-themes'
+  `<html suppressHydrationWarning>`); without it the client value wins. (3.4.0 correctness
+  audit.)
 - **A React Router root with a `Layout` export and an `App` that only returns `<Outlet/>`
   renders its routes.** A hook-free root becomes a server root layout; its `return <Outlet/>;`
   was generated as `return {children};` (an object, rendered as `<undefined>`) and the `Layout`
@@ -209,6 +222,36 @@ and this project adheres to
   vite.config value** (`stampPlugin(\` ${dir}/stamp.txt\`)`). The `${…}`was blanked with the
   string, so the call was carried into`denext.config.ts`, where the value does not exist, and
   the build failed.
+- **A buffered Flight page keeps its Remix `defer()` values.** A page with a deferred value but
+  no Suspense hole is served buffered; its tail was drained as if streaming, so the value's chunk
+  was discarded and the client hydrated the `{"$":"vh"}` placeholder instead of the data. The
+  buffered tail now carries the resolved values. (3.4.0 correctness audit.)
+- **`root.render()` updates the DOM before it returns in an app that uses `<ViewTransition>`.**
+  A Suspense retry marks the root's pending work as an animatable reveal; a `root.render()` before
+  the retry flushed joined that work and its commit waited for a view transition's update
+  callback (a Flight soft navigation then rebooted resumability against the old DOM). An element
+  update is urgent now, and a retry on the transition lane no longer leaves the mark set for a
+  later render. (3.4.0 correctness audit.)
+- **A commit that throws inside a view transition's update callback reaches the root's error
+  handling** (`onUncaughtError`, else the global error handler) and settles a time-sliced
+  transition's `isPending`; it was only logged, and `isPending` stayed true. (3.4.0 correctness
+  audit.)
+- **A hidden `<Activity>` forgets the elements removed while it stays hidden**; a long-hidden list
+  kept every element it ever had. (3.4.0 correctness audit.)
+- **SPA `denext dev` sets plugins up and runs their prepare steps** at startup, and re-runs a step
+  when a file under its `watch` globs changes, then rebuilds and reloads, as App Router dev does;
+  only `denext build` / `export` did, so generated inputs (content-collections' types) were
+  missing in SPA dev. (3.4.0 correctness audit.)
+- **`spa.assetsDir`: the build's file wins over a same-named `public/` file** in `denext dev` (the
+  bundled loop) and in the export, as `denext start` already served it; the export's `public/`
+  copy overwrote the client entry. A `viteEmitterPlugin`'s synthetic entry chunk is named under
+  `spa.assetsDir` too. (3.4.0 correctness audit.)
+- **First-party plugins under `denext export`:** `@denext/openapi` 0.3.1 publishes the document
+  at its `path` (not with `expose: "dev"`), `@denext/graphql` 0.2.1 writes no SDL,
+  `@denext/pages-router` 0.11.1 skips its prebuild and prerender in a hybrid (app/ + pages/)
+  export, whose `out/` never took them (a failing `pages/` build failed the export), and
+  `@denext/htmx` 2.0.12 publishes its runtime at a `path` outside `/_denext/` (at the default
+  path an export says how to ship it). (3.4.0 correctness audit.)
 
 ### Security
 
