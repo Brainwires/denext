@@ -3,7 +3,7 @@
 
 import { dirname, fromFileUrl, join, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { frameworkImports } from "../bundle.ts";
+import { frameworkImports, frameworkRoot } from "../bundle.ts";
 import {
   DENEXT_RUNTIME_FILES,
   libraryReactFile,
@@ -118,6 +118,9 @@ export async function firstPartyResolver(
   return (spec) => resolveWith(aliases, spec, importerAbs, probe, st.opts.projectDir);
 }
 
+/** The framework checkout's root (a path ending in a separator; a URL when it runs remotely). */
+const FRAMEWORK_ROOT = frameworkRoot();
+
 /** {@link resolveFirstParty} against an already loaded alias table. */
 function resolveWith(
   aliases: ImportAliases,
@@ -134,12 +137,14 @@ function resolveWith(
     hit = probe(resolve(dirname(importerAbs), spec));
   } else {
     // The alias first, then the target's platform file for the file it names. A folder alias
-    // (`~/`) is the app's wherever it points; a file alias (`#button`) only inside the project
-    // (`denext` mapped to a checkout is the framework, served as a dependency).
+    // (`~/`) is the app's wherever it points, except into the framework; a file alias
+    // (`#button`) only inside the project. `denext` / `denext/` mapped to a checkout is the
+    // framework, served as a dependency: through `@fs` it would load a second runtime.
     const exact = aliases.some(([key]) => key === spec);
     const url = resolveImportAlias(spec, aliases) ?? resolveImportAlias(spec + "/", aliases);
     const path = url?.startsWith("file:") ? fromFileUrl(url).replace(/[\\/]$/, "") : null;
-    if (path && (!exact || path.startsWith(resolve(projectDir) + SEPARATOR))) hit = probe(path);
+    const inProject = path?.startsWith(resolve(projectDir) + SEPARATOR);
+    if (path && (inProject || (!exact && !path.startsWith(FRAMEWORK_ROOT)))) hit = probe(path);
   }
   return hit ? norm(hit) : null;
 }

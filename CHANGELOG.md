@@ -86,6 +86,12 @@ and this project adheres to
   was generated as `return {children};` (an object, rendered as `<undefined>`) and the `Layout`
   export was dropped. The app now renders inside `Layout`, with the outlet as `<>{children}</>`
   (`@denext/react-router` and `denext migrate --from remix`).
+- **`denext dev` serves a project's `denext/` alias into a local checkout as the framework.** An
+  app whose `deno.json` maps `denext/` to a denext checkout (the e2e fixtures do) had
+  `denext/devtools` & co. served through `@fs` as its own modules since the platform-files alias
+  work: a second runtime beside the dependency chunk's, which broke a library's ref callback
+  (react-native-gesture-handler's `GestureDetector` in React Native mode). An alias into the
+  framework checkout is a dependency again; the app's own aliases are unchanged.
 - **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
   document tags now adopt the page's own elements (React's host singletons): their attributes
   follow the layout's props on the real `<html>` / `<body>`, including later updates, and the
