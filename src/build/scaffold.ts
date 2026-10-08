@@ -7,6 +7,7 @@
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { mfs } from "./migrate-io.ts";
+import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
@@ -152,23 +153,12 @@ const dep = `jsr:@denext/denext@^${VERSION}`;
 /** The version-pinned CLI specifier used by generated `deno task`s. */
 const cli = `${dep}/cli`;
 /** The Capacitor release `--capacitor` scaffolds (CLI, core and both native platforms). */
-const CAPACITOR = "^8.5.2";
+const CAPACITOR = CAPACITOR_VERSION;
 /**
- * What `--capacitor` gitignores. Capacitor 8 builds iOS with Swift Package Manager, and the
- * `ios/` + `android/` projects are meant to be committed — so only their build outputs and
- * the web assets `cap sync` copies in are ignored here (the platforms' own generated
- * `.gitignore` files cover the rest).
+ * What `--capacitor` gitignores: `node_modules/` (Capacitor's CLI and platforms are npm
+ * packages) and the native build outputs a migrated app ignores too.
  */
-const CAPACITOR_IGNORES = [
-  "node_modules/",
-  "ios/App/App/public/",
-  "ios/App/build/",
-  "ios/DerivedData/",
-  "android/app/src/main/assets/public/",
-  "android/app/build/",
-  "android/build/",
-  "android/.gradle/",
-];
+const CAPACITOR_IGNORES = ["node_modules/", ...CAPACITOR_BUILD_IGNORES];
 
 /** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
 function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {

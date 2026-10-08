@@ -11,6 +11,12 @@ import {
   type MigrateFinding,
 } from "../../build/migrate-check.ts";
 import { runCodemod } from "../../build/codemod.ts";
+import {
+  type CapacitorMigrateInfo,
+  type CapacitorStepsOutcome,
+  runCapacitorSteps,
+} from "../../build/migrate-capacitor.ts";
+import type { CommandRunner } from "../../build/mobile-capabilities.ts";
 
 /**
  * Print the codemod's planned source-import rewrites, then apply them — either
@@ -325,8 +331,20 @@ function reportCommunityDeps(
   }
 }
 
+/** An Expo app's next steps (with --enable-capacitor, the install and `cap add` are its steps). */
+function expoNextSteps(e: NonNullable<MigrateResult["expo"]>, capacitor: boolean): string[] {
+  return [
+    ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
+    ...(capacitor ? [] : [
+      "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
+      "deno task export && npx cap add ios && npx cap add android",
+    ]),
+    ...(e.mobile.command ? [e.mobile.command] : []),
+  ];
+}
+
 /** The Capacitor shell and the next steps. */
-function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
+function reportExpoShell(e: NonNullable<MigrateResult["expo"]>, capacitor: boolean): void {
   const c = e.capacitor;
   console.log(
     `  ▸ Capacitor shell: ${c.configWritten ? "wrote" : "kept"} capacitor.config.ts — appId ` +
@@ -339,12 +357,7 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
         "creates its own — move them aside before `npx cap add`.",
     );
   }
-  const steps = [
-    ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
-    "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
-    "deno task export && npx cap add ios && npx cap add android",
-    ...(e.mobile.command ? [e.mobile.command] : []),
-  ];
+  const steps = expoNextSteps(e, capacitor);
   console.log("    next steps:");
   steps.forEach((step, i) => console.log(`      ${i + 1}. ${step}`));
   for (const c2 of e.mobile.capabilities) console.log(`         · ${c2.capability}: ${c2.because}`);
@@ -390,7 +403,7 @@ function reportExpo(r: MigrateResult): void {
   reportAppIcon(s.appIcon);
   reportExpoDesktop(e.desktopPackages);
   reportExpoDeps(e.deps);
-  reportExpoShell(e);
+  reportExpoShell(e, r.capacitor !== undefined);
 }
 
 /** The React Native desktop package(s) the app's `react-native` imports resolve as. */
@@ -430,7 +443,66 @@ function migrateOptions(ctx: CommandContext): MigrateOptions {
     from: ctx.flags.from as string | undefined,
     proxyPrefixes: proxyCsv ? proxyCsv.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
+    capacitor: ctx.flags["enable-capacitor"] === true,
+    appId: ctx.flags["app-id"] as string | undefined,
+    platforms: listFlag(ctx.flags.platform),
   };
+}
+
+/** A comma-separated list flag (`--platform ios,android`), undefined when absent. */
+function listFlag(value: string | number | boolean | undefined): string[] | undefined {
+  if (typeof value !== "string") return undefined;
+  const items = value.split(",").map((v) => v.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+/** The Capacitor target: the config, the review items (printed before the steps run). */
+function reportCapacitor(c: CapacitorMigrateInfo): void {
+  const config = c.configWritten
+    ? "wrote capacitor.config.ts"
+    : `kept ${c.existingConfig ?? "capacitor.config.ts"}`;
+  console.log(
+    `  ▸ Capacitor: ${config} — appId ${c.appId} (${c.appIdSource}) · appName ` +
+      `${JSON.stringify(c.appName)} · webDir ${c.webDir}`,
+  );
+  console.log(
+    "    tasks: mobile:sync · mobile:ios · mobile:android · mobile:build:ios · " +
+      "mobile:build:android",
+  );
+  if (c.review.length) {
+    console.log(`    ⚠️  review (${c.review.length}):`);
+    for (const f of c.review) console.log(`      · ${f.item}: ${f.reason}`);
+  }
+}
+
+/** What running the Capacitor steps did, and what is left to run by hand. */
+function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
+  for (const line of outcome.ran) console.log(`    ran: ${line}`);
+  if (outcome.failed) {
+    console.log(`    ✗ failed (exit ${outcome.failed.code}): ${outcome.failed.line}`);
+  }
+  if (outcome.pending.length) {
+    console.log("    still to run:");
+    for (const p of outcome.pending) console.log(`      ${p.line}    # ${p.reason}`);
+  }
+}
+
+/** Run the Capacitor steps (human mode prints as it goes; JSON mode returns the outcome). */
+async function capacitorSteps(
+  r: MigrateResult,
+  run: CommandRunner,
+  json: boolean,
+): Promise<CapacitorStepsOutcome | undefined> {
+  if (!r.capacitor) {
+    if (r.capacitorSkipped && !json) {
+      console.log(`  ⚠️  --enable-capacitor not applied: ${r.capacitorSkipped}`);
+    }
+    return undefined;
+  }
+  if (!json) reportCapacitor(r.capacitor);
+  const outcome = await runCapacitorSteps(r.capacitor.steps, run);
+  if (!json) reportCapacitorSteps(outcome);
+  return outcome;
 }
 
 /** Print a list of findings under a heading (nothing when empty). */
@@ -438,6 +510,13 @@ function printFindings(heading: string, list: MigrateFinding[]): void {
   if (list.length === 0) return;
   console.log(`\n  ${heading} (${list.length}):`);
   for (const f of list) console.log(`    · ${f.item}: ${f.reason}`);
+}
+
+/** The commands a check says migrate would run (nothing when there are none). */
+function printCommands(commands: string[]): void {
+  if (commands.length === 0) return;
+  console.log(`\n  would run (${commands.length}):`);
+  for (const line of commands) console.log(`    ${line}`);
 }
 
 /** The human-readable `migrate --check` report. */
@@ -452,6 +531,7 @@ function printCheck(report: MigrateCheckReport): void {
   for (const c of report.changes) {
     console.log(`    ${c.action.padEnd(6)} ${c.path}${c.from ? `  (from ${c.from})` : ""}`);
   }
+  printCommands(report.commands ?? []);
   const d = report.dependencies!;
   console.log(
     `\n  dependencies: ${d.aliased.length} aliased to denext · ${d.passthrough.length} npm ` +
@@ -519,104 +599,154 @@ function printCheckCodemod(
   console.log("");
 }
 
-export const migrateCommand: CommandSpec = {
-  name: "migrate",
-  summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, or React app (config files)",
-  positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
-  flags: [
-    {
-      name: "from",
-      type: "string",
-      valueName: "<framework>",
-      help: "Force source: next | remix | vite | cra | generic | expo",
-    },
-    {
-      name: "check",
-      type: "boolean",
-      help: "Report what migrate would change and what won't migrate; writes nothing " +
-        "(needs read access, plus --allow-run to evaluate next.config; add --json for the " +
-        "machine-readable report)",
-    },
-    { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
-    {
-      name: "backend",
-      type: "string",
-      valueName: "<url>",
-      help: "Backend URL for SPA proxy",
-    },
-    {
-      name: "proxy",
-      type: "string",
-      valueName: "<paths>",
-      help: "Comma-separated proxy prefixes",
-    },
-    {
-      name: "codemod",
-      type: "boolean",
-      help: "Also rewrite source imports to native denext",
-    },
-    {
-      name: "yes",
-      alias: "y",
-      type: "boolean",
-      help: "Apply the codemod without prompting",
-    },
-    {
-      name: "denext-local-path",
-      type: "string",
-      valueName: "<path>",
-      help: "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — " +
-        "for testing an unreleased/dev denext against a real app",
-    },
-  ],
-  run: async (ctx: CommandContext) => {
-    const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
-    const json = ctx.global.json;
-    const options = migrateOptions(ctx);
-    if (ctx.flags.check === true) {
-      await runCheck(target, options, json === true, ctx.flags.codemod === true);
-      return;
-    }
-    if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
-    const desktop = options.desktop === true;
-    const r = await migrateProject(target, options);
-    if (json) {
-      // Machine-readable: the result object only (no banner, no prompts). `--codemod`
-      // applies with `--yes`, else reports its plan as a dry run.
-      const codemod = ctx.flags.codemod === true
-        ? await runCodemod(target, { write: ctx.flags.yes === true })
-        : undefined;
-      console.log(JSON.stringify({ target, ...r, codemod }, null, 2));
-      return;
-    }
-    reportDeps(r);
-    reportFramework(r, desktop);
-    if (r.effect) reportEffect(r);
-    if (r.prisma) reportPrisma(r.prisma);
+/**
+ * Run a planned command with the terminal attached, resolving its exit code. `toStderr` sends
+ * its stdout to stderr, so `migrate --json` keeps stdout for the JSON document.
+ */
+function terminalRunner(toStderr: boolean): CommandRunner {
+  return async ({ cmd, args, cwd }) => {
+    const child = new Deno.Command(cmd, {
+      args: [...args],
+      cwd,
+      stdin: "inherit",
+      stdout: toStderr ? "piped" : "inherit",
+      stderr: "inherit",
+    }).spawn();
+    if (toStderr) await child.stdout.pipeTo(Deno.stderr.writable, { preventClose: true });
+    const { code } = await child.status;
+    return { code };
+  };
+}
 
-    if (r.denoJsonExists) {
-      console.log(
-        "\n  ⚠️  deno.json already exists (hand-authored) — left untouched. Merge the " +
-          "generated import map + tasks into it by hand, or remove it and re-run migrate.",
-      );
-    }
+/**
+ * The `migrate` command. `run` runs the commands `--enable-capacitor` plans (the package
+ * install, the export and `npx cap add`); tests pass a recorder. By default they run with the
+ * terminal attached.
+ */
+export function createMigrateCommand(run?: CommandRunner): CommandSpec {
+  return {
+    name: "migrate",
+    summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, or React app (config files)",
+    positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
+    flags: [
+      {
+        name: "from",
+        type: "string",
+        valueName: "<framework>",
+        help: "Force source: next | remix | vite | cra | generic | expo",
+      },
+      {
+        name: "check",
+        type: "boolean",
+        help: "Report what migrate would change and what won't migrate; writes nothing " +
+          "(needs read access, plus --allow-run to evaluate next.config; add --json for the " +
+          "machine-readable report)",
+      },
+      { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
+      {
+        name: "enable-capacitor",
+        type: "boolean",
+        help: "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks " +
+          "and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo)",
+      },
+      {
+        name: "app-id",
+        type: "string",
+        valueName: "<id>",
+        help: "With --enable-capacitor: the app id (reverse-DNS, e.g. com.example.app); else " +
+          "derived from the desktop identifier or the package name",
+      },
+      {
+        name: "platform",
+        type: "string",
+        valueName: "<ios,android>",
+        help: "With --enable-capacitor: export, then run `npx cap add` for these platforms",
+      },
+      {
+        name: "backend",
+        type: "string",
+        valueName: "<url>",
+        help: "Backend URL for SPA proxy",
+      },
+      {
+        name: "proxy",
+        type: "string",
+        valueName: "<paths>",
+        help: "Comma-separated proxy prefixes",
+      },
+      {
+        name: "codemod",
+        type: "boolean",
+        help: "Also rewrite source imports to native denext",
+      },
+      {
+        name: "yes",
+        alias: "y",
+        type: "boolean",
+        help: "Apply the codemod without prompting",
+      },
+      {
+        name: "denext-local-path",
+        type: "string",
+        valueName: "<path>",
+        help: "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — " +
+          "for testing an unreleased/dev denext against a real app",
+      },
+    ],
+    run: async (ctx: CommandContext) => {
+      const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
+      const json = ctx.global.json;
+      const options = migrateOptions(ctx);
+      if (ctx.flags.check === true) {
+        await runCheck(target, options, json === true, ctx.flags.codemod === true);
+        return;
+      }
+      if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
+      const desktop = options.desktop === true;
+      const r = await migrateProject(target, options);
+      if (json) {
+        // Machine-readable: the result object only (no banner, no prompts). `--codemod`
+        // applies with `--yes`, else reports its plan as a dry run. The Capacitor steps'
+        // output goes to the terminal; their outcome is in the JSON.
+        const capacitorRun = await capacitorSteps(r, run ?? terminalRunner(true), true);
+        const codemod = ctx.flags.codemod === true
+          ? await runCodemod(target, { write: ctx.flags.yes === true })
+          : undefined;
+        console.log(JSON.stringify({ target, ...r, capacitorRun, codemod }, null, 2));
+        return;
+      }
+      reportDeps(r);
+      reportFramework(r, desktop);
+      if (r.effect) reportEffect(r);
+      if (r.prisma) reportPrisma(r.prisma);
+      await capacitorSteps(r, run ?? terminalRunner(false), false);
 
-    // Migrate creates config files only. Source rewriting is opt-in via `--codemod`
-    // (imports otherwise resolve through the generated alias map).
-    if (ctx.flags.codemod === true) {
-      console.log("\n  Rewriting source imports to native denext:\n");
-      await applyCodemod(target, ctx.flags.yes === true);
-    } else {
+      if (r.denoJsonExists) {
+        console.log(
+          "\n  ⚠️  deno.json already exists (hand-authored) — left untouched. Merge the " +
+            "generated import map + tasks into it by hand, or remove it and re-run migrate.",
+        );
+      }
+
+      // Migrate creates config files only. Source rewriting is opt-in via `--codemod`
+      // (imports otherwise resolve through the generated alias map).
+      if (ctx.flags.codemod === true) {
+        console.log("\n  Rewriting source imports to native denext:\n");
+        await applyCodemod(target, ctx.flags.yes === true);
+      } else {
+        console.log(
+          "\n  Source unchanged (imports resolve via the alias map). " +
+            "Run `denext migrate --codemod` to rewrite to native denext.",
+        );
+      }
       console.log(
-        "\n  Source unchanged (imports resolve via the alias map). " +
-          "Run `denext migrate --codemod` to rewrite to native denext.",
+        "  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n",
       );
-    }
-    console.log(
-      "  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n",
-    );
-  },
-};
+    },
+  };
+}
+
+export const migrateCommand: CommandSpec = createMigrateCommand();
 
 export const codemodCommand: CommandSpec = {
   name: "codemod",

@@ -8,6 +8,42 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext migrate --enable-capacitor` gives a migrated app an iOS / Android target**, the way
+  `--desktop` gives it a desktop one: a Vite / CRA / generic SPA, a Next App Router app (its
+  static export) or an Expo app. It writes `capacitor.config.ts` (`--app-id`, else an existing
+  Capacitor config, the Expo app config, `desktop.app.identifier`, or a placeholder from the
+  package name with a review item; `appName` from the title; `webDir: "out"`),
+  `spa.precompress: false` and `mobile.icon`, the `mobile:sync` / `mobile:ios` /
+  `mobile:android` / `mobile:build:ios` / `mobile:build:android` tasks and `.gitignore` lines for
+  the native build outputs. It then installs the pinned Capacitor 8 packages the app lacks as dev
+  dependencies with the app's package manager and `--ignore-scripts` (it prints the command when
+  there is no lockfile), and with `--platform ios,android` exports and runs `npx cap add`. What it
+  cannot know is listed for review: build-time mode switches (`VITE_HOSTED_APP_CHANNEL`), backend
+  addresses a phone cannot reach, relative requests and the desktop-only `spa.proxy`, CORS for
+  `capacitor://localhost` / `https://localhost`, and an App Router app's route handlers, Server
+  Actions and `export-routes`. `--check` lists the files, the commands and the review items. A
+  Pages Router or Remix-family app is reported as not covered. The Expo path writes its shell
+  through the same code, so its `mobile:*` tasks now run the app's installed Capacitor CLI
+  (`npx cap`) when a package manager installed it, and the denext CLI outside the app's
+  `node_modules`, as the other migrated tasks do.
+
+### Fixed
+
+- **`denext migrate` ignores what `deno task desktop` and Capacitor write into the project.**
+  The generated `.gitignore` now lists `/*.app/` (the bundle `deno task desktop` writes, under
+  any `desktop.app.name`) with `--desktop`, and the native build outputs (`ios/App/build/`,
+  `android/app/build/`, the web assets `cap sync` copies in, …) for a Capacitor target, Expo
+  included.
+- **`denext migrate --denext-local-path` no longer overrides the app's own dependencies.** It
+  copied every `jsr:` / `npm:` entry of the checkout's import map into the app's, including
+  `"effect": "npm:effect@^3"` (there for `@denext/effect`), which shadowed an app on Effect 4
+  through a `catalog:` range. It now maps only what denext's own runtime source imports, and
+  never a package the app depends on itself.
+- **The desktop and SPA docs show the `desktop.ts` `migrate --desktop` writes**, with its
+  `resolveDesktopCapabilities` spread; they still said a migrated entry lacked it.
+
 ## [3.3.0] - 2026-10-08
 
 ### Breaking

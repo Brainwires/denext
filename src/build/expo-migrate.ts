@@ -904,18 +904,18 @@ export function capacitorIdentity(
 
 /**
  * The generated `capacitor.config.ts`: the app's id and name, the static export as the web
- * directory.
+ * directory. Shared by the Expo path and `denext migrate --enable-capacitor`.
  *
  * @param marker The migrate marker comment line.
  * @param identity The app id and name.
+ * @param placeholderNote Why a placeholder id is one (the TODO comment above it).
  */
 export function capacitorConfigSource(
   marker: string,
   identity: { appId: string; appName: string; placeholderId: boolean },
+  placeholderNote = "the app config's bundle identifier could not be read",
 ): string {
-  const todo = identity.placeholderId
-    ? "  // TODO: a placeholder — the app config's bundle identifier could not be read.\n"
-    : "";
+  const todo = identity.placeholderId ? `  // TODO: a placeholder — ${placeholderNote}.\n` : "";
   return `${marker}
 import type { CapacitorConfig } from "@capacitor/cli";
 
@@ -928,19 +928,6 @@ ${todo}  appId: ${JSON.stringify(identity.appId)},
 
 export default config;
 `;
-}
-
-/** The Capacitor release the shell targets (Capacitor 8, as every `mobile add` plugin). */
-const CAPACITOR_VERSION = "^8.5.2";
-
-/** The `mobile:*` tasks, as `denext create --capacitor` writes them. */
-export function capacitorTasks(cli: string): Record<string, string> {
-  const cap = `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR_VERSION}`;
-  return {
-    "mobile:sync": `deno task export && deno run -A ${cli} ota manifest out && ${cap} sync`,
-    "mobile:ios": `${cap} open ios`,
-    "mobile:android": `${cap} open android`,
-  };
 }
 
 /**

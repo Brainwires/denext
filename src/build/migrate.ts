@@ -34,7 +34,6 @@ import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migra
 import {
   capacitorConfigSource,
   capacitorIdentity,
-  capacitorTasks,
   expoApiUsage,
   expoConfigScript,
   type ExpoDependencyReport,
@@ -48,6 +47,16 @@ import {
 } from "./expo-migrate.ts";
 import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
 import { findReactNativeWeb } from "./react-native.ts";
+import { CAPACITOR_BUILD_IGNORES } from "./capacitor-pins.ts";
+import {
+  appRouterServerFiles,
+  type CapacitorMigrateInfo,
+  type CapacitorOptions,
+  type CapacitorPlan,
+  capacitorTasks,
+  planCapacitor,
+  validateCapacitorOptions,
+} from "./migrate-capacitor.ts";
 import { findSqliteWasm } from "./sqlite-wasm.ts";
 import {
   detectPrismaWiring,
@@ -261,7 +270,7 @@ async function buildAppRouterImports(
   // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
   // local-path mode — denext's own deps (`@std/*`, `ws`, …) so `deno desktop` etc. resolve.
   addMissing(imports, await collectTsPathAliases(dir));
-  addMissing(imports, Object.entries(R.frameworkDeps()));
+  addMissing(imports, frameworkDepsFor(R, deps));
   return imports;
 }
 
@@ -297,6 +306,17 @@ export interface MigrateOptions {
    * aid, not the shipped drop-in. When set, no `npm:`/`jsr:` denext pins are emitted.
    */
   denextLocalPath?: string;
+  /**
+   * `--enable-capacitor`: give the app an iOS / Android Capacitor target (a Vite / CRA /
+   * generic SPA, a Next App Router app, or an Expo app): `capacitor.config.ts`, the `mobile:*`
+   * tasks, the config keys the shell needs, and the steps the CLI runs (see
+   * {@link MigrateResult.capacitor}).
+   */
+  capacitor?: boolean;
+  /** `--app-id`: the Capacitor app id (else derived; see migrate-capacitor.ts). */
+  appId?: string;
+  /** `--platform`: run `cap add` for these platforms after the install. */
+  platforms?: string[];
 }
 
 /** SPA-specific portion of a migration result. */
@@ -377,6 +397,10 @@ export interface MigrateResult {
   expo?: ExpoMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
+  /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
+  capacitor?: CapacitorMigrateInfo;
+  /** Why `--enable-capacitor` was not applied (a Pages Router or Remix-family app). */
+  capacitorSkipped?: string;
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -620,14 +644,72 @@ async function packageExports(dir: string): Promise<Record<string, string>> {
 /**
  * denext's own `jsr:`/`npm:` deps from a checkout's `deno.json` — the app config must carry
  * these so `deno desktop` (and any tool following the local file:// denext modules) can
- * resolve `@std/path`, `ws`, …
+ * resolve `@std/path`, `ws`, … Only the ones denext's own runtime source imports: the root
+ * import map also serves the workspace packages and the tests (`effect@^3` for
+ * `@denext/effect`, `jsqr` for a test), and mapping those into the app would shadow the app's
+ * own versions (T3 Code runs Effect 4).
  */
-function frameworkDepsOf(denoCfg: Record<string, unknown>): Record<string, string> {
+async function frameworkDepsOf(
+  abs: string,
+  denoCfg: Record<string, unknown>,
+): Promise<Record<string, string>> {
+  const used = await denextOwnSpecifiers(abs);
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
-    if (v.startsWith("jsr:") || v.startsWith("npm:")) out[k] = v;
+    if ((v.startsWith("jsr:") || v.startsWith("npm:")) && importsKey(used, k)) out[k] = v;
   }
   return out;
+}
+
+/** Static and dynamic import specifiers in module text (statements at a line start). */
+const IMPORT_SPECIFIERS = [
+  /^[ \t]*(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']/gm,
+  /^[ \t]*import\s*["']([^"']+)["']/gm,
+  /\bimport\(\s*["']([^"']+)["']\s*[,)]/g,
+];
+
+/** The specifiers each checkout's runtime source imports, cached (the source does not change). */
+const ownSpecifiers = new Map<string, Promise<Set<string>>>();
+
+/** Every specifier denext's runtime source (`src/`, `mod.ts`, `cli.ts`) imports. */
+function denextOwnSpecifiers(abs: string): Promise<Set<string>> {
+  let found = ownSpecifiers.get(abs);
+  if (!found) {
+    found = (async () => {
+      const specs = new Set<string>();
+      const scan = (text: string) => {
+        for (const re of IMPORT_SPECIFIERS) {
+          for (const m of text.matchAll(re)) specs.add(m[1]);
+        }
+      };
+      await walkCode(join(abs, "src"), scan);
+      for (const file of ["mod.ts", "cli.ts"]) {
+        const text = await mfs.readTextFile(join(abs, file)).catch(() => null);
+        if (text) scan(text);
+      }
+      return specs;
+    })();
+    ownSpecifiers.set(abs, found);
+  }
+  return found;
+}
+
+/** Whether an import-map key (`ws`, `@std/path`, a `prefix/`) covers one of `specs`. */
+function importsKey(specs: Set<string>, key: string): boolean {
+  if (key.endsWith("/")) return [...specs].some((s) => s.startsWith(key));
+  if (specs.has(key)) return true;
+  return [...specs].some((s) => s.startsWith(key + "/"));
+}
+
+/**
+ * The framework deps an app's import map gets: never one the app depends on itself, which
+ * resolves to the app's own version (installed, or pinned by `classifyDeps`).
+ */
+function frameworkDepsFor(
+  R: DenextResolver,
+  deps: Record<string, string>,
+): Array<[string, string]> {
+  return Object.entries(R.frameworkDeps()).filter(([key]) => !(key in deps));
 }
 
 /** The resolver: the published JSR package, or a local denext checkout (`--denext-local`). */
@@ -636,7 +718,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const abs = resolve(localPath);
   const denoCfg = (await readJson(join(abs, "deno.json"))) ?? {};
   const exp = (denoCfg.exports ?? {}) as Record<string, string>;
-  const frameworkDeps = frameworkDepsOf(denoCfg);
+  const frameworkDeps = await frameworkDepsOf(abs, denoCfg);
   const fileFor = (root: string, rel: string) =>
     toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
   const local = (sub: string): string => {
@@ -722,12 +804,10 @@ async function writeAppRouterDenoJson(
   imports: Record<string, string>,
   prismaWiring: PrismaWiring | null,
   written: string[],
+  cap?: CapacitorPlan,
 ): Promise<boolean> {
   const denoJson = {
-    tasks: {
-      ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto"),
-      ...prismaWiring?.tasks,
-    },
+    tasks: appRouterTasks(R, prismaWiring, cap),
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
@@ -748,11 +828,25 @@ async function writeAppRouterDenoJson(
     imports,
   };
   const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
-  // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export).
-  await ensureGitignore(dir, [".denext/", "out/"], written);
+  // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export), and
+  // with a Capacitor target the native build outputs.
+  await ensureGitignore(dir, [".denext/", "out/", ...(cap ? cap.ignores : [])], written);
   // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
   await ensureVscodeDeno(dir, written);
   return denoJsonExists;
+}
+
+/** An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones. */
+function appRouterTasks(
+  R: DenextResolver,
+  prismaWiring: PrismaWiring | null,
+  cap?: CapacitorPlan,
+): Record<string, string> {
+  return {
+    ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto"),
+    ...prismaWiring?.tasks,
+    ...cap?.tasks,
+  };
 }
 
 /**
@@ -1161,7 +1255,7 @@ async function writeAppRouterConfig(
   deps: Record<string, string>,
   jsr: (sub: string) => string,
   imports: Record<string, string>,
-  hasEffect: boolean,
+  extra: { effect: boolean; mobileIcon?: MobileIconFacts },
   written: string[],
 ): Promise<{ exists: boolean; next: NextConfigTranslation | null }> {
   const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps)
@@ -1173,25 +1267,63 @@ async function writeAppRouterConfig(
   if (!(await writable(configPath))) return { exists: true, next };
   await mfs.writeTextFile(
     configPath,
-    nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
+    nextConfigSource({ tailwind, publicEnv, next, ...extra }),
   );
   written.push(configPath);
   return { exists: false, next };
 }
 
 /**
- * Convert the Next.js project at `dir` to a denext `deno.json`. Returns a summary;
- * throws only on unreadable package.json.
+ * Convert the project at `dir` (Next.js, Remix / React Router, a Vite / CRA / generic SPA, or
+ * Expo) to denext config files. Returns a summary; throws on an unreadable package.json, and
+ * before writing anything on an invalid `--app-id` / `--platform`.
  */
 export async function migrateProject(
   dir: string,
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
-  const deps = await readAppDeps(dir);
-  const nonNext = await migrateNonNextProject(dir, deps, options);
-  if (nonNext) return nonNext;
+  checkCapacitorFlags(options);
+  const r = await migrateAnyProject(dir, options);
+  if (!options.capacitor || r.capacitor) return r;
+  return { ...r, capacitorSkipped: capacitorSkipReason(r) };
+}
 
-  const { pnp } = await detectPackageManager(dir);
+/** Refuse a bad `--app-id` / `--platform`, or one given without `--enable-capacitor`. */
+function checkCapacitorFlags(options: MigrateOptions): void {
+  if (!options.capacitor && (options.appId !== undefined || options.platforms?.length)) {
+    throw new Error("--app-id and --platform configure --enable-capacitor; pass it too");
+  }
+  validateCapacitorOptions(capacitorOptionsOf(options));
+}
+
+/** The `--enable-capacitor` options from the migrate options. */
+function capacitorOptionsOf(options: MigrateOptions): CapacitorOptions {
+  return { appId: options.appId, platforms: options.platforms };
+}
+
+/** Why a migration path has no Capacitor target. */
+function capacitorSkipReason(r: MigrateResult): string {
+  const what = r.kind === "remix"
+    ? "a Remix / React Router app (its loaders and actions need a server)"
+    : "a Pages Router app";
+  return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
+    "which it does not cover yet";
+}
+
+/** The migration for whichever framework `dir` holds. */
+async function migrateAnyProject(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  const deps = await readAppDeps(dir);
+  return await migrateNonNextProject(dir, deps, options) ??
+    await migrateNextProject(dir, deps, options);
+}
+
+/** A Next.js app (App Router, or Pages Router on the plugin). */
+async function migrateNextProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   const R = await denextResolver(await denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
@@ -1199,11 +1331,12 @@ export async function migrateProject(
 
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
+  const cap = await appRouterCapacitor(dir, { deps, pm, R, options, pagesRouter });
   const written: string[] = [];
   const { pagesConfigWritten, pagesConfigExists, next } = await writeMigratedConfig(
     dir,
     pagesRouter,
-    { R, jsr, deps, imports, hasEffect },
+    { R, jsr, deps, imports, hasEffect, mobileIcon: cap.mobileIcon },
     written,
   );
 
@@ -1217,7 +1350,9 @@ export async function migrateProject(
     imports,
     prismaWiring,
     written,
+    cap.plan,
   );
+  const capacitor = await writeCapacitorConfig(dir, cap.plan, written);
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
@@ -1232,7 +1367,67 @@ export async function migrateProject(
     denoJsonExists,
     prisma,
     nextConfig: nextConfigReport(next),
+    capacitor,
   };
+}
+
+/**
+ * The Capacitor target of a Next App Router app (`--enable-capacitor`; never a Pages Router
+ * app): the plan, and the app icon it records. Empty without one.
+ */
+async function appRouterCapacitor(
+  dir: string,
+  app: {
+    deps: Record<string, string>;
+    pm: PackageManager | null;
+    R: DenextResolver;
+    options: MigrateOptions;
+    pagesRouter: boolean;
+  },
+): Promise<{ plan?: CapacitorPlan; mobileIcon?: MobileIconFacts }> {
+  if (!app.options.capacitor || app.pagesRouter) return {};
+  const { deps, pm, R, options } = app;
+  const pkgName = (await readJson(join(dir, "package.json")))?.name;
+  const packageName = typeof pkgName === "string" ? pkgName : undefined;
+  const plan = await planCapacitor({
+    dir,
+    deps,
+    pm,
+    cli: R.cli,
+    run: MIGRATED_RUN,
+    appName: packageName?.replace(/^@[^/]+\//, "") || "app",
+    packageName,
+    kind: "app-router",
+    serverFiles: await appRouterServerFiles(dir),
+    options: capacitorOptionsOf(options),
+  });
+  return { plan, mobileIcon: (await migrateAppIcon(dir, true)).facts.mobileIcon };
+}
+
+/**
+ * Write the planned `capacitor.config.ts` (unless a hand-authored config is kept), returning
+ * the Capacitor report.
+ */
+async function writeCapacitorConfig(
+  dir: string,
+  plan: CapacitorPlan | undefined,
+  written: string[],
+): Promise<CapacitorMigrateInfo | undefined> {
+  if (!plan) return undefined;
+  const configWritten = plan.writeConfig &&
+    await writeIfWritable(
+      join(dir, "capacitor.config.ts"),
+      () => capacitorConfigSource(GEN_MARKER, plan.info, placeholderNote(plan.info.appIdSource)),
+      written,
+    );
+  return { ...plan.info, configWritten };
+}
+
+/** The TODO comment over a placeholder app id, by where it came from. */
+function placeholderNote(source: CapacitorMigrateInfo["appIdSource"]): string | undefined {
+  return source === "package name"
+    ? "derived from the package name; set your bundle id (or --app-id)"
+    : undefined;
 }
 
 /** The app's dependencies + devDependencies from its package.json (throws if absent). */
@@ -1286,6 +1481,8 @@ async function writeMigratedConfig(
     deps: Record<string, string>;
     imports: Record<string, string>;
     hasEffect: boolean;
+    /** The `mobile` block recording the app icon (a Capacitor target). */
+    mobileIcon?: MobileIconFacts;
   },
   written: string[],
 ): Promise<
@@ -1306,7 +1503,7 @@ async function writeMigratedConfig(
     app.deps,
     app.jsr,
     app.imports,
-    app.hasEffect,
+    { effect: app.hasEffect, mobileIcon: app.mobileIcon },
     written,
   );
   return { pagesConfigWritten: false, pagesConfigExists, next };
@@ -1884,7 +2081,7 @@ function spaConfigSource(o: {
   /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
   noPrecompress?: boolean;
   /** The `mobile` block pinning the app icon migrate found, and the source it came from. */
-  mobileIcon?: { config: Record<string, unknown>; from: string };
+  mobileIcon?: MobileIconFacts;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
@@ -1960,7 +2157,7 @@ function tsValue(value: unknown): string {
  * The generated config's `mobile` block: the app icon `denext mobile assets` and
  * `denext mobile build` generate from, pinned so a later build does not pick another.
  */
-function mobileIconLines(m: { config: Record<string, unknown>; from: string } | undefined): string {
+function mobileIconLines(m: MobileIconFacts | undefined): string {
   if (!m) return "";
   const fields = Object.entries(m.config).map(([k, v]) => `    ${k}: ${tsValue(v)},\n`).join("");
   return `  // The app icon \`denext mobile assets\` / \`mobile build\` generate from (found by migrate\n` +
@@ -1968,11 +2165,14 @@ function mobileIconLines(m: { config: Record<string, unknown>; from: string } | 
     `  mobile: {\n${fields}  },\n`;
 }
 
+/** The `mobile` config block recording an app icon, and the source it came from. */
+type MobileIconFacts = { config: Record<string, unknown>; from: string };
+
 /** What {@linkcode migrateAppIcon} found: the report, and the config facts that record it. */
 interface MigratedIcon {
   report: AppIconReport;
   /** Spread into the config facts: `mobileIcon` when there is an icon to record. */
-  facts: { mobileIcon?: { config: Record<string, unknown>; from: string } };
+  facts: { mobileIcon?: MobileIconFacts };
 }
 
 /** No icon to record: the report alone. */
@@ -2146,8 +2346,12 @@ function nextConfigSource(o: {
   next: NextConfigTranslation | null;
   /** Wire the `@denext/effect` bridge's `effect()` plugin (app depends on `effect`). */
   effect?: boolean;
+  /** The `mobile` block pinning the app icon (a Capacitor target). */
+  mobileIcon?: MobileIconFacts;
 }): string {
   const bodyLines: string[] = [`  compatibilityMode: true,`];
+  const mobile = mobileIconLines(o.mobileIcon);
+  if (mobile) bodyLines.push(mobile.replace(/\n$/, ""));
 
   if (o.tailwind) {
     const output = o.tailwind.replace(/\.css$/, ".gen.css");
@@ -2234,6 +2438,12 @@ export function desktopAppName(title: string): string {
   return name || "app";
 }
 
+/**
+ * How a migrated app's tasks run the denext CLI: outside the app's `node_modules` (see
+ * {@link spaTasks}).
+ */
+const MIGRATED_RUN = "deno run -A --node-modules-dir=none";
+
 function spaTasks(
   desktop: boolean,
   cli: string,
@@ -2254,7 +2464,7 @@ function spaTasks(
   // alone would not have applied to the CLI process. It further keeps Deno from "migrating" a
   // pnpm-workspace.yaml into the root package.json on first run.
   void nodeModulesDir;
-  const run = "deno run -A --node-modules-dir=none";
+  const run = MIGRATED_RUN;
   const tasks: Record<string, string> = {
     dev: `${run} ${cli} dev .`,
     build: `${run} ${cli} build .`,
@@ -2355,9 +2565,7 @@ async function spaImportMap(
   for (const [key, val] of await collectTsPathAliases(dir)) {
     if (!(key in imports)) imports[key] = val;
   }
-  for (const [key, val] of Object.entries(R.frameworkDeps())) {
-    if (!(key in imports)) imports[key] = val;
-  }
+  addMissing(imports, frameworkDepsFor(R, deps));
   return imports;
 }
 
@@ -2454,6 +2662,7 @@ async function finishSpaProjectFiles(
   tailwind: string | null,
   desktop: boolean,
   written: string[],
+  extraIgnores: readonly string[] = [],
 ): Promise<boolean> {
   const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
   await ensureGitignore(
@@ -2462,7 +2671,10 @@ async function finishSpaProjectFiles(
       ".denext/",
       "out/",
       ...(tailwind ? [tailwindOutputFor(tailwind).replace(/^\.\//, "")] : []),
-      ...(desktop ? ["desktop-icon.png"] : []),
+      // `deno task desktop` writes the bundle (`<Name>.app` on macOS) into the project; any
+      // name, so renaming `desktop.app.name` needs no new line.
+      ...(desktop ? ["desktop-icon.png", "/*.app/"] : []),
+      ...extraIgnores,
     ],
     written,
   );
@@ -2558,21 +2770,25 @@ async function migrateSpaProject(
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
   const facts = await spaSourceFacts(dir, deps, options, source);
+  const cap = options.capacitor
+    ? await spaCapacitorPlan(dir, deps, pm, R, options, facts, source)
+    : null;
   const icon = await migrateAppIcon(
     dir,
-    await anyExists(dir, ["capacitor.config.ts", "capacitor.config.json", "capacitor.config.js"]),
+    cap !== null ||
+      await anyExists(dir, ["capacitor.config.ts", "capacitor.config.json", "capacitor.config.js"]),
   );
 
   const nodeModulesDir = manual ? "manual" : "auto";
   const files = await writeSpaProjectFiles(
     dir,
-    { ...facts, ...icon.facts },
+    { ...facts, ...icon.facts, ...(cap ? { noPrecompress: true } : {}) },
     imports,
     nodeModulesDir,
     R,
-    !!options.desktop,
+    { desktop: !!options.desktop, cap },
   );
-  return spaMigrateResult(source, files.written, classified, files.denoJsonExists, {
+  const r = spaMigrateResult(source, files.written, classified, files.denoJsonExists, {
     ...facts,
     tailwind: facts.tailwind !== null,
     tailwindInput: facts.tailwind ?? undefined,
@@ -2581,6 +2797,33 @@ async function migrateSpaProject(
     desktopIcon: files.desktopIcon,
     appIcon: appIconInfo(icon, files.configWritten),
     nodeModulesDir,
+  });
+  return files.capacitor ? { ...r, capacitor: files.capacitor } : r;
+}
+
+/** The Capacitor target of a SPA: named from its title, reviewed against its env and proxy. */
+async function spaCapacitorPlan(
+  dir: string,
+  deps: Record<string, string>,
+  pm: PackageManager | null,
+  R: DenextResolver,
+  options: MigrateOptions,
+  facts: { title: string; envKeys: string[] },
+  source: SpaSource,
+): Promise<CapacitorPlan> {
+  const pkgName = (await readJson(join(dir, "package.json")))?.name;
+  return await planCapacitor({
+    dir,
+    deps,
+    pm,
+    cli: R.cli,
+    run: MIGRATED_RUN,
+    appName: desktopAppName(facts.title),
+    packageName: typeof pkgName === "string" ? pkgName : undefined,
+    kind: "spa",
+    envKeys: facts.envKeys,
+    devProxy: source === "vite" ? await parseViteProxyPrefixes(dir) : undefined,
+    options: capacitorOptionsOf(options),
   });
 }
 
@@ -2591,14 +2834,16 @@ async function writeSpaProjectFiles(
   imports: Record<string, string>,
   nodeModulesDir: "manual" | "auto",
   R: DenextResolver,
-  desktop: boolean,
+  targets: { desktop: boolean; cap: CapacitorPlan | null },
 ): Promise<{
   written: string[];
   configWritten: boolean;
   desktopWritten: boolean;
   desktopIcon: string | undefined;
   denoJsonExists: boolean;
+  capacitor?: CapacitorMigrateInfo;
 }> {
+  const { desktop, cap } = targets;
   const written: string[] = [];
   const configWritten = await writeIfWritable(
     join(dir, "denext.config.ts"),
@@ -2609,7 +2854,7 @@ async function writeSpaProjectFiles(
   const denoJson = spaDenoJson(
     imports,
     nodeModulesDir,
-    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir),
+    { ...spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir), ...cap?.tasks },
   );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -2617,8 +2862,10 @@ async function writeSpaProjectFiles(
     facts.tailwind,
     desktop,
     written,
+    cap?.ignores,
   );
-  return { written, configWritten, desktopWritten, desktopIcon, denoJsonExists };
+  const capacitor = await writeCapacitorConfig(dir, cap ?? undefined, written);
+  return { written, configWritten, desktopWritten, desktopIcon, denoJsonExists, capacitor };
 }
 
 /**
@@ -2715,14 +2962,10 @@ async function migrateExpoProject(
     () => spaConfigSource(facts),
     written,
   );
-  const capWritten = await writeIfWritable(
-    join(dir, "capacitor.config.ts"),
-    () => capacitorConfigSource(GEN_MARKER, identity),
-    written,
-  );
+  const shell = await writeExpoShell(dir, { deps, pm, R, options, pkg, identity }, written);
   const tasks = {
     ...spaTasks(false, R.cli, false, nodeModulesDir),
-    ...capacitorTasks(R.cli),
+    ...capacitorTasks(R.cli, { run: MIGRATED_RUN, installed: pm !== null }),
   };
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
@@ -2730,17 +2973,11 @@ async function migrateExpoProject(
     null,
     false,
     written,
+    CAPACITOR_BUILD_IGNORES,
   );
-  // Expo keeps the Tailwind input (uniwind / NativeWind) at the root as global.css.
-  const tailwindInput = "tailwindcss" in deps
-    ? await findTailwindInput(dir, ["global.css", "app/global.css"]) ??
-      await findSpaTailwindInput(dir)
-    : null;
-  const missingPackages = [
-    ...(await findReactNativeWeb(dir) ? [] : ["react-native-web"]),
-    ...("expo-sqlite" in deps && !(await findSqliteWasm(dir)) ? ["@sqlite.org/sqlite-wasm"] : []),
-  ];
+  const { tailwindInput, missingPackages } = await expoWebNeeds(dir, deps);
   return {
+    capacitor: shell.capacitor,
     kind: "expo",
     wrote: written,
     ...classified,
@@ -2764,7 +3001,7 @@ async function migrateExpoProject(
       generatedEntry: entry.generated &&
         { path: entry.generated.path, kind: entry.generated.kind },
       expoRouter: entry.expoRouter,
-      capacitor: { ...identity, configWritten: capWritten },
+      capacitor: shell.expo,
       mobile: expoMobilePlan(deps, config, await expoApiUsage(dir)),
       // Runtime dependencies only: the dev toolchain never reaches the bundle.
       deps: await expoDependencyReport(
@@ -2772,10 +3009,71 @@ async function migrateExpoProject(
         (pkg.dependencies ?? {}) as Record<string, string>,
       ),
       prebuildFolders: await prebuildFolders(dir),
-      tailwindInput: tailwindInput ?? undefined,
+      tailwindInput,
       missingPackages,
       metro: await readMetroResolution(dir, deps),
       desktopPackages,
     },
   };
+}
+
+/**
+ * The Expo app's Tailwind input (uniwind / NativeWind keep it at the root as global.css), and
+ * the npm packages its web build needs that it has not installed.
+ */
+async function expoWebNeeds(
+  dir: string,
+  deps: Record<string, string>,
+): Promise<{ tailwindInput?: string; missingPackages: string[] }> {
+  const tailwindInput = "tailwindcss" in deps
+    ? await findTailwindInput(dir, ["global.css", "app/global.css"]) ??
+      await findSpaTailwindInput(dir)
+    : null;
+  const missingPackages = [
+    ...(await findReactNativeWeb(dir) ? [] : ["react-native-web"]),
+    ...("expo-sqlite" in deps && !(await findSqliteWasm(dir)) ? ["@sqlite.org/sqlite-wasm"] : []),
+  ];
+  return { tailwindInput: tailwindInput ?? undefined, missingPackages };
+}
+
+/**
+ * The Expo app's Capacitor shell: `capacitor.config.ts` from the app config, or with
+ * `--enable-capacitor` the planned target (`--app-id` winning, and the steps to run).
+ */
+async function writeExpoShell(
+  dir: string,
+  app: {
+    deps: Record<string, string>;
+    pm: PackageManager | null;
+    R: DenextResolver;
+    options: MigrateOptions;
+    pkg: Record<string, unknown>;
+    identity: { appId: string; appName: string; placeholderId: boolean };
+  },
+  written: string[],
+): Promise<{ expo: ExpoMigrateInfo["capacitor"]; capacitor?: CapacitorMigrateInfo }> {
+  const { identity } = app;
+  if (!app.options.capacitor) {
+    const configWritten = await writeIfWritable(
+      join(dir, "capacitor.config.ts"),
+      () => capacitorConfigSource(GEN_MARKER, identity),
+      written,
+    );
+    return { expo: { ...identity, configWritten } };
+  }
+  const plan = await planCapacitor({
+    dir,
+    deps: app.deps,
+    pm: app.pm,
+    cli: app.R.cli,
+    run: MIGRATED_RUN,
+    appName: identity.appName,
+    packageName: typeof app.pkg.name === "string" ? app.pkg.name : undefined,
+    kind: "expo",
+    appConfigId: { appId: identity.appId, placeholder: identity.placeholderId },
+    options: capacitorOptionsOf(app.options),
+  });
+  const capacitor = (await writeCapacitorConfig(dir, plan, written))!;
+  const { appId, appName, placeholderId, configWritten } = capacitor;
+  return { expo: { appId, appName, placeholderId, configWritten }, capacitor };
 }

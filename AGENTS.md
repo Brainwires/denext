@@ -24,6 +24,11 @@ emit correct denext instead of Next.js.
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
    writes nothing; problems denext handles are listed at https://denext.dev/docs/fixed.
+   `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
+   ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
+   the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
+   app's package manager, and review items for what it can't know (a hosted-mode env switch, a
+   backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
    `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
    pinned CLI tasks and every first-party `@denext/*` package together.
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
@@ -443,8 +448,8 @@ or a locked keyring rejects `backend_unavailable` with the reason) and your `def
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
-`runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
-call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
+`runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
+add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
 buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
