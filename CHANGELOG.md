@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-08
+
 ### Breaking
 
 - **`signInFailed.reason` is the closed `SignInFailedReason` union** (exported from
@@ -30,7 +32,6 @@ and this project adheres to
   makes `denextAuth()` throw. The default is on rather than opt-in because an unbounded session
   is what a stolen, regularly used cookie needs; set a larger `maxLifetime` to keep sessions
   longer.
-
 - **`apple()` signs in over `response_mode=form_post` and requests `openid name email`.** The
   session carries the email from the verified `id_token` and the name Apple posts on a user's
   first authorization (the unsigned `user` field — used for the display name only). Asking for
@@ -70,7 +71,6 @@ and this project adheres to
   (the Vite / CRA path and `--from expo`) records the chosen icon as `mobile.icon`, prints it in
   its report and `--check`, and adds a review item for a Capacitor or Expo app that has none (or
   only one under 1024×1024).
-
 - **TOTP secrets are encrypted at rest.** The MFA layer seals each secret before any adapter
   stores it — AES-256-GCM under a key HKDF-SHA-256-derived from the auth `secret` (a dedicated
   label; a random 96-bit nonce per seal; the user id bound in as additional data) — as
@@ -298,7 +298,6 @@ and this project adheres to
   generations: the bridge view controller (OTA 8, auth-session 5, app-extension 5), the composed
   MainActivity (5), `DenextSettings` (2) and `DenextContextMenu` (2); an unedited earlier file is
   upgraded by the next `denext mobile add`, then ship a new binary.
-
 - **`denext desktop doctor --linux` reports CEF's cookie store** (`cookies   CEF: os | basic |
   unknown`) as the runtime picks it for a new profile, with a fix when a CEF app would start with
   `--password-store=basic`, and sees an **XEmbed system tray** on X11 (`_NET_SYSTEM_TRAY_S<n>`'s
@@ -332,7 +331,6 @@ and this project adheres to
   request whose locale was negotiated (`detectLocale`, `localeMiddleware`, next-intl's
   middleware), or a request a `middleware.ts` matched, unless
   `cdnCacheHeaders: { evenWithMiddleware: true }`.
-
 - **denext pins Deno Desktop runtime 2.9.7-denext.13** (deno `a8de3d1a`, laufey `6974b61`, API
   47). Title bar preferences (`getTitleBarPreferences()`), the Linux file dialogs through
   xdg-desktop-portal's FileChooser, the runtime's own Linux secure store and the runtime's own macOS
@@ -11685,7 +11683,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.2.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.3.0...development
+[3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0
 [3.1.0]: https://jsr.io/@denext/denext@3.1.0
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2
