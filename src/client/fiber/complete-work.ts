@@ -83,6 +83,19 @@ function completeHost(wip: Fiber): void {
   wip.flags |= Placement;
 }
 
+/**
+ * A singleton (an adopted `<html>`/`<head>`/`<body>`, see begin-work.ts): its props become the
+ * page element's attributes — set on mount (hydration included: equal values are no-ops), diffed
+ * on update like a host. It never creates or re-syncs DOM; its children live in the container.
+ */
+function completeSingleton(wip: Fiber): void {
+  const props = wip.vnode.props ?? {};
+  if (wip.alternate === null) {
+    applyProps(wip.stateNode as Element, wip, {}, props, onErrorFor(wip), false);
+    if (props.ref != null) wip.flags |= RefAttach;
+  } else if (hostPropsChanged(wip.alternate.vnode.props, props)) wip.flags |= Update;
+}
+
 function completeText(wip: Fiber): void {
   if (wip.alternate !== null) {
     // Same text as last render: nothing to do, without reading the DOM (React compares
@@ -110,6 +123,9 @@ export function completeWork(wip: Fiber): void {
   switch (wip.tag) {
     case "host":
       completeHost(wip);
+      break;
+    case "singleton":
+      completeSingleton(wip);
       break;
     case "text":
       completeText(wip);

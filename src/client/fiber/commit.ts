@@ -76,7 +76,7 @@ function commitInsertionEffects(wipRoot: Fiber): void {
 function commitMutation(wipRoot: Fiber): void {
   walkFlagged(wipRoot, Update, (f) => {
     if ((f.flags & Update) === 0) return;
-    if (f.tag === "host") {
+    if (f.tag === "host" || f.tag === "singleton") {
       applyProps(
         f.stateNode as Element,
         f,

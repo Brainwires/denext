@@ -9,9 +9,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **`<Script strategy="worker">` runs on the main thread** (as `afterInteractive`). denext ships
   no Partytown-style DOM-proxying worker runtime; self-host Partytown if you need one.
-- **A root layout rendered by client code re-creates `<html>`/`<body>` once on hydration.**
-  denext owns the document tags; keep the root layout a Server Component (its attributes are
-  moved onto the real tags) or render only the in-body chrome.
+- **A root layout rendered by client code adds its `<head>`'s `<title>`/`<meta>`/`<link>` to the
+  page on hydration.** The server hoisted them into the document head, and the client doesn't
+  hoist, so it creates them again in the page container (and dev warns of the mismatch). Put
+  them in `metadata` or a Server Component layout instead.
 - **A library's npm `"use client"` files are found by resolving its packages as the server bundle
   does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
   bundle resolves packages differently, so a package's own client components may render on the

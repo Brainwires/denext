@@ -31,6 +31,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
+  document tags now adopt the page's own elements (React's host singletons): their attributes
+  follow the layout's props on the real `<html>` / `<body>`, including later updates, and the
+  layout's content hydrates the server markup where the parser left it. Before, hydration
+  mismatched at `<html>` and re-created the whole page inside the page container.
 - **A hidden `<Activity>` mounts no effects, as React 19.2's doesn't.** Content that mounts (or is
   added) while hidden is pre-rendered and kept hidden, but its `useEffect` / `useLayoutEffect` /
   store subscriptions first run when it is revealed — before, a subtree that mounted hidden ran its
