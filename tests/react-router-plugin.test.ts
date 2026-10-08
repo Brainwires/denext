@@ -415,3 +415,42 @@ export default function Team({ loaderData }: { loaderData: { id: string } }) {
     assertStringIncludes(teamPage, 'return [{"id":"7"}];');
   });
 });
+
+// A hook-free root (`Layout` + an `App` that only returns `<Outlet/>`) is a SERVER root layout.
+// Its generated layout must render the route through `Layout` — `return <Outlet/>;` once became
+// `return {children};` (an object literal, rendered as `<undefined>`) and `Layout` was dropped.
+const SERVER_ROOT = `import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+export function Layout({ children }: { children: unknown }) {
+  return (
+    <html lang="en" className="dark">
+      <head><Meta /><Links /></head>
+      <body data-app="rr7s">{children}<ScrollRestoration /><Scripts /></body>
+    </html>
+  );
+}
+export default function App() {
+  return <Outlet />;
+}
+`;
+
+Deno.test("react-router plugin: a hook-free root with Layout + `return <Outlet/>` renders the route", async () => {
+  await withRrApp({
+    "root.tsx": SERVER_ROOT,
+    "routes.ts": `import { index } from ${JSON.stringify(DSL)};
+export default [index("routes/home.tsx")];
+`,
+    "routes/home.tsx": `export default function Home() {
+  return <h1 id="home">home</h1>;
+}
+`,
+  }, async (app, root) => {
+    const layout = await Deno.readTextFile(
+      join(root, ".denext", "react-router", "root", "layout.tsx"),
+    );
+    assert(!layout.includes("return {children}"), layout);
+    const html = await (await app(new Request("http://localhost/"))).text();
+    assertStringIncludes(html, '<h1 id="home">home</h1>');
+    assertStringIncludes(html, 'data-app="rr7s"', "the root Layout export renders the body");
+    assert(!html.includes("<undefined"), html);
+  });
+});

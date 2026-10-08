@@ -1292,16 +1292,27 @@ function templateHoleEnd(code: string, start: number): number {
  * `<Outlet/>` mapped to `children` and the root's `meta` bridged to `generateMetadata`.
  */
 export function serverRootLayoutSource(parts: ModuleParts): string {
+  const viaLayout = parts.hasLayoutExport;
   const clientStmts = parts.clientStatements.map((stmt) => {
     if (!/^\s*export\s+default\b/.test(stmt.trimStart())) return renameDocumentTags(stmt);
-    return renameDocumentTags(stmt)
-      .replace(/<Outlet\s*\/>/g, "{children}")
-      .replace(/<Outlet\b[^>]*>\s*<\/Outlet>/g, "{children}")
+    return outletToChildren(renameDocumentTags(stmt))
       .replace(
         /export\s+default\s+function\s+([A-Za-z0-9_$]+)\s*\(\s*\)/,
-        "export default function $1({ children }: { children?: unknown })",
+        viaLayout
+          ? "function $1({ children }: { children?: unknown })"
+          : "export default function $1({ children }: { children?: unknown })",
       );
   });
+  // Remix / React Router render the root's `Layout` export around the app component
+  // (`<Layout><App/></Layout>`); the server root does the same, threading the route subtree
+  // through the app's `<Outlet/>` (now `children`).
+  const app = viaLayout ? defaultFunctionName(parts.clientStatements) : null;
+  if (app) {
+    clientStmts.push(
+      `export default function __RemixRootLayout({ children }: { children?: unknown }) {\n` +
+        `  return <Layout><${app}>{children}</${app}></Layout>;\n}`,
+    );
+  }
   const rootSeed = new Set<string>([...parts.serverFree, ...parts.clientFree]);
   const helpers = selectHelpers(parts.helpers, rootSeed).map(renameDocumentTags);
   const bodyStatements = [...helpers, ...parts.serverStatements, ...clientStmts];
@@ -1319,6 +1330,30 @@ export function serverRootLayoutSource(parts: ModuleParts): string {
     .map((s) => rewriteRemixImports(s).trim())
     .join("\n\n");
   return `${GEN_HEADER}${body}\n`;
+}
+
+/**
+ * The root's `<Outlet/>` becomes `children`: `{children}` as a JSX child, and `<>{children}</>`
+ * where the outlet IS the returned expression (`return <Outlet/>;` must not become the object
+ * literal `return {children};`, nor `() => <Outlet/>` a block body).
+ */
+function outletToChildren(stmt: string): string {
+  return stmt
+    .replace(
+      /(\breturn\s*\(?\s*|=>\s*\(?\s*)<Outlet\b[^>]*?(?:\/>|>\s*<\/Outlet>)/g,
+      "$1<>{children}</>",
+    )
+    .replace(/<Outlet\s*\/>/g, "{children}")
+    .replace(/<Outlet\b[^>]*>\s*<\/Outlet>/g, "{children}");
+}
+
+/** The name of the root's `export default function Name()` (null when anonymous / absent). */
+function defaultFunctionName(statements: string[]): string | null {
+  for (const stmt of statements) {
+    const m = stmt.match(/export\s+default\s+function\s+([A-Za-z0-9_$]+)\s*\(/);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 /**

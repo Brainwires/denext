@@ -81,6 +81,11 @@ and this project adheres to
   new layout starts from clean elements instead of the old one's classes. The new layout's
   attributes are applied in the commit, after the old ones are cleared, and an `on*` handler on
   `<body>` no longer throws.
+- **A React Router root with a `Layout` export and an `App` that only returns `<Outlet/>`
+  renders its routes.** A hook-free root becomes a server root layout; its `return <Outlet/>;`
+  was generated as `return {children};` (an object, rendered as `<undefined>`) and the `Layout`
+  export was dropped. The app now renders inside `Layout`, with the outlet as `<>{children}</>`
+  (`@denext/react-router` and `denext migrate --from remix`).
 - **A root layout rendered by client code hydrates `<html>`/`<head>`/`<body>` in place.** Its
   document tags now adopt the page's own elements (React's host singletons): their attributes
   follow the layout's props on the real `<html>` / `<body>`, including later updates, and the
