@@ -211,10 +211,10 @@ config is read, never run):
 
 - `build.assetsDir` becomes `spa.assetsDir` (`"assets"`, Vite's default, when it is unset), so
   the built files keep the `/assets/name-HASH.ext` paths a server written for the Vite build
-  serves ([SPA mode › Vite build parity](/docs/spa)).
+  serves ([SPA mode › Vite build parity](/docs/spa#vite-build-parity)).
 - TanStack Router's `tanstackRouter({ autoCodeSplitting: true })` becomes
   `spa.tanstackRouter: { autoCodeSplitting: true }`, so route components stay out of the
-  startup chunk ([SPA mode › Vite build parity](/docs/spa)).
+  startup chunk ([SPA mode › Vite build parity](/docs/spa#vite-build-parity)).
 - A plugin that emits a file from `generateBundle` (`this.emitFile({ type: "asset", … })`),
   imported from your own module, is wired into `denext.config.ts` as
   `viteEmitterPlugin(<the same call>)` from `denext/plugin-kit`, so the file still lands in the

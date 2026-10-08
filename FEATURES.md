@@ -99,6 +99,16 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   exclusive with the App Router per project. See `examples/spa`, and
   `examples/tanstack-router` for a stock file-based TanStack Router app in this
   mode (library mode: the router runs in the browser, no plugin needed).
+  **Vite build parity:** a SPA runs its configured `plugins` (prepare steps
+  before the bundle, build steps at `denext build` and `export`, publishing
+  files through `emitFile`; `viteEmitterPlugin` hosts a Vite `generateBundle`
+  emitter unchanged); `client:*` directives defer a component's mount and split
+  its code (`client:placeholder` until the trigger); `spa.assetsDir` is Vite's
+  `build.assetsDir` (`name-HASH8.ext` files under `/assets/`);
+  `spa.viteManifest` writes `.vite/manifest.json`; `spa.tanstackRouter`
+  runs TanStack Router's route code-splitting; a failed chunk load dispatches
+  `vite:preloadError`. See
+  [/docs/spa#vite-build-parity](https://denext.dev/docs/spa#vite-build-parity).
 
 ## React runtime (own React 19-compatible implementation)
 
@@ -112,10 +122,15 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `StrictMode`.
 - **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
   mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
-  restores the same instances; import-gated, so apps that don't use it pay nothing.
+  restores the same instances; content that mounts hidden is pre-rendered and runs
+  no effects until it is revealed (React 19.2); import-gated, so apps that don't
+  use it pay nothing.
 - **`ViewTransition`** — per-element view transitions across navigations: a shared
   `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
-  `addTransitionType` select the animation, on every soft-nav path; import-gated.
+  `addTransitionType` select the animation, on every soft-nav path; and, as in
+  React 19.2, on the same page: a commit made only of Transition work animates the
+  boundaries that enter, exit, are shared or update (urgent updates never do);
+  import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
@@ -320,6 +335,13 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   editor** — honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
   Sublime, and terminal editors; default `code`).
 - **`dynamic()`** with `ssr: false` code-split islands.
+- **`VirtualList`** (`denext`) and **`lists: "denext"`** — the measured
+  virtualized list engine behind React Native mode's FlatList / FlashList /
+  LegendList; with `lists: "denext"` an npm-React app's (and its packages')
+  `@legendapp/list/react` imports resolve to a LegendList built on it, chat
+  behaviour (`initialScrollAtEnd`, `maintainScrollAtEnd`, `alignItemsAtEnd`),
+  `getState().listen` and the DOM build's class and attribute props included. See
+  [/docs/lists](https://denext.dev/docs/lists).
 - **`denext/mobile`** and **`denext/desktop`** — the client runtimes for apps
   shipped in a Capacitor shell or a Deno Desktop window; see
   [Mobile & desktop apps](#mobile--desktop-apps).
@@ -637,6 +659,11 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   `next/*` + `react` to native denext (`<Link>`/`<Image>` → named,
   `next/navigation` → `denext`, `next/headers`/`next/cache` → `denext/server`,
   …). A **`pages/` app** is wired to the `@denext/pages-router` plugin.
+  **`--enable-capacitor`** gives a migrated Vite / CRA / generic SPA, Next App
+  Router app (its static export) or Expo app an iOS / Android target:
+  `capacitor.config.ts`, the `mobile:*` tasks, the pinned Capacitor 8 packages
+  (installed with `--ignore-scripts`) and, with `--platform ios,android`, the
+  native projects; what it cannot know is listed for review.
   `denext codemod` runs just the import rewrite standalone.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole
   app runs on **one** React; the RSC/Flight island boundary is preserved.
@@ -791,7 +818,10 @@ cache uses Deno's built-in `node:sqlite`.)
   so Flight, streaming SSR, per-segment error boundaries, soft navigation, ISR and Fast
   Refresh are denext's own; loaders/actions, `meta`, `links`, `ErrorBoundary`, the root
   `Layout` export and the `Route.ComponentProps` props contract run on the `denext/remix`
-  runtime. `denext migrate` detects an RR7 app and wires it. See
+  runtime. A route module's browser half runs too: `clientLoader` (with
+  `serverLoader()` and `clientLoader.hydrate`), `clientAction` and
+  `HydrateFallback`; `ssr: false` is SPA mode and `prerender` becomes segment
+  config. `denext migrate` detects an RR7 app and wires it. See
   [/docs/react-router](https://denext.dev/docs/react-router).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - **Unified CLI** — a real command framework (declarative flags, uniform global
@@ -1261,7 +1291,8 @@ default").
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served
   runtime rides only Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A
   guard fails on any `npm:` specifier in compat modules. `deno.json`'s remaining
-  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` —
+  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` /
+  `@tanstack/router-plugin` —
   are build/dev-time only and never enter a shipped bundle (the CSS + swc-AST
   tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
   npm); the image/og codecs are now first-party JSR packages

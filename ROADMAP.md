@@ -5,9 +5,10 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.2** is in progress on `development`: Deno Desktop at Electron parity through a
-> pinned runtime built from public forks ([Brainwires/deno](https://github.com/Brainwires/deno),
-> [Brainwires/laufey](https://github.com/Brainwires/laufey)).
+> denext **3.4** is in progress on `development`: LegendList on `VirtualList` (`lists`), SPA
+> builds at Vite parity (plugins, `client:*` deferred mounts, `spa.assetsDir`, TanStack Router
+> code-splitting), React Router's browser half, React 19.2's same-page `<ViewTransition>` and
+> hidden `<Activity>`, and `denext migrate --enable-capacitor`.
 
 ## Deno Desktop
 
@@ -78,6 +79,24 @@
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
 - **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
 - **`ip` on every auth event** (only `signInFailed` carries it today).
+
+## React, Remix and SPA surface
+
+- **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /
+  `onUpdate` / `onShare`, more than one child (today it needs a single element child, since its
+  config rides an attribute on it), an `<Activity>` going hidden animated as an exit, and an
+  update skipped when the boundary is off-screen.
+- **A hidden `<Activity>` holds class lifecycles and refs too:** a class component inside one
+  still runs `componentDidMount`, and a hidden subtree's refs stay attached (function
+  components' effects already wait until it is shown).
+- **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
+  client navigation's Flight payload waits for every deferred value.
+- **A root layout rendered by client code hoists its `<head>` tags:** its
+  `<title>` / `<meta>` / `<link>` are created again in the page container on hydration (the
+  server hoisted them into the document head, and dev warns of the mismatch). Until then, put
+  them in `metadata` or a Server Component layout.
+- **SPA `client:interaction` replays the triggering event** on the mounted component, as a
+  Flight island does; today the first interaction only mounts it.
 
 ## Server, ops and API surface
 

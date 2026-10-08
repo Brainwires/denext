@@ -760,7 +760,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `nodeResolve` were removed in 3.0 and are a config error.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
-  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
+  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking

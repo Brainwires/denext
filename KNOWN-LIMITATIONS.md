@@ -9,10 +9,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **`<Script strategy="worker">` runs on the main thread** (as `afterInteractive`). denext ships
   no Partytown-style DOM-proxying worker runtime; self-host Partytown if you need one.
-- **A root layout rendered by client code adds its `<head>`'s `<title>`/`<meta>`/`<link>` to the
-  page on hydration.** The server hoisted them into the document head, and the client doesn't
-  hoist, so it creates them again in the page container (and dev warns of the mismatch). Put
-  them in `metadata` or a Server Component layout instead.
 - **A library's npm `"use client"` files are found by resolving its packages as the server bundle
   does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
   bundle resolves packages differently, so a package's own client components may render on the
@@ -27,11 +23,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
 - **`captureOwnerStack()` and `cacheSignal()` return `null`** (owner stacks are in denext's
   DevTools; there is no client cache scope).
-- **A class component inside a hidden `<Activity>` still runs `componentDidMount`**, and a hidden
-  subtree's refs stay attached; function components' effects are not mounted until it is shown.
-- **`<ViewTransition>` takes no `onEnter`/`onExit`/`onUpdate`/`onShare` callbacks** and needs a
-  single element child (its config rides an attribute on it). An `<Activity>` going hidden is not
-  animated as an exit, and an update is not skipped when the boundary is off-screen.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).
@@ -45,7 +36,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   component's mount and split its code instead (no server HTML to keep inert): only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component
   also used without a directive stays in the main bundle; `client:interaction` needs a
-  `client:placeholder` to interact with and does not replay the triggering event.
+  `client:placeholder` to interact with.
 - **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
   outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
@@ -125,10 +116,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 
+### Lists (`lists: "denext"`)
+
+- **LegendList's DOM build on `VirtualList` ignores a few props:** `waitForInitialLayout` and
+  `itemsAreEqual` have no effect, `adaptiveRender` is always `"normal"`, and the start insets of
+  `contentInset` (`top` / `left`) add no room before the first item (its end does).
+
 ### Remix and React Router
 
-- **A soft navigation's `defer()` data arrives whole:** a document load streams each deferred
-  value as it resolves, but a client navigation's Flight payload waits for all of them.
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.

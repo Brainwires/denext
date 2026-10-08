@@ -289,6 +289,7 @@ spa: {
       </p>
       <Code lang="ts">
         {`// denext.config.ts
+import type { DenextConfig } from "denext/server";
 import { viteEmitterPlugin } from "denext/plugin-kit";
 import { licensesPlugin } from "./scripts/licenses.ts";
 

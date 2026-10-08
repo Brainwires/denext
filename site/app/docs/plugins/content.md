@@ -340,7 +340,8 @@ should import from **only the first two**:
    plugin uses it exactly like an app does.
 2. **The plugin toolkit — `@denext/denext/plugin-kit`.** The contract seams
    (`DenextPlugin`, `PluginContext`, `PluginRequestHandler`, `PluginBuildStep`,
-   `PluginBuildContext`, `PluginTeardown`, `RouteSynthesizer`, `CommandSpec`) **plus**
+   `PluginBuildContext`, `PluginPrepareContext`, `EmittedAsset`, `PluginTeardown`,
+   `RouteSynthesizer`, `CommandSpec`, and the `viteEmitterPlugin` adapter) **plus**
    the pipeline primitives a **router-class** plugin needs — route matching
    (`matchSegments`, `parsePattern`, `specificity`, `peelLocale`), client-route
    bundling (`bundleRoutes`), the CSS pipeline (`buildAppCss`, `extractRouteCss`),

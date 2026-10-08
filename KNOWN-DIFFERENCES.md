@@ -211,6 +211,14 @@ internal design choice with no observable difference lives in
   their own resolution: their `.ios.js` files are not picked, since they call native modules. A
   Pages Router app (`@denext/pages-router`) takes the `web` target's files only.
 
+## Lists
+
+- **`lists: "denext"`'s LegendList is `VirtualList`'s engine, not LegendList's.** An item
+  size estimate is always confirmed by measuring the rendered item, and the scroll element
+  carries the engine's inline `height: 100%`: a `style` height, or a class with a max height, sizes it, where
+  the real DOM build's element has no inline height. It applies to apps on npm React (the
+  esbuild build path); a denext-native app uses `VirtualList` directly.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

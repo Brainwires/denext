@@ -264,23 +264,16 @@ export function Thread({ diagram, diff }) {
         default and an element whose name an inner scope re-binds mount eagerly. A component that is
         also used without a directive, or referenced as a value, keeps its static import: its
         directive elements still defer their mount, but its code stays in the main bundle. An app
-        with no directive bundles none of this. In an npm-React app, TypeScript learns the
-        attributes from a declaration of your own:
+        with no directive bundles none of this. In an npm-React app type-checked against{" "}
+        <code>@types/react</code>, TypeScript learns the attributes from{" "}
+        <code>denext/jsx-directives</code>'s <code>ClientDirectives</code>, added to React's{" "}
+        <code>Attributes</code> by a two-line declaration of your own (with{" "}
+        <code>deno check</code>, list it in <code>compilerOptions.types</code>):
       </p>
       <Code lang="ts">
         {`// client-directives.d.ts
-import "react";
-declare module "react" {
-  interface Attributes {
-    "client:load"?: boolean;
-    "client:idle"?: boolean;
-    "client:visible"?: boolean;
-    "client:interaction"?: boolean;
-    "client:media"?: string;
-    "client:only"?: boolean;
-    "client:placeholder"?: React.ReactNode;
-  }
-}`}
+import type { ClientDirectives } from "denext/jsx-directives";
+declare module "react" { interface Attributes extends ClientDirectives<import("react").ReactNode> {} }`}
       </Code>
       <p>
         Islands are a <a href="/docs/rendering">rendering-strategy</a>{" "}
