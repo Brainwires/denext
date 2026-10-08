@@ -350,6 +350,7 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
         e.mobile.manualPermissions.join(", "),
     );
   }
+  e.mobile.manualLinks.forEach((item) => console.log(`    ${item}`));
   for (const { plugin, note } of e.mobile.unmappedPlugins) {
     console.log(`    config plugin ${plugin}: ${note}`);
   }

@@ -509,6 +509,13 @@ and this project adheres to
 
 ### Security
 
+- **`denext migrate --from expo` no longer pastes an app config's scheme or domain into a shell
+  command unchecked.** The suggested `denext mobile add … --scheme … --domain …` line joined the
+  `scheme` and `ios.associatedDomains` values as written, so a hostile `app.json` in someone else's
+  repository became a shell injection for whoever copied the command. Only a URL scheme
+  (`[a-z][a-z0-9+.-]*`) and a host name reach the command now, shell-quoted where needed (a
+  `*.example.com` wildcard); anything else is listed as a manual item, quoted, in the report and
+  in `migrate --check`.
 - **`denext mobile add app-config` writes nothing from the app config as markup or build
   settings.** The config may come from another repository: an `ios.infoPlist` key ending in
   `UsageDescription` was written raw into `<key>…</key>` (so it could add any plist entry), an

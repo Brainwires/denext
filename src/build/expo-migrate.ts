@@ -285,8 +285,14 @@ export interface MobilePlan {
   schemes: string[];
   /** `--domain` values (deep-links). */
   domains: string[];
-  /** The full command. */
+  /** The full command (every value in it validated, and shell-quoted where needed). */
   command: string | null;
+  /**
+   * App-config schemes and associated domains left out of {@linkcode command} because they are
+   * not a URL scheme / host name (the app config may come from someone else's repo, and the
+   * command is pasted into a shell), each quoted with what to do.
+   */
+  manualLinks: string[];
   /** iOS usage strings no capability writes: copy them into ios/App/App/Info.plist. */
   manualPlist: Record<string, string | null>;
   /** Android permissions no capability declares: add them to AndroidManifest.xml. */
@@ -385,18 +391,22 @@ export function expoMobilePlan(
   const manualPermissions = permissionCapabilities(config.androidPermissions, add);
   const carry = appConfigToCarry(manualPlist, manualPermissions, config.buildProperties);
   if (carry) add("app-config", carry);
-  if (config.schemes.length > 0) add("deep-links", `scheme ${config.schemes.join(", ")}`);
+  const { schemes: validSchemes, domains: validDomains, manualLinks } = safeLinks(config);
+  if (config.schemes.length > 0) {
+    add("deep-links", validSchemes.length > 0 ? `scheme ${validSchemes.join(", ")}` : "scheme");
+  }
   if (config.linkDomains.length > 0) add("deep-links", "ios.associatedDomains applinks");
   const order = Object.keys(MOBILE_CAPABILITIES);
   const capabilities = [...chosen].map(([capability, because]) => ({ capability, because }))
     .sort((a, b) => order.indexOf(a.capability) - order.indexOf(b.capability));
-  const schemes = schemeArgs(chosen, config);
-  const domains = chosen.has("deep-links") ? config.linkDomains : [];
+  const schemes = schemeArgs(chosen, validSchemes, validDomains);
+  const domains = chosen.has("deep-links") ? validDomains : [];
   const command = capabilities.length === 0 ? null : [
     "denext mobile add",
     ...capabilities.map((c) => c.capability),
-    ...schemes.map((s) => `--scheme ${s}`),
-    ...domains.map((d) => `--domain ${d}`),
+    // The placeholder is ours, for the user to replace; every other value is the app config's.
+    ...schemes.map((s) => `--scheme ${s === SCHEME_PLACEHOLDER ? s : shellArg(s)}`),
+    ...domains.map((d) => `--domain ${shellArg(d)}`),
   ].join(" ");
   const unmappedPlugins = config.plugins.filter((p) => !pluginCarried(p)).map((plugin) => ({
     plugin,
@@ -407,6 +417,7 @@ export function expoMobilePlan(
     schemes,
     domains,
     command,
+    manualLinks,
     manualPlist,
     manualPermissions,
     unmappedPlugins,
@@ -445,16 +456,59 @@ function permissionCapabilities(
   return manual;
 }
 
+/** The `--scheme` placeholder the command carries when the config has no usable scheme. */
+const SCHEME_PLACEHOLDER = "<scheme>";
+
+/** A URL scheme (RFC 3986): what `--scheme` takes. */
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*$/i;
+
+/** A host name, optionally a `*.` wildcard (iOS associated domains), as `--domain` takes. */
+const LINK_DOMAIN =
+  /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+
 /**
- * The `--scheme` values: the config's schemes. auth-session needs a scheme, and deep-links a
- * scheme or a domain: one the config computes in code (or lacks) still has to be passed, so
- * the command then carries a placeholder.
+ * The app config's schemes and associated domains that may go into the suggested command, and
+ * a manual item for each that may not: the config may be someone else's, and the command is
+ * pasted into a shell, so only a real URL scheme or host name is ever interpolated.
  */
-function schemeArgs(chosen: Map<string, string>, config: ExpoAppConfig): string[] {
+function safeLinks(
+  config: ExpoAppConfig,
+): { schemes: string[]; domains: string[]; manualLinks: string[] } {
+  const manualLinks: string[] = [];
+  const schemes = config.schemes.filter((s) => {
+    if (URL_SCHEME.test(s)) return true;
+    manualLinks.push(
+      `scheme ${JSON.stringify(s)} is not a URL scheme, so it is left out of the command; ` +
+        "pass the app's scheme with --scheme yourself",
+    );
+    return false;
+  });
+  const domains = config.linkDomains.filter((d) => {
+    if (LINK_DOMAIN.test(d)) return true;
+    manualLinks.push(
+      `associated domain ${JSON.stringify(d)} is not a host name, so it is left out of the ` +
+        "command; pass the app's domain with --domain yourself",
+    );
+    return false;
+  });
+  return { schemes, domains, manualLinks };
+}
+
+/** `value` as one shell word: bare when it has no special characters, else single-quoted. */
+function shellArg(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The `--scheme` values: the config's (valid) schemes. auth-session needs a scheme, and
+ * deep-links a scheme or a domain: one the config computes in code (or lacks, or gives in a
+ * form that is not a scheme) still has to be passed, so the command then carries a placeholder.
+ */
+function schemeArgs(chosen: Map<string, string>, schemes: string[], domains: string[]): string[] {
   if (!chosen.has("deep-links") && !chosen.has("auth-session")) return [];
-  if (config.schemes.length > 0) return config.schemes;
-  const needsScheme = chosen.has("auth-session") || config.linkDomains.length === 0;
-  return needsScheme ? ["<scheme>"] : [];
+  if (schemes.length > 0) return schemes;
+  const needsScheme = chosen.has("auth-session") || domains.length === 0;
+  return needsScheme ? [SCHEME_PLACEHOLDER] : [];
 }
 
 // --- dependencies -------------------------------------------------------------------------

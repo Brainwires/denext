@@ -226,6 +226,7 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
       item: `Info.plist: ${key}`,
       reason: "an iOS usage string no capability writes; copy it into ios/App/App/Info.plist",
     })),
+    ...e.mobile.manualLinks.map((reason) => ({ item: "deep links", reason })),
     ...e.mobile.manualPermissions.map((perm) => ({
       item: perm,
       reason: "an Android permission no capability declares; add it to AndroidManifest.xml",
