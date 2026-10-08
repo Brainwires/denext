@@ -373,10 +373,12 @@ single denext React.
   `unstable_parseMultipartFormData` with the memory upload handler, from
   `denext/remix/server`.
 - **`defer` and `<Await>`**: a `defer()` promise leaves a placeholder so the
-  shell flushes immediately with the `<Await>` fallback; the content streams in
-  as its Suspense boundary resolves, and the resolved value is written into the
-  tail Flight payload so hydration sees real data. A rejection drives
-  `errorElement` through `useAsyncError`.
+  shell flushes immediately with the `<Await>` fallback. Each deferred value
+  streams as its own chunk the moment it resolves, next to the `<Await>`
+  content of its Suspense boundary, so an early boundary's data is on the wire
+  before a slow one resolves; the browser puts every chunk back into the page's
+  Flight tree, so hydration sees real data. A rejection drives `errorElement`
+  through `useAsyncError`.
 - **Nested routes and layouts**: `<Outlet />` in a layout renders the nested
   subtree, `<Outlet context>` / `useOutletContext` work, and an ancestor's
   loader data is readable from a nested route through `useMatches` and
@@ -437,11 +439,11 @@ The CLI prints up to twelve notes and a count of the rest.
   renders from the echoed data. First paint, hard navigations, routes without
   `shouldRevalidate`, and an explicit `true` always run the loader, so nothing
   is ever stale.
-- **Deferred data is whole at the end.** The `<Await>` content streams
-  progressively and first paint is not blocked, but the Flight payload
-  (`#__denext_flight`) is emitted once all boundaries resolve. A soft
-  navigation to a deferred route therefore carries the resolved value rather
-  than re-streaming the chunk.
+- **A soft navigation's deferred data arrives whole.** On a document load each
+  deferred value streams as it resolves (see §6), and the page hydrates once
+  the document is complete. A client navigation to a deferred route fetches the
+  route's Flight payload in one response, so it carries every resolved value
+  rather than streaming them one by one.
 - **`useBlocker` guards in-app navigations and browser back/forward, not a
   hard unload.** A registered blocker vetoes `<Link>`, `useNavigate`, and
   `<Form>` navigations and undoes a popstate until `proceed()`; one active

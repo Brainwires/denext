@@ -123,8 +123,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Remix and React Router
 
-- **Deferred data is whole-at-end:** `<Await>` content streams, but the Flight payload is emitted
-  once every boundary resolves.
+- **A soft navigation's `defer()` data arrives whole:** a document load streams each deferred
+  value as it resolves, but a client navigation's Flight payload waits for all of them.
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.

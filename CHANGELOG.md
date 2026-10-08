@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Remix `defer()` data streams per boundary.** On a streamed Flight page each deferred value is
+  sent as its own `<script type="application/json" data-dnx-v>` chunk the moment it resolves,
+  and each Suspense boundary's Flight subtree (`data-dnx-f`) beside its HTML, so an early
+  `<Await>`'s data is on the wire before a slow one resolves; the trailing `#__denext_flight`
+  is now the shell tree with those holes left in place, and the browser entry puts the chunks
+  back (`readStreamedFlight` from `denext/client-runtime`) before it hydrates. A buffered
+  document still carries the complete tree.
 - **`@denext/react-router` 0.2.0 runs a route module's browser half.** `clientLoader` (with
   `serverLoader()` and `clientLoader.hydrate`), `clientAction` (with `serverAction()`) and
   `HydrateFallback` work as in React Router v7 framework mode: a hydrating client loader renders

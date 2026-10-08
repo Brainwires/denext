@@ -23,6 +23,8 @@ export {
   flightClientIds,
   parseFlight,
 } from "./flight-client.ts";
+// A streamed Flight document's tree: the shell + each hole / deferred value as it streamed.
+export { readStreamedFlight } from "./streamed-flight.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
 // Class components: `installClassSupport` lives in its own entrypoint, `denext/class-runtime`

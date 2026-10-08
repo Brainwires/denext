@@ -590,7 +590,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -754,7 +754,8 @@ function flightMain(catchBody: string, classBoot: string): string {
   if (!el || !flightEl) return;
   let flight;
   try {
-    flight = JSON.parse(flightEl.textContent || "null");
+    // A streamed document sent each Suspense hole and deferred value as its own chunk.
+    flight = readStreamedFlight(document, JSON.parse(flightEl.textContent || "null"));
   } catch {
     return;
   }

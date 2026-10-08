@@ -3970,6 +3970,7 @@
     "performModuleRefresh:function",
     "provideLayoutSegments:function",
     "qrl:function",
+    "readStreamedFlight:function",
     "registerComponentMeta:function",
     "registerFamily:function",
     "setFlightParser:function",
