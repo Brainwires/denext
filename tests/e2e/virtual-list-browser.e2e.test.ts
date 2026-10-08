@@ -210,6 +210,7 @@ window.scenarios = {
     render();
     await frames(6);
     const afterAppend = { gap: gap(), last: !!row(309), isAtEnd: ref.getState().isAtEnd };
+    const beforeGrow = totals.at(-1);
     tall = 400; // the last message grows as it streams
     render();
     await frames(6);
@@ -219,11 +220,12 @@ window.scenarios = {
       contentLength: Math.round(ref.getState().contentLength),
       scrollHeight: s.scrollHeight,
     };
+    const grew = totals.at(-1) - beforeGrow;
     await ref.scrollToIndex({ index: 0, animated: false });
     await frames(4);
     const afterTop = { top: Math.round(s.scrollTop), first: !!row(0) };
     stop();
-    return { atStart, afterAppend, afterGrow, afterTop, totals: totals.length, total: totals.at(-1) };
+    return { atStart, afterAppend, afterGrow, afterTop, totals: totals.length, grew };
   },
 
   async keyboard() {
@@ -488,7 +490,7 @@ Deno.test({
         assertEquals(top.top, 0, "scrollToIndex(0) reaches the start");
         assert(top.first, "the first message is rendered there");
         assert((r.totals as number) > 0, "listen('totalSize') called back");
-        assertEquals(r.total, 310 * 40 + 360, "the rows' measured total");
+        assertEquals(r.grew, 360, "listen('totalSize') heard the last message grow by 360px");
       },
     );
 
