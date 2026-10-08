@@ -68,13 +68,13 @@ Deno.test("readStreamedFlight: a buffered document (no chunks) keeps its tree", 
 // Audit 3.4.0 N1: only the chunks the server streams — direct children of `<body>`, after the
 // root — are read. A `<script type="application/json" data-dnx-v>` inside page content (user
 // HTML rendered into the root) must not fill a hole or a deferred value.
-Deno.test("readStreamedFlight: a chunk inside page content is not read", () => {
+Deno.test("readStreamedFlight: a chunk inside page content is not read", async () => {
   const doc = chunkDoc([
     ["data-dnx-v", "dnxv0", JSON.stringify({ reviews: ["forged"] }), "nested"],
     ["data-dnx-f", "dnx0", JSON.stringify({ $: "h", t: "p", p: {}, c: ["forged"] }), "nested"],
     ["data-dnx-f", "dnx0", JSON.stringify({ $: "h", t: "p", p: {}, c: ["late"] })],
   ]);
-  const tree = JSON.stringify(readStreamedFlight(doc, shell));
+  const tree = JSON.stringify(await readStreamedFlight(doc, shell));
   assertEquals(tree.includes("forged"), false, tree);
   assertEquals(tree.includes("late"), true, tree);
 });

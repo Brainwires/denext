@@ -116,6 +116,13 @@ async function readRuntime(): Promise<Uint8Array> {
   return runtimeBytes;
 }
 
+/** Write the runtime under `dir` at `fileName` (a core without `emitFile`). */
+async function writeUnder(dir: string, fileName: string): Promise<void> {
+  const dest = join(dir, ...fileName.split("/"));
+  await Deno.mkdir(join(dest, ".."), { recursive: true });
+  await Deno.writeFile(dest, await readRuntime());
+}
+
 /**
  * Create the htmx plugin. Place it in your `denext.config.ts` `plugins`. It serves
  * the vendored htmx runtime from your origin (so a strict `script-src 'self'` CSP
@@ -153,17 +160,23 @@ export function htmx(options: HtmxOptions = {}): DenextPlugin {
       });
 
       // Build/export: publish the runtime at its URL with `emitFile`, so a static export (no
-      // server handler in play) serves it as a plain file from its root, and `denext start`
-      // serves a build's copy from `<outDir>/emitted`. A core before `emitFile` (3.3) had no
-      // published root: the step wrote under `outDir` as it always did.
+      // server handler in play) serves it as a plain file from its root. denext reserves
+      // `/_denext/` for the build's own output, so the default path can't be published there:
+      // `denext start` serves it from the handler above, and an export says how to ship it. A
+      // core before `emitFile` (3.3) had no published root: the step writes under `outDir`.
       ctx.addBuildStep(async ({ outDir, emitFile }) => {
-        const segments = servePath.split("/").filter(Boolean);
-        if (typeof emitFile === "function") {
-          return await emitFile({ fileName: segments.join("/"), source: await readRuntime() });
+        const fileName = servePath.split("/").filter(Boolean).join("/");
+        if (typeof emitFile !== "function") return await writeUnder(outDir, fileName);
+        if (!fileName.toLowerCase().startsWith("_denext/")) {
+          return await emitFile({ fileName, source: await readRuntime() });
         }
-        const dest = join(outDir, ...segments);
-        await Deno.mkdir(join(dest, ".."), { recursive: true });
-        await Deno.writeFile(dest, await readRuntime());
+        if (ctx.mode === "export") {
+          console.warn(
+            `[@denext/htmx] a static export can't publish the runtime at ${servePath} (denext ` +
+              "reserves /_denext/ for its own output): set htmx({ path }) outside it, e.g. " +
+              '"/htmx/htmx.min.js", with the same `src` on <Htmx/>.',
+          );
+        }
       });
 
       // Contribute the `denext htmx` verb (info / eject).
