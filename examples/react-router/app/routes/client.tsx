@@ -41,7 +41,7 @@ export default function Client(
     <main>
       <h1 id="client">{loaderData.source}</h1>
       <Form method="post">
-        <input name="note" defaultValue="hello" />
+        <input type="hidden" name="note" value="hello" />
         <button id="save" type="submit">Save</button>
       </Form>
       {actionData ? <p id="saved">{actionData.saved}</p> : null}

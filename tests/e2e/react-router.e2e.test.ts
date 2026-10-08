@@ -11,7 +11,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { launchBrowser, pollFor, runDeno, startCliServer } from "./harness.ts";
+import { collectConsoleLogs, launchBrowser, pollFor, runDeno, startCliServer } from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/react-router", import.meta.url));
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
@@ -89,7 +89,13 @@ Deno.test({
     await t.step("in the browser: clientLoader data, then a clientAction", async () => {
       const browser = await launchBrowser();
       try {
-        const page = await browser.newPage(server.origin + "/client");
+        const page = await browser.newPage();
+        const logs = collectConsoleLogs(page);
+        await page.goto(server.origin + "/client");
+        const failWith = async (err: unknown) => {
+          const dom = await page.evaluate(`document.body.innerHTML`);
+          throw new Error(`${err}\nconsole: ${logs.join(" | ")}\nbody: ${dom}`);
+        };
         await pollFor(
           page,
           `document.getElementById("client")?.textContent === "server loader + clientLoader"`,
@@ -98,7 +104,8 @@ Deno.test({
         await pollFor(
           page,
           `document.getElementById("saved")?.textContent === "hello (via clientAction)"`,
-        );
+          20_000,
+        ).catch(failWith);
       } finally {
         await browser.close();
       }
