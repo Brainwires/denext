@@ -376,6 +376,30 @@ Deno.test("LegendList (DOM): getState().listen and listenToPosition call back on
   });
 });
 
+Deno.test("LegendList (DOM): getState().contentLength is the whole scroll content; totalSize the items", async () => {
+  await withRO(async () => {
+    let ref: LegendListDomRef | null = null;
+    const screen = await render(legend({
+      data: msgs(5),
+      ref: (r: LegendListDomRef | null) => (ref = r),
+      keyExtractor: (m: Msg) => m.id,
+      estimatedItemSize: 30,
+      ListHeaderComponent: h("span", { "data-text": "HISTORY" }),
+      ListFooterComponent: h("span", { "data-text": "COMPOSER-SPACE" }),
+      renderItem: ({ item }: { item: Msg }) => h("span", { "data-text": item.text }),
+    }));
+    const totals: unknown[] = [];
+    ref!.getState().listen("totalSize", (v) => totals.push(v));
+    await measureAll(() => 50);
+    // Laid out: the scroll element's scroll size (header + items + footer + end room), which
+    // T3 Code's timeline subtracts `scroll` and `scrollLength` from to find the gap below.
+    (scrollerOf(screen) as unknown as { scrollHeight: number }).scrollHeight = 420;
+    assertEquals(ref!.getState().contentLength, 420, "the scroll element's scroll size");
+    assertEquals(totals.at(-1), 250, "listen('totalSize') reports the items alone");
+    await screen.unmount();
+  });
+});
+
 Deno.test("LegendList (DOM): contentInsetEndAdjustment and contentInset's end add room after the last item", async () => {
   const room = async (props: Record<string, unknown>) => {
     const screen = await render(legend({

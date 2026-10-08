@@ -4,7 +4,8 @@
 // - a `startTransition` update that adds a wrapped element runs inside
 //   `document.startViewTransition`, the entering element named on the NEW side only (its
 //   `enter` class applied), and every stamp removed once the transition finishes;
-// - an urgent (non-transition) update applies directly, with no view transition;
+// - an urgent (non-transition) update applies directly, with no view transition (the next
+//   Transition add is the second recorded one);
 // - a hidden `<Activity>` mounts no effect until it is revealed, and cleans it up on hide.
 //
 // A probe wraps `startViewTransition` (before the page's scripts) to record, per call, the
@@ -100,8 +101,16 @@ Deno.test({
     // An urgent add applies directly: no second view transition.
     await page.evaluate("document.querySelector('[data-testid=add-urgent]').click()");
     await pollFor(page, "!!document.querySelector('[data-testid=item-c]')");
-    await new Promise((r) => setTimeout(r, 300));
-    assertEquals(await page.evaluate("window.__vt.length"), 1, "urgent updates never animate");
+    // The signal that the urgent commit started no transition: the next Transition add is the
+    // second recorded call (a view transition starts inside the commit, so one for item-c
+    // would have been recorded before it).
+    await page.evaluate("document.querySelector('[data-testid=add]').click()");
+    await pollFor(page, "window.__vt.length >= 2 && window.__vt.at(-1).next !== null");
+    assertEquals(await page.evaluate("window.__vt.length"), 2, "urgent updates never animate");
+    assert(
+      (await page.evaluate("window.__vt[1].next") as string[]).includes("item-d=item-in"),
+      "the second view transition is the Transition add's",
+    );
     assertEquals(errors, [], "no console errors");
   } finally {
     await browser.close();

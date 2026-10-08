@@ -24,6 +24,7 @@ import {
 import { spaIslandSources, transformSpaIslands } from "../src/build/spa-islands.ts";
 import { bundleSpaInto } from "../src/build/spa/bundle.ts";
 import { resolveProject } from "../src/build/paths.ts";
+import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 
 // ── the rewrite ─────────────────────────────────────────────────────────────────────────────
 
@@ -324,7 +325,10 @@ async function staticGraph(
 }
 
 /** Build a SPA whose app defers a component; return where its marker landed. */
-async function buildSplit(compat: boolean): Promise<{ graph: Set<string>; marker: string[] }> {
+async function buildSplit(
+  compat: boolean,
+  dev = false,
+): Promise<{ graph: Set<string>; marker: string[]; app: string[] }> {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_islands_build_" }));
   try {
     await Deno.mkdir(join(dir, "src"));
@@ -336,7 +340,7 @@ async function buildSplit(compat: boolean): Promise<{ graph: Set<string>; marker
     await Deno.writeTextFile(
       join(dir, "src/app.tsx"),
       `import Chart from "./chart.tsx";\nexport function App() {\n` +
-        `  return <main><h1>app</h1><Chart client:visible label="sales" /></main>;\n}\n`,
+        `  return <main><h1>APP_MODULE</h1><Chart client:visible label="sales" /></main>;\n}\n`,
     );
     await Deno.writeTextFile(
       join(dir, "src/chart.tsx"),
@@ -362,25 +366,119 @@ async function buildSplit(compat: boolean): Promise<{ graph: Set<string>; marker
     const paths = await resolveProject(dir);
     const out = join(dir, "out");
     await Deno.mkdir(out);
-    await bundleSpaInto(paths, join(dir, "src", "main.tsx"), out, false);
+    await bundleSpaInto(paths, join(dir, "src", "main.tsx"), out, false, dev);
     const marker: string[] = [];
+    const app: string[] = [];
     for await (const e of Deno.readDir(out)) {
       if (!e.name.endsWith(".js")) continue;
-      if ((await Deno.readTextFile(join(out, e.name))).includes("DEFERRED_CHART_MODULE")) {
-        marker.push(e.name);
-      }
+      const text = await Deno.readTextFile(join(out, e.name));
+      if (text.includes("DEFERRED_CHART_MODULE")) marker.push(e.name);
+      if (text.includes("APP_MODULE")) app.push(e.name);
     }
-    return { graph: await staticGraph(out, "index.js"), marker };
+    return { graph: await staticGraph(out, "index.js"), marker, app };
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 }
 
-for (const compat of [false, true]) {
-  Deno.test(`spa islands build (${compat ? "compat esbuild" : "native deno bundle"} path): the deferred component is its own chunk`, async () => {
-    const { graph, marker } = await buildSplit(compat);
-    assertEquals(marker.length, 1, `the component's code is in one file (${marker})`);
-    assert(marker[0] !== "index.js", "not in the entry");
-    assert(!graph.has(marker[0]), `not in the entry's static graph (${[...graph]})`);
-  });
+for (const dev of [false, true]) {
+  for (const compat of [false, true]) {
+    const path = compat ? "compat esbuild" : "native deno bundle";
+    Deno.test(`spa islands ${dev ? "bundled dev build" : "build"} (${path} path): the deferred component is its own chunk`, async () => {
+      const { graph, marker, app } = await buildSplit(compat, dev);
+      assertEquals(marker.length, 1, `the component's code is in one file (${marker})`);
+      assert(marker[0] !== "index.js", "not in the entry");
+      // A dev build loads the app itself through a chunk, so the entry's graph alone would not
+      // tell a split: the component is also outside the app module's chunk.
+      assert(!app.includes(marker[0]), `not in the app module's chunk (${app})`);
+      assert(!graph.has(marker[0]), `not in the entry's static graph (${[...graph]})`);
+    });
+  }
 }
+
+// ── the unbundled dev loop: the same rewrite, per module ────────────────────────────────────
+
+/** A SPA project whose `src/app.tsx` defers `./chart.tsx`, and an unbundled dev loop over it. */
+async function unbundledApp(
+  opts: { spaIslands?: boolean; features?: Record<string, boolean> },
+  app = `import Chart from "./chart.tsx";\nexport function App() {\n` +
+    `  return <main><Chart client:visible label="sales" /></main>;\n}\n`,
+) {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_islands_dev_" }));
+  await Deno.mkdir(join(dir, "src"));
+  await Deno.writeTextFile(join(dir, "src/app.tsx"), app);
+  await Deno.writeTextFile(
+    join(dir, "src/chart.tsx"),
+    `export default function Chart(p: { label: string }) { return <p>{p.label}</p>; }\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+      imports: {
+        "denext": new URL("mod.ts", ROOT).href,
+        "denext/jsx-runtime": new URL("src/jsx/jsx-runtime.ts", ROOT).href,
+        "denext/jsx-dev-runtime": new URL("src/jsx/jsx-runtime.ts", ROOT).href,
+        "denext/client": new URL("src/client/mod.ts", ROOT).href,
+      },
+    }),
+  );
+  const dev = createUnbundledDev({
+    projectDir: dir,
+    appDir: join(dir, "src"),
+    configPath: join(dir, "deno.json"),
+    outDir: join(dir, ".denext"),
+    compat: false,
+    ...opts,
+  });
+  return {
+    code: async () => (await dev._internal.transform(join(dir, "src/app.tsx"), "web")).code,
+    async [Symbol.asyncDispose]() {
+      await dev.stop();
+      await Deno.remove(dir, { recursive: true });
+    },
+  };
+}
+
+Deno.test("spa islands unbundled dev: a served module's directive elements are deferred mounts", async () => {
+  await using app = await unbundledApp({ spaIslands: true });
+  const code = await app.code();
+  assertStringIncludes(code, "__DnxSpaIsland", "the element is a SpaIsland");
+  assertStringIncludes(code, "spa-island", "denext/spa-island is imported");
+  assert(/import\(\s*["'][^"']*chart\.tsx/.test(code), `chart.tsx is a dynamic import:\n${code}`);
+  assert(!/^\s*import\s[^(]*chart\.tsx/m.test(code), "and no longer a static one");
+});
+
+Deno.test("spa islands unbundled dev: without spaIslands (the App Router loop) the module is served as written", async () => {
+  await using app = await unbundledApp({});
+  const code = await app.code();
+  assert(!code.includes("__DnxSpaIsland"), code);
+  assert(/^\s*import\s[^(]*chart\.tsx/m.test(code), "chart.tsx stays a static import");
+});
+
+Deno.test("unbundled dev: a build transform that throws warns once and serves the module as written", async () => {
+  // A `features` value whose read throws: the fold's own failure path (a module that does not
+  // parse is left alone, so a throw is an internal failure the developer must hear about).
+  const features = Object.defineProperty({}, "FLAG", {
+    enumerable: true,
+    get(): boolean {
+      throw new Error("FLAG unreadable");
+    },
+  }) as Record<string, boolean>;
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    await using app = await unbundledApp(
+      { features },
+      `import { feature } from "denext/feature";\nexport const on = feature("FLAG");\n`,
+    );
+    assertStringIncludes(await app.code(), "feature(", "served unfolded");
+  } finally {
+    console.warn = warn;
+  }
+  const mine = warnings.filter((w) => w.includes("feature() fold"));
+  assertEquals(mine.length, 1, warnings.join("\n"));
+  assertStringIncludes(mine[0], "FLAG unreadable");
+  assertStringIncludes(mine[0], "app.tsx");
+});

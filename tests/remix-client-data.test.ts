@@ -7,6 +7,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { h } from "denext/jsx-runtime";
+import { useEffect } from "denext";
 import { render, waitFor } from "denext/testing";
 import {
   type ClientActionFunction,
@@ -92,8 +93,12 @@ Deno.test("clientLoader without hydrate: the first load keeps the server data; a
     hasServerLoader: true,
     hasHydrateFallback: true,
   });
+  // Effects run in declaration order, so once this one has run, the hook's load effect has too
+  // (and a clientLoader it started was called synchronously, inside the effect).
+  let effectsRan = 0;
   const Probe = (props: { n: number }) => {
     const client = useClientRouteData(opts(props.n));
+    useEffect(() => void effectsRan++);
     return h("p", null, JSON.stringify(client.data ?? null));
   };
   const screen = await render(h(Probe, { n: 1 }));
@@ -101,7 +106,7 @@ Deno.test("clientLoader without hydrate: the first load keeps the server data; a
     screen.html().includes('{"n":1}'),
     "the server data renders on the first load",
   );
-  await new Promise((r) => setTimeout(r, 10));
+  await waitFor(() => assert(effectsRan > 0, "the mount's effects ran"));
   assertEquals(
     clientLoader.calls,
     0,

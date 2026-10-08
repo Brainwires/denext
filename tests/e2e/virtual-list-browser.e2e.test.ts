@@ -13,6 +13,7 @@ import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import * as esbuild from "esbuild";
 import { launchManagedBrowser } from "../../src/profile/browser.ts";
+import { domListsPlugin } from "../../src/build/dom-lists.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 
@@ -21,10 +22,22 @@ const ENTRY = `
 import { h } from ${JSON.stringify(join(FW, "src/jsx/jsx-runtime.ts"))};
 import { createRoot, flushSync } from ${JSON.stringify(join(FW, "src/client/reconciler.ts"))};
 import { VirtualList } from ${JSON.stringify(join(FW, "src/client/virtual/virtual-list.ts"))};
-import { LegendList } from ${JSON.stringify(join(FW, "src/lists/legend-list.ts"))};
+// The app's own specifier: \`lists: "denext"\`'s alias plugin resolves it to denext's module.
+import { LegendList } from "@legendapp/list/react";
 
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
 const frames = async (n) => { for (let i = 0; i < n; i++) await frame(); };
+// Poll each frame (at most \`max\`) until \`read()\` satisfies \`done\` on two frames in a row.
+const settled = async (read, done, max = 120) => {
+  let prev = null;
+  for (let i = 0; i < max; i++) {
+    await frame();
+    const v = read();
+    if (done(v) && prev !== null && done(prev)) return v;
+    prev = v;
+  }
+  return read();
+};
 let root = null;
 let host = null;
 function mount(props, wrap) {
@@ -201,21 +214,21 @@ window.scenarios = {
       renderItem: ({ item, index }) => msg(item, index),
     })));
     render();
-    await frames(6);
     const s = sc();
     const gap = () => Math.round(s.scrollHeight - s.clientHeight - s.scrollTop);
-    const atStart = { gap: gap(), isAtEnd: ref.getState().isAtEnd, cls: s.className };
+    // Measurement lands over a few frames: wait (bounded) for the end to hold still at gap 0.
+    const atEnd = () => settled(gap, (g) => g === 0);
+    const atStart = { gap: await atEnd(), isAtEnd: ref.getState().isAtEnd, cls: s.className };
     const stop = ref.getState().listen("totalSize", (v) => totals.push(v));
     data = [...data, ...rowsOf(310).slice(300)];
     render();
-    await frames(6);
-    const afterAppend = { gap: gap(), last: !!row(309), isAtEnd: ref.getState().isAtEnd };
+    const afterAppend = { gap: await atEnd(), last: !!row(309), isAtEnd: ref.getState().isAtEnd };
     const beforeGrow = totals.at(-1);
     tall = 400; // the last message grows as it streams
     render();
-    await frames(6);
+    await settled(() => totals.at(-1) - beforeGrow, (d) => d === 360);
     const afterGrow = {
-      gap: gap(),
+      gap: await atEnd(),
       isAtEnd: ref.getState().isAtEnd,
       contentLength: Math.round(ref.getState().contentLength),
       scrollHeight: s.scrollHeight,
@@ -370,6 +383,17 @@ Deno.test({
     format: "esm",
     minify: true,
     logLevel: "silent",
+    // `lists: "denext"`: the build's alias plugin, with its runtime module served from source
+    // (an app's build loads the prebuilt `lists-legend-list.js` instead).
+    plugins: [domListsPlugin("browser"), {
+      name: "legend-list-runtime-from-source",
+      setup(build) {
+        build.onResolve(
+          { filter: /^denext\/lists\/legend-list$/ },
+          () => ({ path: join(FW, "src/lists/legend-list.ts") }),
+        );
+      },
+    }],
   });
   await esbuild.stop();
   const page = HTML(
@@ -470,7 +494,7 @@ Deno.test({
     );
 
     await t.step(
-      'lists: "denext" LegendList chat: starts at the end, follows appends and a growing message',
+      'lists: "denext" (@legendapp/list/react aliased) LegendList chat: starts at the end, follows appends and a growing message',
       async () => {
         const r = await run<Record<string, Record<string, number | boolean | string> | number>>(
           "window.scenarios.legendChat()",

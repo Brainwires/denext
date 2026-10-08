@@ -632,7 +632,7 @@ Deno.test("migrate --denext-local-path: denext's own deps never override the app
   );
 });
 
-Deno.test("capacitor.config.ts type-checks against @capacitor/cli (when cached)", async () => {
+Deno.test("capacitor.config.ts type-checks against @capacitor/cli", async () => {
   await withTree(t3Like(), async (root) => {
     const dir = join(root, "apps/web");
     await migrateProject(dir, { capacitor: true });
@@ -643,15 +643,21 @@ Deno.test("capacitor.config.ts type-checks against @capacitor/cli (when cached)"
       join(probe, "deno.json"),
       JSON.stringify({ imports: { "@capacitor/cli": "npm:@capacitor/cli@8.5.2" } }),
     );
+    // Not `--cached-only`: an uncached @capacitor/cli is fetched into the Deno cache, so a
+    // fresh CI runner checks the config instead of skipping it.
     const { code, stderr } = await new Deno.Command(Deno.execPath(), {
-      args: ["check", "--cached-only", "--node-modules-dir=none", "capacitor.config.ts"],
+      args: ["check", "--node-modules-dir=none", "capacitor.config.ts"],
       cwd: probe,
       stdout: "null",
       stderr: "piped",
     }).output();
     const err = new TextDecoder().decode(stderr);
-    if (code !== 0 && /cached-only|not found in cache|Could not find/i.test(err)) {
-      console.log("  (skipped: @capacitor/cli@8.5.2 is not in the Deno cache)");
+    const unavailable = code !== 0 &&
+      /not found in cache|Could not find|error sending request|failed to fetch|Import .* failed/i
+        .test(err);
+    if (unavailable && !Deno.env.get("CI")) {
+      // Offline outside CI only; under CI an unreachable package fails the test below.
+      console.log("  (skipped: @capacitor/cli@8.5.2 could not be fetched)");
       return;
     }
     assertEquals(code, 0, err);

@@ -278,6 +278,45 @@ Deno.test("validateDenextConfig: spa.ota must be a boolean", () => {
   assertThrows(() => validateDenextConfig(spa("yes")), Error, "`spa.ota` must be a boolean");
 });
 
+Deno.test("validateDenextConfig: spa.viteManifest and spa.tanstackRouter are checked", () => {
+  const spa = (extra: Record<string, unknown>) =>
+    ({ mode: "spa", spa: { entry: "./src/main.tsx", ...extra } }) as Parameters<
+      typeof validateDenextConfig
+    >[0];
+  validateDenextConfig(spa({ viteManifest: true }));
+  validateDenextConfig(spa({ viteManifest: false }));
+  validateDenextConfig(spa({ tanstackRouter: {} }));
+  validateDenextConfig(spa({
+    tanstackRouter: {
+      autoCodeSplitting: true,
+      routesDirectory: "./src/routes",
+      generatedRouteTree: "./src/routeTree.gen.ts",
+    },
+  }));
+  const bad: [Record<string, unknown>, string][] = [
+    [{ viteManifest: "yes" }, "`spa.viteManifest` must be a boolean"],
+    [{ tanstackRouter: true }, "`spa.tanstackRouter` must be an object"],
+    [{ tanstackRouter: [] }, "`spa.tanstackRouter` must be an object"],
+    [
+      { tanstackRouter: { autoCodeSplitting: "true" } },
+      "`spa.tanstackRouter.autoCodeSplitting` must be a boolean",
+    ],
+    [
+      { tanstackRouter: { routesDirectory: "" } },
+      "`spa.tanstackRouter.routesDirectory` must be a non-empty path",
+    ],
+    [
+      { tanstackRouter: { generatedRouteTree: 3 } },
+      "`spa.tanstackRouter.generatedRouteTree` must be a non-empty path",
+    ],
+    [
+      { tanstackRouter: { autoCodesplitting: true } },
+      "`spa.tanstackRouter.autoCodesplitting` is not a known option",
+    ],
+  ];
+  for (const [extra, msg] of bad) assertThrows(() => validateDenextConfig(spa(extra)), Error, msg);
+});
+
 Deno.test("desktop.capabilities: valid shapes pass; bad shapes throw a field-scoped error", () => {
   // Valid: booleans, an fs options object, a shell options object, an extensions list, or absent.
   validateDenextConfig({

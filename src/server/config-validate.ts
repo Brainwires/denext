@@ -508,6 +508,45 @@ function validateSpaOta(ota: unknown, fail: Fail): void {
   if (ota !== undefined && typeof ota !== "boolean") fail("spa.ota", "must be a boolean");
 }
 
+/** `spa.viteManifest`: a boolean when present. */
+function validateSpaViteManifest(value: unknown, fail: Fail): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    fail("spa.viteManifest", "must be a boolean");
+  }
+}
+
+/** The keys of `spa.tanstackRouter` (a typo would silently turn code-splitting off). */
+const TANSTACK_ROUTER_KEYS = ["autoCodeSplitting", "routesDirectory", "generatedRouteTree"];
+
+/** `spa.tanstackRouter`: `{ autoCodeSplitting?: boolean, routesDirectory?, generatedRouteTree? }`. */
+function validateSpaTanstackRouter(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("spa.tanstackRouter", "must be an object (e.g. `{ autoCodeSplitting: true }`)");
+    return;
+  }
+  const v = value as Record<string, unknown>;
+  const unknown = Object.keys(v).find((key) => !TANSTACK_ROUTER_KEYS.includes(key));
+  if (unknown !== undefined) {
+    fail(
+      `spa.tanstackRouter.${unknown}`,
+      `is not a known option (${TANSTACK_ROUTER_KEYS.join(", ")})`,
+    );
+  }
+  if (v.autoCodeSplitting !== undefined && typeof v.autoCodeSplitting !== "boolean") {
+    fail("spa.tanstackRouter.autoCodeSplitting", "must be a boolean");
+  }
+  validateOptionalPath("spa.tanstackRouter.routesDirectory", v.routesDirectory, fail);
+  validateOptionalPath("spa.tanstackRouter.generatedRouteTree", v.generatedRouteTree, fail);
+}
+
+/** An optional project-relative path: a non-empty string when present. */
+function validateOptionalPath(field: string, value: unknown, fail: Fail): void {
+  if (value !== undefined && (typeof value !== "string" || value === "")) {
+    fail(field, "must be a non-empty path relative to the project root");
+  }
+}
+
 /**
  * The top-level directories the client may not move under: denext's own endpoints and files
  * (`_denext`), the web's well-known URIs (app links) and the `spa.viteManifest` manifest
@@ -1170,6 +1209,8 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMode(config, fail);
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
+  validateSpaViteManifest(config.spa?.viteManifest, fail);
+  validateSpaTanstackRouter(config.spa?.tanstackRouter, fail);
   validateSpaAssetsDir(config.spa?.assetsDir, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateLists(config.lists, fail);
