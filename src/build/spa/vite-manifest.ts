@@ -8,7 +8,8 @@
 // so each entry here is keyed by its output path and names itself as `file`. Only files whose
 // name carries a content hash are listed: the entry (`index.js`) and stylesheet (`index.css`)
 // keep their names across builds, so listing them would let such a server cache a stale entry
-// for a year.
+// for a year. With `spa.assetsDir: "assets"` the files are `assets/<name>-<HASH>.<ext>`, the
+// paths such a server expects (T3 Code's admits `^assets/.+-[\w-]{8}\.[^/]+$`).
 
 import { walk } from "@std/fs";
 import { join, relative, SEPARATOR } from "@std/path";
@@ -28,28 +29,25 @@ export interface ViteManifestChunk {
 /** `.vite/manifest.json`'s content: output path → chunk. */
 export type ViteManifest = Record<string, ViteManifestChunk>;
 
-/** An esbuild `[name]-[hash]` asset or worker name: an 8-character base32 hash before the extension. */
-const ESBUILD_HASHED = /-[A-Z2-7]{8}\.[A-Za-z0-9]+$/;
-
-/** Whether an output file's name carries a content hash. */
-function isHashedOutput(rel: string): boolean {
-  return isContentHashed(rel) || ESBUILD_HASHED.test(rel.slice(rel.lastIndexOf("/") + 1));
-}
-
 /**
- * The manifest for the client files under `<exportRoot>/_denext/client/`: every content-hashed
- * file except precompressed `.gz` siblings and source maps, sorted by path.
+ * The manifest for the client files under `<exportRoot>/_denext/client/` (or the `spa.assetsDir`
+ * prefix): every content-hashed file except precompressed `.gz` siblings and source maps, sorted
+ * by path.
  *
  * @param exportRoot The export directory (or its staging dir).
+ * @param clientPrefix The client's URL prefix (`/_denext/client/`, `/assets/`).
  */
-export async function collectViteManifest(exportRoot: string): Promise<ViteManifest> {
-  const prefix = CLIENT_PREFIX.slice(1); // "_denext/client/"
+export async function collectViteManifest(
+  exportRoot: string,
+  clientPrefix: string = CLIENT_PREFIX,
+): Promise<ViteManifest> {
+  const prefix = clientPrefix.slice(1); // "_denext/client/"
   const clientDir = join(exportRoot, ...prefix.split("/").filter(Boolean));
   const files: string[] = [];
   try {
     for await (const e of walk(clientDir, { includeDirs: false })) {
       const rel = relative(clientDir, e.path).split(SEPARATOR).join("/");
-      if (rel.endsWith(".gz") || rel.endsWith(".map") || !isHashedOutput(rel)) continue;
+      if (rel.endsWith(".gz") || rel.endsWith(".map") || !isContentHashed(rel)) continue;
       files.push(prefix + rel);
     }
   } catch (err) {
@@ -62,13 +60,16 @@ export async function collectViteManifest(exportRoot: string): Promise<ViteManif
 }
 
 /**
- * Write `<exportRoot>/.vite/manifest.json` (see {@linkcode collectViteManifest}).
+ * Write `manifest` (see {@linkcode collectViteManifest}) to `<exportRoot>/.vite/manifest.json`.
  *
  * @param exportRoot The export directory (or its staging dir).
+ * @param manifest The manifest to write.
  * @returns How many files the manifest lists.
  */
-export async function writeViteManifest(exportRoot: string): Promise<number> {
-  const manifest = await collectViteManifest(exportRoot);
+export async function writeViteManifest(
+  exportRoot: string,
+  manifest: ViteManifest,
+): Promise<number> {
   await Deno.mkdir(join(exportRoot, ".vite"), { recursive: true });
   await Deno.writeTextFile(
     join(exportRoot, ".vite", "manifest.json"),

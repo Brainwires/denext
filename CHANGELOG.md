@@ -115,15 +115,39 @@ and this project adheres to
   take a `PluginPrepareContext` (the same fields, without the emit seam).
 - **`spa.viteManifest: true` writes a Vite-shaped `.vite/manifest.json`** into the static
   export, one `{ file }` entry per content-hashed client file, for a server that reads Vite's
-  manifest to serve those files as `immutable`. The unhashed entry and stylesheet are not listed.
+  manifest to serve those files as `immutable`. The unhashed entry and stylesheet are not listed,
+  nor is any file copied in from `public/`.
+- **`spa.assetsDir`, Vite's `build.assetsDir`.** `"assets"` moves a SPA's client output (entry,
+  stylesheet, split chunks, imported assets) from `/_denext/client/` to `/assets/`: `denext
+  export` writes it to `out/assets/`, `denext start` and `denext dev` serve it there (a
+  `public/assets/` file is served behind the build's, and the dev origin gate covers the
+  directory), and the shell, `modulepreload` links, the chunk-error rewrite, the OTA manifest
+  and `.vite/manifest.json` follow it. Content-hashed files are `name-HASH.ext` with an
+  8-character hash (`?url` assets sit beside the chunks, as under Vite), the shape a server
+  written for a Vite build serves as `immutable`. `denext migrate` sets it from a Vite app's
+  `build.assetsDir`, else `"assets"`. Unset, the layout is unchanged.
+- **`denext/jsx-directives`: the `client:*` props for apps typed by `@types/react`.** It exports
+  `ClientDirectives<Placeholder>`, the directive keys and `client:placeholder`; an app whose
+  `tsc` reads React's JSX types adds them to React's `Attributes` with a two-line
+  `client-directives.d.ts` (see SPA mode › Deferred mounts). denext's own JSX types now take the
+  keys from the same interface.
 
 ### Changed
 
 - **Plugin build steps run at `denext export` too**, on the App Router and SPA paths (they ran
   only at `denext build` and in a Pages Router export), and a SPA now sets up its configured
   plugins and runs their prepare and build steps; before, SPA mode ignored `plugins`.
+- **Assets an App Router build emits for `?url` and bare asset imports are named
+  `name-HASH.ext` with esbuild's 8-character base32 hash** (they had a variable-length base36
+  one), so the immutable-cache check recognizes them.
 
 ### Fixed
+
+- **Content-hashed files with esbuild's base32 hash are served as `immutable`.** The server's
+  hash check recognized `chunk-*.js` and hex hashes only, so a `deno bundle` split module
+  (`lazy-VXRX55NY.js`) and a `?url` or file-loader asset (`logo-QWERTY23.svg`) were served
+  with revalidation. A `-` followed by exactly eight upper-case base32 characters now counts;
+  lower-case names never do.
 
 - **`defaultValue` / `defaultChecked` fill a client-rendered form, as in react-dom.** An
   `<input defaultValue>` mounted on the client (not hydrated) wrote a `defaultvalue` attribute

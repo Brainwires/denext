@@ -42,7 +42,13 @@ import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
+import {
+  CLIENT_PREFIX,
+  ENTRY_FILE,
+  generateSpaEntry,
+  spaClientPrefix,
+  STYLE_FILE,
+} from "./shared.ts";
 import { CHUNK_ERROR_SEED, wrapDynamicImports } from "./chunk-error.ts";
 import { hasPluginBuildSteps } from "../../plugin/mod.ts";
 
@@ -203,8 +209,11 @@ async function bundleCompatSpa(
       __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
     },
     // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
-    // prefixed with the path the SPA servers already serve them at.
-    assets: { publicPath: CLIENT_PREFIX },
+    // prefixed with the path the SPA servers already serve them at. With `spa.assetsDir` (Vite's
+    // `build.assetsDir`) they sit beside the chunks as `name-HASH.ext`, as Vite places them.
+    assets: spa.assetsDir === undefined
+      ? { publicPath: CLIENT_PREFIX }
+      : { publicPath: spaClientPrefix(spa), assetNames: "[name]-[hash]" },
     // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve — denext
     // resolves these straight from node_modules (front-runs the loader).
     catalogPackages: await pnpmCatalogPackages(paths.projectDir),
@@ -425,7 +434,7 @@ export async function bundleSpaInto(
     await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
   }
   // A split chunk that fails to load dispatches `vite:preloadError` / `denext:chunkError`.
-  if (!dev) await wrapDynamicImports(clientDir);
+  if (!dev) await wrapDynamicImports(clientDir, spaClientPrefix(spa));
   if (!css) return { hasStyles: false, modules };
   const text = await extractRouteCss(cssRoots, css);
   if (text.trim().length === 0) return { hasStyles: false, modules };

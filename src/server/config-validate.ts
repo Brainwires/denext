@@ -508,6 +508,34 @@ function validateSpaOta(ota: unknown, fail: Fail): void {
   if (ota !== undefined && typeof ota !== "boolean") fail("spa.ota", "must be a boolean");
 }
 
+/**
+ * `spa.assetsDir` normalized: the slash-separated directory without leading or trailing
+ * slashes, or null when it is not a plain relative directory. Each segment is letters, digits,
+ * `_`, `.` or `-`, and never `.` / `..`; the bare `_denext` is refused (denext's own endpoints
+ * live there).
+ *
+ * @param value The configured directory (`"assets"`, `"/static/js/"`).
+ * @returns The normalized directory (`"assets"`, `"static/js"`), or null.
+ */
+export function normalizeSpaAssetsDir(value: string): string | null {
+  const dir = value.replace(/^\/+|\/+$/g, "");
+  const valid = dir !== "" && dir !== "_denext" &&
+    dir.split("/").every((s) => /^[\w.-]+$/.test(s) && s !== "." && s !== "..");
+  return valid ? dir : null;
+}
+
+/** `spa.assetsDir`: a plain relative directory when present. */
+function validateSpaAssetsDir(dir: unknown, fail: Fail): void {
+  if (dir === undefined) return;
+  if (typeof dir !== "string" || normalizeSpaAssetsDir(dir) === null) {
+    fail(
+      "spa.assetsDir",
+      'must be a relative directory of letters, digits, "_", "." and "-" segments ' +
+        '(e.g. "assets")',
+    );
+  }
+}
+
 type Proxy = NonNullable<NonNullable<DenextConfig["spa"]>["proxy"]>;
 
 /** `spa.proxy.prefixes`: a non-empty array of "/"-rooted path strings. */
@@ -1134,6 +1162,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMode(config, fail);
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
+  validateSpaAssetsDir(config.spa?.assetsDir, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);

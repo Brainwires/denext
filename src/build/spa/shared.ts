@@ -3,12 +3,34 @@
 
 import { join, normalize, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
+import { normalizeSpaAssetsDir } from "../../server/config-validate.ts";
 import { computeCsp } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveExportPath } from "../export-paths.ts";
 
 /** The client-asset URL prefix (matches the App Router prod server). */
 export const CLIENT_PREFIX = "/_denext/client/";
+
+/**
+ * The URL prefix the SPA's client output is served under, and the export-relative directory it
+ * is written to: `/<spa.assetsDir>/` when set (Vite's `build.assetsDir`), else
+ * {@linkcode CLIENT_PREFIX}.
+ *
+ * @param spa The SPA config.
+ * @returns A prefix with a leading and a trailing slash.
+ */
+export function spaClientPrefix(spa: SpaConfig | undefined): string {
+  if (spa?.assetsDir === undefined) return CLIENT_PREFIX;
+  const dir = normalizeSpaAssetsDir(spa.assetsDir);
+  if (dir === null) {
+    throw new Error(
+      `denext: \`spa.assetsDir\` must be a relative directory of letters, digits, "_", "." and ` +
+        `"-" segments (e.g. "assets"), not ${JSON.stringify(spa.assetsDir)}`,
+    );
+  }
+  return `/${dir}/`;
+}
+
 /** Live-reload SSE endpoint (dev). */
 export const RELOAD_PATH = "/_denext/reload";
 /** The external dev-reload module URL (kept out of the CSP inline-script path). */
@@ -258,7 +280,11 @@ async function cspMetaTag(spa: SpaConfig, head: string): Promise<string> {
  * `main`) are intentionally left out — preloading those would waste bandwidth on code a
  * given load may never reach.
  */
-export async function collectSpaPreloads(clientDir: string, entryFile: string): Promise<string[]> {
+export async function collectSpaPreloads(
+  clientDir: string,
+  entryFile: string,
+  prefix: string = CLIENT_PREFIX,
+): Promise<string[]> {
   const seen = new Set<string>();
   const queued = new Set<string>();
   const queue = [entryFile];
@@ -277,8 +303,8 @@ export async function collectSpaPreloads(clientDir: string, entryFile: string): 
     }
     for (const m of src.matchAll(importRe)) {
       const spec = m[1];
-      if (!spec.startsWith(CLIENT_PREFIX)) continue; // only our emitted client chunks
-      const name = spec.slice(CLIENT_PREFIX.length);
+      if (!spec.startsWith(prefix)) continue; // only our emitted client chunks
+      const name = spec.slice(prefix.length);
       if (name === entryFile || seen.has(name) || queued.has(name)) continue;
       queued.add(name);
       out.push(name);

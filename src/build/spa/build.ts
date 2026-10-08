@@ -16,10 +16,10 @@ import { loadOtaSigningKey } from "../ota-signing.ts";
 import { stashSourceMapsIfHidden } from "../hidden-sourcemaps.ts";
 import {
   assertEntryExists,
-  CLIENT_PREFIX,
   collectSpaPreloads,
   ENTRY_FILE,
   SHELL_FILE,
+  spaClientPrefix,
   spaEntryPath,
   spaShellHtml,
   STYLE_FILE,
@@ -33,7 +33,7 @@ import {
   runPluginBuildSteps,
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
-import { writeViteManifest } from "./vite-manifest.ts";
+import { collectViteManifest, type ViteManifest, writeViteManifest } from "./vite-manifest.ts";
 
 /**
  * Set up the config's plugins and run their prepare steps (codegen the app imports), before
@@ -85,12 +85,13 @@ async function bundleAndShell(
   }
   // Preload the entry's static chunk graph so the browser fetches the runtime in parallel
   // with the entry (Vite parity) rather than discovering it after downloading + parsing.
-  const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE))
-    .map((name) => `${CLIENT_PREFIX}${name}`);
+  const prefix = spaClientPrefix(paths.config!.spa);
+  const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE, prefix))
+    .map((name) => `${prefix}${name}`);
   const html = await spaShellHtml({
     spa: paths.config!.spa!,
-    scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
-    styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
+    scriptSrc: `${prefix}${ENTRY_FILE}`,
+    styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
     preload,
     reactNativeRootStyle: reactNativeRootStyle(paths.config),
   });
@@ -155,10 +156,10 @@ async function copyPublic(publicDir: string, outDir: string): Promise<void> {
 }
 
 /**
- * Static export for SPA mode: `out/index.html` + `out/_denext/client/*` + public/. Written
- * through the same staging swap as the App Router export, so `out/` holds exactly this build
- * (content-hashed chunks from earlier builds never pile up) and a failed export leaves the
- * previous one intact.
+ * Static export for SPA mode: `out/index.html` + `out/_denext/client/*` (`out/<spa.assetsDir>/*`
+ * when set) + public/. Written through the same staging swap as the App Router export, so `out/`
+ * holds exactly this build (content-hashed chunks from earlier builds never pile up) and a failed
+ * export leaves the previous one intact.
  */
 export async function exportSpa(
   paths: ProjectPaths,
@@ -169,14 +170,21 @@ export async function exportSpa(
   await assertEntryExists(entryPath);
   const outDir = await resolveExportOutDir(paths, options.outDir);
   await preparePlugins(paths, "export");
+  // `spa.assetsDir` (Vite's `build.assetsDir`) moves the client from `_denext/client/`.
+  const clientRel = spaClientPrefix(spa).slice(1);
   await writeViaStaging(outDir, async (staging) => {
-    const clientOut = join(staging, "_denext", "client");
+    const clientOut = join(staging, ...clientRel.split("/").filter(Boolean));
     await ensureDir(clientOut);
     console.log(
-      `  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}` +
+      `  SPA mode: bundling ${spa.entry} -> ${clientRel}${ENTRY_FILE}` +
         (platform === "web" ? "" : ` (platform: ${platform})`),
     );
     const clientModules = await bundleAndShell(paths, entryPath, clientOut, staging, platform);
+    // `spa.viteManifest` lists the build's own hashed files, taken before `public/` is copied in:
+    // a `public/assets/x-ABCD1234.png` merges into the same directory and must never be listed.
+    const viteManifest: ViteManifest | null = spa.viteManifest === true
+      ? await collectViteManifest(staging, spaClientPrefix(spa))
+      : null;
     await copyPublic(paths.publicDir, staging);
     // Plugin build steps, after `public/`: a file published with `emitFile` lands at the
     // export's root (replacing a same-named public file, as a Vite-emitted asset does).
@@ -190,8 +198,8 @@ export async function exportSpa(
     await stashSourceMapsIfHidden(staging, paths.outDir);
     // `spa.viteManifest`: `.vite/manifest.json` listing the content-hashed client files, for a
     // server that reads Vite's manifest to serve them as immutable.
-    if (spa.viteManifest === true) {
-      const count = await writeViteManifest(staging);
+    if (viteManifest) {
+      const count = await writeViteManifest(staging, viteManifest);
       console.log(
         `  Vite manifest: .vite/manifest.json (${count} hashed file${count === 1 ? "" : "s"})`,
       );

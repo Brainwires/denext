@@ -206,8 +206,12 @@ deno run -A jsr:@denext/denext/cli migrate apps/web \
   --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws
 ```
 
-From the Vite config it also carries two build plugins over (the config is read, never run):
+From the Vite config it also carries the asset directory and two build plugins over (the
+config is read, never run):
 
+- `build.assetsDir` becomes `spa.assetsDir` (`"assets"`, Vite's default, when it is unset), so
+  the built files keep the `/assets/name-HASH.ext` paths a server written for the Vite build
+  serves ([SPA mode › Vite build parity](/docs/spa)).
 - TanStack Router's `tanstackRouter({ autoCodeSplitting: true })` becomes
   `spa.tanstackRouter: { autoCodeSplitting: true }`, so route components stay out of the
   startup chunk ([SPA mode › Vite build parity](/docs/spa)).

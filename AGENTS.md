@@ -90,6 +90,10 @@ export function Counter() {
 Branch on a value in JSX with `choose` from `denext` (Lit-style, lazy; own keys only):
 `choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null)`.
 
+In SPA mode a `client:*` directive defers the mount and code-splits the component:
+`<Chart client:visible client:placeholder={<Spinner />} />` (`load`/`idle`/`visible`/`interaction`/
+`media`/`only`); under `@types/react`, `ClientDirectives` from `denext/jsx-directives` types them.
+
 **A route handler (API):**
 
 ```ts
@@ -421,7 +425,8 @@ Docs: https://denext.dev/docs/platform-files
 **A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
-`denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. Docs:
+`denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
+makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Docs:
 https://denext.dev/docs/lists
 
 **Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
@@ -722,11 +727,14 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
 `optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
-`mode: "spa"` + `spa: { entry, … }` for SPA mode — with Vite build parity: `spa.tanstackRouter:
-{ autoCodeSplitting: true }` splits TanStack Router routes into chunks, a failed chunk load
-dispatches a cancelable `vite:preloadError` (+ `denext:chunkError`) with `event.payload`, and
-`spa.viteManifest: true` writes `.vite/manifest.json`). Not `next.config.js`.
+`mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
+
+SPA Vite build parity (`denext migrate` sets what vite.config had): `spa.assetsDir: "assets"`
+serves and exports the client under `/assets/` as `name-HASH8.ext`; `spa.viteManifest: true`
+writes `.vite/manifest.json`; `spa.tanstackRouter: { autoCodeSplitting: true }` splits routes;
+a failed chunk load dispatches cancelable `vite:preloadError` (+ `denext:chunkError`); a plugin
+build step's `emitFile()` (or `viteEmitterPlugin(vitePlugin)`) publishes files at the site root.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),

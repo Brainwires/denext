@@ -11,10 +11,14 @@
 //   hooks, is declared inline in vite.config, or whose call reads vite.config's own variables
 //   is reported for review instead.
 //
+// - `build.assetsDir` becomes `spa.assetsDir` (Vite's default, `"assets"`, when the config does
+//   not set it), so the built files keep the paths a server written for the Vite build serves.
+//
 // vite.config is read as text, never executed.
 
 import { dirname, join, relative, resolve } from "@std/path";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
+import { normalizeSpaAssetsDir } from "../server/config-validate.ts";
 import { mfs } from "./migrate-io.ts";
 
 /** The vite.config file names migrate reads, in precedence order. */
@@ -71,6 +75,37 @@ function skipString(text: string, start: number): number {
     else if (text[i] === quote) return i;
   }
   return text.length;
+}
+
+/** `text` with its comments blanked out (string literals kept), offsets unchanged. */
+function withoutComments(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const end = skipNonCode(text, i);
+    if (end === i) {
+      out += text[i];
+      continue;
+    }
+    const span = text.slice(i, end + 1);
+    out += span.startsWith("/") ? span.replace(/[^\n]/g, " ") : span;
+    i = end;
+  }
+  return out;
+}
+
+/** Vite's `build.assetsDir` default. */
+const VITE_ASSETS_DIR = "assets";
+
+/**
+ * `spa.assetsDir` for a Vite app: a literal `assetsDir` from its vite.config (`build.assetsDir`),
+ * else Vite's default `"assets"`. A value migrate cannot read (an expression) or carry (`""`, the
+ * files at the root) keeps the default.
+ *
+ * @param text The vite.config source.
+ */
+export function viteAssetsDir(text: string): string {
+  const m = withoutComments(text).match(/\bassetsDir\s*:\s*(["'`])([^"'`\n]*)\1/);
+  return (m && normalizeSpaAssetsDir(m[2])) ?? VITE_ASSETS_DIR;
 }
 
 /** A string-literal property `key: "value"` inside `args`, or undefined. */

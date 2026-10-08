@@ -9,7 +9,11 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 import { checkMigration } from "../src/build/migrate-check.ts";
-import { balancedCall, tanstackRouterFacts } from "../src/build/migrate-vite-plugins.ts";
+import {
+  balancedCall,
+  tanstackRouterFacts,
+  viteAssetsDir,
+} from "../src/build/migrate-vite-plugins.ts";
 import { staticExport } from "../src/build/export.ts";
 import { resetPlugins } from "../src/plugin/mod.ts";
 
@@ -101,6 +105,37 @@ Deno.test("migrate SPA: TanStack Router autoCodeSplitting → spa.tanstackRouter
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("viteAssetsDir: build.assetsDir from the vite.config, else Vite's default", () => {
+  assertEquals(viteAssetsDir(`export default { build: { assetsDir: "static/js" } };`), "static/js");
+  assertEquals(viteAssetsDir(`build: {\n  outDir: "dist",\n  assetsDir: 'res',\n}`), "res");
+  assertEquals(viteAssetsDir(`export default { plugins: [] };`), "assets");
+  // A comment mentioning it, or a value migrate cannot read, keeps the default.
+  assertEquals(viteAssetsDir(`// assetsDir: "nope"\nexport default {};`), "assets");
+  assertEquals(viteAssetsDir(`build: { assetsDir: dir }`), "assets");
+  // Vite's "" (assets at the root) has no denext equivalent: the default is kept.
+  assertEquals(viteAssetsDir(`build: { assetsDir: "" }`), "assets");
+});
+
+for (
+  const [label, build, expected] of [
+    ["Vite's default", "", "assets"],
+    ["the vite.config's build.assetsDir", `, build: { assetsDir: "static" }`, "static"],
+  ] as const
+) {
+  Deno.test(`migrate SPA: spa.assetsDir is ${label}`, async () => {
+    const dir = await viteApp(`export default { plugins: []${build} };\n`);
+    try {
+      await migrateProject(dir, {});
+      const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+      assertStringIncludes(config, `assetsDir: ${JSON.stringify(expected)},`);
+      const loaded = (await import(`file://${join(dir, "denext.config.ts")}`)).default;
+      assertEquals(loaded.spa.assetsDir, expected);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
 
 Deno.test("migrate SPA: no autoCodeSplitting → no spa.tanstackRouter", async () => {
   const dir = await viteApp(

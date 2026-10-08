@@ -20,6 +20,7 @@ import {
   type MappedViteEmitter,
   readViteConfig,
   tanstackRouterFacts,
+  viteAssetsDir,
   type ViteEmitterFacts,
   viteEmitterFacts,
   type ViteEmitterFinding,
@@ -361,6 +362,8 @@ export interface SpaMigrateInfo {
   viteEmitters?: MappedViteEmitter[];
   /** File-emitting Vite plugins migrate could not carry over (reported for review). */
   viteEmitterReview?: ViteEmitterFinding[];
+  /** `spa.assetsDir`: a Vite app's `build.assetsDir` (Vite's default `"assets"` when unset). */
+  assetsDir?: string;
 }
 
 /** The app icon migrate found (or did not) for `denext mobile assets` / `mobile build`. */
@@ -2103,6 +2106,8 @@ function spaConfigSource(o: {
   tanstackRouter?: SpaTanstackRouterConfig;
   /** File-emitting Vite plugins, run through `viteEmitterPlugin`. */
   viteEmitters?: MappedViteEmitter[];
+  /** `spa.assetsDir` (a Vite app's `build.assetsDir`). */
+  assetsDir?: string;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
@@ -2154,6 +2159,10 @@ function spaConfigSource(o: {
       ? `    // The Capacitor shell loads files as they are: no .gz siblings.\n    precompress: false,\n`
       : "") +
     (envLines ? `    env: {\n${envLines}\n    },\n` : "") +
+    (o.assetsDir
+      ? `    // Vite's build.assetsDir: the client is served from /${o.assetsDir}/ as under Vite.\n` +
+        `    assetsDir: ${JSON.stringify(o.assetsDir)},\n`
+      : "") +
     tanstackRouterLines(o.tanstackRouter) +
     proxyBlock +
     // Show the desktop-icon override so it's discoverable (commented → auto-detection
@@ -2753,6 +2762,7 @@ async function spaSourceFacts(
   tanstackRouter?: SpaTanstackRouterConfig;
   viteEmitters: MappedViteEmitter[];
   viteEmitterReview: ViteEmitterFinding[];
+  assetsDir?: string;
 }> {
   const idx = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
   const { entry, title } = idx;
@@ -2778,20 +2788,27 @@ async function spaSourceFacts(
     tanstackRouter: vite.tanstackRouter,
     viteEmitters: vite.emitters.mapped,
     viteEmitterReview: vite.emitters.review,
+    assetsDir: vite.assetsDir,
   };
 }
 
 /**
- * The Vite build plugins whose output denext carries over (see migrate-vite-plugins.ts): TanStack
- * Router's `autoCodeSplitting`, and plugins that emit files from `generateBundle`.
+ * The Vite build settings and plugins whose output denext carries over (see
+ * migrate-vite-plugins.ts): `build.assetsDir`, TanStack Router's `autoCodeSplitting`, and plugins
+ * that emit files from `generateBundle`.
  */
 async function viteBuildPluginFacts(
   dir: string,
   source: SpaSource,
-): Promise<{ tanstackRouter?: SpaTanstackRouterConfig; emitters: ViteEmitterFacts }> {
+): Promise<
+  { tanstackRouter?: SpaTanstackRouterConfig; emitters: ViteEmitterFacts; assetsDir?: string }
+> {
   const config = source === "vite" ? await readViteConfig(dir) : null;
-  if (!config) return { emitters: { mapped: [], review: [] } };
+  // A Vite app builds into `assets/` even with no vite.config.
+  const assetsDir = source === "vite" ? viteAssetsDir(config?.text ?? "") : undefined;
+  if (!config) return { emitters: { mapped: [], review: [] }, assetsDir };
   return {
+    assetsDir,
     tanstackRouter: tanstackRouterFacts(config.text),
     emitters: await viteEmitterFacts(dir),
   };

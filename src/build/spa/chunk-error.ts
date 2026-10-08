@@ -34,12 +34,21 @@ const HANDLER_SOURCE = `globalThis.${HANDLER}=function(e){var p=!1;` +
 /** The import that installs the handler, prepended to a production SPA entry. */
 export const CHUNK_ERROR_SEED = `import "data:text/javascript;base64,${btoa(HANDLER_SOURCE)}";\n`;
 
+/** The client prefix when `spa.assetsDir` is unset. */
+const DEFAULT_PREFIX = "/_denext/client/";
+
 /**
  * An `import("./x.js")` call, or one of the client prefix's (`import("/_denext/client/x.js")`, the
- * esbuild path's `publicPath`), naming a top-level file — not a member call such as `a.import(…)`.
+ * esbuild path's `publicPath`; `/assets/x.js` under `spa.assetsDir: "assets"`), naming a
+ * top-level file — not a member call such as `a.import(…)`.
  */
-const DYNAMIC_IMPORT =
-  /(?<![\w$.])import\(\s*(["'])(?:\.\/|\/_denext\/client\/)([\w$.@-]+\.js)\1\s*\)/g;
+function dynamicImportPattern(prefix: string): RegExp {
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  return new RegExp(
+    `(?<![\\w$.])import\\(\\s*(["'])(?:\\.\\/|${escaped})([\\w$.@-]+\\.js)\\1\\s*\\)`,
+    "g",
+  );
+}
 
 /** What a rewrite inserts after each matched call (the handler, read when the import fails). */
 const SUFFIX = `.catch(e=>(globalThis.${HANDLER}||(e=>Promise.reject(e)))(e))`;
@@ -51,14 +60,17 @@ interface Insertion {
 
 /**
  * Rewrite one output file's dynamic imports of sibling files (`chunks` = the names in its
- * directory), returning the new text and where the suffix went (indices in the old text).
+ * directory, imported relatively or under the client `prefix`), returning the new text and where
+ * the suffix went (indices in the old text).
  */
 export function wrapImportsInSource(
   source: string,
   chunks: ReadonlySet<string>,
+  prefix: string = DEFAULT_PREFIX,
 ): { code: string; insertions: Insertion[] } {
   const insertions: Insertion[] = [];
-  const code = source.replace(DYNAMIC_IMPORT, (match, _q, file: string, offset: number) => {
+  const pattern = dynamicImportPattern(prefix);
+  const code = source.replace(pattern, (match, _q, file: string, offset: number) => {
     if (!chunks.has(file)) return match;
     insertions.push({ index: offset + match.length });
     return match + SUFFIX;
@@ -182,9 +194,14 @@ async function shiftSiblingMap(
  * `.js` files: the entry and the chunks) through the chunk-error handler, keeping any source
  * map beside a rewritten file in step.
  *
+ * @param clientDir The bundle's directory.
+ * @param prefix The URL prefix the client is served under (`spa.assetsDir`'s, or the default).
  * @returns How many `import()` calls were rewritten.
  */
-export async function wrapDynamicImports(clientDir: string): Promise<number> {
+export async function wrapDynamicImports(
+  clientDir: string,
+  prefix: string = DEFAULT_PREFIX,
+): Promise<number> {
   const names = new Set<string>();
   for await (const e of Deno.readDir(clientDir)) {
     if (e.isFile && e.name.endsWith(".js")) names.add(e.name);
@@ -193,7 +210,7 @@ export async function wrapDynamicImports(clientDir: string): Promise<number> {
   for (const name of names) {
     const path = join(clientDir, name);
     const source = await Deno.readTextFile(path);
-    const { code, insertions } = wrapImportsInSource(source, names);
+    const { code, insertions } = wrapImportsInSource(source, names, prefix);
     if (insertions.length === 0) continue;
     await Deno.writeTextFile(path, code);
     await shiftSiblingMap(path, source, insertions);

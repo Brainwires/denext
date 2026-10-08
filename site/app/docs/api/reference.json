@@ -24336,6 +24336,23 @@
       ]
     },
     {
+      "module": "denext/jsx-directives",
+      "symbols": [
+        {
+          "name": "ClientDirectives",
+          "slug": "ClientDirectives",
+          "kind": "interface",
+          "signature": "interface ClientDirectives<Placeholder>",
+          "doc": "The client:* directive props: a Flight route's island hydration markers, and in SPA mode the deferred mount of a code-split component. The build strips every client:* key before it reaches the component or the DOM; they are authoring markers, not real props.",
+          "docFull": "The `client:*` directive props: a Flight route's island hydration markers, and in SPA mode the\ndeferred mount of a code-split component. The build strips every `client:*` key before it\nreaches the component or the DOM; they are authoring markers, not real props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/cli/command",
       "symbols": [
         {

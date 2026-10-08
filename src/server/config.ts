@@ -310,12 +310,21 @@ export interface SpaConfig {
   /**
    * Write a Vite-shaped build manifest, `.vite/manifest.json`, into the static export: one
    * entry per content-hashed client file (`"_denext/client/chunk-AB12CD34.js": { "file":
-   * "_denext/client/chunk-AB12CD34.js" }`), the shape Vite's `build.manifest` writes. A server
-   * written for a Vite build reads it to learn which files are safe to serve as `immutable`.
-   * The entry `index.js` and `index.css` keep their names across builds and are not listed.
-   * Default `false`.
+   * "_denext/client/chunk-AB12CD34.js" }`, under {@link assetsDir} when set), the shape Vite's
+   * `build.manifest` writes. A server written for a Vite build reads it to learn which files
+   * are safe to serve as `immutable`. The entry `index.js` and `index.css` keep their names
+   * across builds and are not listed, nor is any `public/` file. Default `false`.
    */
   viteManifest?: boolean;
+  /**
+   * Where the client output (entry, stylesheet, split chunks, imported assets) is served and
+   * exported, as Vite's `build.assetsDir`: `"assets"` serves it from `/assets/` and writes it to
+   * `out/assets/`, with content-hashed files named `name-HASH.ext` (an 8-character hash), the
+   * shape a server written for a Vite build expects. A `public/` file at the same path is served
+   * behind the build's. Unset, the client lives under `/_denext/client/`. `denext migrate` sets
+   * it from a Vite app's `build.assetsDir` (`"assets"` by default).
+   */
+  assetsDir?: string;
   /**
    * TanStack Router file-based routing: with `autoCodeSplitting: true` a production build splits
    * each route file's `component` (and loader, error/pending/not-found components) into its own

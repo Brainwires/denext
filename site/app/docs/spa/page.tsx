@@ -188,9 +188,39 @@ const u = new URL("./asset.bin", import.meta.url); // emitted + rewritten`}
 
       <h2>Vite build parity</h2>
       <p>
-        Four things a Vite build does that a migrated app may rely on. All apply to{" "}
+        Five things a Vite build does that a migrated app may rely on. All apply to{" "}
         <code>denext build</code> and <code>denext export</code>; <code>denext dev</code>{" "}
         does not code-split, emit, or write a manifest.
+      </p>
+
+      <h3>
+        Asset paths — <code>spa.assetsDir</code>
+      </h3>
+      <p>
+        A Vite build puts its JavaScript, CSS and imported assets under <code>assets/</code>{" "}
+        (<code>build.assetsDir</code>) with names like{" "}
+        <code>index-BxY4Q2c7.js</code>, and a server written for it may serve only paths of that
+        shape as long-lived. <code>spa.assetsDir</code> does the same: the client is written to{" "}
+        <code>out/assets/</code> and served from <code>/assets/</code> (by <code>denext start</code>
+        {" "}
+        and <code>denext dev</code> too) instead of{" "}
+        <code>/_denext/client/</code>, and each content-hashed file is named{" "}
+        <code>name-HASH.ext</code> with an 8-character hash (<code>chunk-AB12CD34.js</code>,{" "}
+        <code>logo-QWERTY23.svg</code>):
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: {
+  entry: "./src/main.tsx",
+  assetsDir: "assets",
+}`}
+      </Code>
+      <p>
+        The entry keeps its stable name (<code>assets/index.js</code>, revalidated rather than
+        cached). Files in <code>public/assets/</code> share the directory, behind the build's own.
+        {" "}
+        <code>denext migrate</code> sets it to the Vite app's <code>build.assetsDir</code>{" "}
+        (<code>"assets"</code> by default). Unset, nothing moves.
       </p>
 
       <h3>
@@ -283,16 +313,16 @@ export default {
         to learn which files are content-hashed and can be served as <code>immutable</code>.{" "}
         <code>{"spa: { viteManifest: true }"}</code>{" "}
         writes one into the export, in Vite's shape, listing every content-hashed file under{" "}
-        <code>_denext/client/</code>:
+        <code>_denext/client/</code> (or <code>spa.assetsDir</code>):
       </p>
       <Code lang="json">
         {`{
-  "_denext/client/chunk-AB12CD34.js": { "file": "_denext/client/chunk-AB12CD34.js" }
+  "assets/chunk-AB12CD34.js": { "file": "assets/chunk-AB12CD34.js" }
 }`}
       </Code>
       <p>
         The entry (<code>index.js</code>) and stylesheet (<code>index.css</code>) keep their names
-        across builds, so they are not listed.
+        across builds, so they are not listed; nor is any file from <code>public/</code>.
       </p>
 
       <h2>Styling</h2>
@@ -453,6 +483,23 @@ spa: { desktop: { icon: "./assets/app-icon.png" } }`}
         viewer, a settings page, a chart. The same syntax runs on an App Router route, where it
         defers hydration instead. See{" "}
         <a href="/docs/islands#in-spa-mode-deferred-mounts">In SPA mode: deferred mounts</a>.
+      </p>
+      <p>
+        denext's own JSX types admit the directives on every element. An app whose type check reads
+        {" "}
+        <code>@types/react</code> instead (a migrated app's <code>tsc</code>) adds them to React's
+        {" "}
+        <code>Attributes</code> with a two-line file its type check includes (with{" "}
+        <code>deno check</code>, list it in <code>compilerOptions.types</code>):
+      </p>
+      <Code lang="ts">
+        {`// client-directives.d.ts
+import type { ClientDirectives } from "denext/jsx-directives";
+declare module "react" { interface Attributes extends ClientDirectives<import("react").ReactNode> {} }`}
+      </Code>
+      <p>
+        The augmentation lives in the app because a published package may not change another
+        package's types; <code>denext/jsx-directives</code> exports only the shape.
       </p>
 
       <h2>What it does not do</h2>

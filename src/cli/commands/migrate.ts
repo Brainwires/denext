@@ -101,6 +101,9 @@ function reportDeps(r: MigrateResult): void {
 
 /** The vite.config build plugins migrate carried over (or left for review). */
 function reportViteBuildPlugins(s: NonNullable<MigrateResult["spa"]>): void {
+  if (s.assetsDir) {
+    console.log(`    assets dir: /${s.assetsDir}/ (spa.assetsDir, Vite's build.assetsDir)`);
+  }
   if (s.tanstackRouter) {
     console.log("    tanstack router: autoCodeSplitting carried over (spa.tanstackRouter)");
   }
