@@ -16,6 +16,7 @@ import { applyProps, detachRef, updateRef } from "../dom-props.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import { getActivitySupport } from "./activity-support.ts";
+import { getSingletonSupport } from "./singleton-support.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -76,7 +77,9 @@ function commitInsertionEffects(wipRoot: Fiber): void {
 function commitMutation(wipRoot: Fiber): void {
   walkFlagged(wipRoot, Update, (f) => {
     if ((f.flags & Update) === 0) return;
-    if (f.tag === "host" || f.tag === "singleton") {
+    if (f.tag === "singleton") {
+      getSingletonSupport()!.commit(f);
+    } else if (f.tag === "host") {
       applyProps(
         f.stateNode as Element,
         f,
@@ -473,13 +476,11 @@ function runUnmountCleanups(fiber: Fiber): void {
 /**
  * Remove a host/text fiber's node from the DOM, if it is attached. An adopted singleton (the
  * page's `<html>`/`<body>`) stays, but loses the attributes and listeners its props set, as
- * React releases a singleton — so the next root layout starts from a clean element.
+ * React releases a singleton — and only those (singleton-runtime.ts).
  */
 function removeHostNode(fiber: Fiber): void {
   const dom = fiber.stateNode;
-  if (fiber.tag === "singleton") {
-    return applyProps(dom as Element, fiber, fiber.vnode.props ?? {}, {}, onErrorFor(fiber), false);
-  }
+  if (fiber.tag === "singleton") return getSingletonSupport()!.release(fiber);
   if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
     dom.parentNode.removeChild(dom);
   }

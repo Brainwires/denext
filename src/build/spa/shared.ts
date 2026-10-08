@@ -120,6 +120,8 @@ export interface SpaEntrySupport {
   activity?: boolean;
   /** Install the per-element `<ViewTransition>` runtime (set when the app uses it). */
   viewTransition?: boolean;
+  /** Install the host-singleton runtime (default true; a scan clears it when no document tag). */
+  singletons?: boolean;
   /** Route the shell's deep links through expo-router (React Native mode with `app/`). */
   expoRouterLinks?: boolean;
   /** React Native mode: hide the shell's splash screen once the app has drawn. */
@@ -202,6 +204,12 @@ export function supportInstall(support: SpaEntrySupport): string {
     lines.push(
       `import { installViewTransitionSupport } from "denext/client-runtime";`,
       `installViewTransitionSupport();`,
+    );
+  }
+  if (support.singletons ?? true) {
+    lines.push(
+      `import { installSingletonSupport } from "denext/client-runtime";`,
+      `installSingletonSupport();`,
     );
   }
   return lines.length ? lines.join("\n") + "\n" : "";

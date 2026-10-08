@@ -21,7 +21,8 @@ import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import type { ClientRefInfo } from "../runtime/client-reference.ts";
 import { serializeFlight } from "./render-to-html-flight.ts";
 import { inlinedRootFlight } from "./flight-inline.ts";
-import { fillFlightHoles, substituteValueHoles } from "./flight-holes.ts";
+import { fillFlightHoles } from "./flight-holes.ts";
+import { substituteValueHoles } from "./flight-value-holes.ts";
 import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import {
   type CarvedIsland,
@@ -296,7 +297,7 @@ export interface FlightStreamTail {
    * The Flight tree for `#__denext_flight`: complete (holes filled) when the holes were
    * drained without streaming their data; the shell tree, its holes unfilled, when each
    * hole's subtree and each deferred value already streamed as its own chunk (the client
-   * puts them back — `assembleStreamedFlight`). `null` for a root-less islands page.
+   * puts them back — `readStreamedFlight`). `null` for a root-less islands page.
    */
   flight: FlightNode;
   /** Lazy (`client:*`/resumable) islands, keyed by tree-path id, or undefined if none. */

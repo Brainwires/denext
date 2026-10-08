@@ -58,6 +58,7 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,
+    usesSingletons: ctx.usesSingletons,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
 }
@@ -79,6 +80,7 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
         classRuntime: ctx.classRuntime,
         usesActivity: ctx.usesActivity,
         usesViewTransition: ctx.usesViewTransition,
+        usesSingletons: ctx.usesSingletons,
       }),
     })),
   });

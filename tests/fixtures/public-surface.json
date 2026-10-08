@@ -3977,6 +3977,7 @@
     "ensureFlightModules:function",
     "flightClientIds:function",
     "installActivitySupport:function",
+    "installSingletonSupport:function",
     "installViewTransitionSupport:function",
     "loadClassRuntime:function",
     "parseFlight:function",

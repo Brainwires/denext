@@ -463,6 +463,11 @@ export interface BuildNextCompatFlightOptions {
    */
   usesViewTransition?: boolean;
   /**
+   * Whether the app renders a document tag (build scan). When false, the generated entry omits
+   * `installSingletonSupport()` and the host-singleton runtime is dropped. Defaults to `true`.
+   */
+  usesSingletons?: boolean;
+  /**
    * The target's platform files for the app's own modules. Forwarded to
    * {@link BundleNextCompatModulesOptions.appPlatform}.
    */
@@ -522,6 +527,8 @@ export async function buildNextCompatFlightEntry(
       options.classRuntime ?? "lazy",
       options.usesActivity ?? false,
       options.usesViewTransition ?? false,
+      {},
+      options.usesSingletons ?? true,
     ),
   );
   await bundleNextCompatModules({

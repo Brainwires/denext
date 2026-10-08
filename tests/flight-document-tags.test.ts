@@ -6,6 +6,7 @@
 // The HTML itself is unchanged.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import "./helpers/singleton-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { createApp } from "../src/server/app.ts";
@@ -141,7 +142,12 @@ Deno.test("a client-rendered root layout hydrates in place: same nodes, no misma
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   (doc.body as Any).appendChild(container);
-  (doc.documentElement as Any).setAttribute("lang", "en"); // denext's own, before the client runs
+  // The server hoisted the layout's document-tag attributes onto the real tags (see the tests
+  // below); the layout is `suppressHydrationWarning`, so hydration leaves them as the page has them.
+  (doc.documentElement as Any).setAttribute("lang", "fr");
+  (doc.documentElement as Any).setAttribute("class", "dark");
+  (doc.body as Any).setAttribute("class", "b");
+  (doc.body as Any).setAttribute("data-theme", "dark");
   // The parsed server DOM: the browser dropped the nested <html>/<head>/<body>, kept the rest.
   createRoot(container as Any).render(
     [

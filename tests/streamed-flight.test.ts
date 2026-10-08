@@ -37,13 +37,13 @@ const shell = {
   ],
 } as unknown as FlightNode;
 
-Deno.test("readStreamedFlight: holes and deferred values are put back in place", () => {
+Deno.test("readStreamedFlight: holes and deferred values are put back in place", async () => {
   const doc = chunkDoc([
     ["data-dnx-f", "dnx0", JSON.stringify({ $: "h", t: "p", p: {}, c: ["late"] })],
     ["data-dnx-v", "dnxv0", JSON.stringify({ reviews: ["great"] })],
     ["data-dnx-v", "dnxv9", "{not json"], // a malformed chunk is skipped
   ]);
-  assertEquals(readStreamedFlight(doc, shell), {
+  assertEquals(await readStreamedFlight(doc, shell), {
     $: "h",
     t: "main",
     p: {},
@@ -59,10 +59,10 @@ Deno.test("readStreamedFlight: holes and deferred values are put back in place",
   });
 });
 
-Deno.test("readStreamedFlight: a buffered document (no chunks) keeps its tree", () => {
+Deno.test("readStreamedFlight: a buffered document (no chunks) keeps its tree", async () => {
   const complete = { $: "h", t: "main", p: {}, c: ["done"] } as unknown as FlightNode;
-  assertEquals(readStreamedFlight(chunkDoc([]), complete), complete);
-  assertEquals(readStreamedFlight(chunkDoc([]), null), null);
+  assertEquals(await readStreamedFlight(chunkDoc([]), complete), complete);
+  assertEquals(await readStreamedFlight(chunkDoc([]), null), null);
 });
 
 // Audit 3.4.0 N1: only the chunks the server streams — direct children of `<body>`, after the

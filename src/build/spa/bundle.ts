@@ -17,6 +17,7 @@ import {
   type SpaConfig,
 } from "../../server/config.ts";
 import {
+  appRendersDocumentTags,
   appUsesActivity,
   appUsesViewTransition,
   bundleSourceFiles,
@@ -390,9 +391,10 @@ export async function bundleSpaInto(
   // that can render class components, which a source scan wouldn't see. `<Activity>`/
   // `<ViewTransition>` are denext-only APIs the app itself must name, so a source scan detects
   // them precisely (and keeps their runtimes out of a bundle that never uses them).
-  const [scannedActivity, viewTransition] = await Promise.all([
+  const [scannedActivity, viewTransition, singletons] = await Promise.all([
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
+    appRendersDocumentTags(paths.projectDir, [entryPath]),
   ]);
   // React Native mode's Expo Router navigators keep hidden stack screens in an `Activity`.
   const activity = scannedActivity || reactNativeOptions(paths.config) !== null;
@@ -410,6 +412,7 @@ export async function bundleSpaInto(
         classComponents: paths.config?.classComponents ?? true,
         activity,
         viewTransition,
+        singletons,
         expoRouterLinks: await usesExpoRouter(paths),
         reactNative: reactNativeOptions(paths.config) !== null,
       },

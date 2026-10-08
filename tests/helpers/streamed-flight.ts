@@ -2,7 +2,8 @@
 // Suspense-hole (`data-dnx-f`) and deferred-value (`data-dnx-v`) chunks a streamed document
 // sent put back — the server-side mirror of the entry's `readStreamedFlight`.
 
-import { assembleStreamedFlight } from "../../src/jsx/flight-holes.ts";
+import { fillFlightHoles } from "../../src/jsx/flight-holes.ts";
+import { substituteValueHoles } from "../../src/jsx/flight-value-holes.ts";
 import type { FlightNode, FlightValue } from "../../src/jsx/render-to-flight.ts";
 
 /** The JSON chunks a streamed document sent under `attr`, by id. */
@@ -24,9 +25,7 @@ export function streamedChunks<T>(html: string, attr: string): Map<string, T> {
 export function hydratedFlight(html: string): FlightNode {
   const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
   if (!m) throw new Error("no #__denext_flight in the document");
-  return assembleStreamedFlight(
-    JSON.parse(m[1]),
-    streamedChunks<FlightNode>(html, "data-dnx-f"),
-    streamedChunks<FlightValue>(html, "data-dnx-v"),
-  );
+  const filled = fillFlightHoles(JSON.parse(m[1]), streamedChunks<FlightNode>(html, "data-dnx-f"));
+  const values = streamedChunks<FlightValue>(html, "data-dnx-v");
+  return values.size > 0 ? substituteValueHoles(filled, values) as FlightNode : filled;
 }

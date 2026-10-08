@@ -14,6 +14,7 @@ import {
 import { platformResolution, projectPlatformRedirects } from "../platform-extensions.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import {
+  appRendersDocumentTags,
   appUsesActivity,
   appUsesClassComponents,
   appUsesViewTransition,
@@ -140,6 +141,9 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
   // renders `<ViewTransition>` (a build scan).
   const usesViewTransition = await appUsesViewTransition(projectDir, outside);
+  // Gate the host-singleton runtime: install it only when the app renders a document tag (a
+  // client root layout's `<html>`/`<body>` adopt the page's own elements).
+  const usesSingletons = await appRendersDocumentTags(projectDir, outside);
   return {
     projectDir,
     paths,
@@ -163,6 +167,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     classRuntime,
     usesActivity,
     usesViewTransition,
+    usesSingletons,
     compatServerModules: {},
   };
 }

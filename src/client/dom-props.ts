@@ -392,63 +392,18 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 // (strokeWidth → stroke-width, strokeLinecap → stroke-linecap, …) that SVG spells with
 // hyphens; without the conversion the attribute is ignored and the graphic renders with
 // the wrong (default) stroke/fill/etc — e.g. lucide icons come out hairline-thin.
-const SVG_KEEP_CAMELCASE = new Set([
-  "viewBox",
-  "preserveAspectRatio",
-  "attributeName",
-  "attributeType",
-  "baseFrequency",
-  "baseProfile",
-  "calcMode",
-  "clipPathUnits",
-  "diffuseConstant",
-  "edgeMode",
-  "filterUnits",
-  "gradientTransform",
-  "gradientUnits",
-  "kernelMatrix",
-  "kernelUnitLength",
-  "keyPoints",
-  "keySplines",
-  "keyTimes",
-  "lengthAdjust",
-  "limitingConeAngle",
-  "markerHeight",
-  "markerUnits",
-  "markerWidth",
-  "maskContentUnits",
-  "maskUnits",
-  "numOctaves",
-  "pathLength",
-  "patternContentUnits",
-  "patternTransform",
-  "patternUnits",
-  "pointsAtX",
-  "pointsAtY",
-  "pointsAtZ",
-  "primitiveUnits",
-  "refX",
-  "refY",
-  "repeatCount",
-  "repeatDur",
-  "requiredExtensions",
-  "specularConstant",
-  "specularExponent",
-  "spreadMethod",
-  "startOffset",
-  "stdDeviation",
-  "stitchTiles",
-  "surfaceScale",
-  "systemLanguage",
-  "tableValues",
-  "targetX",
-  "targetY",
-  "textLength",
-  "viewTarget",
-  "xChannelSelector",
-  "yChannelSelector",
-  "zoomAndPan",
-]);
+const SVG_KEEP_CAMELCASE = /* @__PURE__ */ new Set(
+  // One space-separated string: a fraction of an array literal's bytes in every bundle.
+  ("viewBox preserveAspectRatio attributeName attributeType baseFrequency baseProfile " +
+    "calcMode clipPathUnits diffuseConstant edgeMode filterUnits gradientTransform " +
+    "gradientUnits kernelMatrix kernelUnitLength keyPoints keySplines keyTimes lengthAdjust " +
+    "limitingConeAngle markerHeight markerUnits markerWidth maskContentUnits maskUnits " +
+    "numOctaves pathLength patternContentUnits patternTransform patternUnits pointsAtX " +
+    "pointsAtY pointsAtZ primitiveUnits refX refY repeatCount repeatDur requiredExtensions " +
+    "specularConstant specularExponent spreadMethod startOffset stdDeviation stitchTiles " +
+    "surfaceScale systemLanguage tableValues targetX targetY textLength viewTarget " +
+    "xChannelSelector yChannelSelector zoomAndPan").split(" "),
+);
 
 /**
  * Map a React prop name to the actual DOM attribute name for `el`. Handles
@@ -456,7 +411,7 @@ const SVG_KEEP_CAMELCASE = new Set([
  * presentation attributes to the hyphenated names SVG expects (keeping the structural
  * camelCase attributes like `viewBox` as-is).
  */
-function domAttrName(el: Element, name: string): string {
+export function domAttrName(el: Element, name: string): string {
   const base = normalizeAttr(name);
   if (
     el.namespaceURI === SVG_NS && /[a-z][A-Z]/.test(base) &&

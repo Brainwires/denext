@@ -2,9 +2,11 @@
 // each Suspense hole's subtree (`<script type="application/json" data-dnx-f="<id>">`) and each
 // deferred value — a Remix `defer()` field — (`data-dnx-v="<id>"`) as its own chunk the moment
 // it resolves, and its trailing `#__denext_flight` carries the shell tree with those holes left
-// in place. The entry puts them back before hydrating.
+// in place. The entry puts them back before hydrating. Deferred values are a migrated Remix
+// route's alone, so their substitution is a chunk of its own, fetched only for a document that
+// streamed one: the shared runtime every Flight app ships carries none of it.
 
-import { assembleStreamedFlight } from "../jsx/flight-holes.ts";
+import { fillFlightHoles } from "../jsx/flight-holes.ts";
 import type { FlightNode, FlightValue } from "../jsx/render-to-flight.ts";
 
 /**
@@ -33,9 +35,11 @@ function readChunks<T>(doc: ParentNode, attr: string): Map<string, T> {
  * @param shell The parsed `#__denext_flight` tree.
  * @returns The tree to hydrate.
  */
-export function readStreamedFlight(doc: ParentNode, shell: FlightNode): FlightNode {
+export async function readStreamedFlight(doc: ParentNode, shell: FlightNode): Promise<FlightNode> {
   const holes = readChunks<FlightNode>(doc, "data-dnx-f");
+  const filled = holes.size > 0 ? fillFlightHoles(shell, holes) : shell;
   const values = readChunks<FlightValue>(doc, "data-dnx-v");
-  if (holes.size === 0 && values.size === 0) return shell;
-  return assembleStreamedFlight(shell, holes, values);
+  if (values.size === 0) return filled;
+  const { substituteValueHoles } = await import("../jsx/flight-value-holes.ts");
+  return substituteValueHoles(filled, values) as FlightNode;
 }

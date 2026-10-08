@@ -9,6 +9,7 @@ import { applyProps, initSelect } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { documentForFiber } from "./state.ts";
+import { getSingletonSupport } from "./singleton-support.ts";
 import {
   bubbleFlags,
   childrenDom,
@@ -39,7 +40,7 @@ function createHostInstance(wip: Fiber): Element {
  * identity, like applyProps' own per-prop `oldValue === value` guard — so a `false` here
  * means applyProps would change nothing (it would only re-register identical listeners).
  */
-function hostPropsChanged(
+export function hostPropsChanged(
   prev: Record<string, unknown> | null | undefined,
   next: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -87,19 +88,6 @@ function completeHost(wip: Fiber): void {
   wip.flags |= Placement;
 }
 
-/**
- * A singleton (an adopted `<html>`/`<head>`/`<body>`, see begin-work.ts): its props become the
- * page element's attributes in the commit's mutation phase — on mount too (hydration included:
- * equal values are no-ops), so they land after a replaced layout's singleton cleared its own
- * (deletions commit first). It never creates or re-syncs DOM; its children live in the container.
- */
-function completeSingleton(wip: Fiber): void {
-  if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
-  if (wip.alternate === null || hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) {
-    wip.flags |= Update;
-  }
-}
-
 function completeText(wip: Fiber): void {
   if (wip.alternate !== null) {
     // Same text as last render: nothing to do, without reading the DOM (React compares
@@ -128,8 +116,8 @@ export function completeWork(wip: Fiber): void {
     case "host":
       completeHost(wip);
       break;
-    case "singleton":
-      completeSingleton(wip);
+    case "singleton": // an adopted document tag (singleton-support.ts)
+      getSingletonSupport()!.complete(wip);
       break;
     case "text":
       completeText(wip);

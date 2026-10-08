@@ -12,7 +12,7 @@ import {
   type SpaConfig,
 } from "../../server/config.ts";
 import { domListAliases } from "../dom-lists.ts";
-import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
+import { appRendersDocumentTags, appUsesActivity, appUsesViewTransition } from "../bundle.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { buildAppCss, concatCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
@@ -183,9 +183,10 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
     // the loop's dependency bundle; it needs the compat (react→denext) runtime.
     const rn = reactNativeBundleOptions(paths.config, paths.projectDir, true);
     const compat = rn !== null || await detectNextCompat(paths);
-    const [activity, viewTransition] = await Promise.all([
+    const [activity, viewTransition, singletons] = await Promise.all([
       appUsesActivity(paths.projectDir, [entryPath]),
       appUsesViewTransition(paths.projectDir, [entryPath]),
+      appRendersDocumentTags(paths.projectDir, [entryPath]),
     ]);
     st.unbundled = createUnbundledDev({
       projectDir: paths.projectDir,
@@ -209,6 +210,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
         classComponents: paths.config?.classComponents ?? true,
         activity: activity || rn !== null,
         viewTransition,
+        singletons,
       }) + (rn ? REACT_NATIVE_SPLASH : "") + (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : ""),
       // The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals,
       // and `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).

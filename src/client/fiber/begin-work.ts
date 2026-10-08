@@ -27,13 +27,8 @@ import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
 import { LIBRARY_ELEMENT } from "../../runtime/library-elements.ts";
 import { type Fiber, NoLane, Rendered, type SuspenseListState } from "./fiber.ts";
-import {
-  documentForFiber,
-  fiberToRoot,
-  noteOffscreen,
-  notePortalTarget,
-  noteProfiler,
-} from "./state.ts";
+import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
+import { getSingletonSupport } from "./singleton-support.ts";
 import { renderLanes } from "./scheduler.ts";
 
 /** Perform one unit of work; return the next unit (first child) or null. */
@@ -359,40 +354,12 @@ function beginActivity(wip: Fiber): Fiber | null {
   return wip.child;
 }
 
-/**
- * Adopt the page's own `<html>`/`<head>`/`<body>` for a document tag that a root layout rendered
- * by client code puts straight under a page-container root (on mount; true when adopted). Not
- * under a document root (global-error hydration renders the whole document), inside another
- * element, or when the page lacks the element: a real host then.
- *
- * An adopted fiber becomes a "singleton" (React's host singletons): its props become that
- * element's attributes (completeWork / commitMutation) and it creates no element of its own. It
- * begins like a plain Fragment, so its children flow into the container, where the server's
- * parsed markup already put them (the parser drops the nested tags; the Flight tree peels them
- * the same way): hydration claims them in place, with no remount and no flash.
- */
-function adoptDocumentTag(wip: Fiber): boolean {
-  const type = wip.vnode.type as string;
-  if (wip.alternate !== null || !isContainerRoot(wip.host!) || !/^(html|head|body)$/.test(type)) {
-    return false;
-  }
-  const page = documentForFiber(wip);
-  const el = (type === "html" ? page.documentElement : page[type as "head" | "body"]) ?? null;
-  if (el === null) return false;
-  wip.tag = "singleton";
-  wip.stateNode = el;
-  return true;
-}
-
-/** A root rendering into a page element — not the document (global-error's hydrateDocument). */
-function isContainerRoot(host: Fiber): boolean {
-  return host.tag === "root" && host.stateNode!.nodeType !== 9 &&
-    fiberToRoot.get(host)?.documentRoot !== true;
-}
-
-// A "host" fiber (a DOM element), or a document tag a client root layout renders (adopted).
+// A "host" fiber (a DOM element), or a document tag a client root layout renders: with the
+// singleton runtime installed (singleton-support.ts), that tag adopts the page's own element and
+// begins like a Fragment, so its children flow into the container where the server's parsed
+// markup already put them — hydration claims them in place.
 function beginHost(wip: Fiber): Fiber | null {
-  return adoptDocumentTag(wip) ? beginFragment(wip) : beginElement(wip);
+  return getSingletonSupport()?.adopt(wip) ? beginFragment(wip) : beginElement(wip);
 }
 
 // A DOM element: claim its server node during hydration, and — for a `<form action={fn}>` —
