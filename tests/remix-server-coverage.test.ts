@@ -37,6 +37,7 @@ import {
   currentContext,
   runWithContext,
 } from "../src/server/request-context.ts";
+import { DEFAULT_SEGMENT_CONFIG } from "../src/server/segment-config.ts";
 
 // ── Data helpers ──────────────────────────────────────────────────────────────
 
@@ -85,6 +86,35 @@ Deno.test("data(): applies status + non-cookie headers AND Set-Cookie onto the r
   assertEquals(ctx.responseStatus, 202);
   assertEquals(ctx.outgoingHeaders.get("X-A"), "1");
   assert(ctx.outgoingHeaders.getSetCookie().some((c) => c.startsWith("sid=1")));
+});
+
+// Audit 3.4.0 B1 (defence in depth): a loader's `request.headers` is a dynamic read, as
+// `headers()` is — an ISR route whose loader reads the Cookie header must not be cached for
+// everyone — and under `force-static` the loader gets the URL alone (React Router's prerender).
+Deno.test("runLoader: request.headers is a dynamic read; force-static strips headers", async () => {
+  const live = () => new Request("http://localhost/p?q=1", { headers: { cookie: "u=alice" } });
+  const readsCookie = ({ request }: { request: Request }) => ({
+    who: request.headers.get("cookie"),
+    url: request.url,
+    cloned: request.clone().headers.get("cookie"),
+  });
+
+  const isr = createRequestContext(live());
+  isr.segmentConfig = { ...DEFAULT_SEGMENT_CONFIG, revalidate: 60 };
+  const seen = await runWithContext(isr, () => runLoader(readsCookie, {}));
+  assertEquals(seen, { who: "u=alice", url: "http://localhost/p?q=1", cloned: "u=alice" });
+  assertEquals(isr.usedDynamicApi, true, "reading the loader's request headers marks it dynamic");
+
+  const urlOnly = createRequestContext(live());
+  urlOnly.segmentConfig = { ...DEFAULT_SEGMENT_CONFIG, revalidate: 60 };
+  await runWithContext(urlOnly, () => runLoader(({ request }) => request.url, {}));
+  assert(!urlOnly.usedDynamicApi, "reading only the URL keeps the render cacheable");
+
+  const fixed = createRequestContext(live());
+  fixed.segmentConfig = { ...DEFAULT_SEGMENT_CONFIG, dynamic: "force-static" };
+  const prerendered = await runWithContext(fixed, () => runLoader(readsCookie, {}));
+  assertEquals(prerendered, { who: null, url: "http://localhost/p?q=1", cloned: null });
+  assert(!fixed.usedDynamicApi, "force-static stays static");
 });
 
 // ── Loader/action runners ─────────────────────────────────────────────────────

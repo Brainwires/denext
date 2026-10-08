@@ -48,7 +48,9 @@ A route module's browser half runs as in React Router v7:
   still renders as the app shell.
 - **`prerender`** (`true`, a path list, or a function given `getStaticPaths()`) becomes
   segment config: a listed static route is `force-static` (rendered once, then cached), a
-  dynamic route's listed params its `generateStaticParams` (written by `denext export`).
+  dynamic route's listed params its `generateStaticParams` (written by `denext export`). The
+  loaders of a `force-static` page get the URL alone (no headers, no body), as React Router's
+  build-time prerender does, since one render is served to everyone.
 
 ## Limitations
 

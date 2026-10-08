@@ -91,7 +91,12 @@ export default { plugins: [reactRouter()] };`}
         <code>getStaticPaths()</code>) maps to segment config: a listed static route is{" "}
         <code>force-static</code>{" "}
         (rendered once, then cached), and a dynamic route's listed params become its{" "}
-        <code>generateStaticParams</code>, which <code>denext export</code> writes as files.
+        <code>generateStaticParams</code>, which <code>denext export</code>{" "}
+        writes as files. As in React Router's build-time prerender, the loaders of a{" "}
+        <code>force-static</code> page get the URL alone, with no headers (no{" "}
+        <code>Cookie</code>) and no body, since one render is served to everyone. On any other page,
+        reading <code>request.headers</code> in a loader makes the render dynamic, as{" "}
+        <code>headers()</code> does, so it is never cached for everyone.
       </p>
 
       <h2>Limitations</h2>

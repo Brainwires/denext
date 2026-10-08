@@ -13,6 +13,7 @@ import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createApp } from "../src/server/app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
+import { PageCache } from "../src/server/cache.ts";
 
 const DSL = new URL("../packages/react-router/routes.ts", import.meta.url).href;
 
@@ -234,6 +235,7 @@ async function withRrApp(
     app: (req: Request) => Promise<Response>,
     root: string,
   ) => Promise<void>,
+  options: { pageCache?: PageCache } = {},
 ): Promise<void> {
   resetPlugins();
   const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
@@ -249,7 +251,11 @@ async function withRrApp(
       load: defaultLoader,
     });
     const manifest = await scanRoutes(join(root, "app"));
-    const app = createApp({ getManifest: () => manifest, load: defaultLoader });
+    const app = createApp({
+      getManifest: () => manifest,
+      load: defaultLoader,
+      pageCache: options.pageCache,
+    });
     await run(app, root);
   } finally {
     resetPlugins();
@@ -453,4 +459,41 @@ export default [index("routes/home.tsx")];
     assertStringIncludes(html, 'data-app="rr7s"', "the root Layout export renders the body");
     assert(!html.includes("<undefined"), html);
   });
+});
+
+// Audit 3.4.0 B1: `prerender` makes a listed route `force-static` (cached for everyone). React
+// Router prerenders with a build-time request that carries no cookies, so a root loader that
+// reads `request.headers` must see none under `force-static` — the first visitor's cookie must
+// never reach the page cache that every later visitor is served from.
+Deno.test("react-router plugin: a prerendered route's loader gets no request headers (no cross-user cache)", async () => {
+  await withRrApp({
+    "react-router.config.ts": `export default { prerender: true };\n`,
+    "root.tsx": `import { Outlet } from "react-router";
+export function loader({ request }: { request: Request }) {
+  return { who: request.headers.get("cookie") ?? "anonymous" };
+}
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App({ loaderData }: { loaderData: { who: string } }) {
+  return <main><p id="who">{loaderData.who}</p><Outlet /></main>;
+}
+`,
+    "routes.ts": `import { route } from ${JSON.stringify(DSL)};
+export default [route("about", "routes/about.tsx")];
+`,
+    "routes/about.tsx": `export default function About() {
+  return <p id="about">about</p>;
+}
+`,
+  }, async (app) => {
+    const visit = async (cookie: string) =>
+      await (await app(new Request("http://localhost/about", { headers: { cookie } }))).text();
+    const first = await visit("user=alice");
+    const second = await visit("user=bob");
+    assertStringIncludes(second, '<p id="about">about</p>');
+    assert(!second.includes("alice"), "the second visitor must not see the first visitor's data");
+    assertStringIncludes(second, '<p id="who">anonymous</p>');
+    assert(!first.includes("alice"), "the prerendered page never carries a visitor's cookie");
+  }, { pageCache: new PageCache() });
 });

@@ -198,6 +198,17 @@ and this project adheres to
 - **The desktop and SPA docs show the `desktop.ts` `migrate --desktop` writes**, with its
   `resolveDesktopCapabilities` spread; they still said a migrated entry lacked it.
 
+### Security
+
+- **A `@denext/react-router` `prerender` page no longer caches one visitor's data for everyone.**
+  `prerender` makes a listed route `force-static`, which empties `cookies()` and `headers()`, but
+  a React Router (or Remix) loader read the live request through its `request` argument, so a
+  root loader that read the `Cookie` header put the first visitor's data in the page cache that
+  every later visitor was served. Under `force-static` a loader now gets the URL alone, with no
+  headers and no body, as React Router's build-time prerender does. On every other page a
+  loader reading `request.headers` (or its `clone()`) makes the render dynamic, as `headers()`
+  does, so an ISR or PPR page that reads it is never cached for everyone.
+
 ## [3.3.0] - 2026-10-08
 
 ### Breaking
