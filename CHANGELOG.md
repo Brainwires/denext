@@ -101,6 +101,10 @@ and this project adheres to
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
 
+- **The `progressive` step of the VirtualList browser e2e is deterministic.** It waited fixed
+  frames and 400 ms for the slices to finish and compared wall-clock milliseconds, so it flaked
+  under load. It now polls (bounded) until no placeholder is left, asserts the rows rendered
+  inside a scroll frame, and compares milliseconds only on an idle machine.
 - **LegendList without `maintainScrollAtEnd` no longer follows the end** (React Native mode and
   the `lists: "denext"` DOM build). With it unset or `false`, an end-anchored list
   (`initialScrollAtEnd`, `alignItemsAtEnd`) still pinned to the end on every change; real
