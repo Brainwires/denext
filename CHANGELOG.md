@@ -50,6 +50,22 @@ and this project adheres to
 
 ### Fixed
 
+- **`import { SwipeableRow } from "denext"` builds in a compatibility-mode app installed from
+  JSR.** The bundler sent `denext/navigation`, `denext/mobile` and the other client subpaths to
+  denext's prebuilt runtime, but not the bare `denext` entry, so it fell through to the
+  deno-loader, which can't load `jsr:@denext/denext` without a lockfile: `denext export` (any
+  platform) and `build` failed with "Failed reading lockfile" or "jsr: specifiers are not
+  supported in the portable loader without a lockfile". It built only with denext linked as a
+  `file://` path, and then bundled a second copy of denext's hooks beside the runtime's. The bare
+  entry is now part of the prebuilt runtime (one copy of the core, and what an app doesn't import
+  is tree-shaken out), and so is every other public client subpath that fell through the same
+  way: `denext/desktop/clerk`, `denext/slot`, `denext/compose-refs`, `denext/next-intl`,
+  `denext/next-intl/navigation`, `denext/next-intl/routing`, `denext/next/head`,
+  `denext/client-only`, `denext/empty`, `denext/jsx-directives`, and the `denext/react*` /
+  `denext/next/*` spellings of the compat modules. Server and tooling subpaths (`denext/testing`,
+  `denext/cli`, `denext/desktop/updater`, …) stay external, as `denext/server` was. In
+  `denext dev`, bare `denext` resolved to the React shim, which has no `SwipeableRow`,
+  `VirtualList` or `choose`; it now resolves to the full entry.
 - **An SPA's stylesheet follows `spa.head`, as Vite's does.** The shell linked the app's
   stylesheet (and its modulepreloads) ahead of `spa.head`, so an inline `<style>` there (the boot
   styles `denext migrate` carries over from a Vite `index.html`) came later in the cascade and won

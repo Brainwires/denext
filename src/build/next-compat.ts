@@ -192,6 +192,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
   const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
   const u = (rel: string) => new URL(rel, base).href;
   return {
+    // The bare `denext` entry (`import { SwipeableRow } from "denext"`): the root barrel,
+    // prebuilt into the same graph so its hooks and reconciler are the one shared instance.
+    "denext": u("mod.ts"),
     "react": u("src/compat/react.ts"),
     "react-dom": u("src/compat/react-dom.ts"),
     "react-dom-client": u("src/compat/react-dom-client.ts"),
@@ -241,6 +244,20 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "desktop-client": u("src/desktop/client.ts"),
     "desktop-window": u("src/desktop/window.ts"),
     "desktop-app": u("src/desktop/app.ts"),
+    // `denext/desktop/clerk` — `@clerk/electron`'s bridge over the desktop client RPC.
+    "desktop-clerk": u("src/desktop/clerk.ts"),
+    // The React-ecosystem helpers denext exports as subpaths (`denext/slot`,
+    // `denext/compose-refs`) and the next-intl compat's client modules.
+    "slot": u("src/compat/slot.ts"),
+    "compose-refs": u("src/compat/refs.ts"),
+    "next-intl": u("src/compat/next-intl/index.ts"),
+    "next-intl-navigation": u("src/compat/next-intl/navigation.ts"),
+    "next-intl-routing": u("src/compat/next-intl/routing.ts"),
+    // `denext/next/head` (the bare `next/head` stays the Pages Router plugin's).
+    "next-head": u("src/compat/next/head.ts"),
+    // The empty module behind the runtime-free subpaths (`denext/client-only`,
+    // `denext/empty`, the type-only `denext/jsx-directives`).
+    "empty": u("src/compat/empty.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -682,6 +699,8 @@ export function resolveReactFamilyFile(spec: string): { file: string; warning?: 
  * generated route entry shares the one denext instance.
  */
 export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
+  // The bare entry: an app's `import { SwipeableRow, useState } from "denext"`.
+  "denext": "denext.js",
   "denext/ssr": "ssr.js",
   "denext/ssr-stream": "ssr-stream.js",
   "denext/client": "client.js",
@@ -700,6 +719,21 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/desktop/client": "desktop-client.js",
   "denext/desktop/window": "desktop-window.js",
   "denext/desktop/app": "desktop-app.js",
+  "denext/desktop/clerk": "desktop-clerk.js",
+  "denext/slot": "slot.js",
+  "denext/compose-refs": "compose-refs.js",
+  "denext/next-intl": "next-intl.js",
+  "denext/next-intl/navigation": "next-intl-navigation.js",
+  "denext/next-intl/routing": "next-intl-routing.js",
+  "denext/client-only": "empty.js",
+  "denext/empty": "empty.js",
+  "denext/jsx-directives": "empty.js",
+  // denext's own spellings of the React and Next.js compat modules (`denext/react`,
+  // `denext/next/link`), which a migrated app's import map points `react` / `next/*` at.
+  ...prefixedAliases(REACT_ALIASES),
+  "denext/react-dom/static": "react-dom-server.js",
+  ...prefixedAliases(NEXT_ALIASES),
+  "denext/next/head": "next-head.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   "denext/compiler-runtime": "compiler-runtime.js",
@@ -718,6 +752,41 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
+
+/** `{ "react": "react.js" }` → `{ "denext/react": "react.js" }`. */
+function prefixedAliases(aliases: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(aliases).map(([k, v]) => [`denext/${k}`, v]));
+}
+
+/**
+ * The public `denext/*` subpaths (deno.json `exports`) that are NOT browser runtime: server
+ * APIs, the CLI and build tooling, test helpers, and Deno-side desktop modules. A bundle
+ * keeps them EXTERNAL to the framework source (see {@link serverOnlyExternalResolver}); every
+ * other export is a {@link DENEXT_RUNTIME_FILES} key, so no `denext` specifier ever reaches
+ * the deno-loader (which cannot load `jsr:` without a lockfile). `tests/` guards the split.
+ */
+export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
+  "denext/server",
+  "denext/server-only",
+  "denext/remix/server",
+  "denext/next-intl/server",
+  "denext/next-intl/middleware",
+  "denext/better-sqlite3",
+  "denext/testing",
+  "denext/cli",
+  "denext/cli/command",
+  "denext/plugin-kit",
+  "denext/plugin-kit/vite-emitter",
+  "denext/lint-plugin",
+  "denext/bundle",
+  "denext/build/css",
+  "denext/build/next-compat",
+  "denext/build/next-mdx",
+  "denext/desktop",
+  "denext/desktop/updater",
+  // The shims' compatibility manifest: metadata for tooling (`denext migrate`, the docs).
+  "denext/expo/manifest",
+]);
 
 /**
  * Server-only denext subpaths (`denext/remix/server`, `denext/server`) can't be inlined
@@ -785,12 +854,12 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = NEXT_ALIASES[spec];
         return file ? runtimeFile(file) : null;
       });
-      build.onResolve(
-        { filter: /^denext\/remix\/server$|^denext\/server$/ },
-        serverOnlyExternalResolver(),
-      );
-      build.onResolve({ filter: /^denext\// }, (args) => {
-        const file = DENEXT_RUNTIME_FILES[args.path];
+      const serverOnly = serverOnlyExternalResolver();
+      build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
+        if (DENEXT_SERVER_SUBPATHS.has(args.path)) return serverOnly(args);
+        const file = Object.hasOwn(DENEXT_RUNTIME_FILES, args.path)
+          ? DENEXT_RUNTIME_FILES[args.path]
+          : undefined;
         return file ? runtimeFile(file) : null;
       });
       // The expo shims' react-native-web bridge, when React Native mode has not claimed it: an

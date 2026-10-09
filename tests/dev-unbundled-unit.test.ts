@@ -41,7 +41,12 @@ Deno.test("compatDepUrl maps react/next/denext to the runtime, npm to the dep bu
   assertEquals(compatDepUrl(st, "denext/compiler-runtime"), `${DEP_PREFIX}compiler-runtime.js`);
   assertEquals(compatDepUrl(st, "next/link"), `${DEP_PREFIX}${NEXT_ALIASES["next/link"]}`);
   assertEquals(compatDepUrl(st, "next/not-a-module"), null, "unmapped next/* is left alone");
-  assertEquals(compatDepUrl(st, "denext"), `${DEP_PREFIX}react.js`);
+  assertEquals(
+    compatDepUrl(st, "denext"),
+    `${DEP_PREFIX}denext.js`,
+    "the root barrel, not the react shim",
+  );
+  assertEquals(compatDepUrl(st, "denext/react"), `${DEP_PREFIX}react.js`);
   assertEquals(compatDepUrl(st, "node:fs"), null);
   assertEquals(compatDepUrl(st, "https://esm.sh/x"), null);
   assertEquals(compatDepUrl(st, "lodash-es"), `${NPM_PREFIX}${depSlug("lodash-es")}.js`);
