@@ -28,6 +28,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A component without effects holds no effect queues.** Every function component got three
+  fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
+  after the commit. They are now allocated by the component's first effect of a render and
+  released once they run. In T3 Code that is ~5,000 fewer retained arrays (~0.1 MB of JS heap)
+  and three fewer allocations per component render.
+
 - **An unmounted subtree is released at once.** Three references kept a deleted
   component's fibers, and with them its hook state, its props and its detached DOM, alive
   after the commit that removed it: the parent's previous buffer still listed the deleted

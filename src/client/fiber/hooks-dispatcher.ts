@@ -134,9 +134,12 @@ export function setParkingEffects(on: boolean): void {
  * development, a mount effect is immediately unmounted and remounted (setup →
  * cleanup → setup) to surface missing cleanup, matching React.
  */
+/** The fiber field an effect is queued on (allocated on first use). */
+type EffectQueue = "passiveEffects" | "pendingEffects" | "insertionEffects";
+
 function scheduleEffect(
   inst: Fiber,
-  queue: CommitEffect[],
+  queue: EffectQueue,
   cell: HookCell,
   effect: () => (() => void) | void,
   deps?: DependencyList,
@@ -181,7 +184,7 @@ function scheduleEffect(
   entry.cleanup = () => {
     if (typeof cell.cleanup === "function") cell.cleanup();
   };
-  queue.push(entry);
+  (inst[queue] ??= []).push(entry);
   // Mark the fiber as effect-bearing so the commit-phase collectors can prune to it
   // (bubbleFlags propagates this into ancestors' subtreeFlags at completeWork).
   inst.flags |= HasEffect;
@@ -316,7 +319,7 @@ export const clientDispatcher: Dispatcher = {
 
   useEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.passiveEffects!, getHook(HK_EFFECT), effect, deps);
+    scheduleEffect(inst, "passiveEffects", getHook(HK_EFFECT), effect, deps);
   },
 
   useMemo<T>(factory: () => T, deps?: DependencyList): T {
@@ -381,7 +384,7 @@ export const clientDispatcher: Dispatcher = {
     const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
-      inst.passiveEffects!.push(
+      (inst.passiveEffects ??= []).push(
         storeSubscriptionEffect(cell, subscribe, () => snapshotChanged(cell, getSnapshot)),
       );
       // This push bypasses scheduleEffect, so flag the effect-bearing fiber here too.
@@ -433,12 +436,12 @@ export const clientDispatcher: Dispatcher = {
   // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
   useLayoutEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.pendingEffects!, getHook(HK_LAYOUT), effect, deps);
+    scheduleEffect(inst, "pendingEffects", getHook(HK_LAYOUT), effect, deps);
   },
   useInsertionEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
-    scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
+    scheduleEffect(inst, "insertionEffects", getHook(HK_INSERTION), effect, deps, false);
   },
 
   // Cell-free on purpose: no getHook, so adding/removing a call never changes the hook

@@ -93,8 +93,8 @@ function park(fibers: Fiber[]): void {
   try {
     runCommitEffects(fibers, (f) => {
       const es = (f.pendingEffects ?? []).concat(f.passiveEffects ?? []);
-      f.pendingEffects = [];
-      f.passiveEffects = [];
+      f.pendingEffects = undefined;
+      f.passiveEffects = undefined;
       return es;
     });
   } finally {

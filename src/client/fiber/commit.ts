@@ -90,7 +90,7 @@ function commitInsertionEffects(wipRoot: Fiber): void {
   collectInsertionEffects(wipRoot, insertionFibers);
   runCommitEffects(insertionFibers, (f) => {
     const es = f.insertionEffects;
-    f.insertionEffects = [];
+    f.insertionEffects = undefined;
     return es;
   });
 }
@@ -189,7 +189,7 @@ function clearFiberFlags(f: Fiber): void {
 function commitLayoutEffects(effects: Fiber[]): void {
   runCommitEffects(effects, (f) => {
     const es = f.pendingEffects;
-    f.pendingEffects = [];
+    f.pendingEffects = undefined;
     return es;
   });
   for (const f of effects) {
@@ -477,7 +477,7 @@ export function flushPassiveEffects(): void {
     // two-pass order (commitPassiveUnmount then commitPassiveMount).
     runCommitEffects(batch, (f) => {
       const es = f.passiveEffects;
-      f.passiveEffects = [];
+      f.passiveEffects = undefined;
       return es;
     });
   } finally {

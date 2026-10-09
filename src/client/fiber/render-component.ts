@@ -66,9 +66,11 @@ function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | un
       c.mounted = false;
     }
   }
-  inst.insertionEffects = [];
-  inst.pendingEffects = [];
-  inst.passiveEffects = [];
+  // Effect queues are allocated on a component's first effect of the render (most
+  // components schedule none): three empty arrays per render, and per fiber, otherwise.
+  inst.insertionEffects = undefined;
+  inst.pendingEffects = undefined;
+  inst.passiveEffects = undefined;
 }
 
 /**
@@ -343,9 +345,11 @@ export function renderComponent(inst: Fiber): VNode | null {
   const swap = resolveRefreshSwap(inst);
   setRefreshSwapRender(swap.refreshSwap);
   enterComponentRender(inst, 0);
-  inst.insertionEffects = [];
-  inst.pendingEffects = [];
-  inst.passiveEffects = [];
+  // Effect queues are allocated on a component's first effect of the render (most
+  // components schedule none): three empty arrays per render, and per fiber, otherwise.
+  inst.insertionEffects = undefined;
+  inst.pendingEffects = undefined;
+  inst.passiveEffects = undefined;
   // Rebuild the read-context set from this render's useContext calls (accumulated
   // across any render-phase / StrictMode re-invocations, which read the same set).
   inst.readContexts = undefined;
