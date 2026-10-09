@@ -86,6 +86,13 @@ and this project adheres to
   this on most launches, 30 to 110 renders a second while idle, re-attaching ~50 listeners per
   render; its WebKit page process grew ~50 MB over two idle minutes.
 
+- **A desktop window fits the display it opens on.** `desktop.window`'s size was applied as
+  given, wherever the OS had placed the window. Windows cascades a new window from the top
+  left, so T3 Code's 1280×820 on a 1280×800 display ran off the right edge (the close button
+  out of reach) and put its composer under the taskbar, on WebView2 and CEF alike. Under
+  denext's pinned runtime the size is now capped at the display's work area, and a window the
+  OS left partly outside it is moved back in; one that fits keeps the OS's placement.
+
 - **A component without effects holds no effect queues.** Every function component got three
   fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
   after the commit. They are now allocated by the component's first effect of a render and

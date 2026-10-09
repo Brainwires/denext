@@ -950,7 +950,9 @@ export interface DesktopConfig {
   preload?: string;
   /**
    * The initial window: size, title and resizability, applied by the desktop runtime when it
-   * adopts the window (on every runtime). The page changes it later with `denext/desktop/window`.
+   * adopts the window (on every runtime). Under denext's pinned runtime the size is capped at the
+   * work area of the display the window opens on, and the window is moved inside it. The page
+   * changes it later with `denext/desktop/window`.
    */
   window?: DesktopWindowConfig;
   /**

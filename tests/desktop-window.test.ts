@@ -867,6 +867,48 @@ Deno.test("window settings: applied to the pinned runtime's window", () => {
   assertEquals(vib.calls, [["setVibrancy", ["under-window"]]]);
 });
 
+/** A window the OS placed at (67, 62) on a 1280×800 display whose taskbar leaves 1280×752. */
+class SmallScreenWindow extends FakeWindow {
+  constructor(
+    readonly at = { x: 67, y: 62 },
+    readonly workArea = { x: 0, y: 0, width: 1280, height: 752 },
+  ) {
+    super();
+  }
+  override getBounds() {
+    return { ...this.at, width: 800, height: 600 };
+  }
+  override getScreen() {
+    const bounds = { x: 0, y: 0, width: 1280, height: 800 };
+    return { id: 1, bounds, workArea: this.workArea, scaleFactor: 1, isPrimary: true } as never;
+  }
+}
+
+Deno.test("window settings: the initial size and place fit the display's work area", () => {
+  // T3 Code asks for 1280×820; on a 1280×800 Windows display the window ran off the right edge
+  // and its composer sat under the taskbar.
+  const small = new SmallScreenWindow();
+  applyDesktopWindowSettings(small, { width: 1280, height: 820 }, () => {});
+  assertEquals(small.calls, [["setSize", [1280, 752]], ["setPosition", [0, 0]]]);
+  // It fits in size but not where the OS put it: moved back inside, the size kept.
+  const shifted = new SmallScreenWindow({ x: 200, y: 62 });
+  applyDesktopWindowSettings(shifted, { width: 1200, height: 700 }, () => {});
+  assertEquals(shifted.calls, [["setSize", [1200, 700]], ["setPosition", [80, 52]]]);
+  // A work area that does not start at the origin (a second display, a top taskbar).
+  const offset = new SmallScreenWindow({ x: 1300, y: 10 }, {
+    x: 1280,
+    y: 40,
+    width: 1920,
+    height: 1040,
+  });
+  applyDesktopWindowSettings(offset, { width: 2000, height: 900 }, () => {});
+  assertEquals(offset.calls, [["setSize", [1920, 900]], ["setPosition", [1280, 40]]]);
+  // Room to spare: the configured size, and the OS's placement left alone.
+  const roomy = new SmallScreenWindow();
+  applyDesktopWindowSettings(roomy, { width: 1000, height: 600 }, () => {});
+  assertEquals(roomy.calls, [["setSize", [1000, 600]]]);
+});
+
 Deno.test("window settings: the stock runtime applies the basics and warns for the rest", () => {
   const win = new StockWindow();
   const warnings: string[] = [];

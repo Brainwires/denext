@@ -143,6 +143,9 @@ export function resolveDesktopWindowSettings(desktop: unknown): DesktopWindowSet
 interface ConfigurableWindow {
   setSize?(width: number, height: number): void;
   getSize?(): [number, number];
+  getBounds?(): Rect;
+  getScreen?(): { workArea: Rect } | null;
+  setPosition?(x: number, y: number): void;
   setTitle?(title: string): void;
   setResizable?(resizable: boolean): void;
   setMinimumSize?(width: number, height: number): void;
@@ -187,9 +190,64 @@ function applyBackdrop(
   }
 }
 
+/** A rectangle in CSS pixels. */
+interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The work area of the display the window is on (pinned runtime), or `null`. */
+function workAreaOf(win: ConfigurableWindow): Rect | null {
+  try {
+    const area = typeof win.getScreen === "function" ? win.getScreen()?.workArea : null;
+    return area && area.width > 0 && area.height > 0 ? area : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Move a `width`×`height` window back inside `area` when the OS placed it partly outside. The OS
+ * places a new window without regard to the size it is about to get (Windows cascades it from the
+ * top-left), so a configured size close to the display's left it off the edge and under the
+ * taskbar. A window that already fits keeps the OS's placement.
+ */
+function keepInside(win: ConfigurableWindow, area: Rect, width: number, height: number): void {
+  if (typeof win.getBounds !== "function" || typeof win.setPosition !== "function") return;
+  try {
+    const { x, y } = win.getBounds();
+    const nx = Math.max(area.x, Math.min(x, area.x + area.width - width));
+    const ny = Math.max(area.y, Math.min(y, area.y + area.height - height));
+    if (nx !== x || ny !== y) win.setPosition(nx, ny);
+  } catch { /* placement is best effort */ }
+}
+
+/**
+ * Apply `desktop.window`'s size, capped at the work area of the window's display, and move the
+ * window inside that area ({@link keepInside}). An axis left unset keeps the current size.
+ */
+function applySize(
+  win: ConfigurableWindow,
+  settings: DesktopWindowSettings,
+  warn: (message: string) => void,
+): void {
+  const [currentWidth, currentHeight] = typeof win.getSize === "function"
+    ? win.getSize()
+    : [800, 600];
+  const area = workAreaOf(win);
+  const width = Math.min(settings.width ?? currentWidth, area ? area.width : Infinity);
+  const height = Math.min(settings.height ?? currentHeight, area ? area.height : Infinity);
+  tryCall(win, "setSize", "window", warn, width, height);
+  if (area) keepInside(win, area, width, height);
+}
+
 /**
  * Apply the settings to the adopted window. A setting the runtime cannot apply (the stock runtime
  * has no size limits, title bar styles or backdrops) is skipped with a warning; nothing throws.
+ * Where the runtime reports the window's display, the configured size is capped at the display's
+ * work area and the window is moved inside it.
  *
  * @param window The adopted `Deno.BrowserWindow` (`undefined` outside the desktop runtime: no-op).
  * @param settings The resolved settings.
@@ -210,17 +268,7 @@ export function applyDesktopWindowSettings(
     const { width, height } = settings.maxSize;
     tryCall(win, "setMaximumSize", "maxSize", warn, width, height);
   }
-  if (settings.width !== undefined || settings.height !== undefined) {
-    const current = typeof win.getSize === "function" ? win.getSize() : [800, 600];
-    tryCall(
-      win,
-      "setSize",
-      "window",
-      warn,
-      settings.width ?? current[0],
-      settings.height ?? current[1],
-    );
-  }
+  if (settings.width !== undefined || settings.height !== undefined) applySize(win, settings, warn);
   if (settings.title !== undefined) tryCall(win, "setTitle", "window.title", warn, settings.title);
   if (settings.resizable !== undefined) {
     tryCall(win, "setResizable", "window.resizable", warn, settings.resizable);
