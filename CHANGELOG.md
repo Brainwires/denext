@@ -234,6 +234,13 @@ and this project adheres to
   scaffold does; a test keeps each committed file equal to what the desktop sync writes from
   the example's config.
 
+- **`denext mobile add` runs a Yarn install without lifecycle scripts.** Its `yarn add` ran
+  the project's own scripts (a monorepo's `prepare`, a `postinstall`) and its dependencies',
+  which the Capacitor plugins never need. It now sets `npm_config_ignore_scripts=true` (Yarn 1)
+  and `YARN_ENABLE_SCRIPTS=0` (Berry), as `denext migrate`'s install does; the dry run shows
+  them, and the CLI's command runner (shared with `mobile build`) now passes a command's
+  environment through.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

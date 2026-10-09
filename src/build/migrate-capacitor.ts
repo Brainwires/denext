@@ -11,7 +11,11 @@ import { join } from "@std/path";
 import { mfs } from "./migrate-io.ts";
 import { exists, firstExisting } from "./migrate-fs.ts";
 import { CAPACITOR_CONFIGS, readCapacitorConfig } from "./capacitor-config.ts";
-import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
+import {
+  CAPACITOR_BUILD_IGNORES,
+  CAPACITOR_VERSION,
+  YARN_NO_SCRIPTS_ENV,
+} from "./capacitor-pins.ts";
 import type { CommandRunner, PlannedCommand } from "./mobile-capabilities.ts";
 
 /** A native platform Capacitor adds. */
@@ -229,16 +233,6 @@ function missingPackages(
   const wanted = ["cli", "core", ...platforms].map((p) => `@capacitor/${p}`);
   return wanted.filter((name) => !(name in deps)).map((name) => `${name}@${CAPACITOR_VERSION}`);
 }
-
-/**
- * Yarn's switches for "run no lifecycle scripts": Yarn Berry rejects `--ignore-scripts`, so
- * both majors are told through the environment — `npm_config_ignore_scripts` (Yarn 1 reads the
- * npm config) and `YARN_ENABLE_SCRIPTS` (Berry's `enableScripts`).
- */
-const YARN_NO_SCRIPTS_ENV: Readonly<Record<string, string>> = {
-  npm_config_ignore_scripts: "true",
-  YARN_ENABLE_SCRIPTS: "0",
-};
 
 /**
  * The install command for `specs` as dev dependencies. It never runs the project's own

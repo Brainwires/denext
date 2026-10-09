@@ -481,7 +481,10 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>deno.lock</code> with no such lockfile above it means <code>deno add</code>; else a
         {" "}
         <code>packageManager</code>{" "}
-        field; else npm), declares any Android permissions they need, and runs{" "}
+        field; else npm; a Yarn install runs no lifecycle scripts, through{" "}
+        <code>npm_config_ignore_scripts</code> and <code>YARN_ENABLE_SCRIPTS</code> as{" "}
+        <code>denext migrate</code>&apos;s does), declares any Android permissions they need, and
+        runs{" "}
         <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
         export exists (no <code>index.html</code> in the config&apos;s{" "}
         <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}

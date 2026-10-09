@@ -292,8 +292,12 @@ export async function replacePlaceholderIcons(
   for (const l of [...lines, ...report.warnings.map((w) => `warning: ${w}`)]) log(`    ${l}`);
 }
 
-/** Run a command with the terminal attached; `env` is added to the inherited environment. */
-const runInherit: BuildRunner = async ({ cmd, args, cwd, env }) => {
+/**
+ * Run a command with the terminal attached; `env` is added to the inherited environment (a Yarn
+ * install's no-scripts switches, signing secrets). Shared by `denext mobile build`, `submit` and
+ * `add`.
+ */
+export const runInheritedCommand: BuildRunner = async ({ cmd, args, cwd, env }) => {
   try {
     const { code } = await new Deno.Command(cmd, {
       args: [...args],
@@ -427,7 +431,7 @@ function assertHostBuilds(platform: MobilePlatform): void {
  */
 export async function mobileBuild(
   ctx: CommandContext,
-  run: BuildRunner = runInherit,
+  run: BuildRunner = runInheritedCommand,
 ): Promise<void> {
   if (ctx.flags.restore === true) return await restoreBuild(ctx);
   const platform = platformArg(ctx, "build");
@@ -569,7 +573,7 @@ function printSubmit(ctx: CommandContext, platform: MobilePlatform, report: Subm
  */
 export async function mobileSubmit(
   ctx: CommandContext,
-  deps: SubmitVerbDeps = { fetch: globalThis.fetch, run: runInherit, now: Date.now },
+  deps: SubmitVerbDeps = { fetch: globalThis.fetch, run: runInheritedCommand, now: Date.now },
 ): Promise<void> {
   const platform = platformArg(ctx, "submit");
   let report: SubmitReport;

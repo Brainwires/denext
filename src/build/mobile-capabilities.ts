@@ -51,6 +51,7 @@ import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
+import { YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -1190,7 +1191,11 @@ async function detectPackageManager(root: string): Promise<DetectedPackageManage
   return { manager: "npm" };
 }
 
-/** `manager`'s command to add `specs` as dependencies. */
+/**
+ * `manager`'s command to add `specs` as dependencies. Yarn gets {@link YARN_NO_SCRIPTS_ENV}, as
+ * `denext migrate`'s install does: `yarn add` runs lifecycle scripts (the project's own, and its
+ * dependencies'), and the Capacitor plugins need none.
+ */
 function addCommand(
   manager: PackageManager,
   specs: string[],
@@ -1212,7 +1217,8 @@ function addCommand(
     : manager === "npm" || manager === "pnpm"
     ? ["--save-exact"]
     : ["--exact"];
-  return { cmd: manager, args: [verb, ...flag, ...specs], cwd };
+  const env = manager === "yarn" ? { env: YARN_NO_SCRIPTS_ENV } : {};
+  return { cmd: manager, args: [verb, ...flag, ...specs], cwd, ...env };
 }
 
 /** A plain version (`8.5.2`, `8.0.0-rc.1`): what an exactly pinned dependency holds. */
@@ -1567,9 +1573,10 @@ export async function planMobileCapabilities(
   };
 }
 
-/** One command as a shell-like line. */
+/** One command as a shell-like line (its env assignments first). */
 function commandLine(command: PlannedCommand): string {
-  return [command.cmd, ...command.args].join(" ");
+  const env = Object.entries(command.env ?? {}).map(([k, v]) => `${k}=${v}`);
+  return [...env, command.cmd, ...command.args].join(" ");
 }
 
 /** Where the plan's package manager came from, for the dry-run line. */

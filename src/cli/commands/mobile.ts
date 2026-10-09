@@ -82,6 +82,7 @@ import {
   mobileBuild,
   mobileBuildLocks,
   mobileSubmit,
+  runInheritedCommand,
 } from "./mobile-build.ts";
 
 /** Print `message` to stderr and exit 1. */
@@ -513,18 +514,6 @@ async function addOta(ctx: CommandContext): Promise<void> {
   if (failure !== undefined) fail(`\n  ${failure}`);
 }
 
-/** Run a planned command with the terminal attached, resolving its exit code. */
-const runInherit: CommandRunner = async ({ cmd, args, cwd }) => {
-  const { code } = await new Deno.Command(cmd, {
-    args: [...args],
-    cwd,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  return { code };
-};
-
 /** Print an `add` report (after the commands ran). */
 function printAddReport(report: AddCapabilitiesReport): void {
   for (const path of report.written) console.log(`  wrote      ${path}`);
@@ -712,7 +701,7 @@ async function mobileFingerprint(ctx: CommandContext): Promise<void> {
  * @param run Runs `add`'s package install and `cap sync`.
  * @returns The command spec.
  */
-export function createMobileCommand(run: CommandRunner = runInherit): CommandSpec {
+export function createMobileCommand(run: CommandRunner = runInheritedCommand): CommandSpec {
   return {
     ...mobileCommandSpec,
     run: async (ctx) => {
