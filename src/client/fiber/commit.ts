@@ -13,6 +13,7 @@ import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef, updateRef } from "../dom-props.ts";
+import { stampFiber } from "../dom-fiber-map.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import { getActivitySupport } from "./activity-support.ts";
@@ -111,6 +112,7 @@ function commitMutation(wipRoot: Fiber): void {
     if (f.tag === "singleton") {
       getSingletonSupport()!.commit(f);
     } else if (f.tag === "host") {
+      stampFiber(f.stateNode, f); // its committed props are now these (event dispatch reads them)
       applyProps(
         f.stateNode as Element,
         f,

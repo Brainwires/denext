@@ -316,6 +316,10 @@ export interface FireEvent {
   submit(el: TestElement, init?: Record<string, unknown>): Promise<void>;
   /** Fire a `keydown` (e.g. `{ key: "Enter" }`). */
   keyDown(el: TestElement, init?: Record<string, unknown>): Promise<void>;
+  /** Focus `el`: `focus` then the bubbling `focusin` that `onFocus` listens to (as in React). */
+  focus(el: TestElement, init?: Record<string, unknown>): Promise<void>;
+  /** Blur `el`: `blur` then the bubbling `focusout` that `onBlur` listens to (as in React). */
+  blur(el: TestElement, init?: Record<string, unknown>): Promise<void>;
 }
 
 async function dispatch(
@@ -342,6 +346,14 @@ const fireEvent = Object.assign(
       dispatch(el, "input", init),
     submit: (el: TestElement, init?: Record<string, unknown>) => dispatch(el, "submit", init),
     keyDown: (el: TestElement, init?: Record<string, unknown>) => dispatch(el, "keydown", init),
+    focus: async (el: TestElement, init?: Record<string, unknown>) => {
+      await dispatch(el, "focus", init);
+      await dispatch(el, "focusin", init);
+    },
+    blur: async (el: TestElement, init?: Record<string, unknown>) => {
+      await dispatch(el, "blur", init);
+      await dispatch(el, "focusout", init);
+    },
   },
 ) as FireEvent;
 
@@ -380,7 +392,7 @@ export const userEvent: UserEvent = {
   async click(el: TestElement): Promise<void> {
     await dispatch(el, "pointerdown");
     await dispatch(el, "mousedown");
-    await dispatch(el, "focus");
+    await fireEvent.focus(el);
     await dispatch(el, "pointerup");
     await dispatch(el, "mouseup");
     await dispatch(el, "click");

@@ -35,8 +35,10 @@ export interface TestEvent {
   target: DomEl;
   /** The element whose listener is currently running. */
   currentTarget: DomEl;
-  /** Whether the event bubbles (all synthetic events here do). */
+  /** Whether the event bubbles (all but focus/blur/enter/leave/load/error/scroll here). */
   bubbles: boolean;
+  /** Set once `stopPropagation()` is called (the DOM's stop-propagation flag). */
+  cancelBubble: boolean;
   /** Whether `preventDefault()` was called. */
   defaultPrevented: boolean;
   /** Mark the event's default action as prevented. */
@@ -239,11 +241,16 @@ export class DomDocument {
   }
 }
 
+/** Event types that do not bubble (they still run capture listeners on the way down). */
+const NON_BUBBLING = new Set(
+  "focus blur mouseenter mouseleave pointerenter pointerleave load error scroll".split(" "),
+);
+
 /**
  * Dispatch an event on `target`, propagating through the tree exactly as a browser
  * would: a capture phase from the root down, then a bubble phase from the target
- * up. denext attaches listeners directly on elements, so this drives both the
- * target's handler and any ancestor (delegated) handlers.
+ * up. denext dispatches most handlers from the root container (event delegation), so
+ * this drives both the target's handler and any ancestor handlers.
  *
  * @param target The element to dispatch on.
  * @param type The event type (e.g. `"click"`).
@@ -255,13 +262,15 @@ export function fireEventOn(target: DomEl, type: string, init: Record<string, un
     type,
     target,
     currentTarget: target,
-    bubbles: true,
+    bubbles: !NON_BUBBLING.has(type),
+    cancelBubble: false,
     defaultPrevented: false,
     preventDefault() {
       this.defaultPrevented = true;
     },
     stopPropagation() {
       stopped = true;
+      this.cancelBubble = true;
     },
     ...init,
   };
@@ -272,8 +281,9 @@ export function fireEventOn(target: DomEl, type: string, init: Record<string, un
     event.currentTarget = path[i];
     path[i].captureListeners.get(type)?.forEach((fn) => fn(event));
   }
-  // Bubble: target → root.
-  for (let i = 0; i < path.length && !stopped; i++) {
+  // Bubble: target → root (just the target for a non-bubbling type).
+  const last = event.bubbles ? path.length : 1;
+  for (let i = 0; i < last && !stopped; i++) {
     event.currentTarget = path[i];
     path[i].listeners.get(type)?.forEach((fn) => fn(event));
   }

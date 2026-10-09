@@ -21,6 +21,30 @@ and this project adheres to
   element allocated one at mount; the first handler now creates it. With the smaller fiber, a
   10,000-row list of static rows (a component, two elements and two text nodes each) uses 25 %
   less heap after mounting and 30 % less once it has re-rendered.
+- **Event handlers are delegated to the root, as in React 17+ — and with React's behaviour.**
+  A bubbling handler (`onClick`, `onKeyDown`, `onInput` / `onChange`, `onPointerDown`, `onSubmit`,
+  …) no longer adds a listener and a wrapper closure to its element, nor swaps them on every
+  render that passes a new function: each root container and portal target listens once per
+  event type, and the dispatcher reads the handlers from the elements' committed props.
+  Behaviour now matches React where it used to follow the DOM:
+  - `onFocus` / `onBlur` listen to the bubbling `focusin` / `focusout` (`event.type` still reads
+    `"focus"` / `"blur"`), so a parent's `onFocus` fires when a child gains focus.
+  - `onMouseEnter` / `onMouseLeave` / `onPointerEnter` / `onPointerLeave` are derived from the
+    over/out events: leave runs from the element left up to the common ancestor, then enter from
+    below it down to the element entered.
+  - An event inside a portal bubbles to the components that rendered the portal, not to the DOM
+    ancestors of its target, and a nested root's events reach the outer root's handlers after its
+    own.
+  - `stopPropagation()` in a handler stops the event at the root container, so a `document`
+    listener (a "click outside" handler) no longer sees it; a native listener on an element
+    between the target and the root runs before the bubbling handlers.
+
+  Events that do not bubble (`onScroll`, `onLoad`, `onError`, media events, `onToggle`, …),
+  `onWheel` / `onTouch*` (a root listener for them would hold scrolling on the main thread) and
+  unknown event types (a custom element's) keep a listener on their element. A 10,000-row list
+  with an `onClick` per row uses 10 % less heap after mounting. denext/testing's `fireEvent`
+  gains `focus` / `blur` (each sends the focus event, then `focusin` / `focusout`), and its
+  `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer bubble.
 
 ### Fixed
 

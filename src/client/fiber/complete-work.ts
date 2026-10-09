@@ -66,7 +66,6 @@ function completeHost(wip: Fiber): void {
     // Update: applyProps + re-sync deferred to the commit (mutation) phase — only when a
     // prop other than `children` changed (React's prepareUpdate diff). applyProps over
     // equal props is a no-op, so a re-rendered list of unchanged rows commits no work.
-    stampFiber(wip.stateNode, wip); // keep the reverse map on the live buffer
     if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
     return;
   }
@@ -86,7 +85,10 @@ function completeHost(wip: Fiber): void {
   // A new `<select>` picks its option once the options are in it (hydration keeps the
   // server's — or the user's — selection).
   if (fresh && wip.vnode.type === "select") initSelect(wip.stateNode as Element, props);
-  stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
+  // Index node → fiber for event dispatch (events.ts). A fresh node is only reachable once this
+  // render commits; an update re-records at its commit (commitMutation), never at render, so an
+  // abandoned render's handlers never run.
+  stampFiber(wip.stateNode, wip);
   wip.flags |= Placement;
 }
 

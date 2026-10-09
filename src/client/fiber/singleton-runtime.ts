@@ -14,6 +14,7 @@
 //   this layout set.
 
 import { applyProps, domAttrName } from "../dom-props.ts";
+import { stampFiber } from "../dom-fiber-map.ts";
 import { onErrorFor } from "./boundaries.ts";
 import { hostPropsChanged } from "./complete-work.ts";
 import { isHydrating } from "./hydration.ts";
@@ -138,6 +139,7 @@ function commit(f: Fiber): void {
   const next: Props = f.vnode.props ?? {};
   const prev = previousProps(f, el);
   takeBack(foreign.get(el), prev, next);
+  stampFiber(el, f); // event dispatch reads the adopted element's committed props from here
   applyProps(el, f, attrsOnly(prev), attrsOnly(next), onErrorFor(f));
   patchClass(el, classOf(prev), classOf(next));
 }

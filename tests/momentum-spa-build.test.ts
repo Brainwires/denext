@@ -34,7 +34,7 @@ Object.defineProperty(globalThis, "document", {
   configurable: true,
   value: { addEventListener() {}, removeEventListener() {} },
 });
-createRoot({});
+createRoot({ addEventListener() {} });
 setTimeout(() => {
   const patched = Object.getOwnPropertyDescriptor(El.prototype, "scrollTop").get !== original;
   console.log("installed:" + patched);

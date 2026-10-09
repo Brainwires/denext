@@ -20,6 +20,7 @@ import {
 } from "../jsx/dom-attributes.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
+import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -291,12 +292,15 @@ export function detachRef(state: HostState): void {
 /**
  * React's event-prop names don't always match DOM event types. Map the ones that
  * differ (keyed by the lowercased React name, minus `on`/`Capture`): React's
- * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur), and
- * `onDoubleClick` is `dblclick`. Everything else lowercases directly.
+ * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur),
+ * `onDoubleClick` is `dblclick`, and `onFocus` / `onBlur` are the bubbling `focusin` /
+ * `focusout` (React 17+). Everything else lowercases directly.
  */
 const REACT_EVENT_MAP: Record<string, string> = {
   change: "input",
   doubleclick: "dblclick",
+  focus: "focusin",
+  blur: "focusout",
 };
 
 interface ParsedEvent {
@@ -318,41 +322,6 @@ function parseEvent(prop: string): ParsedEvent {
   return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
-// React's SyntheticEvent members that denext's native event lacks, installed as own
-// properties on each dispatched event (never on `Event.prototype`, so nothing leaks into
-// code outside denext's handlers). One shared object of methods that read `this`, so no
-// per-event closures. `persist()` is a no-op since React 17 (events are never pooled).
-const SYNTHETIC_MEMBERS: Record<string, unknown> = {
-  persist() {},
-  isPersistent: () => true,
-  isDefaultPrevented(this: Event): boolean {
-    return !!this.defaultPrevented;
-  },
-  isPropagationStopped(this: Event): boolean {
-    // `cancelBubble` reads back the event's stop-propagation flag (DOM Living Standard).
-    return !!this.cancelBubble;
-  },
-};
-
-/**
- * React-compat: give the native event the SyntheticEvent surface libraries call.
- * `nativeEvent` — libraries (Base UI / floating-ui-react, etc.) reach the DOM event via
- * `event.nativeEvent` (and gate on `"nativeEvent" in event`); React's
- * `SyntheticEvent.nativeEvent` IS the DOM event and denext's event already is that DOM
- * event, so the self-reference is faithful. `persist()` / `isPersistent()` — React 17+
- * keeps them as no-op / `true` (react-native-web's ScrollView calls `e.persist()` on every
- * scroll). `isDefaultPrevented()` / `isPropagationStopped()` read the native flags. Runs
- * once per event: a bubbling event keeps the members for the next handler.
- */
-function addSyntheticEventMembers(event: unknown): void {
-  if (!event || typeof event !== "object" || "nativeEvent" in event) return;
-  try {
-    const e = event as Record<string, unknown>;
-    for (const k in SYNTHETIC_MEMBERS) if (!(k in e)) e[k] = SYNTHETIC_MEMBERS[k];
-    e.nativeEvent = event;
-  } catch { /* non-extensible event (rare) — leave as-is */ }
-}
-
 function setListener(
   el: Element,
   state: HostState,
@@ -364,6 +333,9 @@ function setListener(
   const key = prop; // key by React prop name so distinct props never collide
   const existing = state.listeners?.get(key);
   if (existing) el.removeEventListener(ev.type, existing, ev.capture);
+  // A bubbling event is dispatched from the root / portal container (fiber/events.ts), which
+  // reads the element's committed props: nothing to attach here.
+  if (typeof handler === "function" && delegates(ev.type, ev.capture, prop)) return;
   if (typeof handler === "function") {
     // Wrap so a throw in the handler routes to the nearest error boundary
     // (React can't catch event-handler errors; denext can).

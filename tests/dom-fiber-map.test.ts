@@ -41,12 +41,12 @@ Deno.test("fiberForNode returns undefined for an unstamped node", () => {
   assertEquals(fiberForNode(null), undefined);
 });
 
-Deno.test("re-stamps the live buffer across an update", () => {
+Deno.test("re-stamps the committed buffer when an element's props change", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
 
   function App({ label }: { label: string }) {
-    return h("button", { id: "b" }, label);
+    return h("button", { id: "b", title: label }, label);
   }
   const root = createRoot(container as Any);
   root.render(h(App as Any, { label: "one" }));
@@ -61,6 +61,7 @@ Deno.test("re-stamps the live buffer across an update", () => {
 
   const second = fiberForNode(button);
   assert(second, "expected a fiber after update");
-  // The node is shared across buffers; the map tracks whichever rendered last.
-  assertEquals(second!.vnode.props.children, "two");
+  // The node is shared across buffers; the map tracks the buffer whose props were committed
+  // last (event dispatch reads an element's handlers from it).
+  assertEquals(second!.vnode.props.title, "two");
 });

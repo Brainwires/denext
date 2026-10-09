@@ -117,7 +117,8 @@ function routeToBoundary(inst: Fiber, error: unknown): void {
   triggerBoundary(boundary, error);
 }
 
-function handleEventError(inst: Fiber, error: unknown): void {
+/** Route an event handler's error: a redirect navigates, a control signal rethrows, else a boundary. */
+export function handleEventError(inst: Fiber, error: unknown): void {
   if (isRedirect(error)) {
     if (typeof location !== "undefined") location.href = error.url;
     return;

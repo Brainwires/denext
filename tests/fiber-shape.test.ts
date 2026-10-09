@@ -65,7 +65,9 @@ Deno.test("plain rows allocate no extension and no listener map, across both buf
   }
 });
 
-Deno.test("a handler added on update gets a listener map shared by both buffers", () => {
+Deno.test("an element listener added on update gets a map shared by both buffers", () => {
+  // `scroll` does not bubble, so it keeps its own listener on the element (a bubbling
+  // handler is dispatched from the root and needs no map at all).
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   const clicks: number[] = [];
@@ -73,7 +75,7 @@ Deno.test("a handler added on update gets a listener map shared by both buffers"
   function App(): VNode {
     const [stage, set] = useState(0);
     setStage = set;
-    const props = stage === 0 ? {} : { onClick: () => clicks.push(stage) };
+    const props = stage === 0 ? {} : { onScroll: () => clicks.push(stage) };
     return h("button", props, "b") as VNode;
   }
   createRoot(container as Any).render(h(App, null));
@@ -82,13 +84,13 @@ Deno.test("a handler added on update gets a listener map shared by both buffers"
   assertEquals(fiberForNode(button)!.listeners, undefined, "no handler, no map");
   setStage(1);
   flushSync();
-  button.dispatch("click");
+  button.dispatch("scroll");
   setStage(2); // the handler swaps through the other buffer, which must see the same map
   flushSync();
-  button.dispatch("click");
+  button.dispatch("scroll");
   setStage(0); // removed again: the old listener is detached, not orphaned
   flushSync();
-  button.dispatch("click");
+  button.dispatch("scroll");
   assertEquals(clicks, [1, 2]);
   const f = fiberForNode(button)!;
   assert(f.listeners !== undefined && f.listeners === f.alternate?.listeners, "one shared map");

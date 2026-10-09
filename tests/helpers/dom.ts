@@ -67,6 +67,11 @@ class FakeText extends FakeNode {
 
 type Listener = (event: FakeEvent) => void;
 
+/** Event types that do not bubble (they still run capture listeners on the way down). */
+const NON_BUBBLING = new Set(
+  "focus blur mouseenter mouseleave pointerenter pointerleave load error scroll".split(" "),
+);
+
 export interface FakeEvent {
   type: string;
   target: FakeElement;
@@ -198,17 +203,38 @@ export class FakeElement extends FakeNode {
     return { top: 0, left: 0, width: 0, height: 0 };
   }
 
-  /** Test helper: fire an event of `type` on this element (capture then bubble). */
+  /**
+   * Test helper: fire an event of `type` at this element and propagate it as a browser does —
+   * capture from the topmost ancestor down, then (for a bubbling type) bubble back up — so
+   * handlers delegated to the root container run. `stopPropagation()` stops it.
+   */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
+    const path: FakeElement[] = [this];
+    for (let n = this.parentNode; n instanceof FakeElement; n = n.parentNode) path.push(n);
     const event: FakeEvent = {
       type,
       target: this,
-      preventDefault: () => {},
-      stopPropagation: () => {},
+      currentTarget: this,
+      bubbles: !NON_BUBBLING.has(type),
+      cancelBubble: false,
+      defaultPrevented: false,
+      preventDefault() {
+        event.defaultPrevented = true;
+      },
+      stopPropagation() {
+        event.cancelBubble = true;
+      },
       ...extra,
     };
-    this.captureListeners.get(type)?.forEach((fn) => fn(event));
-    this.listeners.get(type)?.forEach((fn) => fn(event));
+    for (let i = path.length - 1; i >= 0 && !event.cancelBubble; i--) {
+      event.currentTarget = path[i];
+      path[i].captureListeners.get(type)?.forEach((fn) => fn(event));
+    }
+    const last = event.bubbles ? path.length : 1;
+    for (let i = 0; i < last && !event.cancelBubble; i++) {
+      event.currentTarget = path[i];
+      path[i].listeners.get(type)?.forEach((fn) => fn(event));
+    }
   }
 
   /** Serialize to an HTML-ish string for assertions. */

@@ -45,6 +45,7 @@ import {
   UnderProfilerBit,
 } from "./fiber.ts";
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
+import { listenOn } from "./events.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
 import { renderLanes } from "./scheduler.ts";
 
@@ -476,6 +477,7 @@ export function beginWork(wip: Fiber): Fiber | null {
     case "portal": {
       wip.stateNode = wip.vnode.props.target as Element;
       notePortalTarget(wip.stateNode);
+      listenOn(wip.stateNode); // the portal's events dispatch from its target (events.ts)
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,
