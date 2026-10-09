@@ -8,6 +8,8 @@ import {
   insertChild,
   type ListenerMethods,
   listenerMethods,
+  type ListenerTarget,
+  propagateEvent,
 } from "../../src/testing/dom.ts";
 
 export class FakeNode {
@@ -67,12 +69,7 @@ class FakeText extends FakeNode {
 
 type Listener = (event: FakeEvent) => void;
 
-/** Event types that do not bubble (they still run capture listeners on the way down). */
-const NON_BUBBLING = new Set(
-  "focus blur mouseenter mouseleave pointerenter pointerleave load error scroll".split(" "),
-);
-
-export interface FakeEvent {
+interface FakeEvent {
   type: string;
   target: FakeElement;
   [key: string]: unknown;
@@ -209,43 +206,12 @@ export class FakeElement extends FakeNode {
    * handlers delegated to the root container run. `stopPropagation()` stops it.
    */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
-    const path: FakeElement[] = [this];
-    for (let n = this.parentNode; n instanceof FakeElement; n = n.parentNode) path.push(n);
+    const path: ListenerTarget[] = [this];
+    let n: unknown = this.parentNode;
+    for (; n instanceof FakeElement; n = n.parentNode) path.push(n);
     // A browser propagates past <html> to the document (where hydrateDocument's root listens).
-    const doc = (path[path.length - 1] as { parentNode: unknown }).parentNode;
-    const docTarget = doc instanceof FakeDocument ? doc : null;
-    const event: FakeEvent = {
-      type,
-      target: this,
-      currentTarget: this,
-      bubbles: !NON_BUBBLING.has(type),
-      cancelBubble: false,
-      defaultPrevented: false,
-      preventDefault() {
-        event.defaultPrevented = true;
-      },
-      stopPropagation() {
-        event.cancelBubble = true;
-      },
-      ...extra,
-    };
-    if (docTarget) {
-      event.currentTarget = docTarget as unknown as FakeElement;
-      docTarget.docCaptureListeners.get(type)?.forEach((fn) => fn(event));
-    }
-    for (let i = path.length - 1; i >= 0 && !event.cancelBubble; i--) {
-      event.currentTarget = path[i];
-      path[i].captureListeners.get(type)?.forEach((fn) => fn(event));
-    }
-    const last = event.bubbles ? path.length : 1;
-    for (let i = 0; i < last && !event.cancelBubble; i++) {
-      event.currentTarget = path[i];
-      path[i].listeners.get(type)?.forEach((fn) => fn(event));
-    }
-    if (docTarget && event.bubbles && !event.cancelBubble) {
-      event.currentTarget = docTarget as unknown as FakeElement;
-      docTarget.docListeners.get(type)?.forEach((fn) => fn(event));
-    }
+    if (n instanceof FakeDocument) path.push(n);
+    propagateEvent(path, type, extra);
   }
 
   /** Serialize to an HTML-ish string for assertions. */
@@ -292,17 +258,13 @@ function textOf(node: FakeNode): string {
   return node.childNodes.map(textOf).join("");
 }
 
-function isCapture(opt: boolean | { capture?: boolean } | undefined): boolean {
-  return typeof opt === "boolean" ? opt : opt?.capture === true;
-}
-
 export class FakeDocument {
   /** The document body — created on first access, matching a real `document.body`. */
   readonly body: FakeElement;
   readonly documentElement: FakeElement;
-  /** Bubble- and capture-phase listeners; an element event visits them first and last. */
-  readonly docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
-  readonly docCaptureListeners = new Map<string, Set<(event: FakeEvent) => void>>();
+  /** Bubble- and capture-phase listeners; an element event visits them last and first. */
+  readonly listeners = new Map<string, Set<Listener>>();
+  readonly captureListeners = new Map<string, Set<Listener>>();
 
   /** The document head (a client runtime appends `<link>`s here). */
   readonly head: FakeElement;
@@ -332,23 +294,6 @@ export class FakeDocument {
     return el;
   }
 
-  /** Document-level listeners (the panel's Ctrl+Shift+D + element-picker handlers). */
-  addEventListener(
-    type: string,
-    fn: (event: FakeEvent) => void,
-    capture?: boolean | { capture?: boolean; once?: boolean },
-  ): void {
-    const map = isCapture(capture) ? this.docCaptureListeners : this.docListeners;
-    if (!map.has(type)) map.set(type, new Set());
-    map.get(type)!.add(fn);
-  }
-  removeEventListener(
-    type: string,
-    fn: (event: FakeEvent) => void,
-    capture?: boolean | { capture?: boolean },
-  ): void {
-    (isCapture(capture) ? this.docCaptureListeners : this.docListeners).get(type)?.delete(fn);
-  }
   /** Test helper: fire a document-level event of `type`. */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
     const event = {
@@ -358,8 +303,8 @@ export class FakeDocument {
       stopPropagation: () => {},
       ...extra,
     } as unknown as FakeEvent;
-    this.docCaptureListeners.get(type)?.forEach((fn) => fn(event));
-    this.docListeners.get(type)?.forEach((fn) => fn(event));
+    this.captureListeners.get(type)?.forEach((fn) => fn(event));
+    this.listeners.get(type)?.forEach((fn) => fn(event));
   }
   createElementNS(ns: string, tag: string): FakeElement {
     const el = new FakeElement(tag);
@@ -378,6 +323,10 @@ export class FakeDocument {
     return this.byId.get(id) ?? null;
   }
 }
+
+// Document-level listeners (the panel's Ctrl+Shift+D + element-picker handlers), as on elements.
+Object.assign(FakeDocument.prototype, listenerMethods);
+export interface FakeDocument extends ListenerMethods<Listener> {}
 
 /** Build a fresh document + container element for a test. */
 export function makeDom(): { doc: FakeDocument; container: FakeElement } {

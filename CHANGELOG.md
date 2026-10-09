@@ -18,6 +18,10 @@ and this project adheres to
   dispatcher is looked up on a global symbol. A build transform's import of any prebuilt runtime
   entry by framework URL (the compiler's, the AsyncContext transform's) now resolves to the one
   prebuilt runtime, in `denext export` (every platform) and `build`.
+- **`denext/testing`'s in-memory DOM reads listener options as a browser does.** An element's
+  `addEventListener(type, fn, { passive: true })` registered a capture-phase listener (any options
+  object read as `useCapture`); only `true` or `{ capture: true }` does now. Assigning
+  `event.cancelBubble = true` in a handler stops propagation, as `stopPropagation()` does.
 
 ## [3.4.2] - 2026-10-09
 
