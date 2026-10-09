@@ -184,7 +184,8 @@ export interface VirtualListOptions<T> {
    * the rows (`footer`: `ListFooterComponent`, a composer inset). Each defaults to `true`; a change
    * whose flag is `false` keeps the visible rows in place instead (LegendList's
    * `maintainScrollAtEnd.on`). `{ footer: false }` keeps a chat's messages still while its
-   * composer grows.
+   * composer grows. With all four `false` the list still opens at the end: its first row sizes
+   * and viewport size land there, until the first data change or scroll away from the end.
    */
   readonly pinEndOn?: {
     readonly data?: boolean;

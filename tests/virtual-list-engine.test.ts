@@ -421,6 +421,35 @@ Deno.test("core: anchor end — starts at the end, stays pinned on append / grow
   assertEquals(core.v, v, "unmoved while scrolled up");
 });
 
+Deno.test("core: anchor end with every pin flag off — opens at the end over its first sizes, then follows nothing", () => {
+  let keys = range(0, 100);
+  const core = new VirtualCore({
+    defaultSize: 50,
+    anchor: "end",
+    pinOnData: false,
+    pinOnItems: false,
+    pinOnLayout: false,
+    pinOnFooter: false,
+  });
+  core.setMetrics(300, 0, 0);
+  core.setSource(source(keys));
+  core.initialEnd();
+  // Opening: the viewport and the first measurements keep the end.
+  core.setMetrics(500, 0, 0);
+  assertEquals(core.v, core.vmax, "the viewport size lands while opening");
+  core.measure([[99, 120]]);
+  assertEquals(core.v, core.vmax, "a first measurement lands while opening");
+  // A data change ends the opening: the view stays, the new rows sit below it.
+  const v = core.v;
+  keys = [...keys, 100, 101];
+  core.setSource(source(keys));
+  assertEquals(core.v, v, "an append is not followed");
+  core.measure([[101, 400]]);
+  assertEquals(core.v, v, "a later size change is not followed");
+  core.setMetrics(600, 0, 0);
+  assertEquals(core.v, v, "a later viewport change is not followed");
+});
+
 Deno.test("core: maintainVisibleContentPosition=false leaves the offset alone", () => {
   let keys = range(100, 300);
   const core = new VirtualCore({ defaultSize: 50, maintainVisibleContentPosition: false });

@@ -244,6 +244,37 @@ window.scenarios = {
     return { atStart, afterAppend, afterGrow, afterTop, totals: totals.length, grew };
   },
 
+  async legendNoPin(atEnd) {
+    // LegendList without \`maintainScrollAtEnd\` (unset or false) opens at the end
+    // (\`initialScrollAtEnd\`) but never follows later changes: an append leaves the view where
+    // it was, so the new rows sit below it.
+    let ref = null;
+    let data = rowsOf(300);
+    if (root) root.unmount();
+    if (host) host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const props = () => {
+      const p = {
+        data, ref: (x) => { ref = x; }, keyExtractor: (r) => r.id, estimatedItemSize: 40,
+        initialScrollAtEnd: true, style: { height: "400px" },
+        renderItem: ({ item }) => h("div", { style: { height: "40px", boxSizing: "border-box" } }, item.text),
+      };
+      if (atEnd !== undefined) p.maintainScrollAtEnd = atEnd;
+      return p;
+    };
+    flushSync(() => root.render(h(LegendList, props())));
+    const s = sc();
+    const gap = () => Math.round(s.scrollHeight - s.clientHeight - s.scrollTop);
+    const open = await settled(gap, (g) => g === 0);
+    data = [...data, ...rowsOf(310).slice(300)];
+    flushSync(() => root.render(h(LegendList, props())));
+    await settled(() => s.scrollHeight, (h2) => h2 === 12400);
+    await frames(10);
+    return { open, gap: gap(), height: s.scrollHeight };
+  },
+
   async legendTimeline(grow) {
     // T3 Code's MessagesTimeline: 2,000 messages of varying heights (none known up front; with
     // GROW each renders small and takes its real height a frame after mount), the props it
@@ -437,10 +468,11 @@ window.scenarios = {
 
   async progressive(on) {
     const busy = (ms) => { const t = performance.now(); while (performance.now() - t < ms) { /* heavy row */ } };
+    let renders = 0;
     mount({
       count: 1000000, getItem: (i) => i, estimatedItemSize: 40, style: { height: "600px" },
       progressive: on,
-      renderItem: (i) => { busy(1.5); return h("div", { style: { height: "40px" } }, "row " + i); },
+      renderItem: (i) => { renders++; busy(1.5); return h("div", { style: { height: "40px" } }, "row " + i); },
     });
     await frames(4);
     const s = sc();
@@ -457,25 +489,31 @@ window.scenarios = {
     };
     requestAnimationFrame(gapLoop);
     let maxWork = 0;
+    let maxRows = 0;
     let workStart = -1;
-    const onScroll = () => { if (workStart < 0) workStart = performance.now(); };
+    let rendersAtStart = 0;
+    const onScroll = () => {
+      if (workStart < 0) { workStart = performance.now(); rendersAtStart = renders; }
+    };
     document.addEventListener("scroll", onScroll, { capture: true, passive: true });
     let placeholders = 0;
     for (let f = 0; f < 60; f++) {
       s.scrollTop += 900;
       requestAnimationFrame(() => {
-        if (workStart >= 0) maxWork = Math.max(maxWork, performance.now() - workStart);
+        if (workStart >= 0) {
+          maxWork = Math.max(maxWork, performance.now() - workStart);
+          maxRows = Math.max(maxRows, renders - rendersAtStart);
+        }
         workStart = -1;
       });
       await frame();
       placeholders = Math.max(placeholders, host.querySelectorAll("[data-vl-placeholder]").length);
     }
     document.removeEventListener("scroll", onScroll, { capture: true });
-    await new Promise((r) => setTimeout(r, 400));
-    await frames(3);
+    // Poll (bounded) for the slices to finish: no placeholder left, on two frames in a row.
+    const left = await settled(() => host.querySelectorAll("[data-vl-placeholder]").length, (n) => n === 0, 600);
     gapOn = false;
-    const left = host.querySelectorAll("[data-vl-placeholder]").length;
-    return { maxWork: Math.round(maxWork), maxGap: Math.round(maxGap), placeholders, left };
+    return { maxWork: Math.round(maxWork), maxRows, maxGap: Math.round(maxGap), placeholders, left };
   },
 };
 window.__ready = true;
@@ -657,6 +695,19 @@ Deno.test({
       );
     }
 
+    for (const atEnd of ["undefined", "false"]) {
+      await t.step(
+        `lists: "denext" LegendList maintainScrollAtEnd ${atEnd}: opens at the end, appends are not followed`,
+        async () => {
+          const r = await run<Record<string, number>>(`window.scenarios.legendNoPin(${atEnd})`);
+          report[`legendNoPin_${atEnd}`] = r;
+          assertEquals(r.open, 0, "opens at the very end");
+          assertEquals(r.height, 12400, "the appended rows are laid out");
+          assertEquals(r.gap, 400, "the 10 appended rows sit below the view: no pin");
+        },
+      );
+    }
+
     for (const footerLayout of [false, true]) {
       await t.step(
         `lists: "denext" LegendList maintainScrollAtEnd.on.footerLayout: ${footerLayout} — the composer grows at the end`,
@@ -730,13 +781,18 @@ Deno.test({
         report.progressive = { off, on };
         assert(on.placeholders > 0, "placeholders were shown while flinging");
         assertEquals(on.left, 0, "every row rendered its content after the fling");
+        // Rows rendered inside a scroll frame are the work's deterministic measure.
         assert(
-          on.maxWork < off.maxWork,
-          `progressive frames are lighter (${on.maxWork} < ${off.maxWork} ms)`,
+          on.maxRows < off.maxRows,
+          `progressive frames render fewer rows (${on.maxRows} < ${off.maxRows})`,
         );
-        // Whole-frame gaps are wall-clock: asserted only on an idle machine.
+        // Milliseconds are wall-clock: asserted only on an idle machine.
         const [load1] = Deno.loadavg();
         if (load1 < 4) {
+          assert(
+            on.maxWork < off.maxWork,
+            `progressive frames are lighter (${on.maxWork} < ${off.maxWork} ms)`,
+          );
           assert(on.maxGap < off.maxGap, `shorter frame gaps (${on.maxGap} < ${off.maxGap} ms)`);
         }
       },

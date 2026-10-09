@@ -113,13 +113,16 @@ export interface MaintainScrollAtEndOptions {
 }
 
 /**
- * `maintainScrollAtEnd.on` as the engine's `pinEndOn`: undefined (every change pins) for `true`,
- * an object without `on`, or no `maintainScrollAtEnd`; with `on`, only its `true` keys.
+ * `maintainScrollAtEnd` as the engine's `pinEndOn`: undefined (every change pins) for `true` or
+ * an object without `on`; with `on`, only its `true` keys; with `false` or no
+ * `maintainScrollAtEnd`, nothing pins (the list opens at the end with `initialScrollAtEnd` and
+ * is not followed after, as LegendList's).
  */
 function pinTriggers(
   atEnd: LegendListProps<unknown>["maintainScrollAtEnd"],
 ): EngineOptions["pinEndOn"] {
-  if (typeof atEnd !== "object" || atEnd === null || !("on" in atEnd)) return undefined;
+  if (!atEnd) return { data: false, items: false, layout: false, footer: false };
+  if (typeof atEnd !== "object" || !("on" in atEnd)) return undefined;
   const on = atEnd.on ?? {};
   return {
     data: on.dataChange === true,

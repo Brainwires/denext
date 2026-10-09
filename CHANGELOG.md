@@ -101,6 +101,14 @@ and this project adheres to
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
 
+- **LegendList without `maintainScrollAtEnd` no longer follows the end** (React Native mode and
+  the `lists: "denext"` DOM build). With it unset or `false`, an end-anchored list
+  (`initialScrollAtEnd`, `alignItemsAtEnd`) still pinned to the end on every change; real
+  LegendList opens at the end and then leaves the view alone, so an append, a growing last row
+  or a resize now keeps the visible rows where they are. The list still opens at the end over
+  its first measurements (the engine's opening phase: row sizes and the viewport keep the end
+  until the first data change or scroll away). `maintainScrollAtEnd: true` and `{ on }` are
+  unchanged.
 - **`denext mobile assets` removes the app icon images it replaced.** It rewrote the iOS
   `AppIcon.appiconset/Contents.json` and left behind the images the previous one named and the
   new one does not (a dark icon no longer configured, an older catalog's sizes), which kept

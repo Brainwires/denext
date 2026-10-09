@@ -77,7 +77,10 @@ export interface CoreConfig {
    * `maintainScrollAtEnd.on`): a data change, a row's size (a measurement or a hint), the
    * viewport's size, and the size of what follows the rows (a footer). Each defaults to `true`;
    * a change whose flag is `false` keeps the visible rows in place instead. A header's size
-   * always keeps it pinned.
+   * always keeps it pinned. While the list is opening at the end (from `initialEnd` until the
+   * first data change to a non-empty list or the first time the view leaves the end) a row's
+   * size and the viewport's pin whatever the flags say: the end is where the list starts, and
+   * its first measurements and viewport size must not move it.
    */
   readonly pinOnData?: boolean;
   readonly pinOnItems?: boolean;
@@ -310,6 +313,7 @@ export class VirtualCore {
   /** Start at the end (anchor `"end"`). */
   initialEnd(): void {
     this.pinned = true;
+    this.#opening = true;
     this.s = 0;
     this.#setV(this.vmax);
   }
@@ -326,6 +330,8 @@ export class VirtualCore {
       return false;
     }
     const first = this.tree.count === 0 && old === EMPTY_SOURCE;
+    // A data change to a list that had rows ends the opening (see `CoreConfig.pinOnData`).
+    if (old.count > 0) this.#opening = false;
     this.#mutate(
       () => {
         this.#src = src;
@@ -609,8 +615,15 @@ export class VirtualCore {
     return true;
   }
 
+  /** Opening at the end (`initialEnd`): sizes keep the end until the view first leaves it. */
+  #opening = false;
+
   /** Whether a change of this kind keeps a pinned view at the end (see `CoreConfig.pinOnData`). */
   #pinOn(kind: "data" | "items" | "layout" | "footer"): boolean {
+    if (this.#opening && (kind === "items" || kind === "layout")) {
+      if (this.pinned) return true;
+      this.#opening = false;
+    }
     const c = this.#cfg;
     const flag = kind === "data"
       ? c.pinOnData
