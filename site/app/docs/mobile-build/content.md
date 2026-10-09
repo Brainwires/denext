@@ -89,7 +89,9 @@ The App Store icon is 1024×1024 and opaque. A smaller source is still used, ups
 warning that names a better one to add (for a monorepo whose Expo config computes its icon:
 export that icon as a PNG and set `mobile.icon`). A transparent icon is flattened onto the
 background colour (the manifest's `background_color`, the Expo adaptive background, or
-`--background-color`), with a warning. Android's adaptive layers come from the Expo config when
+`--background-color`), with a warning. An icon that looks pre-masked (a rounded rectangle on
+transparency) gets a warning too: iOS rounds the icon itself, so a pre-rounded one shows as a
+rounded rectangle inside a rounded rectangle; use the full-bleed square artwork. Android's adaptive layers come from the Expo config when
 it has them; otherwise the icon is scaled into the adaptive safe zone over the background colour.
 
 `denext migrate` (the Vite / CRA path and `--from expo`) runs the same search and records the

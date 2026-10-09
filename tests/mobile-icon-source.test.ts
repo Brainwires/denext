@@ -562,3 +562,56 @@ Deno.test("denext migrate --from expo: the app's own icon is recorded with its a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** Whether (`x`, `y`) lies outside a rounded square spanning `lo`..`hi` with corner radius `rad`. */
+function outsideRounded(x: number, y: number, lo: number, hi: number, rad: number): boolean {
+  if (x < lo || x > hi || y < lo || y > hi) return true;
+  const cx = Math.min(Math.max(x, lo + rad), hi - rad);
+  const cy = Math.min(Math.max(y, lo + rad), hi - rad);
+  return (x - cx) ** 2 + (y - cy) ** 2 > rad * rad;
+}
+
+/**
+ * A `side`² icon whose opaque shape is a rounded square (corner radius `radius` × side; a
+ * circle with `radius` 0.5 and no inset), inset by `inset` × side, on transparency.
+ */
+async function shapedPng(side: number, radius: number, inset = 0): Promise<Uint8Array> {
+  const r: Raster = solid(side, side, { r: 220, g: 20, b: 60 });
+  const lo = Math.round(inset * side);
+  const hi = side - 1 - lo;
+  const rad = Math.min(radius * side, (hi - lo + 1) / 2);
+  for (let i = 0; i < side * side; i++) {
+    if (outsideRounded(i % side, Math.floor(i / side), lo, hi, rad)) r.px[i * 4 + 3] = 0;
+  }
+  return await encodePng(r);
+}
+
+Deno.test("icon source: a pre-masked icon (rounded corners on transparency) is warned about", async () => {
+  const cases: [string, Uint8Array, boolean][] = [
+    ["rounded, full bleed", await shapedPng(1024, 0.2237), true],
+    [
+      "rounded, inset (a macOS-style icon)",
+      await shapedPng(1024, 0.2, 0.08),
+      true,
+    ],
+    ["full-bleed square", await png(1024), false],
+    ["one transparent pixel", await png(1024, 1024, { hole: true }), false],
+    ["a round logo", await shapedPng(1024, 0.5, 0.1), false],
+  ];
+  for (const [label, bytes, premasked] of cases) {
+    const dir = await tree({ "assets/icon.png": bytes });
+    try {
+      const search = await resolveIconSource(dir);
+      assertEquals(search.source?.kind, "assets", label);
+      const lines = formatIconSearch(search, { warnSize: false });
+      const warned = lines.some((l) => l.startsWith("warning:") && l.includes("pre-masked"));
+      assertEquals(warned, premasked, `${label}: ${lines.join(" | ")}`);
+      if (premasked) {
+        assertStringIncludes(lines.join("\n"), "assets/icon.png looks pre-masked");
+        assertStringIncludes(lines.join("\n"), "rounded rectangle inside a rounded rectangle");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});

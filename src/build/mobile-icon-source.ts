@@ -67,6 +67,11 @@ export interface IconSearch {
   readonly root: string;
   readonly source: IconSource | null;
   readonly notes: readonly string[];
+  /**
+   * Problems with the chosen icon itself: one that looks pre-masked (rounded corners on
+   * transparency), which iOS masks again.
+   */
+  readonly warnings: readonly string[];
   /** What to add for a sharper icon, when the chosen one is under 1024². */
   readonly hint: string;
 }
@@ -619,7 +624,90 @@ export async function resolveIconSource(root: string): Promise<IconSearch> {
   const hint = s.hint ||
     "add a 1024×1024 PNG and set `mobile.icon` to it in denext.config.ts (or save it as " +
       "assets/icon.png)";
-  return { root, source, notes: s.notes, hint };
+  const warnings = source && await isPreMasked(source.icon)
+    ? [
+      `${s.rel(source.icon)} looks pre-masked (rounded corners on transparency): iOS applies ` +
+      "its own rounded mask, so the app shows a rounded rectangle inside a rounded rectangle. " +
+      "Use a full-bleed square icon (the artwork to the edges, no rounding, no transparency)",
+    ]
+    : [];
+  return { root, source, notes: s.notes, warnings, hint };
+}
+
+/** An alpha at or above this counts as part of the icon's shape. */
+const SHAPE_ALPHA = 128;
+
+/** Whether pixel (`x`, `y`) of `r` (rounded to the grid) is part of the shape. */
+type ShapeTest = (x: number, y: number) => boolean;
+
+/** The bounding box of the opaque pixels (inclusive), or null when there are none. */
+interface Box {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+}
+
+/** The bounding box of `solid`'s pixels in a `width`×`height` image. */
+function shapeBox(width: number, height: number, solid: ShapeTest): Box | null {
+  let [x0, y0, x1, y1] = [width, height, -1, -1];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!solid(x, y)) continue;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+  }
+  return x1 < 0 ? null : { x0, y0, x1, y1 };
+}
+
+/** Whether `box` is a near square covering most of a `width`×`height` image. */
+function coversSquare(box: Box, width: number, height: number): boolean {
+  const [bw, bh] = [box.x1 - box.x0 + 1, box.y1 - box.y0 + 1];
+  return bw >= 0.6 * width && bh >= 0.6 * height &&
+    Math.abs(bw - bh) <= 0.05 * Math.max(bw, bh);
+}
+
+/** Whether each corner of `box`, and a point just inside it on the diagonal, is transparent. */
+function cornersCut(box: Box, solid: ShapeTest): boolean {
+  const inset = Math.max(1, Math.round(0.02 * (box.x1 - box.x0 + 1)));
+  return [[box.x0, 1], [box.x1, -1]].every(([x, dx]) =>
+    [[box.y0, 1], [box.y1, -1]].every(([y, dy]) =>
+      !solid(x, y) && !solid(x + dx * inset, y + dy * inset)
+    )
+  );
+}
+
+/** Whether `box`'s four edges are part of the shape from 30% to 70% of their length. */
+function straightEdges(box: Box, solid: ShapeTest): boolean {
+  return [0.3, 0.5, 0.7].every((t) => {
+    const x = box.x0 + t * (box.x1 - box.x0);
+    const y = box.y0 + t * (box.y1 - box.y0);
+    return solid(x, box.y0) && solid(x, box.y1) && solid(box.x0, y) && solid(box.x1, y);
+  });
+}
+
+/**
+ * Whether the icon is a rounded rectangle on transparency: the bounding box of its opaque
+ * pixels is a near square covering most of the image, every corner of that box is transparent
+ * (cut by the rounding), and its four edges are opaque from 30% to 70% of their length (straight
+ * sides, which rules out a round logo). A full-bleed square, or one with a few transparent
+ * pixels, is not.
+ *
+ * @param path The icon (a PNG / JPEG / WebP; JPEG has no transparency).
+ * @returns Whether it looks pre-masked; false when it cannot be decoded.
+ */
+async function isPreMasked(path: string): Promise<boolean> {
+  if (/\.jpe?g$/i.test(path)) return false;
+  const r = await Deno.readFile(path).then(decodeImage).catch(() => null);
+  if (!r) return false;
+  const solid: ShapeTest = (x, y) =>
+    r.px[(Math.round(y) * r.width + Math.round(x)) * 4 + 3] >= SHAPE_ALPHA;
+  const box = shapeBox(r.width, r.height, solid);
+  return box !== null && coversSquare(box, r.width, r.height) && cornersCut(box, solid) &&
+    straightEdges(box, solid);
 }
 
 /** A short description of a source's kind, for the report. */
@@ -661,6 +749,7 @@ export function formatIconSearch(
         `App Store icon and will look soft; ${search.hint}`,
     );
   }
+  for (const w of search.warnings) lines.push(`warning: ${w}`);
   for (const n of search.notes) lines.push(`note: ${n}`);
   return lines;
 }

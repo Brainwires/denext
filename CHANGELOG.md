@@ -194,6 +194,13 @@ and this project adheres to
   beside a leak-free control project at the same moment, and the leaky run fails only while it
   is still alive after 4x the control's time (at least 30 s).
 
+- **A pre-masked app icon is warned about.** The icon `denext mobile assets`, `denext mobile
+  build` and `denext migrate` find for a Capacitor shell can be one already rounded for display
+  (a rounded rectangle on transparency, as many web manifests and design exports ship). iOS
+  applies its own rounded mask, so the app showed a rounded rectangle inside a rounded
+  rectangle. The icon report now warns when the chosen icon looks pre-masked and asks for the
+  full-bleed square artwork.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added
