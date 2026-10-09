@@ -5,6 +5,7 @@
 // package script checks the signed executable; `denext desktop doctor` checks DENEXT_WINDOWS_CERT.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import { desktopWindowsTargetNote } from "../src/build/desktop.ts";
 import {
   authenticodeSignature,
@@ -195,4 +196,61 @@ Deno.test("desktop doctor: no CEF signing finding for webview, a trusted cert, n
     });
     assertEquals(report.findings.filter((f) => f.check === "cef-signing"), [], JSON.stringify(c));
   }
+});
+
+Deno.test({
+  name: "the default PowerShell runner: -EncodedCommand, the environment passed, null when absent",
+  ignore: Deno.build.os === "windows", // a fake powershell.exe on PATH; Windows has the real one
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const path = Deno.env.get("PATH") ?? "";
+    try {
+      // The fake echoes the probe's input back as the JSON Get-AuthenticodeSignature would print.
+      const fake = join(dir, "powershell.exe");
+      await Deno.writeTextFile(
+        fake,
+        '#!/bin/sh\n[ "$3" = "-EncodedCommand" ] || exit 2\n' +
+          'printf \'{"status":"UnknownError","message":"%s"}\\r\\n\' "$DENEXT_TRUST_FILE"\n',
+      );
+      await Deno.chmod(fake, 0o755);
+      Deno.env.set("PATH", dir);
+      assertEquals(await authenticodeSignature("App.exe", { os: "windows" }), {
+        status: "UnknownError",
+        message: "App.exe",
+      });
+      Deno.env.set("PATH", join(dir, "nothing-here"));
+      assertEquals(await authenticodeSignature("App.exe", { os: "windows" }), null);
+    } finally {
+      Deno.env.set("PATH", path);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("the probes: odd PowerShell output is no answer, odd fields get defaults", async () => {
+  const answer = (stdout: string): PowerShellRunner => () => Promise.resolve({ code: 0, stdout });
+  const win = (stdout: string) => ({ os: "windows", powershell: answer(stdout) });
+  assertEquals(await authenticodeSignature("x", win("null")), null);
+  assertEquals(await authenticodeSignature("x", win('{"status":3}')), null);
+  assertEquals(await authenticodeSignature("x", win('{"status":"Valid"}')), {
+    status: "Valid",
+    message: "",
+  });
+  assertEquals(await certificateTrust("c", undefined, win('{"trusted":"yes"}')), null);
+  assertEquals(await certificateTrust("c", undefined, win('{"trusted":false,"problems":"x"}')), {
+    trusted: false,
+    subject: "",
+    selfSigned: false,
+    problems: [],
+  });
+  const absent: PowerShellRunner = () => Promise.resolve(null);
+  assertEquals(await certificateTrust("c", "p", { os: "windows", powershell: absent }), null);
+  const bare = cefCertificateProblem({
+    trusted: false,
+    subject: "",
+    selfSigned: false,
+    problems: [],
+  })!;
+  assertStringIncludes(bare, "is a certificate this machine does not trust: no subject.");
+  assertStringIncludes(cefSignatureProblem({ status: "NotTrusted", message: "" })!, "(NotTrusted)");
 });

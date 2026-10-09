@@ -66,6 +66,9 @@ on:
       - "src/build/export-paths.ts"
       - "src/build/export.ts"
       - "src/build/platform-*.ts"
+      # The icon a package script derives when none is set (desktop-icon.ts).
+      - "src/build/mobile-icon-source.ts"
+      - "src/build/png-raster.ts"
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
       - "src/build/paths.ts"
