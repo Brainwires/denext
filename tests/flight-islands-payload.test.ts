@@ -16,12 +16,8 @@ import { generateFlightEntry } from "../src/build/bundle.ts";
 import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 import type { FlightNavPayload } from "../src/server/document.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
-import {
-  discardRetainedRoot,
-  navigate,
-  setFlightParser,
-  startClient,
-} from "../src/client/navigation.ts";
+import { discardRetainedRoot, navigate, startClient } from "../src/client/navigation.ts";
+import { setFlightParser } from "../src/client/flight-nav.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { useEffect, useState } from "../src/runtime/hooks.ts";
 import { islandWrapper } from "../src/jsx/island-wrapper.ts";

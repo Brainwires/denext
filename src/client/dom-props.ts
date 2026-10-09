@@ -5,7 +5,12 @@
 // and form-action handlers route thrown/rejected errors through an injected
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
-import { isValidAttrName, sanitizeUrlAttr, warnDangerousHtml } from "../jsx/render-to-string.ts";
+import {
+  isValidAttrName,
+  refusesUrlAttr,
+  warnDangerousHtml,
+  warnRefusedUrl,
+} from "../jsx/render-to-string.ts";
 import {
   cssPropertyName,
   cssPropertyValue,
@@ -72,11 +77,26 @@ function removeProp(el: Element, state: HostState, name: string, oldValue: unkno
   if (isValidAttrName(attr)) el.removeAttribute(attr);
 }
 
+/**
+ * The dev-only prop warnings (a `dangerouslySetInnerHTML` XSS sink, a refused dangerous URL),
+ * installed by the dev entries ({@linkcode installDomPropWarnings}, via `installDevtools`) so a
+ * production bundle carries neither message. Null in production: each call site is one `?.`.
+ */
+let devWarnings: {
+  html(tag: string): void;
+  url(attr: string, value: string): void;
+} | null = null;
+
+/** Install (or, with `false`, remove) the dev-only prop warnings. Called from the dev path. */
+export function installDomPropWarnings(on = true): void {
+  devWarnings = on ? { html: warnDangerousHtml, url: warnRefusedUrl } : null;
+}
+
 /** Raw HTML injection (React parity): apply innerHTML; warn (dev) about the XSS sink. */
 function applyDangerousHtml(el: Element, value: unknown): void {
   const html = (value as { __html?: unknown } | null | undefined)?.__html;
   if (typeof html !== "string") return;
-  warnDangerousHtml(el.tagName.toLowerCase());
+  devWarnings?.html(el.tagName.toLowerCase());
   el.innerHTML = html;
 }
 
@@ -458,12 +478,12 @@ function setAttribute(el: Element, name: string, value: unknown): void {
   // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) before
   // it reaches a URL-bearing attribute — the same guard the SSR serializer applies.
   const str = String(value);
-  const safe = sanitizeUrlAttr(tag, attr, str);
-  if (safe === null) {
+  if (refusesUrlAttr(tag, attr, str)) {
+    devWarnings?.url(attr, str);
     el.removeAttribute(attr);
     return;
   }
-  el.setAttribute(attr, safe);
+  el.setAttribute(attr, str);
 }
 
 /**

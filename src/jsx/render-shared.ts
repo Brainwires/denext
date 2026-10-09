@@ -27,7 +27,7 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-base.ts";
+import { renderClassToVNode } from "../compat/class-instance.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
 import {
   type HeadCollector,

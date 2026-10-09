@@ -32,6 +32,7 @@ import { renderPanel } from "./devtools-panel/render.ts";
 import { buildShell } from "./devtools-panel/shell.ts";
 import { buildStyles } from "./devtools-panel/styles.ts";
 import { installDuplicateKeyWarning } from "./fiber/reconcile-children.ts";
+import { installDomPropWarnings } from "./dom-props.ts";
 
 function isDev(): boolean {
   try {
@@ -164,6 +165,7 @@ export function installDevtools(): void {
   if (installed || !devtoolsAvailable()) return;
   // The reconciler's dev-only warnings ride the dev entries too (never a production bundle).
   installDuplicateKeyWarning();
+  installDomPropWarnings();
   const api = installInspector();
   if (!api) return;
   installed = true;

@@ -445,7 +445,7 @@ Deno.test("root.render() between a Suspense retry and its flush commits synchron
   // A retry marks the root's pending sync work as a pure reveal (animatable). A direct
   // `root.render` before the retry's microtask joins that work: it is an element update, so
   // it is urgent and must commit now, not wait on a view transition's update callback
-  // (commitFlightNav's resumabilityReboot then ran against the old DOM).
+  // (the Flight commit's resumabilityReboot then ran against the old DOM).
   const { root, tree, resolve, promise, container } = revealFixture();
   resolve();
   await promise; // the retry is scheduled; its sync flush is still queued

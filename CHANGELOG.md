@@ -60,6 +60,17 @@ and this project adheres to
   excludes a package, and `"!*"` turns the automatic mode off (`optimizePackageImports: false`
   still turns everything off).
 
+### Changed
+
+- **Every app's shared client runtime is 1.4 KB smaller (raw), with no change in behaviour.** An
+  app with no Flight route no longer ships the Flight soft-navigation runtime or the root-less
+  islands mount: both moved to a module only the Flight entry's `setFlightParser` reaches. The
+  class-component base classes (`Component` / `PureComponent`) now ship only in the on-demand
+  class runtime, where the server renderer's import used to hoist them into every app's shared
+  chunk. The client's dev-only warnings for `dangerouslySetInnerHTML` and a refused dangerous URL
+  are installed by `installDevtools` with the other dev warnings, so a production bundle carries
+  neither message. `examples/hello`'s shared chunks went from 65,427 B to 63,995 B.
+
 ### Fixed
 
 - **`denext profile --interact` no longer reports first-run state as a leak.** With
