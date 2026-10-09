@@ -40,7 +40,10 @@ import { tanstackCodeSplitPlugin } from "../tanstack-code-split.ts";
 import { spaFeatureFold } from "./features.ts";
 import { spaNativeRefresh } from "../refresh-modules.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
-import { optimizePackageImportsList } from "../optimize-package-imports.ts";
+import {
+  autoOptimizePackageImports,
+  optimizePackageImportsList,
+} from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import {
@@ -226,6 +229,7 @@ async function bundleCompatSpa(
     // Barrel imports of `optimizePackageImports` packages → their defining modules (lucide's
     // barrel + `dynamicIconImports` otherwise put every icon chunk on the startup path).
     optimizePackageImports: optimizePackageImportsList(config),
+    autoOptimizePackageImports: autoOptimizePackageImports(config),
     // `lists: "denext"`: `@legendapp/list/react` on denext's VirtualList (dom-lists.ts).
     domLists: domListsEnabled(config),
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace

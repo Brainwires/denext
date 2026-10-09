@@ -484,6 +484,15 @@ every `--platform` target included.
   exclude such a package with `"!pkg"`. Next's
   `experimental.optimizePackageImports` spelling is honored with a dev warning.
 
+  Packages that declare themselves side-effect free in their own `package.json`
+  (`"sideEffects": false`, or an array naming none of the modules the barrel loads) are
+  looked through **automatically**, unlisted, under stricter rules: the barrel must be the
+  file the build resolves the specifier to, a name re-exported from another package stays on
+  the barrel, and every module the barrel would have loaded must be side-effect free. This
+  also keeps a lazy route's modules out of the startup chunks when the startup graph imports
+  other names from the same barrel. `"!pkg"` excludes a package from it, and `"!*"` turns
+  the automatic mode off (`false` turns everything off).
+
   ```ts
   export default {
     optimizePackageImports: ["@acme/icons", "@acme/ui/*", "!recharts"],

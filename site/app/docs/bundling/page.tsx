@@ -109,9 +109,11 @@ export default {
         configure.
       </p>
       <Callout kind="note">
-        Only the boolean <code>"sideEffects": false</code>{" "}
-        form is honored; the array form is treated conservatively as having side effects (never
-        wrongly dropped). The native <code>deno bundle</code> path does its own tree-shaking.
+        The array form (<code>{`"sideEffects": ["*.css", "./dist/register.js"]`}</code>) is read as
+        esbuild and webpack read it: the files it names keep their side effects, every other file of
+        the package is side-effect-free. A pattern with a slash matches the package-relative path;
+        one without matches the file name anywhere in the package. The native{" "}
+        <code>deno bundle</code> path does its own tree-shaking.
       </Callout>
       <p>
         When a package&apos;s <code>module</code>{" "}
@@ -154,6 +156,25 @@ export default {
         runs. A barrel that runs code of its own (a call, a decorator, a directive) is detected and
         left alone.
       </Callout>
+      <h3>Automatic barrels</h3>
+      <p>
+        A package that declares itself side-effect-free (<code>"sideEffects": false</code>, or an
+        array that names none of the modules its barrel loads) gets the same rewrite without being
+        listed. Besides the module-graph savings, that fixes a code-splitting effect: when the
+        startup graph and a lazily loaded route import different names from one barrel, esbuild
+        places every module the barrel re-exports in a chunk the startup graph loads, the lazy
+        route&apos;s modules included. Rewritten imports keep each module with the code that uses it
+        (T3 Code with its list removed: boot JS 1.53 MB → 1.24 MB gzip with the ESM-entry fix above,
+        the same bytes as with the list).
+      </p>
+      <p>
+        The automatic path is narrower than a listed package: the barrel must be the file the build
+        itself resolves the specifier to (an alias, or the denext runtime owning a name, rules it
+        out); a name the barrel re-exports from another package stays on the barrel import; and
+        every module the barrel would have loaded must be side-effect-free by its package&apos;s own
+        declaration. <code>"!pkg"</code> excludes a package, and <code>"!*"</code>{" "}
+        turns the automatic mode off (listed packages are still rewritten).
+      </p>
       <Callout kind="note">
         The rewrite runs in the esbuild bundles (compat client/server and SPA, production builds and
         compat dev rebuilds). The unbundled per-module dev server and the native{" "}

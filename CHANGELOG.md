@@ -8,7 +8,32 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Barrels of side-effect-free packages are looked through automatically.** Under esbuild code
+  splitting, when the startup graph and a lazily loaded route import different names from one
+  barrel, every module the barrel re-exports lands in a chunk the startup graph loads, the lazy
+  route's modules included (plain esbuild 0.24–0.28 does this). T3 Code worked around it by
+  listing `@pierre/diffs`, `@pierre/trees` and `@base-ui/react` in `optimizePackageImports`.
+  Now a package that declares itself side-effect free in its own `package.json`
+  (`"sideEffects": false`, or an array naming none of the modules its barrel loads) gets the
+  same import rewrite unlisted, under stricter rules than a listed package: the barrel must be
+  the file the build itself resolves the specifier to (an alias or the denext runtime owning a
+  name rules it out), a name it re-exports from another package stays on the barrel import,
+  and every module the barrel would have loaded must be side-effect free by its package's own
+  declaration. T3 Code's boot JS with its list removed: 1,525,993 B gzip on 3.4.0, and
+  1,235,940 B with this release's fixes, byte for byte the build with the list. `"!pkg"`
+  excludes a package, and `"!*"` turns the automatic mode off (`optimizePackageImports: false`
+  still turns everything off).
+
 ### Fixed
+
+- **The `sideEffects` array form is honored.** denext resolves `node_modules` itself and marks
+  each resolved file for esbuild; it read only `"sideEffects": false` and treated the array form
+  (`["*.css", "./dist/web-components.js"]`) as "every file has side effects", so nothing in such
+  a package could be tree-shaken. The files the array names keep their side effects and every
+  other file is side-effect free, as esbuild and webpack read it (a pattern with a slash matches
+  the package-relative path, one without the file name anywhere).
 
 - **A `module` field that names a missing file no longer falls back to CommonJS.** lucide 0.564's
   `module` (`dist/esm/lucide.js`) is not in its tarball; rollup's `preserveModules` put the entry

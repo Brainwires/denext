@@ -1600,6 +1600,14 @@ export interface DenextConfig {
    * the modules beside the one a name comes from are never loaded, so a top-level side effect
    * in one of them no longer runs. Next's `experimental.optimizePackageImports` spelling is
    * honored, with a dev warning, when this field is absent.
+   *
+   * Packages whose own `package.json` declares them side-effect free (`"sideEffects": false`, or
+   * an array naming none of the modules the barrel loads) are looked through automatically,
+   * unlisted: the barrel must be the file the build resolves the specifier to, a name it
+   * re-exports from another package stays on the barrel, and every module the barrel would have
+   * loaded must be side-effect free. That also keeps a lazy route's modules out of the startup
+   * chunks when the startup graph imports other names from the same barrel. `"!pkg"` excludes a
+   * package from the automatic mode too, and `"!*"` turns the automatic mode off.
    */
   optimizePackageImports?: string[] | false;
   /**

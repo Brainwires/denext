@@ -32,7 +32,10 @@ import {
 } from "./platform-extensions.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { compileCssAsset } from "./css-url.ts";
-import { optimizePackageImportsList } from "./optimize-package-imports.ts";
+import {
+  autoOptimizePackageImports,
+  optimizePackageImportsList,
+} from "./optimize-package-imports.ts";
 import { CLIENT_PREFIX } from "./prod-server/assets.ts";
 import type { AssetOptions } from "./next-compat.ts";
 
@@ -143,6 +146,7 @@ export function compatBuildOptions(
     momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
     optimizePackageImports: optimizePackageImportsList(paths.config),
+    autoOptimizePackageImports: autoOptimizePackageImports(paths.config),
     domLists: domListsEnabled(paths.config),
     useCache: resolveCacheComponents(paths.config),
     cssImportMap,

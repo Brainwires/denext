@@ -6,10 +6,14 @@
 import { assert } from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "esbuild";
-import { appResolverPlugin, catalogResolverPlugin } from "../src/build/next-compat.ts";
+import {
+  appResolverPlugin,
+  catalogResolverPlugin,
+  withPackageSideEffects,
+} from "../src/build/next-compat.ts";
 
 /** Scaffold a temp barrel package `mypkg` (index re-exports a.js + b.js). */
-async function scaffold(sideEffects: boolean | undefined): Promise<{ dir: string; entry: string }> {
+async function scaffold(sideEffects: unknown): Promise<{ dir: string; entry: string }> {
   const dir = await Deno.makeTempDir({ prefix: "denext_treeshake_" });
   const pkgDir = join(dir, "node_modules", "mypkg");
   await Deno.mkdir(pkgDir, { recursive: true });
@@ -33,7 +37,7 @@ async function scaffold(sideEffects: boolean | undefined): Promise<{ dir: string
   return { dir, entry };
 }
 
-async function bundleOnce(sideEffects: boolean | undefined): Promise<string> {
+async function bundleOnce(sideEffects: unknown, native = false): Promise<string> {
   const { dir, entry } = await scaffold(sideEffects);
   try {
     const result = await esbuild.build({
@@ -43,7 +47,11 @@ async function bundleOnce(sideEffects: boolean | undefined): Promise<string> {
       format: "esm",
       treeShaking: true,
       logLevel: "silent",
-      plugins: [catalogResolverPlugin(dir, "all")],
+      // The compat chain: the app resolver claims the barrel's relative imports, the node_modules
+      // resolver the package itself (esbuild reads package.json only for paths IT resolves).
+      plugins: native
+        ? []
+        : [appResolverPlugin(join(dir, "deno.json")), catalogResolverPlugin(dir, "all")],
     });
     return new TextDecoder().decode(result.outputFiles![0].contents);
   } finally {
@@ -120,4 +128,51 @@ Deno.test("the app resolver marks a sideEffects:false package's relative imports
 
 Deno.test("the app resolver leaves a package without the declaration side-effectful", async () => {
   assert((await resolveRelativeInPackage(undefined)) === true, "expected sideEffects: true");
+});
+
+// The array form names the files that DO have side effects (`["./dist/web-components.js"]`,
+// `["*.css"]`); every other file of the package is side-effect free, as esbuild and webpack read
+// it. A pattern without a slash matches the file name anywhere in the package.
+
+Deno.test("sideEffects array: a file it does not name is tree-shaken like sideEffects:false", async () => {
+  for (const patterns of [["./other.js"], ["*.css"], ["dist/**"]]) {
+    const out = await bundleOnce(patterns);
+    assert(out.includes("USED_A_MARKER"), "the imported export must be kept");
+    assert(!out.includes("SIDE_EFFECT_RAN"), `b.js kept under ${JSON.stringify(patterns)}`);
+  }
+});
+
+Deno.test("sideEffects array: the compat chain keeps and drops exactly what esbuild does alone", async () => {
+  // esbuild reads package.json itself for the paths it resolves; denext's resolvers must mark
+  // their results to match, pattern for pattern.
+  for (const patterns of [["./b.js"], ["b.js"], ["*.js"], ["./*.js"], ["./other.js"], ["*.css"]]) {
+    const chain = (await bundleOnce(patterns)).includes("SIDE_EFFECT_RAN");
+    const alone = (await bundleOnce(patterns, true)).includes("SIDE_EFFECT_RAN");
+    assert(
+      chain === alone,
+      `${JSON.stringify(patterns)}: chain kept=${chain}, esbuild kept=${alone}`,
+    );
+  }
+});
+
+Deno.test("sideEffects array: the resolver marks exactly the files it does not name", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_treeshake_marks_" });
+  const pkgDir = join(dir, "node_modules", "marks");
+  try {
+    await Deno.mkdir(join(pkgDir, "dist", "components"), { recursive: true });
+    await Deno.writeTextFile(
+      join(pkgDir, "package.json"),
+      JSON.stringify({ name: "marks", sideEffects: ["./dist/components/register.js", "*.css"] }),
+    );
+    const free = async (rel: string) => {
+      await Deno.writeTextFile(join(pkgDir, rel), "");
+      return (await withPackageSideEffects(join(pkgDir, rel))).sideEffects === false;
+    };
+    assert(await free("dist/index.js"));
+    assert(await free("dist/components/button.js"));
+    assert(!await free("dist/components/register.js"), "named by path");
+    assert(!await free("dist/components/style.css"), "named by file-name pattern");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

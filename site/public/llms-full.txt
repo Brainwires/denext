@@ -686,7 +686,10 @@ automatically on the esbuild path. `optimizePackageImports` (Next's key, top-lev
 barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
 loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages,
 drop one with `"!pkg"`, or disable it with `false`. Listing a package asserts it is side-effect
-free. Applied by the esbuild bundles only (not unbundled dev or the native `deno bundle` path).
+free. A package whose own `package.json` declares `sideEffects` (`false`, or an array naming none of
+the barrel's modules) is rewritten unlisted too, so a lazy route's modules stay out of the startup
+chunks (`"!*"` turns that automatic mode off). Applied by the esbuild bundles only (not unbundled
+dev or the native `deno bundle` path).
 
 **Testing an app (no browser, JS-disabled path):**
 

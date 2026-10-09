@@ -53,6 +53,7 @@ import {
   dirname,
   extname,
   fromFileUrl,
+  globToRegExp,
   isAbsolute,
   join,
   relative,
@@ -69,7 +70,10 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
-import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
+import {
+  type AutoOptimizePackageImports,
+  withOptimizedPackageImports,
+} from "./optimize-package-imports.ts";
 import { preservedModulesEntry } from "./esm-entry.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
@@ -1212,6 +1216,12 @@ export interface BundleNextCompatModulesOptions {
    */
   optimizePackageImports?: readonly string[];
   /**
+   * The automatic barrel mode (see `autoOptimizePackageImports`): named imports of unlisted
+   * packages that declare `"sideEffects": false` are looked through too, under the same
+   * {@link resolveAllNodeModules} condition. Omit or pass null to rewrite listed packages only.
+   */
+  autoOptimizePackageImports?: AutoOptimizePackageImports | null;
+  /**
    * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
    * VirtualList-backed modules (see dom-lists.ts).
    */
@@ -1874,8 +1884,12 @@ async function selfPackageDir(fromDir: string, name: string): Promise<string | n
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
-/** owner-dir → whether its package.json declares `"sideEffects": false`. */
-const sideEffectFreePkg = new Map<string, boolean>();
+/**
+ * owner-dir → its package.json `sideEffects`: `false` (every file is side-effect free), the
+ * array form compiled to matchers (the files that DO have side effects), or `true` (anything
+ * else: absent, `true`, unreadable — every file is assumed to have side effects).
+ */
+const pkgSideEffects = new Map<string, Promise<false | SideEffectsMatcher[] | true>>();
 /** file-dir → the owning package dir (nearest ancestor with a package.json), or null. */
 const ownerPkgDir = new Map<string, string | null>();
 
@@ -1899,27 +1913,55 @@ async function ownerPackageDir(file: string): Promise<string | null> {
   return null;
 }
 
+/** One `sideEffects` array entry: a glob over the package-relative path, or over the file name. */
+interface SideEffectsMatcher {
+  re: RegExp;
+  basename: boolean;
+}
+
 /**
- * Whether the package owning `file` declares `"sideEffects": false` — so esbuild may drop
- * unused named re-exports from its barrel `index` files (a `lucide-react`/`@radix-ui` import
- * of one export no longer drags in the whole package). denext resolves node_modules itself
- * and hands esbuild a bare `{ path }`, so without this the tree-shaker must assume every
- * module has side effects and keeps them. Only the boolean `false` form is honored; the array
- * form (`["*.css"]`) is treated conservatively as "has side effects" (never wrongly dropped).
- * Cached per package dir (the field is constant for a build).
+ * A package's `sideEffects` array as matchers, the way esbuild and webpack read it: a pattern
+ * with a slash is a glob over the package-relative path (`./` optional), one without matches the
+ * file name in any directory (`"*.css"`).
+ */
+function sideEffectsMatchers(patterns: unknown[]): SideEffectsMatcher[] {
+  return patterns.filter((p): p is string => typeof p === "string" && p !== "").map((p) => ({
+    re: globToRegExp(p.replace(/^\.\//, ""), { extended: true, globstar: true }),
+    basename: !p.includes("/"),
+  }));
+}
+
+/** The `sideEffects` declaration of the package in `dir` (cached per directory). */
+function packageSideEffects(dir: string): Promise<false | SideEffectsMatcher[] | true> {
+  let hit = pkgSideEffects.get(dir);
+  if (!hit) {
+    hit = Deno.readTextFile(join(dir, "package.json")).then((text) => {
+      const field = JSON.parse(text)?.sideEffects;
+      if (field === false) return false;
+      return Array.isArray(field) ? sideEffectsMatchers(field) : true;
+    }).catch(() => true as const);
+    pkgSideEffects.set(dir, hit);
+  }
+  return hit;
+}
+
+/**
+ * Whether the package owning `file` declares it side-effect free — so esbuild may drop it when
+ * nothing it exports is used (a `lucide-react`/`@radix-ui` import of one export no longer drags
+ * in the whole package). denext resolves node_modules itself and hands esbuild a bare
+ * `{ path }`, so without this the tree-shaker must assume every module has side effects and
+ * keeps them. `"sideEffects": false` covers every file; the array form (`["*.css",
+ * "./dist/register.js"]`) covers every file it does NOT match, as esbuild reads it for the paths
+ * it resolves itself. No field (or `true`) means side effects.
  */
 async function resolvedIsSideEffectFree(file: string): Promise<boolean> {
   const dir = await ownerPackageDir(file);
   if (!dir) return false;
-  const cached = sideEffectFreePkg.get(dir);
-  if (cached !== undefined) return cached;
-  let free = false;
-  try {
-    const pkg = JSON.parse(await Deno.readTextFile(join(dir, "package.json")));
-    free = pkg.sideEffects === false;
-  } catch { /* unreadable/invalid → assume side effects */ }
-  sideEffectFreePkg.set(dir, free);
-  return free;
+  const declared = await packageSideEffects(dir);
+  if (declared === true) return false;
+  if (declared === false) return true;
+  const rel = relative(dir, file).replaceAll("\\", "/");
+  return !declared.some((m) => m.re.test(m.basename ? basename(rel) : rel));
 }
 
 /**
@@ -2306,7 +2348,10 @@ function optimizeImports(
   options: BundleNextCompatModulesOptions,
 ): esbuild.Plugin[] {
   const packages = options.optimizePackageImports ?? [];
-  if (packages.length === 0 || !options.resolveAllNodeModules || !options.absWorkingDir) {
+  const auto = options.autoOptimizePackageImports ?? null;
+  if (
+    (packages.length === 0 && !auto) || !options.resolveAllNodeModules || !options.absWorkingDir
+  ) {
     return plugins;
   }
   const conditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
@@ -2317,7 +2362,9 @@ function optimizeImports(
     resolvers: {
       resolveBare: (fromDir, spec) => resolveNodeFrom(fromDir, spec, conditions, platformExts),
       probe: (base) => probeSourceFile(base, exts),
+      sideEffectFree: async (file) => (await withPackageSideEffects(file)).sideEffects === false,
     },
+    auto,
   });
 }
 
