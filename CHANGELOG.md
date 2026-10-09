@@ -68,8 +68,9 @@ and this project adheres to
   generated `desktop.ts` imported the config module, so `deno desktop` embedded every plugin the
   config imports, with their build toolchain. The desktop sync that every export, build,
   `denext desktop run|dev` and package script already runs now also writes
-  `.deno-desktop/config.json` (the config's `desktop` section and `spa.proxy`, through JSON), and
-  the entries `denext create --desktop` and `denext migrate --desktop` write import that file.
+  `.deno-desktop/config.json` (the config's `desktop` section and `spa.proxy`, through JSON) for
+  an entry that imports it, and the entries `denext create --desktop` and `denext migrate
+  --desktop` write import that file.
   `resolveDesktopCapabilities` takes the JSON as it takes the config and also returns
   `spa.proxy` as `proxy`, so the entry's one spread covers it. An entry that still imports the
   config keeps working; to drop the build-only code, change its import to

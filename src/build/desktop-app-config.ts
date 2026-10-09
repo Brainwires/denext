@@ -8,7 +8,8 @@
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   .deno-desktop/config.json  the runtime slice of `denext.config.ts` the generated `desktop.ts`
 //                            imports (`desktop` and `spa.proxy`, JSON-serialized), so the config
-//                            module and the plugins it imports are never compiled into the app
+//                            module and the plugins it imports are never compiled into the app;
+//                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
 //                            `singleInstance`, `inspectable`, `bridgeOrigins`, and on Linux
 //                            `requireSandbox`), read at process
@@ -288,8 +289,11 @@ export async function writeLaufeyLaunchConfig(
 export interface DesktopAppSyncReport {
   /** `.deno-desktop/app.json`: written, already current, removed (origin unset), or absent. */
   readonly appJson: "written" | "unchanged" | "removed" | "none";
-  /** `.deno-desktop/config.json` (the desktop entry's config): written or already current. */
-  readonly runtimeConfig: "written" | "unchanged";
+  /**
+   * `.deno-desktop/config.json` (the desktop entry's config): written, already current, or not
+   * needed (the project's `desktop.ts` does not import it).
+   */
+  readonly runtimeConfig: "written" | "unchanged" | "none";
   /** `compile.include` in deno.json: updated, already right, or no deno.json to edit. */
   readonly include: "updated" | "unchanged" | "no-deno-json";
   /** deno.json `desktop.app.deepLinks` (present only when deep links are configured). */
@@ -445,11 +449,27 @@ export function desktopRuntimeConfigText(config: unknown): string {
   return JSON.stringify(desktopRuntimeConfig(config), null, 2) + "\n";
 }
 
-/** Write `.deno-desktop/config.json` (when it changed), never through a symlink. */
+/**
+ * Whether the project's `desktop.ts` imports `.deno-desktop/config.json`. An entry that imports
+ * `denext.config.ts` instead needs no JSON, and `denext desktop run` must leave such a project's
+ * folder as it found it.
+ */
+async function entryImportsRuntimeConfig(root: string): Promise<boolean> {
+  try {
+    return (await Deno.readTextFile(join(root, "desktop.ts"))).includes(
+      DESKTOP_RUNTIME_CONFIG_FILE,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Write `.deno-desktop/config.json` (when the entry imports it and it changed), never through a symlink. */
 async function syncRuntimeConfig(
   root: string,
   config: unknown,
 ): Promise<DesktopAppSyncReport["runtimeConfig"]> {
+  if (!await entryImportsRuntimeConfig(root)) return "none";
   const dir = join(root, ".deno-desktop");
   const path = join(root, DESKTOP_RUNTIME_CONFIG_FILE);
   if ((await isSymlink(dir)) || (await isSymlink(path))) {
@@ -530,7 +550,7 @@ function configIdentity(config: unknown): Record<string, string> {
 /**
  * Bring the project's `.deno-desktop/app.json` and deno.json in line with `desktop.app` in
  * `config`, and write `.deno-desktop/config.json` (the desktop entry's config, see
- * `desktopRuntimeConfig`): with an origin, deep-link schemes or `singleInstance`, write `app.json` (origin +
+ * `desktopRuntimeConfig`) when `desktop.ts` imports it: with an origin, deep-link schemes or `singleInstance`, write `app.json` (origin +
  * identifier, `deepLinks`, `singleInstance`) and make sure `compile.include` lists the file
  * (appending to existing entries, idempotent); with none, remove a previous `app.json` and its
  * include entry so the runtime does not keep a stale origin. Configured deep-link schemes are also

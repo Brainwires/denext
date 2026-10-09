@@ -85,7 +85,9 @@ await runDesktop({
         The entry reads <code>.deno-desktop/config.json</code>, not{" "}
         <code>denext.config.ts</code>: the part of the config the app uses at runtime (the{" "}
         <code>desktop</code> section and <code>spa.proxy</code>), which every export, build and{" "}
-        <code>denext desktop</code> command (and the package scripts) rewrites from the config.{" "}
+        <code>denext desktop</code>{" "}
+        command (and the package scripts) rewrites from the config whenever the entry imports it.
+        {" "}
         <code>deno desktop</code>{" "}
         compiles the entry&apos;s imports into the app, so importing the config module would ship
         every plugin it imports (and their build toolchain) too. An entry that still imports{" "}

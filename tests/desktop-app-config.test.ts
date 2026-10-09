@@ -173,7 +173,7 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
   try {
     assertEquals(await syncDesktopAppConfigAt(dir, T3), {
       appJson: "written",
-      runtimeConfig: "written",
+      runtimeConfig: "none",
       include: "updated",
       identity: "updated",
     });
@@ -191,7 +191,7 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
     // Idempotent: a second run changes nothing.
     assertEquals(await syncDesktopAppConfigAt(dir, T3), {
       appJson: "unchanged",
-      runtimeConfig: "unchanged",
+      runtimeConfig: "none",
       include: "unchanged",
       identity: "unchanged",
     });
@@ -223,7 +223,7 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     const none = { desktop: { app: { identifier: "com.t3.code" } } };
     assertEquals(await syncDesktopAppConfigAt(dir, none), {
       appJson: "removed",
-      runtimeConfig: "written",
+      runtimeConfig: "none",
       include: "updated",
       identity: "unchanged",
     });
@@ -240,7 +240,7 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     // No origin and nothing written before: a no-op.
     assertEquals(await syncDesktopAppConfigAt(lone, none), {
       appJson: "none",
-      runtimeConfig: "unchanged",
+      runtimeConfig: "none",
       include: "unchanged",
       identity: "unchanged",
     });
@@ -325,7 +325,7 @@ Deno.test("launch file: without a config it still turns DevTools off", async () 
     });
     assertEquals(await syncDesktopAppConfig(entry), {
       appJson: "none",
-      runtimeConfig: "written",
+      runtimeConfig: "none",
       include: "no-deno-json",
     });
   } finally {
@@ -367,7 +367,7 @@ Deno.test("sync: deepLinks + singleInstance go to app.json, and deepLinks to den
   try {
     assertEquals(await syncDesktopAppConfigAt(dir, config), {
       appJson: "written",
-      runtimeConfig: "written",
+      runtimeConfig: "none",
       include: "updated",
       deepLinks: "updated",
       identity: "updated",

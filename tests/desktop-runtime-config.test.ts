@@ -8,6 +8,7 @@
 // generated entries import that JSON.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { exists } from "@std/fs";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   DESKTOP_RUNTIME_CONFIG_FILE,
@@ -36,10 +37,15 @@ function configWithPlugin(): DenextConfig {
   } as DenextConfig;
 }
 
+/** The scaffolded entry's text (it imports `.deno-desktop/config.json`). */
+const ENTRY =
+  scaffoldFiles({ dir: "/x", desktop: true }).find((f) => f.path === "desktop.ts")!.content;
+
 Deno.test("sync writes the desktop entry's config: the desktop section and spa.proxy, no plugins", async () => {
   const dir = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(join(dir, "desktop.ts"), ENTRY);
     const first = await syncDesktopAppConfigAt(dir, configWithPlugin());
     assertEquals(first.runtimeConfig, "written");
     const written = JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_RUNTIME_CONFIG_FILE)));
@@ -59,6 +65,22 @@ Deno.test("sync writes the desktop entry's config: the desktop section and spa.p
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("sync leaves the project alone when its entry does not import the JSON", async () => {
+  // An entry that imports denext.config.ts (or no entry: `denext desktop run` keeps the project
+  // folder untouched) needs no config.json, and none is written.
+  for (const entry of [undefined, `import config from "./denext.config.ts";\n`]) {
+    const dir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+      if (entry) await Deno.writeTextFile(join(dir, "desktop.ts"), entry);
+      assertEquals((await syncDesktopAppConfigAt(dir, configWithPlugin())).runtimeConfig, "none");
+      assertEquals(await exists(join(dir, ".deno-desktop")), false);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   }
 });
 
@@ -119,16 +141,20 @@ Deno.test({
     const entry = scaffoldFiles({ dir, desktop: true }).find((f) => f.path === "desktop.ts")!;
     await Deno.writeTextFile(join(dir, "desktop.ts"), entry.content);
     await syncDesktopAppConfigAt(dir, { desktop: { app: { identifier: "com.example.g" } } });
+    // A file URL, not a path: `deno info` reads `C:\…` as a URL whose scheme is `c:`.
+    const root = toFileUrl(join(dir, "desktop.ts")).href;
     const out = await new Deno.Command(Deno.execPath(), {
-      args: ["info", "--json", "--config", join(dir, "deno.json"), join(dir, "desktop.ts")],
+      args: ["info", "--json", "--config", join(dir, "deno.json"), root],
       cwd: dir,
       stdout: "piped",
       stderr: "piped",
     }).output();
     assert(out.success, new TextDecoder().decode(out.stderr));
     const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as {
-      modules: Array<{ specifier: string }>;
+      modules: Array<{ specifier: string; error?: string }>;
     };
+    const failed = graph.modules.filter((m) => m.error);
+    assertEquals(failed, [], "every module of the entry's graph loads");
     const specs = graph.modules.map((m) => m.specifier);
     assert(specs.some((s) => s.endsWith("/.deno-desktop/config.json")), specs.join("\n"));
     assert(!specs.some((s) => s.endsWith("/denext.config.ts")), "the config module is compiled in");
