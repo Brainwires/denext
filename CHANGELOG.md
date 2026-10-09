@@ -32,6 +32,21 @@ and this project adheres to
   `addEventListener(type, fn, { passive: true })` registered a capture-phase listener (any options
   object read as `useCapture`); only `true` or `{ capture: true }` does now. Assigning
   `event.cancelBubble = true` in a handler stops propagation, as `stopPropagation()` does.
+- **A native App Router client bundle no longer carries two copies of denext when the app's
+  `denext` is not the framework running the build.** The generated entries
+  (`denext/client-runtime`, `denext/live`, …) and the client transforms' output (the auto-memo
+  compiler's `compiler-runtime`, qrl segments) import the running framework by URL, while `deno
+  bundle` resolves the app's own `denext` through the app's `deno.json`. A CLI run from a checkout
+  or another URL building an app mapped to `jsr:@denext/denext@<a version the checkout does not
+  satisfy>`, a published CLI building an app locked to another version, or an app mapped to
+  another checkout bundled that copy's hooks and reconciler next to the running framework's. The
+  bundle config now folds the app's copy into the running framework (a prefix import-map entry
+  from its root, read from the import map and `deno.lock`): the app's entry modules load as
+  written and everything under them is the running framework's, the one the generated code, the
+  server renderer and unbundled dev (already) use. A different published version is named in a
+  one-time warning, since the app then runs the building CLI's runtime. The published setup (the
+  CLI and the app on the same JSR version) and a checkout the app's range admits were already one
+  copy and are unchanged.
 
 ## [3.4.2] - 2026-10-09
 
