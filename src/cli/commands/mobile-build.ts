@@ -31,6 +31,7 @@ import {
   formatIconSearch,
   type IconSearch,
   type IconSource,
+  preMaskedWarnings,
   resolveIconSource,
 } from "../../build/mobile-icon-source.ts";
 import {
@@ -108,6 +109,8 @@ async function source(ctx: CommandContext, root: string, flag: string, kind: str
 interface ResolvedAssets {
   readonly spec: AssetSources;
   readonly search?: IconSearch;
+  /** Warnings about an icon given explicitly (`--icon`, a flavor's): the search has its own. */
+  readonly warnings?: readonly string[];
 }
 
 /** Why no icon could be found, with what was passed over. */
@@ -144,7 +147,12 @@ async function assetSources(
 ): Promise<ResolvedAssets> {
   const fromFlavor = (p: string | undefined) => (p === undefined ? undefined : resolve(root, p));
   const explicit = pathFlag(ctx, "icon") ?? fromFlavor(flavor?.config.icon);
-  if (explicit) return { spec: await specFor(ctx, root, explicit, flavor) };
+  if (explicit) {
+    return {
+      spec: await specFor(ctx, root, explicit, flavor),
+      warnings: await preMaskedWarnings(root, explicit),
+    };
+  }
   const search = await resolveIconSource(root);
   if (!search.source) throw noIconError(search);
   return { spec: await specFor(ctx, root, search.source.icon, flavor, search), search };
@@ -224,13 +232,19 @@ function assetPlatforms(ctx: CommandContext): AssetPlatform[] | undefined {
 export async function mobileAssets(ctx: CommandContext): Promise<void> {
   const root = capRoot(ctx);
   try {
-    const { spec, search } = await assetSources(ctx, root);
+    const { spec, search, warnings } = await assetSources(ctx, root);
     const report = await generateMobileAssets(root, spec, {
       platforms: assetPlatforms(ctx),
       dryRun: ctx.flags["dry-run"] === true,
     });
     if (ctx.global.json) {
-      return console.log(JSON.stringify(search ? { ...report, iconSource: search } : report));
+      return console.log(
+        JSON.stringify(
+          search
+            ? { ...report, iconSource: search }
+            : { ...report, warnings: [...(warnings ?? []), ...report.warnings] },
+        ),
+      );
     }
     console.log(`\n  denext mobile assets${report.dryRun ? " --dry-run" : ""}  ▸  ${root}\n`);
     if (search) {
@@ -238,7 +252,9 @@ export async function mobileAssets(ctx: CommandContext): Promise<void> {
         formatIconSearch(search, { warnSize: false }).map((l) => `  ${l}`).join("\n") + "\n",
       );
     }
-    console.log(formatAssetsReport(report));
+    console.log(
+      formatAssetsReport({ ...report, warnings: [...(warnings ?? []), ...report.warnings] }),
+    );
   } catch (err) {
     fail(`denext mobile assets: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -278,7 +294,7 @@ export async function replacePlaceholderIcons(
   if ((await capacitorPlaceholders(root, platform, "splash")).length) kinds.push("splash");
   const lines = resolved.search
     ? formatIconSearch(resolved.search, { warnSize: false })
-    : [`icon: ${resolved.spec.icon}`];
+    : [`icon: ${resolved.spec.icon}`, ...(resolved.warnings ?? []).map((w) => `warning: ${w}`)];
   const report = await generateMobileAssets(root, resolved.spec, {
     platforms: [platform],
     kinds,
@@ -292,8 +308,12 @@ export async function replacePlaceholderIcons(
   for (const l of [...lines, ...report.warnings.map((w) => `warning: ${w}`)]) log(`    ${l}`);
 }
 
-/** Run a command with the terminal attached; `env` is added to the inherited environment. */
-const runInherit: BuildRunner = async ({ cmd, args, cwd, env }) => {
+/**
+ * Run a command with the terminal attached; `env` is added to the inherited environment (a Yarn
+ * install's no-scripts switches, signing secrets). Shared by `denext mobile build`, `submit` and
+ * `add`.
+ */
+export const runInheritedCommand: BuildRunner = async ({ cmd, args, cwd, env }) => {
   try {
     const { code } = await new Deno.Command(cmd, {
       args: [...args],
@@ -427,7 +447,7 @@ function assertHostBuilds(platform: MobilePlatform): void {
  */
 export async function mobileBuild(
   ctx: CommandContext,
-  run: BuildRunner = runInherit,
+  run: BuildRunner = runInheritedCommand,
 ): Promise<void> {
   if (ctx.flags.restore === true) return await restoreBuild(ctx);
   const platform = platformArg(ctx, "build");
@@ -569,7 +589,7 @@ function printSubmit(ctx: CommandContext, platform: MobilePlatform, report: Subm
  */
 export async function mobileSubmit(
   ctx: CommandContext,
-  deps: SubmitVerbDeps = { fetch: globalThis.fetch, run: runInherit, now: Date.now },
+  deps: SubmitVerbDeps = { fetch: globalThis.fetch, run: runInheritedCommand, now: Date.now },
 ): Promise<void> {
   const platform = platformArg(ctx, "submit");
   let report: SubmitReport;

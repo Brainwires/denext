@@ -418,6 +418,14 @@ export type {
   VirtualListSlot,
 } from "./src/client/virtual/types.ts";
 export type { ScrollSnapAlign, ScrollSnapOptions } from "./src/client/virtual/snap.ts";
+// Swipe-to-reveal row actions (leading/trailing, full swipe), VirtualList-safe; its own module.
+export { SwipeableRow } from "./src/client/swipe-row/swipeable-row.ts";
+export type {
+  SwipeableRowHandle,
+  SwipeableRowProps,
+  SwipeableRowSide,
+  SwipeAction,
+} from "./src/client/swipe-row/swipeable-row.ts";
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
@@ -469,4 +477,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "3.4.0";
+export const VERSION = "3.4.1";

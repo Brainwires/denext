@@ -4,6 +4,7 @@
 
 import type { ProfileResult } from "./types.ts";
 import type { CpuFrame } from "./cpu.ts";
+import { retainedBytes } from "./heap.ts";
 
 /** Human-readable byte size. */
 function formatBytes(n: number): string {
@@ -53,9 +54,10 @@ function heapLines(result: ProfileResult): string[] {
     `  after         ${formatBytes(h.afterBytes)}  (peak growth ${
       formatBytes(h.afterBytes - h.beforeBytes)
     })`,
-    `  after GC      ${formatBytes(h.afterGcBytes)}  (retained ${
-      formatBytes(h.afterGcBytes - h.beforeBytes)
-    })`,
+    ...(h.warmBytes === undefined ? [] : [
+      `  warm          ${formatBytes(h.warmBytes)}  (after the first run + GC: the leak baseline)`,
+    ]),
+    `  after GC      ${formatBytes(h.afterGcBytes)}  (retained ${formatBytes(retainedBytes(h))})`,
     `  leak          ${h.leaked ? "⚠ retained growth after GC" : "✔ none"}`,
   ];
 }

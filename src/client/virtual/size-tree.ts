@@ -18,12 +18,15 @@
  * @module
  */
 
+// Literals, not `1 << BLOCK_SHIFT` / `BLOCK_SIZE - 1`: the bundler keeps a computed module-scope
+// constant even when nothing uses it, which put these three into every app's shared runtime chunk
+// (the root `denext` entry reaches this module), VirtualList or not.
 /** log2 of the rows per block. */
 const BLOCK_SHIFT = 8;
-/** Rows per block. */
-export const BLOCK_SIZE: number = 1 << BLOCK_SHIFT;
-/** Mask of a row's position inside its block. */
-const BLOCK_MASK = BLOCK_SIZE - 1;
+/** Rows per block (`1 << BLOCK_SHIFT`). */
+export const BLOCK_SIZE: number = 256;
+/** Mask of a row's position inside its block (`BLOCK_SIZE - 1`). */
+const BLOCK_MASK = 255;
 
 /** A row's size state: never seeded (default size), estimated, or measured. */
 export const RowState = { Default: 0, Estimated: 1, Measured: 2 } as const;

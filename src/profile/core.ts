@@ -77,22 +77,29 @@ async function stopAndMeasure(
   cdp: Cdp,
   beforeBytes: number,
   leakCheck: boolean,
+  warmBytes?: number,
 ): Promise<Capture> {
   const { profile } = await cdp.Profiler.stop() as { profile: RawCpuProfile };
   const afterBytes = await readHeapBytes(page);
   await forceGc(cdp);
   const afterGcBytes = await readHeapBytes(page);
-  const leaked = leakCheck ? isLeak(beforeBytes, afterGcBytes) : false;
-  return { profile, heap: { beforeBytes, afterBytes, afterGcBytes, leaked } };
+  const leaked = leakCheck ? isLeak(warmBytes ?? beforeBytes, afterGcBytes) : false;
+  const heap: HeapResult = { beforeBytes, afterBytes, afterGcBytes, leaked };
+  if (warmBytes !== undefined) heap.warmBytes = warmBytes;
+  return { profile, heap };
 }
 
 /**
  * INTERACTION mode (`--interact` given): load and settle the app so the heap baseline is
  * the idle, loaded app, then profile the interaction repeated `iterations` times. Because
  * the baseline is post-load, the post-GC delta is a real leak signal — a repeated
- * interaction that keeps growing after GC retained something it shouldn't.
+ * interaction that keeps growing after GC retained something it shouldn't. With 2+
+ * iterations the leak baseline is the heap after the first one (`warmBytes`): that run
+ * loads what the interaction needs once (route chunks, compiled code, data caches), which
+ * a post-load baseline flagged as a leak (T3 Code's thread switch: "+24 MB retained",
+ * all of it first-visit state that a repeated rotation holds flat).
  */
-async function captureInteraction(
+export async function captureInteraction(
   // deno-lint-ignore no-explicit-any
   page: any,
   cdp: Cdp,
@@ -105,8 +112,14 @@ async function captureInteraction(
   await forceGc(cdp);
   const beforeBytes = await readHeapBytes(page);
   await cdp.Profiler.start();
-  for (let i = 0; i < iterations; i++) await page.evaluate(interact);
-  return stopAndMeasure(page, cdp, beforeBytes, true);
+  await page.evaluate(interact);
+  let warmBytes: number | undefined;
+  if (iterations > 1) {
+    await forceGc(cdp);
+    warmBytes = await readHeapBytes(page);
+  }
+  for (let i = 1; i < iterations; i++) await page.evaluate(interact);
+  return stopAndMeasure(page, cdp, beforeBytes, true, warmBytes);
 }
 
 /**

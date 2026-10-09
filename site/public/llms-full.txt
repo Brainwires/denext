@@ -430,14 +430,20 @@ Docs: https://denext.dev/docs/platform-files
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
 `denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
-makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Docs:
-https://denext.dev/docs/lists
+makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Swipe actions:
+`<SwipeableRow leading={[…]} trailing={[{ label, tone, onPress }]}>` from `denext` (transform-only,
+VirtualList-safe, full swipe runs the first action, real buttons; RNGH `Swipeable` /
+`ReanimatedSwipeable` resolve to it in React Native mode). Docs: https://denext.dev/docs/lists
 
 **Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
 keeps pushed screens mounted with platform animations and the iOS swipe back, `TabsLayout`
 keeps each tab's state, `Sheet` is a bottom sheet with detents; a page sets
 `export const screenOptions = { title, presentation }`; `useStackNavigation()` pushes and
-pops. Docs: https://denext.dev/docs/navigation-native
+pops. On another router (TanStack Router, React Router, none): `<HistoryStack
+history={tanstackHistory(router)} screens={[{ path: "/$id", render, options }]} />` (screens read
+`useScreenMatch()`, not the router's hooks) and `HistoryTabs`; the back swipe starts anywhere
+there (`fullScreenSwipe`, or a screen's `fullScreenGestureEnabled`). Docs:
+https://denext.dev/docs/navigation-native
 
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
@@ -686,7 +692,10 @@ automatically on the esbuild path. `optimizePackageImports` (Next's key, top-lev
 barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
 loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages,
 drop one with `"!pkg"`, or disable it with `false`. Listing a package asserts it is side-effect
-free. Applied by the esbuild bundles only (not unbundled dev or the native `deno bundle` path).
+free. A package whose own `package.json` declares `sideEffects` (`false`, or an array naming none of
+the barrel's modules) is rewritten unlisted too, so a lazy route's modules stay out of the startup
+chunks (`"!*"` turns that automatic mode off). Applied by the esbuild bundles only (not unbundled
+dev or the native `deno bundle` path).
 
 **Testing an app (no browser, JS-disabled path):**
 
@@ -1047,6 +1056,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
 - `interface SuspenseListProps` — Props for SuspenseList.
 - `interface SuspenseProps` — Props for the Suspense boundary component.
+- `SwipeableRow(props: SwipeableRowProps): VNode` — A row that swipes sideways to reveal actions; see the module docs. A client component: render it from a "use client" file. Inside a VirtualList, render one per row.
+- `interface SwipeableRowHandle` — What a SwipeableRow's rowRef receives.
+- `interface SwipeableRowProps` — Props of SwipeableRow.
+- `type SwipeableRowSide = leading | trailing` — Which side of a row is open.
+- `interface SwipeAction` — One action a SwipeableRow reveals.
 - `interface SyntheticEvent<T, E>` — Base synthetic event.
 - `interface TextEstimateOptions<T>` — How to predict a text row's size.
 - `tryCatch<T, E>(operation: () => T | PromiseLike<T>): Promise<TryCatchResult<T, E>>` — Runs an operation and captures its return value, thrown value, or rejection.
@@ -1131,7 +1145,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 3.4.0` — The denext framework version.
+- `VERSION: 3.4.1` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2054,13 +2068,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
 - `interface DesktopCapCtx` — The context a capability handler runs with: a scoped DesktopCapCtx.emit for its declared events, the OS app-support directory (which survives relaunch, unlike browser storage — see the desktop storage note), the running OS, the app window (Deno's BrowserWindow when the runtime exposes it), and an AbortSignal that fires when the handler's timeout elapses.
 - `class DesktopCapError` — Throw this from a capability handler to answer the page with a specific error code and a SAFE message. The bridge puts code, the message and any data into the { ok: false, error } envelope at status (default 400). Never encode an absolute path, environment value or stack into the message — it crosses to the page. The code "unavailable" is RESERVED (it means the capability/method is not enabled, which makes the page fall back to its web path); use another code for a real failure.
+- `desktopCheckCefSignature(exe: string, deps?: WindowsTrustDeps): Promise<boolean>` — After signing a CEF app on Windows: warn when the signed <App>.exe will not start here (cefSignatureProblem). Off Windows, or when the probe fails, nothing is said.
 - `desktopDenoFlagArgs(entryUrl: string): Promise<string[]>` — The project's desktop.denoFlags, checked, for a scaffolded packaging script: reads denext.config.ts next to entryUrl's folder (a script in scripts/ → ../), like desktopPackageFlags. A project without a config gets []; a refused flag throws.
 - `desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string, devBuild?: boolean): DesktopDevProxyDecision` — Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath), or devBuild (the mark only a denext desktop dev build compiles in) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.
 - `type DesktopDevProxyDecision = object | object` — The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.
 - `class DesktopEventLog` — A bounded, replayable log of desktop bridge events. One instance per running app (created by the bridge); exported as a type so DesktopBridge["events"] is documentable.
 - `desktopExportEnv(os: DesktopOs): Record<string, string>` — The environment of a package run's deno task export: the TARGET OS's platform (windows when cross-packaging from a Mac), so the export resolves its .windows / .desktop files, not the host's.
 - `desktopHasTool(cmd: string): Promise<boolean>` — Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.
-- `desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>` — The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists (none: no icon, and deno desktop uses its default). Paths are relative to the project.
+- `desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>` — The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists, else one derived from the app's own icon (deriveDesktopIcon: the web manifest, the apple-touch-icon, … into .deno-desktop/; none: no icon, and deno desktop uses its default). Paths are relative to the project.
 - `desktopIncludeArgs(entryUrl: string): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
 - `type DesktopInstallerFormat = indexedAccess` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: typeOperator, add?: typeOperator): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
@@ -2088,6 +2103,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>` — Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted.
 - `interface DesktopRunOptions` — Options for desktopRun.
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
+- `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
@@ -2098,6 +2114,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
 - `interface DesktopWindowSettings` — The resolved initial-window settings runDesktop applies (every key optional).
 - `interface DesktopWindowSize` — A window size in CSS pixels.
+- `desktopWindowsTargetNote(backend: string, noVcRuntime: typeOperator): string` — The closing note of a Windows package run: what the target machine needs for backend. A webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022 redistributable for each arch in noVcRuntime (the runtime could not be bundled app-local).
 - `injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string, preloadKey?: string, page?: DesktopPageGlobals): Promise<string>` — Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.
 - `installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown` — Closing the window (macOS red light / Cmd-W) quits the app. Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close; adopt the initial window and exit on its close. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.
 - `isDenoCliExecPath(execPath: string): boolean` — Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. A packaged app's execPath is its own binary; the window denext desktop dev builds is one too, and carries the dev-build mark instead (see desktopDevProxyDecision). Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.
@@ -2107,11 +2124,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PickedTarget` — A resolved access: the confined absolute path plus the root dir to ensure before a write.
 - `type PickMode = read | readwrite | folder | readFolder` — How much access a picked handle grants.
 - `planDesktopInstallers(os: DesktopOs, config: unknown, requested?: typeOperator, add?: typeOperator): DesktopInstallerPlan` — Which installers to build for os: requested (--format) when it names any, else desktop.installers.<os> from the config, else DEFAULT_DESKTOP_INSTALLERS. add (a script's legacy --dmg / --appimage) is appended to whichever list applies.
+- `type PowerShellRunner = (script: string, env: Record<string, string>) => Promise<object | null>` — Runs a PowerShell script with extra environment; null when PowerShell did not run.
 - `interface PreparedDesktopPackage` — What prepareDesktopPackage resolved.
 - `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), dist/, unless --no-export the static export (deno task export), then the .deno-desktop/app.json + compile.include + deno.json desktop.app sync and the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about).
 - `type ProxyModule = ./dev-proxy.ts` — The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.
 - `interface ResolvedDesktop` — What resolveDesktopCapabilities returns — spread straight into runDesktop.
-- `resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.
+- `resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.
 - `interface ResolveDesktopOptions` — Options for resolveDesktopCapabilities.
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).
@@ -2119,6 +2137,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
+- `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
 - `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable and (on Linux) desktop.linux.requireSandbox in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
 
 ### `denext/desktop/updater`
@@ -2562,12 +2581,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/navigation`
 
 - `announceRoute(message: string): void` — Announce message to screen readers now (the same text twice in a row is announced twice). Nothing happens without a document or with an empty message.
+- `browserHistory(): HistorySource` — The browser's own history as a HistorySource, for an app with no router (or one that navigates only through this source): push / replace write history.pushState / replaceState and stamp each entry with its index, and popstate (back, forward) is heard. A pushState made behind its back is not.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createBottomTabNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createBottomTabNavigator for React Native mode, drawn by TabsView: visited tabs stay mounted (hidden with <Activity>), tabBarBadge / tabBarIcon / tabBarLabel / title and lazy / popToTopOnBlur / unmountOnBlur are honoured, and a press on the active tab emits tabPress (a nested stack pops to its root) then scrolls it to the top.
 - `createNativeStackNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createNativeStackNavigator for React Native mode, drawn by StackView.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `interface HistoryLocation` — A location as the history bindings read it.
+- `interface HistoryScreen` — One screen of a HistoryStack's table.
+- `interface HistorySource` — A history-based router, as HistoryStack and HistoryTabs use it: read the location, hear it change, and navigate. browserHistory, tanstackHistory and reactRouterHistory build one; any router whose location lives in the URL history can implement it in a few lines.
+- `HistoryStack(props: HistoryStackProps): VNode` — A native-feeling stack over any history-based router; see the module docs. Mount it where the router would render the routes it covers (in a TanStack Router layout route, in place of its <Outlet />), and give it the screens; the router keeps owning the URL.
+- `interface HistoryStackProps` — Props of HistoryStack. theme, material and accentColor pick the look; see NavigationThemeProps.
+- `interface HistoryTab` — One tab of a HistoryTabs: a TabDefinition that renders itself.
+- `HistoryTabs(props: HistoryTabsProps): VNode` — A tab bar over any history-based router whose tabs keep their state; see the module docs.
+- `interface HistoryTabsProps` — Props of HistoryTabs.
 - `type IosBarMaterial = glass | blur` — The iOS bar material of the platform theme: "glass" (iOS 26's Liquid Glass, approximated: a floating translucent tab bar and glass header buttons; the default) or "blur" (the iOS 7–18 translucent bars, edge to edge).
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `matchScreenPath(pattern: string, pathname: string): Record<string, string> | null` — Match pathname against a screen pattern: literal segments, :name or $name params (TanStack Router's spelling too), and a trailing * or $ splat (its value under "*" and "_splat"). Returns the decoded params, or null when it does not match.
 - `type NavigationPlatform = ios | android` — The platform look a navigator takes: iOS or Android (Material).
 - `type NavigationTheme = auto | platform | plain` — Which look the navigators take:
 - `interface NavigationThemeProps` — The theme props every navigator takes.
@@ -2577,6 +2606,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ReactNavigationObject` — The slice of the navigation object the navigators use.
 - `interface ReactNavigationRoute` — A React Navigation route, as the navigators read it.
 - `interface ReactNavigationState` — A navigator's state, as the navigators read it.
+- `reactRouterHistory(router: ReactRouterLike): HistorySource` — A React Router data router (createBrowserRouter / createHashRouter / createMemoryRouter, library mode) as a HistorySource: the location from router.state, changes from router.subscribe, navigations through router.navigate. The entry index is the browser router's history.state.idx where it exists.
+- `interface ReactRouterLike` — The slice of a React Router data router (createBrowserRouter) reactRouterHistory uses.
+- `resolveScreen(screens: typeOperator, loc: Pick<HistoryLocation, pathname | search | hash>): object | null` — The first screen of screens that matches loc, with its match.
+- `interface ScreenMatch` — What a screen renders from: the location it was pushed at, matched against its path.
 - `interface ScreenOptions` — Options for one screen of a stack. As a page's export const screenOptions = { … } they are plain JSON (the server reads them and ships them with the page); setOptions from useStackNavigation can also set the component-valued header* slots.
 - `Sheet(props: SheetProps): VNode` — A bottom sheet. Controlled by open; the user's dismissal calls onOpenChange(false).
 - `type SheetDetent = medium | large | fit | number` — A height a sheet can rest at: "medium" (half the available height), "large" (the full available height), "fit" (its content's height, up to "large"), or a number (a fraction of the available height when at most 1, else CSS px).
@@ -2600,7 +2633,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TabStackHandle` — What a stack inside a tab registers, so the tab bar can pop it or scroll it to the top.
 - `TabsView(props: TabsViewProps): VNode` — The router-independent tab view: panels kept with <Activity>, and the bar.
 - `interface TabsViewProps` — Props of TabsView. theme, material and accentColor pick the look (see NavigationThemeProps).
+- `tanstackHistory(routerOrHistory: TanStackRouterLike | TanStackHistoryLike): HistorySource` — A TanStack Router (or its router.history) as a HistorySource. With the router, navigations go through router.navigate({ href }) (so loaders, blockers and view transitions run as for a <Link>); with a bare history, through history.push. The entry index comes from TanStack's __TSR_index, so back and forward are exact.
+- `interface TanStackHistoryLike` — The slice of @tanstack/history's RouterHistory tanstackHistory uses.
+- `interface TanStackRouterLike` — The slice of a TanStack Router tanstackHistory uses.
 - `useScreenInfo(): object | null` — The screen a component renders in, or null outside a stack. Reads id and index (0 = the stack's root screen).
+- `useScreenMatch(): ScreenMatch | null` — The location the screen this component renders in was pushed at (its path params, search and hash), or null outside a HistoryStack. Read this in a screen rather than the router's own location hooks: a kept screen below the top keeps its own location, while the router's hooks follow the top screen.
 - `useStackNavigation(): StackNavigation` — The stack navigation for the screen this component renders in: push, pop, popToTop, replace, canGoBack, setOptions. Outside a StackLayout the methods fall back to plain navigation and history.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.

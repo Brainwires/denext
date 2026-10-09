@@ -88,6 +88,12 @@ export interface RootHandle {
   documentRoot?: boolean;
   /** The pending sync work is only a Suspense reveal (a retry): its commit may animate. */
   reveal?: boolean;
+  /**
+   * A useSyncExternalStore update is pending: its commit runs the passive effects before
+   * returning (React flushes a SyncLane commit's passive effects synchronously), so a
+   * re-subscription happens before any other task can observe the store unsubscribed.
+   */
+  syncPassive?: boolean;
   /** RootOptions error callbacks (React 19 parity), or undefined. */
   onCaughtError?: RootErrorCallback;
   onUncaughtError?: RootErrorCallback;

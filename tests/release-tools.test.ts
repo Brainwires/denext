@@ -191,3 +191,15 @@ Deno.test("the release regenerates the plugin catalog the bump makes stale, befo
   assert(at("gen:plugin-catalog") < at("docs:corpus"), "before the corpus that reads it");
   assert(at("docs:mcp") < at("docs:corpus"), "the MCP page feeds the corpus");
 });
+
+Deno.test("the release gate re-checks only the release's own changes unless --full-gate", async () => {
+  const { gateCommand, RELEASE_DELTA_TESTS } = await import("../scripts/release.ts");
+  assertEquals(gateCommand(true), ["deno", "task", "check"]);
+  const [sh, flag, script] = gateCommand(false);
+  assertEquals([sh, flag], ["sh", "-c"]);
+  assertStringIncludes(script, "deno fmt --check && deno lint && ");
+  for (const file of RELEASE_DELTA_TESTS) {
+    assertStringIncludes(script, file);
+    assert((await Deno.stat(new URL(`../${file}`, import.meta.url))).isFile, `${file} exists`);
+  }
+});

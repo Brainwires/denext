@@ -57,7 +57,10 @@ export { viteEmitterPlugin } from "./vite-emitter.ts";
 export type {
   GenerateBundleHook,
   ViteEmittedFile,
+  ViteEmitterBuildContext,
   ViteEmitterContext,
+  ViteEmitterDenextPlugin,
+  ViteEmitterSetupContext,
   VitePluginLike,
 } from "./vite-emitter.ts";
 

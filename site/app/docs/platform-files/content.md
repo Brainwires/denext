@@ -196,6 +196,12 @@ A [Pages Router](/docs/pages-router) app (`@denext/pages-router`) takes the `web
 in its server render and its client bundles alike, in `denext dev`, `build` and `start`; its
 pages do not take another target's files in a platform export or a shell's dev session.
 
+A variant's stylesheets are its targets' own: `BigButton.mobile.tsx`'s `import "./phone.css"`
+lands in the iOS and Android stylesheet only, and the plain file's sheet in the others', on every
+build path (SPA and App Router, `export`, `build` and both `denext dev` loops, where each shell's
+session gets its own). Fonts and `?url` assets a variant imports are likewise emitted for the
+targets that load it.
+
 Route files (`page.tsx`, `layout.tsx`, …) do not take a variant; put the platform-specific part
 in a component the route imports. A variant importing its own plain module
 (`BigButton.ios.tsx` importing `./BigButton.tsx`) resolves to itself, as in React Native; share

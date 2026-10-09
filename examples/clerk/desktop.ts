@@ -1,7 +1,10 @@
 // Entry for Deno Desktop: serves the static export (`out/`) in a native window. The page is the
 // same app as the web; its `/api/*` calls go to the web server (DENEXT_CLERK_API_ORIGIN, default
 // the local `deno task start` at http://127.0.0.1:3000), which verifies the bearer session token.
-import config from "./denext.config.ts";
+// The desktop settings come from `.deno-desktop/config.json` (the runtime part of
+// denext.config.ts that every export and `denext desktop` command rewrites), so the config module
+// and what it imports are never compiled into the app.
+import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
 /** Where the protected API runs. */

@@ -107,6 +107,8 @@ function markUpdateSource(fiber: Fiber, fromState: boolean): void {
  */
 export function scheduleStoreUpdate(fiber: Fiber): void {
   markUpdateSource(fiber, false);
+  const handle = rootHandleOf(fiber);
+  if (handle) handle.syncPassive = true;
   scheduleUpdateLane(fiber, SyncLane);
 }
 
@@ -137,8 +139,12 @@ export function scheduleUpdate(fiber: Fiber, fromState = false): void {
 }
 
 /** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
-/** The fiber whose update was scheduled most recently — named when the render loop gives up. */
-let lastScheduled: Fiber | null = null;
+/**
+ * The component type whose update was scheduled most recently — named when the render loop
+ * gives up. The type, not the fiber: a module-level fiber reference outlives the component's
+ * unmount and pins its hook state (and, through its links, its whole deleted subtree).
+ */
+let lastScheduledType: unknown = undefined;
 
 /**
  * Display name of the component that scheduled the most recent update. The work loop's
@@ -146,12 +152,12 @@ let lastScheduled: Fiber | null = null;
  * app (2,700 islands) can be traced to a component instead of a minified chunk offset.
  */
 export function lastUpdateSourceName(): string {
-  return lastScheduled ? componentDisplayName(lastScheduled.vnode.type) : "unknown";
+  return lastScheduledType !== undefined ? componentDisplayName(lastScheduledType) : "unknown";
 }
 
 export function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   if (fiber == null) return; // an SSR class setState has no reconciler fiber
-  lastScheduled = fiber;
+  lastScheduledType = fiber.vnode.type;
   fiber.lanes |= lane;
   if (fiber.alternate) fiber.alternate.lanes |= lane;
   let node = fiber.return;

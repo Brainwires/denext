@@ -8,6 +8,298 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-09
+
+### Added
+
+- **`denext/navigation` binds to any history-based router: `HistoryStack` and `HistoryTabs`.**
+  `StackLayout` and `TabsLayout` take the App Router's routes; an app on TanStack Router, a
+  React Router data router or no router at all now gets the same native stack and tab bar
+  through a history source: `tanstackHistory(router)` (navigations through
+  `router.navigate({ href })`, entry indices from `__TSR_index`), `reactRouterHistory(router)`,
+  or `browserHistory()`, and any other router in five methods (`HistorySource`). The stack is a
+  table of screens (`{ path: "/$threadId", render, options }`, with `:name` / `$name` params and
+  a splat) that each render from their own location (`useScreenMatch()`), so a kept screen below
+  the top goes on showing what it showed while the router's own hooks follow the top. A
+  navigation pushes, a back pops to the entry it lands on (exactly, by entry index), a forward
+  pushes again, a replace swaps the top, and a link to a screen below pops back to it; pushed
+  screens stay mounted with the platform animations, per-screen options (title, presentation,
+  `formSheet` sheets, header) and `useStackNavigation()` work as in `StackLayout`, and a deep
+  link mounts its ancestors underneath so the swipe back works at once.
+- **Swipe back from anywhere on the screen.** `fullScreenSwipe` on `StackView` / `StackLayout`
+  (on by default in `HistoryStack`), and the per-screen `fullScreenGestureEnabled` option
+  (react-native-screens' name, mapped from React Navigation too), let the back swipe start
+  anywhere, not only within 20 px of the left edge. It follows the finger like the edge swipe,
+  under a stricter rule so it never takes a scroll: the axis locks only when the movement is at
+  least 1.4 times as horizontal as vertical, and a fling pops only past 72 px (T3 Code's native
+  thread back-swipe rule). It yields to text fields, horizontal scrollers and any element marked
+  `data-dnx-no-back-swipe`.
+- **`SwipeableRow`: swipe-to-reveal row actions.** A row (from `denext`) with leading and
+  trailing actions, outermost first, and a full swipe that runs a side's first action. A drag
+  writes only `transform`s and never reads layout (sizes come from one shared
+  `ResizeObserver`), so it is safe inside a scrolling `VirtualList`; the axis lock leaves a
+  vertical drag to the scroll and a swipe toward a side with nothing to reveal to the stack's
+  back swipe. One row is open at a time (a tap elsewhere, a scroll or Escape closes it), a full
+  swipe arming plays a haptic in the native shell, and every action is a real `<button>` that
+  opens its side when focused. In React Native mode
+  `react-native-gesture-handler/ReanimatedSwipeable` and `react-native-gesture-handler/Swipeable`
+  resolve to it (partial: the render functions get `{ value }` holders or `Animated.Value`s, and
+  the thresholds, overshoot and gesture-composition props are ignored). An app that does not
+  use it ships none of it.
+- **Barrels of side-effect-free packages are looked through automatically.** Under esbuild code
+  splitting, when the startup graph and a lazily loaded route import different names from one
+  barrel, every module the barrel re-exports lands in a chunk the startup graph loads, the lazy
+  route's modules included (plain esbuild 0.24–0.28 does this). T3 Code worked around it by
+  listing `@pierre/diffs`, `@pierre/trees` and `@base-ui/react` in `optimizePackageImports`.
+  Now a package that declares itself side-effect free in its own `package.json`
+  (`"sideEffects": false`, or an array naming none of the modules its barrel loads) gets the
+  same import rewrite unlisted, under stricter rules than a listed package: the barrel must be
+  the file the build itself resolves the specifier to (an alias or the denext runtime owning a
+  name rules it out), a name it re-exports from another package stays on the barrel import,
+  and every module the barrel would have loaded must be side-effect free by its package's own
+  declaration. T3 Code's boot JS with its list removed: 1,525,993 B gzip on 3.4.0, and
+  1,235,940 B with this release's fixes, byte for byte the build with the list. `"!pkg"`
+  excludes a package, and `"!*"` turns the automatic mode off (`optimizePackageImports: false`
+  still turns everything off).
+- **The packaged desktop app's icon comes from the app's own when none is set.** With no
+  `desktop.app.icons.<os>` and none of the package script's default icon files, the package
+  scripts (and `denext desktop run` / `dev`) derive one from the icon `denext mobile assets`
+  would use (`mobile.icon`, the Capacitor `assets/` folder, the Expo config, the web manifest,
+  the apple-touch-icon, the largest PNG favicon): a Windows `.ico` of PNG images from 16 to
+  256 px, a 1024 px macOS PNG on Apple's icon grid, a full-tile 1024 px Linux PNG, written to
+  `.deno-desktop/`. Only an app with no icon at all keeps `deno desktop`'s generic one.
+
+### Changed
+
+- **Every app's shared client runtime is 1.4 KB smaller (raw), with no change in behaviour.** An
+  app with no Flight route no longer ships the Flight soft-navigation runtime or the root-less
+  islands mount: both moved to a module only the Flight entry's `setFlightParser` reaches. The
+  class-component base classes (`Component` / `PureComponent`) now ship only in the on-demand
+  class runtime, where the server renderer's import used to hoist them into every app's shared
+  chunk. The client's dev-only warnings for `dangerouslySetInnerHTML` and a refused dangerous URL
+  are installed by `installDevtools` with the other dev warnings, so a production bundle carries
+  neither message. `examples/hello`'s shared chunks went from 65,427 B to 63,995 B.
+
+### Fixed
+
+- **A platform file's stylesheet reaches its target's build.** `x.mobile.ts`'s
+  `import "./a.css"` was left out of `DENEXT_PLATFORM=ios denext export` while the file's JS was
+  bundled: the stylesheet crawl (`deno info`) walked the plain files' graph. It now resolves
+  through the target's platform files on every path: SPA mode (`deno bundle` and esbuild),
+  next-compat App Router export and build, and `denext dev` (bundled, unbundled, and a
+  next-compat app's route CSS), so each target's stylesheet holds its own variants' sheets and
+  not the others'. The unbundled SPA dev loop now links the stylesheets the session's target
+  reaches (it served every stylesheet in the project), and a React Native mode SPA no longer
+  crawls every `.web.*` file for a non-web target.
+- **A bare import resolves on Windows as it does on macOS and Linux.** The esbuild deno-loader's
+  resolver runs in WASM, which spells a drive path `/C:/app/package.json`, and Windows refuses
+  that spelling (os error 123). Every file it probed while finding the workspace and resolving
+  (the `deno.json` and `package.json` beside the config, `node_modules/<pkg>/package.json`) read
+  as missing, so the app's `package.json` dependencies were never seen: a bare import denext's
+  own resolver did not place (such as `ms` with `nodeModulesDir: "manual"`) failed with
+  `Relative import path "ms" not prefixed with / or ./ or ../` on Windows only. The loader's
+  file reads now take those paths as `C:/…`. A new `windows-resolve` CI job runs the regression
+  test on windows-latest.
+- **The Windows package script's closing note follows the backend.** A CEF build ships Chromium,
+  so it no longer says the target needs the Microsoft Edge WebView2 runtime.
+- **The installers' version falls back to `package.json`.** With no deno.json `version`, the
+  `.msi` (and `.deb`, `.rpm`, the CEF executable's version resource) take package.json's
+  `version` before `1.0.0`, and the made-up-version warning names both files.
+- **A CEF build signed with a certificate Windows does not trust is caught.** CEF's bootstrap
+  checks the executable's Authenticode chain with WinVerifyTrust and dies at launch with a FATAL
+  error when it does not reach a trusted root. The Windows package script now checks the signed
+  executable (`Get-AuthenticodeSignature`) and warns with the fix (a CA-issued certificate, or
+  `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
+  CEF app on Windows (a `cef-signing` warning).
+- **The `progressive` step of the VirtualList browser e2e is deterministic.** It waited fixed
+  frames and 400 ms for the slices to finish and compared wall-clock milliseconds, so it flaked
+  under load. It now polls (bounded) until no placeholder is left, asserts the rows rendered
+  inside a scroll frame, and compares milliseconds only on an idle machine.
+- **LegendList without `maintainScrollAtEnd` no longer follows the end** (React Native mode and
+  the `lists: "denext"` DOM build). With it unset or `false`, an end-anchored list
+  (`initialScrollAtEnd`, `alignItemsAtEnd`) still pinned to the end on every change; real
+  LegendList opens at the end and then leaves the view alone, so an append, a growing last row
+  or a resize now keeps the visible rows where they are. The list still opens at the end over
+  its first measurements (the engine's opening phase: row sizes and the viewport keep the end
+  until the first data change or scroll away). `maintainScrollAtEnd: true` and `{ on }` are
+  unchanged.
+- **`denext mobile assets` removes the app icon images it replaced.** It rewrote the iOS
+  `AppIcon.appiconset/Contents.json` and left behind the images the previous one named and the
+  new one does not (a dark icon no longer configured, an older catalog's sizes), which kept
+  shipping in the bundle. Like the splash set, it now removes only plain file names the old
+  `Contents.json` referenced (never a path that leaves the folder, never a file no catalog
+  named); the report lists them (`would remove` in a dry run).
+- **`denext mobile assets --icon` warns about a pre-masked icon.** Only the icon the project
+  already has was checked for rounded corners on transparency; one passed explicitly (or a
+  flavor's) went unchecked. It gets the same check and warning.
+- **`denext mobile add` no longer runs the project's lifecycle scripts with npm, pnpm or bun.**
+  Only Yarn was told to skip them. The install now passes `--ignore-scripts` (the dry-run line
+  shows it), as `denext migrate --enable-capacitor` does; the Capacitor plugins need no install
+  script.
+- **`denext profile --interact` no longer reports first-run state as a leak.** With
+  `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
+  the heap after the first run and a GC, shown as `warm` in the report. The first run loads
+  what the interaction needs once (lazily loaded route chunks, their compiled code, first-visit
+  data caches); measured from the post-load heap, T3 Code's thread switch reported "+24 MB
+  retained", none of which grows when the switch repeats. One iteration keeps the post-load
+  baseline. Budgets written by `--write-budget` before this change may hold a larger
+  `maxLeakedBytes` than a fresh run needs.
+- **A new fiber allocates no context maps.** Every fiber was constructed with two fresh `Map`s
+  that reconcile replaced before the fiber rendered. New fibers now share one empty map
+  (context maps are never mutated in place): two fewer allocations per mounted element, ~9,000
+  for T3 Code's first screen.
+- **A store-driven render no longer loops when the store reclaims unsubscribed entries.** A
+  `useSyncExternalStore` update now runs the commit's passive effects before returning, as
+  React does for a SyncLane commit. denext ran them on a later 0 ms timer, so a store that drops
+  an entry nobody subscribes to on its own next task (@effect/atom's registry) could reclaim
+  the entry a render had just read before the subscription effect ran; re-subscribing rebuilt
+  it with a new value, which read as a change, and a component deriving its store per render
+  (`useAtomValue(atom, f)` with an inline `f`) re-rendered indefinitely. T3 Code's composer did
+  this on most launches, 30 to 110 renders a second while idle, re-attaching ~50 listeners per
+  render; its WebKit page process grew ~50 MB over two idle minutes.
+- **A desktop window fits the display it opens on.** `desktop.window`'s size was applied as
+  given, wherever the OS had placed the window. Windows cascades a new window from the top
+  left, so T3 Code's 1280×820 on a 1280×800 display ran off the right edge (the close button
+  out of reach) and put its composer under the taskbar, on WebView2 and CEF alike. Under
+  denext's pinned runtime the size is now capped at the display's work area, and a window the
+  OS left partly outside it is moved back in; one that fits keeps the OS's placement.
+- **A component without effects holds no effect queues.** Every function component got three
+  fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
+  after the commit. They are now allocated by the component's first effect of a render and
+  released once they run. In T3 Code that is ~5,000 fewer retained arrays (~0.1 MB of JS heap)
+  and three fewer allocations per component render.
+- **An unmounted subtree is released at once.** Three references kept a deleted
+  component's fibers, and with them its hook state, its props and its detached DOM, alive
+  after the commit that removed it: the parent's previous buffer still listed the deleted
+  child until the parent rendered again; only the deleted fiber was severed, not its double
+  buffer, whose `child` / `return` links led back into the old subtree; and the scheduler
+  kept the last fiber that scheduled an update (for one error message). The commit now
+  detaches both buffers and the parent's previous child list, as React does
+  (`detachFiberMutation`, `detachFiberAfterEffects`, `detachAlternateSiblings`), and the
+  scheduler keeps the component type. In T3 Code, leaving its 2,000-message thread no
+  longer keeps 87 of that view's DOM nodes and ~0.5 MB of JS heap until the next render.
+- **The `sideEffects` array form is honored.** denext resolves `node_modules` itself and marks
+  each resolved file for esbuild; it read only `"sideEffects": false` and treated the array form
+  (`["*.css", "./dist/web-components.js"]`) as "every file has side effects", so nothing in such
+  a package could be tree-shaken. The files the array names keep their side effects and every
+  other file is side-effect free, as esbuild and webpack read it (a pattern with a slash matches
+  the package-relative path, one without the file name anywhere).
+- **A `module` field that names a missing file no longer falls back to CommonJS.** lucide 0.564's
+  `module` (`dist/esm/lucide.js`) is not in its tarball; rollup's `preserveModules` put the entry
+  at `dist/esm/lucide/src/lucide.js`. The browser resolver gave up on the package and the build
+  took the CJS `main`, which esbuild can't tree-shake: 379 KB raw for T3 Code's four icons. It now
+  tries the package's other ESM entries first: the next `exports` condition when a target is
+  missing, `jsnext:main` / `es2015`, then the one file of the same name one or two directories
+  below the `module` path (the `source` field's path first). With the barrel changes above,
+  T3 Code's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream Vite build
+  (1,242,805 B).
+- **A build no longer rewrites a committed `routeTree.gen.ts` with the same routes.**
+  `spa.tanstackRouter` runs denext's pinned `@tanstack/router-plugin` generator, which orders the
+  tree differently from other versions (and never sees a Vite config's inline `quoteStyle` /
+  `semicolons`), so every denext build of T3 Code reordered the tracked file and every Vite run
+  reordered it back. When the regenerated tree holds the committed tree's statements, in any
+  order and up to quotes, semicolons and indentation, the committed bytes are put back. A route
+  added, renamed or removed is written as before.
+- **The desktop entry no longer compiles `denext.config.ts` (and its plugins) into the app.** The
+  generated `desktop.ts` imported the config module, so `deno desktop` embedded every plugin the
+  config imports, with their build toolchain. The desktop sync that every export, build,
+  `denext desktop run|dev` and package script already runs now also writes
+  `.deno-desktop/config.json` (the config's `desktop` section and `spa.proxy`, through JSON) for
+  an entry that imports it, and the entries `denext create --desktop` and `denext migrate
+  --desktop` write import that file.
+  `resolveDesktopCapabilities` takes the JSON as it takes the config and also returns
+  `spa.proxy` as `proxy`, so the entry's one spread covers it. An entry that still imports the
+  config keeps working; to drop the build-only code, change its import to
+  `import config from "./.deno-desktop/config.json" with { type: "json" };` and remove a
+  `proxy: config.spa?.proxy` line. The package scripts still load the config while packaging,
+  so the `denext/plugin-kit/vite-emitter` entry below keeps mattering there.
+- **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
+  `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
+  toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm
+  imports. The config is loaded outside the build too (a Deno Desktop app's `desktop.ts` imports
+  it at runtime, and so does the macOS package script), so desktop packaging failed under
+  `nodeModulesDir: "manual"` ("Could not find a matching package for 'npm:esbuild@^0.24.0'"),
+  and a looser setup would have shipped the toolchain in the app. The new entry exports the same
+  function with no npm package and no bundler in its graph; `denext migrate` and the docs use it.
+  `denext/plugin-kit` still re-exports it.
+- **The `client:*` directive types type-check under `exactOptionalPropertyTypes`.** With the
+  documented `client-directives.d.ts` merged into `@types/react`'s `Attributes`, a component
+  that spreads props typed the way component libraries type them (each key `?: T | undefined`,
+  as Base UI's are) onto an element failed `tsc` with TS2375 under
+  `exactOptionalPropertyTypes: true` (T3 Code: 103 errors). Every `ClientDirectives` key now
+  admits an explicit `undefined`, as React's own `Attributes` do.
+- **A `lists: "denext"` chat opened at the end shows its footer.** With LegendList's DOM build on
+  `VirtualList`, T3 Code's 2,000-message thread opened 188 px short of the end: the last message
+  sat on the bottom edge and the list footer (the composer's inset, 172 px, plus 16 px of
+  padding) was below it, out of view. The rows measured larger than the 90 px estimate, so while
+  the sizes landed the rendered window overflowed its estimated box and covered the footer, and
+  the space after the rows read as 0; nothing re-read it once the layout caught up. The list now
+  re-reads that space after laying out whenever the last read was covered, so
+  `initialScrollAtEnd` ends at the very end, footer included, as LegendList does.
+- **LegendList renders its default `drawDistance` (250 px) beyond the viewport.** Without a
+  `drawDistance` the engine's own default applied, a whole viewport each side: that chat
+  rendered 18 rows where LegendList renders 11. It now renders 12 (React Native mode's
+  `LegendList` too).
+- **Release-gate flake: the Cron panel test under load.** `tests/ui-config-cron.test.ts` ("what
+  a browser posts for the untouched editor is not refused") read `[""]` for the posted tasks at
+  load 70: the panel's discovery child overran its 15 s deadline on its cold start, so the page
+  (correctly) listed no schedules. The suite tests what the panel renders from a listing, so it
+  now gives the child 300 s through a test seam (`setCronDiscoveryBudget`), and says so when the
+  listing did not finish; the panel's own deadline is unchanged.
+- **Release-gate flake: the leaked-handle listing test under load.**
+  `tests/integration/cli-plugin-command.test.ts` ("a plugin that leaks a handle cannot keep a
+  listing alive") failed when `denext completions zsh` took 20.6 s against a fixed 20 s bound.
+  The leak is an interval, so the regression is a process that never exits: each verb now runs
+  beside a leak-free control project at the same moment, and the leaky run fails only while it
+  is still alive after 4x the control's time (at least 30 s).
+- **A pre-masked app icon is warned about.** The icon `denext mobile assets`, `denext mobile
+  build` and `denext migrate` find for a Capacitor shell can be one already rounded for display
+  (a rounded rectangle on transparency, as many web manifests and design exports ship). iOS
+  applies its own rounded mask, so the app showed a rounded rectangle inside a rounded
+  rectangle. The icon report now warns when the chosen icon looks pre-masked and asks for the
+  full-bleed square artwork.
+- **`denext mobile assets` removes the splash images it replaced.** It rewrote the iOS
+  Splash.imageset's `Contents.json` but left the images the old one named behind, unreferenced
+  (a dark splash no longer configured, a hand-made set's own file names), so they kept shipping
+  in the app bundle. The images the old `Contents.json` named and the new one does not are now
+  removed, and listed in the report (`--dry-run` lists them as "would remove"); a file no
+  catalog named, or a name that leaves the set's folder, is never touched.
+- **A phone or web export no longer carries `desktop.preload`.** Every export bundled the
+  configured preload to `_denext/desktop-preload.js`, so an iOS / Android export shipped it in
+  the app (and over the air) and a web export served it, though only a Deno Desktop window
+  loads it. Only a `macos` / `windows` / `linux` export (what `denext desktop run` and the
+  package scripts make) bundles it now; another export says it left it out.
+- **`denext mobile doctor` flags stale auth-session native templates.** As `ota-generations`
+  does for the OTA plugin, the new `auth-session-generations` check (`--store`, `--release`)
+  reads the template markers of the auth-session files on each platform: files from different
+  generations (an edited `DenextAuthSessionPlugin.swift` a later `mobile add auth-session` kept
+  beside an upgraded bridge view controller) are an error, and files that all predate this
+  denext's generation, missing the bridge fixes made since, are a warning.
+- **`denext mobile add` in a pnpm (or yarn / npm / bun) workspace uses the workspace's
+  manager even beside a stray `deno.lock`.** The nearest lockfile won, so a `deno.lock` that
+  `deno task` or a denext run left in a workspace's app made the install `deno add npm:…`
+  instead of the root `pnpm-lock.yaml`'s `pnpm add`. A workspace lockfile above the project now
+  wins over the project's own `deno.lock`, which names the manager only when there is none.
+- **The examples' desktop entries read `.deno-desktop/config.json`.** `examples/native`,
+  `clerk`, `desktop-kitchen-sink` and `rn-desktop` (and the CI relocation smoke's app) still
+  imported `denext.config.ts` in `desktop.ts`, so their packaged apps compiled the config's
+  module graph in. They now import the committed `.deno-desktop/config.json`, as a new
+  scaffold does; a test keeps each committed file equal to what the desktop sync writes from
+  the example's config.
+- **`denext mobile add` runs a Yarn install without lifecycle scripts.** Its `yarn add` ran
+  the project's own scripts (a monorepo's `prepare`, a `postinstall`) and its dependencies',
+  which the Capacitor plugins never need. It now sets `npm_config_ignore_scripts=true` (Yarn 1)
+  and `YARN_ENABLE_SCRIPTS=0` (Berry), as `denext migrate`'s install does; the dry run shows
+  them, and the CLI's command runner (shared with `mobile build`) now passes a command's
+  environment through.
+- **LegendList's `maintainScrollAtEnd.on` flags are honoured.** The LegendList adapter
+  accepted `on` but kept the end pinned on every change, so with T3 Code's
+  `on: { footerLayout: false }` a composer growing while the timeline sat at its end still
+  moved the visible messages up. Given `on`, only its `true` keys (`dataChange`, `itemLayout`,
+  `layout`, `footerLayout`) keep the end pinned now, as in LegendList; any other change keeps
+  the visible items in place. `VirtualList` gains the underlying `pinEndOn` prop
+  (`{ data, items, layout, footer }`, all `true` by default) for `anchor="end"`.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added
@@ -12030,7 +12322,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.1...development
+[3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0

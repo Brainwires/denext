@@ -17,11 +17,11 @@ import { parseFlight } from "../src/client/flight-client.ts";
 import {
   Link,
   navigate,
-  setFlightParser,
   startClient,
   useLinkStatus,
   withViewTransition,
 } from "../src/client/navigation.ts";
+import { setFlightParser } from "../src/client/flight-nav.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { Component, VNode } from "../src/jsx/types.ts";

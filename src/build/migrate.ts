@@ -2178,7 +2178,7 @@ function spaConfigSource(o: {
 /** The generated config's imports for the vite.config's file-emitting plugins. */
 function viteEmitterImports(emitters: readonly MappedViteEmitter[] = []): string {
   if (emitters.length === 0) return "";
-  return `import { viteEmitterPlugin } from "denext/plugin-kit";\n` +
+  return `import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";\n` +
     emitters.map((e) => `${e.importLine}\n`).join("");
 }
 
@@ -2457,22 +2457,22 @@ function nextConfigSource(o: {
 
 /** Source text for the generated `deno desktop` entry (`desktop.ts`). */
 function spaDesktopSource(): string {
-  // Always read `spa.proxy` from denext.config.ts (harmlessly `undefined` when no
-  // proxy is set) so ADDING a backend proxy to the config later just works — no
-  // desktop.ts hand-edit or re-migration. `deno desktop` compiles this import in, so
-  // the proxy config is baked into the packaged app (which has no config at runtime).
+  // The entry reads `.deno-desktop/config.json`: the runtime part of denext.config.ts
+  // (`desktop`, `spa.proxy`) that every export, build and `denext desktop` command rewrites, so
+  // ADDING a backend proxy to the config later just works (no desktop.ts hand-edit or
+  // re-migration) and the config module, with any plugin it imports, never ships in the app.
   return GEN_MARKER + "\n" +
     `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native\n` +
     `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +
     `// Backend reverse proxy: set \`spa.proxy\` in denext.config.ts (e.g. to reach a\n` +
-    `// local server same-origin so its session cookies persist).\n` +
+    `// local server same-origin so its session cookies persist). It reaches this entry through\n` +
+    `// .deno-desktop/config.json, which the export writes from the config.\n` +
     `import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";\n` +
-    `import config from "./denext.config.ts";\n\n` +
+    `import config from "./.deno-desktop/config.json" with { type: "json" };\n\n` +
     `await runDesktop({\n` +
     `  importMetaUrl: import.meta.url,\n` +
-    `  proxy: config.spa?.proxy,\n` +
-    `  // Serve the enabled desktop.capabilities (denext desktop add <cap>); without this spread\n` +
-    `  // every bridge call answers \`unavailable\` and \`denext desktop add\` has no runtime effect.\n` +
+    `  // Serve the enabled desktop.capabilities (denext desktop add <cap>) and \`spa.proxy\`;\n` +
+    `  // without this spread every bridge call answers \`unavailable\`.\n` +
     `  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),\n` +
     `});\n`;
 }
@@ -2857,7 +2857,11 @@ async function migrateSpaProject(
 
   const facts = await spaSourceFacts(dir, deps, options, source);
   // `viteEmitterPlugin` in the generated config.
-  if (facts.viteEmitters.length > 0) imports["denext/plugin-kit"] = R.sub("plugin-kit");
+  // The light entry: a desktop app's `desktop.ts` imports the config at runtime, and
+  // `denext/plugin-kit` would bring the build toolchain (esbuild, sass, mdx) with it.
+  if (facts.viteEmitters.length > 0) {
+    imports["denext/plugin-kit/vite-emitter"] = R.sub("plugin-kit/vite-emitter");
+  }
   const cap = options.capacitor
     ? await spaCapacitorPlan(dir, deps, pm, R, options, facts, source)
     : null;

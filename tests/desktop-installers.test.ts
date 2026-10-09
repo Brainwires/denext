@@ -23,6 +23,7 @@ import {
   DEFAULT_DESKTOP_INSTALLERS,
   desktopInstallerPlan,
   desktopPackageMeta,
+  desktopPackageMetaWarnings,
   isDbusAppId,
   linuxDbusService,
   linuxDesktopEntry,
@@ -865,7 +866,10 @@ Deno.test("meta warnings: a made-up version or identifier is warned about, a set
   const bare = packageMetaFrom({}, {}, "Thing");
   const lines = packageMetaWarnings({}, {}, bare);
   assertEquals(lines.length, 2);
-  assertStringIncludes(lines[0], 'deno.json has no "version": the installers say 1.0.0');
+  assertStringIncludes(
+    lines[0],
+    'no "version" in deno.json or package.json: the installers say 1.0.0',
+  );
   assertStringIncludes(lines[1], "using com.deno.desktop.thing");
   assertStringIncludes(lines[1], "UpgradeCode");
   const deno = { version: "2.0.0", desktop: { app: { identifier: "com.acme.thing" } } };
@@ -1028,6 +1032,39 @@ Deno.test("buildDesktopTarball: the bundle as the top-level directory, modes kep
     assertEquals(entries.get("./My-App-x64/laufey-launch.json")?.slice(0, 2), ["0", 0o644]);
     assertEquals(entries.get("./My-App-x64/sub/data.txt")?.[2].length, 700);
     assertEquals(entries.get("./My-App-x64/")?.[0], "5");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("meta: the version falls back to package.json `version`, then 1.0.0; deno.json's wins", () => {
+  assertEquals(packageMetaFrom({}, {}, "Thing", { version: "3.4.5" }).version, "3.4.5");
+  assertEquals(
+    packageMetaFrom({ version: "2.0.0" }, {}, "Thing", { version: "3.4.5" }).version,
+    "2.0.0",
+  );
+  assertEquals(packageMetaFrom({}, {}, "Thing", { version: " " }).version, "1.0.0");
+  assertEquals(packageMetaFrom({}, {}, "Thing", undefined).version, "1.0.0");
+  // A package.json version is a real one: no made-up-version warning.
+  const cfg = { desktop: { app: { identifier: "com.acme.cfg" } } };
+  const pkg = { version: "3.4.5" };
+  assertEquals(packageMetaWarnings({}, cfg, packageMetaFrom({}, cfg, "Thing", pkg), pkg), []);
+  const none = packageMetaWarnings({}, cfg, packageMetaFrom({}, cfg, "Thing"));
+  assertStringIncludes(none.join("\n"), 'no "version" in deno.json or package.json');
+});
+
+Deno.test("meta: desktopPackageMeta reads package.json `version` beside the scripts/ entry", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ desktop: { app: {} } }));
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify({ version: "0.7.1" }));
+    const entry = toFileUrl(join(dir, "scripts", "package-windows.ts")).href;
+    const meta = await desktopPackageMeta(entry, "x");
+    assertEquals(meta.version, "0.7.1");
+    assertEquals(msiProductVersion(meta.version), "0.7.1");
+    const warnings = await desktopPackageMetaWarnings(entry, meta);
+    assert(!warnings.some((l) => l.includes('"version"')), warnings.join("\n"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -13,7 +13,7 @@
 // route bundle.
 
 import { carryLinks } from "./config-links.ts";
-import { denoInfoGraph, reachableModules } from "./module-graph.ts";
+import { denoInfoGraph, reachableModules, withModuleGraphRedirects } from "./module-graph.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
@@ -152,9 +152,13 @@ const CSS_GRAPH_CACHE = "css";
  * follow are answered from the cached graph instead of spawning a `deno info` each
  * (≈4 s × routes on a large app). Failures are ignored — the per-route calls then crawl.
  */
-export async function primeCssGraph(entryFiles: string[], appConfigPath?: string): Promise<void> {
+export async function primeCssGraph(
+  entryFiles: string[],
+  appConfigPath?: string,
+  graph?: AppCss["graph"],
+): Promise<void> {
   if (entryFiles.length === 0) return;
-  await discoverCssFiles(entryFiles, appConfigPath).catch(() => {});
+  await discoverCssFiles(entryFiles, appConfigPath, graph).catch(() => {});
 }
 
 /**
@@ -163,14 +167,29 @@ export async function primeCssGraph(entryFiles: string[], appConfigPath?: string
  * ("identified a Css module") but still reports their specifiers, so we collect
  * those rather than skipping them the way {@link crawlLocalModules} does.
  *
+ * A platform file's stylesheets belong to the targets that load it, so the crawl resolves
+ * through `graph` (the target's platform-file redirects, {@linkcode AppCss.graph}) when one is
+ * given, else through whatever redirects the caller's crawls already use.
+ *
  * @param entryFiles Absolute paths of the modules to crawl from.
+ * @param appConfigPath The app's own `deno.json` (its css→shim redirects are stripped for the
+ *   crawl, and `graph` applies on top of it).
+ * @param graph The target's import map to crawl through.
  * @returns Absolute paths of all `.css` files in the graph (sorted, unique).
  */
 export async function discoverCssFiles(
   entryFiles: string[],
   appConfigPath?: string,
+  graph?: AppCss["graph"],
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
+  if (graph && appConfigPath) {
+    return await withModuleGraphRedirects(
+      appConfigPath,
+      graph,
+      () => discoverCssFiles(entryFiles, appConfigPath),
+    );
+  }
   // `deno info` resolves each module's imports via the `deno.json` nearest to it —
   // the app's own config — NOT a `--config` override. When that config has the
   // css→shim redirects mirrored in (anchoring apps; see buildAppCss), every `.css`
@@ -379,6 +398,17 @@ export interface AppCss extends CssAssets {
    * {@linkcode restoreAppConfig}), leaving the committed `deno.json` byte-identical.
    */
   appConfigRedirects?: Record<string, string>;
+  /**
+   * The build target's import map (its platform-file redirects, and the app module each rewritten
+   * copy in it stands in for; `GraphImportMap` in ./module-graph.ts) every stylesheet crawl over
+   * these assets resolves through, so `look.ios.ts`'s `import "./a.css"`
+   * reaches the iOS build's CSS and the plain file's does not; absent, the crawls use the
+   * redirects already in effect (a native App Router build installs its target's).
+   */
+  graph?: {
+    readonly importMap: Record<string, string>;
+    readonly originals?: Readonly<Record<string, string>>;
+  };
 }
 
 type BuildAppCssOptions = Parameters<typeof buildAppCss>[0];
@@ -410,7 +440,7 @@ async function collectCssFiles(
   }
   if (!opts.entryFiles || opts.entryFiles.length === 0) return cssFiles;
   const seen = new Set(cssFiles.map((f) => resolve(f)));
-  for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
+  for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath, opts.graph)) {
     const abs = resolve(found);
     if (seen.has(abs) || excluded?.has(abs)) continue;
     if (shells.test(abs)) continue; // a copy of built CSS; vendored node_modules sheets stay
@@ -576,6 +606,8 @@ export async function buildAppCss(opts: {
    * `undefined`) and a killed `denext dev` cannot leave redirects in the committed config.
    */
   spa?: boolean;
+  /** The build target's import map the crawls resolve through ({@linkcode AppCss.graph}). */
+  graph?: AppCss["graph"];
 }): Promise<AppCss | null> {
   // Compile Tailwind first so its output exists for the walk below.
   if (opts.tailwind) {
@@ -605,7 +637,14 @@ export async function buildAppCss(opts: {
   const appConfigRedirects = opts.spa
     ? undefined
     : await appConfigRedirectsFor(opts.configPath, redirects);
-  return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles, appConfigRedirects };
+  return {
+    ...assets,
+    configPath,
+    appConfigPath: opts.configPath,
+    cssFiles,
+    appConfigRedirects,
+    graph: opts.graph,
+  };
 }
 
 /**
@@ -687,7 +726,7 @@ export function restoreAppConfigSync(configPath: string, outDir: string): void {
  * @param assets The app's CSS assets from {@linkcode buildAppCss}.
  */
 export async function extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string> {
-  const used = new Set(await discoverCssFiles(routeFiles, assets.appConfigPath));
+  const used = new Set(await discoverCssFiles(routeFiles, assets.appConfigPath, assets.graph));
   const parts = new Map<string, string>();
   for (const file of assets.css.keys()) {
     if (used.has(file)) parts.set(file, assets.css.get(file)!);

@@ -2828,6 +2828,68 @@
           "denextOnly": true
         },
         {
+          "name": "SwipeableRow",
+          "slug": "SwipeableRow",
+          "kind": "function",
+          "signature": "SwipeableRow(props: SwipeableRowProps): VNode",
+          "doc": "A row that swipes sideways to reveal actions; see the module docs. A client component: render it from a \"use client\" file. Inside a VirtualList, render one per row.",
+          "docFull": "A row that swipes sideways to reveal actions; see the module docs. A client component:\nrender it from a `\"use client\"` file. Inside a `VirtualList`, render one per row.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { SwipeableRow, VirtualList } from \"denext\";\n\nexport function Threads({ threads }: { threads: Thread[] }) {\n  return (\n    <VirtualList\n      data={threads}\n      renderItem={(item) => (\n        <SwipeableRow\n          leading={[{ label: \"Unread\", tone: \"accent\", onPress: () => markUnread(item.id) }]}\n          trailing={[\n            { label: \"Archive\", tone: \"warning\", onPress: () => archive(item.id) },\n            { label: \"Mute\", onPress: () => mute(item.id) },\n          ]}\n        >\n          <ThreadRow thread={item} />\n        </SwipeableRow>\n      )}\n    />\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SwipeableRowHandle",
+          "slug": "SwipeableRowHandle",
+          "kind": "interface",
+          "signature": "interface SwipeableRowHandle",
+          "doc": "What a SwipeableRow's rowRef receives.",
+          "docFull": "What a {@linkcode SwipeableRow}'s `rowRef` receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SwipeableRowProps",
+          "slug": "SwipeableRowProps",
+          "kind": "interface",
+          "signature": "interface SwipeableRowProps",
+          "doc": "Props of SwipeableRow.",
+          "docFull": "Props of {@linkcode SwipeableRow}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SwipeableRowSide",
+          "slug": "SwipeableRowSide",
+          "kind": "typeAlias",
+          "signature": "type SwipeableRowSide = leading | trailing",
+          "doc": "Which side of a row is open.",
+          "docFull": "Which side of a row is open.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SwipeAction",
+          "slug": "SwipeAction",
+          "kind": "interface",
+          "signature": "interface SwipeAction",
+          "doc": "One action a SwipeableRow reveals.",
+          "docFull": "One action a {@linkcode SwipeableRow} reveals.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SyntheticEvent",
           "slug": "SyntheticEvent",
           "kind": "interface",
@@ -4056,7 +4118,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.0",
+          "signature": "VERSION: 3.4.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16233,6 +16295,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopCheckCefSignature",
+          "slug": "desktopCheckCefSignature",
+          "kind": "function",
+          "signature": "desktopCheckCefSignature(exe: string, deps?: WindowsTrustDeps): Promise<boolean>",
+          "doc": "After signing a CEF app on Windows: warn when the signed <App>.exe will not start here (cefSignatureProblem). Off Windows, or when the probe fails, nothing is said.",
+          "docFull": "After signing a CEF app on Windows: warn when the signed `<App>.exe` will not start here\n({@linkcode cefSignatureProblem}). Off Windows, or when the probe fails, nothing is said.",
+          "params": [
+            {
+              "name": "exe",
+              "doc": "The bundle's executable."
+            },
+            {
+              "name": "deps",
+              "doc": "Seams."
+            }
+          ],
+          "returns": "Whether the executable's signature is fine (true when it could not be checked).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopDenoFlagArgs",
           "slug": "desktopDenoFlagArgs",
           "kind": "function",
@@ -16324,8 +16407,8 @@
           "slug": "desktopIconArgs",
           "kind": "function",
           "signature": "desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>",
-          "doc": "The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists (none: no icon, and deno desktop uses its default). Paths are relative to the project.",
-          "docFull": "The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in\n`denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists\n(none: no icon, and `deno desktop` uses its default). Paths are relative to the project.",
+          "doc": "The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists, else one derived from the app's own icon (deriveDesktopIcon: the web manifest, the apple-touch-icon, … into .deno-desktop/; none: no icon, and deno desktop uses its default). Paths are relative to the project.",
+          "docFull": "The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in\n`denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists,\nelse one derived from the app's own icon (`deriveDesktopIcon`: the web manifest, the\napple-touch-icon, … into `.deno-desktop/`; none: no icon, and `deno desktop` uses its default).\nPaths are relative to the project.",
           "params": [
             {
               "name": "entryUrl",
@@ -16781,6 +16864,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopRuntimeConfig",
+          "slug": "DesktopRuntimeConfig",
+          "kind": "interface",
+          "signature": "interface DesktopRuntimeConfig",
+          "doc": "What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.",
+          "docFull": "What {@link resolveDesktopCapabilities} reads: the project config, or the JSON slice of it the\ndesktop sync writes to `.deno-desktop/config.json` (`{ desktop, spa: { proxy } }`), which the\ngenerated `desktop.ts` imports so `denext.config.ts` (and every plugin it imports) stays out of\nthe packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopRuntimeEnv",
           "slug": "desktopRuntimeEnv",
           "kind": "function",
@@ -16946,6 +17041,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopWindowsTargetNote",
+          "slug": "desktopWindowsTargetNote",
+          "kind": "function",
+          "signature": "desktopWindowsTargetNote(backend: string, noVcRuntime: typeOperator): string",
+          "doc": "The closing note of a Windows package run: what the target machine needs for backend. A webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022 redistributable for each arch in noVcRuntime (the runtime could not be bundled app-local).",
+          "docFull": "The closing note of a Windows package run: what the target machine needs for `backend`. A\nwebview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF\nbuild ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022\nredistributable for each arch in `noVcRuntime` (the runtime could not be bundled app-local).",
+          "params": [
+            {
+              "name": "backend",
+              "doc": "The deno desktop backend (meta.backend: \"webview\" or \"cef\")."
+            },
+            {
+              "name": "noVcRuntime",
+              "doc": "The arches whose bundle has no app-local VC++ runtime."
+            }
+          ],
+          "returns": "The note, in parentheses.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
@@ -17093,6 +17209,18 @@
           "denextOnly": true
         },
         {
+          "name": "PowerShellRunner",
+          "slug": "PowerShellRunner",
+          "kind": "typeAlias",
+          "signature": "type PowerShellRunner = (script: string, env: Record<string, string>) => Promise<object | null>",
+          "doc": "Runs a PowerShell script with extra environment; null when PowerShell did not run.",
+          "docFull": "Runs a PowerShell script with extra environment; `null` when PowerShell did not run.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PreparedDesktopPackage",
           "slug": "PreparedDesktopPackage",
           "kind": "interface",
@@ -17157,20 +17285,20 @@
           "name": "resolveDesktopCapabilities",
           "slug": "resolveDesktopCapabilities",
           "kind": "function",
-          "signature": "resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
+          "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
           "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
-              "name": "config",
-              "doc": "The project config (or its desktop block via the whole config); undefined yields no capabilities."
+              "name": "runtimeConfig",
+              "doc": "The project config, or .deno-desktop/config.json (its runtime slice, see DesktopRuntimeConfig); undefined yields no capabilities."
             },
             {
               "name": "options",
               "doc": "The app id (for storage dirs) and the entry's import.meta.url (for extensions)."
             }
           ],
-          "returns": "The enabled capabilities, the app-support directory, and whether auth-session is enabled.",
+          "returns": "The enabled capabilities, the app-support directory, whether auth-session is enabled, and spa.proxy.",
           "examples": [],
           "denextOnly": true
         },
@@ -17260,6 +17388,18 @@
             }
           ],
           "returns": "What changed.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowsTrustDeps",
+          "slug": "WindowsTrustDeps",
+          "kind": "interface",
+          "signature": "interface WindowsTrustDeps",
+          "doc": "Seams for the probes (tests stub them).",
+          "docFull": "Seams for the probes (tests stub them).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -23680,6 +23820,20 @@
           "denextOnly": true
         },
         {
+          "name": "browserHistory",
+          "slug": "browserHistory",
+          "kind": "function",
+          "signature": "browserHistory(): HistorySource",
+          "doc": "The browser's own history as a HistorySource, for an app with no router (or one that navigates only through this source): push / replace write history.pushState / replaceState and stamp each entry with its index, and popstate (back, forward) is heard. A pushState made behind its back is not.",
+          "docFull": "The browser's own history as a {@linkcode HistorySource}, for an app with no router (or one\nthat navigates only through this source): `push` / `replace` write `history.pushState` /\n`replaceState` and stamp each entry with its index, and `popstate` (back, forward) is heard.\nA `pushState` made behind its back is not.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { browserHistory, HistoryStack } from \"denext/navigation\";\nconst history = browserHistory();\nexport function App() {\n  return <HistoryStack history={history} screens={[…]} />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -23740,6 +23894,106 @@
           "denextOnly": false
         },
         {
+          "name": "HistoryLocation",
+          "slug": "HistoryLocation",
+          "kind": "interface",
+          "signature": "interface HistoryLocation",
+          "doc": "A location as the history bindings read it.",
+          "docFull": "A location as the history bindings read it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryScreen",
+          "slug": "HistoryScreen",
+          "kind": "interface",
+          "signature": "interface HistoryScreen",
+          "doc": "One screen of a HistoryStack's table.",
+          "docFull": "One screen of a {@linkcode HistoryStack}'s table.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HistorySource",
+          "slug": "HistorySource",
+          "kind": "interface",
+          "signature": "interface HistorySource",
+          "doc": "A history-based router, as HistoryStack and HistoryTabs use it: read the location, hear it change, and navigate. browserHistory, tanstackHistory and reactRouterHistory build one; any router whose location lives in the URL history can implement it in a few lines.",
+          "docFull": "A history-based router, as {@linkcode HistoryStack} and {@linkcode HistoryTabs} use it: read\nthe location, hear it change, and navigate. {@linkcode browserHistory},\n{@linkcode tanstackHistory} and {@linkcode reactRouterHistory} build one; any router whose\nlocation lives in the URL history can implement it in a few lines.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryStack",
+          "slug": "HistoryStack",
+          "kind": "function",
+          "signature": "HistoryStack(props: HistoryStackProps): VNode",
+          "doc": "A native-feeling stack over any history-based router; see the module docs. Mount it where the router would render the routes it covers (in a TanStack Router layout route, in place of its <Outlet />), and give it the screens; the router keeps owning the URL.",
+          "docFull": "A native-feeling stack over any history-based router; see the module docs. Mount it where\nthe router would render the routes it covers (in a TanStack Router layout route, in place of\nits `<Outlet />`), and give it the screens; the router keeps owning the URL.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { HistoryStack, tanstackHistory, useScreenMatch } from \"denext/navigation\";\nimport { router } from \"./router.ts\";\n\nconst history = tanstackHistory(router);\nconst screens = [\n  { path: \"/\", render: () => <ThreadList />, options: { title: \"Threads\" } },\n  { path: \"/$threadId\", render: (m) => <Thread id={m.params.threadId} /> },\n  {\n    path: \"/$threadId/diff\",\n    render: (m) => <Diff id={m.params.threadId} />,\n    options: { presentation: \"formSheet\", sheetAllowedDetents: [\"medium\", \"large\"] },\n  },\n];\n\nexport function PhoneShell() {\n  return <HistoryStack history={history} screens={screens} />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryStackProps",
+          "slug": "HistoryStackProps",
+          "kind": "interface",
+          "signature": "interface HistoryStackProps",
+          "doc": "Props of HistoryStack. theme, material and accentColor pick the look; see NavigationThemeProps.",
+          "docFull": "Props of {@linkcode HistoryStack}. `theme`, `material` and `accentColor` pick the look; see\n{@linkcode NavigationThemeProps}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryTab",
+          "slug": "HistoryTab",
+          "kind": "interface",
+          "signature": "interface HistoryTab",
+          "doc": "One tab of a HistoryTabs: a TabDefinition that renders itself.",
+          "docFull": "One tab of a {@linkcode HistoryTabs}: a {@linkcode TabDefinition} that renders itself.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryTabs",
+          "slug": "HistoryTabs",
+          "kind": "function",
+          "signature": "HistoryTabs(props: HistoryTabsProps): VNode",
+          "doc": "A tab bar over any history-based router whose tabs keep their state; see the module docs.",
+          "docFull": "A tab bar over any history-based router whose tabs keep their state; see the module docs.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { HistoryStack, HistoryTabs, tanstackHistory } from \"denext/navigation\";\nconst history = tanstackHistory(router);\nexport function Phone() {\n  return (\n    <HistoryTabs\n      history={history}\n      tabs={[\n        { name: \"threads\", href: \"/threads\", title: \"Threads\",\n          render: () => <HistoryStack history={history} base=\"/threads\" screens={threadScreens} /> },\n        { name: \"settings\", href: \"/settings\", title: \"Settings\", render: () => <Settings /> },\n      ]}\n    />\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "HistoryTabsProps",
+          "slug": "HistoryTabsProps",
+          "kind": "interface",
+          "signature": "interface HistoryTabsProps",
+          "doc": "Props of HistoryTabs.",
+          "docFull": "Props of {@linkcode HistoryTabs}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "IosBarMaterial",
           "slug": "IosBarMaterial",
           "kind": "typeAlias",
@@ -23761,6 +24015,20 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "matchScreenPath",
+          "slug": "matchScreenPath",
+          "kind": "function",
+          "signature": "matchScreenPath(pattern: string, pathname: string): Record<string, string> | null",
+          "doc": "Match pathname against a screen pattern: literal segments, :name or $name params (TanStack Router's spelling too), and a trailing * or $ splat (its value under \"*\" and \"_splat\"). Returns the decoded params, or null when it does not match.",
+          "docFull": "Match `pathname` against a screen pattern: literal segments, `:name` or `$name` params\n(TanStack Router's spelling too), and a trailing `*` or `$` splat (its value under `\"*\"` and\n`\"_splat\"`). Returns the decoded params, or `null` when it does not match.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nmatchScreenPath(\"/threads/$threadId\", \"/threads/42\"); // { threadId: \"42\" }\nmatchScreenPath(\"/files/*\", \"/files/a/b.ts\"); // { \"*\": \"a/b.ts\", _splat: \"a/b.ts\" }\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -23866,6 +24134,59 @@
           "signature": "interface ReactNavigationState",
           "doc": "A navigator's state, as the navigators read it.",
           "docFull": "A navigator's state, as the navigators read it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "reactRouterHistory",
+          "slug": "reactRouterHistory",
+          "kind": "function",
+          "signature": "reactRouterHistory(router: ReactRouterLike): HistorySource",
+          "doc": "A React Router data router (createBrowserRouter / createHashRouter / createMemoryRouter, library mode) as a HistorySource: the location from router.state, changes from router.subscribe, navigations through router.navigate. The entry index is the browser router's history.state.idx where it exists.",
+          "docFull": "A React Router data router (`createBrowserRouter` / `createHashRouter` /\n`createMemoryRouter`, library mode) as a {@linkcode HistorySource}: the location from\n`router.state`, changes from `router.subscribe`, navigations through `router.navigate`. The\nentry index is the browser router's `history.state.idx` where it exists.",
+          "params": [
+            {
+              "name": "router",
+              "doc": "The data router."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReactRouterLike",
+          "slug": "ReactRouterLike",
+          "kind": "interface",
+          "signature": "interface ReactRouterLike",
+          "doc": "The slice of a React Router data router (createBrowserRouter) reactRouterHistory uses.",
+          "docFull": "The slice of a React Router data router (`createBrowserRouter`) {@linkcode reactRouterHistory} uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resolveScreen",
+          "slug": "resolveScreen",
+          "kind": "function",
+          "signature": "resolveScreen(screens: typeOperator, loc: Pick<HistoryLocation, pathname | search | hash>): object | null",
+          "doc": "The first screen of screens that matches loc, with its match.",
+          "docFull": "The first screen of `screens` that matches `loc`, with its match.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ScreenMatch",
+          "slug": "ScreenMatch",
+          "kind": "interface",
+          "signature": "interface ScreenMatch",
+          "doc": "What a screen renders from: the location it was pushed at, matched against its path.",
+          "docFull": "What a screen renders from: the location it was pushed at, matched against its path.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -24154,6 +24475,49 @@
           "denextOnly": true
         },
         {
+          "name": "tanstackHistory",
+          "slug": "tanstackHistory",
+          "kind": "function",
+          "signature": "tanstackHistory(routerOrHistory: TanStackRouterLike | TanStackHistoryLike): HistorySource",
+          "doc": "A TanStack Router (or its router.history) as a HistorySource. With the router, navigations go through router.navigate({ href }) (so loaders, blockers and view transitions run as for a <Link>); with a bare history, through history.push. The entry index comes from TanStack's __TSR_index, so back and forward are exact.",
+          "docFull": "A TanStack Router (or its `router.history`) as a {@linkcode HistorySource}. With the router,\nnavigations go through `router.navigate({ href })` (so loaders, blockers and view\ntransitions run as for a `<Link>`); with a bare history, through `history.push`. The entry\nindex comes from TanStack's `__TSR_index`, so back and forward are exact.",
+          "params": [
+            {
+              "name": "routerOrHistory",
+              "doc": "The app's router (createRouter(…)), or router.history."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { HistoryStack, tanstackHistory } from \"denext/navigation\";\nimport { router } from \"./router.ts\";\nconst history = tanstackHistory(router);\nexport function PhoneLayout() {\n  return <HistoryStack history={history} screens={screens} />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "TanStackHistoryLike",
+          "slug": "TanStackHistoryLike",
+          "kind": "interface",
+          "signature": "interface TanStackHistoryLike",
+          "doc": "The slice of @tanstack/history's RouterHistory tanstackHistory uses.",
+          "docFull": "The slice of `@tanstack/history`'s `RouterHistory` {@linkcode tanstackHistory} uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TanStackRouterLike",
+          "slug": "TanStackRouterLike",
+          "kind": "interface",
+          "signature": "interface TanStackRouterLike",
+          "doc": "The slice of a TanStack Router tanstackHistory uses.",
+          "docFull": "The slice of a TanStack Router {@linkcode tanstackHistory} uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useScreenInfo",
           "slug": "useScreenInfo",
           "kind": "function",
@@ -24163,6 +24527,20 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useScreenMatch",
+          "slug": "useScreenMatch",
+          "kind": "function",
+          "signature": "useScreenMatch(): ScreenMatch | null",
+          "doc": "The location the screen this component renders in was pushed at (its path params, search and hash), or null outside a HistoryStack. Read this in a screen rather than the router's own location hooks: a kept screen below the top keeps its own location, while the router's hooks follow the top screen.",
+          "docFull": "The location the screen this component renders in was pushed at (its path params, search\nand hash), or `null` outside a {@linkcode HistoryStack}. Read this in a screen rather than\nthe router's own location hooks: a kept screen below the top keeps its own location, while\nthe router's hooks follow the top screen.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useScreenMatch } from \"denext/navigation\";\nexport function Thread() {\n  const id = useScreenMatch()?.params.threadId;\n  return <h1>Thread {id}</h1>;\n}\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -24344,7 +24722,7 @@
           "kind": "interface",
           "signature": "interface ClientDirectives<Placeholder>",
           "doc": "The client:* directive props: a Flight route's island hydration markers, and in SPA mode the deferred mount of a code-split component. The build strips every client:* key before it reaches the component or the DOM; they are authoring markers, not real props.",
-          "docFull": "The `client:*` directive props: a Flight route's island hydration markers, and in SPA mode the\ndeferred mount of a code-split component. The build strips every `client:*` key before it\nreaches the component or the DOM; they are authoring markers, not real props.",
+          "docFull": "The `client:*` directive props: a Flight route's island hydration markers, and in SPA mode the\ndeferred mount of a code-split component. The build strips every `client:*` key before it\nreaches the component or the DOM; they are authoring markers, not real props.\n\nEach key admits an explicit `undefined`, as React's own `Attributes` do: under\n`exactOptionalPropertyTypes` a props type that spells its optional keys `?: T | undefined`\n(Base UI's, any mapped `Partial`) is spread onto elements whose `Attributes` include these.",
           "params": [],
           "returns": "",
           "examples": [],

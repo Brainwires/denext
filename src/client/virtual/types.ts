@@ -179,6 +179,21 @@ export interface VirtualListOptions<T> {
    */
   readonly anchor?: "start" | "end";
   /**
+   * With `anchor="end"`, which changes keep a view that is at the end pinned there: a data change
+   * (`data`), a row's size (`items`), the scroller's size (`layout`), and the size of what follows
+   * the rows (`footer`: `ListFooterComponent`, a composer inset). Each defaults to `true`; a change
+   * whose flag is `false` keeps the visible rows in place instead (LegendList's
+   * `maintainScrollAtEnd.on`). `{ footer: false }` keeps a chat's messages still while its
+   * composer grows. With all four `false` the list still opens at the end: its first row sizes
+   * and viewport size land there, until the first data change or scroll away from the end.
+   */
+  readonly pinEndOn?: {
+    readonly data?: boolean;
+    readonly items?: boolean;
+    readonly layout?: boolean;
+    readonly footer?: boolean;
+  };
+  /**
    * Keep the visible rows in place when rows are added or removed above them (anchored by
    * key). Default `true`. With `false`, a data change above the view shifts what is visible
    * (React Native's default: a view at the very top shows new first rows). Size refinements —

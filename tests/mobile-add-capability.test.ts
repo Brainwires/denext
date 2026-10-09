@@ -30,6 +30,7 @@ import {
   withSceneDelegateQuickActions,
 } from "../src/build/mobile-native-config.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
+import { runInheritedCommand } from "../src/cli/commands/mobile-build.ts";
 
 const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,6 +85,9 @@ async function project(files: Record<string, string | null> = {}): Promise<strin
   return dir;
 }
 
+/** The environment a Yarn install runs with: no lifecycle scripts (Yarn 1 and Berry). */
+const YARN_NO_SCRIPTS = { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "0" };
+
 /** A runner that records every command and exits with `codes[i]` (default 0). */
 function fakeRunner(codes: number[] = []) {
   const calls: PlannedCommand[] = [];
@@ -125,8 +129,11 @@ Deno.test("mobile add: the package manager comes from the lockfile (npm without 
       assertEquals(plan.lockfile, lockfile ?? undefined);
       assertEquals(plan.install, {
         cmd,
-        args: [verb, "@capacitor/haptics@^8.0.2", "@capacitor/share@^8.0.2"],
+        args: cmd === "yarn"
+          ? [verb, "@capacitor/haptics@^8.0.2", "@capacitor/share@^8.0.2"]
+          : [verb, "--ignore-scripts", "@capacitor/haptics@^8.0.2", "@capacitor/share@^8.0.2"],
         cwd: dir,
+        ...(cmd === "yarn" ? { env: YARN_NO_SCRIPTS } : {}),
       });
     });
   }
@@ -148,12 +155,23 @@ Deno.test("mobile add: exact @capacitor/* pins get exact versions, with each man
       const plan = await planMobileCapabilities({ capabilities: ["haptics", "barcode"], cwd: dir });
       assertEquals(plan.install, {
         cmd,
-        args: [verb, flag, "@capacitor/haptics@8.0.2", "@capacitor/barcode-scanner@3.1.2"],
+        args: cmd === "yarn"
+          ? [verb, flag, "@capacitor/haptics@8.0.2", "@capacitor/barcode-scanner@3.1.2"]
+          : [
+            verb,
+            "--ignore-scripts",
+            flag,
+            "@capacitor/haptics@8.0.2",
+            "@capacitor/barcode-scanner@3.1.2",
+          ],
         cwd: dir,
+        ...(cmd === "yarn" ? { env: YARN_NO_SCRIPTS } : {}),
       }, String(lockfile));
       assertStringIncludes(
         formatCapabilityPlan(plan),
-        `install        ${cmd} ${verb} ${flag} @capacitor/haptics@8.0.2`,
+        `${cmd} ${verb} ${
+          cmd === "yarn" ? "" : "--ignore-scripts "
+        }${flag} @capacitor/haptics@8.0.2`,
       );
     });
   }
@@ -161,7 +179,12 @@ Deno.test("mobile add: exact @capacitor/* pins get exact versions, with each man
   await inProject({ "package.json": exactPkg }, async (dir) => {
     const { run, calls } = fakeRunner();
     await addMobileCapabilities({ capabilities: ["share"], cwd: dir, run });
-    assertEquals(calls[0].args, ["install", "--save-exact", "@capacitor/share@8.0.2"]);
+    assertEquals(calls[0].args, [
+      "install",
+      "--ignore-scripts",
+      "--save-exact",
+      "@capacitor/share@8.0.2",
+    ]);
   });
 });
 
@@ -177,7 +200,7 @@ Deno.test("mobile add: any @capacitor/* range (or none declared) keeps caret ran
       const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
       assertEquals(
         plan.install?.args,
-        ["install", "@capacitor/haptics@^8.0.2"],
+        ["install", "--ignore-scripts", "@capacitor/haptics@^8.0.2"],
         JSON.stringify(dependencies),
       );
     });
@@ -190,7 +213,7 @@ Deno.test("mobile add: any @capacitor/* range (or none declared) keeps caret ran
     }),
   }, async (dir) => {
     const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
-    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+    assertEquals(plan.install?.args, ["install", "--ignore-scripts", "@capacitor/haptics@^8.0.2"]);
   });
   // Exact non-Capacitor dependencies say nothing about the Capacitor style.
   await inProject({
@@ -199,7 +222,7 @@ Deno.test("mobile add: any @capacitor/* range (or none declared) keeps caret ran
     }),
   }, async (dir) => {
     const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
-    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+    assertEquals(plan.install?.args, ["install", "--ignore-scripts", "@capacitor/haptics@^8.0.2"]);
   });
 });
 
@@ -243,7 +266,7 @@ Deno.test("mobile add: a workspace lockfile two levels up picks its manager; ins
       assertEquals(plan.lockfile, "../../pnpm-lock.yaml");
       assertEquals(plan.install, {
         cmd: "pnpm",
-        args: ["add", "@capacitor/haptics@^8.0.2"],
+        args: ["add", "--ignore-scripts", "@capacitor/haptics@^8.0.2"],
         cwd: root,
       });
       assertStringIncludes(
@@ -337,7 +360,7 @@ Deno.test("mobile add: no lockfile and no packageManager field fall back to npm"
     assertEquals([plan.lockfile, plan.packageManagerField], [undefined, undefined]);
     assertEquals(plan.install, {
       cmd: "npm",
-      args: ["install", "@capacitor/haptics@^8.0.2"],
+      args: ["install", "--ignore-scripts", "@capacitor/haptics@^8.0.2"],
       cwd: root,
     });
   });
@@ -354,13 +377,13 @@ Deno.test("mobile add: runs the install, edits the manifest, then cap sync", asy
     assertEquals(calls, [
       {
         cmd: "pnpm",
-        args: ["add", "@capacitor/network@^8.0.1", "@capacitor/haptics@^8.0.2"],
+        args: ["add", "--ignore-scripts", "@capacitor/network@^8.0.1", "@capacitor/haptics@^8.0.2"],
         cwd: dir,
       },
       { cmd: "npx", args: ["cap", "sync"], cwd: dir },
     ]);
     assertEquals(report.ran, [
-      "pnpm add @capacitor/network@^8.0.1 @capacitor/haptics@^8.0.2",
+      "pnpm add --ignore-scripts @capacitor/network@^8.0.1 @capacitor/haptics@^8.0.2",
       "npx cap sync",
     ]);
     assertEquals(report.written, [MANIFEST_PATH]);
@@ -442,7 +465,8 @@ Deno.test("mobile add: --dry-run plans, prints, and changes nothing", async () =
     assertStringIncludes(text, "package mgr    yarn (yarn.lock)");
     assertStringIncludes(
       text,
-      "install        yarn add @capacitor/network@^8.0.1 @aparajita/capacitor-secure-storage@^8.0.1",
+      "install        npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=0 yarn add " +
+        "@capacitor/network@^8.0.1 @aparajita/capacitor-secure-storage@^8.0.1",
     );
     assertStringIncludes(text, "<uses-permission android.permission.ACCESS_NETWORK_STATE>");
     assertStringIncludes(text, "sync           npx cap sync");
@@ -712,12 +736,15 @@ Deno.test("denext mobile add: --list, --dry-run and a real run through the verb"
   await inProject({ "bun.lockb": "" }, async (dir) => {
     const planned = await runVerb(["add", "haptics"], { "dry-run": true, dir }, run);
     assertStringIncludes(planned.join("\n"), "nothing changed");
-    assertStringIncludes(planned.join("\n"), "install        bun add @capacitor/haptics@^8.0.2");
+    assertStringIncludes(
+      planned.join("\n"),
+      "install        bun add --ignore-scripts @capacitor/haptics@^8.0.2",
+    );
     assertEquals(calls, []);
 
     const done = await runVerb(["add", "network"], { dir }, run);
     assertEquals(calls.map((c) => [c.cmd, ...c.args].join(" ")), [
-      "bun add @capacitor/network@^8.0.1",
+      "bun add --ignore-scripts @capacitor/network@^8.0.1",
       "npx cap sync",
     ]);
     assertStringIncludes(done.join("\n"), `wrote      ${MANIFEST_PATH}`);
@@ -804,7 +831,7 @@ Deno.test("mobile add deep-links: URL types, intent filters and associated domai
       domains: ["app.example.com"],
     };
     const report = await addMobileCapabilities(opts);
-    assertEquals(calls[0].args, ["install", "@capacitor/app@^8.1.1"]);
+    assertEquals(calls[0].args, ["install", "--ignore-scripts", "@capacitor/app@^8.1.1"]);
     assertEquals(report.written.sort(), [ENTITLEMENTS_PATH, MANIFEST_PATH, PLIST_PATH].sort());
 
     const plist = await read(dir, PLIST_PATH);
@@ -1169,6 +1196,7 @@ Deno.test("mobile add: the new capabilities install their pinned plugins; plist 
     });
     assertEquals(calls[0].args, [
       "install",
+      "--ignore-scripts",
       "@capacitor/filesystem@^8.1.3",
       "@capacitor/camera@^8.2.4",
       "@capawesome/capacitor-file-picker@^8.1.0",
@@ -1203,7 +1231,11 @@ Deno.test("mobile add quick-actions: SceneDelegate forwarding (warm + cold start
   await inProject(nativeProject({ [SCENE_DELEGATE_PATH]: SCENE_DELEGATE }), async (dir) => {
     const { run, calls } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["quick-actions"], cwd: dir, run });
-    assertEquals(calls[0].args, ["install", "@capawesome/capacitor-app-shortcuts@^8.0.2"]);
+    assertEquals(calls[0].args, [
+      "install",
+      "--ignore-scripts",
+      "@capawesome/capacitor-app-shortcuts@^8.0.2",
+    ]);
     assertEquals(report.written, [SCENE_DELEGATE_PATH]);
     assertStringIncludes(formatCapabilityPlan(report.plan), "native         forward quick actions");
     const scene = await read(dir, SCENE_DELEGATE_PATH);
@@ -1333,4 +1365,85 @@ Deno.test("mobile add: a denext project's own deno.lock installs with `deno add 
   await inProject({ "deno.lock": "{}", "package-lock.json": "" }, async (dir) => {
     assertEquals((await planIn(dir)).packageManager, "npm");
   });
+});
+
+Deno.test("mobile add: a workspace root's lockfile beats a stray deno.lock in the project (pnpm monorepo)", async () => {
+  const pnpmMonorepo = {
+    ".git/HEAD": "",
+    "package.json": JSON.stringify({ name: "mono", private: true, packageManager: "pnpm@10.18.0" }),
+    "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+    "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+  };
+  await inWorkspace(pnpmMonorepo, async (root) => {
+    // `deno task` / a denext CLI run in the app left a deno.lock behind.
+    await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+    const plan = await planIn(root);
+    assertEquals(plan.packageManager, "pnpm");
+    assertEquals(plan.lockfile, "../../pnpm-lock.yaml");
+    assertEquals(plan.install, {
+      cmd: "pnpm",
+      args: ["add", "--ignore-scripts", "@capacitor/haptics@^8.0.2"],
+      cwd: root,
+    });
+  });
+  // The same for the other managers' workspace lockfiles.
+  for (
+    const [lockfile, manager] of [["yarn.lock", "yarn"], ["package-lock.json", "npm"], [
+      "bun.lock",
+      "bun",
+    ]]
+  ) {
+    await inWorkspace({ ".git/HEAD": "", "package.json": "{}", [lockfile]: "" }, async (root) => {
+      await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+      assertEquals((await planIn(root)).packageManager, manager, lockfile);
+    });
+  }
+  // With no workspace lockfile above it, the project's own deno.lock still names deno.
+  await inWorkspace({ ".git/HEAD": "", "package.json": "{}" }, async (root) => {
+    await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+    const plan = await planIn(root);
+    assertEquals([plan.packageManager, plan.lockfile], ["deno", "deno.lock"]);
+  });
+});
+
+Deno.test("mobile add: a Yarn install runs no lifecycle scripts (Yarn 1 and Berry, through the environment)", async () => {
+  const noScripts = { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "0" };
+  await inProject({ "yarn.lock": "" }, async (dir) => {
+    const plan = await planIn(dir);
+    assertEquals(plan.install?.env, noScripts);
+    assertStringIncludes(
+      formatCapabilityPlan(plan),
+      "install        npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=0 yarn add @capacitor/haptics@^8.0.2",
+    );
+    const { run, calls } = fakeRunner();
+    await addMobileCapabilities({ capabilities: ["haptics"], cwd: dir, run });
+    assertEquals(calls[0].env, noScripts);
+  });
+  // The terminal runner `denext mobile add` uses (shared with `mobile build`) adds a command's
+  // env to the inherited one.
+  const probe = "Deno.exit(Deno.env.get('YARN_ENABLE_SCRIPTS') === '0' && " +
+    "Deno.env.get('npm_config_ignore_scripts') === 'true' && Deno.env.get('PATH') ? 0 : 3)";
+  const { code } = await runInheritedCommand({
+    cmd: Deno.execPath(),
+    args: ["eval", probe],
+    cwd: Deno.cwd(),
+    env: noScripts,
+  });
+  assertEquals(code, 0, "the env reaches the command, beside the inherited PATH");
+});
+
+Deno.test("mobile add: npm, pnpm and bun installs run no lifecycle scripts (--ignore-scripts)", async () => {
+  for (
+    const [lockfile, cmd] of [["package-lock.json", "npm"], ["pnpm-lock.yaml", "pnpm"], [
+      "bun.lock",
+      "bun",
+    ]]
+  ) {
+    await inProject({ "package.json": "{}", [lockfile]: "" }, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+      assertEquals(plan.install?.cmd, cmd);
+      assertEquals(plan.install?.args.includes("--ignore-scripts"), true, cmd);
+      assertStringIncludes(formatCapabilityPlan(plan), "--ignore-scripts");
+    });
+  }
 });

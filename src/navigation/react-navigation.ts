@@ -166,6 +166,7 @@ export function mapStackOptions(
       ? options.animationDuration
       : undefined,
     gestureEnabled: bool("gestureEnabled"),
+    fullScreenGestureEnabled: bool("fullScreenGestureEnabled") ?? bool("fullScreenSwipeEnabled"),
     presentation: mapPresentation(options.presentation),
     headerShown: bool("headerShown") ?? true,
     headerLargeTitle: bool("headerLargeTitle"),

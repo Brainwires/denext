@@ -30,6 +30,11 @@ import { fastlaneFindings } from "./mobile-fastlane.ts";
 import { manifestMetaDataValue } from "./mobile-native-config.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
 import { capacitorPlaceholders } from "./mobile-icon-source.ts";
+import {
+  AUTH_SESSION_ANDROID_FILES,
+  AUTH_SESSION_IOS_FILES,
+  AUTH_SESSION_TEMPLATE_VERSION,
+} from "./auth-session-native-templates.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -1074,10 +1079,29 @@ const OTA_TEMPLATE_FILES = {
   ],
 } as const;
 
-/** The template generation on a file's `denext-ota-template` marker line, or null without one. */
-function otaGeneration(text: string | null): number | null {
-  const marker = text === null ? null : /^\/\/ denext-ota-template: (\d+) sha256=/.exec(text);
+/**
+ * The template generation on a file's `// denext-<family>-template:` marker line, or null
+ * without one (or for another family's marker).
+ */
+function templateGeneration(family: string, text: string | null): number | null {
+  const marker = text === null
+    ? null
+    : new RegExp(`^// denext-${family}-template: (\\d+) sha256=`).exec(text);
   return marker ? Number(marker[1]) : null;
+}
+
+/** Each of `files` (project-relative) carrying a `family` marker: its name and generation. */
+async function templateGenerations(
+  root: string,
+  family: string,
+  files: readonly string[],
+): Promise<Map<string, number>> {
+  const generations = new Map<string, number>();
+  for (const file of files) {
+    const generation = templateGeneration(family, await readText(join(root, file)));
+    if (generation !== null) generations.set(file.slice(file.lastIndexOf("/") + 1), generation);
+  }
+  return generations;
 }
 
 /**
@@ -1087,11 +1111,7 @@ function otaGeneration(text: string | null): number | null {
  * edited file keeps the marker line it was written with, which tells its generation.
  */
 const otaGenerations: Check = perOtaPlatform("ota-generations", async (p, platform) => {
-  const generations = new Map<string, number>();
-  for (const file of OTA_TEMPLATE_FILES[platform]) {
-    const generation = otaGeneration(await readText(join(p.root, file)));
-    if (generation !== null) generations.set(file.slice(file.lastIndexOf("/") + 1), generation);
-  }
+  const generations = await templateGenerations(p.root, "ota", OTA_TEMPLATE_FILES[platform]);
   if (new Set(generations.values()).size < 2) return null;
   const listed = [...generations].map(([name, generation]) => `${name} ${generation}`);
   return {
@@ -1102,6 +1122,89 @@ const otaGenerations: Check = perOtaPlatform("ota-generations", async (p, platfo
       "`denext mobile add-ota --force` and re-apply your edits",
   };
 });
+
+/**
+ * The auth-session template files `denext mobile add auth-session` writes, per platform. The iOS
+ * bridge view controller counts only while it carries the auth-session marker (the
+ * registering-only one; with OTA installed it is OTA's).
+ */
+const AUTH_SESSION_TEMPLATE_FILES = {
+  iOS: [
+    ...Object.keys(AUTH_SESSION_IOS_FILES).map((name) => `ios/App/App/${name}`),
+    BRIDGE_VIEW_CONTROLLER,
+  ],
+  Android: Object.keys(AUTH_SESSION_ANDROID_FILES).map(
+    (name) => `android/app/src/main/java/dev/denext/authsession/${name}`,
+  ),
+} as const;
+
+const AUTH_SESSION_GENERATIONS = "auth-session-generations";
+
+/** A platform's auth-session generations as a finding: mixed (error) or all older (warning). */
+function authSessionFinding(
+  platform: string,
+  generations: ReadonlyMap<string, number>,
+): MobileDoctorFinding | null {
+  const listed = [...generations].map(([name, generation]) => `${name} ${generation}`).join(", ");
+  if (new Set(generations.values()).size > 1) {
+    return {
+      check: AUTH_SESSION_GENERATIONS,
+      level: "error",
+      message: `${platform}: the auth-session files come from different template generations ` +
+        `(${listed}); the bridge view controller and the plugin are written as one, so the app ` +
+        "does not compile (or misses a fix) until they match",
+      fix: "merge denext's current template into the edited file by hand, or re-run " +
+        "`denext mobile add auth-session --force` and re-apply your edits",
+    };
+  }
+  const generation = Math.min(...generations.values());
+  if (generation >= AUTH_SESSION_TEMPLATE_VERSION) return null;
+  return {
+    check: AUTH_SESSION_GENERATIONS,
+    level: "warning",
+    message: `${platform}: the auth-session files are template generation ${generation} ` +
+      `(${listed}), older than this denext's ${AUTH_SESSION_TEMPLATE_VERSION}: they miss the ` +
+      "fixes made since (the bridge's frame guard, its route checks)",
+    fix: "run `denext mobile add auth-session` (an unedited file is upgraded; an edited one " +
+      "needs `--force` or the changes merged by hand); then ship a new binary",
+  };
+}
+
+/**
+ * Auth-session template files from a stale generation, as `ota-generations` checks OTA's: files of
+ * different generations on one platform (an edited file a later `mobile add auth-session` kept
+ * while the others were upgraded) are an error; files that agree on an older generation than this
+ * denext writes are a warning.
+ */
+const authSessionGenerations: Check = {
+  id: AUTH_SESSION_GENERATIONS,
+  profiles: ["store", "release"],
+  applies: async (p) => (await authSessionPlatforms(p)).length > 0,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const [platform, generations] of await authSessionPlatforms(p)) {
+      const finding = authSessionFinding(platform, generations);
+      if (finding) findings.push(finding);
+    }
+    return findings;
+  },
+};
+
+/** The platforms with auth-session template files, and each file's generation. */
+async function authSessionPlatforms(
+  p: MobileProject,
+): Promise<[string, Map<string, number>][]> {
+  const out: [string, Map<string, number>][] = [];
+  for (const platform of ["iOS", "Android"] as const) {
+    const generations = await templateGenerations(
+      p.root,
+      "auth-session",
+      AUTH_SESSION_TEMPLATE_FILES[platform],
+    );
+    if (generations.size > 0) out.push([platform, generations]);
+  }
+  return out;
+}
 
 /** Every Java / Kotlin source of the Android app outside denext's OTA package, as text. */
 async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
@@ -1170,6 +1273,7 @@ const CHECKS: readonly Check[] = [
   otaSigning,
   otaReverify,
   otaGenerations,
+  authSessionGenerations,
   androidRouteProcessor,
 ];
 

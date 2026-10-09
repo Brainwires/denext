@@ -1,7 +1,7 @@
 // SPA mode dev server: the request handler — live-reload SSE, the dev-reload module, the
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
-import { pinDevPlatform } from "../platform-extensions.ts";
+import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
 import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
@@ -73,7 +73,7 @@ function htmlResponse(request: Request, html: string, status = 200): Response {
 async function serveShell(st: SpaDevState, request: Request): Promise<Response> {
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
   if (await ensureUnbundled(st) && st.unbundled) {
-    const css = await getUnbundledCss(st);
+    const css = await getUnbundledCss(st, devPlatformOf(request));
     const html = await spaShellHtml({
       spa: st.spa,
       scriptSrc: st.unbundled.spaEntryUrl(),
@@ -115,7 +115,7 @@ async function serveUnbundled(
     if (res) return res;
   }
   if (pathname === UNBUNDLED_STYLE_PATH && await ensureUnbundled(st)) {
-    return new Response(await getUnbundledCss(st), {
+    return new Response(await getUnbundledCss(st, devPlatformOf(request)), {
       headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
     });
   }

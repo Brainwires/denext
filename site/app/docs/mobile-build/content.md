@@ -55,7 +55,11 @@ Every verb takes `--dir <capacitor project>` (default: the current directory), `
 Without a splash image, the splash is the icon centred on the background colour. The dark
 variants (an asset catalog `luminosity: dark` appearance on iOS, `drawable-night*` on Android)
 are written when `--splash-dark`, `assets/splash-dark.png` or `--dark-background-color` is
-given. `--platform ios|android` limits the output; `--dry-run` lists every file and its size.
+given. The splash and app icon sets' new `Contents.json` replace the old ones, and the images the old
+ones named that the new ones do not (a dark splash or icon no longer configured, the template's
+own names)
+are removed; files it never named stay. `--platform ios|android` limits the output; `--dry-run`
+lists every file and its size, and what it would remove.
 
 The images are decoded and resized with `@denext/photon` (WebAssembly) and encoded by denext
 itself, so the verb needs no npm package and no ImageMagick. Icons and splash are native
@@ -89,7 +93,9 @@ The App Store icon is 1024×1024 and opaque. A smaller source is still used, ups
 warning that names a better one to add (for a monorepo whose Expo config computes its icon:
 export that icon as a PNG and set `mobile.icon`). A transparent icon is flattened onto the
 background colour (the manifest's `background_color`, the Expo adaptive background, or
-`--background-color`), with a warning. Android's adaptive layers come from the Expo config when
+`--background-color`), with a warning. An icon that looks pre-masked (a rounded rectangle on
+transparency) gets a warning too: iOS rounds the icon itself, so a pre-rounded one shows as a
+rounded rectangle inside a rounded rectangle; use the full-bleed square artwork. Android's adaptive layers come from the Expo config when
 it has them; otherwise the icon is scaled into the adaptive safe zone over the background colour.
 
 `denext migrate` (the Vite / CRA path and `--from expo`) runs the same search and records the

@@ -351,7 +351,7 @@ async function classifyEmitter(
       item,
       reason: "a Vite plugin that emits files, called with values from vite.config (" +
         `${free.join(", ") || "unparsed"}); add \`viteEmitterPlugin(${local}(…))\` from ` +
-        "denext/plugin-kit to `plugins` in denext.config.ts",
+        "denext/plugin-kit/vite-emitter to `plugins` in denext.config.ts",
     };
   }
   return {
@@ -382,7 +382,7 @@ export async function viteEmitterFacts(dir: string): Promise<ViteEmitterFacts> {
     facts.review.push({
       item: `${config.name}: an inline plugin's generateBundle`,
       reason: "emits files from a plugin declared in vite.config; move it into its own module " +
-        "and add `viteEmitterPlugin(plugin)` from denext/plugin-kit to `plugins` in " +
+        "and add `viteEmitterPlugin(plugin)` from denext/plugin-kit/vite-emitter to `plugins` in " +
         "denext.config.ts, or port it to a denext build step (`emitFile`)",
     });
   }

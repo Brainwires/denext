@@ -7,6 +7,7 @@
 //   deno task release 2.0.0-rc.5            # prep, then PROMPT before tagging
 //   deno task release 2.0.0-rc.5 --confirm  # skip the prompt (authorized/agent use)
 //   deno task release 2.0.0-rc.5 --dry      # preview every step; write/commit nothing
+//   deno task release 2.0.0-rc.5 --full-gate  # run the whole local suite at step 5
 //
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
@@ -21,7 +22,10 @@
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
 //   4. deno cache mod.ts   — refresh deno.lock
-//   5. deno task check     — fmt + lint + full test suite (ABORTS the release if it fails)
+//   5. the gate (ABORTS the release if it fails): step 0 already proved CI's `check` job (fmt +
+//      lint + the full suite) green on HEAD, and publish.yml re-runs the full suite on the tagged
+//      commit before it publishes, so locally only the release's own changes are re-checked —
+//      fmt, lint and RELEASE_DELTA_TESTS. `--full-gate` runs `deno task check` instead.
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
@@ -333,7 +337,7 @@ function unreleasedEntries(text: string, marker: string): number {
 }
 
 async function main(): Promise<void> {
-  const { version, dry, confirmed } = parseReleaseArgs();
+  const { version, dry, confirmed, fullGate } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
   if (dry) return await dryRun(version, tag, branch);
@@ -341,7 +345,8 @@ async function main(): Promise<void> {
   await checkCi(branch, false);
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
-  await runGate();
+  // Step 0 refuses a HEAD whose ci.yml `check` job (fmt + lint + the whole suite) is not green.
+  await runGate(fullGate);
   if (await confirmRelease(tag, branch, confirmed)) await publish(version, tag, branch);
 }
 
@@ -354,16 +359,26 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
   console.log("3b. badge:tests      (skipped — dry run)");
   console.log("3c. badge:fallow     (skipped — dry run)");
   console.log("4. deno cache        (skipped — dry run)");
-  console.log("5. deno task check   (skipped — dry run)");
+  console.log("5. release gate      (skipped — dry run)");
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
 
-function parseReleaseArgs(): { version: string; dry: boolean; confirmed: boolean } {
+function parseReleaseArgs(): {
+  version: string;
+  dry: boolean;
+  confirmed: boolean;
+  fullGate: boolean;
+} {
   const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
   const version = Deno.args.find((a) => !a.startsWith("--"));
-  if (!version) die("usage: deno task release <version> [--confirm] [--dry]");
+  if (!version) die("usage: deno task release <version> [--confirm] [--dry] [--full-gate]");
   if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
-  return { version: version!, dry: flags.has("--dry"), confirmed: flags.has("--confirm") };
+  return {
+    version: version!,
+    dry: flags.has("--dry"),
+    confirmed: flags.has("--confirm"),
+    fullGate: flags.has("--full-gate"),
+  };
 }
 
 /** Preconditions (a real run only — --dry previews regardless of tree state). */
@@ -407,6 +422,24 @@ async function checkCi(branch: string, dry: boolean): Promise<void> {
  */
 export const RELEASE_REGEN_TASKS = ["gen:plugin-catalog", "docs:mcp", "docs:corpus", "docs:llms"];
 
+/**
+ * The tests that read what the release commit changes on top of the CI-tested HEAD: the version
+ * pins, the CHANGELOG roll, the effect golden and the regenerated catalog / corpus / API docs.
+ * With CI's `check` job green on HEAD (step 0), the gate runs these instead of the whole suite;
+ * `--full-gate` runs everything.
+ */
+export const RELEASE_DELTA_TESTS = [
+  "tests/release-tools.test.ts",
+  "tests/release-blockers.test.ts",
+  "tests/plugin-catalog.test.ts",
+  "tests/mcp-docs-corpus.test.ts",
+  "tests/docs-generated.test.ts",
+  "tests/api-reference.test.ts",
+  "tests/migrate-effect-fixture.test.ts",
+  "tests/cli-upgrade.test.ts",
+  "tests/public-surface.test.ts",
+];
+
 /** Steps 1–2: version pins (+ the effect example golden) and the CHANGELOG roll. */
 export async function prepareRelease(version: string, dry: boolean): Promise<void> {
   const bump = await bumpVersion(version, { dry });
@@ -446,7 +479,7 @@ function plural(n: number, one: string, many: string): string {
  * does NOT — so a release that adds tests would ship a stale badge and turn CI red on the
  * merge. Regenerating it here keeps the release commit current.
  */
-async function runGate(): Promise<void> {
+async function runGate(fullGate: boolean): Promise<void> {
   console.log("\n3. Regenerating API reference (deno task docs:api)…");
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
@@ -474,16 +507,33 @@ async function runGate(): Promise<void> {
   }
   console.log("\n4. Refreshing deno.lock (deno cache mod.ts)…");
   await run("deno", "cache", "mod.ts");
-  console.log("\n5. Running the gate (deno task check)…");
-  if (await run("deno", "task", "check") !== 0) {
-    die("gate failed — release aborted BEFORE tagging. Prepared changes are in your working tree.");
-  }
+  await runReleaseGate(fullGate);
   // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
   if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
   }
+}
+
+/** Step 5: {@linkcode gateCommand}; a failure aborts before anything is committed. */
+async function runReleaseGate(fullGate: boolean): Promise<void> {
+  console.log(`\n5. Running the gate (${fullGate ? "deno task check" : "release delta"})…`);
+  const [gate, ...gateArgs] = gateCommand(fullGate);
+  if (await run(gate, ...gateArgs) !== 0) {
+    die("gate failed — release aborted BEFORE tagging. Prepared changes are in your working tree.");
+  }
+}
+
+/**
+ * Step 5's command. CI's `check` job already ran fmt, lint and the whole suite on HEAD, so by
+ * default the gate re-checks only the release's own changes: fmt and lint over the tree, and
+ * {@linkcode RELEASE_DELTA_TESTS}. `--full-gate` runs `deno task check` as well.
+ */
+export function gateCommand(fullGate: boolean): string[] {
+  if (fullGate) return ["deno", "task", "check"];
+  const tests = `deno run -A scripts/test-run.ts ${RELEASE_DELTA_TESTS.join(" ")}`;
+  return ["sh", "-c", `deno fmt --check && deno lint && ${tests}`];
 }
 
 /** Show the diff and ask (unless `--confirm`); false aborts with the tree left as prepared. */

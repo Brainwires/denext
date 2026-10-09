@@ -184,7 +184,7 @@ Deno.test("mobile add: the permission capabilities install DenextSettings once",
       run,
     });
     assertEquals(lines(), [
-      "npm install @capacitor/local-notifications@^8.3.1 @aparajita/capacitor-biometric-auth@^10.0.0 " +
+      "npm install --ignore-scripts @capacitor/local-notifications@^8.3.1 @aparajita/capacitor-biometric-auth@^10.0.0 " +
       "@capacitor/geolocation@^8.2.2",
       "npx cap sync",
     ]);
@@ -216,7 +216,10 @@ Deno.test("mobile add social-login: the Apple entitlement, Google's scheme, the 
       run,
       schemes: ["com.googleusercontent.apps.1234-abcd"],
     });
-    assertEquals(lines(), ["npm install @capgo/capacitor-social-login@^8.5.11", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts @capgo/capacitor-social-login@^8.5.11",
+      "npx cap sync",
+    ]);
     const entitlements = await read(dir, ENTITLEMENTS);
     assertStringIncludes(entitlements, "<key>com.apple.developer.applesignin</key>");
     assertStringIncludes(entitlements, "<string>Default</string>");
@@ -234,7 +237,10 @@ Deno.test("mobile add purchases: RevenueCat's SDK and the store steps", async ()
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["purchases"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @revenuecat/purchases-capacitor@^13.6.1", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts @revenuecat/purchases-capacitor@^13.6.1",
+      "npx cap sync",
+    ]);
     assertEquals(report.written, []);
     const manual = report.plan.manual.join("\n");
     assertStringIncludes(manual, "In-App Purchase capability");
@@ -403,7 +409,7 @@ Deno.test("mobile add background-location: the plugin, the keys, no background p
       run,
     });
     assertEquals(lines(), [
-      "npm install @capgo/background-geolocation@^8.4.7 @capacitor/background-runner@^3.0.0",
+      "npm install --ignore-scripts @capgo/background-geolocation@^8.4.7 @capacitor/background-runner@^3.0.0",
       "npx cap sync",
     ]);
     const plist = await read(dir, INFO_PLIST);
@@ -441,7 +447,7 @@ Deno.test("mobile add application: @capacitor/app + @capacitor/device, each pack
     const { run, lines } = fakeRunner();
     await addMobileCapabilities({ capabilities: ["application"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install @capacitor/app@^8.1.1 @capacitor/device@^8.0.3",
+      "npm install --ignore-scripts @capacitor/app@^8.1.1 @capacitor/device@^8.0.3",
       "npx cap sync",
     ]);
     const plan = await planMobileCapabilities({
@@ -450,6 +456,7 @@ Deno.test("mobile add application: @capacitor/app + @capacitor/device, each pack
     });
     assertEquals(plan.install?.args, [
       "install",
+      "--ignore-scripts",
       "@capacitor/app@^8.1.1",
       "@capacitor/device@^8.0.3",
     ]);
@@ -467,7 +474,7 @@ Deno.test("mobile add toast + action-sheet: the plugins RN's overlays feature-de
       run,
     });
     assertEquals(lines(), [
-      "npm install @capacitor/toast@^8.0.1 @capacitor/action-sheet@^8.1.1",
+      "npm install --ignore-scripts @capacitor/toast@^8.0.1 @capacitor/action-sheet@^8.1.1",
       "npx cap sync",
     ]);
     // Neither plugin needs a usage string, a permission or an entitlement.
@@ -497,7 +504,10 @@ Deno.test("mobile add: no web export yet runs `cap update` and says what is left
   await inProject({ "out/index.html": null }, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["dialog"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @capacitor/dialog@^8.0.1", "npx cap update"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts @capacitor/dialog@^8.0.1",
+      "npx cap update",
+    ]);
     assertEquals(report.plan.webAssetsMissing, "out");
     const warning = report.plan.warnings.join("\n");
     assertStringIncludes(warning, "no web export at out/index.html");

@@ -89,6 +89,8 @@ export interface EngineOptions {
   readonly autoscrollEnd?: number | ((viewport: number) => number);
   /** Animate those autoscrolls. */
   readonly autoscrollSmooth?: boolean;
+  /** At the end of an end-anchored list, which changes keep it pinned there (`pinEndOn`). */
+  readonly pinEndOn?: VirtualListProps<unknown>["pinEndOn"];
   /** Replaces the item-separator rule: the node after (before, inverted) data index `i`. */
   readonly separator?: (index: number, item: unknown, extra: Record<string, unknown>) => VNodeChild;
   /** Converts viewability tokens (data indices) before the app sees them. */
@@ -1162,6 +1164,7 @@ function layoutProps(
   return {
     horizontal: !!list.horizontal,
     anchor: model.inverted || engine.anchorEnd ? "end" : "start",
+    pinEndOn: engine.pinEndOn,
     maintainVisibleContentPosition: engine.mvcp ?? !!list.maintainVisibleContentPosition,
     overscan: list.disableVirtualization ? 1e9 : engine.overscan,
     // React Native's first batch, only when the app sets it (the rest renders after the first

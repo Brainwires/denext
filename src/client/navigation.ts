@@ -7,7 +7,7 @@
 
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { fillPattern, parsePattern, type RouteParams } from "../router/segments.ts";
 import type { StandardSchemaV1 } from "../runtime/define-action.ts";
 import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
@@ -27,7 +27,7 @@ import { createContext } from "../runtime/context.ts";
 // and break it under the strict CSP. The remaining document.ts imports are type-only
 // (erased at build), so they don't pull the module at runtime.
 import { ROOT_ID } from "../server/root-id.ts";
-import type { FlightNavPayload, HydrationData, IsoNavPayload } from "../server/document.ts";
+import type { HydrationData, IsoNavPayload } from "../server/document.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { setActionRefreshHandler } from "../runtime/server-action.ts";
@@ -87,7 +87,8 @@ function readLocation(): LocationState {
   return { pathname: stripBase(location.pathname), search: location.search };
 }
 
-function emit(): void {
+/** Notify the location hooks that the URL changed (also the Flight soft nav's, flight-nav.ts). */
+export function emit(): void {
   current = readLocation();
   for (const l of listeners) l();
 }
@@ -223,21 +224,22 @@ function prefetchKey(href: string): string {
   return state ? `${href}\u0000${state}` : href;
 }
 
-// The Flight soft-nav parser, registered by the generated Flight entry
-// (`setFlightParser`). It reconstructs a VNode tree from a Flight payload via the
-// app-wide client registry. Left null for isomorphic (non-Flight) apps, whose
-// server never sends a Flight payload — so this stays entirely out of their
-// bundle (the Flight entry is the only importer of `parseFlight`).
-let flightParse: ((flight: unknown) => VNodeChild | Promise<VNodeChild>) | null = null;
-
 /**
- * Register the Flight-payload parser used by soft navigation. Called once by the
- * generated Flight entry with a closure over the route's client registry.
+ * The Flight soft-nav handler, installed by the generated Flight entry's `setFlightParser`
+ * (flight-nav.ts): parse a Flight navigation payload through the app-wide client registry and
+ * commit it. Left null for isomorphic (non-Flight) apps, whose server never sends a Flight
+ * payload — so the whole Flight soft-nav runtime stays out of their bundle (the Flight entry is
+ * the only importer of flight-nav.ts).
  */
-export function setFlightParser(
-  parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
+let flightNav:
+  | ((body: string, url: URL, href: string, options: NavigateOptions) => Promise<void>)
+  | null = null;
+
+/** Install the Flight soft-nav handler (called by flight-nav.ts's `setFlightParser`). */
+export function setFlightNavigator(
+  fn: (body: string, url: URL, href: string, options: NavigateOptions) => Promise<void>,
 ): void {
-  flightParse = parse;
+  flightNav = fn;
 }
 
 /**
@@ -387,6 +389,11 @@ export async function navigate(
   }
 }
 
+/** Surface a soft navigation's failed DOM swap (one copy of the message for both paths below). */
+function reportNavFailure(err: unknown): void {
+  console.error("denext: soft navigation failed", err);
+}
+
 /** The same-origin soft-navigation body. */
 /**
  * Run a soft-nav DOM commit inside a View Transition when the browser supports it
@@ -415,9 +422,7 @@ export function withViewTransition(commit: () => void): void {
     // `commit` is often an async callback (typed `() => void` via void-bivalence); without a
     // transition to carry its rejection, surface a DOM-swap failure instead of letting it become
     // an unhandled promise rejection (a nav that "hangs").
-    Promise.resolve((commit as () => unknown)()).catch((err) =>
-      console.error("denext: soft navigation failed", err)
-    );
+    Promise.resolve((commit as () => unknown)()).catch(reportNavFailure);
     return;
   }
   const vt = getViewTransitionSupport();
@@ -446,9 +451,7 @@ export function withViewTransition(commit: () => void): void {
   transition?.ready?.catch(() => {}); // a skipped/aborted transition is not an error
   // `updateCallbackDone` rejects ONLY when `commit` itself threw (distinct from an abort, which
   // rejects `ready`/`finished`) — surface that real DOM-swap failure instead of swallowing it.
-  transition?.updateCallbackDone?.catch((err) =>
-    console.error("denext: soft navigation failed", err)
-  );
+  transition?.updateCallbackDone?.catch(reportNavFailure);
   const done = () => tx?.clear();
   (transition?.finished ?? Promise.resolve()).then(done, done);
 }
@@ -543,7 +546,7 @@ function swapRootHtml(container: Element, newRoot: Element): void {
  * Scroll for the new page unless the navigation opted out: to the element the URL's
  * `#fragment` names (what a hard load does), else to the top.
  */
-function scrollAfterNav(url: URL, options: NavigateOptions): void {
+export function scrollAfterNav(url: URL, options: NavigateOptions): void {
   if (options.scroll === false) return;
   const hash = url.hash.slice(1);
   if (hash) {
@@ -578,15 +581,11 @@ async function navigateSameOrigin(
   // Flight route: the server sent a JSON payload, not HTML. Parse it through the app-wide
   // client registry and reconcile the retained root in place — no HTML parse, no bundle
   // re-run. A root-less islands page mounts a fresh root on its first Flight nav. If we can't
-  // (no parser / no root to render into), hard navigate rather than DOMParser-ing JSON.
+  // (no Flight runtime, or no root to render into: see flight-nav.ts), hard navigate rather
+  // than DOMParser-ing JSON.
   if (flight) {
-    if (flightParse && (retainedRoot || canMountRootless())) {
-      // Parse first (the parser may load this route's island chunks — async), then commit
-      // the DOM synchronously inside the view transition: an async transition callback is
-      // aborted by the browser when it outlives the transition ("invalid state").
-      const prepared = await prepareFlightNav(body, href);
-      if (prepared) withViewTransition(() => commitFlightNav(prepared, url, href, options));
-    } else location.href = href;
+    if (flightNav) await flightNav(body, url, href, options);
+    else location.href = href;
     return;
   }
   // Isomorphic route: a compact JSON payload (title/data/entry/styles) instead of the full
@@ -600,7 +599,7 @@ async function navigateSameOrigin(
  * leave untouched (`options.history === false`, i.e. popstate — the browser already
  * changed the URL). Shared by the HTML, Flight, and isomorphic nav paths.
  */
-function updateHistory(url: URL, options: NavigateOptions): void {
+export function updateHistory(url: URL, options: NavigateOptions): void {
   if (options.history === false) return;
   if (options.replace) history.replaceState({}, "", url.href);
   else history.pushState({}, "", url.href);
@@ -663,7 +662,7 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
     scrollAfterNav(url, options);
     // A root-less islands page has no root for the entry to render into: give it a fresh one
     // (its islands are unmounted first).
-    if (canMountRootless()) mountRootlessPage(null, false);
+    rootlessPrepare?.();
     await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
     // The new route has no islands: unmount the ones whose wrapper the reconcile removed.
     resumabilityReboot?.([]);
@@ -693,90 +692,26 @@ function swapRouteStyles(hrefs: string[] | undefined): void {
   }
 }
 
-/** A parsed soft-navigation Flight payload, ready to commit. */
-interface PreparedFlightNav {
-  payload: FlightNavPayload;
-  tree: VNode;
-}
-
 /**
- * Parse a Flight soft-navigation payload and reconstruct its tree — awaiting the parser,
- * which may first load the route's island chunks (code-split islands). Any failure
- * (malformed payload, reconstruction error) hard-navigates and returns null, so the user is
- * never stuck on the old route; nothing is committed until {@link commitFlightNav}.
+ * Before an isomorphic navigation re-runs a route entry, give a root-less islands page a fresh
+ * root to render into (its islands are unmounted first). Installed by flight-nav.ts's
+ * `setRootlessMount` once the resumability runtime registers its mount, so it is null in an app
+ * with no Flight route, which can never render a root-less page.
  */
-async function prepareFlightNav(body: string, href: string): Promise<PreparedFlightNav | null> {
-  try {
-    const payload = JSON.parse(body) as FlightNavPayload;
-    const tree = await flightParse!(payload.flight) as VNode;
-    return { payload, tree };
-  } catch {
-    location.href = href; // malformed payload / reconstruction failure: hard navigate
-    return null;
-  }
+let rootlessPrepare: (() => void) | null = null;
+
+/** Install the root-less page hook (called by flight-nav.ts's `setRootlessMount`). */
+export function setRootlessPrepare(fn: () => void): void {
+  rootlessPrepare = fn;
 }
 
-/**
- * Commit a prepared Flight navigation: update history, title, and the `#__denext_data`
- * island, then reconcile the new tree through the retained root in place (preserving
- * unaffected-subtree state). Synchronous, so it can run inside a view transition.
- */
-function commitFlightNav(
-  { payload, tree }: PreparedFlightNav,
-  url: URL,
-  href: string,
-  options: NavigateOptions,
-): void {
-  // A refresh of the current route (a Server Action's `refresh()`, a revalidation), read before
-  // history moves: a root-less islands page adopts its markup instead of re-mounting it.
-  const sameRoute = url.pathname === location.pathname;
-  // Update history first so route hooks read the correct URL after render.
-  updateHistory(url, options);
-
-  // <title> + the hydration-data island, so useParams()/useTranslations() etc.
-  // re-read the new route's params/messages (and a later hard reload matches).
-  if (payload.title != null) document.title = payload.title;
-  writeDataIsland(payload.data);
-
-  emit();
-  scrollAfterNav(url, options);
-
-  try {
-    if (retainedRoot) retainedRoot.render(tree);
-    else mountRootlessPage(tree, sameRoute);
-  } catch {
-    // The render threw after we committed history/title — recover with a hard nav
-    // so the document isn't left half-updated.
-    location.href = href;
-    return;
-  }
-
-  // Resumability: hand the new route's islands + signal state to the re-boot hook so
-  // it can render/wire them. The route Flight carried its islands as empty foreign
-  // hosts, so the reconciled wrappers are empty and the hook mounts each island from
-  // its own Flight. The hook is null until the resumability runtime has loaded (an
-  // app without islands never registers it, and pays nothing here).
-  resumabilityReboot?.(payload.islands, payload.signalState);
-}
-
-/** Whether this is a root-less islands page the resumability runtime can mount a root for. */
-function canMountRootless(): boolean {
-  return !retainedRoot && !!globalWin.__dnxRootless && !!rootlessMount;
-}
-
-/**
- * The first Flight navigation of a root-less islands page (its document inlined no root Flight;
- * see `startClient`): the resumability runtime's {@link rootlessMount} renders `tree` — adopting
- * the current markup and its live islands for a refresh of the same route, else into a fresh
- * root. That root is retained, so later navigations reconcile in place as on any Flight page.
- */
-function mountRootlessPage(tree: VNode | null, adopt: boolean): void {
-  globalWin.__dnxRootless = false;
-  retainedRoot = globalWin.__dnxRoot = rootlessMount!(tree, adopt);
+/** Retain `root` as the page root (flight-nav.ts: a root-less page's first navigation). */
+export function retainRoot(root: Root): void {
+  retainedRoot = globalWin.__dnxRoot = root;
 }
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
-function writeDataIsland(data: HydrationData): void {
+export function writeDataIsland(data: HydrationData): void {
   let live = document.getElementById("__denext_data");
   if (!live) {
     live = document.createElement("script");
@@ -794,7 +729,7 @@ function writeDataIsland(data: HydrationData): void {
  * chunk) never statically imports the resumability runtime — an app without islands
  * bundles none of it. See {@link setResumabilityReboot}.
  */
-let resumabilityReboot:
+export let resumabilityReboot:
   | ((islands?: IslandPayload[], signalState?: Record<string, unknown>) => void)
   | null = null;
 
@@ -803,19 +738,6 @@ export function setResumabilityReboot(
   fn: (islands?: IslandPayload[], signalState?: Record<string, unknown>) => void,
 ): void {
   resumabilityReboot = fn;
-}
-
-/**
- * Renders a root-less islands page's first Flight navigation into a root (see
- * {@link mountRootlessPage}) — registered by the resumability runtime, which owns the island
- * roots it must keep (a refresh adopts them) or unmount (another route). Injected like
- * {@link resumabilityReboot}, keeping that code off the shared chunk.
- */
-let rootlessMount: ((tree: VNode | null, adopt: boolean) => Root) | null = null;
-
-/** Register the root-less page mount (called by the resumability runtime). */
-export function setRootlessMount(fn: (tree: VNode | null, adopt: boolean) => Root): void {
-  rootlessMount = fn;
 }
 
 /**
@@ -940,10 +862,10 @@ let committedHref = "";
  * every soft nav, so `startClient` would fall into the `hydrateRoot` branch —
  * adopting the outgoing page's DOM as the incoming tree and flooding the console
  * with hydration mismatches. The global bridges those separate module instances.
- * The other readers here (`navigateSameOrigin`, `commitFlightNav`) always run in the
+ * The other readers here (`navigateSameOrigin`, flight-nav.ts's commit) always run in the
  * persistent initial module, so they keep using this cheap local mirror.
  */
-let retainedRoot: Root | null = null;
+export let retainedRoot: Root | null = null;
 
 /**
  * The document-global slot the retained root lives on; see {@link retainedRoot}.
@@ -962,7 +884,7 @@ const globalWin = globalThis as { __dnxRoot?: Root | null; __dnxRootless?: boole
  * A `null` tree is a root-less islands page: every client part of it is a carved `client:*`
  * island that hydrates in its own root, so the page root has nothing to hydrate (its server
  * inlined no root Flight). Only navigation is installed; the first Flight navigation away
- * mounts a fresh root ({@link mountRootlessPage}).
+ * mounts a fresh root (flight-nav.ts's `mountRootlessPage`).
  *
  * @param container The hydration root element.
  * @param tree The route's virtual-node tree, or `null` for a root-less islands page.

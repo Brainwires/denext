@@ -2,6 +2,7 @@
 // qrl handler extraction, AsyncContext instrumentation, feature folds), merged into the bundler
 // import map. `denext export` runs the same transforms (../export-pipeline/assets.ts).
 
+import { join } from "@std/path";
 import { asyncContextEnabled, featureFlags, reactCompilerEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
@@ -9,6 +10,7 @@ import { compileFeatureModules } from "../feature-transform.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
 import { routeEntryFiles } from "../module-graph.ts";
+import { stylesheetImportMap } from "../platform-imports.ts";
 import { compileQrlModules } from "../qrl-transform.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { type BuildContext, log } from "./context.ts";
@@ -17,9 +19,9 @@ import { type BuildContext, log } from "./context.ts";
  * CSS assets for the whole app: the import map lets `deno bundle` resolve every `.css`
  * import to its shim; per-route extraction produces the linked stylesheet.
  */
-export function buildCss(ctx: BuildContext): Promise<AppCss | null> {
+export async function buildCss(ctx: BuildContext): Promise<AppCss | null> {
   const { projectDir, paths, manifest } = ctx;
-  return buildAppCss({
+  return await buildAppCss({
     projectDir,
     configPath: paths.configPath,
     outDir: paths.outDir,
@@ -28,6 +30,16 @@ export function buildCss(ctx: BuildContext): Promise<AppCss | null> {
     // stylesheets in sibling workspace packages (outside `projectDir`) the walk misses.
     entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
     tailwind: tailwindPaths(projectDir, paths.config?.tailwind),
+    // A next-compat app's esbuild bundles probe the `.web` files, so its stylesheet crawl
+    // resolves them through their redirects (the native path's crawls already do).
+    graph: ctx.compat
+      ? await stylesheetImportMap(
+        projectDir,
+        paths.config,
+        "web",
+        join(paths.outDir, "platform-imports", "css-web"),
+      )
+      : undefined,
   });
 }
 

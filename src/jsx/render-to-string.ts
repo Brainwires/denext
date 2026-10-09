@@ -27,7 +27,7 @@ import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-base.ts";
+import { renderClassToVNode } from "../compat/class-instance.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import {
@@ -137,42 +137,57 @@ const SCRIPT_URL_SCHEME = /^(?:javascript|vbscript|livescript|mocha|data):/;
 
 /**
  * Neutralize a dangerous URL scheme in a URL-bearing attribute value. Returns the
- * value unchanged when safe, or `null` when it must be dropped.
+ * value unchanged when safe, or `null` when it must be dropped (warning in dev).
  *
  * `javascript:`, `vbscript:`, `livescript:` and `mocha:` are refused in any URL
  * attribute; `data:` is refused only where it executes — a navigation/submission
  * target (`href`, `action`, …) or the `src`/`data` of a
  * `<script>`/`<iframe>`/`<embed>`/`<object>` — so a `data:image/*` in `<img src>`
- * keeps working. Leading ASCII control/whitespace chars are stripped before the
- * scheme test because browsers ignore them inside a scheme (`java\tscript:` still
- * runs). Shared by SSR serialization and the client reconciler's `setAttribute`.
+ * keeps working. See {@linkcode refusesUrlAttr}, the check itself, which the client
+ * reconciler's `setAttribute` shares.
  */
 export function sanitizeUrlAttr(
   tag: string | undefined,
   attr: string,
   value: string,
 ): string | null {
+  if (!refusesUrlAttr(tag, attr, value)) return value;
+  warnRefusedUrl(attr, value);
+  return null;
+}
+
+/**
+ * Whether a URL-bearing attribute value carries a script-executing scheme that must be
+ * dropped (the rules of {@linkcode sanitizeUrlAttr}). Leading ASCII control/whitespace chars
+ * are stripped before the scheme test because browsers ignore them inside a scheme
+ * (`java\tscript:` still runs). Shared by SSR serialization and the client reconciler's
+ * `setAttribute`, which reports the refusal through its dev-only warning seam instead.
+ */
+export function refusesUrlAttr(tag: string | undefined, attr: string, value: string): boolean {
   // HTML attribute names are case-insensitive; the React prop may be camelCase
   // (`formAction` -> `formaction`), so compare on a lowercased name.
   const a = attr.toLowerCase();
-  if (!URL_ATTRS.has(a)) return value;
+  if (!URL_ATTRS.has(a)) return false;
   // Strip ASCII control chars + whitespace before the scheme test; browsers
   // ignore them inside a scheme, so `java\tscript:` would otherwise slip through.
   // deno-lint-ignore no-control-regex
   const scheme = value.replace(/[\u0000-\u0020\u007F-\u009F]+/g, "").toLowerCase();
-  if (!SCRIPT_URL_SCHEME.test(scheme)) return value;
+  if (!SCRIPT_URL_SCHEME.test(scheme)) return false;
   if (scheme.startsWith("data:")) {
-    const executes = NAV_URL_ATTRS.has(a) ||
+    // e.g. data:image/* in <img src> — safe
+    return NAV_URL_ATTRS.has(a) ||
       (tag !== undefined && SCRIPTY_TAGS.has(tag) && (a === "src" || a === "data"));
-    if (!executes) return value; // e.g. data:image/* in <img src> — safe
   }
-  if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
-    console.warn(
-      `denext: refused a dangerous URL in ${attr}="${value.slice(0, 40)}" — ` +
-        `javascript:/vbscript:/executable data: URLs are dropped to prevent XSS.`,
-    );
-  }
-  return null;
+  return true;
+}
+
+/** Warn (dev only) that a dangerous URL in `attr` was refused (see {@linkcode sanitizeUrlAttr}). */
+export function warnRefusedUrl(attr: string, value: string): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    `denext: refused a dangerous URL in ${attr}="${value.slice(0, 40)}" — ` +
+      `javascript:/vbscript:/executable data: URLs are dropped to prevent XSS.`,
+  );
 }
 
 /**

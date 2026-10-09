@@ -536,6 +536,12 @@ export class VirtualController<T> {
   #cols = 1;
   /** Cached lead / tail for window / ancestor scrolling (re-read on resize, not per scroll). */
   #leadCache: { lead: number; tail: number } | null = null;
+  /**
+   * The last lead / tail read could not see the tail: the rendered window overflowed the inner
+   * box (rows measured larger than their estimates, the layout not caught up yet), so the
+   * overflow covered the footer and the extent read it as 0. Re-read once the layout is applied.
+   */
+  #tailObscured = false;
   /** Rows whose content has rendered (progressive mode). */
   readonly #ready = new Set<Key>();
   #progressScheduled = false;
@@ -736,6 +742,10 @@ export class VirtualController<T> {
       maxPhysicalSize: DEFAULT_MAX_PHYSICAL_SIZE,
       endThreshold: props.onEndReachedThreshold ?? DEFAULT_CONFIG.endThreshold,
       startThreshold: props.onStartReachedThreshold ?? DEFAULT_CONFIG.startThreshold,
+      pinOnData: props.pinEndOn?.data,
+      pinOnItems: props.pinEndOn?.items,
+      pinOnLayout: props.pinEndOn?.layout,
+      pinOnFooter: props.pinEndOn?.footer,
     };
     const same = (Object.keys(next) as (keyof CoreConfig)[]).every((k) => prev[k] === next[k]);
     return same ? prev : next;
@@ -1239,6 +1249,7 @@ export class VirtualController<T> {
     }
     this.#tryRestore();
     this.#applyLayout();
+    this.#rereadObscuredTail();
     if (this.#pendingWrite) {
       const smooth = this.#pendingWrite.smooth;
       this.#pendingWrite = null;
@@ -1287,9 +1298,20 @@ export class VirtualController<T> {
     return this.core.setMetrics(vp, lt.lead, lt.tail);
   }
 
+  /**
+   * Re-read the metrics after a layout when the last read could not see the tail (see
+   * {@linkcode #tailObscured}), and lay out again if they changed. Without it a chat opened at
+   * the end over rows larger than their estimate pins the last row, not the footer, to the
+   * bottom: the footer (a composer inset, say) stays hidden until something else re-reads.
+   */
+  #rereadObscuredTail(): void {
+    if (this.#tailObscured && this.#readMetrics()) this.#applyLayout();
+  }
+
   /** Space before and after the rows inside the scroller. */
   #leadTail(a: Axis): { lead: number; tail: number } {
     const inner = rectOf(this.inner);
+    this.#tailObscured = false;
     if (!hasLayout(inner)) {
       // No layout (tests): the keyboard spacer is the only known space after the rows.
       const inset = Math.max(0, this.props.keyboardInset ?? 0);
@@ -1297,7 +1319,9 @@ export class VirtualController<T> {
     }
     const start = a.lead(inner);
     const win = rectOf(this.win);
-    const innerExtent = Math.max(inner[a.size], win ? a.trail(win) - start : 0);
+    const windowExtent = win ? a.trail(win) - start : 0;
+    const innerExtent = Math.max(inner[a.size], windowExtent);
+    this.#tailObscured = windowExtent > inner[a.size] + 0.5;
     const base = this.#mode === "window" ? this.#windowBase(a) : this.#elementBase(a);
     if (!base) return NO_LAYOUT;
     const lead = start + base.offset;
@@ -1630,6 +1654,7 @@ export class VirtualController<T> {
   /** After sizes or metrics changed outside a render. */
   #afterChange(): void {
     this.#applyLayout();
+    this.#rereadObscuredTail();
     this.#reconcile(false);
     this.#afterMeasure();
     this.#notify();

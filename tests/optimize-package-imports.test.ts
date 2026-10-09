@@ -12,6 +12,8 @@ import { fromFileUrl, join, SEPARATOR } from "@std/path";
 import * as esbuild from "esbuild";
 import {
   analyzeBarrel,
+  type AutoOptimizePackageImports,
+  autoOptimizePackageImports,
   type BarrelExport,
   type BarrelResolvers,
   DEFAULT_OPTIMIZE_PACKAGE_IMPORTS,
@@ -28,6 +30,7 @@ import {
   probeSourceFile,
   resolveNodeFrom,
   stopNextCompat,
+  withPackageSideEffects,
 } from "../src/build/next-compat.ts";
 import { buildNextCompatClientEntries } from "../src/build/next-compat-build.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../src/server/config-validate.ts";
@@ -507,4 +510,303 @@ Deno.test("e2e: the real compat client bundler applies the option (TS app source
     await stopNextCompat();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// --- Automatic barrels: shared-barrel lazy routes ----------------------------------------
+//
+// The T3 Code case (`@pierre/diffs`, `@pierre/trees`, `@base-ui/react`): the startup graph and a
+// lazily loaded route import different names from one `"sideEffects": false` barrel. esbuild's
+// code splitting then puts EVERY module the barrel re-exports into a chunk the startup graph
+// loads, the lazy route's modules included (plain esbuild 0.24–0.28 does this). Looking through
+// the barrel automatically keeps each defining module with the code that imports it.
+
+/** A static `import … from "./chunk.js"` / `import "./chunk.js"` (never a dynamic `import()`). */
+const STATIC_CHUNK_IMPORT = /\bimport\s*(?:[^;"'()]*?\bfrom\s*)?["']\.\/([^"']+)["']/g;
+
+/** The package's three modules, each with a marker string the output is searched for. */
+const SHARED_MODULES: Record<string, string> = {
+  "index.js":
+    `export { a } from "./a.js";\nexport { b } from "./b.js";\nexport { c } from "./c.js";\n`,
+  "a.js": `export function a() { return "BODY_A"; }\n`,
+  "b.js": `export function b() { return "BODY_B"; }\n`,
+  "c.js": `export function c() { return "BODY_C"; }\nglobalThis.__sharedC = "SIDE_C";\n`,
+};
+
+/** A temp app: `main.js` imports `a` from the barrel and lazy-loads `route.js`, which imports `b`. */
+async function sharedBarrelApp(pkgJson: Record<string, unknown>): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_opi_auto_" });
+  const pkgDir = join(dir, "node_modules", "shared-barrel");
+  await Deno.mkdir(pkgDir, { recursive: true });
+  await Deno.writeTextFile(
+    join(pkgDir, "package.json"),
+    JSON.stringify({ name: "shared-barrel", type: "module", main: "index.js", ...pkgJson }),
+  );
+  for (const [name, text] of Object.entries(SHARED_MODULES)) {
+    await Deno.writeTextFile(join(pkgDir, name), text);
+  }
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+  await Deno.writeTextFile(
+    join(dir, "main.js"),
+    `import { a } from "shared-barrel";\nconsole.log(a());\n` +
+      `import("./route.js").then((m) => m.run());\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "route.js"),
+    `import { b } from "shared-barrel";\nexport function run() { return b(); }\n`,
+  );
+  return dir;
+}
+
+const autoResolvers: BarrelResolvers = {
+  ...resolvers,
+  sideEffectFree: async (file) => (await withPackageSideEffects(file)).sideEffects === false,
+};
+
+interface SplitResult {
+  /** The text of the entry chunk plus every chunk it statically imports (transitively). */
+  startup: string;
+  /** Every output file's text. */
+  all: string;
+  /** How many times `b.js` entered the module graph. */
+  bCopies: number;
+}
+
+/** Bundle the app code-split, optionally behind an earlier plugin, and split startup from lazy. */
+async function bundleShared(
+  dir: string,
+  opts: { auto?: { exclude: string[] } | null; lead?: esbuild.Plugin[] },
+): Promise<SplitResult> {
+  const chain = [
+    ...(opts.lead ?? []),
+    appResolverPlugin(join(dir, "deno.json")),
+    catalogResolverPlugin(dir, "all"),
+  ];
+  const plugins = opts.auto
+    ? withOptimizedPackageImports(chain, {
+      packages: [],
+      resolvers: autoResolvers,
+      auto: opts.auto,
+    })
+    : chain;
+  try {
+    const result = await esbuild.build({
+      entryPoints: { main: join(dir, "main.js") },
+      bundle: true,
+      splitting: true,
+      format: "esm",
+      write: false,
+      outdir: join(dir, "out"),
+      metafile: true,
+      logLevel: "silent",
+      plugins,
+    });
+    const byName = new Map(
+      result.outputFiles!.map((f) => [f.path.slice(f.path.lastIndexOf("/") + 1), f.text]),
+    );
+    const seen = new Set<string>();
+    const walk = (name: string) => {
+      if (seen.has(name) || !byName.has(name)) return;
+      seen.add(name);
+      for (const m of byName.get(name)!.matchAll(STATIC_CHUNK_IMPORT)) {
+        walk(m[1]);
+      }
+    };
+    walk("main.js");
+    return {
+      startup: [...seen].map((n) => byName.get(n)).join("\n"),
+      all: [...byName.values()].join("\n"),
+      bCopies: Object.keys(result.metafile!.inputs).filter((p) => p.endsWith("shared-barrel/b.js"))
+        .length,
+    };
+  } finally {
+    await esbuild.stop();
+  }
+}
+
+Deno.test("auto barrels: without them, the lazy route's module is in the startup graph", async () => {
+  // Pins the esbuild behaviour the automatic look-through exists for.
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  try {
+    const { startup } = await bundleShared(dir, {});
+    assertStringIncludes(startup, "BODY_A");
+    assertStringIncludes(startup, "BODY_B", "esbuild no longer hoists the barrel's modules?");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: a sideEffects-false barrel is looked through without being listed", async () => {
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  try {
+    const { startup, all, bCopies } = await bundleShared(dir, { auto: { exclude: [] } });
+    assertStringIncludes(startup, "BODY_A");
+    assert(!startup.includes("BODY_B"), `the lazy route's module is still at startup:\n${startup}`);
+    assertStringIncludes(all, "BODY_B", "it is still bundled, in the lazy chunk");
+    assert(!all.includes("BODY_C") && !all.includes("SIDE_C"), "the unused module never loads");
+    assertEquals(bCopies, 1, "one copy of b.js");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: a package without sideEffects false (or with the array form) is untouched", async () => {
+  for (const pkgJson of [{}, { sideEffects: ["./b.js"] }, { sideEffects: true }]) {
+    const dir = await sharedBarrelApp(pkgJson);
+    try {
+      const { startup } = await bundleShared(dir, { auto: { exclude: [] } });
+      assertStringIncludes(startup, "BODY_B", `rewritten despite ${JSON.stringify(pkgJson)}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("auto barrels: a sideEffects array that names no module the barrel loads is looked through", async () => {
+  // `@pierre/diffs`: `"sideEffects": ["dist/components/web-components.js"]`, a file the barrel
+  // does not import.
+  for (const sideEffects of [["./web-components.js"], ["*.css"]]) {
+    const dir = await sharedBarrelApp({ sideEffects });
+    try {
+      const { startup, all } = await bundleShared(dir, { auto: { exclude: [] } });
+      assert(
+        !startup.includes("BODY_B"),
+        `not looked through under ${JSON.stringify(sideEffects)}`,
+      );
+      assertStringIncludes(all, "BODY_B");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("auto barrels: a barrel that loads a module the sideEffects array names is untouched", async () => {
+  // c.js (unused) has side effects: esbuild keeps it, so skipping the barrel would drop them.
+  const dir = await sharedBarrelApp({ sideEffects: ["./c.js"] });
+  try {
+    const { startup } = await bundleShared(dir, { auto: { exclude: [] } });
+    assertStringIncludes(startup, "BODY_B");
+    assertStringIncludes(startup, "SIDE_C", "the side-effectful module still runs at startup");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: a name from another package stays on the barrel; its own names move", async () => {
+  // `@pierre/diffs` re-exports a few `shiki` names beside its own modules.
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  const pkgDir = join(dir, "node_modules", "shared-barrel");
+  const otherDir = join(dir, "node_modules", "other-pkg");
+  await Deno.mkdir(otherDir, { recursive: true });
+  await Deno.writeTextFile(
+    join(otherDir, "package.json"),
+    JSON.stringify({ name: "other-pkg", type: "module", main: "index.js", sideEffects: false }),
+  );
+  await Deno.writeTextFile(join(otherDir, "index.js"), `export const o = () => "BODY_O";\n`);
+  await Deno.writeTextFile(
+    join(pkgDir, "index.js"),
+    SHARED_MODULES["index.js"] + `export { o } from "other-pkg";\n`,
+  );
+  try {
+    // The startup graph imports only the package's own `a`: `b` stays with the lazy route.
+    const { startup, all } = await bundleShared(dir, { auto: { exclude: [] } });
+    assert(!startup.includes("BODY_B"), `not looked through:\n${startup}`);
+    assertStringIncludes(all, "BODY_B");
+    // Importing the other package's `o` keeps that import on the barrel, and it still works.
+    await Deno.writeTextFile(
+      join(dir, "main.js"),
+      `import { a, o } from "shared-barrel";\nconsole.log(a(), o());\n` +
+        `import("./route.js").then((m) => m.run());\n`,
+    );
+    const withOther = await bundleShared(dir, { auto: { exclude: [] } });
+    assertStringIncludes(withOther.startup, "BODY_O");
+    assertStringIncludes(withOther.startup, "BODY_A");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: an excluded package (`!pkg`) is untouched", async () => {
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  try {
+    const { startup } = await bundleShared(dir, { auto: { exclude: ["shared-barrel"] } });
+    assertStringIncludes(startup, "BODY_B");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: a specifier the build resolves elsewhere (an alias) is never rewritten", async () => {
+  // An earlier plugin owns `shared-barrel` (the way denext's runtime owns `react`): the
+  // node_modules barrel is not the module the build loads, so its files must not be imported.
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  await Deno.writeTextFile(
+    join(dir, "alias.js"),
+    `export const a = () => "ALIAS_A";\nexport const b = () => "ALIAS_B";\n`,
+  );
+  const alias: esbuild.Plugin = {
+    name: "alias",
+    setup(build) {
+      build.onResolve({ filter: /^shared-barrel$/ }, () => ({ path: join(dir, "alias.js") }));
+    },
+  };
+  try {
+    const { all } = await bundleShared(dir, { auto: { exclude: [] }, lead: [alias] });
+    assertStringIncludes(all, "ALIAS_B");
+    assert(!all.includes("BODY_"), `the node_modules package leaked in:\n${all}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("auto barrels: the real compat client bundler looks through by default", async () => {
+  const dir = await sharedBarrelApp({ sideEffects: false });
+  try {
+    const startupOf = async (auto: AutoOptimizePackageImports | null) => {
+      const clientDir = join(dir, `client-${auto ? "auto" : "off"}`);
+      await buildNextCompatClientEntries({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        clientDir,
+        entries: [{ id: "index", source: `import ${JSON.stringify(join(dir, "main.js"))};\n` }],
+        resolveAllNodeModules: true,
+        optimizePackageImports: [],
+        autoOptimizePackageImports: auto,
+      });
+      const texts = new Map<string, string>();
+      for await (const e of Deno.readDir(clientDir)) {
+        if (e.name.endsWith(".js")) {
+          texts.set(e.name, await Deno.readTextFile(join(clientDir, e.name)));
+        }
+      }
+      const seen = new Set<string>();
+      const walk = (name: string) => {
+        if (seen.has(name) || !texts.has(name)) return;
+        seen.add(name);
+        for (const m of texts.get(name)!.matchAll(STATIC_CHUNK_IMPORT)) {
+          walk(m[1]);
+        }
+      };
+      walk("index.js");
+      return [...seen].map((n) => texts.get(n)).join("\n");
+    };
+    assertStringIncludes(await startupOf(null), "BODY_B", "off: the bug");
+    const on = await startupOf(autoOptimizePackageImports(undefined));
+    assert(!on.includes("BODY_B"), "on (the default config): fixed");
+  } finally {
+    await stopNextCompat();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("autoOptimizePackageImports: on by default; `false` or `!*` turns it off; `!pkg` excludes", () => {
+  assertEquals(autoOptimizePackageImports(undefined), { exclude: [] });
+  assertEquals(autoOptimizePackageImports({ optimizePackageImports: ["x"] }), { exclude: [] });
+  assertEquals(autoOptimizePackageImports({ optimizePackageImports: false }), null);
+  assertEquals(autoOptimizePackageImports({ optimizePackageImports: ["!*", "x"] }), null);
+  assertEquals(
+    autoOptimizePackageImports({ optimizePackageImports: ["!@base-ui/react", "lucide-react"] }),
+    { exclude: ["@base-ui/react"] },
+  );
+  assert(!optimizePackageImportsList({ optimizePackageImports: ["!*"] }).includes("*"));
 });

@@ -29,7 +29,7 @@ export async function emitRouteCss(ctx: BuildContext): Promise<void> {
   const { css, clientDir } = ctx;
   if (!css) return;
   const pages = ctx.manifest.pages;
-  await primeCssGraph([...new Set(pages.flatMap(routeSourceFiles))], css.appConfigPath);
+  await primeCssGraph([...new Set(pages.flatMap(routeSourceFiles))], css.appConfigPath, css.graph);
   for (const route of pages) {
     const text = await extractRouteCss(routeSourceFiles(route), css);
     if (text.trim().length > 0) {

@@ -426,14 +426,20 @@ Docs: https://denext.dev/docs/platform-files
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
 `denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
-makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Docs:
-https://denext.dev/docs/lists
+makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Swipe actions:
+`<SwipeableRow leading={[…]} trailing={[{ label, tone, onPress }]}>` from `denext` (transform-only,
+VirtualList-safe, full swipe runs the first action, real buttons; RNGH `Swipeable` /
+`ReanimatedSwipeable` resolve to it in React Native mode). Docs: https://denext.dev/docs/lists
 
 **Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
 keeps pushed screens mounted with platform animations and the iOS swipe back, `TabsLayout`
 keeps each tab's state, `Sheet` is a bottom sheet with detents; a page sets
 `export const screenOptions = { title, presentation }`; `useStackNavigation()` pushes and
-pops. Docs: https://denext.dev/docs/navigation-native
+pops. On another router (TanStack Router, React Router, none): `<HistoryStack
+history={tanstackHistory(router)} screens={[{ path: "/$id", render, options }]} />` (screens read
+`useScreenMatch()`, not the router's hooks) and `HistoryTabs`; the back swipe starts anywhere
+there (`fullScreenSwipe`, or a screen's `fullScreenGestureEnabled`). Docs:
+https://denext.dev/docs/navigation-native
 
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
@@ -682,7 +688,10 @@ automatically on the esbuild path. `optimizePackageImports` (Next's key, top-lev
 barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
 loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages,
 drop one with `"!pkg"`, or disable it with `false`. Listing a package asserts it is side-effect
-free. Applied by the esbuild bundles only (not unbundled dev or the native `deno bundle` path).
+free. A package whose own `package.json` declares `sideEffects` (`false`, or an array naming none of
+the barrel's modules) is rewritten unlisted too, so a lazy route's modules stay out of the startup
+chunks (`"!*"` turns that automatic mode off). Applied by the esbuild bundles only (not unbundled
+dev or the native `deno bundle` path).
 
 **Testing an app (no browser, JS-disabled path):**
 

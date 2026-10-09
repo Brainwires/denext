@@ -13,9 +13,12 @@
 
 import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { djb2 } from "../runtime/djb2.ts";
+import type { DenextConfig } from "../server/config.ts";
 import {
   type ImportAliases,
   keptPlatformScanner,
+  type Platform,
+  projectPlatformRedirects,
   projectSourceFiles,
   readImportAliases,
   resolveImportAlias,
@@ -203,6 +206,28 @@ export async function platformImportMap(
   for (const [from, to] of Object.entries(redirects)) importMap[from] = copyOf.get(to) ?? to;
   for (const [from, copy] of copyOf) importMap[from] ??= copy;
   return { importMap: await withRealPathKeys(projectDir, importMap), originals };
+}
+
+/**
+ * The import map a target's stylesheet crawls resolve through (`AppCss.graph`, ./css.ts), whatever
+ * bundles its JS: the target's platform redirects, with copies of the modules that reach a
+ * variant through an alias. The esbuild paths probe the variants themselves, but the crawl that
+ * picks the stylesheets is `deno info`, which cannot; without this, `look.ios.ts`'s
+ * `import "./a.css"` was left out of the iOS build while its JS was bundled.
+ *
+ * @param projectDir The project root.
+ * @param config The app config.
+ * @param platform The target.
+ * @param copyDir Where the alias copies are written (emptied first); its own, not a bundle's.
+ */
+export async function stylesheetImportMap(
+  projectDir: string,
+  config: DenextConfig | null | undefined,
+  platform: Platform,
+  copyDir: string,
+): Promise<PlatformImportMap> {
+  const redirects = await projectPlatformRedirects(projectDir, config, platform);
+  return await platformImportMap(projectDir, redirects, copyDir);
 }
 
 /**

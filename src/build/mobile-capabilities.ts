@@ -51,6 +51,7 @@ import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
+import { YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -1160,21 +1161,27 @@ async function packageManagerFieldIn(dir: string): Promise<PackageManager | unde
 /**
  * The package manager, walking up from the Capacitor project `root` to the repository root
  * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
- * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
- * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder; a `deno.lock`
- * only in `root` itself, for a denext project installed with `deno install`); then the nearest
- * `package.json` `packageManager` field; then npm.
+ * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest npm-family
+ * lockfile (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then
+ * a `deno.lock` in `root` itself, for a denext project installed with `deno install`; then the
+ * nearest `package.json` `packageManager` field; then npm.
  */
 async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
   const dirs = await workspaceAncestors(root);
+  let projectDenoLock: string | undefined;
   for (const dir of dirs) {
     const found = await lockfileIn(dir);
-    // A deno.lock names the project's manager only in the project itself: an npm project nested
-    // in a Deno repository is still an npm project.
-    if (found && (found.manager !== "deno" || dir === root)) {
-      return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    if (found?.manager !== "deno") {
+      if (found) return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+      continue;
     }
+    // A deno.lock names the project's manager only in the project itself (an npm project nested
+    // in a Deno repository is still an npm project), and only when no workspace above it has an
+    // npm-family lockfile: `deno task` or a denext run in a pnpm workspace's app leaves a
+    // deno.lock there, and the workspace's manager still owns the install.
+    if (dir === root) projectDenoLock = found.path;
   }
+  if (projectDenoLock) return { manager: "deno", lockfile: posixRelative(root, projectDenoLock) };
   for (const dir of dirs) {
     const manager = await packageManagerFieldIn(dir);
     if (manager) {
@@ -1184,7 +1191,12 @@ async function detectPackageManager(root: string): Promise<DetectedPackageManage
   return { manager: "npm" };
 }
 
-/** `manager`'s command to add `specs` as dependencies. */
+/**
+ * `manager`'s command to add `specs` as dependencies. Yarn gets {@link YARN_NO_SCRIPTS_ENV}, as
+ * `denext migrate`'s install does: an install runs lifecycle scripts (the project's own, and its
+ * dependencies'), and the Capacitor plugins need none. npm, pnpm and bun take `--ignore-scripts`;
+ * Yarn gets {@link YARN_NO_SCRIPTS_ENV}.
+ */
 function addCommand(
   manager: PackageManager,
   specs: string[],
@@ -1206,7 +1218,11 @@ function addCommand(
     : manager === "npm" || manager === "pnpm"
     ? ["--save-exact"]
     : ["--exact"];
-  return { cmd: manager, args: [verb, ...flag, ...specs], cwd };
+  // Yarn Berry rejects `--ignore-scripts`, so Yarn is told through its environment instead.
+  if (manager === "yarn") {
+    return { cmd: manager, args: [verb, ...flag, ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
+  }
+  return { cmd: manager, args: [verb, "--ignore-scripts", ...flag, ...specs], cwd };
 }
 
 /** A plain version (`8.5.2`, `8.0.0-rc.1`): what an exactly pinned dependency holds. */
@@ -1561,9 +1577,10 @@ export async function planMobileCapabilities(
   };
 }
 
-/** One command as a shell-like line. */
+/** One command as a shell-like line (its env assignments first). */
 function commandLine(command: PlannedCommand): string {
-  return [command.cmd, ...command.args].join(" ");
+  const env = Object.entries(command.env ?? {}).map(([k, v]) => `${k}=${v}`);
+  return [...env, command.cmd, ...command.args].join(" ");
 }
 
 /** Where the plan's package manager came from, for the dry-run line. */

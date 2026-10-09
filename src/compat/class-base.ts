@@ -123,55 +123,7 @@ export function internals(c: unknown): ClassInternals {
   return (c as { __denext: ClassInternals }).__denext;
 }
 
-/**
- * Construct a class instance and attach denext internals.
- *
- * @param Ctor The class-component constructor.
- * @param props Initial props.
- * @param context Legacy `contextType` value, if any.
- * @param inst The owning reconciler Instance (or null for SSR).
- * @returns The constructed class instance (with `__denext` internals).
- */
-export function instantiateClass(
-  Ctor: unknown,
-  props: unknown,
-  context: unknown,
-  inst: unknown,
-): object {
-  const c = new (Ctor as Any)(props, context);
-  Object.defineProperty(c, "__denext", {
-    value: {
-      inst,
-      pendingState: [],
-      pendingCallbacks: [],
-      forced: false,
-      mounted: false,
-    } as ClassInternals,
-    enumerable: false,
-    writable: true,
-  });
-  if (c.state === undefined || c.state === null) c.state = {};
-  return c;
-}
-
-/**
- * Server-render a class component to a vnode: instantiate, apply
- * `getDerivedStateFromProps`, call `render()`. No lifecycle effects (React server
- * behavior).
- *
- * @param type The class component.
- * @param props The props.
- * @param context Legacy context value, if resolvable.
- * @returns The rendered vnode.
- */
-export function renderClassToVNode(type: unknown, props: unknown, context: unknown): unknown {
-  const c = instantiateClass(type, props, context, null) as Any;
-  let state = c.state;
-  const g = (type as Any).getDerivedStateFromProps;
-  if (typeof g === "function") {
-    const d = g(props, state);
-    if (d != null) state = { ...state, ...d };
-  }
-  c.state = state;
-  return c.render();
-}
+// Instantiation + the SSR render live in a leaf module, so the server renderer (reachable from
+// every app's client graph through the root `denext` entry) never reaches the base classes
+// above: they then ship only in the on-demand class runtime, not in every shared chunk.
+export { instantiateClass } from "./class-instance.ts";

@@ -52,8 +52,30 @@ function commitBeforeMutation(wipRoot: Fiber): void {
  */
 function commitDeletions(wipRoot: Fiber): void {
   walkFlagged(wipRoot, ChildDeletion, (f) => {
-    if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
+    if (!f.deletions) return;
+    for (const d of f.deletions) commitDeletion(d);
+    detachPreviousChildren(f);
   });
+}
+
+/**
+ * Unlink the previous buffer's child list of a parent that just lost children (React's
+ * `detachAlternateSiblings`). `parent.alternate` is the tree this commit replaced, and its
+ * `child` / `sibling` chain still reaches each deleted fiber (live child --alternate-->
+ * previous child --sibling--> deleted child), so a deleted subtree stayed reachable until
+ * the parent rendered again. Nothing reads that list: the next render rebuilds it from the
+ * committed parent (`createWorkInProgress` copies `current.child` and resets `sibling`).
+ */
+function detachPreviousChildren(parent: Fiber): void {
+  const previous = parent.alternate;
+  if (previous === null) return;
+  let c = previous.child;
+  previous.child = null;
+  while (c !== null) {
+    const next = c.sibling;
+    c.sibling = null;
+    c = next;
+  }
 }
 
 /**
@@ -68,7 +90,7 @@ function commitInsertionEffects(wipRoot: Fiber): void {
   collectInsertionEffects(wipRoot, insertionFibers);
   runCommitEffects(insertionFibers, (f) => {
     const es = f.insertionEffects;
-    f.insertionEffects = [];
+    f.insertionEffects = undefined;
     return es;
   });
 }
@@ -167,7 +189,7 @@ function clearFiberFlags(f: Fiber): void {
 function commitLayoutEffects(effects: Fiber[]): void {
   runCommitEffects(effects, (f) => {
     const es = f.pendingEffects;
-    f.pendingEffects = [];
+    f.pendingEffects = undefined;
     return es;
   });
   for (const f of effects) {
@@ -214,6 +236,14 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
   runCommitReport(handle);
+  // 7. A store-driven commit runs its passive effects now, as React does for a SyncLane
+  //    commit: a store that reclaims an unsubscribed entry on its next task (an atom
+  //    registry) must see the re-subscription first, or the rebuilt entry reads as a
+  //    change and the component re-renders again, indefinitely.
+  if (handle.syncPassive) {
+    handle.syncPassive = false;
+    flushPassiveEffects();
+  }
 }
 
 /**
@@ -455,7 +485,7 @@ export function flushPassiveEffects(): void {
     // two-pass order (commitPassiveUnmount then commitPassiveMount).
     runCommitEffects(batch, (f) => {
       const es = f.passiveEffects;
-      f.passiveEffects = [];
+      f.passiveEffects = undefined;
       return es;
     });
   } finally {
@@ -500,16 +530,36 @@ function removeHostNode(fiber: Fiber): void {
 
 /**
  * Mark unmounted and sever tree links so that if anything outside the tree still
- * references this fiber (a pending Suspense retry promise), it can't pin the rest of
- * the detached subtree or the root in memory.
+ * references this fiber (a pending Suspense retry promise, a hook setter a store kept,
+ * a detached DOM node someone holds), it can't pin the rest of the detached subtree, the
+ * root, or the component's state in memory. Both buffers: a reference can reach either
+ * one (a setter's `owner` is whichever rendered last), and an unsevered alternate's
+ * `child` / `return` lead back into the whole old subtree. React's
+ * `detachFiberMutation` + `detachFiberAfterEffects`.
  */
 function severFiber(fiber: Fiber): void {
-  fiber.unmounted = true;
-  if (fiber.alternate) fiber.alternate.unmounted = true;
-  fiber.child = null;
-  fiber.sibling = null;
-  fiber.return = null;
-  fiber.stateNode = null;
+  const alternate = fiber.alternate;
+  detachFiber(fiber);
+  if (alternate !== null) detachFiber(alternate);
+}
+
+function detachFiber(f: Fiber): void {
+  f.unmounted = true;
+  f.child = null;
+  f.sibling = null;
+  f.return = null;
+  f.alternate = null;
+  f.stateNode = null;
+  f.deletions = null;
+  // Its own state, cleanups already run: hook cells, effect lists, listener closures.
+  f.hooks = undefined;
+  f.insertionEffects = undefined;
+  f.pendingEffects = undefined;
+  f.passiveEffects = undefined;
+  f.listeners = undefined;
+  f.hiddenEls = undefined;
+  f.pendingElement = undefined;
+  f.provValue = undefined;
 }
 
 export function commitDeletion(fiber: Fiber): void {

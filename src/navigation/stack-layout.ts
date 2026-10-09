@@ -26,14 +26,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useReducer,
-  useRef,
-  useState,
-} from "../runtime/hooks.ts";
+import { useContext, useEffect, useLayoutEffect, useRef } from "../runtime/hooks.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { getNavigatingHref, navigate, subscribeNavigating } from "../client/navigation.ts";
 import { detectPlatform, ensureViewTransitionRules, VT_NAME } from "./animation.ts";
@@ -57,6 +50,7 @@ import {
   withStamp,
 } from "./stack-model.ts";
 import { StackView, type StackViewAnimate, type StackViewHandle } from "./stack-view.ts";
+import { plainLinkHref, stackNavigator, useStackInTab, useStackOwner } from "./stack-owner.ts";
 import { viewTransitionsOn } from "./vt-hold.ts";
 import type { NavigationThemeProps } from "./theme.ts";
 import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.ts";
@@ -92,6 +86,11 @@ export interface StackLayoutProps extends NavigationThemeProps {
   readonly getKey?: (href: string) => string;
   /** A light haptic when the iOS swipe commits (default `false`). */
   readonly swipeHaptic?: boolean;
+  /**
+   * Whether the back swipe may start anywhere on the screen, not only at its left edge
+   * (default `false`; a page's `fullScreenGestureEnabled` screen option overrides it).
+   */
+  readonly fullScreenSwipe?: boolean;
   /** Extra style for the container (its height defaults to `100dvh`, `100%` inside tabs). */
   readonly style?: Readonly<Record<string, string | number | undefined>>;
   /** A class for the container. */
@@ -475,14 +474,8 @@ function popTo(rt: LayoutRt, index: number, animated: boolean): void {
 
 /** A click on a link to a screen below: go back to it through history instead of pushing. */
 function onStackClick(rt: LayoutRt, event: MouseEvent): void {
-  if (event.defaultPrevented || event.button !== 0) return;
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const anchor = (event.target as Element | null)?.closest?.("a");
-  if (!anchor || anchor.hasAttribute("download")) return;
-  const tgt = anchor.getAttribute("target");
-  if (tgt && tgt !== "_self") return;
+  const target = plainLinkHref(event, (anchor) => toHref(anchor.href));
   const m = rt.model;
-  const target = toHref((anchor as HTMLAnchorElement).href);
   const index = m && target ? indexBelowTop(m, rt.getKey(target)) : -1;
   if (index < 0) return;
   event.preventDefault();
@@ -491,19 +484,15 @@ function onStackClick(rt: LayoutRt, event: MouseEvent): void {
 
 /** The navigator the screens get through context (stable). */
 function createApi(rt: LayoutRt): StackNavigatorApi {
-  const go = (target: string, kind: RouteIntent) => {
-    rt.intent = { key: rt.getKey(toHref(target) || target), kind };
-    void navigate(target, kind === "replace" ? { replace: true } : {});
-  };
-  return {
-    push: (target) => go(target, "push"),
-    replace: (target) => go(target, "replace"),
+  return stackNavigator({
+    go: (target, kind) => {
+      rt.intent = { key: rt.getKey(toHref(target) || target), kind };
+      void navigate(target, kind === "replace" ? { replace: true } : {});
+    },
     popTo: (index) => popTo(rt, index, true),
     depth: () => rt.model?.entries.length ?? 1,
-    setOptions(id, options) {
-      rt.setOverrides((prev) => new Map(prev).set(id, { ...prev.get(id), ...options }));
-    },
-  };
+    setOverrides: () => rt.setOverrides,
+  });
 }
 
 /** The router/container hooks: claimed backs, navigation starts, links to screens below. */
@@ -531,14 +520,12 @@ function useLayoutListeners(rt: LayoutRt): void {
 
 /** Inside a tab: re-tapping the tab pops to the root, then scrolls to the top. */
 function useTabRegistration(rt: LayoutRt, tab: TabScope | null): void {
-  useEffect(() => {
-    if (!tab) return;
-    return tab.register({
-      canGoBack: () => (rt.model?.entries.length ?? 1) > 1,
-      popToTop: () => popTo(rt, 0, true),
-      scrollToTop: () => rt.handle?.scrollToTop() ?? false,
-    });
-  }, [tab]);
+  useStackInTab(
+    tab,
+    () => rt.model?.entries.length ?? 1,
+    () => popTo(rt, 0, true),
+    () => rt.handle?.scrollToTop() ?? false,
+  );
 }
 
 /** A fresh runtime for a mounting layout. */
@@ -592,9 +579,7 @@ function createLayoutRuntime(props: StackLayoutProps): LayoutRt {
 export function StackLayout(props: StackLayoutProps): VNode {
   const ctx = navigationContexts();
   const segment = useContext(LayoutSegmentContext);
-  const tab = useContext(ctx.tab);
-  const [, force] = useReducer((n: number, _tick: void) => n + 1, 0);
-  const [overrides, setOverrides] = useState<ReadonlyMap<string, ScreenOptions>>(() => new Map());
+  const { tab, force, overrides, setOverrides } = useStackOwner();
   const ref = useRef<LayoutRt | null>(null);
   const rt = ref.current ??= createLayoutRuntime(props);
   const { base, known } = layoutBase(props, segment);
@@ -636,6 +621,7 @@ export function StackLayout(props: StackLayoutProps): VNode {
       platform: rt.platform,
       screenOptions: props.screenOptions,
       swipeHaptic: props.swipeHaptic,
+      fullScreenSwipe: props.fullScreenSwipe,
       theme: props.theme,
       material: props.material,
       accentColor: props.accentColor,

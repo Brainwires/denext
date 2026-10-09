@@ -199,3 +199,117 @@ Deno.test("mobile assets: no native project, or an undecodable source, is an err
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("mobile assets: images the previous splash catalog named and the new one does not are removed", async () => {
+  const dir = await project(["ios"]);
+  const set = "ios/App/App/Assets.xcassets/Splash.imageset";
+  const exists = async (rel: string) => {
+    try {
+      return (await Deno.stat(join(dir, rel))).isFile;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    await Deno.mkdir(join(dir, set), { recursive: true });
+    // A catalog an earlier run (with a dark splash) or a hand edit left: its own images, one it
+    // shares with the new catalog, a name that leaves the folder, and one that does not exist.
+    await Deno.writeTextFile(
+      join(dir, set, "Contents.json"),
+      JSON.stringify({
+        images: [
+          { idiom: "universal", filename: "splash-2732x2732.png", scale: "3x" },
+          { idiom: "universal", filename: "splash-2732x2732-dark.png", scale: "3x" },
+          { idiom: "universal", filename: "Default@2x~universal~anyany.png", scale: "2x" },
+          { idiom: "universal", filename: "../escape.png", scale: "1x" },
+          { idiom: "universal", filename: "missing.png", scale: "1x" },
+        ],
+        info: { version: 1, author: "xcode" },
+      }),
+    );
+    for (
+      const name of ["splash-2732x2732-dark.png", "Default@2x~universal~anyany.png", "notes.txt"]
+    ) {
+      await Deno.writeTextFile(join(dir, set, name), "old");
+    }
+    await Deno.writeTextFile(join(dir, set, "../escape.png"), "outside the set");
+    const spec = { icon: join(dir, "assets/icon.png"), background: { r: 255, g: 255, b: 255 } };
+
+    const dry = await generateMobileAssets(dir, spec, { dryRun: true });
+    const dryText = formatAssetsReport(dry);
+    assertStringIncludes(dryText, `would remove  ${set}/splash-2732x2732-dark.png`);
+    assertStringIncludes(dryText, `would remove  ${set}/Default@2x~universal~anyany.png`);
+    assert(await exists(`${set}/splash-2732x2732-dark.png`), "a dry run removes nothing");
+
+    const report = await generateMobileAssets(dir, spec);
+    const text = formatAssetsReport(report);
+    assertStringIncludes(text, `removed  ${set}/splash-2732x2732-dark.png`);
+    assert(!await exists(`${set}/splash-2732x2732-dark.png`), "the old dark splash is removed");
+    assert(
+      !await exists(`${set}/Default@2x~universal~anyany.png`),
+      "an old named image is removed",
+    );
+    assert(await exists(`${set}/splash-2732x2732.png`), "an image the new catalog names stays");
+    assert(await exists(`${set}/notes.txt`), "a file no catalog named stays");
+    assert(await exists("ios/App/App/Assets.xcassets/escape.png"), "nothing outside the set");
+    assert(!text.includes("escape.png") && !text.includes("missing.png"), text);
+
+    // Run again: the catalog it wrote names exactly what is there, so nothing more goes.
+    assert(!formatAssetsReport(await generateMobileAssets(dir, spec)).includes("removed"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile assets: images the previous app icon catalog named and the new one does not are removed", async () => {
+  const dir = await project(["ios"]);
+  const set = "ios/App/App/Assets.xcassets/AppIcon.appiconset";
+  const exists = async (rel: string) => {
+    try {
+      return (await Deno.stat(join(dir, rel))).isFile;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    await Deno.mkdir(join(dir, set), { recursive: true });
+    // An earlier run with a dark icon, an older multi-size catalog, a name that leaves the
+    // folder, and a file no catalog named.
+    await Deno.writeTextFile(
+      join(dir, set, "Contents.json"),
+      JSON.stringify({
+        images: [
+          { idiom: "universal", filename: "AppIcon-512@2x.png", size: "1024x1024" },
+          { idiom: "universal", filename: "AppIcon-512@2x-dark.png", size: "1024x1024" },
+          { idiom: "iphone", filename: "AppIcon-60@3x.png", size: "60x60" },
+          { idiom: "iphone", filename: "../escape.png", size: "20x20" },
+          { idiom: "iphone", filename: "missing.png", size: "20x20" },
+        ],
+        info: { version: 1, author: "xcode" },
+      }),
+    );
+    for (const name of ["AppIcon-512@2x-dark.png", "AppIcon-60@3x.png", "notes.txt"]) {
+      await Deno.writeTextFile(join(dir, set, name), "old");
+    }
+    await Deno.writeTextFile(join(dir, set, "../escape.png"), "outside the set");
+    const spec = { icon: join(dir, "assets/icon.png"), background: { r: 255, g: 255, b: 255 } };
+
+    const dry = await generateMobileAssets(dir, spec, { dryRun: true });
+    assertStringIncludes(formatAssetsReport(dry), `would remove  ${set}/AppIcon-512@2x-dark.png`);
+    assert(await exists(`${set}/AppIcon-512@2x-dark.png`), "a dry run removes nothing");
+
+    const report = await generateMobileAssets(dir, spec);
+    const text = formatAssetsReport(report);
+    assertStringIncludes(text, `removed  ${set}/AppIcon-512@2x-dark.png`);
+    assertStringIncludes(text, `removed  ${set}/AppIcon-60@3x.png`);
+    assert(!await exists(`${set}/AppIcon-512@2x-dark.png`), "the old dark icon is removed");
+    assert(!await exists(`${set}/AppIcon-60@3x.png`), "an old named image is removed");
+    assert(await exists(`${set}/AppIcon-512@2x.png`), "an image the new catalog names stays");
+    assert(await exists(`${set}/notes.txt`), "a file no catalog named stays");
+    assert(await exists("ios/App/App/Assets.xcassets/escape.png"), "nothing outside the set");
+    assert(!text.includes("escape.png") && !text.includes("missing.png"), text);
+    assert(!formatAssetsReport(await generateMobileAssets(dir, spec)).includes("removed"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

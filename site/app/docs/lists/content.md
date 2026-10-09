@@ -298,6 +298,9 @@ keys, a text selection's ends). Each has its own `offset`, so they need no speci
 - scrolled up, nothing moves when messages arrive;
 - `onStartReached` loads older messages, and prepending them does not move the view, even
   when they are much taller than estimated.
+- `pinEndOn` picks which changes keep it pinned (`data`, `items`, `layout`, `footer`; all by
+  default). `pinEndOn={{ footer: false }}` leaves the visible messages where they are while a
+  composer in the footer grows.
 
 ```tsx
 "use client";
@@ -611,6 +614,58 @@ export function Playlist({ songs, move }: Props) {
 - `itemProps(i)` marks the drop position with `data-vl-drop="before" | "after"` and a default
   inset line. Style it however you like.
 
+### Swipe actions
+
+`SwipeableRow` (from `denext`) is a row that swipes sideways to reveal actions, like Mail on
+iOS: leading actions under a rightward swipe, trailing actions under a leftward one, and a full
+swipe that runs a side's first action.
+
+```tsx
+"use client";
+import { SwipeableRow, VirtualList } from "denext";
+
+<VirtualList
+  data={threads}
+  renderItem={(item) => (
+    <SwipeableRow
+      leading={[{ label: "Unread", tone: "accent", onPress: () => markUnread(item.id) }]}
+      trailing={[
+        { label: "Archive", tone: "warning", onPress: () => archive(item.id) },
+        { label: "Mute", onPress: () => mute(item.id) },
+      ]}
+    >
+      <ThreadRow thread={item} />
+    </SwipeableRow>
+  )}
+/>;
+```
+
+- **Safe in a scrolling list.** A drag writes only `transform`s and never reads layout (sizes
+  come from one shared `ResizeObserver`), so a row inside a `VirtualList` never forces a layout,
+  even mid-scroll. The axis locks after 10 px and only on a horizontal movement: a vertical drag
+  stays a scroll (the row is `touch-action: pan-y`), and a scroll closes an open row.
+- **Actions.** Each side's actions are listed outermost first; `tone` (`"neutral"`,
+  `"accent"`, `"destructive"`, `"warning"`, `"success"`) or `background` / `color` colour them,
+  and `icon` goes above the label. `fullSwipe` (default `true`; `false`, `"leading"` or
+  `"trailing"`) chooses which sides run their first action on a full swipe, past
+  `fullSwipeThreshold` (55% of the row's width). A press runs the action and closes the row.
+- **One open row.** Opening a row closes the one that was open; a tap elsewhere, a tap on the
+  open row, or Escape closes it. `rowRef` gets `open(side)` / `close()`, and `onOpenChange`
+  reports the open side.
+- **Haptics.** Inside the native shell a full swipe arming plays a haptic through
+  `denext/mobile` (`haptics={false}` turns it off).
+- **Accessibility.** Every action is a real `<button>` in the tab order and the accessibility
+  tree, named by `accessibilityLabel` or its label; focusing one opens its side so it is visible.
+- **With a stack.** A row with leading actions (or an open one) marks itself
+  `data-dnx-no-back-swipe`, so `denext/navigation`'s back swipe from anywhere leaves its
+  rightward swipe alone; a row with only trailing actions lets the back swipe through.
+- `leadingPanel` / `trailingPanel` reveal custom content instead of buttons, `mouse` lets a
+  mouse drag swipe, `disabled` turns the gesture off.
+
+In React Native mode, `react-native-gesture-handler/ReanimatedSwipeable` and
+`react-native-gesture-handler/Swipeable` resolve to it (see
+[community packages](/docs/react-native#community-packages)).
+
 ### Animations
 
 `itemLayoutAnimation` animates rows when the data changes. Moved rows glide from where they
@@ -874,7 +929,9 @@ build adds over the React Native one:
 
 Chat lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
 `maintainScrollAtEnd` (with `maintainScrollAtEndThreshold` and its `{ animated }` form) follows
-new items and size changes while the view is at the end, `alignItemsAtEnd` bottom-aligns a
+new items and size changes while the view is at the end (its `on` keys pick which, as in
+LegendList: `dataChange`, `itemLayout`, `layout`, `footerLayout`; given `on`, only the keys set
+to `true` keep the end pinned), `alignItemsAtEnd` bottom-aligns a
 short conversation, and `anchoredEndSpace` keeps a sent message at the top while the reply
 streams in. The ref's `scrollToEnd`, `scrollToIndex`, `scrollToOffset`, `scrollToItem` and
 `scrollIndexIntoView` return promises, and `getState()` reports the scroll position, the

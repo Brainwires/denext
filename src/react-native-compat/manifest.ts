@@ -274,6 +274,35 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "stays mounted.",
   },
 
+  "react-native-gesture-handler/ReanimatedSwipeable": {
+    kind: "runtime",
+    module: "./gesture-handler-reanimated-swipeable.ts",
+    pinned: "3.2.1",
+    status: "partial",
+    implementation: "denext SwipeableRow (DOM row, transform-only drag)",
+    notes: "Only this subpath is aliased; the rest of react-native-gesture-handler resolves " +
+      "normally. renderLeftActions / renderRightActions become the row's leading / trailing " +
+      "panels and receive { value } holders for the progress and the drag (updated as the row " +
+      "moves; an animated style computed from them is not re-run per frame). friction, " +
+      "enabled, containerStyle, childrenContainerStyle, onSwipeableOpen / Close / WillOpen / " +
+      "WillClose and the ref's close, openLeft, openRight and reset work. The thresholds, " +
+      "overshoot, animationOptions, dragOffsetFrom*, onSwipeableRelease / *StartDrag and the " +
+      "gesture-composition props are ignored; the row opens past half its panel's width.",
+  },
+  "react-native-gesture-handler/Swipeable": {
+    kind: "runtime",
+    module: "./gesture-handler-swipeable.ts",
+    pinned: "2.28.0",
+    status: "partial",
+    implementation: "denext SwipeableRow (DOM row, transform-only drag)",
+    notes: "Only this subpath is aliased; the rest of react-native-gesture-handler resolves " +
+      "normally. renderLeftActions / renderRightActions become the row's leading / trailing " +
+      "panels and receive Animated.Values for the progress and the drag in React Native mode " +
+      "(they follow the finger, so interpolations work). friction, enabled, containerStyle, " +
+      "childrenContainerStyle, onSwipeableOpen / Close / WillOpen / WillClose and the ref's " +
+      "close, openLeft, openRight and reset work; the thresholds, overshoot and " +
+      "dragOffsetFrom* are ignored.",
+  },
   "react-native-permissions": {
     kind: "runtime",
     module: "./permissions.ts",

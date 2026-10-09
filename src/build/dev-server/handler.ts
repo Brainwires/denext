@@ -4,7 +4,7 @@
 
 import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
 import { withModuleGraphRedirects } from "../module-graph.ts";
-import { devPlatformImports } from "./platform.ts";
+import { devStylesheetImports } from "./platform.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
@@ -151,7 +151,7 @@ async function routeCssResponse(st: DevState, url: URL, platform: Platform): Pro
   const text = route && css
     ? await withModuleGraphRedirects(
       st.paths.configPath,
-      await devPlatformImports(st, platform),
+      await devStylesheetImports(st, platform),
       () => extractRouteCss(routeSourceFiles(route), css),
     )
     : "";

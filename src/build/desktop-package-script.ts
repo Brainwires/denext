@@ -451,8 +451,10 @@ async function isFileAt(root: string, path: string): Promise<boolean> {
 
 /**
  * The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in
- * `denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists
- * (none: no icon, and `deno desktop` uses its default). Paths are relative to the project.
+ * `denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists,
+ * else one derived from the app's own icon (`deriveDesktopIcon`: the web manifest, the
+ * apple-touch-icon, … into `.deno-desktop/`; none: no icon, and `deno desktop` uses its default).
+ * Paths are relative to the project.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
@@ -483,7 +485,11 @@ export async function desktopIconArgs(
   for (const icon of candidates) {
     if (await isFileAt(root, icon)) return ["--icon", icon];
   }
-  return [];
+  // Nothing set: derive one from the app's own icon (web manifest, apple-touch-icon, …) rather
+  // than ship `deno desktop`'s generic one. Loaded only here: it decodes images.
+  const { deriveDesktopIcon } = await import("./desktop-icon.ts");
+  const derived = await deriveDesktopIcon(root, os);
+  return derived ? ["--icon", derived] : [];
 }
 
 /**
@@ -640,6 +646,34 @@ export async function desktopWindowsBootstrapBundle(
 ): Promise<boolean> {
   if (await desktopWindowsCefLayout(bundleDir, meta)) return true;
   return await isFileAt(bundleDir, `${basename(bundleDir)}.runtime.dll`);
+}
+
+/**
+ * The closing note of a Windows package run: what the target machine needs for `backend`. A
+ * webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF
+ * build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022
+ * redistributable for each arch in `noVcRuntime` (the runtime could not be bundled app-local).
+ *
+ * @param backend The `deno desktop` backend (`meta.backend`: `"webview"` or `"cef"`).
+ * @param noVcRuntime The arches whose bundle has no app-local VC++ runtime.
+ * @returns The note, in parentheses.
+ */
+export function desktopWindowsTargetNote(
+  backend: string,
+  noVcRuntime: readonly string[],
+): string {
+  const vc = noVcRuntime.length === 0
+    ? "the VC++ runtime is bundled app-local, so no VC++ redistributable is required"
+    : `${noVcRuntime.join(", ")}, the VC++ 2015-2022 redistributable: the VC++ runtime was not ` +
+      "bundled; see above";
+  if (backend === "cef") {
+    return noVcRuntime.length === 0
+      ? `(the app ships Chromium (CEF), so the target needs no WebView2 runtime; ${vc})`
+      : `(the app ships Chromium (CEF), so the target needs no WebView2 runtime; it needs, for ${vc})`;
+  }
+  return noVcRuntime.length === 0
+    ? `(the target needs the Microsoft Edge WebView2 runtime; ${vc})`
+    : `(the target needs the Microsoft Edge WebView2 runtime and, for ${vc})`;
 }
 
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */

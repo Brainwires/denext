@@ -146,12 +146,13 @@ Deno.test("package-windows.ts: signs the bundle's PE files before wrapping it, t
   const script = scaffoldFiles({ dir: "/x", desktop: true } as never)
     .find((f) => f.path === "scripts/package-windows.ts")!.content;
   const body = script.slice(script.indexOf("async function packageArch("));
-  const signBundle = body.indexOf("if (signing) await sign(await desktopPeFiles(dir));");
-  assert(signBundle > 0, "every PE file of the bundle is signed");
+  const signBundle = body.indexOf("if (signing) await signBundle(dir, ");
+  assert(signBundle > 0, "the bundle is signed");
+  assertStringIncludes(script, "if (await sign(await desktopPeFiles(dir)) && "); // every PE file
   assert(signBundle > body.indexOf("bundleVcRuntime(dir, arch)"), "after the VC++ runtime lands");
   assert(signBundle < body.indexOf("await msi("), "before the .msi wraps it");
   assert(signBundle < body.indexOf("zipBundle("), "before the .zip wraps it");
   assert(body.indexOf("if (built && signing) await sign([built]);") > body.indexOf("await msi("));
-  assertStringIncludes(script, "await desktopSignWindows(files);");
+  assertStringIncludes(script, "return await desktopSignWindows(files);");
   assert(!script.includes("sign(`${dir}/${name}-${LABELS[arch]}.exe`)"), "not the .exe alone");
 });

@@ -11,7 +11,47 @@
 // alone, the per-chunk breakdown of a real Rollup bundle, and every other Vite hook (transform,
 // resolveId, configureServer, …) — `denext migrate` flags plugins that rely on those.
 
-import type { DenextPlugin, PluginBuildContext } from "./mod.ts";
+/**
+ * `viteEmitterPlugin`: run a Vite plugin's `generateBundle` file emitter as a denext build step.
+ * The same function `denext/plugin-kit` exports, on an entry light enough for
+ * `denext.config.ts` (which a Deno Desktop app's `desktop.ts` imports at runtime): no bundler,
+ * no npm package.
+ *
+ * @module
+ */
+
+// The plugin types are spelled structurally here (a subset of `PluginBuildContext` and
+// `PluginContext`) rather than imported, so this entry stays light and self-documenting; the
+// returned plugin is assignable to `DenextPlugin` (tests/plugin-emit.test.ts registers it).
+
+/** The parts of a plugin build step's context the emitter uses (a subset of `PluginBuildContext`). */
+export interface ViteEmitterBuildContext {
+  /** The build output directory. */
+  readonly outDir: string;
+  /** The resolved project config (`spa.assetsDir` places the synthetic entry chunk). */
+  readonly config: { readonly spa?: { readonly assetsDir?: string } };
+  /** The client bundle's modules (absolute paths), when the build knows them. */
+  readonly clientModules?: readonly string[];
+  /** Publish a file at the site root. */
+  emitFile(
+    asset: { readonly fileName: string; readonly source: string | Uint8Array },
+  ): Promise<void>;
+}
+
+/** The setup context `viteEmitterPlugin`'s plugin uses (a subset of `PluginContext`). */
+export interface ViteEmitterSetupContext {
+  /** Register a build step (runs at `denext build` / `denext export`). */
+  addBuildStep(step: (build: ViteEmitterBuildContext) => void | Promise<void>): void;
+}
+
+/** The denext plugin {@linkcode viteEmitterPlugin} returns (assignable to `DenextPlugin`). */
+export interface ViteEmitterDenextPlugin {
+  /** `vite:<the Vite plugin's name>`. */
+  readonly name: string;
+  /** Registers the emitter's build step. */
+  setup(ctx: ViteEmitterSetupContext): void;
+}
+
 import { normalizeSpaAssetsDir } from "../server/config-validate.ts";
 
 /** A Rollup `emitFile` argument (only `type: "asset"` with a `fileName` is supported). */
@@ -74,7 +114,7 @@ function appliesToBuild(apply: VitePluginLike["apply"]): boolean {
  * where the client entry is published: under `spa.assetsDir` when set (Vite's `build.assetsDir`),
  * else `_denext/client/`.
  */
-function syntheticBundle(build: PluginBuildContext): Record<string, unknown> {
+function syntheticBundle(build: ViteEmitterBuildContext): Record<string, unknown> {
   const assetsDir = build.config.spa?.assetsDir;
   const dir = (assetsDir === undefined ? null : normalizeSpaAssetsDir(assetsDir)) ??
     "_denext/client";
@@ -93,7 +133,10 @@ function syntheticBundle(build: PluginBuildContext): Record<string, unknown> {
 }
 
 /** The `this` a hook runs with, collecting the writes its `emitFile` calls start. */
-function emitterContext(build: PluginBuildContext, writes: Promise<void>[]): ViteEmitterContext {
+function emitterContext(
+  build: ViteEmitterBuildContext,
+  writes: Promise<void>[],
+): ViteEmitterContext {
   return {
     emitFile(file) {
       if (file.type !== "asset") {
@@ -125,7 +168,7 @@ function emitterContext(build: PluginBuildContext, writes: Promise<void>[]): Vit
  * @example
  * ```ts
  * // denext.config.ts
- * import { viteEmitterPlugin } from "denext/plugin-kit";
+ * import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";
  * import { licensesPlugin } from "./scripts/licenses.ts";
  * export default { plugins: [viteEmitterPlugin(licensesPlugin({ out: "licenses.json" }))] };
  * ```
@@ -133,7 +176,7 @@ function emitterContext(build: PluginBuildContext, writes: Promise<void>[]): Vit
  * @param vitePlugin The Vite plugin object (what its factory returns).
  * @returns A denext plugin named `vite:<name>`.
  */
-export function viteEmitterPlugin(vitePlugin: VitePluginLike): DenextPlugin {
+export function viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin {
   const name = `vite:${vitePlugin.name ?? "anonymous"}`;
   return {
     name,

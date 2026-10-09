@@ -11,6 +11,7 @@ import { build } from "../../src/build/build.ts";
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
+const FLIGHT_EXAMPLE = fromFileUrl(new URL("../../examples/islands", import.meta.url));
 
 /** File names directly in `dir`. */
 async function fileNames(dir: string): Promise<string[]> {
@@ -155,6 +156,15 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * Re-based 64 → 65.5 KB (65,500 B) after 3.2.0 (measured 63,939 B: 61 B under the old
  * 64,000 B budget, ~1,561 B under the new one): the auth, passkey and server-ops work kept the
  * shared graph flat, but the old budget had no room left for the next small runtime addition. Native, desktop and mobile code is verified absent from this total.
+ * Headroom recovered after 3.4.0 without raising the budget: the shared graph had grown to
+ * 65,427 B (Deno 2.9.6, CI's pin; the reconciler's leak fixes after 3.4.0 added +463 B), 73 B
+ * under budget. Four cuts brought it to 63,995 B — 1,505 B of headroom: the Flight soft-nav
+ * runtime and the root-less islands mount moved to flight-nav.ts, which only the Flight entry's
+ * `setFlightParser` reaches (−394 B, −131 B); the class base (`Component`/`PureComponent`) left
+ * this graph for the class-runtime chunk once the server renderer imported only
+ * class-instance.ts (−497 B); the dev-only prop warnings moved behind `installDevtools`
+ * (−375 B); and two pieces of module-scope residue went (−35 B). Each gate is asserted in
+ * {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -188,6 +198,17 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["dnx-reveal:", "inline streaming swap runtime (a server string)"], // pure-built SWAP_RUNTIME
     ["data-vl-", "VirtualList (0 bytes unless imported)"], // the list's row attributes
     ["trailingMargin", "VirtualList controller's axis tables"], // module-scope objects
+    ["data-dnx-swipe-row", "SwipeableRow (0 bytes unless imported)"],
+    ["__dnxIdx", "denext/navigation's history sources"],
+    // The Flight soft-nav commit (flight-nav.ts) reads the payload's `signalState`: only the
+    // Flight entry's `setFlightParser` installs it, so an app with no Flight route ships none.
+    ["signalState", "Flight soft-navigation runtime"],
+    // The class base (`Component`/`PureComponent`) belongs to the on-demand class runtime; the
+    // server renderer's static import of it once hoisted it into this shared graph.
+    ["class component is missing a render", "class-component base classes"],
+    // Dev-only prop warnings ride `installDevtools` (dom-props.ts's warning seam).
+    ["emits raw HTML", "dev-only dangerouslySetInnerHTML warning"],
+    ["refused a dangerous URL", "dev-only dangerous-URL warning"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {
@@ -252,6 +273,24 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   await assertSharedRuntimeChunk(clientDir);
   await assertBundleBudgets(clientDir);
   await assertGatedRuntimeAbsent(clientDir);
+});
+
+// The other half of the Flight soft-nav gate: an app WITH Flight routes still ships the
+// soft-nav runtime (the `signalState` marker its commit reads), reached from `flight.js`.
+Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-navigation runtime", async () => {
+  const result = await build(FLIGHT_EXAMPLE);
+  const clientDir = join(result.outDir, "client");
+  let flightGraph = "";
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && /^(flight|chunk-.*)\.js$/.test(e.name)) {
+      flightGraph += await Deno.readTextFile(join(clientDir, e.name));
+    }
+  }
+  assertStringIncludes(
+    flightGraph,
+    "signalState",
+    "the Flight soft-nav runtime is missing from a Flight app",
+  );
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN

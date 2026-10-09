@@ -26,7 +26,10 @@ import { getCss } from "./assets.ts";
 import { baseLoaderFor } from "./loaders.ts";
 import type { DevState } from "./state.ts";
 import { compatAssets } from "../pipeline-shared.ts";
-import { optimizePackageImportsList } from "../optimize-package-imports.ts";
+import {
+  autoOptimizePackageImports,
+  optimizePackageImportsList,
+} from "../optimize-package-imports.ts";
 
 /** Whether this project runs as a next-compat drop-in (detected once). */
 export function isCompat(st: DevState): Promise<boolean> {
@@ -44,6 +47,7 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     mdxOptions: st.paths.config?.mdx,
     optimizePackageImports: optimizePackageImportsList(st.paths.config),
+    autoOptimizePackageImports: autoOptimizePackageImports(st.paths.config),
     domLists: domListsEnabled(st.paths.config),
     useCache: resolveCacheComponents(st.paths.config),
     cssImportMap,

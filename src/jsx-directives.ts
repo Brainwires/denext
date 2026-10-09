@@ -24,30 +24,34 @@
  * deferred mount of a code-split component. The build strips every `client:*` key before it
  * reaches the component or the DOM; they are authoring markers, not real props.
  *
+ * Each key admits an explicit `undefined`, as React's own `Attributes` do: under
+ * `exactOptionalPropertyTypes` a props type that spells its optional keys `?: T | undefined`
+ * (Base UI's, any mapped `Partial`) is spread onto elements whose `Attributes` include these.
+ *
  * @typeParam Placeholder What `client:placeholder` accepts: `ReactNode` under `@types/react`,
  * denext's `VNodeChild` in denext's own JSX types.
  */
 export interface ClientDirectives<Placeholder = unknown> {
   /** Hydrate this client island eagerly, per-island (`client:load`). */
-  "client:load"?: boolean;
+  "client:load"?: boolean | undefined;
   /** Hydrate when the main thread is idle (`client:idle`). */
-  "client:idle"?: boolean;
+  "client:idle"?: boolean | undefined;
   /** Hydrate when the island scrolls into view (`client:visible`). */
-  "client:visible"?: boolean;
+  "client:visible"?: boolean | undefined;
   /** Hydrate on first interaction — focus/pointer/keydown (`client:interaction`). */
-  "client:interaction"?: boolean;
+  "client:interaction"?: boolean | undefined;
   /**
    * Hydrate when a CSS media query matches. The query is the attribute value:
    * `client:media="(min-width: 800px)"`. Bare `client:media` (boolean) is accepted
    * for symmetry but a query string is the useful form.
    */
-  "client:media"?: boolean | string;
+  "client:media"?: boolean | string | undefined;
   /** Render on the client only, skipping SSR entirely (`client:only`). */
-  "client:only"?: boolean;
+  "client:only"?: boolean | undefined;
   /**
    * SPA mode: what a `client:*` element renders until its trigger mounts the component
    * (and what `client:interaction` listens on). A Flight route ignores it: the island's
    * server HTML is its placeholder.
    */
-  "client:placeholder"?: Placeholder;
+  "client:placeholder"?: Placeholder | undefined;
 }

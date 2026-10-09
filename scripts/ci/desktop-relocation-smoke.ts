@@ -17,6 +17,10 @@
 
 import { copy } from "@std/fs";
 import { join, resolve, toFileUrl } from "@std/path";
+import {
+  DESKTOP_RUNTIME_CONFIG_FILE,
+  desktopRuntimeConfigText,
+} from "../../src/build/desktop-app-config.ts";
 
 const ROOT = resolve(import.meta.dirname!, "..", "..");
 const OS = Deno.build.os;
@@ -64,21 +68,27 @@ async function writeApp(app: string, denext: string, probe: string): Promise<voi
       2,
     ),
   );
+  const config = {
+    desktop: {
+      app: desktopApp,
+      installers: { macos: [], linux: [], windows: [] },
+      capabilities: { extensions: ["./ext.ts"] },
+    },
+  };
   await Deno.writeTextFile(
     join(app, "denext.config.ts"),
-    `export default ${
-      JSON.stringify({
-        desktop: {
-          app: desktopApp,
-          installers: { macos: [], linux: [], windows: [] },
-          capabilities: { extensions: ["./ext.ts"] },
-        },
-      })
-    };\n`,
+    `export default ${JSON.stringify(config)};\n`,
+  );
+  // The entry reads the config's runtime part from `.deno-desktop/config.json`, as a scaffolded
+  // one does: a first copy here, which the package script's sync rewrites from the config.
+  await Deno.mkdir(join(app, ".deno-desktop"), { recursive: true });
+  await Deno.writeTextFile(
+    join(app, DESKTOP_RUNTIME_CONFIG_FILE),
+    desktopRuntimeConfigText(config),
   );
   await Deno.writeTextFile(
     join(app, "desktop.ts"),
-    'import config from "./denext.config.ts";\n' +
+    'import config from "./.deno-desktop/config.json" with { type: "json" };\n' +
       'import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";\n' +
       "await runDesktop({\n" +
       "  importMetaUrl: import.meta.url,\n" +

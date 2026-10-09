@@ -109,6 +109,7 @@ export {
 
 // The config→capabilities resolver the generated `desktop.ts` entry spreads into `runDesktop`.
 export {
+  type DesktopRuntimeConfig,
   type ResolvedDesktop,
   resolveDesktopCapabilities,
   type ResolveDesktopOptions,
@@ -181,10 +182,19 @@ export {
   desktopSlug,
   desktopToolGate,
   desktopVersionProblem,
+  desktopWindowsTargetNote,
   parseDesktopPackageArgs,
   type PreparedDesktopPackage,
   prepareDesktopPackage,
 } from "./desktop-package-script.ts";
+
+// A CEF app signed with a certificate Windows does not trust dies at launch (CEF's bootstrap runs
+// WinVerifyTrust on itself): the Windows package script checks the signed executable.
+export {
+  desktopCheckCefSignature,
+  type PowerShellRunner,
+  type WindowsTrustDeps,
+} from "./desktop-windows-trust.ts";
 
 /** The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}
  * forwards to when a backend proxy is configured; exported so the handler's signature is public. */
@@ -375,9 +385,10 @@ export interface RunDesktopOptions {
   /** Local server port. Default: env `PORT`, else `8000`. */
   port?: number;
   /**
-   * Backend reverse-proxy config. Generated `desktop.ts` passes
-   * `config.spa?.proxy` from the app's `denext.config.ts` (compiled into the entry,
-   * since the packaged app has no config file at runtime). Omit for no proxy.
+   * Backend reverse-proxy config. The generated `desktop.ts` spreads
+   * `resolveDesktopCapabilities(config)`, which carries `spa.proxy` from
+   * `.deno-desktop/config.json` (the config's runtime slice, compiled into the entry, since
+   * the packaged app has no config file at runtime). Omit for no proxy.
    */
   proxy?: SpaProxyConfig;
   /**

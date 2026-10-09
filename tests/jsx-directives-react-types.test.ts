@@ -35,7 +35,25 @@ export const typo = <Chart points={[1]} client:visble />;
 export const wrongType = <Chart points={[1]} client:load="yes" />;
 `;
 
-async function check(withDirectives: boolean, app: string): Promise<{ code: number; out: string }> {
+/**
+ * A wrapper that spreads its props onto an element, as every shadcn-style UI component does,
+ * typed the way component libraries type props (Base UI: every key optional with an explicit
+ * `| undefined`). Under `exactOptionalPropertyTypes` (T3 Code's tsconfig) the spread then
+ * carries each directive as `boolean | undefined`, which `Attributes` must accept.
+ */
+const SPREAD = `import type { ComponentProps, ReactNode } from "react";
+type LibraryProps<T> = { [K in keyof T]?: T[K] | undefined };
+export function Button(props: LibraryProps<ComponentProps<"button">>): ReactNode {
+  return <button type="button" {...props} />;
+}
+export const e = <Button client:idle>go</Button>;
+`;
+
+async function check(
+  withDirectives: boolean,
+  app: string,
+  extraCompilerOptions: Record<string, unknown> = {},
+): Promise<{ code: number; out: string }> {
   const dir = await Deno.makeTempDir({ prefix: "denext_jsx_directives_" });
   try {
     await Deno.writeTextFile(
@@ -46,6 +64,7 @@ async function check(withDirectives: boolean, app: string): Promise<{ code: numb
           jsxImportSource: "react",
           lib: ["deno.window", "dom"],
           strict: true,
+          ...extraCompilerOptions,
           ...(withDirectives ? { types: ["./client-directives.d.ts"] } : {}),
         },
         imports: {
@@ -93,5 +112,14 @@ Deno.test({
     assert(misuse.code !== 0, misuse.out);
     assertStringIncludes(misuse.out, "client:visble");
     assertStringIncludes(misuse.out, "client:load");
+  },
+});
+
+Deno.test({
+  name: "jsx-directives: a props spread type-checks under exactOptionalPropertyTypes",
+  sanitizeResources: false,
+  async fn() {
+    const typed = await check(true, SPREAD, { exactOptionalPropertyTypes: true });
+    assertEquals(typed.code, 0, typed.out);
   },
 });

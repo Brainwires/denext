@@ -151,7 +151,7 @@ Deno.test("mobile add: the six plugin capabilities install and write their usage
       run,
     });
     assertEquals(lines(), [
-      "npm install @capawesome/capacitor-app-review@^8.0.2 @capawesome/capacitor-app-update@^8.0.5 " +
+      "npm install --ignore-scripts @capawesome/capacitor-app-review@^8.0.2 @capawesome/capacitor-app-update@^8.0.5 " +
       "@capacitor/screen-orientation@^8.0.1 @capacitor-community/media@^9.1.0 " +
       "@capacitor/privacy-screen@^2.0.1 capacitor-plugin-app-tracking-transparency@^3.0.0",
       "npx cap sync",
@@ -195,7 +195,10 @@ Deno.test("mobile add background: runner config, plist keys, AppDelegate, gradle
     assertStringIncludes(text, "UIBackgroundModes: fetch, processing");
     assertStringIncludes(text, "BGTaskSchedulerPermittedIdentifiers: dev.denext.background");
     const report = await addMobileCapabilities({ capabilities: ["background"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @capacitor/background-runner@^3.0.0", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts @capacitor/background-runner@^3.0.0",
+      "npx cap sync",
+    ]);
     for (const path of ["capacitor.config.ts", INFO_PLIST, APP_DELEGATE, APP_GRADLE]) {
       assert(report.written.includes(path), path);
     }
@@ -272,7 +275,7 @@ Deno.test("mobile add restore: @capacitor/app plus the startup note", async () =
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["restore"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @capacitor/app@^8.1.1", "npx cap sync"]);
+    assertEquals(lines(), ["npm install --ignore-scripts @capacitor/app@^8.1.1", "npx cap sync"]);
     assertStringIncludes(report.plan.manual.join("\n"), "onRestoredResult");
   });
 });

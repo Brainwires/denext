@@ -248,6 +248,16 @@ spa: {
         {" "}
         <code>autoCodeSplitting: true</code>.
       </p>
+      <p>
+        The route generator that runs is denext&apos;s pinned one, which can order the route tree
+        differently from your own <code>@tanstack/router-plugin</code>{" "}
+        version (and does not see a Vite config&apos;s inline <code>quoteStyle</code> or{" "}
+        <code>semicolons</code>; <code>tsr.config.json</code>{" "}
+        it does). When the regenerated tree holds the same routes as the committed{" "}
+        <code>routeTree.gen.ts</code>, in any order or style, the build puts the committed file back
+        byte for byte, so a build never churns a tracked tree. A route you add, rename or remove is
+        written as usual.
+      </p>
 
       <h3>
         Chunk-load errors — <code>vite:preloadError</code>
@@ -290,7 +300,7 @@ spa: {
       <Code lang="ts">
         {`// denext.config.ts
 import type { DenextConfig } from "denext/server";
-import { viteEmitterPlugin } from "denext/plugin-kit";
+import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";
 import { licensesPlugin } from "./scripts/licenses.ts";
 
 export default {
@@ -303,7 +313,11 @@ export default {
         <code>denext migrate</code>{" "}
         writes this for an emitter imported from the app's own module; one it cannot carry over
         (other build hooks, values from vite.config) is listed for review. See{" "}
-        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>.
+        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>. Import it from{" "}
+        <code>denext/plugin-kit/vite-emitter</code>, not{" "}
+        <code>denext/plugin-kit</code>: the config is also loaded outside the build (a Deno Desktop
+        app's <code>desktop.ts</code>{" "}
+        imports it at runtime), and the full plugin kit brings the build toolchain along.
       </p>
 
       <h3>

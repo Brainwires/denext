@@ -1,7 +1,7 @@
 // SPA mode dev server: the shared state — the per-generation bundle, the live-reload
 // subscribers, and the optional unbundled (per-module HMR) loop.
 
-import { platformResolution } from "../platform-extensions.ts";
+import { type Platform, platformResolution } from "../platform-extensions.ts";
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
 import {
@@ -14,14 +14,14 @@ import {
 import { domListAliases } from "../dom-lists.ts";
 import { appRendersDocumentTags, appUsesActivity, appUsesViewTransition } from "../bundle.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
-import { buildAppCss, concatCss } from "../css.ts";
+import { buildAppCss, extractRouteCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { DevEventLog } from "../dev-events.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { bundleSpaInto, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
+import { bundleSpaInto, spaCssGraph, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
 import {
   CLIENT_PREFIX,
   EXPO_ROUTER_LINKS,
@@ -79,7 +79,8 @@ export interface SpaDevState {
   readonly unbundledOptIn: boolean;
   unbundled: UnbundledDev | null;
   unbundledReady: Promise<boolean> | null;
-  unbundledCss: string | null;
+  /** The unbundled loop's stylesheet per target, for generation {@linkcode unbundledCssGen}. */
+  readonly unbundledCss: Map<Platform, string>;
   unbundledCssGen: number;
   /**
    * Settles once the config's plugins are set up and their prepare steps ran (see
@@ -115,7 +116,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     unbundledOptIn: unbundledOptIn(options),
     unbundled: null,
     unbundledReady: null,
-    unbundledCss: null,
+    unbundledCss: new Map(),
     unbundledCssGen: -1,
     pluginsReady: Promise.resolve(),
   };
@@ -243,23 +244,40 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
   })();
 }
 
-/** The unbundled SPA's extracted stylesheet for the current generation (cached). */
-export async function getUnbundledCss(st: SpaDevState): Promise<string> {
-  if (st.unbundledCssGen === st.generation && st.unbundledCss !== null) return st.unbundledCss;
+/**
+ * The unbundled SPA's extracted stylesheet for `platform` (the session's target) and the current
+ * generation (cached): the stylesheets its graph reaches through that target's platform files,
+ * as a build of it extracts them.
+ */
+export async function getUnbundledCss(
+  st: SpaDevState,
+  platform: Platform = "web",
+): Promise<string> {
+  if (st.unbundledCssGen !== st.generation) {
+    st.unbundledCss.clear();
+    st.unbundledCssGen = st.generation;
+  }
+  const hit = st.unbundledCss.get(platform);
+  if (hit !== undefined) return hit;
   const { paths } = st;
+  const gen = st.generation;
+  let text = "";
   try {
+    const roots = await spaCssRoots(paths, st.entryPath, platform);
     const appCss = await buildAppCss({
       projectDir: paths.projectDir,
       configPath: paths.configPath,
       outDir: paths.outDir,
       minify: false,
-      entryFiles: await spaCssRoots(paths, st.entryPath),
+      entryFiles: roots,
       tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
+      graph: await spaCssGraph(paths, platform, "dev"),
     });
-    st.unbundledCss = appCss ? concatCss(appCss.css) : "";
+    text = appCss ? await extractRouteCss(roots, appCss) : "";
   } catch {
-    st.unbundledCss = "";
+    text = "";
   }
-  st.unbundledCssGen = st.generation;
-  return st.unbundledCss;
+  // An edit meanwhile started another generation: its request extracts afresh.
+  if (st.unbundledCssGen === gen) st.unbundledCss.set(platform, text);
+  return text;
 }

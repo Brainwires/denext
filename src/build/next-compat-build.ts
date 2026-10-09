@@ -133,6 +133,11 @@ export interface BuildNextCompatModulesOptions {
    */
   optimizePackageImports?: readonly string[];
   /**
+   * The automatic barrel mode, forwarded to
+   * {@link BundleNextCompatModulesOptions.autoOptimizePackageImports}.
+   */
+  autoOptimizePackageImports?: { readonly exclude: readonly string[] } | null;
+  /**
    * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
    * VirtualList-backed modules (see dom-lists.ts).
    */
@@ -220,6 +225,7 @@ export async function buildNextCompatModules(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    autoOptimizePackageImports: options.autoOptimizePackageImports,
     domLists: options.domLists,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
@@ -311,6 +317,11 @@ export interface BuildNextCompatClientOptions {
    */
   optimizePackageImports?: readonly string[];
   /**
+   * The automatic barrel mode, forwarded to
+   * {@link BundleNextCompatModulesOptions.autoOptimizePackageImports}.
+   */
+  autoOptimizePackageImports?: { readonly exclude: readonly string[] } | null;
+  /**
    * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
    * VirtualList-backed modules (see dom-lists.ts).
    */
@@ -375,6 +386,7 @@ export async function buildNextCompatClientEntries(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    autoOptimizePackageImports: options.autoOptimizePackageImports,
     domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
@@ -431,6 +443,11 @@ export interface BuildNextCompatFlightOptions {
    * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * The automatic barrel mode, forwarded to
+   * {@link BundleNextCompatModulesOptions.autoOptimizePackageImports}.
+   */
+  autoOptimizePackageImports?: { readonly exclude: readonly string[] } | null;
   /**
    * `lists: "denext"`: the DOM list packages (`@legendapp/list/react`) resolve to denext's
    * VirtualList-backed modules (see dom-lists.ts).
@@ -543,6 +560,7 @@ export async function buildNextCompatFlightEntry(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
+    autoOptimizePackageImports: options.autoOptimizePackageImports,
     domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,

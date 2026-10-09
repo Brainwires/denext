@@ -259,3 +259,20 @@ jobs:
           deno test -A --unstable-kv tests/ota-reverify.test.ts 2>&1 | tee "$RUNNER_TEMP/ota-reverify.txt"
           grep -E 'the Swift store compiles and refuses a tampered UI \.\.\. ok' "$RUNNER_TEMP/ota-reverify.txt"
           grep -E 'the plugin and the store type-check against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/ota-reverify.txt"
+
+  # Module resolution on Windows: the esbuild deno-loader's WASM spells drive paths `/C:/…`,
+  # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
+  # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
+  windows-resolve:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: The deno-loader resolves package.json dependencies on Windows
+        run: deno test -A tests/deno-loader-plugins.test.ts

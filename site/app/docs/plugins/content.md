@@ -149,7 +149,9 @@ ctx.addBuildStep(async ({ emitFile, clientModules }) => {
 `clientModules` lists the modules in the client bundle (absolute paths) when the build knows
 them — a SPA built through esbuild (npm React / `compatibilityMode`) — and is `undefined`
 otherwise. An existing Vite plugin that only emits files from `generateBundle` runs unchanged
-through `viteEmitterPlugin(vitePlugin)` from `denext/plugin-kit`: its hook gets a `this` whose
+through `viteEmitterPlugin(vitePlugin)` from `denext/plugin-kit/vite-emitter` (the same function
+`denext/plugin-kit` exports, on an entry that leaves the build toolchain out of
+`denext.config.ts`, which a Deno Desktop app's `desktop.ts` imports at runtime): its hook gets a `this` whose
 `emitFile` publishes through this seam (asset files with a `fileName`), and a `bundle` holding
 one chunk whose `modules` are `clientModules`. Other Vite hooks are not run.
 

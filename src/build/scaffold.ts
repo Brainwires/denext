@@ -7,6 +7,7 @@
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { mfs } from "./migrate-io.ts";
+import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
@@ -305,9 +306,11 @@ function desktopEntry(): string {
 //
 // Native capabilities (\`denext desktop add <cap>\`) are read from \`desktop.capabilities\`
 // in the config and served through the gated bridge — default deny when \`desktop\` is
-// absent. To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\` and pass
-// \`proxy: (config as DenextConfig).spa?.proxy\` below.
-import config from "./denext.config.ts";
+// absent; a backend reverse proxy is \`spa.proxy\`. Both arrive through
+// \`.deno-desktop/config.json\`, the runtime part of \`denext.config.ts\` that every export, build
+// and \`denext desktop\` command rewrites: the config module itself (and any plugin it imports)
+// is never compiled into the app.
+import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
 await runDesktop({
@@ -507,6 +510,9 @@ const GLOBAL_CSS_PLAIN = `:root { font-family: system-ui, sans-serif; }
 
 const TAILWIND_INPUT = `@import "tailwindcss";\n`;
 
+/** The `desktop` section a desktop scaffold writes into `denext.config.ts`. */
+const SCAFFOLD_DESKTOP_CONFIG = { app: { identifier: "com.example.denext" } } as const;
+
 function denextConfig(opts: ScaffoldOptions): string {
   const appBase = opts.srcDir ? "src/app" : "app";
   const lines: string[] = [];
@@ -527,7 +533,7 @@ function denextConfig(opts: ScaffoldOptions): string {
       `    // Unique per app: keys the OS storage dirs and the secureStore keychain service, so`,
       `    // change it to YOUR reverse-DNS id (keep it equal to deno.json's desktop.app.identifier).`,
       `    // secureStore / fs / sqlite refuse to start without it, to avoid sharing data across apps.`,
-      `    app: { identifier: "com.example.denext" },`,
+      `    app: { identifier: "${SCAFFOLD_DESKTOP_CONFIG.app.identifier}" },`,
       `    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>`,
       `  },`,
     );
@@ -576,13 +582,19 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   } else {
     files.push({ path: "public/styles.css", content: GLOBAL_CSS_PLAIN });
   }
-  // The desktop entry imports `./denext.config.ts` to resolve `desktop.capabilities`, so a
-  // desktop scaffold always needs the config file even without tailwind/compiler.
+  // `desktop.capabilities` and the rest of the desktop settings live in `./denext.config.ts`, so
+  // a desktop scaffold always needs the config file even without tailwind/compiler.
   if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) {
     files.push({ path: "desktop.ts", content: desktopEntry() });
+    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
+    // entry type-checks before the first export.
+    files.push({
+      path: DESKTOP_RUNTIME_CONFIG_FILE,
+      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
+    });
     files.push({ path: "icons/README.md", content: desktopIcons() });
     files.push({
       path: "scripts/package-macos.ts",
@@ -1483,14 +1495,19 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
  *
- * The end user's Windows machine needs the Microsoft Edge WebView2 runtime for the window
- * (preinstalled on current Windows 10/11); that is a deploy-environment dependency, not
- * baked into the bundle. Outputs into ./dist/.
+ * A webview build (the default \`desktop.backend\`) needs the Microsoft Edge WebView2 runtime on
+ * the end user's machine (preinstalled on current Windows 10/11); that is a deploy-environment
+ * dependency, not baked into the bundle. A CEF build ships Chromium in the bundle instead. A
+ * signed CEF build must be signed with a certificate the target trusts: CEF's bootstrap verifies
+ * the executable's Authenticode chain and exits at launch otherwise (the run warns when this
+ * machine does not trust it; \`--no-sign\` builds an unsigned app that starts). Outputs into
+ * ./dist/.
  */
 
 import {
   buildDesktopBundle,
   buildDesktopMsi,
+  desktopCheckCefSignature,
   desktopHasTool as has,
   desktopMsiProblem,
   desktopOptionalInstaller,
@@ -1500,6 +1517,7 @@ import {
   desktopRun as run,
   desktopSignWindows,
   desktopToolGate,
+  desktopWindowsTargetNote,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
 } from "denext/desktop";
@@ -1524,9 +1542,19 @@ async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<stri
 }
 
 /** Authenticode-sign \`files\` with DENEXT_WINDOWS_CERT through \`signtool\`, batched; without a
- * certificate or signtool, skip with a warning (see desktopSignWindows). */
-async function sign(files: string[]): Promise<void> {
-  await desktopSignWindows(files);
+ * certificate or signtool, skip with a warning (see desktopSignWindows). Whether they were signed. */
+async function sign(files: string[]): Promise<boolean> {
+  return await desktopSignWindows(files);
+}
+
+/** Sign EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime,
+ * CEF's DLLs, any .node), found by its header: the runtime refuses an update of a signed app
+ * unless each one carries the running app's signature. A signed CEF app must be trusted here:
+ * CEF's bootstrap verifies the executable's signature at launch and dies when it is not. */
+async function signBundle(dir: string, exe: string, backend: string): Promise<void> {
+  if (await sign(await desktopPeFiles(dir)) && backend === "cef") {
+    await desktopCheckCefSignature(\`\${dir}/\${exe}\`);
+  }
 }
 
 /** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
@@ -1620,10 +1648,7 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  // EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime, CEF's
-  // DLLs, any .node), found by its header: the runtime refuses an update of a signed app unless
-  // each one carries the running app's signature.
-  if (signing) await sign(await desktopPeFiles(dir));
+  if (signing) await signBundle(dir, \`\${name}-\${LABELS[arch]}.exe\`, meta.backend);
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
@@ -1653,14 +1678,9 @@ async function main(): Promise<void> {
 
   console.log("\\n  Built:");
   for (const a of artifacts) console.log("  " + a);
-  console.log(
-    noVcRuntime.length === 0
-      ? "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
-        " app-local, so no VC++ redistributable is required)"
-      : "\\n  (the target needs the Microsoft Edge WebView2 runtime and, for " +
-        noVcRuntime.join(", ") +
-        ", the VC++ 2015-2022 redistributable: the VC++ runtime was not bundled; see above)",
-  );
+  // What the target needs: WebView2 for a webview build (a CEF build ships Chromium), and the
+  // VC++ redistributable for an arch whose runtime could not be bundled.
+  console.log("\\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime));
 }
 
 if (import.meta.main) await main();

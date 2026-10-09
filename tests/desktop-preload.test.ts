@@ -240,7 +240,7 @@ Deno.test("bundleDesktopPreload: a missing module is a clear error", async () =>
   }
 });
 
-Deno.test("writeDesktopPreload: the export step bundles desktop.preload into the out dir", async () => {
+Deno.test("writeDesktopPreload: the export step bundles desktop.preload into a desktop export only", async () => {
   const { writeDesktopPreload } = await import("../src/build/desktop-preload.ts");
   const { DESKTOP_PRELOAD_FILE } = await import("../src/desktop/preload.ts");
   const dir = await Deno.makeTempDir();
@@ -253,12 +253,15 @@ Deno.test("writeDesktopPreload: the export step bundles desktop.preload into the
     const out = join(dir, "out");
     const paths = { projectDir: dir, configPath: join(dir, "deno.json") };
     // No desktop.preload → nothing written.
-    await writeDesktopPreload({ ...paths, config: {} } as never, out);
+    await writeDesktopPreload({ ...paths, config: {} } as never, out, "macos");
     assertEquals(await readDesktopPreload(join(out, DESKTOP_PRELOAD_FILE)), undefined);
-    await writeDesktopPreload(
-      { ...paths, config: { desktop: { preload: "pre.ts" } } } as never,
-      out,
-    );
+    const config = { desktop: { preload: "pre.ts" } };
+    // A web or phone export never loads it.
+    for (const platform of ["web", "ios", "android"] as const) {
+      await writeDesktopPreload({ ...paths, config } as never, out, platform);
+      assertEquals(await readDesktopPreload(join(out, DESKTOP_PRELOAD_FILE)), undefined);
+    }
+    await writeDesktopPreload({ ...paths, config } as never, out, "windows");
     assertStringIncludes((await readDesktopPreload(join(out, DESKTOP_PRELOAD_FILE)))!, "p");
   } finally {
     await Deno.remove(dir, { recursive: true });

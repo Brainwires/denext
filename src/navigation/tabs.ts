@@ -29,6 +29,7 @@ import { suspendViewTransitions } from "./vt-hold.ts";
 import { type NavigationThemeProps, themeAttributes, useNavigationTheme } from "./theme.ts";
 import { isNativeShell } from "../mobile/bridge.ts";
 import { haptic } from "../mobile/haptics.ts";
+import { plainClick } from "./stack-owner.ts";
 import type { NavigationPlatform } from "./types.ts";
 
 /** One tab of a {@linkcode TabsLayout}. */
@@ -439,11 +440,6 @@ function useViewportKeyboard(enabled: boolean): boolean {
 /** A value `children` never is, so the first render always takes the route. */
 const NONE: unique symbol = Symbol("none");
 
-/** Whether a click is a plain primary click (not a new-tab / context gesture). */
-function plainClick(event: MouseEvent): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
-}
-
 /** Scroll the tab's panel to the top; `false` when it already was. */
 function scrollPanelToTop(event: MouseEvent, name: string): boolean {
   const doc = (event.currentTarget as Element | null)?.ownerDocument;
@@ -506,6 +502,40 @@ function nextPanels(
   return { panels, active: shown };
 }
 
+/** The scope of each tab's stacks (created on first use, kept across renders). */
+export function useTabScopes(): (name: string) => ReturnType<typeof createTabScope> {
+  const scopes = useRef(new Map<string, ReturnType<typeof createTabScope>>());
+  return (name: string) => {
+    let scope = scopes.current.get(name);
+    if (!scope) scopes.current.set(name, scope = createTabScope());
+    return scope;
+  };
+}
+
+/**
+ * A tab bar's press handler: a plain click on the active tab pops its stack to the root (then
+ * scrolls it to the top); on another tab it calls `go`.
+ */
+export function tabPressHandler<T extends TabDefinition>(o: {
+  readonly tabs: readonly T[];
+  readonly active: string;
+  readonly scopeFor: (name: string) => ReturnType<typeof createTabScope>;
+  readonly notify: (name: string) => void;
+  readonly go: (tab: T) => void;
+}): (name: string, event: MouseEvent) => void {
+  return (name, event) => {
+    if (!plainClick(event)) return;
+    event.preventDefault();
+    o.notify(name);
+    if (name === o.active) {
+      reselectTab(o.scopeFor(name).handles, () => scrollPanelToTop(event, name));
+      return;
+    }
+    const tab = o.tabs.find((t) => t.name === name);
+    if (tab) o.go(tab);
+  };
+}
+
 /**
  * A tab bar layout whose tabs keep their state; see the module docs. Render it from a
  * `"use client"` component your layout uses.
@@ -536,7 +566,6 @@ export function TabsLayout(props: TabsLayoutProps): VNode {
   const panelsRef = useRef<Map<string, VNodeChildren>>(new Map());
   const childrenRef = useRef<unknown>(NONE);
   const lastHref = useRef(new Map<string, string>());
-  const scopes = useRef(new Map<string, ReturnType<typeof createTabScope>>());
   const latest = useRef(props);
   latest.current = props;
   const hold = useTransitionHold();
@@ -568,26 +597,18 @@ export function TabsLayout(props: TabsLayoutProps): VNode {
   };
   useTabPopstate(() => latest.current.tabs, active, panelsRef, show);
 
-  const scopeFor = (name: string) => {
-    let scope = scopes.current.get(name);
-    if (!scope) scopes.current.set(name, scope = createTabScope());
-    return scope;
-  };
-
-  const onTabPress = (name: string, event: MouseEvent) => {
-    if (!plainClick(event)) return;
-    event.preventDefault();
-    latest.current.onTabPress?.(name);
-    if (name === active) {
-      reselectTab(scopeFor(name).handles, () => scrollPanelToTop(event, name));
-      return;
-    }
-    const tab = tabs.find((t) => t.name === name);
-    if (!tab) return;
-    if (panelsRef.current.has(name)) show(name);
-    const target = lastHref.current.get(name) ?? tab.href;
-    void navigate(target, { replace: props.history === "replace", scroll: false });
-  };
+  const scopeFor = useTabScopes();
+  const onTabPress = tabPressHandler({
+    tabs,
+    active,
+    scopeFor,
+    notify: (name) => latest.current.onTabPress?.(name),
+    go: (tab) => {
+      if (panelsRef.current.has(tab.name)) show(tab.name);
+      const target = lastHref.current.get(tab.name) ?? tab.href;
+      void navigate(target, { replace: props.history === "replace", scroll: false });
+    },
+  });
 
   const hideOnKeyboard = props.hideTabBarOnKeyboard === true;
   const viewportKeyboard = useViewportKeyboard(hideOnKeyboard && props.keyboard === undefined);

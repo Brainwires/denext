@@ -939,8 +939,10 @@ export interface DesktopConfig {
   inspectable?: boolean;
   /**
    * A module run in the window before the page's scripts (Electron's preload), e.g.
-   * `"./desktop/preload.ts"` (relative to the project). The export bundles it into one classic
-   * script (`out/_denext/desktop-preload.js`), and the desktop runtime inlines it as the first page
+   * `"./desktop/preload.ts"` (relative to the project). A desktop export (`macos` / `windows` /
+   * `linux`: `denext desktop run`, the package scripts) bundles it into one classic script
+   * (`out/_denext/desktop-preload.js`; a web, iOS or Android export does not carry it), and the
+   * desktop runtime inlines it as the first page
    * script of every top-level document it serves over the memory transport (the denext-pinned
    * runtime), right after the `__denext` global, with its own CSP hash. Never in an iframe, and not
    * under the stock runtime (loopback). It runs in the page's world with the page's privileges
@@ -950,7 +952,9 @@ export interface DesktopConfig {
   preload?: string;
   /**
    * The initial window: size, title and resizability, applied by the desktop runtime when it
-   * adopts the window (on every runtime). The page changes it later with `denext/desktop/window`.
+   * adopts the window (on every runtime). Under denext's pinned runtime the size is capped at the
+   * work area of the display the window opens on, and the window is moved inside it. The page
+   * changes it later with `denext/desktop/window`.
    */
   window?: DesktopWindowConfig;
   /**
@@ -1600,6 +1604,14 @@ export interface DenextConfig {
    * the modules beside the one a name comes from are never loaded, so a top-level side effect
    * in one of them no longer runs. Next's `experimental.optimizePackageImports` spelling is
    * honored, with a dev warning, when this field is absent.
+   *
+   * Packages whose own `package.json` declares them side-effect free (`"sideEffects": false`, or
+   * an array naming none of the modules the barrel loads) are looked through automatically,
+   * unlisted: the barrel must be the file the build resolves the specifier to, a name it
+   * re-exports from another package stays on the barrel, and every module the barrel would have
+   * loaded must be side-effect free. That also keeps a lazy route's modules out of the startup
+   * chunks when the startup graph imports other names from the same barrel. `"!pkg"` excludes a
+   * package from the automatic mode too, and `"!*"` turns the automatic mode off.
    */
   optimizePackageImports?: string[] | false;
   /**

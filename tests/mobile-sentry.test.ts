@@ -67,6 +67,7 @@ Deno.test("mobile add sentry: @sentry/capacitor with its exact sibling SDK, and 
     const plan = await planMobileCapabilities({ capabilities: ["sentry"], cwd: dir });
     assertEquals(plan.install?.args, [
       "install",
+      "--ignore-scripts",
       "@sentry/capacitor@4.4.0",
       "@sentry/browser@10.69.0",
     ]);

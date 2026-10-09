@@ -2,14 +2,17 @@
 // and report violations. Pure (no I/O) so both the CLI (which turns a violation into a
 // non-zero exit) and the MCP tool (which returns the structured verdict) share it.
 
-import type { HeapResult } from "./heap.ts";
+import { type HeapResult, retainedBytes } from "./heap.ts";
 import type { CpuProfileResult } from "./cpu.ts";
 
 /** A recorded performance baseline (JSON on disk). */
 export interface Budget {
   /** Max allowed heap growth (afterBytes − beforeBytes) in bytes. */
   maxHeapGrowthBytes?: number;
-  /** Max allowed retained-after-GC growth (afterGcBytes − beforeBytes) in bytes. */
+  /**
+   * Max allowed retained-after-GC growth in bytes: afterGcBytes − the leak baseline (the warm
+   * heap after the first iteration when 2+ ran, else beforeBytes; see `retainedBytes`).
+   */
   maxLeakedBytes?: number;
   /** Per-function self-time ceilings, keyed by function name. */
   hotFns?: { name: string; maxSelfPct: number }[];
@@ -52,7 +55,7 @@ export function evaluateBudget(
   }
 
   if (budget.maxLeakedBytes !== undefined) {
-    const leaked = heap.afterGcBytes - heap.beforeBytes;
+    const leaked = retainedBytes(heap);
     if (leaked > budget.maxLeakedBytes) {
       violations.push({
         kind: "leaked",
@@ -87,7 +90,7 @@ export function budgetFromRun(
 ): Budget {
   return {
     maxHeapGrowthBytes: Math.ceil((heap.afterBytes - heap.beforeBytes) * headroom),
-    maxLeakedBytes: Math.max(0, Math.ceil((heap.afterGcBytes - heap.beforeBytes) * headroom)),
+    maxLeakedBytes: Math.max(0, Math.ceil(retainedBytes(heap) * headroom)),
     hotFns: cpu.topSelfTime.slice(0, 5).map((f) => ({
       name: f.name,
       maxSelfPct: Math.ceil(f.pct * headroom),

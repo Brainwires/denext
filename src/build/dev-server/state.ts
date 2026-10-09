@@ -218,6 +218,8 @@ export interface DevState {
   readonly platformScanner: PlatformScanner;
   /** Each target's client import map (`devPlatformImports`), per generation. */
   readonly platformImports: Map<Platform, { gen: number; imports: PlatformImportMap }>;
+  /** A next-compat app's stylesheet-crawl import map per target (`devStylesheetImports`). */
+  readonly stylesheetImports: Map<Platform, { gen: number; imports: PlatformImportMap }>;
 
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
@@ -333,6 +335,7 @@ export function createDevState(options: DevServerOptions): DevState {
     compilerGen: -1,
     platformScanner: createPlatformScanner(paths.projectDir),
     platformImports: new Map(),
+    stylesheetImports: new Map(),
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoads: new Map(),
     devCopies: new DevCopies(paths.projectDir),

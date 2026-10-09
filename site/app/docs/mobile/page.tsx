@@ -476,9 +476,15 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
         <code>@capacitor/core</code>{" "}
         major other than 8, adds the packages with the package manager the nearest lockfile names
-        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts; else
-        a <code>packageManager</code>{" "}
-        field; else npm), declares any Android permissions they need, and runs{" "}
+        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts, and
+        wins over a <code>deno.lock</code> in the project; a project&apos;s own{" "}
+        <code>deno.lock</code> with no such lockfile above it means <code>deno add</code>; else a
+        {" "}
+        <code>packageManager</code>{" "}
+        field; else npm; a Yarn install runs no lifecycle scripts, through{" "}
+        <code>npm_config_ignore_scripts</code> and <code>YARN_ENABLE_SCRIPTS</code> as{" "}
+        <code>denext migrate</code>&apos;s does), declares any Android permissions they need, and
+        runs{" "}
         <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
         export exists (no <code>index.html</code> in the config&apos;s{" "}
         <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}
@@ -1337,7 +1343,12 @@ export default {
         <code>DenextBridgeViewController</code> and <code>MainActivity</code>, which it shares with
         {" "}
         <code>add-ota</code>; either can run first). <code>--scheme</code>{" "}
-        registers the callback scheme the way <code>deep-links</code> does.
+        registers the callback scheme the way <code>deep-links</code>{" "}
+        does. A re-run upgrades the unedited files and keeps edited ones;{" "}
+        <code>denext mobile doctor --store</code> / <code>--release</code> reports{" "}
+        <code>auth-session-generations</code>{" "}
+        when the files left behind are from different template generations (an error: an edited file
+        kept beside upgraded ones) or all from an older one (a warning).
       </p>
       <Code lang="bash">
         {`denext mobile add auth-session --scheme myapp`}

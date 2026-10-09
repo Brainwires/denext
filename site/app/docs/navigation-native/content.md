@@ -10,6 +10,9 @@ lead: Stacks that keep the screen below, platform push and pop animations, the i
   mounted, with its state and scroll position, and a pop shows it again at once.
 - **`TabsLayout`**: a tab bar whose tabs keep their state and their own stacks.
 - **`Sheet`**: a bottom sheet with detents.
+- **`HistoryStack`** / **`HistoryTabs`**: the same stack and tab bar for an app on another
+  router (TanStack Router, React Router, or none); see
+  [Other routers](#other-routers-tanstack-router-react-router).
 
 Everything is DOM and CSS: animations move only `transform`, `opacity` and `filter`, so they
 run on the compositor, and no gesture writes a scroll position (iOS momentum scrolling is safe).
@@ -162,6 +165,14 @@ stays none), and sheets appear without sliding.
   pops when the screen is past halfway or flung right, and springs back otherwise. On by default
   with the iOS look; `swipeHaptic` adds a light haptic on commit. In mobile Safari the browser's
   own back swipe runs instead; the stack then pops without animating twice.
+- **Swipe back from anywhere.** `fullScreenSwipe` (or a screen's `fullScreenGestureEnabled`
+  option, react-native-screens' name) lets the swipe start anywhere on the screen, not only at
+  the edge. It is stricter about direction, so it never steals a scroll: the axis locks only when
+  the movement is at least 1.4 times as horizontal as vertical, and a fling pops only once it has
+  travelled 72 px. It yields to text fields, to horizontal scrollers, and to any element marked
+  `data-dnx-no-back-swipe`, which a [`SwipeableRow`](/docs/lists#swipe-actions) with leading
+  actions (or an open one) sets on itself. Off by default in `StackLayout`, on by default in
+  `HistoryStack`.
 - **Android predictive back.** In the Capacitor shell with `denext mobile add back`, the back
   gesture previews the pop: the top screen shrinks toward the gesture's edge as the progress
   grows, and the pop commits or springs back when the gesture ends. The back button pops too.
@@ -201,6 +212,71 @@ current entry, so back goes to `/items/42`, then `/items`. They load when popped
 - `ancestors` chooses the screens: `"segments"` (default) every path from `base` down,
   `"root"` just `base` (React Navigation's `initialRouteName`), `false` none, or a function
   `(pathname, base) => hrefs` for routes whose intermediate paths are not pages.
+
+## Other routers (TanStack Router, React Router)
+
+`StackLayout` and `TabsLayout` take the App Router's routes. An app on another router (a SPA on
+TanStack Router, a React Router data router, or no router at all) uses `HistoryStack` and
+`HistoryTabs`: the same views, bound to a **history source**, with a table of screens.
+
+```tsx
+// src/phone-shell.tsx
+"use client";
+import { HistoryStack, tanstackHistory, useScreenMatch } from "denext/navigation";
+import { router } from "./router.ts";
+
+const history = tanstackHistory(router); // once, at module scope
+
+function Thread() {
+  const id = useScreenMatch()!.params.threadId; // this screen's own location
+  return <ThreadView id={id} />;
+}
+
+const screens = [
+  { path: "/", render: () => <ThreadList />, options: { title: "Threads" } },
+  { path: "/$threadId", render: () => <Thread />, options: { headerShown: true } },
+  {
+    path: "/$threadId/diff",
+    render: (m) => <Diff threadId={m.params.threadId} />,
+    options: { presentation: "formSheet", sheetAllowedDetents: ["medium", "large"] },
+  },
+];
+
+export function PhoneShell() {
+  return <HistoryStack history={history} screens={screens} />;
+}
+```
+
+Render it where the router would render those routes (in TanStack Router, the layout route's
+component, in place of its `<Outlet />`). The router keeps owning the URL: its `<Link>`s,
+`navigate()`, loaders and the browser's back and forward buttons all work, and the stack follows.
+
+- **History sources.** `tanstackHistory(router)` navigates through `router.navigate({ href })`
+  (so loaders and blockers run as for a `<Link>`). `reactRouterHistory(router)` takes a data
+  router (`createBrowserRouter`). `browserHistory()` is the plain History API, for an app with
+  no router. Anything else implements `HistorySource` in a few lines: `location()`,
+  `subscribe()`, `push()`, `replace()`, `go()`.
+- **The history is the stack.** A navigation pushes a screen, a back pops to the entry it lands
+  on, a forward pushes it again, and a replace swaps the top screen. All three sources report
+  each entry's index, so a back of two entries pops exactly two screens. A link to a screen
+  already below pops back to it instead of pushing a copy.
+- **Each screen renders from its own location.** A kept screen below the top goes on showing
+  what it showed; the router's own hooks (`useParams()`, `useSearch()`) follow the top screen,
+  so read a screen's params from `useScreenMatch()` (or the `render` argument).
+- **Screen paths** are literal segments, `:name` or `$name` params (TanStack Router's
+  spelling works) and a trailing `*` or `$` splat; the first match wins. A location under
+  `base` that no screen matches leaves the stack as it is.
+- **Options and gestures** are `StackLayout`'s: `options` per screen (an object, or a function
+  of the match), `screenOptions` for all, `useStackNavigation()` inside a screen. The back swipe
+  starts anywhere on the screen by default (`fullScreenSwipe={false}` keeps it to the edge).
+- **Deep links** stack the matching ancestors underneath, mounted and hidden, so the swipe back
+  works at once. Popping to one replaces the history entry, since it has none of its own.
+- **Tabs.** `HistoryTabs` takes tabs with a `render()` each (typically a `HistoryStack` with the
+  tab's `base`). The location picks the tab, visited tabs keep their state, a press navigates to
+  the tab's last location, and a press on the active tab pops its stack to the root.
+
+Do not turn on TanStack Router's `defaultViewTransition` for these routes: the stack animates
+its own pushes and pops.
 
 ## Tabs
 
@@ -369,7 +445,8 @@ press on the active tab emits `tabPress`, which pops a nested stack to its root.
 
 ## Limits
 
-- A screen kept below the top is hidden, not frozen: while the iOS swipe or a predictive back
+- In a `StackLayout`, a screen kept below the top is hidden, not frozen (a `HistoryStack`
+  screen renders from its own location, so this does not apply there): while the iOS swipe or a predictive back
   reveals it, it renders with the current URL, so a component there that reads `useParams()`
   sees the top screen's params until the pop lands.
 - A claimed pop re-renders the route in the background (the router's normal soft navigation),
