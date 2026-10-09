@@ -13,12 +13,7 @@
 // route bundle.
 
 import { carryLinks } from "./config-links.ts";
-import {
-  denoInfoGraph,
-  type GraphImportMap,
-  reachableModules,
-  withModuleGraphRedirects,
-} from "./module-graph.ts";
+import { denoInfoGraph, reachableModules, withModuleGraphRedirects } from "./module-graph.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
@@ -160,7 +155,7 @@ const CSS_GRAPH_CACHE = "css";
 export async function primeCssGraph(
   entryFiles: string[],
   appConfigPath?: string,
-  graph?: GraphImportMap,
+  graph?: AppCss["graph"],
 ): Promise<void> {
   if (entryFiles.length === 0) return;
   await discoverCssFiles(entryFiles, appConfigPath, graph).catch(() => {});
@@ -185,7 +180,7 @@ export async function primeCssGraph(
 export async function discoverCssFiles(
   entryFiles: string[],
   appConfigPath?: string,
-  graph?: GraphImportMap,
+  graph?: AppCss["graph"],
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
   if (graph && appConfigPath) {
@@ -404,12 +399,16 @@ export interface AppCss extends CssAssets {
    */
   appConfigRedirects?: Record<string, string>;
   /**
-   * The build target's import map (its platform-file redirects, {@linkcode GraphImportMap}) every
-   * stylesheet crawl over these assets resolves through, so `look.ios.ts`'s `import "./a.css"`
+   * The build target's import map (its platform-file redirects, and the app module each rewritten
+   * copy in it stands in for; `GraphImportMap` in ./module-graph.ts) every stylesheet crawl over
+   * these assets resolves through, so `look.ios.ts`'s `import "./a.css"`
    * reaches the iOS build's CSS and the plain file's does not; absent, the crawls use the
    * redirects already in effect (a native App Router build installs its target's).
    */
-  graph?: GraphImportMap;
+  graph?: {
+    readonly importMap: Record<string, string>;
+    readonly originals?: Readonly<Record<string, string>>;
+  };
 }
 
 type BuildAppCssOptions = Parameters<typeof buildAppCss>[0];
@@ -608,7 +607,7 @@ export async function buildAppCss(opts: {
    */
   spa?: boolean;
   /** The build target's import map the crawls resolve through ({@linkcode AppCss.graph}). */
-  graph?: GraphImportMap;
+  graph?: AppCss["graph"];
 }): Promise<AppCss | null> {
   // Compile Tailwind first so its output exists for the walk below.
   if (opts.tailwind) {
