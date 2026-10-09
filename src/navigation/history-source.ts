@@ -123,21 +123,28 @@ export function browserHistory(): HistorySource {
 
 /** The slice of `@tanstack/history`'s `RouterHistory` {@linkcode tanstackHistory} uses. */
 export interface TanStackHistoryLike {
+  /** The current location (its `state` carries `__TSR_index`). */
   readonly location: {
     readonly pathname: string;
     readonly search: string;
     readonly hash: string;
     readonly state?: unknown;
   };
+  /** Listen to location changes; returns the unsubscribe. */
   subscribe(listener: (...args: never[]) => void): () => void;
+  /** Push a history entry. */
   push(path: string, state?: unknown): void;
+  /** Replace the current history entry. */
   replace(path: string, state?: unknown): void;
+  /** Move through the history. */
   go(delta: number): void;
 }
 
 /** The slice of a TanStack Router {@linkcode tanstackHistory} uses. */
 export interface TanStackRouterLike {
+  /** The router's history. */
   readonly history: TanStackHistoryLike;
+  /** Navigate (loaders, blockers and view transitions run as for a `<Link>`). */
   navigate(options: { href: string; replace?: boolean }): unknown;
 }
 
@@ -191,6 +198,7 @@ export function tanstackHistory(
 
 /** The slice of a React Router data router (`createBrowserRouter`) {@linkcode reactRouterHistory} uses. */
 export interface ReactRouterLike {
+  /** The router's state (its `location`). */
   readonly state: {
     readonly location: {
       readonly pathname: string;
@@ -198,7 +206,9 @@ export interface ReactRouterLike {
       readonly hash: string;
     };
   };
+  /** Listen to state changes; returns the unsubscribe. */
   subscribe(listener: (...args: never[]) => void): () => void;
+  /** Navigate to a path, or by a history delta. */
   navigate(to: string | number, options?: { replace?: boolean }): unknown;
 }
 
