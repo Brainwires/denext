@@ -3,6 +3,7 @@
 // "inverted" following the page's color scheme, and nothing happens in a browser.
 
 import { assertEquals } from "@std/assert";
+import { act } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { setStatusBarHidden, setStatusBarStyle, StatusBar } from "../src/expo/status-bar.ts";
 import { resetStatusBarForTesting } from "../src/react-native/status-bar.ts";
@@ -19,9 +20,12 @@ import {
 
 const BAR_METHODS = ["setStyle", "show", "hide", "setAnimation"];
 
-/** Let passive effects and promise callbacks run. */
+/**
+ * Commit pending renders and run their passive effects, then let promise callbacks run. Not a
+ * sleep: a short one lost to the effects' own task when the parallel suite loaded the machine.
+ */
 async function tick(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await act(() => undefined);
   await settle();
 }
 

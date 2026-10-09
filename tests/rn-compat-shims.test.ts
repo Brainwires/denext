@@ -27,6 +27,7 @@ import {
   inShell,
   mount,
   settle,
+  until,
   withGlobals,
 } from "./helpers/mobile-fakes.ts";
 
@@ -354,7 +355,7 @@ Deno.test("DrawerLayoutAndroid: renders the screen and the drawer; the ref opens
   assert(container.textContent.includes("menu"));
   assertEquals(typeof ref.current.openDrawer, "function");
   ref.current.openDrawer();
-  await new Promise((r) => setTimeout(r, 300));
+  await until(() => opened > 0, "onDrawerOpen");
   await settle();
   assertEquals(opened, 1);
 });

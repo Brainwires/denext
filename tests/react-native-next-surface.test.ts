@@ -26,7 +26,7 @@ import {
 import type { PressabilityEventHandlers } from "../src/react-native/pressability.ts";
 import type { SectionListRef } from "../src/react-native/lists/types.ts";
 import { all } from "./helpers/virtual-list.ts";
-import { type Any, withGlobals } from "./helpers/mobile-fakes.ts";
+import { type Any, until, withGlobals } from "./helpers/mobile-fakes.ts";
 
 // ---- constants -------------------------------------------------------------------------------
 
@@ -184,7 +184,10 @@ Deno.test("UIManager: measureLayoutRelativeToParent, viewIsDescendantOf, findSub
 /** Collect every Networking event (by name) while `fn` runs; returns the log. */
 async function networkLog(
   fetchImpl: (url: string, init: RequestInit) => Promise<Response>,
-  fn: (send: (opts: Partial<Record<string, unknown>>) => number) => Promise<void>,
+  fn: (
+    send: (opts: Partial<Record<string, unknown>>) => number,
+    log: ReadonlyArray<[string, unknown[]]>,
+  ) => Promise<void>,
 ): Promise<Array<[string, unknown[]]>> {
   const log: Array<[string, unknown[]]> = [];
   const subs = [
@@ -211,7 +214,7 @@ async function networkLog(
           false,
         );
         return id;
-      }));
+      }, log));
   } finally {
     for (const s of subs) s.remove();
   }
@@ -258,12 +261,13 @@ Deno.test("Networking: a failure, a timeout and abortRequest", async () => {
         if ((init.headers as Record<string, string>)?.fail) reject(new Error("offline"));
         init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
       }),
-    async (send) => {
+    async (send, log) => {
       send({ headers: { fail: "1" } });
       send({ timeout: 5 });
       const aborted = send({});
       Networking.abortRequest(aborted);
-      await new Promise((r) => setTimeout(r, 30));
+      // The timeout's timer is armed in a later task, so a fixed sleep raced it under load.
+      await until(() => log.filter(([e]) => e === "didCompleteNetworkResponse").length >= 2);
     },
   );
   const completes = log.filter(([e]) => e === "didCompleteNetworkResponse").map(([, a]) => a);
