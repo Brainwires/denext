@@ -135,7 +135,7 @@ export interface LegendListProps<T>
   readonly dataKey?: string | number;
   /** Re-render the items when this changes. */
   readonly dataVersion?: string | number;
-  /** Px rendered beyond the viewport. */
+  /** Px rendered beyond the viewport (default 250, LegendList's own). */
   readonly drawDistance?: number;
   /** One size estimate. */
   readonly estimatedItemSize?: number;
@@ -489,6 +489,13 @@ function keptRows(
   return [...rows].map(rowKey).concat(a.keys ?? []);
 }
 
+/**
+ * LegendList's default `drawDistance`: px rendered beyond the viewport. The engine's own default
+ * is a whole viewport each side, which renders a chat opened at the end with half again as many
+ * rows as LegendList does.
+ */
+const DRAW_DISTANCE = 250;
+
 /** The engine extras for LegendList's props. */
 function legendEngine(
   props: LegendListProps<unknown>,
@@ -523,7 +530,7 @@ function legendEngine(
       : undefined,
     estimatedItemSize: props.estimatedItemSize,
     recycle: props.recycleItems === true,
-    overscan: props.drawDistance,
+    overscan: props.drawDistance ?? DRAW_DISTANCE,
     mvcp: props.maintainVisibleContentPosition !== false,
     anchorEnd: props.alignItemsAtEnd === true || props.initialScrollAtEnd === true,
     autoscrollEnd: atEnd ? (viewport: number) => threshold * viewport : undefined,

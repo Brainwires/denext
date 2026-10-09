@@ -27,6 +27,34 @@ and this project adheres to
   `exactOptionalPropertyTypes: true` (T3 Code: 103 errors). Every `ClientDirectives` key now
   admits an explicit `undefined`, as React's own `Attributes` do.
 
+- **A `lists: "denext"` chat opened at the end shows its footer.** With LegendList's DOM build on
+  `VirtualList`, T3 Code's 2,000-message thread opened 188 px short of the end: the last message
+  sat on the bottom edge and the list footer (the composer's inset, 172 px, plus 16 px of
+  padding) was below it, out of view. The rows measured larger than the 90 px estimate, so while
+  the sizes landed the rendered window overflowed its estimated box and covered the footer, and
+  the space after the rows read as 0; nothing re-read it once the layout caught up. The list now
+  re-reads that space after laying out whenever the last read was covered, so
+  `initialScrollAtEnd` ends at the very end, footer included, as LegendList does.
+
+- **LegendList renders its default `drawDistance` (250 px) beyond the viewport.** Without a
+  `drawDistance` the engine's own default applied, a whole viewport each side: that chat
+  rendered 18 rows where LegendList renders 11. It now renders 12 (React Native mode's
+  `LegendList` too).
+
+- **Release-gate flake: the Cron panel test under load.** `tests/ui-config-cron.test.ts` ("what
+  a browser posts for the untouched editor is not refused") read `[""]` for the posted tasks at
+  load 70: the panel's discovery child overran its 15 s deadline on its cold start, so the page
+  (correctly) listed no schedules. The suite tests what the panel renders from a listing, so it
+  now gives the child 300 s through a test seam (`setCronDiscoveryBudget`), and says so when the
+  listing did not finish; the panel's own deadline is unchanged.
+
+- **Release-gate flake: the leaked-handle listing test under load.**
+  `tests/integration/cli-plugin-command.test.ts` ("a plugin that leaks a handle cannot keep a
+  listing alive") failed when `denext completions zsh` took 20.6 s against a fixed 20 s bound.
+  The leak is an interval, so the regression is a process that never exits: each verb now runs
+  beside a leak-free control project at the same moment, and the leaky run fails only while it
+  is still alive after 4x the control's time (at least 30 s).
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

@@ -10,10 +10,16 @@ import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
-import { cronPanel, nextRuns } from "../src/ui/features/config-cron.ts";
+import { cronPanel, nextRuns, setCronDiscoveryBudget } from "../src/ui/features/config-cron.ts";
 import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
+
+// What these tests check is what the panel renders FROM a listing, so the discovery child must
+// finish. The panel's own 15 s deadline is for a person waiting on a page; a release gate at load
+// 70 spent longer than that on the child's cold start, and the page then (correctly) showed no
+// rows — which read as `[""]` where two schedules were expected.
+setCronDiscoveryBudget(300_000);
 
 /** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
 async function project(
@@ -222,6 +228,7 @@ Deno.test("what a browser posts for the untouched editor is not refused", async 
   const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
   try {
     const page = await (await call(dir)).text();
+    assert(!page.includes("denext ui: "), "the listing finished — no discovery notice");
     const body = browserBody(page);
     // The add row's task picker starts BLANK. Without a blank option the browser posts the
     // first task's name beside an empty expression, and every save — an edit to another row, a

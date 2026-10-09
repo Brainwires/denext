@@ -148,8 +148,11 @@ const INTENT_CLEAR_HISTORY = "clear-history";
 /** The value the history toggle carries: `"on"` or `"off"`. */
 const HISTORY_FIELD = "history";
 
-/** How long the discovery child gets before the panel gives up on it. */
+/** How long the discovery child gets by default before the panel gives up on it. */
 const DISCOVERY_BUDGET_MS = 15_000;
+
+/** The discovery deadline in force ({@linkcode setCronDiscoveryBudget} changes it). */
+let discoveryBudgetMs = DISCOVERY_BUDGET_MS;
 
 /** How long a SUCCESSFUL listing is reused before the next request re-discovers. */
 const LIST_TTL_MS = 5000;
@@ -261,6 +264,23 @@ function toScheduledTasks(
 const listCache = new Map<string, { at: number; base: string; state: Listing }>();
 const inFlight = new Map<string, Promise<Listing>>();
 
+/**
+ * Lengthen (or shorten) how long the discovery child may take, clearing the cached listing so
+ * the next request re-discovers under it. A suite that tests what the panel renders FROM a
+ * listing sets it generously: the default is a deadline for a person waiting on a page, and a
+ * heavily loaded machine can spend longer than that on the child's cold start alone.
+ *
+ * @internal Test seam.
+ * @param ms The new deadline in milliseconds.
+ * @returns The deadline that was in force before.
+ */
+export function setCronDiscoveryBudget(ms: number): number {
+  const previous = discoveryBudgetMs;
+  discoveryBudgetMs = ms;
+  listCache.clear();
+  return previous;
+}
+
 /** The child's listing, or `null` when it printed nothing parsable. */
 function parseTaskListing(output: string): TaskListing | null {
   return parseJsonDocument<TaskListing>(output);
@@ -326,7 +346,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
     await runDeno(argv, {
       cwd: dir,
       onLine: (line) => lines.push(line),
-      signal: AbortSignal.timeout(DISCOVERY_BUDGET_MS),
+      signal: AbortSignal.timeout(discoveryBudgetMs),
     });
   } catch {
     return empty("the task listing did not finish — tasks and schedules are not shown");

@@ -4,7 +4,9 @@
 // rows mounted, the window-scroll page-offset cache (content above the list resizing), the
 // keyboard inset, progressive rendering's per-frame work on heavy rows (reported as JSON), and
 // `lists: "denext"`'s LegendList DOM build as a chat (start at the end, follow appends and a
-// growing last message, `getState().listen("totalSize")`, the scroll element's class).
+// growing last message, `getState().listen("totalSize")`, the scroll element's class) and as
+// T3 Code's timeline (a 2,000-message thread opening at the end over rows measured after mount,
+// with a header and a footer carrying the composer's inset).
 //
 // Opt-in (launches Chromium): run with `deno task test:e2e`, or directly:
 //   deno test -A tests/e2e/virtual-list-browser.e2e.test.ts
@@ -21,6 +23,7 @@ const FW = fromFileUrl(new URL("../../", import.meta.url));
 const ENTRY = `
 import { h } from ${JSON.stringify(join(FW, "src/jsx/jsx-runtime.ts"))};
 import { createRoot, flushSync } from ${JSON.stringify(join(FW, "src/client/reconciler.ts"))};
+import { useEffect, useState } from ${JSON.stringify(join(FW, "src/runtime/hooks.ts"))};
 import { VirtualList } from ${JSON.stringify(join(FW, "src/client/virtual/virtual-list.ts"))};
 // The app's own specifier: \`lists: "denext"\`'s alias plugin resolves it to denext's module.
 import { LegendList } from "@legendapp/list/react";
@@ -239,6 +242,68 @@ window.scenarios = {
     const afterTop = { top: Math.round(s.scrollTop), first: !!row(0) };
     stop();
     return { atStart, afterAppend, afterGrow, afterTop, totals: totals.length, grew };
+  },
+
+  async legendTimeline(grow) {
+    // T3 Code's MessagesTimeline: 2,000 messages of varying heights (none known up front; with
+    // GROW each renders small and takes its real height a frame after mount), the props it
+    // passes, a 16 px header, and a footer holding the composer's inset (172 px) above 16 px of
+    // padding. Real rows are larger than the 90 px estimate, so the first window overflows its
+    // estimated box and covers the footer while the sizes land.
+    let ref = null;
+    const N = 2000;
+    const size = (i) => 40 + ((i * 97) % 360);
+    function Message({ item }) {
+      const [px, setPx] = useState(grow ? 24 : size(item.n));
+      useEffect(() => {
+        if (grow) requestAnimationFrame(() => setPx(size(item.n)));
+      }, []);
+      return h("div", { "data-message-id": item.id, style: { height: px + "px", boxSizing: "border-box" } }, item.text);
+    }
+    const data = rowsOf(N).map((r, n) => ({ ...r, n }));
+    const footer = h("div", null,
+      h("div", { "aria-hidden": "true", style: { height: "172px" } }),
+      h("div", { "aria-hidden": "true", style: { height: "16px" } }));
+    if (root) root.unmount();
+    if (host) host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    flushSync(() => root.render(h(LegendList, {
+      ref: (x) => { ref = x; }, data, keyExtractor: (r) => r.id, getItemType: () => "message",
+      renderItem: ({ item }) => h("div", { className: "frame" }, h(Message, { item })),
+      estimatedItemSize: 90, initialScrollAtEnd: true, extraData: "t:" + N, dataVersion: "t",
+      contentInsetEndAdjustment: 0, maintainScrollAtEndThreshold: 1,
+      maintainScrollAtEnd: {
+        animated: false,
+        on: { dataChange: true, footerLayout: false, itemLayout: true, layout: true },
+      },
+      maintainVisibleContentPosition: { data: true, size: true, shouldRestorePosition: () => true },
+      className: "messages-timeline-scroll",
+      style: { height: "800px", minHeight: 0, overflowX: "hidden", overflowAnchor: "none" },
+      ListHeaderComponent: h("div", { style: { height: "16px" } }),
+      ListFooterComponent: footer,
+    })));
+    const s = sc();
+    const gap = () => Math.round(s.scrollHeight - s.clientHeight - s.scrollTop);
+    // Let the sizes land, then wait (bounded) for the view to hold still at the end.
+    await frames(20);
+    const fromEnd = await settled(gap, (g) => g === 0);
+    const last = host.querySelector('[data-message-id="r' + (N - 1) + '"]');
+    const open = {
+      gap: fromEnd,
+      lastAboveFooter: last
+        ? Math.round(s.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom)
+        : null,
+      isAtEnd: ref.getState().isAtEnd,
+      rows: host.querySelectorAll("[data-message-id]").length,
+    };
+    s.scrollTop -= 1500;
+    await frames(4);
+    const scrolledUp = { gap: gap(), isAtEnd: ref.getState().isAtEnd };
+    await ref.scrollToEnd({ animated: false });
+    const back = await settled(gap, (g) => g === 0);
+    return { open, scrolledUp, back };
   },
 
   async keyboard() {
@@ -517,6 +582,30 @@ Deno.test({
         assertEquals(r.grew, 360, "listen('totalSize') heard the last message grow by 360px");
       },
     );
+
+    for (const grow of [false, true]) {
+      await t.step(
+        `lists: "denext" LegendList as T3's timeline opens at the very end, footer included${
+          grow ? " (rows grow after mount)" : ""
+        }`,
+        async () => {
+          type Facts = Record<string, number | boolean | null>;
+          const r = await run<{ open: Facts; scrolledUp: Facts; back: number }>(
+            `window.scenarios.legendTimeline(${grow})`,
+          );
+          report[`legendTimeline_${grow}`] = r;
+          // Before the fix the view stopped 188 px short: the last message sat on the bottom
+          // edge and the footer (the composer's inset) was below it, out of view.
+          assertEquals(r.open.gap, 0, "initialScrollAtEnd: at the very end, not at the last row");
+          assertEquals(r.open.lastAboveFooter, 188, "the whole footer in view below the last row");
+          assertEquals(r.open.isAtEnd, true);
+          // LegendList's drawDistance (250 px), not a viewport of overscan (18 rows here).
+          assert((r.open.rows as number) <= 12, `rows rendered at the end: ${r.open.rows}`);
+          assert((r.scrolledUp.gap as number) > 0 && r.scrolledUp.isAtEnd === false, "scrolled up");
+          assertEquals(r.back, 0, "scrollToEnd re-pins to the very end");
+        },
+      );
+    }
 
     await t.step("keyboardInset: last row above the keyboard, back after (B8, T9)", async () => {
       const r = await run<Record<string, number>>("window.scenarios.keyboard()");

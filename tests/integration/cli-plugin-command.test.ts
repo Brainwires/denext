@@ -158,10 +158,41 @@ Deno.test("`denext commands` lists the project's verbs, in text and as JSON", as
   }
 });
 
+/** A CLI run in flight: its exit status, how long it took, and a way to stop it. */
+interface Running {
+  readonly done: Promise<{ code: number; ms: number }>;
+  kill(): void;
+}
+
+/** Start the CLI with `args` (output discarded) and time it from spawn to exit. */
+function startCli(args: string[]): Running {
+  const started = performance.now();
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", CLI, ...args],
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  return {
+    done: child.status.then(({ code }) => ({ code, ms: performance.now() - started })),
+    kill: () => {
+      try {
+        child.kill("SIGKILL");
+      } catch { /* already exited */ }
+    },
+  };
+}
+
 Deno.test("a plugin that leaks a handle cannot keep a listing alive", async () => {
-  // `setup` starts an hour-long interval and never clears it: before the listing verbs exited
-  // explicitly, `denext --help` and `denext completions` in this project never terminated.
-  const dir = await project(
+  // `setup` starts an interval and never clears it: before the listing verbs exited explicitly,
+  // `denext --help` and `denext completions` in this project never terminated. The interval
+  // repeats forever, so the regression is a process that does not exit at all — not a slow one.
+  //
+  // Whether it exited is judged against a CONTROL: the same verb, at the same moment, in a
+  // project whose plugin leaks nothing. A wall-clock bound alone flakes on a loaded machine (a
+  // release gate at load 70 took 20.6 s for `completions zsh`); the control pays the same
+  // load, so the leaky run gets several times what the control needed before it is called hung.
+  const leaky = await project(
     "denext_leaky_plugin_",
     `export default {
   plugins: [{ name: "leaky", setup: () => { setInterval(() => {}, 3600e3); } }],
@@ -169,22 +200,53 @@ Deno.test("a plugin that leaks a handle cannot keep a listing alive", async () =
 };
 `,
   );
+  const control = await project(
+    "denext_tidy_plugin_",
+    `export default {
+  plugins: [{ name: "tidy", setup: () => {} }],
+  commands: [{ name: "seed", summary: "load fixture data", run: () => {} }],
+};
+`,
+  );
   try {
-    for (
-      const args of [["--help", `--cwd=${dir}`], ["completions", "zsh", "--cwd", dir], [
-        "commands",
-        "--cwd",
-        dir,
-      ]]
-    ) {
-      const started = performance.now();
-      const { code } = await runCli(args);
-      const elapsed = performance.now() - started;
-      assertEquals(code, 0, `\`denext ${args.join(" ")}\` exited ${code}`);
-      assert(elapsed < 20_000, `\`denext ${args.join(" ")}\` took ${Math.round(elapsed)} ms`);
+    const verbs: Array<(dir: string) => string[]> = [
+      (dir) => ["--help", `--cwd=${dir}`],
+      (dir) => ["completions", "zsh", "--cwd", dir],
+      (dir) => ["commands", "--cwd", dir],
+    ];
+    for (const argv of verbs) {
+      const verb = argv(leaky);
+      const leakyRun = startCli(verb);
+      const controlRun = startCli(argv(control));
+      const tidy = await controlRun.done;
+      assertEquals(tidy.code, 0, `control \`denext ${verb.join(" ")}\` exited ${tidy.code}`);
+      // The leaky run started with the control; past 4x the control's time (and never under
+      // 30 s) it is not slow, it is held open.
+      const budget = Math.max(30_000, 4 * tidy.ms);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        leakyRun.done,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), budget - tidy.ms);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (outcome === null) {
+        leakyRun.kill();
+        await leakyRun.done;
+      }
+      assert(
+        outcome !== null,
+        `\`denext ${verb.join(" ")}\` was still running after ${Math.round(budget)} ms ` +
+          `(the leak-free control exited in ${
+            Math.round(tidy.ms)
+          } ms): the leaked handle held it open`,
+      );
+      assertEquals(outcome.code, 0, `\`denext ${verb.join(" ")}\` exited ${outcome.code}`);
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(leaky, { recursive: true });
+    await Deno.remove(control, { recursive: true });
   }
 });
 
