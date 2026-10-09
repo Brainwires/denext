@@ -34,7 +34,7 @@ import {
   stackFrames,
   swipeFrame,
 } from "./animation.ts";
-import { EdgeSwipeTracker, type SwipeRelease } from "./gesture.ts";
+import { EdgeSwipeTracker, FULL_SCREEN_SWIPE, type SwipeRelease } from "./gesture.ts";
 import { LARGE_TITLE_COLLAPSE, LargeTitle, StackHeader } from "./header.ts";
 import { Sheet } from "./sheet.ts";
 import { navigationContexts } from "./context.ts";
@@ -69,6 +69,15 @@ export interface StackViewProps extends NavigationThemeProps {
   readonly screenOptions?: ScreenOptions;
   /** Whether the iOS edge swipe pops (default: `true` on the iOS look). */
   readonly swipeBack?: boolean;
+  /**
+   * Whether the back swipe may start anywhere on the screen, not only at its left edge
+   * (default `false`; a screen's `fullScreenGestureEnabled` option overrides it). The
+   * full-screen swipe locks only on a clearly horizontal movement (at least 1.4 × as
+   * horizontal as vertical) and a fling commits only past 72 px; it yields to text fields,
+   * horizontal scrollers and any element marked `data-dnx-no-back-swipe` (a
+   * `SwipeableRow` with leading actions, or an open one, marks itself).
+   */
+  readonly fullScreenSwipe?: boolean;
   /** A light haptic when a swipe commits (default `false`). */
   readonly swipeHaptic?: boolean;
   /** Extra style for the container. */
@@ -186,15 +195,19 @@ interface SwipeTarget extends ListenerTarget {
 /**
  * Wire the iOS interactive back swipe to `el`: a touch (or pen) that goes down within 20 px of
  * its left edge and moves horizontally (the axis locks after 10 px; vertical movement leaves
- * the touch to scrolling) drives `host`. Mouse pointers are ignored unless `mouse` is set.
- * Returns the detach function. Exported for testing.
+ * the touch to scrolling) drives `host`. With `fullScreen` (read at each pointer-down) the
+ * touch may go down anywhere, under {@linkcode FULL_SCREEN_SWIPE}'s stricter lock. Mouse
+ * pointers are ignored unless `mouse` is set. Returns the detach function. Exported for
+ * testing.
  */
 export function attachEdgeSwipe(
   el: SwipeTarget,
   host: EdgeSwipeHost,
-  options: { edgeWidth?: number; mouse?: boolean } = {},
+  options: { edgeWidth?: number; mouse?: boolean; fullScreen?: () => boolean } = {},
 ): () => void {
-  const tracker = new EdgeSwipeTracker({ edgeWidth: options.edgeWidth });
+  const edge = new EdgeSwipeTracker({ edgeWidth: options.edgeWidth });
+  let full: EdgeSwipeTracker | null = null;
+  let tracker = edge;
   let id: number | null = null;
   let width = 1;
   const t = (e: SwipePointer) => e.timeStamp ?? Date.now();
@@ -202,6 +215,7 @@ export function attachEdgeSwipe(
     if (id !== null || e.isPrimary === false) return;
     if (e.pointerType === "mouse" && !options.mouse) return;
     if (!host.canStart(e)) return;
+    tracker = options.fullScreen?.() ? (full ??= new EdgeSwipeTracker(FULL_SCREEN_SWIPE)) : edge;
     const rect = el.getBoundingClientRect?.() ??
       { left: 0, width: (globalThis as { innerWidth?: number }).innerWidth ?? 375 };
     if (!tracker.start(e.clientX, e.clientY, t(e), rect.left, rect.width)) return;
@@ -247,15 +261,22 @@ export function attachEdgeSwipe(
   });
 }
 
-/** Whether a gesture starting on `target` belongs to it: a text field, or a scrolled row. */
+/**
+ * Whether a gesture starting on `target` belongs to it: a text field, a scrolled row, or an
+ * element marked `data-dnx-no-back-swipe` (a swipeable row that reveals actions rightward).
+ */
 function claimsHorizontal(target: unknown): boolean {
   for (let el = target as Element | null; el && el.tagName; el = el.parentElement) {
-    if (/^(?:INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
-    if ((el as HTMLElement).isContentEditable) return true;
-    if ((el as HTMLElement).scrollLeft > 0) return true;
+    if (claimsAt(el as HTMLElement)) return true;
     if (el.hasAttribute?.("data-dnx-screen")) break;
   }
   return false;
+}
+
+/** Whether `el` itself keeps a horizontal gesture: a text field, a scrolled row, an opt-out. */
+function claimsAt(el: HTMLElement): boolean {
+  if (/^(?:INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) return true;
+  return el.scrollLeft > 0 || el.hasAttribute?.("data-dnx-no-back-swipe") === true;
 }
 
 /** Write a gesture frame's style onto `el` (or clear it with `null`). */
@@ -292,6 +313,11 @@ interface StackRt {
   readonly sections: Map<string, HTMLElement>;
   readonly bodies: Map<string, HTMLElement>;
   readonly scrollMemo: Map<string, number>;
+  /**
+   * The scroll positions of the scrollers inside each screen (a virtualized list's own
+   * scroller): hiding a screen (`display: none`) drops them, so they are put back on reveal.
+   */
+  readonly nestedScroll: Map<string, Map<Element, number>>;
   /** The entries of the last commit. */
   prev: readonly StackViewEntry[];
   /** Popped screens still drawn while they leave. */
@@ -359,6 +385,51 @@ function planRender(rt: StackRt, animate: StackViewAnimate, revealed: string | n
   return { entries, change, willAnimate, exiting, visible };
 }
 
+/**
+ * Put the remembered nested scrollers of a screen back where they were, then tell them so: a
+ * `scroll` event once the revealed subtree's effects are back, so a virtualized list (whose
+ * window followed the reset to 0 while hidden) renders the rows at its position again.
+ */
+function restoreNested(memo: Map<Element, number> | undefined): void {
+  if (!memo) return;
+  const live: Element[] = [];
+  for (const [el, top] of memo) {
+    if (!el.isConnected) {
+      memo.delete(el);
+      continue;
+    }
+    if (el.scrollTop !== top) el.scrollTop = top;
+    live.push(el);
+  }
+  const raf = globalThis.requestAnimationFrame;
+  if (live.length === 0 || typeof raf !== "function") return;
+  raf(() =>
+    raf(() => {
+      for (const el of live) el.dispatchEvent?.(new Event("scroll"));
+    })
+  );
+}
+
+/** Remember where a scroller inside screen `id` scrolled to (a capture-phase `scroll`). */
+function noteNestedScroll(rt: StackRt, id: string, event: Event): void {
+  const el = event.target as Element | null;
+  if (!el || el === event.currentTarget || typeof el.scrollTop !== "number") return;
+  if (el.hasAttribute?.("data-dnx-screen-body")) return;
+  let memo = rt.nestedScroll.get(id);
+  if (!memo) rt.nestedScroll.set(id, memo = new Map());
+  memo.set(el, el.scrollTop);
+}
+
+/** Forget the scroll positions of screens no longer drawn (they hold detached elements). */
+function pruneScrollMemos(rt: StackRt, plan: RenderPlan): void {
+  const live = (id: string) => plan.exiting.has(id) || plan.entries.some((e) => e.id === id);
+  for (const id of [...rt.nestedScroll.keys(), ...rt.scrollMemo.keys()]) {
+    if (live(id)) continue;
+    rt.nestedScroll.delete(id);
+    rt.scrollMemo.delete(id);
+  }
+}
+
 /** Screens that show again get their scroll position back (display:none dropped it). */
 function restoreScroll(rt: StackRt, visible: Set<string>): void {
   for (const id of visible) {
@@ -366,6 +437,7 @@ function restoreScroll(rt: StackRt, visible: Set<string>): void {
     const body = rt.bodies.get(id);
     const memo = rt.scrollMemo.get(id);
     if (body && memo !== undefined && body.scrollTop !== memo) body.scrollTop = memo;
+    restoreNested(rt.nestedScroll.get(id));
   }
   rt.wasVisible = new Set(visible);
 }
@@ -403,6 +475,7 @@ function runAnimation(rt: StackRt, change: StackDiff, entries: readonly StackVie
 /** The commit: remember the entries, restore scroll, and animate (or settle a gesture). */
 function commitRender(rt: StackRt, plan: RenderPlan, revealed: string | null): void {
   rt.prev = plan.entries;
+  pruneScrollMemos(rt, plan);
   for (const a of rt.cancelLater.splice(0)) a.cancel();
   restoreScroll(rt, plan.visible);
   if (!plan.change) return;
@@ -535,12 +608,20 @@ function swipeHost(rt: StackRt): EdgeSwipeHost {
   };
 }
 
+/** Whether the top screen's back swipe may start anywhere (its option, else the view's). */
+function fullScreenSwipe(rt: StackRt): boolean {
+  const list = rt.props.entries;
+  const top = list[list.length - 1];
+  const own = top ? optionsOf(rt, top).fullScreenGestureEnabled : undefined;
+  return own ?? rt.props.fullScreenSwipe ?? false;
+}
+
 /** The iOS edge swipe on the stack's container. */
 function useEdgeSwipe(rt: StackRt, enabled: boolean): void {
   useEffect(() => {
     const root = rt.root;
     if (!root || !enabled || typeof root.addEventListener !== "function") return;
-    return attachEdgeSwipe(root, swipeHost(rt));
+    return attachEdgeSwipe(root, swipeHost(rt), { fullScreen: () => fullScreenSwipe(rt) });
   }, [enabled]);
 }
 
@@ -685,6 +766,7 @@ function cardScreen(rt: StackRt, item: ScreenItem): VNode {
       ref: track(rt.sections, entry.id),
       "data-dnx-screen": entry.id,
       "data-dnx-screen-state": state,
+      onScrollCapture: (event: Event) => noteNestedScroll(rt, entry.id, event),
       "aria-hidden": item.isTop ? undefined : "true",
       inert: item.isTop ? undefined : true,
       style: {
@@ -774,6 +856,7 @@ function createRuntime(props: StackViewProps): StackRt {
     sections: new Map(),
     bodies: new Map(),
     scrollMemo: new Map(),
+    nestedScroll: new Map(),
     prev: props.entries,
     exiting: new Map(),
     animating: null,

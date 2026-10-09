@@ -188,6 +188,8 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["dnx-reveal:", "inline streaming swap runtime (a server string)"], // pure-built SWAP_RUNTIME
     ["data-vl-", "VirtualList (0 bytes unless imported)"], // the list's row attributes
     ["trailingMargin", "VirtualList controller's axis tables"], // module-scope objects
+    ["data-dnx-swipe-row", "SwipeableRow (0 bytes unless imported)"],
+    ["__dnxIdx", "denext/navigation's history sources"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

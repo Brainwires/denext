@@ -10,6 +10,40 @@ and this project adheres to
 
 ### Added
 
+- **`denext/navigation` binds to any history-based router: `HistoryStack` and `HistoryTabs`.**
+  `StackLayout` and `TabsLayout` take the App Router's routes; an app on TanStack Router, a
+  React Router data router or no router at all now gets the same native stack and tab bar
+  through a history source: `tanstackHistory(router)` (navigations through
+  `router.navigate({ href })`, entry indices from `__TSR_index`), `reactRouterHistory(router)`,
+  or `browserHistory()`, and any other router in five methods (`HistorySource`). The stack is a
+  table of screens (`{ path: "/$threadId", render, options }`, with `:name` / `$name` params and
+  a splat) that each render from their own location (`useScreenMatch()`), so a kept screen below
+  the top goes on showing what it showed while the router's own hooks follow the top. A
+  navigation pushes, a back pops to the entry it lands on (exactly, by entry index), a forward
+  pushes again, a replace swaps the top, and a link to a screen below pops back to it; pushed
+  screens stay mounted with the platform animations, per-screen options (title, presentation,
+  `formSheet` sheets, header) and `useStackNavigation()` work as in `StackLayout`, and a deep
+  link mounts its ancestors underneath so the swipe back works at once.
+- **Swipe back from anywhere on the screen.** `fullScreenSwipe` on `StackView` / `StackLayout`
+  (on by default in `HistoryStack`), and the per-screen `fullScreenGestureEnabled` option
+  (react-native-screens' name, mapped from React Navigation too), let the back swipe start
+  anywhere, not only within 20 px of the left edge. It follows the finger like the edge swipe,
+  under a stricter rule so it never takes a scroll: the axis locks only when the movement is at
+  least 1.4 times as horizontal as vertical, and a fling pops only past 72 px (T3 Code's native
+  thread back-swipe rule). It yields to text fields, horizontal scrollers and any element marked
+  `data-dnx-no-back-swipe`.
+- **`SwipeableRow`: swipe-to-reveal row actions.** A row (from `denext`) with leading and
+  trailing actions, outermost first, and a full swipe that runs a side's first action. A drag
+  writes only `transform`s and never reads layout (sizes come from one shared
+  `ResizeObserver`), so it is safe inside a scrolling `VirtualList`; the axis lock leaves a
+  vertical drag to the scroll and a swipe toward a side with nothing to reveal to the stack's
+  back swipe. One row is open at a time (a tap elsewhere, a scroll or Escape closes it), a full
+  swipe arming plays a haptic in the native shell, and every action is a real `<button>` that
+  opens its side when focused. In React Native mode
+  `react-native-gesture-handler/ReanimatedSwipeable` and `react-native-gesture-handler/Swipeable`
+  resolve to it (partial: the render functions get `{ value }` holders or `Animated.Value`s, and
+  the thresholds, overshoot and gesture-composition props are ignored). An app that does not
+  use it ships none of it.
 - **Barrels of side-effect-free packages are looked through automatically.** Under esbuild code
   splitting, when the startup graph and a lazily loaded route import different names from one
   barrel, every module the barrel re-exports lands in a chunk the startup graph loads, the lazy

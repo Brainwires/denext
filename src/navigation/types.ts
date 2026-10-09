@@ -70,6 +70,11 @@ export interface ScreenOptions {
   readonly animationDuration?: number;
   /** Whether the iOS edge swipe and Android predictive back can pop it (default `true`). */
   readonly gestureEnabled?: boolean;
+  /**
+   * Whether the back swipe may start anywhere on the screen, not only at its left edge
+   * (default: the stack's `fullScreenSwipe`). The name follows `react-native-screens`.
+   */
+  readonly fullScreenGestureEnabled?: boolean;
   /** How the screen is presented (default `"card"`). */
   readonly presentation?: StackPresentation;
   /** Whether to draw the stack's header above the screen (default `false`). */

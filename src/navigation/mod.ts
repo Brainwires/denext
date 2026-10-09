@@ -1,6 +1,7 @@
 /**
  * `denext/navigation` — native-feeling navigation for App Router apps (and, through adapters,
- * React Navigation / Expo Router in React Native mode):
+ * history-based routers such as TanStack Router, and React Navigation / Expo Router in React
+ * Native mode):
  *
  * - {@linkcode StackLayout}: the routes under a layout as a stack. A push keeps the screens
  *   below mounted (state and scroll kept, via `<Activity>`), a pop shows them again at once;
@@ -14,6 +15,11 @@
  *   active tab pops to its root, then scrolls to the top.
  * - {@linkcode Sheet}: a bottom sheet with detents, drag, dismissal, a focus trap and keyboard
  *   avoidance.
+ * - {@linkcode HistoryStack} / {@linkcode HistoryTabs}: the stack and the tab bar bound to any
+ *   history-based router — TanStack Router ({@linkcode tanstackHistory}), a React Router data
+ *   router ({@linkcode reactRouterHistory}) or the browser's own history
+ *   ({@linkcode browserHistory}) — with a table of screens that each render from their own
+ *   location ({@linkcode useScreenMatch}), and the back swipe from anywhere on the screen.
  * - A route announcer: a push, a pop or a tab switch reads the new screen's title to screen
  *   readers (an `aria-live` region; `announceRouteChanges: false` turns it off);
  *   {@linkcode announceRoute} says something through the same region.
@@ -53,6 +59,26 @@ export {
   type TabsViewProps,
 } from "./tabs.ts";
 export { Sheet, type SheetProps } from "./sheet.ts";
+export {
+  type HistoryScreen,
+  HistoryStack,
+  type HistoryStackProps,
+  resolveScreen,
+  type ScreenMatch,
+  useScreenMatch,
+} from "./history-stack.ts";
+export { type HistoryTab, HistoryTabs, type HistoryTabsProps } from "./history-tabs.ts";
+export {
+  browserHistory,
+  type HistoryLocation,
+  type HistorySource,
+  matchScreenPath,
+  reactRouterHistory,
+  type ReactRouterLike,
+  tanstackHistory,
+  type TanStackHistoryLike,
+  type TanStackRouterLike,
+} from "./history-source.ts";
 export { announceRoute } from "./announcer.ts";
 export {
   type IosBarMaterial,

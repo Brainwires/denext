@@ -430,14 +430,20 @@ Docs: https://denext.dev/docs/platform-files
 10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
 `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
 `denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
-makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Docs:
-https://denext.dev/docs/lists
+makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Swipe actions:
+`<SwipeableRow leading={[…]} trailing={[{ label, tone, onPress }]}>` from `denext` (transform-only,
+VirtualList-safe, full swipe runs the first action, real buttons; RNGH `Swipeable` /
+`ReanimatedSwipeable` resolve to it in React Native mode). Docs: https://denext.dev/docs/lists
 
 **Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
 keeps pushed screens mounted with platform animations and the iOS swipe back, `TabsLayout`
 keeps each tab's state, `Sheet` is a bottom sheet with detents; a page sets
 `export const screenOptions = { title, presentation }`; `useStackNavigation()` pushes and
-pops. Docs: https://denext.dev/docs/navigation-native
+pops. On another router (TanStack Router, React Router, none): `<HistoryStack
+history={tanstackHistory(router)} screens={[{ path: "/$id", render, options }]} />` (screens read
+`useScreenMatch()`, not the router's hooks) and `HistoryTabs`; the back swipe starts anywhere
+there (`fullScreenSwipe`, or a screen's `fullScreenGestureEnabled`). Docs:
+https://denext.dev/docs/navigation-native
 
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
@@ -1050,6 +1056,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
 - `interface SuspenseListProps` — Props for SuspenseList.
 - `interface SuspenseProps` — Props for the Suspense boundary component.
+- `SwipeableRow(props: SwipeableRowProps): VNode` — A row that swipes sideways to reveal actions; see the module docs. A client component: render it from a "use client" file. Inside a VirtualList, render one per row.
+- `interface SwipeableRowHandle` — What a SwipeableRow's rowRef receives.
+- `interface SwipeableRowProps` — Props of SwipeableRow.
+- `type SwipeableRowSide = leading | trailing` — Which side of a row is open.
+- `interface SwipeAction` — One action a SwipeableRow reveals.
 - `interface SyntheticEvent<T, E>` — Base synthetic event.
 - `interface TextEstimateOptions<T>` — How to predict a text row's size.
 - `tryCatch<T, E>(operation: () => T | PromiseLike<T>): Promise<TryCatchResult<T, E>>` — Runs an operation and captures its return value, thrown value, or rejection.
@@ -2091,6 +2102,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>` — Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted.
 - `interface DesktopRunOptions` — Options for desktopRun.
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
+- `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
@@ -2114,7 +2126,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), dist/, unless --no-export the static export (deno task export), then the .deno-desktop/app.json + compile.include + deno.json desktop.app sync and the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about).
 - `type ProxyModule = ./dev-proxy.ts` — The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.
 - `interface ResolvedDesktop` — What resolveDesktopCapabilities returns — spread straight into runDesktop.
-- `resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.
+- `resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.
 - `interface ResolveDesktopOptions` — Options for resolveDesktopCapabilities.
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).
@@ -2565,12 +2577,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/navigation`
 
 - `announceRoute(message: string): void` — Announce message to screen readers now (the same text twice in a row is announced twice). Nothing happens without a document or with an empty message.
+- `browserHistory(): HistorySource` — The browser's own history as a HistorySource, for an app with no router (or one that navigates only through this source): push / replace write history.pushState / replaceState and stamp each entry with its index, and popstate (back, forward) is heard. A pushState made behind its back is not.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createBottomTabNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createBottomTabNavigator for React Native mode, drawn by TabsView: visited tabs stay mounted (hidden with <Activity>), tabBarBadge / tabBarIcon / tabBarLabel / title and lazy / popToTopOnBlur / unmountOnBlur are honoured, and a press on the active tab emits tabPress (a nested stack pops to its root) then scrolls it to the top.
 - `createNativeStackNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createNativeStackNavigator for React Native mode, drawn by StackView.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `interface HistoryLocation` — A location as the history bindings read it.
+- `interface HistoryScreen` — One screen of a HistoryStack's table.
+- `interface HistorySource` — A history-based router, as HistoryStack and HistoryTabs use it: read the location, hear it change, and navigate. browserHistory, tanstackHistory and reactRouterHistory build one; any router whose location lives in the URL history can implement it in a few lines.
+- `HistoryStack(props: HistoryStackProps): VNode` — A native-feeling stack over any history-based router; see the module docs. Mount it where the router would render the routes it covers (in a TanStack Router layout route, in place of its <Outlet />), and give it the screens; the router keeps owning the URL.
+- `interface HistoryStackProps` — Props of HistoryStack. theme, material and accentColor pick the look; see NavigationThemeProps.
+- `interface HistoryTab` — One tab of a HistoryTabs: a TabDefinition that renders itself.
+- `HistoryTabs(props: HistoryTabsProps): VNode` — A tab bar over any history-based router whose tabs keep their state; see the module docs.
+- `interface HistoryTabsProps` — Props of HistoryTabs.
 - `type IosBarMaterial = glass | blur` — The iOS bar material of the platform theme: "glass" (iOS 26's Liquid Glass, approximated: a floating translucent tab bar and glass header buttons; the default) or "blur" (the iOS 7–18 translucent bars, edge to edge).
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `matchScreenPath(pattern: string, pathname: string): Record<string, string> | null` — Match pathname against a screen pattern: literal segments, :name or $name params (TanStack Router's spelling too), and a trailing * or $ splat (its value under "*" and "_splat"). Returns the decoded params, or null when it does not match.
 - `type NavigationPlatform = ios | android` — The platform look a navigator takes: iOS or Android (Material).
 - `type NavigationTheme = auto | platform | plain` — Which look the navigators take:
 - `interface NavigationThemeProps` — The theme props every navigator takes.
@@ -2580,6 +2602,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ReactNavigationObject` — The slice of the navigation object the navigators use.
 - `interface ReactNavigationRoute` — A React Navigation route, as the navigators read it.
 - `interface ReactNavigationState` — A navigator's state, as the navigators read it.
+- `reactRouterHistory(router: ReactRouterLike): HistorySource` — A React Router data router (createBrowserRouter / createHashRouter / createMemoryRouter, library mode) as a HistorySource: the location from router.state, changes from router.subscribe, navigations through router.navigate. The entry index is the browser router's history.state.idx where it exists.
+- `interface ReactRouterLike` — The slice of a React Router data router (createBrowserRouter) reactRouterHistory uses.
+- `resolveScreen(screens: typeOperator, loc: Pick<HistoryLocation, pathname | search | hash>): object | null` — The first screen of screens that matches loc, with its match.
+- `interface ScreenMatch` — What a screen renders from: the location it was pushed at, matched against its path.
 - `interface ScreenOptions` — Options for one screen of a stack. As a page's export const screenOptions = { … } they are plain JSON (the server reads them and ships them with the page); setOptions from useStackNavigation can also set the component-valued header* slots.
 - `Sheet(props: SheetProps): VNode` — A bottom sheet. Controlled by open; the user's dismissal calls onOpenChange(false).
 - `type SheetDetent = medium | large | fit | number` — A height a sheet can rest at: "medium" (half the available height), "large" (the full available height), "fit" (its content's height, up to "large"), or a number (a fraction of the available height when at most 1, else CSS px).
@@ -2603,7 +2629,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TabStackHandle` — What a stack inside a tab registers, so the tab bar can pop it or scroll it to the top.
 - `TabsView(props: TabsViewProps): VNode` — The router-independent tab view: panels kept with <Activity>, and the bar.
 - `interface TabsViewProps` — Props of TabsView. theme, material and accentColor pick the look (see NavigationThemeProps).
+- `tanstackHistory(routerOrHistory: TanStackRouterLike | TanStackHistoryLike): HistorySource` — A TanStack Router (or its router.history) as a HistorySource. With the router, navigations go through router.navigate({ href }) (so loaders, blockers and view transitions run as for a <Link>); with a bare history, through history.push. The entry index comes from TanStack's __TSR_index, so back and forward are exact.
+- `interface TanStackHistoryLike` — The slice of @tanstack/history's RouterHistory tanstackHistory uses.
+- `interface TanStackRouterLike` — The slice of a TanStack Router tanstackHistory uses.
 - `useScreenInfo(): object | null` — The screen a component renders in, or null outside a stack. Reads id and index (0 = the stack's root screen).
+- `useScreenMatch(): ScreenMatch | null` — The location the screen this component renders in was pushed at (its path params, search and hash), or null outside a HistoryStack. Read this in a screen rather than the router's own location hooks: a kept screen below the top keeps its own location, while the router's hooks follow the top screen.
 - `useStackNavigation(): StackNavigation` — The stack navigation for the screen this component renders in: push, pop, popToTop, replace, canGoBack, setOptions. Outside a StackLayout the methods fall back to plain navigation and history.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.

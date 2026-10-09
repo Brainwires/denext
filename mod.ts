@@ -418,6 +418,14 @@ export type {
   VirtualListSlot,
 } from "./src/client/virtual/types.ts";
 export type { ScrollSnapAlign, ScrollSnapOptions } from "./src/client/virtual/snap.ts";
+// Swipe-to-reveal row actions (leading/trailing, full swipe), VirtualList-safe; its own module.
+export { SwipeableRow } from "./src/client/swipe-row/swipeable-row.ts";
+export type {
+  SwipeableRowHandle,
+  SwipeableRowProps,
+  SwipeableRowSide,
+  SwipeAction,
+} from "./src/client/swipe-row/swipeable-row.ts";
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";

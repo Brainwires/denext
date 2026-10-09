@@ -18,7 +18,29 @@ export interface EdgeSwipeConfig {
   readonly commitProgress?: number;
   /** Horizontal speed, in px/ms, past which a release commits (or cancels, leftward) (default `0.3`). */
   readonly commitVelocity?: number;
+  /**
+   * How much more horizontal than vertical the movement must be for the axis to lock (default
+   * `1`; the full-screen swipe uses `1.4`, so a slightly diagonal scroll stays a scroll).
+   */
+  readonly lockRatio?: number;
+  /**
+   * The distance, in CSS px, a fast release must have travelled to commit on its velocity alone
+   * (default `0`; the full-screen swipe uses `72`, so a short flick mid-screen does not pop).
+   */
+  readonly minFlingDistance?: number;
 }
+
+/**
+ * The tunables of the full-screen back swipe (a swipe that may start anywhere on the screen,
+ * not only at the left edge): the axis locks only when the movement is at least 1.4 × as
+ * horizontal as vertical, and a fling commits only past 72 px — the gesture rule T3 Code's
+ * native app uses for its thread back swipe.
+ */
+export const FULL_SCREEN_SWIPE: EdgeSwipeConfig = {
+  edgeWidth: Infinity,
+  lockRatio: 1.4,
+  minFlingDistance: 72,
+};
 
 /** What {@linkcode EdgeSwipeTracker.move} reports. */
 export type SwipeMove =
@@ -91,16 +113,17 @@ export function inEdgeZone(x: number, left: number, edgeWidth = 20): boolean {
 
 /**
  * The axis decision for a movement of `dx`/`dy` px since the touch started: `"pending"` under
- * `lockDistance`, then `"horizontal"` when it moved right at least as much as it moved
- * vertically, else `"reject"` (vertical scrolling, or a leftward swipe, keeps the touch).
+ * `lockDistance`, then `"horizontal"` when it moved right at least `ratio` × as much as it
+ * moved vertically, else `"reject"` (vertical scrolling, or a leftward swipe, keeps the touch).
  */
 export function lockAxis(
   dx: number,
   dy: number,
   lockDistance = 10,
+  ratio = 1,
 ): "pending" | "horizontal" | "reject" {
   if (Math.hypot(dx, dy) < lockDistance) return "pending";
-  return dx > 0 && dx >= Math.abs(dy) ? "horizontal" : "reject";
+  return dx > 0 && dx >= ratio * Math.abs(dy) ? "horizontal" : "reject";
 }
 
 /**
@@ -109,21 +132,24 @@ export function lockAxis(
  *
  * @param progress How far the screen went, 0…1.
  * @param velocityX The release velocity in px/ms (positive = rightward).
+ * @param config The tunables; a `minFlingDistance` needs `distance`.
+ * @param distance How far the finger travelled, in px (default: past any `minFlingDistance`).
  */
 export function releaseSwipe(
   progress: number,
   velocityX: number,
   config: EdgeSwipeConfig = {},
+  distance = Infinity,
 ): SwipeRelease {
   const threshold = config.commitVelocity ?? 0.3;
-  if (velocityX >= threshold) return "commit";
+  if (velocityX >= threshold && distance >= (config.minFlingDistance ?? 0)) return "commit";
   if (velocityX <= -threshold) return "cancel";
   return progress >= (config.commitProgress ?? 0.5) ? "commit" : "cancel";
 }
 
 /**
  * The iOS interactive back swipe as a state machine over pointer positions: {@linkcode start}
- * accepts a touch in the left edge zone, {@linkcode move} locks the axis after the first
+ * accepts a touch in the left edge zone (anywhere with {@linkcode FULL_SCREEN_SWIPE}), {@linkcode move} locks the axis after the first
  * `lockDistance` px and then reports the screen's offset and progress, and {@linkcode end}
  * decides commit or cancel from the progress and the release velocity. It never touches the
  * DOM (and so never writes a scroll position).
@@ -134,6 +160,7 @@ export class EdgeSwipeTracker {
   #width = 1;
   #locked = false;
   #progress = 0;
+  #dx = 0;
   readonly #velocity = new VelocityTracker();
 
   constructor(config: EdgeSwipeConfig = {}) {
@@ -170,7 +197,12 @@ export class EdgeSwipeTracker {
     this.#velocity.add(t, x, y);
     const dx = x - origin.x;
     if (!this.#locked) {
-      const axis = lockAxis(dx, y - origin.y, this.#config.lockDistance ?? 10);
+      const axis = lockAxis(
+        dx,
+        y - origin.y,
+        this.#config.lockDistance ?? 10,
+        this.#config.lockRatio ?? 1,
+      );
       if (axis === "pending") return { phase: "pending" };
       if (axis === "reject") {
         this.cancel();
@@ -179,6 +211,7 @@ export class EdgeSwipeTracker {
       this.#locked = true;
     }
     const offset = clamp(dx, 0, this.#width);
+    this.#dx = offset;
     this.#progress = offset / this.#width;
     return { phase: "tracking", dx: offset, progress: this.#progress };
   }
@@ -190,11 +223,13 @@ export class EdgeSwipeTracker {
   end(t: number): { decision: SwipeRelease; progress: number; velocityX: number } | null {
     const locked = this.#locked && this.#origin !== null;
     const progress = this.#progress;
+    const distance = this.#dx;
     const velocityX = this.#velocity.velocity().x;
     void t;
     this.cancel();
     if (!locked) return null;
-    return { decision: releaseSwipe(progress, velocityX, this.#config), progress, velocityX };
+    const decision = releaseSwipe(progress, velocityX, this.#config, distance);
+    return { decision, progress, velocityX };
   }
 
   /** Stop tracking without a decision. */
@@ -202,6 +237,7 @@ export class EdgeSwipeTracker {
     this.#origin = null;
     this.#locked = false;
     this.#progress = 0;
+    this.#dx = 0;
     this.#velocity.reset();
   }
 }
