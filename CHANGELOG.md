@@ -11,8 +11,9 @@ and this project adheres to
 ### Added
 
 - **`scheduleNotification({ silent: true })` in `denext/mobile`: deliver a local notification
-  without a sound.** iOS attaches no sound (a `sound` is ignored), Android posts it with the
-  local-notifications plugin's `silent` flag, the web passes `silent` to
+  without a sound.** iOS attaches no sound (a `sound` is ignored), Android 8+ posts it on a
+  denext-owned low-importance `denext-silent` channel (unless you pass your own `channelId`;
+  Android 7 cannot silence it), the web passes `silent` to
   `new Notification(title, { silent })`, and Deno Desktop sends `silent` to the runtime's
   notification schedule (a repeating series' top-up stays silent). The desktop page's own web
   `Notification` shim now honours `silent: true` too instead of ignoring it.
