@@ -73,6 +73,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A bare import resolves on Windows as it does on macOS and Linux.** The esbuild deno-loader's
+  resolver runs in WASM, which spells a drive path `/C:/app/package.json`, and Windows refuses
+  that spelling (os error 123). Every file it probed while finding the workspace and resolving
+  (the `deno.json` and `package.json` beside the config, `node_modules/<pkg>/package.json`) read
+  as missing, so the app's `package.json` dependencies were never seen: a bare import denext's
+  own resolver did not place (such as `ms` with `nodeModulesDir: "manual"`) failed with
+  `Relative import path "ms" not prefixed with / or ./ or ../` on Windows only. The loader's
+  file reads now take those paths as `C:/…`. A new `windows-resolve` CI job runs the regression
+  test on windows-latest.
 - **`denext profile --interact` no longer reports first-run state as a leak.** With
   `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
   the heap after the first run and a GC, shown as `warm` in the report. The first run loads

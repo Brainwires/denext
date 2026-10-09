@@ -128,6 +128,14 @@ export default {
         path. CommonJS can&apos;t be tree-shaken, so this keeps an icon library&apos;s unused icons
         out of the bundle.
       </p>
+      <p>
+        A bare import denext&apos;s own resolver does not place falls through to the Deno resolver,
+        which reads the app&apos;s <code>package.json</code> dependencies and, with{" "}
+        <code>nodeModulesDir: "manual"</code>, its{" "}
+        <code>node_modules</code>. It resolves the same on Windows as on macOS and Linux: an app
+        that builds on one builds on the others (through 3.4.0 a Windows build failed with{" "}
+        <code>Relative import path "ms" not prefixed with / or ./ or ../</code>).
+      </p>
 
       <h2>Barrel imports: optimizePackageImports</h2>
       <p>
