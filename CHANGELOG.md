@@ -28,6 +28,17 @@ and this project adheres to
 
 ### Fixed
 
+- **An unmounted subtree is released at once.** Three references kept a deleted
+  component's fibers, and with them its hook state, its props and its detached DOM, alive
+  after the commit that removed it: the parent's previous buffer still listed the deleted
+  child until the parent rendered again; only the deleted fiber was severed, not its double
+  buffer, whose `child` / `return` links led back into the old subtree; and the scheduler
+  kept the last fiber that scheduled an update (for one error message). The commit now
+  detaches both buffers and the parent's previous child list, as React does
+  (`detachFiberMutation`, `detachFiberAfterEffects`, `detachAlternateSiblings`), and the
+  scheduler keeps the component type. In T3 Code, leaving its 2,000-message thread no
+  longer keeps 87 of that view's DOM nodes and ~0.5 MB of JS heap until the next render.
+
 - **The `sideEffects` array form is honored.** denext resolves `node_modules` itself and marks
   each resolved file for esbuild; it read only `"sideEffects": false` and treated the array form
   (`["*.css", "./dist/web-components.js"]`) as "every file has side effects", so nothing in such
