@@ -29,7 +29,14 @@ import { beginWork } from "./begin-work.ts";
 import { completeWork } from "./complete-work.ts";
 import { handleThrow, SUSPENDED_TRANSITION } from "./unwind.ts";
 import { commitRoot, flushPassiveEffects } from "./commit.ts";
-import { createWorkInProgress, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
+import {
+  createWorkInProgress,
+  type Fiber,
+  fiberExt,
+  NoLane,
+  SyncLane,
+  TransitionLane,
+} from "./fiber.ts";
 import { beginHydration, endHydration } from "./hydration.ts";
 import { getViewTransitionSupport } from "./view-transition-support.ts";
 
@@ -90,7 +97,7 @@ export function beginConcurrentRender(): void {
   setRenderLanes(TransitionLane);
   const wipRoot = createWorkInProgress(handle.current, null);
   fiberToRoot.set(wipRoot, handle);
-  wipRoot.pendingElement = handle.pendingElement;
+  fiberExt(wipRoot).pendingElement = handle.pendingElement;
   wipRoot.host = wipRoot;
   startConcurrentRender(handle, wipRoot);
   resumeConcurrent();
@@ -228,7 +235,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     setRenderLanes(lanes);
     const wipRoot = createWorkInProgress(handle.current, null);
     fiberToRoot.set(wipRoot, handle);
-    wipRoot.pendingElement = handle.pendingElement;
+    fiberExt(wipRoot).pendingElement = handle.pendingElement;
     wipRoot.host = wipRoot;
     setDuringRender(true);
     enterRootDocument(handle);

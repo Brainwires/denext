@@ -26,7 +26,24 @@ import { normalizeChildren } from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
 import { LIBRARY_ELEMENT } from "../../runtime/library-elements.ts";
-import { type Fiber, NoLane, Rendered, type SuspenseListState } from "./fiber.ts";
+import {
+  BailedBit,
+  DidRenderBit,
+  type Fiber,
+  fiberExt,
+  ForceRenderBit,
+  hasBit,
+  HiddenBit,
+  NoLane,
+  OffscreenBit,
+  Rendered,
+  setBit,
+  ShowingFallbackBit,
+  StateUpdateBit,
+  StrictBit,
+  type SuspenseListState,
+  UnderProfilerBit,
+} from "./fiber.ts";
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
 import { renderLanes } from "./scheduler.ts";
@@ -78,10 +95,11 @@ function canSkipComponentRender(
  * boundary reset) always renders.
  */
 function ownUpdateIsNoop(wip: Fiber, current: Fiber | null): boolean {
-  const forced = wip.forceRender || current?.forceRender;
-  const fromState = wip.stateUpdate || current?.stateUpdate;
-  wip.forceRender = wip.stateUpdate = false;
-  if (current) current.forceRender = current.stateUpdate = false;
+  const bits = wip.bits | (current?.bits ?? 0);
+  const forced = (bits & ForceRenderBit) !== 0;
+  const fromState = (bits & StateUpdateBit) !== 0;
+  wip.bits &= ~(ForceRenderBit | StateUpdateBit);
+  if (current) current.bits &= ~(ForceRenderBit | StateUpdateBit);
   // Only an update that state setters scheduled can be a no-op; a lane pending for any other
   // reason (a suspended child's retry, a retained hidden-subtree lane) is real work.
   if (forced || !fromState || !current) return false;
@@ -107,9 +125,9 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   // `.contexts` with their derived map; components never expose via it.)
   wip.contexts = wip.inherited;
   const rendered = renderComponent(wip);
-  wip.didRender = true; // this fiber re-ran its render → its hook baselines need promotion at commit
+  wip.bits |= DidRenderBit; // this fiber re-ran its render → its hook baselines need promotion at commit
   wip.flags |= Rendered; // …and lets the commit's flag reset prune clean subtrees
-  if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) {
+  if (__DENEXT_CLASS_COMPONENTS__ && hasBit(wip, BailedBit)) {
     // shouldComponentUpdate/PureComponent bailed. Like the function bailout,
     // still descend into children that have their own pending work, so a
     // descendant's update isn't dropped just because this class didn't change.
@@ -172,16 +190,14 @@ function beginFragment(wip: Fiber): Fiber | null {
   const { strict, profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
   // A StrictMode boundary makes its whole subtree strict in development — enabling
   // render/effect double-invoke.
-  if (wip.strict !== true && devHydrationActive() && strict) {
-    wip.strict = true;
-  }
+  if (!hasBit(wip, StrictBit) && devHydrationActive() && strict) wip.bits |= StrictBit;
   // A <Profiler> boundary times its subtree's component renders.
   if (profiler) {
-    wip.profiler = profiler;
-    wip.underProfiler = true;
+    fiberExt(wip).profiler = profiler;
+    wip.bits |= UnderProfilerBit;
     noteProfiler();
   }
-  const prevProvValue = wip.provValue;
+  const prevProvValue = wip.ext?.provValue;
   const exposed = providerContexts(wip, wip.vnode, wip.inherited);
   wip.contexts = exposed;
   // A provider whose value CHANGED must force every descendant that reads this
@@ -220,8 +236,8 @@ function applySuspenseListPolicy(
 ): void {
   // One shared state object across all buffers (created once, carried by
   // reference) so a bailed/cloned member always reads fresh reveal state.
-  const st: SuspenseListState = wip.listState ?? { members: [], ready: [], snapshot: [] };
-  wip.listState = st;
+  const x = fiberExt(wip);
+  const st: SuspenseListState = x.listState ??= { members: [], ready: [], snapshot: [] };
   st.revealOrder = listPolicy.revealOrder;
   st.tail = listPolicy.tail;
   // Freeze the persistent readiness so every member this render decides against
@@ -232,8 +248,9 @@ function applySuspenseListPolicy(
   // <Suspense> each renders (see reconcileChildren).
   let i = 0;
   for (let c = wip.child; c !== null; c = c.sibling) {
-    c.listOwnerState = st;
-    c.listIndex = i++;
+    const cx = fiberExt(c);
+    cx.listOwnerState = st;
+    cx.listIndex = i++;
   }
   // Record the child count so the collapsed/hidden tail can locate the leading
   // boundary on the first render (when `snapshot` is still empty).
@@ -249,12 +266,11 @@ function applySuspenseListPolicy(
 // gated Activity runtime (activity-runtime.ts).
 export function revealOffscreenChildren(wip: Fiber): void {
   for (let c = wip.child; c !== null; c = c.sibling) {
-    c.hidden = false;
+    c.bits = (c.bits & ~HiddenBit) | ForceRenderBit;
     c.lanes |= renderLanes;
-    c.forceRender = true;
   }
-  wip.offscreen = false;
-  wip.primaryCount = undefined;
+  wip.bits &= ~OffscreenBit;
+  if (wip.ext) wip.ext.primaryCount = undefined;
   noteOffscreen();
 }
 
@@ -268,10 +284,10 @@ function beginSuspenseOffscreen(wip: Fiber): Fiber | null {
     normalizeChildren(wip.vnode.props.fallback as VNodeChildren),
   );
   reconcileChildren(wip, combined, wip.host, wip.boundary, wip.inherited);
-  wip.primaryCount = primary.length;
+  const primaryCount = fiberExt(wip).primaryCount = primary.length;
   let i = 0;
   for (let c = wip.child; c !== null; c = c.sibling, i++) {
-    c.hidden = i < wip.primaryCount;
+    setBit(c, HiddenBit, i < primaryCount);
   }
   noteOffscreen();
   return wip.child;
@@ -285,7 +301,11 @@ function resolveSuspenseDisplay(
   wip: Fiber,
   inList: boolean,
 ): { display: "content" | "fallback" | "hidden"; children: VNodeChildren } {
-  const display = inList ? suspenseListDisplay(wip) : wip.showingFallback ? "fallback" : "content";
+  const display = inList
+    ? suspenseListDisplay(wip)
+    : hasBit(wip, ShowingFallbackBit)
+    ? "fallback"
+    : "content";
   const children = display === "content"
     ? (wip.vnode.props.children as VNodeChildren)
     : display === "fallback"
@@ -306,22 +326,22 @@ function beginSuspense(wip: Fiber): Fiber | null {
   }
   // Under a SuspenseList, reveal order decides whether this boundary may show
   // content yet, show its fallback, or stay hidden (tail policy).
-  const st = wip.listState;
+  const st = wip.ext?.listState;
   const inList = st != null && st.revealOrder != null;
-  if (inList) st!.members[wip.listIndex!] = wip;
+  if (inList) st!.members[wip.ext!.listIndex!] = wip;
 
   // Offscreen: an URGENT re-suspend of an already-revealed boundary. Keep the
   // primary subtree mounted-but-hidden and show the fallback alongside, so a
   // later reveal restores the SAME instances (state preserved) instead of
   // remounting.
-  if (!inList && wip.offscreen === true && wip.showingFallback === true) {
+  if (!inList && hasBit(wip, OffscreenBit) && hasBit(wip, ShowingFallbackBit)) {
     return beginSuspenseOffscreen(wip);
   }
 
   const { display, children } = resolveSuspenseDisplay(wip, inList);
   // A list member rendering content is (tentatively) ready; if its children then
   // suspend, handleThrow resets its slot to false for the ordering above.
-  if (inList && display === "content") st!.ready[wip.listIndex!] = true;
+  if (inList && display === "content") st!.ready[wip.ext!.listIndex!] = true;
   reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
   // Leaving Offscreen (revealing content): un-hide the primary fibers so they render, and
   // mark the boundary for the commit pass to restore their DOM. Each un-hidden fiber gets
@@ -329,7 +349,7 @@ function beginSuspense(wip: Fiber): Fiber | null {
   // lanes, but a primary that MOUNTED during the offscreen pass (a new key or type — the
   // re-suspend replaced the child) has never rendered and carries no lane of its own, so
   // without this the props-equal bailout would keep its empty committed subtree forever.
-  if (!inList && display === "content" && wip.primaryCount != null) {
+  if (!inList && display === "content" && wip.ext?.primaryCount != null) {
     revealOffscreenChildren(wip); // so the commit pass restores hiddenEls visibility
   }
   return wip.child;
@@ -372,9 +392,10 @@ function beginElement(wip: Fiber): Fiber | null {
     const props = wip.vnode.props ?? {};
     const act = props.action ?? props.formAction;
     if (typeof act === "function") {
-      wip.formStatus ??= createFormStatusSignal();
+      const x = fiberExt(wip);
+      x.formStatus ??= createFormStatusSignal();
       childInherited = new Map(wip.inherited);
-      childInherited.set(FormStatusContext._id, wip.formStatus);
+      childInherited.set(FormStatusContext._id, x.formStatus);
     }
   }
   reconcileChildren(
@@ -391,14 +412,15 @@ function beginElement(wip: Fiber): Fiber | null {
 // to the PARENT boundary so an error in the fallback doesn't loop back here); otherwise
 // render its children with itself as their boundary. Split out of {@linkcode beginWork}.
 function beginErrorBoundary(wip: Fiber): Fiber | null {
-  if (wip.__error != null) {
+  const error = wip.ext?.__error;
+  if (error != null) {
     const Fallback = wip.vnode.props.fallback as (p: {
       error: Error;
       reset: () => void;
     }) => VNode;
     const fallbackVNode: VNode = {
       type: Fallback as unknown as VNode["type"],
-      props: { error: toError(wip.__error), reset: () => resetBoundary(wip) },
+      props: { error: toError(error), reset: () => resetBoundary(wip) },
       key: null,
     };
     reconcileChildren(wip, [fallbackVNode], wip.host, wip.boundary, wip.inherited);
@@ -419,11 +441,11 @@ export function beginWork(wip: Fiber): Fiber | null {
   // descend — keep the committed subtree mounted-as-is (a suspended child inside must
   // not re-throw) and DO NOT consume its lanes, so revealing it later re-renders with
   // the resolved data. Its DOM is hidden by the commit visibility pass.
-  if (wip.hidden === true) {
+  if ((wip.bits & HiddenBit) !== 0) {
     // The deferred render is real work even if no hook value changes meanwhile — exempt it
     // from the no-op state bailout when the reveal renders it.
-    wip.forceRender = true;
-    if (wip.alternate) wip.alternate.forceRender = true;
+    wip.bits |= ForceRenderBit;
+    if (wip.alternate) wip.alternate.bits |= ForceRenderBit;
     return null;
   }
   const hasOwnUpdate = (wip.lanes & renderLanes) !== 0;
@@ -433,7 +455,7 @@ export function beginWork(wip: Fiber): Fiber | null {
     case "root": {
       reconcileChildren(
         wip,
-        wip.pendingElement != null ? [wip.pendingElement] : [],
+        wip.ext?.pendingElement != null ? [wip.ext.pendingElement] : [],
         wip,
         null,
         wip.inherited,

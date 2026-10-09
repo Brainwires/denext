@@ -11,6 +11,7 @@ import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { documentForFiber } from "./state.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
 import {
+  BailedBit,
   bubbleFlags,
   childrenDom,
   type Fiber,
@@ -59,7 +60,8 @@ export function hostPropsChanged(
 
 function completeHost(wip: Fiber): void {
   if (isHydrating) popHydrationCursor();
-  if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
+  // The listener map is created by the first handler (dom-props) and shared by both buffers.
+  if (!wip.listeners) wip.listeners = wip.alternate?.listeners;
   if (wip.alternate !== null) {
     // Update: applyProps + re-sync deferred to the commit (mutation) phase — only when a
     // prop other than `children` changed (React's prepareUpdate diff). applyProps over
@@ -106,7 +108,10 @@ function completeText(wip: Fiber): void {
 function completeComponent(wip: Fiber): void {
   // getSnapshotBeforeUpdate runs before a class update's DOM mutation — but
   // not when shouldComponentUpdate/PureComponent bailed this render.
-  if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
+  if (
+    __DENEXT_CLASS_COMPONENTS__ && wip.ext?.classInstance && wip.alternate &&
+    (wip.bits & BailedBit) === 0
+  ) {
     wip.flags |= Snapshot;
   }
 }

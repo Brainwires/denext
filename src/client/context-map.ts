@@ -7,16 +7,7 @@
 import { PROVIDER } from "../runtime/context.ts";
 import { areEqualOf } from "../runtime/memo.ts";
 import type { VNode } from "../jsx/types.ts";
-
-/** The provider bookkeeping both reconcilers' node types satisfy. */
-export interface ProviderState {
-  /** Context values visible to this instance's subtree. */
-  contexts: Map<symbol, unknown>;
-  /** The parent map the current `contexts` was derived from (memo key). */
-  provParent?: Map<symbol, unknown>;
-  /** The provided value the current `contexts` was derived from (memo key). */
-  provValue?: unknown;
-}
+import { type Fiber, fiberExt } from "./fiber/fiber.ts";
 
 /**
  * Compute the context map visible to a fragment's children. When the fragment is
@@ -27,12 +18,13 @@ export interface ProviderState {
  * signal (see {@link propsAndContextEqual}). Non-provider fragments pass `parent`
  * through unchanged.
  *
- * @param state The fragment node (stores the memo of its last derivation).
+ * @param state The fragment fiber (its `contexts`, and the memo of its last derivation —
+ *   `provParent` / `provValue` — on its extension).
  * @param vnode The fragment vnode (carries the provider info, if any).
  * @param parent The context map inherited from above.
  */
 export function providerContexts(
-  state: ProviderState,
+  state: Fiber,
   vnode: VNode,
   parent: Map<symbol, unknown>,
 ): Map<symbol, unknown> {
@@ -40,16 +32,18 @@ export function providerContexts(
     | { id: symbol; value: unknown }
     | undefined;
   if (!info) return parent;
+  const memo = state.ext;
   if (
-    state.provParent === parent && Object.is(state.provValue, info.value) &&
+    memo !== undefined && memo.provParent === parent && Object.is(memo.provValue, info.value) &&
     state.contexts.get(info.id) === info.value
   ) {
     return state.contexts; // unchanged provider — reuse the same child-map reference
   }
   const next = new Map(parent);
   next.set(info.id, info.value);
-  state.provParent = parent;
-  state.provValue = info.value;
+  const x = fiberExt(state);
+  x.provParent = parent;
+  x.provValue = info.value;
   return next;
 }
 

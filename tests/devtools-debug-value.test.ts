@@ -125,7 +125,7 @@ Deno.test("useDebugValue: recorded in dev and shown on the custom hook's row", (
     });
     mount(h(Status, null));
     // One record, placed after the custom hook's cell (cursor 2 = two cells consumed).
-    assertEquals(fiberOf(Status).debugValues?.map((e) => e.index), [2]);
+    assertEquals(fiberOf(Status).ext?.debugValues?.map((e) => e.index), [2]);
 
     const node = nodeNamed("Status");
     assertEquals(node.hooksNamed, true, "a zero-cell call keeps the naming walk aligned");
@@ -156,7 +156,7 @@ Deno.test("useDebugValue: format runs only when the inspector reads the value", 
     formatCalls = 0;
     mount(h(Lazy, null));
     assertEquals(formatCalls, 0, "render never calls format");
-    assertEquals(fiberOf(Lazy).debugValues?.length, 1, "the raw value is recorded");
+    assertEquals(fiberOf(Lazy).ext?.debugValues?.length, 1, "the raw value is recorded");
     const node = nodeNamed("Lazy");
     assert(formatCalls >= 1, "the inspector applied format on read");
     assertEquals(node.hooks[0].debug?.preview, '"n=41"');
@@ -216,11 +216,11 @@ Deno.test("useDebugValue: production records nothing on the fiber", () => {
     prodBump();
     flushSync(); // a re-render through the double buffer (carryOver) as well
     const fiber = fiberOf(Prod);
-    // Fibers declare every field up front (one V8 shape), so the slot exists; production must
-    // leave it empty on both buffers.
-    assertEquals(fiber.debugValues, undefined, "nothing recorded on the committed fiber");
+    // The record lives on the fiber's lazily allocated extension; production must not even
+    // allocate one for it, on either buffer.
+    assertEquals(fiber.ext, undefined, "nothing recorded on the committed fiber");
     assert(fiber.alternate !== null, "the re-render went through the double buffer");
-    assertEquals(fiber.alternate.debugValues, undefined, "nor on its alternate");
+    assertEquals(fiber.alternate.ext, undefined, "nor on its alternate");
     assertEquals(prodFormatCalls, 0);
   }, false);
 });
@@ -265,7 +265,7 @@ Deno.test("useDebugValue: consumes no hook cell", () => {
     const labelled = fiberOf(Labelled).hooks!;
     assertEquals(labelled.length, plain.length);
     assertEquals(labelled.map((c) => c.kind), plain.map((c) => c.kind));
-    assertEquals(fiberOf(Labelled).debugValues?.map((e) => e.index), [0, 1, 2]);
+    assertEquals(fiberOf(Labelled).ext?.debugValues?.map((e) => e.index), [0, 1, 2]);
   });
 });
 
@@ -284,10 +284,10 @@ Deno.test("useDebugValue: StrictMode's second pass and a re-render do not duplic
     strictRenders = 0;
     mount(h(StrictMode, null, h(Strict, null)));
     assert(strictRenders >= 2, "StrictMode double-rendered");
-    assertEquals(fiberOf(Strict).debugValues?.map((e) => e.value), ["n=0"]);
+    assertEquals(fiberOf(Strict).ext?.debugValues?.map((e) => e.value), ["n=0"]);
     strictBump();
     flushSync();
-    assertEquals(fiberOf(Strict).debugValues?.map((e) => e.value), ["n=1"]);
+    assertEquals(fiberOf(Strict).ext?.debugValues?.map((e) => e.value), ["n=1"]);
   });
 });
 
@@ -324,7 +324,7 @@ Deno.test("useDebugValue: Fast Refresh keeps state when an edit adds a call", ()
       flushSync();
       assertEquals(container.innerHTML, "<span>v2:2</span>", "state survived the edit");
       assertEquals(reloads, 0, "no signature change reported");
-      assertEquals(fiberOf(V2).debugValues?.map((e) => e.value), ["count 2"]);
+      assertEquals(fiberOf(V2).ext?.debugValues?.map((e) => e.value), ["count 2"]);
 
       // Control: an edit that adds a real cell IS a signature change (the guard is live).
       const V3 = (): VNode => {

@@ -108,7 +108,7 @@ function scanHydration(el: Element, props: Props): { base: Props; skip: Set<stri
 }
 
 function complete(wip: Fiber): void {
-  if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
+  if (!wip.listeners) wip.listeners = wip.alternate?.listeners;
   if (wip.alternate !== null) {
     if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
     return;

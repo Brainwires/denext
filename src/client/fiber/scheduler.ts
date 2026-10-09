@@ -11,7 +11,14 @@ import { setTransitionScheduler, setTransitionSettledHook } from "../../runtime/
 import { Variable } from "../../runtime/async-context.ts";
 import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
 import { inEventDispatch } from "../event-priority.ts";
-import { type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
+import {
+  type Fiber,
+  ForceRenderBit,
+  NoLane,
+  StateUpdateBit,
+  SyncLane,
+  TransitionLane,
+} from "./fiber.ts";
 
 // The render entry points this module drives. They live in the work loop, above this
 // module, and are injected once by `root.ts` so the fiber module graph stays acyclic
@@ -82,13 +89,9 @@ export function resetConcurrentState(): void {
  * forced re-render (a Suspense retry, a store change, a boundary reset — never bailed).
  */
 function markUpdateSource(fiber: Fiber, fromState: boolean): void {
-  if (fromState) {
-    fiber.stateUpdate = true;
-    if (fiber.alternate) fiber.alternate.stateUpdate = true;
-  } else {
-    fiber.forceRender = true;
-    if (fiber.alternate) fiber.alternate.forceRender = true;
-  }
+  const bit = fromState ? StateUpdateBit : ForceRenderBit;
+  fiber.bits |= bit;
+  if (fiber.alternate) fiber.alternate.bits |= bit;
 }
 
 /**

@@ -30,7 +30,16 @@ import { getClassSupport } from "./class-support.ts";
 import { loadClassRuntime } from "../class-loader.ts";
 import { findSuspense } from "./fiber-utils.ts";
 import { scheduleUpdate } from "./scheduler.ts";
-import { type Fiber, HasEffect, type HookCell } from "./fiber.ts";
+import {
+  BailedBit,
+  type Fiber,
+  fiberExt,
+  hasBit,
+  HasEffect,
+  type HookCell,
+  StrictBit,
+  UnderProfilerBit,
+} from "./fiber.ts";
 
 /** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
 const MAX_RENDER_PHASE_PASSES = 25;
@@ -68,7 +77,7 @@ function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | un
   }
   // Effect queues are allocated on a component's first effect of the render (most
   // components schedule none): three empty arrays per render, and per fiber, otherwise.
-  inst.insertionEffects = undefined;
+  if (inst.ext) inst.ext.insertionEffects = undefined;
   inst.pendingEffects = undefined;
   inst.passiveEffects = undefined;
 }
@@ -149,10 +158,9 @@ function resolveRefreshSwap(inst: Fiber): RefreshResolution {
   const resolveFR = familyResolveActive();
   const rawType = resolveFR ? resolveFamilyCurrent(inst.vnode.type) : inst.vnode.type;
   const refreshSwap = resolveFR
-    ? (inst.alternate !== null && inst.alternate.lastImpl != null &&
-      inst.alternate.lastImpl !== rawType)
+    ? (inst.alternate?.ext?.lastImpl != null && inst.alternate.ext.lastImpl !== rawType)
     : (inst.alternate !== null && inst.vnode.type !== inst.alternate.vnode.type);
-  if (resolveFR) inst.lastImpl = rawType;
+  if (resolveFR) fiberExt(inst).lastImpl = rawType;
   const oldKinds = refreshSwap && inst.hooks ? inst.hooks.map((c) => c.kind) : null;
   return { rawType, refreshSwap, oldKinds };
 }
@@ -184,7 +192,7 @@ function awaitClassRuntime(inst: Fiber): VNode | null {
     failed(err);
     scheduleUpdate(inst); // re-render into the guided error (an error boundary can catch it)
   });
-  inst.bailed = true;
+  inst.bits |= BailedBit;
   return (inst.child?.vnode as VNode) ?? null;
 }
 
@@ -203,7 +211,7 @@ function renderClassFiber(inst: Fiber): VNode | null {
   if (cs === null) return awaitClassRuntime(inst);
   const { vnode, bailed } = cs.renderClassInstance(inst as never);
   if (bailed) {
-    inst.bailed = true;
+    inst.bits |= BailedBit;
     return (inst.child?.vnode as VNode) ?? null;
   }
   // Class lifecycle callbacks (componentDidMount / componentDidUpdate) are queued onto the
@@ -213,7 +221,7 @@ function renderClassFiber(inst: Fiber): VNode | null {
   if (
     (inst.pendingEffects && inst.pendingEffects.length > 0) ||
     (inst.passiveEffects && inst.passiveEffects.length > 0) ||
-    (inst.insertionEffects && inst.insertionEffects.length > 0)
+    (inst.ext?.insertionEffects && inst.ext.insertionEffects.length > 0)
   ) {
     inst.flags |= HasEffect;
   }
@@ -293,7 +301,7 @@ function renderWithStrictMode(
 ): VNode | null {
   const depsBaseline = inst.hooks!.map((c) => c.deps);
   const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
-  if (inst.strict === true && devHydrationActive()) {
+  if (hasBit(inst, StrictBit) && devHydrationActive()) {
     const localAfterFirst = inst.idScope!.local;
     // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
     // and queue duplicates: suppress queueing for it (the first pass's entries commit).
@@ -326,10 +334,11 @@ function finishComponentRender(
   if (swap.refreshSwap && hookSignatureChanged(swap.oldKinds, inst.hooks, hookIndex)) {
     reportSignatureChange();
   }
-  if (inst.underProfiler === true) {
+  if (hasBit(inst, UnderProfilerBit)) {
     const d = performance.now() - t0;
-    inst.actualDuration = d;
-    inst.selfBaseDuration = d;
+    const x = fiberExt(inst);
+    x.actualDuration = d;
+    x.selfBaseDuration = d;
   }
   const prof = devtoolsHooks?.profiler;
   if (prof) prof(inst.vnode.type, performance.now() - profT0, inst);
@@ -347,16 +356,16 @@ export function renderComponent(inst: Fiber): VNode | null {
   enterComponentRender(inst, 0);
   // Effect queues are allocated on a component's first effect of the render (most
   // components schedule none): three empty arrays per render, and per fiber, otherwise.
-  inst.insertionEffects = undefined;
+  if (inst.ext) inst.ext.insertionEffects = undefined;
   inst.pendingEffects = undefined;
   inst.passiveEffects = undefined;
   // Rebuild the read-context set from this render's useContext calls (accumulated
   // across any render-phase / StrictMode re-invocations, which read the same set).
   inst.readContexts = undefined;
-  if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
+  if (__DENEXT_CLASS_COMPONENTS__) inst.bits &= ~BailedBit;
   // Time the render for an enclosing <Profiler> (a bailed component never reaches
   // here, so its actualDuration stays 0 while selfBaseDuration carries over).
-  const t0 = inst.underProfiler === true ? performance.now() : 0;
+  const t0 = hasBit(inst, UnderProfilerBit) ? performance.now() : 0;
   // Dev-only DevTools profiler: time every component render while recording (null
   // otherwise, so the hot path is one null check).
   const profT0 = devtoolsHooks?.profiler ? performance.now() : 0;

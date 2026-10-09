@@ -15,9 +15,13 @@ import {
   createFiber,
   type Fiber,
   type FiberTag,
+  hasBit,
   HasEffect,
+  HiddenBit,
   NoLane,
+  OffscreenBit,
   Placement,
+  ShowingFallbackBit,
 } from "./fiber.ts";
 
 export function devHydrationActive(): boolean {
@@ -73,7 +77,7 @@ export function isPlainUnkeyedFragment(v: unknown): v is VNode {
 
 export function isClassBoundary(fiber: Fiber): boolean {
   return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
-    fiber.classInstance != null &&
+    fiber.ext?.classInstance != null &&
     (getClassSupport()?.hasErrorLifecycle(fiber.vnode.type) ?? false);
 }
 
@@ -158,12 +162,12 @@ export function componentErrorInfo(fiber: Fiber): { componentStack: string } {
  * With `tail` collapsed/hidden only the leading edge renders (a serial tail).
  */
 export function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
-  const st = member.listState!;
+  const st = member.ext!.listState!;
   const order = st.revealOrder!;
   // The frozen readiness snapshot for this render, so every member decides against
   // one consistent state.
   const ready = st.snapshot;
-  const idx = member.listIndex!;
+  const idx = member.ext!.listIndex!;
   const revealed = (i: number): boolean => {
     if (!ready[i]) return false;
     if (order === "together") return ready.length > 0 && ready.every(Boolean);
@@ -175,7 +179,7 @@ export function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hi
   // its promise (not ready and not already suspended) it renders content once to
   // drive the promise — which then suspends back to its fallback.
   const gated = (): "content" | "fallback" =>
-    !ready[idx] && member.showingFallback !== true ? "content" : "fallback";
+    !ready[idx] && !hasBit(member, ShowingFallbackBit) ? "content" : "fallback";
   if (st.tail === "collapsed" || st.tail === "hidden") {
     // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
     // Length comes from the child count (not `ready.length`, which is empty on the
@@ -206,12 +210,13 @@ export function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hi
  * the coarse bit down to insertion effects specifically.
  */
 export function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
-  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
+  if ((fiber.bits & HiddenBit) !== 0) return; // Offscreen-hidden subtree: effects are gated.
   if ((fiber.subtreeFlags & HasEffect) !== 0) {
     for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
   }
   if (fiber.tag !== "component" || (fiber.flags & HasEffect) === 0) return;
-  if (fiber.insertionEffects && fiber.insertionEffects.length > 0) out.push(fiber);
+  const es = fiber.ext?.insertionEffects;
+  if (es && es.length > 0) out.push(fiber);
 }
 
 /**
@@ -223,8 +228,8 @@ export function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
  * content) go to `parked` instead: React mounts no effect there until it is revealed.
  */
 export function collectEffects(fiber: Fiber, out: Fiber[], parked: Fiber[] = out): void {
-  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
-  if (fiber.tag === "activity" && fiber.offscreen === true) out = parked;
+  if ((fiber.bits & HiddenBit) !== 0) return; // Offscreen-hidden subtree: effects are gated.
+  if (fiber.tag === "activity" && hasBit(fiber, OffscreenBit)) out = parked;
   if ((fiber.subtreeFlags & HasEffect) !== 0) {
     for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out, parked);
   }

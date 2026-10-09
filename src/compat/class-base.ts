@@ -46,6 +46,12 @@ export interface ReconcilerInstance {
   contexts: Map<symbol, unknown>;
   /** Post-commit effects the reconciler drains (mount/update lifecycle is queued here). */
   pendingEffects?: Array<() => void>;
+  /** The class fields, on the fiber's lazily allocated extension (absent until first set). */
+  ext?: ClassInstanceFields;
+}
+
+/** The per-fiber class-component fields (they live on the fiber's rarely-used-state extension). */
+export interface ClassInstanceFields {
   /** The user's class instance, created on mount. */
   classInstance?: unknown;
   /** The `getSnapshotBeforeUpdate` return value, captured before DOM mutation. */

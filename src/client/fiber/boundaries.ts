@@ -12,7 +12,16 @@ import {
 } from "../../runtime/hooks.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
 import { getClassSupport, setClassScheduleUpdate } from "./class-support.ts";
-import { type Fiber, SyncLane, TransitionLane } from "./fiber.ts";
+import {
+  type Fiber,
+  fiberExt,
+  hasBit,
+  setBit,
+  ShowingFallbackBit,
+  SyncLane,
+  TransitionLane,
+  UnmountedBit,
+} from "./fiber.ts";
 import { currentFiber } from "./hooks-dispatcher.ts";
 
 export function onErrorFor(fiber: Fiber): (err: unknown) => void {
@@ -27,7 +36,7 @@ export function onErrorFor(fiber: Fiber): (err: unknown) => void {
  * subtrees the transition touched — now that the promise has settled.
  */
 export function retrySuspendedTransition(inst: Fiber): void {
-  if (inst.unmounted) return; // boundary was unmounted before the promise settled
+  if (hasBit(inst, UnmountedBit)) return; // boundary was unmounted before the promise settled
   const handle = rootHandleOf(inst);
   if (!handle) return;
   handle.pendingLanes |= TransitionLane;
@@ -35,23 +44,24 @@ export function retrySuspendedTransition(inst: Fiber): void {
 }
 
 export function retrySuspense(inst: Fiber): void {
-  if (inst.unmounted) return; // boundary was unmounted before the promise settled
+  if (hasBit(inst, UnmountedBit)) return; // boundary was unmounted before the promise settled
   // Clear the flag on BOTH buffers: `inst` is the fiber that suspended, and if an ancestor
   // re-rendered while the promise was pending (a parent setState from a layout effect —
   // TanStack Router's Transitioner) the committed buffer is now its alternate, and the
   // next work-in-progress copies `showingFallback` from THAT buffer (createWorkInProgress)
   // — so a one-sided clear would render the fallback forever.
-  inst.showingFallback = false;
-  if (inst.alternate) inst.alternate.showingFallback = false;
+  setBit(inst, ShowingFallbackBit, false);
+  if (inst.alternate) setBit(inst.alternate, ShowingFallbackBit, false);
   // A reveal is Transition-like work (React's retry lanes): when it is the root's only pending
   // urgent work, its commit may run in a view transition (see `reveal`).
   const handle = rootHandleOf(inst);
   const quiet = handle !== null && (handle.pendingLanes & SyncLane) === 0;
-  const st = inst.listState;
-  if (st && inst.listIndex != null) {
+  const st = inst.ext?.listState;
+  const idx = inst.ext?.listIndex;
+  if (st && idx != null) {
     // Mark this member ready on the shared state (indexed — the captured fiber may
     // be stale) and re-render every member so they re-evaluate reveal order.
-    st.ready[inst.listIndex] = true;
+    st.ready[idx] = true;
     for (const m of st.members) if (m) scheduleUpdate(m);
   } else {
     scheduleUpdate(inst);
@@ -65,8 +75,8 @@ export function retrySuspense(inst: Fiber): void {
 export function resetBoundary(inst: Fiber): void {
   // Both buffers, for the same reason as retrySuspense: `__error` is carried over from the
   // committed buffer, which may be `inst.alternate` if an ancestor re-rendered since the catch.
-  inst.__error = undefined;
-  if (inst.alternate) inst.alternate.__error = undefined;
+  if (inst.ext) inst.ext.__error = undefined;
+  if (inst.alternate?.ext) inst.alternate.ext.__error = undefined;
   scheduleUpdate(inst);
   flushRoots(SyncLane); // event-time (fallback's reset button): commit synchronously
 }
@@ -90,8 +100,8 @@ function triggerBoundary(inst: Fiber, error: unknown): void {
   // an ancestor re-render its `.return` chain ends at the boundary's ALTERNATE; `carryOver`
   // would then copy `undefined` from the current buffer over a one-sided write and the error
   // vanished: reported, no fallback, DOM unchanged.
-  inst.__error = error;
-  if (inst.alternate) inst.alternate.__error = error;
+  fiberExt(inst).__error = error;
+  if (inst.alternate) fiberExt(inst.alternate).__error = error;
   scheduleUpdate(inst);
   // Event-handler / async errors are caught outside render; commit the fallback
   // synchronously so the DOM reflects it immediately (React can't do this).

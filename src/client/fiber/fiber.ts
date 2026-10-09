@@ -174,7 +174,129 @@ export const TransitionLane = 2;
 
 export type Lanes = number;
 
+// ---- Per-fiber boolean state (bitmask, `Fiber.bits`) ------------------------
+//
+// Eleven booleans share one Smi field instead of eleven pointer-sized slots. `bits` is
+// persistent state, unlike `flags` (this pass's commit work, reset per render).
+
+/**
+ * Something other than a state setter scheduled this fiber (a Suspense retry, an external-store
+ * change, a boundary reset, Fast Refresh): the next render must run even though no hook value
+ * changed. Cleared when the fiber begins work.
+ */
+export const ForceRenderBit = 1;
+/** A state setter scheduled this fiber — the only updates the no-op bailout may judge; a lane
+ * retained for other reasons (a suspended child's retry) always renders. */
+export const StateUpdateBit = 2;
+/**
+ * This fiber actually re-ran its render this pass (not bailed). Lets the commit's
+ * `clearCommittedFlags` promote hook `committed` baselines only on fibers that rendered. Reset
+ * per pass (in `createWorkInProgress`, and after promotion in the commit walk).
+ */
+export const DidRenderBit = 4;
+/** A class component's shouldComponentUpdate / PureComponent bailed this pass. */
+export const BailedBit = 8;
+/** Inside a StrictMode subtree (dev double-invoke). */
+export const StrictBit = 16;
+/** A descendant of a `<Profiler>`: its component renders are timed. */
+export const UnderProfilerBit = 32;
+/** A `<Profiler>` that has committed once (its next `onRender` phase is "update"). */
+export const ProfilerMountedBit = 64;
+/** Suspense-only: the fallback (vs. real children) is showing. */
+export const ShowingFallbackBit = 128;
+/**
+ * Suspense-only (Offscreen): on an URGENT re-suspend of an already-revealed boundary, the
+ * primary subtree is kept mounted-but-hidden and the fallback is shown alongside (instead of
+ * remounting on reveal — state is preserved). Also an `<Activity>` in its hidden mode.
+ */
+export const OffscreenBit = 256;
+/**
+ * Set on the top-level fibers of an Offscreen-hidden primary subtree: beginWork skips
+ * re-rendering them (a suspended child must not re-throw) and preserves their committed
+ * subtree; commit sets an inline `display:none !important` on their DOM.
+ */
+export const HiddenBit = 512;
+/** Set by commitDeletion once this fiber is unmounted, so a late async callback (a settling
+ * Suspense promise) can bail instead of acting on a dead fiber. */
+export const UnmountedBit = 1024;
+
+/** The bits `createWorkInProgress` carries from the current fiber onto its twin. */
+const CARRIED_BITS = StrictBit | UnderProfilerBit | ProfilerMountedBit | ShowingFallbackBit |
+  OffscreenBit | HiddenBit;
+/** The bits a work-in-progress fiber keeps from its own previous life (never carried). */
+const OWN_BITS = ForceRenderBit | StateUpdateBit | UnmountedBit;
+
 // ---- The Fiber node --------------------------------------------------------
+
+/**
+ * A fiber's rarely used state: providers, Suspense / Activity / SuspenseList bookkeeping,
+ * error boundaries, the root's element, class components, the Profiler, form actions and
+ * dev-only records. Allocated on the first write ({@link fiberExt}); most fibers (plain host
+ * elements, text, function components) never have one, so these fields cost them nothing.
+ * Every field is declared here, so all extensions share one hidden class.
+ */
+class FiberExt {
+  /**
+   * The INSERTION effect queue (useInsertionEffect) — run synchronously at commit *before*
+   * DOM mutation, so CSS-in-JS style insertion precedes any layout read.
+   */
+  insertionEffects: CommitEffect[] | undefined;
+  /** A provider fragment's memo of the parent map and value its derived map was built from. */
+  provParent: Map<symbol, unknown> | undefined;
+  provValue: unknown;
+  /**
+   * Dev only: this render's `useDebugValue` calls (not hook cells — see DebugValueEntry).
+   * Cleared at the start of every render pass; carried on a bailout like readContexts.
+   */
+  debugValues: DebugValueEntry[] | undefined;
+  /** Host `<form action={fn}>` only: the per-form pending signal backing useFormStatus,
+   * persisted across renders and carried between buffers. */
+  formStatus: FormStatusSignal | undefined;
+  /**
+   * Dev per-module HMR only: the component implementation this fiber last rendered with
+   * (after family-current substitution). Compared against the resolved impl on the next
+   * render to detect a per-module refresh swap. Never set in production.
+   */
+  lastImpl: unknown;
+  /**
+   * Profiler timing. `profiler` marks a <Profiler> boundary. `actualDuration` is this
+   * fiber's own render time this pass (0 if it bailed); `selfBaseDuration` is its
+   * most-recent render time (persisted, for baseDuration).
+   */
+  profiler: { id: string; onRender?: ProfilerOnRender } | undefined;
+  actualDuration: number | undefined;
+  selfBaseDuration: number | undefined;
+  /**
+   * Offscreen (see {@link OffscreenBit}): how many of the boundary's top-level children are
+   * the (hidden) primary vs the fallback; `hiddenEls` records the host elements hidden at
+   * commit (via an inline `display:none !important`) so reveal can restore their prior style.
+   */
+  primaryCount: number | undefined;
+  hiddenEls: Element[] | undefined;
+  /**
+   * SuspenseList coordination. A single {@link SuspenseListState} object is shared by the
+   * list fragment and its member <Suspense> fibers across all buffers, so a bailed/cloned
+   * member always reads the freshly-rendered reveal state. `listOwnerState` is set on a
+   * SuspenseList's direct children so membership propagates one level to the <Suspense>
+   * each renders.
+   */
+  listState: SuspenseListState | undefined;
+  listIndex: number | undefined;
+  listOwnerState: SuspenseListState | undefined;
+  /** Error-boundary-only (function ErrorBoundary): the caught error whose fallback is
+   * currently rendered, or null/undefined when showing real children. */
+  __error: unknown;
+  /** Root-only: the element to render into the container. */
+  pendingElement: VNode | null | undefined;
+  /** Class-component only (gated) — the field names the class runtime reads. */
+  classInstance: unknown;
+  __snapshot: unknown;
+  __prevProps: unknown;
+  __prevState: unknown;
+}
+
+/** An extension with every field unset: the source {@link carryExt} resets a twin from. */
+const EMPTY_EXT = new FiberExt();
 
 export interface Fiber {
   tag: FiberTag;
@@ -200,30 +322,14 @@ export interface Fiber {
   lanes: Lanes;
   childLanes: Lanes;
 
-  // Component-only. `insertionEffects` is the INSERTION queue (useInsertionEffect)
-  // — run synchronously at commit *before* DOM mutation, so CSS-in-JS style
-  // insertion precedes any layout read. `pendingEffects` is the LAYOUT queue
-  // (useLayoutEffect and class componentDidMount/DidUpdate) — run synchronously at
-  // commit after mutation, before paint. `passiveEffects` is the PASSIVE queue
-  // (useEffect, useSyncExternalStore subscribe) — scheduled after commit (after paint).
+  /** Persistent boolean state — the `*Bit` constants above. */
+  bits: number;
+
+  // Component-only. `pendingEffects` is the LAYOUT queue (useLayoutEffect and class
+  // componentDidMount/DidUpdate) — run synchronously at commit after mutation, before paint.
+  // `passiveEffects` is the PASSIVE queue (useEffect, useSyncExternalStore subscribe) —
+  // scheduled after commit (after paint). The insertion queue is on {@link FiberExt}.
   hooks?: HookCell[];
-  /**
-   * Set when something other than a state setter scheduled this fiber (a Suspense retry, an
-   * external-store change, a boundary reset, Fast Refresh): the next render must run even
-   * though no hook value changed. Cleared when the fiber begins work.
-   */
-  forceRender?: boolean;
-  /** Set when a state setter scheduled this fiber — the only updates the no-op bailout
-   * may judge; a lane retained for other reasons (a suspended child's retry) always renders. */
-  stateUpdate?: boolean;
-  /**
-   * Set true when this fiber actually re-ran its render this pass (not bailed). Lets the
-   * commit's `clearCommittedFlags` promote hook `committed` baselines only on fibers that
-   * rendered — a bailed fiber's hook cells are unchanged, so promoting them is a no-op. Reset
-   * per pass (in `createWorkInProgress`, and after promotion in the commit walk).
-   */
-  didRender?: boolean;
-  insertionEffects?: CommitEffect[];
   pendingEffects?: CommitEffect[];
   passiveEffects?: CommitEffect[];
 
@@ -240,85 +346,17 @@ export interface Fiber {
   // `inherited`.
   inherited: Map<symbol, unknown>;
   contexts: Map<symbol, unknown>;
-  provParent?: Map<symbol, unknown>;
-  provValue?: unknown;
   // The context ids this fiber READ during its last render (via useContext / use /
   // Consumer). Lets the memo bailout re-render a consumer only when a context it
   // actually reads changed value — instead of when any ancestor provider re-rendered
   // (which cascades a fresh `inherited` map identity to the whole subtree). `undefined`
   // means the last render read no context. Rebuilt each render; carried on a bailout.
   readContexts?: Set<symbol>;
-  // Dev only: this render's `useDebugValue` calls (not hook cells — see DebugValueEntry).
-  // Cleared at the start of every render pass; carried on a bailout like readContexts.
-  // Never set in production, where the dispatcher returns before recording.
-  debugValues?: DebugValueEntry[];
 
   // Host bookkeeping (satisfies HostState from dom-props.ts).
   listeners?: Map<string, EventListener>;
   attachedRef?: unknown;
   refCleanup?: (() => void) | void;
-  // Host `<form action={fn}>` only: the per-form pending signal backing
-  // useFormStatus, persisted across renders and carried between buffers.
-  formStatus?: FormStatusSignal;
-
-  // True when this fiber is inside a StrictMode subtree (dev double-invoke).
-  strict?: boolean;
-
-  // Dev per-module HMR only: the component implementation this fiber last rendered
-  // with (after family-current substitution). Compared against the resolved impl on
-  // the next render to detect a per-module refresh swap — the parent may still hold
-  // the pre-edit ref in its vnode, so `vnode.type` alone can't see the change. Never
-  // set in production (the resolver is null there).
-  lastImpl?: unknown;
-
-  // Profiler timing. `profiler` marks a <Profiler> boundary; `underProfiler` is set
-  // on its descendants so their render time is measured. `actualDuration` is this
-  // fiber's own render time this pass (0 if it bailed); `selfBaseDuration` is its
-  // most-recent render time (persisted, for baseDuration).
-  profiler?: { id: string; onRender?: ProfilerOnRender };
-  underProfiler?: boolean;
-  actualDuration?: number;
-  selfBaseDuration?: number;
-  profilerMounted?: boolean;
-
-  // Suspense-only: whether the fallback (vs. real children) is showing.
-  showingFallback?: boolean;
-  // Suspense-only (Offscreen): on an URGENT re-suspend of an already-revealed
-  // boundary, the primary subtree is kept mounted-but-hidden and the fallback is
-  // shown alongside (instead of remounting on reveal — state is preserved).
-  // `offscreen` marks that mode; `primaryCount` is how many of the boundary's
-  // top-level children are the (hidden) primary vs the fallback; `hiddenEls` records
-  // the host elements hidden at commit (via an inline `display:none !important`) so
-  // reveal can restore their prior inline style.
-  offscreen?: boolean;
-  primaryCount?: number;
-  hiddenEls?: Element[];
-  // Set on the top-level fibers of an Offscreen-hidden primary subtree: beginWork
-  // skips re-rendering them (a suspended child must not re-throw) and preserves their
-  // committed subtree; commit sets an inline `display:none !important` on their DOM.
-  hidden?: boolean;
-  // SuspenseList coordination. A single {@link SuspenseListState} object is shared
-  // by the list fragment and its member <Suspense> fibers across all buffers, so a
-  // bailed/cloned member always reads the freshly-rendered reveal state.
-  listState?: SuspenseListState;
-  listIndex?: number;
-  // Set on a SuspenseList's direct children so membership propagates one level to
-  // the <Suspense> each renders.
-  listOwnerState?: SuspenseListState;
-
-  // Error-boundary-only (function ErrorBoundary): the caught error whose fallback
-  // is currently rendered, or null/undefined when showing real children.
-  __error?: unknown;
-
-  // Root-only: the element to render into the container.
-  pendingElement?: VNode | null;
-
-  // Class-component only (gated) — same field names the class runtime reads.
-  classInstance?: unknown;
-  __snapshot?: unknown;
-  __prevProps?: unknown;
-  __prevState?: unknown;
-  bailed?: boolean;
 
   // Path-based useId. `idParentScope` is the enclosing component's id scope (the
   // scope this fiber's component children slot into); host/fragment/suspense/
@@ -334,22 +372,10 @@ export interface Fiber {
   // so a key only matches an old fiber of the same scope. Set by the parent's reconcile.
   keyScope?: string;
 
-  // Hydration: the server-node cursor for this host/root's children.
-  hydrationCursor?: Cursor | null;
-
-  // Set by commitDeletion once this fiber is unmounted, so a late async callback
-  // (a settling Suspense promise) can bail instead of acting on a dead fiber.
-  unmounted?: boolean;
+  /** Rarely used state, allocated on first write — see {@link FiberExt} / {@link fiberExt}. */
+  ext: FiberExt | undefined;
 }
 
-/**
- * A fiber. Every field is a class field, declared up front, so all fibers share ONE hidden
- * class: added lazily (in whatever order a fiber's life assigns them) they left V8 with many
- * shapes, and `carryOver`'s ~40 property copies per re-rendered fiber went megamorphic — the
- * single largest cost of re-rendering a long list. A class states the shape once (an
- * uninitialized field is `undefined`), which is also far smaller in the client bundle than
- * the same shape as an object literal of `field: undefined` pairs.
- */
 /**
  * The context map of a fiber nothing has provided to yet. Shared: context maps are never
  * mutated in place (a provider derives a new map, `providerContexts`), and reconcile replaces
@@ -357,6 +383,16 @@ export interface Fiber {
  */
 const NO_CONTEXT: Map<symbol, unknown> = new Map();
 
+/**
+ * A fiber. Every field is a class field, declared up front, so all fibers share ONE hidden
+ * class: added lazily (in whatever order a fiber's life assigns them) they left V8 with many
+ * shapes, and `carryOver`'s property copies per re-rendered fiber went megamorphic — the
+ * single largest cost of re-rendering a long list. A class states the shape once (an
+ * uninitialized field is `undefined`), which is also far smaller in the client bundle than
+ * the same shape as an object literal of `field: undefined` pairs. The fields every fiber
+ * kind uses live here; booleans share `bits`, and rarely used state lives in a lazily
+ * allocated {@link FiberExt} — a fiber is ~half the size it was with all of them inline.
+ */
 class FiberNode implements Fiber {
   tag: FiberTag;
   vnode: VNode;
@@ -370,52 +406,22 @@ class FiberNode implements Fiber {
   deletions: Fiber[] | null = null;
   lanes = NoLane;
   childLanes = NoLane;
+  bits = 0;
   host: Fiber | null = null;
   boundary: Fiber | null = null;
   inherited: Map<symbol, unknown> = NO_CONTEXT;
   contexts: Map<symbol, unknown> = NO_CONTEXT;
   hooks: Fiber["hooks"];
-  forceRender: Fiber["forceRender"];
-  stateUpdate: Fiber["stateUpdate"];
-  didRender: Fiber["didRender"];
-  insertionEffects: Fiber["insertionEffects"];
   pendingEffects: Fiber["pendingEffects"];
   passiveEffects: Fiber["passiveEffects"];
-  provParent: Fiber["provParent"];
-  provValue: Fiber["provValue"];
   readContexts: Fiber["readContexts"];
-  debugValues: Fiber["debugValues"];
   listeners: Fiber["listeners"];
   attachedRef: Fiber["attachedRef"];
   refCleanup: Fiber["refCleanup"];
-  formStatus: Fiber["formStatus"];
-  strict: Fiber["strict"];
-  lastImpl: Fiber["lastImpl"];
-  profiler: Fiber["profiler"];
-  underProfiler: Fiber["underProfiler"];
-  actualDuration: Fiber["actualDuration"];
-  selfBaseDuration: Fiber["selfBaseDuration"];
-  profilerMounted: Fiber["profilerMounted"];
-  showingFallback: Fiber["showingFallback"];
-  offscreen: Fiber["offscreen"];
-  primaryCount: Fiber["primaryCount"];
-  hiddenEls: Fiber["hiddenEls"];
-  hidden: Fiber["hidden"];
-  listState: Fiber["listState"];
-  listIndex: Fiber["listIndex"];
-  listOwnerState: Fiber["listOwnerState"];
-  __error: Fiber["__error"];
-  pendingElement: Fiber["pendingElement"];
-  classInstance: Fiber["classInstance"];
-  __snapshot: Fiber["__snapshot"];
-  __prevProps: Fiber["__prevProps"];
-  __prevState: Fiber["__prevState"];
-  bailed: Fiber["bailed"];
   idParentScope: Fiber["idParentScope"];
   idScope: Fiber["idScope"];
   keyScope: Fiber["keyScope"];
-  hydrationCursor: Fiber["hydrationCursor"];
-  unmounted: Fiber["unmounted"];
+  ext: Fiber["ext"];
 
   constructor(tag: FiberTag, vnode: VNode) {
     this.tag = tag;
@@ -426,6 +432,21 @@ class FiberNode implements Fiber {
 /** Allocate a fresh fiber for `vnode` with the given tag. */
 export function createFiber(tag: FiberTag, vnode: VNode): Fiber {
   return new FiberNode(tag, vnode);
+}
+
+/** `fiber`'s {@link FiberExt}, allocated on first use — call it to WRITE a rare field. */
+export function fiberExt(fiber: Fiber): FiberExt {
+  return fiber.ext ??= new FiberExt();
+}
+
+/** Whether every bit of `bit` is set on `fiber`. */
+export function hasBit(fiber: Fiber, bit: number): boolean {
+  return (fiber.bits & bit) !== 0;
+}
+
+/** Set (`on`) or clear `bit` on `fiber`. */
+export function setBit(fiber: Fiber, bit: number, on: boolean): void {
+  fiber.bits = on ? fiber.bits | bit : fiber.bits & ~bit;
 }
 
 /**
@@ -458,8 +479,9 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.lanes = current.lanes;
   wip.childLanes = current.childLanes;
   carryOver(wip, current);
-  wip.bailed = false;
-  wip.didRender = false;
+  // Carried bits from `current`, the twin's own scheduling/unmount bits; `BailedBit` and
+  // `DidRenderBit` start clear every pass.
+  wip.bits = (current.bits & CARRIED_BITS) | (wip.bits & OWN_BITS);
   return wip;
 }
 
@@ -467,43 +489,49 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
 function carryOver(wip: Fiber, current: Fiber): void {
   wip.hooks = current.hooks;
   wip.readContexts = current.readContexts; // kept if the fiber bails (doesn't re-render)
-  // Dev-only slot: compared first so a production fiber (always undefined) never gains it.
-  if (wip.debugValues !== current.debugValues) wip.debugValues = current.debugValues;
-  wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;
   wip.inherited = current.inherited;
   wip.contexts = current.contexts;
-  wip.provParent = current.provParent;
-  wip.provValue = current.provValue;
   wip.listeners = current.listeners;
   wip.attachedRef = current.attachedRef;
   wip.refCleanup = current.refCleanup;
-  wip.formStatus = current.formStatus;
-  wip.strict = current.strict;
-  wip.underProfiler = current.underProfiler;
-  wip.selfBaseDuration = current.selfBaseDuration;
-  wip.profilerMounted = current.profilerMounted;
-  wip.showingFallback = current.showingFallback;
-  wip.offscreen = current.offscreen;
-  wip.primaryCount = current.primaryCount;
-  wip.hiddenEls = current.hiddenEls;
-  wip.hidden = current.hidden;
-  wip.listState = current.listState;
-  wip.listIndex = current.listIndex;
-  wip.listOwnerState = current.listOwnerState;
-  wip.__error = current.__error;
-  wip.pendingElement = current.pendingElement;
-  wip.classInstance = current.classInstance;
-  wip.__prevProps = current.__prevProps;
-  wip.__prevState = current.__prevState;
-  wip.__snapshot = current.__snapshot;
-  wip.hydrationCursor = current.hydrationCursor;
   wip.idParentScope = current.idParentScope;
   wip.idScope = current.idScope;
   wip.keyScope = current.keyScope;
   wip.host = current.host;
   wip.boundary = current.boundary;
+  carryExt(wip, current);
+}
+
+/**
+ * Carry `current`'s {@link FiberExt} onto its twin — copied, not shared, so a render that is
+ * abandoned never leaks its writes into the committed buffer. A twin of a fiber with no
+ * extension keeps its own (holding its uncarried `lastImpl` / `profiler` / `actualDuration`)
+ * with every carried field reset, as the old inline copy did.
+ */
+function carryExt(wip: Fiber, current: Fiber): void {
+  const from = current.ext;
+  if (from === undefined && wip.ext === undefined) return;
+  const to = fiberExt(wip);
+  const src = from ?? EMPTY_EXT;
+  to.insertionEffects = undefined;
+  to.provParent = src.provParent;
+  to.provValue = src.provValue;
+  to.debugValues = src.debugValues;
+  to.formStatus = src.formStatus;
+  to.selfBaseDuration = src.selfBaseDuration;
+  to.primaryCount = src.primaryCount;
+  to.hiddenEls = src.hiddenEls;
+  to.listState = src.listState;
+  to.listIndex = src.listIndex;
+  to.listOwnerState = src.listOwnerState;
+  to.__error = src.__error;
+  to.pendingElement = src.pendingElement;
+  to.classInstance = src.classInstance;
+  to.__prevProps = src.__prevProps;
+  to.__prevState = src.__prevState;
+  to.__snapshot = src.__snapshot;
 }
 
 /** Merge a completed fiber's flags into its own `subtreeFlags` accumulator. */

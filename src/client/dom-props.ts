@@ -23,14 +23,16 @@ import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
-  /** Attached event listeners, keyed by React prop name. */
+  /** Attached event listeners, keyed by React prop name — created by the first one, so an
+   * element without handlers carries no map. */
   listeners?: Map<string, EventListener>;
   /** The ref currently attached to this element. */
   attachedRef?: unknown;
   /** The cleanup a React-19 callback ref returned (invoked on change/unmount). */
   refCleanup?: (() => void) | void;
-  /** For a `<form action={fn}>`: the form-scoped pending signal (useFormStatus). */
-  formStatus?: FormStatusSignal;
+  /** For a `<form action={fn}>`: the form-scoped pending signal (useFormStatus), on the
+   * fiber's rarely-used-state extension. */
+  ext?: { formStatus?: FormStatusSignal };
 }
 
 /** Routes an error thrown by an event/form-action handler to a boundary. */
@@ -201,7 +203,7 @@ function setFormAction(
   action: (payload: unknown) => void,
   onError: ErrorRouter,
 ): void {
-  const existing = state.listeners!.get("submit");
+  const existing = state.listeners?.get("submit");
   if (existing) el.removeEventListener("submit", existing);
   const handler: EventListener = (event) => {
     event.preventDefault();
@@ -218,7 +220,7 @@ function setFormAction(
     }
     // Drive the form-scoped pending signal (useFormStatus) for the duration of
     // the action, and route thrown/rejected errors to the nearest boundary.
-    const sig = state.formStatus;
+    const sig = state.ext?.formStatus;
     if (sig) {
       const el = form as { method?: string } | null;
       beginFormAction(sig, {
@@ -249,7 +251,7 @@ function setFormAction(
     }
   };
   el.addEventListener("submit", handler);
-  state.listeners!.set("submit", handler);
+  (state.listeners ??= new Map()).set("submit", handler);
 }
 
 /**
@@ -360,7 +362,7 @@ function setListener(
 ): void {
   const ev = parseEvent(prop);
   const key = prop; // key by React prop name so distinct props never collide
-  const existing = state.listeners!.get(key);
+  const existing = state.listeners?.get(key);
   if (existing) el.removeEventListener(ev.type, existing, ev.capture);
   if (typeof handler === "function") {
     // Wrap so a throw in the handler routes to the nearest error boundary
@@ -384,8 +386,8 @@ function setListener(
       }
     };
     el.addEventListener(ev.type, wrapped, ev.capture);
-    state.listeners!.set(key, wrapped);
-  } else {
+    (state.listeners ??= new Map()).set(key, wrapped);
+  } else if (existing) {
     state.listeners!.delete(key);
   }
 }
@@ -393,7 +395,7 @@ function setListener(
 function removeListener(el: Element, state: HostState, prop: string): void {
   const ev = parseEvent(prop);
   const key = prop; // key by React prop name so distinct props never collide
-  const existing = state.listeners!.get(key);
+  const existing = state.listeners?.get(key);
   if (existing) {
     el.removeEventListener(ev.type, existing, ev.capture);
     state.listeners!.delete(key);

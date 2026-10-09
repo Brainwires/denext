@@ -13,7 +13,16 @@
 
 import type { Fiber } from "./fiber.ts";
 import type { VNodeChildren } from "../../jsx/types.ts";
-import { NoLane, TransitionLane, Update } from "./fiber.ts";
+import {
+  fiberExt,
+  hasBit,
+  HiddenBit,
+  NoLane,
+  OffscreenBit,
+  setBit,
+  TransitionLane,
+  Update,
+} from "./fiber.ts";
 import { reconcileChildren } from "./reconcile-children.ts";
 import { noteOffscreen } from "./state.ts";
 import { renderLanes, scheduleUpdateLane } from "./scheduler.ts";
@@ -49,11 +58,12 @@ function beginHidden(wip: Fiber): Fiber | null {
   for (let c = wip.child; c !== null; c = c.sibling) {
     count++;
     const old = c.alternate;
-    c.hidden = !lowPriority && old !== null;
-    if (c.hidden && old!.vnode.props !== c.vnode.props) scheduleUpdateLane(c, TransitionLane);
+    const hidden = !lowPriority && old !== null;
+    setBit(c, HiddenBit, hidden);
+    if (hidden && old!.vnode.props !== c.vnode.props) scheduleUpdateLane(c, TransitionLane);
   }
-  wip.primaryCount = count;
-  wip.offscreen = true;
+  fiberExt(wip).primaryCount = count;
+  wip.bits |= OffscreenBit;
   noteOffscreen(); // so the commit pass hides the primary DOM + parks/disconnects effects
   return wip.child;
 }
@@ -75,7 +85,7 @@ function beginActivity(wip: Fiber): Fiber | null {
   // Reveal (hidden → visible): un-hide the preserved children, force them to render live, and
   // let the commit restore their DOM + reconnect the effects the hide tore down. The exact
   // same reveal the <Suspense> offscreen path uses.
-  if (wip.offscreen === true) {
+  if (hasBit(wip, OffscreenBit)) {
     revealOffscreenChildren(wip);
     wip.flags |= Update; // marks the reveal on the commit's flagged paths (a view transition enters it)
   }

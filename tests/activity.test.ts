@@ -281,7 +281,7 @@ Deno.test("a hidden Activity forgets the elements removed while it stays hidden"
     if (handle.container === (container as Any)) visit(handle.current);
   }
   assert(activity, "found the Activity fiber");
-  assertEquals(activity.hiddenEls.length, 1, "only the element still in the subtree");
+  assertEquals(activity.ext.hiddenEls.length, 1, "only the element still in the subtree");
   assertEquals((container as Any).childNodes.length, 1);
   assert(hidden((container as Any).childNodes[0]), "and it is hidden");
 });

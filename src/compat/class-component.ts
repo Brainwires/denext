@@ -15,7 +15,9 @@
 import "../runtime/class-flag.ts";
 import type { Context } from "../runtime/hooks.ts";
 import { getClassScheduleUpdate, setClassSupport } from "../client/fiber/class-support.ts";
+import { type Fiber, fiberExt } from "../client/fiber/fiber.ts";
 import {
+  type ClassInstanceFields,
   type ClassInternals,
   type ClassRenderResult,
   instantiateClass,
@@ -100,12 +102,13 @@ function contextForCtor(Ctor: Any, inst: ReconcilerInstance): unknown {
  */
 function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   const Ctor = inst.vnode.type as Any;
-  let c = inst.classInstance as Any;
+  const x = classFields(inst);
+  let c = x.classInstance as Any;
   const isMount = c == null;
 
   if (isMount) {
     c = instantiateClass(Ctor, inst.vnode.props, contextForCtor(Ctor, inst), inst);
-    inst.classInstance = c;
+    x.classInstance = c;
   } else {
     c.context = contextForCtor(Ctor, inst); // refresh legacy context on update
   }
@@ -132,14 +135,19 @@ function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   c.props = nextProps;
   c.state = nextState;
   i.forced = false;
-  inst.__prevProps = prevProps;
-  inst.__prevState = prevState;
+  x.__prevProps = prevProps;
+  x.__prevState = prevState;
 
   const vnode = c.render();
   (inst.pendingEffects ??= []).push(
     isMount ? mountEffect(c, i) : updateEffect(inst, c, i),
   );
   return { vnode, bailed: false };
+}
+
+/** The instance's class fields, allocating the fiber's extension on first use. */
+function classFields(inst: ReconcilerInstance): ClassInstanceFields {
+  return fiberExt(inst as unknown as Fiber);
 }
 
 /** `shouldComponentUpdate` says no, or a PureComponent sees shallow-equal props + state. */
@@ -162,7 +170,8 @@ function mountEffect(c: Any, i: ClassInternals): () => void {
 function updateEffect(inst: ReconcilerInstance, c: Any, i: ClassInternals): () => void {
   return () => {
     if (typeof c.componentDidUpdate === "function") {
-      c.componentDidUpdate(inst.__prevProps, inst.__prevState, inst.__snapshot);
+      const x = inst.ext;
+      c.componentDidUpdate(x?.__prevProps, x?.__prevState, x?.__snapshot);
     }
     flushCallbacks(i);
   };
@@ -170,17 +179,16 @@ function updateEffect(inst: ReconcilerInstance, c: Any, i: ClassInternals): () =
 
 /** Capture `getSnapshotBeforeUpdate` (after render, before DOM mutation). */
 function captureSnapshot(inst: ReconcilerInstance): void {
-  const c = inst.classInstance as Any;
-  if (c && typeof c.getSnapshotBeforeUpdate === "function") {
-    inst.__snapshot = c.getSnapshotBeforeUpdate(inst.__prevProps, inst.__prevState);
-  } else {
-    inst.__snapshot = undefined;
-  }
+  const x = classFields(inst);
+  const c = x.classInstance as Any;
+  x.__snapshot = c && typeof c.getSnapshotBeforeUpdate === "function"
+    ? c.getSnapshotBeforeUpdate(x.__prevProps, x.__prevState)
+    : undefined;
 }
 
 /** Run `componentWillUnmount` for a class instance (on unmount). */
 function unmountClassInstance(inst: ReconcilerInstance): void {
-  const c = inst.classInstance as Any;
+  const c = inst.ext?.classInstance as Any;
   if (c && typeof c.componentWillUnmount === "function") c.componentWillUnmount();
 }
 
@@ -199,7 +207,7 @@ function handleClassError(
   error: unknown,
   info: { componentStack?: string },
 ): boolean {
-  const c = inst.classInstance as Any;
+  const c = inst.ext?.classInstance as Any;
   if (!c) return false;
   const Ctor = inst.vnode.type as Any;
   let handled = false;

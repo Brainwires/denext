@@ -8,6 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **A client fiber is half the size: 124 B instead of 244 B in a browser.** Eleven booleans
+  (pending-update kind, StrictMode, Profiler, Suspense / Offscreen state, unmounted, …) share one
+  bit field, and the state only providers, Suspense / Activity / SuspenseList boundaries, error
+  boundaries, roots, class components, `<Profiler>`, form actions and dev tooling use moved to an
+  extension object allocated on first write, so a plain element, text node or function component
+  never pays for it. Every fiber still shares one V8 shape. `deno task bench:fiber-memory`
+  measures it.
+- **An element without event handlers no longer carries an empty listener map.** Every host
+  element allocated one at mount; the first handler now creates it. With the smaller fiber, a
+  10,000-row list of static rows (a component, two elements and two text nodes each) uses 25 %
+  less heap after mounting and 30 % less once it has re-rendered.
+
+### Fixed
+
+- **A desktop app versioned in package.json packages and publishes updates as that version.**
+  The installers already took package.json `version` when deno.json has none, but `deno desktop`
+  reads only deno.json's, so the bundle it compiled (the runtime library's app version a full-app
+  update is checked against, Info.plist, the executable's version resource) said `1.0` or no
+  version while the installers said package.json's, and `denext desktop publish-update` refused
+  with "no version". The package scripts now run `deno desktop` with package.json's version
+  written into deno.json for the build and put back after (`desktopWithAppVersion` from
+  `denext/desktop`; regenerate an existing `scripts/package-macos.ts` with
+  `denext desktop package --regenerate-scripts`), and `publish-update` defaults to the same
+  version: deno.json's, else package.json's (`desktopAppVersion`).
+
 ## [3.4.1] - 2026-10-09
 
 ### Added
@@ -82,16 +109,6 @@ and this project adheres to
 
 ### Fixed
 
-- **A desktop app versioned in package.json packages and publishes updates as that version.**
-  The installers already took package.json `version` when deno.json has none, but `deno desktop`
-  reads only deno.json's, so the bundle it compiled (the runtime library's app version a full-app
-  update is checked against, Info.plist, the executable's version resource) said `1.0` or no
-  version while the installers said package.json's, and `denext desktop publish-update` refused
-  with "no version". The package scripts now run `deno desktop` with package.json's version
-  written into deno.json for the build and put back after (`desktopWithAppVersion` from
-  `denext/desktop`; regenerate an existing `scripts/package-macos.ts` with
-  `denext desktop package --regenerate-scripts`), and `publish-update` defaults to the same
-  version: deno.json's, else package.json's (`desktopAppVersion`).
 - **A platform file's stylesheet reaches its target's build.** `x.mobile.ts`'s
   `import "./a.css"` was left out of `DENEXT_PLATFORM=ios denext export` while the file's JS was
   bundled: the stylesheet crawl (`deno info`) walked the plain files' graph. It now resolves

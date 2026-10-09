@@ -13,7 +13,16 @@ import { retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
 import { isThenable } from "../../runtime/suspense.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
 import { getClassSupport } from "./class-support.ts";
-import { type Fiber, NoLane, TransitionLane } from "./fiber.ts";
+import {
+  type Fiber,
+  fiberExt,
+  hasBit,
+  NoLane,
+  OffscreenBit,
+  setBit,
+  ShowingFallbackBit,
+  TransitionLane,
+} from "./fiber.ts";
 import { concurrentWipRoot, renderLanes } from "./scheduler.ts";
 import { dropHydrationCursor, isHydrating } from "./hydration.ts";
 
@@ -49,8 +58,9 @@ function reseedBoundary(boundary: Fiber): void {
  * the concurrent render path, so the sentinel it leads to is caught by resumeConcurrent.
  */
 function keepsRevealedContent(suspense: Fiber): boolean {
-  const revealed = suspense.alternate != null && suspense.alternate.showingFallback !== true;
-  const inList = suspense.listState != null && suspense.listState.revealOrder != null;
+  const revealed = suspense.alternate != null &&
+    !hasBit(suspense.alternate, ShowingFallbackBit);
+  const inList = suspense.ext?.listState?.revealOrder != null;
   return (renderLanes & TransitionLane) !== NoLane && concurrentWipRoot !== null &&
     revealed && !inList;
 }
@@ -67,15 +77,15 @@ function keepsRevealedContent(suspense: Fiber): boolean {
  * the plain path reconciles the fallback against it (remount).
  */
 function prepareFallbackRender(suspense: Fiber): void {
-  suspense.showingFallback = true;
-  const inList = suspense.listState != null && suspense.listState.revealOrder != null;
-  const hasCommittedPrimary = suspense.alternate != null &&
-    (suspense.alternate.showingFallback !== true || suspense.alternate.offscreen === true);
-  suspense.offscreen = hasCommittedPrimary && !inList && !isHydrating;
+  setBit(suspense, ShowingFallbackBit, true);
+  const ext = suspense.ext;
+  const inList = ext?.listState?.revealOrder != null;
+  const alt = suspense.alternate;
+  const hasCommittedPrimary = alt != null &&
+    (!hasBit(alt, ShowingFallbackBit) || hasBit(alt, OffscreenBit));
+  setBit(suspense, OffscreenBit, hasCommittedPrimary && !inList && !isHydrating);
   // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
-  if (suspense.listState && suspense.listIndex != null) {
-    suspense.listState.ready[suspense.listIndex] = false;
-  }
+  if (ext?.listState && ext.listIndex != null) ext.listState.ready[ext.listIndex] = false;
   reseedBoundary(suspense);
   if (isHydrating) dropHydrationCursor();
 }
@@ -118,7 +128,7 @@ function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
     boundary.lanes = NoLane; // drop the self-scheduled update; we re-render inline
   } else {
     reportCaught(boundary, thrown);
-    boundary.__error = thrown;
+    fiberExt(boundary).__error = thrown;
   }
   reseedBoundary(boundary);
   return boundary;
