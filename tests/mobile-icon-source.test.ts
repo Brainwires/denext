@@ -615,3 +615,28 @@ Deno.test("icon source: a pre-masked icon (rounded corners on transparency) is w
     }
   }
 });
+
+Deno.test("denext mobile assets --icon: an explicit pre-masked icon is warned about too", async () => {
+  const dir = await placeholderProject({
+    "art/rounded.png": await shapedPng(1024, 0.2237),
+    "art/square.png": await png(1024),
+  });
+  try {
+    const rounded = await runVerb(["assets"], {
+      dir,
+      "dry-run": true,
+      platform: "ios",
+      icon: join(dir, "art/rounded.png"),
+    });
+    assertStringIncludes(rounded, "art/rounded.png looks pre-masked");
+    const square = await runVerb(["assets"], {
+      dir,
+      "dry-run": true,
+      platform: "ios",
+      icon: join(dir, "art/square.png"),
+    });
+    assertEquals(square.includes("pre-masked"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

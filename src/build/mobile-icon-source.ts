@@ -624,14 +624,26 @@ export async function resolveIconSource(root: string): Promise<IconSearch> {
   const hint = s.hint ||
     "add a 1024×1024 PNG and set `mobile.icon` to it in denext.config.ts (or save it as " +
       "assets/icon.png)";
-  const warnings = source && await isPreMasked(source.icon)
-    ? [
-      `${s.rel(source.icon)} looks pre-masked (rounded corners on transparency): iOS applies ` +
-      "its own rounded mask, so the app shows a rounded rectangle inside a rounded rectangle. " +
-      "Use a full-bleed square icon (the artwork to the edges, no rounding, no transparency)",
-    ]
-    : [];
+  const warnings = source ? await preMaskedWarnings(root, source.icon) : [];
   return { root, source, notes: s.notes, warnings, hint };
+}
+
+/**
+ * The warning for an icon that looks pre-masked (none otherwise): for the resolved icon and for
+ * one passed with `--icon`.
+ *
+ * @param root The project, the warning names the icon relative to it.
+ * @param icon The icon file.
+ * @returns Zero or one warning line.
+ */
+export async function preMaskedWarnings(root: string, icon: string): Promise<string[]> {
+  if (!await isPreMasked(icon)) return [];
+  return [
+    `${posixRelative(root, icon)} looks pre-masked (rounded corners on ` +
+    "transparency): iOS applies its own rounded mask, so the app shows a rounded rectangle " +
+    "inside a rounded rectangle. Use a full-bleed square icon (the artwork to the edges, no " +
+    "rounding, no transparency)",
+  ];
 }
 
 /** An alpha at or above this counts as part of the icon's shape. */

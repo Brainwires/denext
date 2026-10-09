@@ -101,6 +101,9 @@ and this project adheres to
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
 
+- **`denext mobile assets --icon` warns about a pre-masked icon.** Only the icon the project
+  already has was checked for rounded corners on transparency; one passed explicitly (or a
+  flavor's) went unchecked. It gets the same check and warning.
 - **`denext mobile add` no longer runs the project's lifecycle scripts with npm, pnpm or bun.**
   Only Yarn was told to skip them. The install now passes `--ignore-scripts` (the dry-run line
   shows it), as `denext migrate --enable-capacitor` does; the Capacitor plugins need no install
