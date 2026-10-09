@@ -298,6 +298,9 @@ keys, a text selection's ends). Each has its own `offset`, so they need no speci
 - scrolled up, nothing moves when messages arrive;
 - `onStartReached` loads older messages, and prepending them does not move the view, even
   when they are much taller than estimated.
+- `pinEndOn` picks which changes keep it pinned (`data`, `items`, `layout`, `footer`; all by
+  default). `pinEndOn={{ footer: false }}` leaves the visible messages where they are while a
+  composer in the footer grows.
 
 ```tsx
 "use client";
@@ -926,7 +929,9 @@ build adds over the React Native one:
 
 Chat lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
 `maintainScrollAtEnd` (with `maintainScrollAtEndThreshold` and its `{ animated }` form) follows
-new items and size changes while the view is at the end, `alignItemsAtEnd` bottom-aligns a
+new items and size changes while the view is at the end (its `on` keys pick which, as in
+LegendList: `dataChange`, `itemLayout`, `layout`, `footerLayout`; given `on`, only the keys set
+to `true` keep the end pinned), `alignItemsAtEnd` bottom-aligns a
 short conversation, and `anchoredEndSpace` keeps a sent message at the top while the reply
 streams in. The ref's `scrollToEnd`, `scrollToIndex`, `scrollToOffset`, `scrollToItem` and
 `scrollIndexIntoView` return promises, and `getState()` reports the scroll position, the

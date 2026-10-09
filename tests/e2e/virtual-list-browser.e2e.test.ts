@@ -306,6 +306,56 @@ window.scenarios = {
     return { open, scrolledUp, back };
   },
 
+  async legendFooter(footerLayout) {
+    // T3 Code's timeline at its end, then the composer grows (its inset is in the footer).
+    // LegendList's \`maintainScrollAtEnd.on.footerLayout: false\`: the footer's resize must not
+    // move the visible messages; with \`true\` the view stays pinned to the very end.
+    let ref = null;
+    const N = 300;
+    const size = (i) => 40 + ((i * 97) % 360);
+    const data = rowsOf(N).map((r, n) => ({ ...r, n }));
+    const footer = h("div", null,
+      h("div", { id: "composer-inset", "aria-hidden": "true", style: { height: "172px" } }),
+      h("div", { "aria-hidden": "true", style: { height: "16px" } }));
+    if (root) root.unmount();
+    if (host) host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    flushSync(() => root.render(h(LegendList, {
+      ref: (x) => { ref = x; }, data, keyExtractor: (r) => r.id, getItemType: () => "message",
+      renderItem: ({ item }) => h("div", {
+        "data-message-id": item.id, style: { height: size(item.n) + "px", boxSizing: "border-box" },
+      }, item.text),
+      estimatedItemSize: 90, initialScrollAtEnd: true, maintainScrollAtEndThreshold: 1,
+      maintainScrollAtEnd: {
+        animated: false,
+        on: { dataChange: true, footerLayout, itemLayout: true, layout: true },
+      },
+      maintainVisibleContentPosition: { data: true, size: true, shouldRestorePosition: () => true },
+      style: { height: "800px", minHeight: 0, overflowX: "hidden", overflowAnchor: "none" },
+      ListHeaderComponent: h("div", { style: { height: "16px" } }),
+      ListFooterComponent: footer,
+    })));
+    const s = sc();
+    const gap = () => Math.round(s.scrollHeight - s.clientHeight - s.scrollTop);
+    await frames(10);
+    const openGap = await settled(gap, (g) => g === 0);
+    const lastTop = () =>
+      host.querySelector('[data-message-id="r' + (N - 1) + '"]').getBoundingClientRect().top;
+    const before = lastTop();
+    const inset = document.getElementById("composer-inset");
+    inset.style.height = "292px";
+    await frames(4);
+    const grownGap = await settled(gap, () => true, 8);
+    return {
+      openGap,
+      moved: Math.round(lastTop() - before),
+      gap: grownGap,
+      isAtEnd: ref.getState().isAtEnd,
+    };
+  },
+
   async keyboard() {
     const base = { data: rowsOf(200), anchor: "end", style: { height: "400px" }, renderItem: cell };
     const render = mount({ ...base, keyboardInset: 0 });
@@ -603,6 +653,28 @@ Deno.test({
           assert((r.open.rows as number) <= 12, `rows rendered at the end: ${r.open.rows}`);
           assert((r.scrolledUp.gap as number) > 0 && r.scrolledUp.isAtEnd === false, "scrolled up");
           assertEquals(r.back, 0, "scrollToEnd re-pins to the very end");
+        },
+      );
+    }
+
+    for (const footerLayout of [false, true]) {
+      await t.step(
+        `lists: "denext" LegendList maintainScrollAtEnd.on.footerLayout: ${footerLayout} — the composer grows at the end`,
+        async () => {
+          const r = await run<Record<string, number | boolean>>(
+            `window.scenarios.legendFooter(${footerLayout})`,
+          );
+          report[`legendFooter_${footerLayout}`] = r;
+          assertEquals(r.openGap, 0, "opens at the very end, footer included");
+          if (footerLayout) {
+            // Pinned: the view follows the footer down, so the messages move up by its growth.
+            assertEquals(r.moved, -120, "the messages move up with the pinned end");
+            assertEquals(r.gap, 0, "still at the very end");
+          } else {
+            // T3's setting: the composer's growth must not move the visible messages.
+            assertEquals(r.moved, 0, "the visible messages stay where they were");
+            assertEquals(r.gap, 120, "the grown footer extends below the view");
+          }
         },
       );
     }

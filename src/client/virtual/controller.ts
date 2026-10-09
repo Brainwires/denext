@@ -742,6 +742,10 @@ export class VirtualController<T> {
       maxPhysicalSize: DEFAULT_MAX_PHYSICAL_SIZE,
       endThreshold: props.onEndReachedThreshold ?? DEFAULT_CONFIG.endThreshold,
       startThreshold: props.onStartReachedThreshold ?? DEFAULT_CONFIG.startThreshold,
+      pinOnData: props.pinEndOn?.data,
+      pinOnItems: props.pinEndOn?.items,
+      pinOnLayout: props.pinEndOn?.layout,
+      pinOnFooter: props.pinEndOn?.footer,
     };
     const same = (Object.keys(next) as (keyof CoreConfig)[]).every((k) => prev[k] === next[k]);
     return same ? prev : next;

@@ -72,6 +72,17 @@ export interface CoreConfig {
   readonly startThreshold: number;
   /** Most rows to render (a window sized by a guess, before the first measurement). */
   readonly maxRows?: number;
+  /**
+   * With `anchor: "end"`, which changes keep a view pinned at the end there (LegendList's
+   * `maintainScrollAtEnd.on`): a data change, a row's size (a measurement or a hint), the
+   * viewport's size, and the size of what follows the rows (a footer). Each defaults to `true`;
+   * a change whose flag is `false` keeps the visible rows in place instead. A header's size
+   * always keeps it pinned.
+   */
+  readonly pinOnData?: boolean;
+  readonly pinOnItems?: boolean;
+  readonly pinOnLayout?: boolean;
+  readonly pinOnFooter?: boolean;
 }
 
 /** A pending `scrollToIndex` (or `scrollToEnd`): the engine keeps landing on it until settled. */
@@ -284,7 +295,7 @@ export class VirtualCore {
     this.#cfg = config;
     if (config.defaultSize !== old.defaultSize) {
       // A better estimate, not a content change: the view stays put whatever MVCP says.
-      this.#mutate(() => this.tree.setDefaultSize(config.defaultSize), true);
+      this.#mutate(() => this.tree.setDefaultSize(config.defaultSize), true, this.#pinOn("items"));
     }
   }
 
@@ -315,12 +326,16 @@ export class VirtualCore {
       return false;
     }
     const first = this.tree.count === 0 && old === EMPTY_SOURCE;
-    this.#mutate(() => {
-      this.#src = src;
-      if (first) this.tree.resize(src.count);
-      else return this.#applyDiff(old, src);
-      return undefined;
-    });
+    this.#mutate(
+      () => {
+        this.#src = src;
+        if (first) this.tree.resize(src.count);
+        else return this.#applyDiff(old, src);
+        return undefined;
+      },
+      false,
+      this.#pinOn("data"),
+    );
     this.#seedNext = src.hint && src.count <= EAGER_HINT_LIMIT ? 0 : -1;
     this.#edges.data(this.#edgeToken());
     return true;
@@ -339,14 +354,18 @@ export class VirtualCore {
     if (this.#seedNext < 0) return false;
     const start = clock();
     const n = this.tree.count;
-    this.#mutate(() => {
-      while (this.#seedNext < n) {
-        const to = Math.min(n, this.#seedNext + SEED_CHUNK);
-        this.#seed(this.#seedNext, to - 1);
-        this.#seedNext = to;
-        if (clock() - start >= budgetMs) break;
-      }
-    }, true);
+    this.#mutate(
+      () => {
+        while (this.#seedNext < n) {
+          const to = Math.min(n, this.#seedNext + SEED_CHUNK);
+          this.#seed(this.#seedNext, to - 1);
+          this.#seedNext = to;
+          if (clock() - start >= budgetMs) break;
+        }
+      },
+      true,
+      this.#pinOn("items"),
+    );
     if (this.#seedNext >= n) this.#seedNext = -1;
     return this.#seedNext >= 0;
   }
@@ -482,10 +501,15 @@ export class VirtualCore {
    * distance from the viewport (by key, with the next visible rows as fallbacks). `refine`: the
    * change only refines sizes (a measurement, a resize, hints, a learned default size), not
    * the content, so the view is anchored even without `maintainVisibleContentPosition` — that
-   * setting governs data changes only.
+   * setting governs data changes only. `pin: false`: this kind of change does not keep a pinned
+   * view at the end (see `CoreConfig.pinOnData`); it is anchored like an unpinned one.
    */
-  #mutate(change: () => ((oldIndex: number) => number) | void, refine = false): void {
-    const pinned = this.#cfg.anchor === "end" && this.pinned && this.target === null;
+  #mutate(
+    change: () => ((oldIndex: number) => number) | void,
+    refine = false,
+    pin = true,
+  ): void {
+    const pinned = pin && this.#cfg.anchor === "end" && this.pinned && this.target === null;
     let anchor: Anchor | undefined;
     if (!pinned && this.target === null && (refine || this.#cfg.maintainVisibleContentPosition)) {
       anchor = this.#captureAnchor();
@@ -568,14 +592,34 @@ export class VirtualCore {
   setMetrics(vp: number, lead: number, tail: number): boolean {
     if (vp === this.vp && lead === this.lead && tail === this.tail) return false;
     const leadShift = lead - this.lead;
-    this.#mutate(() => {
-      this.vp = vp;
-      // The physical list start moved: the same scroller offset is a different list offset.
-      this.s -= leadShift;
-      this.lead = lead;
-      this.tail = tail;
-    }, true);
+    // A pinned view stays at the end when any of the changed sizes keeps it there.
+    const pin = leadShift !== 0 || (vp !== this.vp && this.#pinOn("layout")) ||
+      (tail !== this.tail && this.#pinOn("footer"));
+    this.#mutate(
+      () => {
+        this.vp = vp;
+        // The physical list start moved: the same scroller offset is a different list offset.
+        this.s -= leadShift;
+        this.lead = lead;
+        this.tail = tail;
+      },
+      true,
+      pin,
+    );
     return true;
+  }
+
+  /** Whether a change of this kind keeps a pinned view at the end (see `CoreConfig.pinOnData`). */
+  #pinOn(kind: "data" | "items" | "layout" | "footer"): boolean {
+    const c = this.#cfg;
+    const flag = kind === "data"
+      ? c.pinOnData
+      : kind === "items"
+      ? c.pinOnItems
+      : kind === "layout"
+      ? c.pinOnLayout
+      : c.pinOnFooter;
+    return flag !== false;
   }
 
   /**
@@ -585,14 +629,18 @@ export class VirtualCore {
    */
   measure(entries: Iterable<readonly [number, number]>): boolean {
     let changed = false;
-    this.#mutate(() => {
-      for (const [i, size] of entries) {
-        const was = this.tree.stateOf(i);
-        if (this.tree.set(i, size, RowState.Measured) !== 0 || was !== RowState.Measured) {
-          changed = true;
+    this.#mutate(
+      () => {
+        for (const [i, size] of entries) {
+          const was = this.tree.stateOf(i);
+          if (this.tree.set(i, size, RowState.Measured) !== 0 || was !== RowState.Measured) {
+            changed = true;
+          }
         }
-      }
-    }, true);
+      },
+      true,
+      this.#pinOn("items"),
+    );
     if (changed) {
       const r = this.range;
       this.tree.compact(r.first - 4096, r.last + 4096, MAX_FULL_BLOCKS);
@@ -693,9 +741,13 @@ export class VirtualCore {
       const next = this.#nextRange();
       this.range = next;
       let seeded = false;
-      this.#mutate(() => {
-        seeded = this.#seed(next.first, next.last);
-      }, true);
+      this.#mutate(
+        () => {
+          seeded = this.#seed(next.first, next.last);
+        },
+        true,
+        this.#pinOn("items"),
+      );
       if (!seeded) break;
     }
     return !sameRange(before, this.range);

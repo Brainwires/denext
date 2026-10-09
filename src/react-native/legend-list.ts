@@ -97,8 +97,36 @@ export interface OnViewableItemsChangedInfo<T> {
 export interface MaintainScrollAtEndOptions {
   /** Animate the scroll to the end. */
   readonly animated?: boolean;
-  /** Accepted: denext keeps the end on data changes and on resizes alike. */
-  readonly on?: Record<string, boolean | undefined>;
+  /**
+   * Which changes keep a list at its end pinned there: new data (`dataChange`), an item's size
+   * (`itemLayout`), the list's size (`layout`) and the footer's (`footerLayout`). Omitted, all
+   * do; given, only the keys set to `true` (LegendList's rule), and any other change keeps the
+   * visible items in place (`footerLayout: false`: a chat's composer growing leaves the messages
+   * where they are).
+   */
+  readonly on?: {
+    readonly dataChange?: boolean;
+    readonly itemLayout?: boolean;
+    readonly layout?: boolean;
+    readonly footerLayout?: boolean;
+  };
+}
+
+/**
+ * `maintainScrollAtEnd.on` as the engine's `pinEndOn`: undefined (every change pins) for `true`,
+ * an object without `on`, or no `maintainScrollAtEnd`; with `on`, only its `true` keys.
+ */
+function pinTriggers(
+  atEnd: LegendListProps<unknown>["maintainScrollAtEnd"],
+): EngineOptions["pinEndOn"] {
+  if (typeof atEnd !== "object" || atEnd === null || !("on" in atEnd)) return undefined;
+  const on = atEnd.on ?? {};
+  return {
+    data: on.dataChange === true,
+    items: on.itemLayout === true,
+    layout: on.layout === true,
+    footer: on.footerLayout === true,
+  };
 }
 
 /** `LegendList`'s props (3.x, plus the v1 names still in use). */
@@ -508,6 +536,7 @@ function legendEngine(
 ): EngineOptions {
   const atEnd = props.maintainScrollAtEnd;
   const threshold = props.maintainScrollAtEndThreshold ?? 0.1;
+  const pinEndOn = pinTriggers(atEnd);
   const fixed = props.getFixedItemSize;
   const est = props.getEstimatedItemSize;
   const typeOf = props.getItemType;
@@ -533,8 +562,12 @@ function legendEngine(
     overscan: props.drawDistance ?? DRAW_DISTANCE,
     mvcp: props.maintainVisibleContentPosition !== false,
     anchorEnd: props.alignItemsAtEnd === true || props.initialScrollAtEnd === true,
-    autoscrollEnd: atEnd ? (viewport: number) => threshold * viewport : undefined,
+    // New data scrolls to the end unless `on` leaves `dataChange` out.
+    autoscrollEnd: atEnd && pinEndOn?.data !== false
+      ? (viewport: number) => threshold * viewport
+      : undefined,
     autoscrollSmooth: typeof atEnd === "object" && atEnd.animated === true,
+    pinEndOn,
     threshold: 0.5,
     wrapCell,
     onScrollFrame,

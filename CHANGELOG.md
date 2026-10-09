@@ -241,6 +241,14 @@ and this project adheres to
   them, and the CLI's command runner (shared with `mobile build`) now passes a command's
   environment through.
 
+- **LegendList's `maintainScrollAtEnd.on` flags are honoured.** The LegendList adapter
+  accepted `on` but kept the end pinned on every change, so with T3 Code's
+  `on: { footerLayout: false }` a composer growing while the timeline sat at its end still
+  moved the visible messages up. Given `on`, only its `true` keys (`dataChange`, `itemLayout`,
+  `layout`, `footerLayout`) keep the end pinned now, as in LegendList; any other change keeps
+  the visible items in place. `VirtualList` gains the underlying `pinEndOn` prop
+  (`{ data, items, layout, footer }`, all `true` by default) for `anchor="end"`.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added
