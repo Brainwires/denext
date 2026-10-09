@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-10-09
+
 ### Added
 
 - **List and clear delivered notifications, per thread: `deliveredNotifications()` /
@@ -53,15 +55,14 @@ and this project adheres to
   - `stopPropagation()` in a handler stops the event at the root container, so a `document`
     listener (a "click outside" handler) no longer sees it; a native listener on an element
     between the target and the root runs before the bubbling handlers.
-
-  Events that do not bubble (`onScroll`, `onLoad`, `onError`, media events, `onToggle`, …),
-  `onWheel` / `onTouch*` (a root listener for them would hold scrolling on the main thread) and
-  unknown event types (a custom element's) keep a listener on their element. A 10,000-row list with
-  an `onClick` per row uses 10 % less heap after mounting. The dispatcher adds 3.9 KB (raw) to every
-  app's shared client runtime; the build-smoke budget moves from 65,500 B to 68,500 B.
-  denext/testing's `fireEvent` gains `focus` / `blur` (each sends the focus event, then `focusin` /
-  `focusout`), and its `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer
-  bubble.
+    Events that do not bubble (`onScroll`, `onLoad`, `onError`, media events, `onToggle`, …),
+    `onWheel` / `onTouch*` (a root listener for them would hold scrolling on the main thread) and
+    unknown event types (a custom element's) keep a listener on their element. A 10,000-row list with
+    an `onClick` per row uses 10 % less heap after mounting. The dispatcher adds 3.9 KB (raw) to every
+    app's shared client runtime; the build-smoke budget moves from 65,500 B to 68,500 B.
+    denext/testing's `fireEvent` gains `focus` / `blur` (each sends the focus event, then `focusin` /
+    `focusout`), and its `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer
+    bubble.
 
 ### Fixed
 
@@ -12413,7 +12414,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.2...development
+[3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0
