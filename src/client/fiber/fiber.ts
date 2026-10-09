@@ -350,6 +350,13 @@ export interface Fiber {
  * uninitialized field is `undefined`), which is also far smaller in the client bundle than
  * the same shape as an object literal of `field: undefined` pairs.
  */
+/**
+ * The context map of a fiber nothing has provided to yet. Shared: context maps are never
+ * mutated in place (a provider derives a new map, `providerContexts`), and reconcile replaces
+ * a new fiber's map before it renders, so two fresh `Map`s per fiber were garbage.
+ */
+const NO_CONTEXT: Map<symbol, unknown> = new Map();
+
 class FiberNode implements Fiber {
   tag: FiberTag;
   vnode: VNode;
@@ -365,8 +372,8 @@ class FiberNode implements Fiber {
   childLanes = NoLane;
   host: Fiber | null = null;
   boundary: Fiber | null = null;
-  inherited: Map<symbol, unknown> = new Map();
-  contexts: Map<symbol, unknown> = new Map();
+  inherited: Map<symbol, unknown> = NO_CONTEXT;
+  contexts: Map<symbol, unknown> = NO_CONTEXT;
   hooks: Fiber["hooks"];
   forceRender: Fiber["forceRender"];
   stateUpdate: Fiber["stateUpdate"];

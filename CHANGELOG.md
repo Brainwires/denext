@@ -28,6 +28,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A new fiber allocates no context maps.** Every fiber was constructed with two fresh `Map`s
+  that reconcile replaced before the fiber rendered. New fibers now share one empty map
+  (context maps are never mutated in place): two fewer allocations per mounted element, ~9,000
+  for T3 Code's first screen.
+
 - **A store-driven render no longer loops when the store reclaims unsubscribed entries.** A
   `useSyncExternalStore` update now runs the commit's passive effects before returning, as
   React does for a SyncLane commit. denext ran them on a later 0 ms timer, so a store that drops
