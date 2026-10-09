@@ -113,6 +113,19 @@ export default {
         form is honored; the array form is treated conservatively as having side effects (never
         wrongly dropped). The native <code>deno bundle</code> path does its own tree-shaking.
       </Callout>
+      <p>
+        When a package&apos;s <code>module</code>{" "}
+        field names a file the package does not ship (lucide 0.564: <code>dist/esm/lucide.js</code>
+        {" "}
+        is missing; the ESM entry is at{" "}
+        <code>dist/esm/lucide/src/lucide.js</code>), the browser bundle tries the package&apos;s
+        other ESM entries before its CommonJS <code>main</code>: the next <code>exports</code>{" "}
+        condition when a target is missing, the <code>jsnext:main</code> and <code>es2015</code>
+        {" "}
+        fields, then the same file name one or two directories below the <code>module</code>{" "}
+        path. CommonJS can&apos;t be tree-shaken, so this keeps an icon library&apos;s unused icons
+        out of the bundle.
+      </p>
 
       <h2>Barrel imports: optimizePackageImports</h2>
       <p>

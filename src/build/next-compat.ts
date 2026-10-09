@@ -70,6 +70,7 @@ import {
 } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
 import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
+import { preservedModulesEntry } from "./esm-entry.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
@@ -1680,25 +1681,80 @@ async function realPathOr(file: string): Promise<string> {
   }
 }
 
+/** The `package.json` fields the package-dir resolver reads. */
+interface PackageEntryFields {
+  exports?: unknown;
+  module?: unknown;
+  main?: unknown;
+  browser?: BrowserField;
+  source?: unknown;
+  "jsnext:main"?: unknown;
+  es2015?: unknown;
+}
+
+/** One entry candidate: a package-relative path, or a search that runs only when reached. */
+type EntryCandidate = string | (() => Promise<string | null>);
+
 /**
- * The package-relative target of `subpath`: the `exports` map, else (for the root) a string
- * `browser` field, else the legacy fields. The SSR bundle (no `browser` condition) prefers
- * `main` (the Node/CJS build) over `module` so an isomorphic-but-browser-leaning ESM build
- * doesn't reach server render; the browser bundle keeps `module` first for tree-shakeable ESM.
+ * The `exports` targets for `subpath`, best first: the target the full condition list picks,
+ * then what each shorter suffix of it picks (`browser, import, …` → `import, …` → …). A target
+ * the package does not ship then falls through to the next condition's instead of failing.
  */
-function packageEntryRel(
-  pkg: { exports?: unknown; module?: string; main?: string },
+function exportsCandidates(exportsField: unknown, subpath: string, conditions: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < conditions.length; i++) {
+    const rel = resolveExportsField(exportsField, subpath, conditions.slice(i));
+    if (rel && !out.includes(rel)) out.push(rel);
+  }
+  return out;
+}
+
+/** The string fields of `values`, in order (package.json fields can hold anything). */
+const strings = (...values: unknown[]): string[] =>
+  values.filter((v): v is string => typeof v === "string" && v !== "");
+
+/**
+ * The package-relative targets of `subpath`, best first: the `exports` map, else (for the root)
+ * a string `browser` field, else the legacy fields. The SSR bundle (no `browser` condition)
+ * prefers `main` (the Node/CJS build) over `module` so an isomorphic-but-browser-leaning ESM
+ * build doesn't reach server render; the browser bundle keeps ESM first for tree-shaking, and
+ * when `module` names a missing file it tries the other ESM entries (`jsnext:main`, `es2015`, a
+ * preserved-modules entry, see {@link preservedModulesEntry}) before the CJS `main`.
+ */
+function packageEntryCandidates(
+  pkgDir: string,
+  pkg: PackageEntryFields,
   subpath: string,
   conditions: string[],
   browser: BrowserField,
-): string {
-  const rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
-  if (rel) return rel;
-  if (subpath !== "") return "." + subpath;
-  if (typeof browser === "string") return browser;
-  return conditions === SSR_CONDITIONS
-    ? (pkg.main ?? pkg.module ?? "index.js")
-    : (pkg.module ?? pkg.main ?? "index.js");
+): EntryCandidate[] {
+  const fromExports = pkg.exports ? exportsCandidates(pkg.exports, subpath, conditions) : [];
+  if (fromExports.length > 0) return fromExports;
+  if (subpath !== "") return ["." + subpath];
+  if (typeof browser === "string") return [browser];
+  if (conditions === SSR_CONDITIONS) return [...strings(pkg.main, pkg.module), "index.js"];
+  const module = typeof pkg.module === "string" ? pkg.module : null;
+  return [
+    ...strings(pkg.module, pkg["jsnext:main"], pkg.es2015),
+    ...(module ? [() => preservedModulesEntry(pkgDir, module, pkg.source)] : []),
+    ...strings(pkg.main),
+    "index.js",
+  ];
+}
+
+/** The first candidate that names a real file (extensions and `index` probed), or null. */
+async function firstPackageFile(
+  pkgDir: string,
+  candidates: EntryCandidate[],
+  platformExtensions?: readonly string[],
+): Promise<string | null> {
+  for (const candidate of candidates) {
+    const rel = typeof candidate === "string" ? candidate : await candidate();
+    if (rel === null) continue;
+    const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")), platformExtensions);
+    if (file) return file;
+  }
+  return null;
 }
 
 /**
@@ -1713,18 +1769,15 @@ async function resolveInPackageDirBrowser(
   conditions: string[],
   platformExtensions?: readonly string[],
 ): Promise<string | false | null> {
-  let pkg: { exports?: unknown; module?: string; main?: string; browser?: BrowserField };
+  let pkg: PackageEntryFields;
   try {
     pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
   } catch {
     return null;
   }
   const browser = conditions.includes("browser") ? pkg.browser : undefined;
-  const rel = packageEntryRel(pkg, subpath, conditions, browser);
-  let file: string | false | null = await probePackageFile(
-    join(pkgDir, rel.replace(/^\.\//, "")),
-    platformExtensions,
-  );
+  const candidates = packageEntryCandidates(pkgDir, pkg, subpath, conditions, browser);
+  let file: string | false | null = await firstPackageFile(pkgDir, candidates, platformExtensions);
   if (!file) return null;
   const map = browserMap(browser);
   if (map) file = (await browserFileRemap(pkgDir, map, file, platformExtensions)) ?? file;

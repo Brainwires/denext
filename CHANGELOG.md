@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Fixed
 
+- **A `module` field that names a missing file no longer falls back to CommonJS.** lucide 0.564's
+  `module` (`dist/esm/lucide.js`) is not in its tarball; rollup's `preserveModules` put the entry
+  at `dist/esm/lucide/src/lucide.js`. The browser resolver gave up on the package and the build
+  took the CJS `main`, which esbuild can't tree-shake: 379 KB raw for T3 Code's four icons. It now
+  tries the package's other ESM entries first: the next `exports` condition when a target is
+  missing, `jsnext:main` / `es2015`, then the one file of the same name one or two directories
+  below the `module` path (the `source` field's path first). With the barrel changes above,
+  T3 Code's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream Vite build
+  (1,242,805 B).
+
 - **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
   `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
   toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm
