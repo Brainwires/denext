@@ -201,6 +201,13 @@ and this project adheres to
   rectangle. The icon report now warns when the chosen icon looks pre-masked and asks for the
   full-bleed square artwork.
 
+- **`denext mobile assets` removes the splash images it replaced.** It rewrote the iOS
+  Splash.imageset's `Contents.json` but left the images the old one named behind, unreferenced
+  (a dark splash no longer configured, a hand-made set's own file names), so they kept shipping
+  in the app bundle. The images the old `Contents.json` named and the new one does not are now
+  removed, and listed in the report (`--dry-run` lists them as "would remove"); a file no
+  catalog named, or a name that leaves the set's folder, is never touched.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

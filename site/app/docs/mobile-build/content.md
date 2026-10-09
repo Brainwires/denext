@@ -55,7 +55,10 @@ Every verb takes `--dir <capacitor project>` (default: the current directory), `
 Without a splash image, the splash is the icon centred on the background colour. The dark
 variants (an asset catalog `luminosity: dark` appearance on iOS, `drawable-night*` on Android)
 are written when `--splash-dark`, `assets/splash-dark.png` or `--dark-background-color` is
-given. `--platform ios|android` limits the output; `--dry-run` lists every file and its size.
+given. The splash set's new `Contents.json` replaces the old one, and the images the old one
+named that the new one does not (a dark splash no longer configured, the template's own names)
+are removed; files it never named stay. `--platform ios|android` limits the output; `--dry-run`
+lists every file and its size, and what it would remove.
 
 The images are decoded and resized with `@denext/photon` (WebAssembly) and encoded by denext
 itself, so the verb needs no npm package and no ImageMagick. Icons and splash are native

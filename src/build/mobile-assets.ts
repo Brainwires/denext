@@ -109,6 +109,11 @@ export interface AssetsReport {
   readonly platforms: readonly AssetPlatform[];
   readonly files: readonly PlannedAsset[];
   readonly warnings: readonly string[];
+  /**
+   * Images the previous Splash.imageset `Contents.json` referenced and the new one does not
+   * (paths relative to the project): removed, or in a dry run, to be removed.
+   */
+  readonly removed: readonly string[];
   readonly dryRun: boolean;
 }
 
@@ -164,6 +169,11 @@ export function colorFlag(value: string, flag: string): Rgb {
 /** One output: the path, a label and how to make its bytes. */
 interface Job extends PlannedAsset {
   readonly make: () => Promise<Uint8Array>;
+  /**
+   * For an asset catalog's `Contents.json` that replaces the set's images: the file names the
+   * new one references. The previous one's other images are removed (see `supersededImages`).
+   */
+  readonly replacesImages?: readonly string[];
 }
 
 /** Decoded sources, and their resized copies, each made once. */
@@ -291,8 +301,49 @@ function iosSplashJobs(src: Sources): Job[] {
     path: `${SPLASHSET}/Contents.json`,
     what: "asset catalog",
     make: () => Promise.resolve(jsonBytes({ images, info: { version: 1, author: "xcode" } })),
+    replacesImages: images.map((image) => String(image.filename)),
   });
   return jobs;
+}
+
+/** Whether `name` is a file name inside its folder (no separator, not `.` / `..`). */
+function isPlainFileName(name: unknown): name is string {
+  return typeof name === "string" && name !== "" && name !== "." && name !== ".." &&
+    !/[\\/]/.test(name);
+}
+
+/**
+ * The images a catalog's current `Contents.json` references that its replacement does not:
+ * plain file names in the set's folder (a name with a path separator, or `..`, is never
+ * touched), that exist as files. A missing or unreadable `Contents.json` supersedes nothing.
+ *
+ * @param root The Capacitor project.
+ * @param contents The `Contents.json` path, relative to `root`.
+ * @param keep The file names the new `Contents.json` references.
+ * @returns The superseded images, relative to `root`.
+ */
+async function supersededImages(
+  root: string,
+  contents: string,
+  keep: readonly string[],
+): Promise<string[]> {
+  let images: unknown;
+  try {
+    images = (JSON.parse(await Deno.readTextFile(join(root, contents))) as { images?: unknown })
+      .images;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(images)) return [];
+  const set = dirname(contents);
+  const names = new Set<string>();
+  for (const image of images) {
+    const name = (image as { filename?: unknown } | null)?.filename;
+    if (isPlainFileName(name) && !keep.includes(name)) names.add(name);
+  }
+  const out: string[] = [];
+  for (const name of names) if (await isFile(join(root, set, name))) out.push(`${set}/${name}`);
+  return out;
 }
 
 const RES = "android/app/src/main/res";
@@ -540,15 +591,23 @@ export async function generateMobileAssets(
   const src = new Sources(spec);
   const warnings = await sourceWarnings(src, platforms);
   const jobs = assetJobs(src, platforms, opts.kinds ?? ["icon", "splash"]);
+  // Read the catalogs being replaced before writing over them.
+  const removed: string[] = [];
+  for (const job of jobs) {
+    if (job.replacesImages) {
+      removed.push(...await supersededImages(root, job.path, job.replacesImages));
+    }
+  }
   if (!opts.dryRun) {
     for (const job of jobs) {
       const path = join(root, job.path);
       await Deno.mkdir(dirname(path), { recursive: true });
       await Deno.writeFile(path, await job.make());
     }
+    for (const path of removed) await Deno.remove(join(root, path));
   }
   const files = jobs.map(({ path, what, size }) => (size ? { path, what, size } : { path, what }));
-  return { root, platforms, files, warnings, dryRun: opts.dryRun === true };
+  return { root, platforms, files, warnings, removed, dryRun: opts.dryRun === true };
 }
 
 /**
@@ -563,6 +622,14 @@ export function formatAssetsReport(report: AssetsReport): string {
     `  ${verb}  ${posixRelative(report.root, join(report.root, f.path))}  ${f.size ?? ""} ${f.what}`
       .trimEnd()
   );
+  const remove = report.dryRun ? "would remove" : "removed";
+  for (const path of report.removed) {
+    lines.push(
+      `  ${remove}  ${
+        posixRelative(report.root, join(report.root, path))
+      }  (no longer in the splash catalog)`,
+    );
+  }
   for (const w of report.warnings) lines.push(`  warning: ${w}`);
   lines.push(
     "",
