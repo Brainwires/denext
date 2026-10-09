@@ -45,6 +45,14 @@ and this project adheres to
   T3 Code's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream Vite build
   (1,242,805 B).
 
+- **A build no longer rewrites a committed `routeTree.gen.ts` with the same routes.**
+  `spa.tanstackRouter` runs denext's pinned `@tanstack/router-plugin` generator, which orders the
+  tree differently from other versions (and never sees a Vite config's inline `quoteStyle` /
+  `semicolons`), so every denext build of T3 Code reordered the tracked file and every Vite run
+  reordered it back. When the regenerated tree holds the committed tree's statements, in any
+  order and up to quotes, semicolons and indentation, the committed bytes are put back. A route
+  added, renamed or removed is written as before.
+
 - **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
   `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
   toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm

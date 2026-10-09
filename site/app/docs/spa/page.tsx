@@ -248,6 +248,16 @@ spa: {
         {" "}
         <code>autoCodeSplitting: true</code>.
       </p>
+      <p>
+        The route generator that runs is denext&apos;s pinned one, which can order the route tree
+        differently from your own <code>@tanstack/router-plugin</code>{" "}
+        version (and does not see a Vite config&apos;s inline <code>quoteStyle</code> or{" "}
+        <code>semicolons</code>; <code>tsr.config.json</code>{" "}
+        it does). When the regenerated tree holds the same routes as the committed{" "}
+        <code>routeTree.gen.ts</code>, in any order or style, the build puts the committed file back
+        byte for byte, so a build never churns a tracked tree. A route you add, rename or remove is
+        written as usual.
+      </p>
 
       <h3>
         Chunk-load errors — <code>vite:preloadError</code>

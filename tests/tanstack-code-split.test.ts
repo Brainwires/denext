@@ -99,6 +99,77 @@ Deno.test({
   }
 });
 
+// A project's tracked `routeTree.gen.ts`, written by the app's OWN generator (its own
+// `@tanstack/router-plugin` version and settings), must survive a denext build byte for byte when
+// the route set is unchanged. denext's pinned generator orders imports and routes differently
+// from older versions (T3 Code: every build flipped the order), and a Vite config's inline
+// `quoteStyle` / `semicolons` never reach it, so a regenerated tree that holds the same
+// statements is put back exactly as committed.
+
+/** The fixture's tree in another generator's dress: imports reversed, double quotes, semicolons. */
+function restyled(tree: string): string {
+  const lines = tree.split("\n");
+  const imports = lines.filter((l) => l.startsWith("import { Route as"));
+  let k = imports.length;
+  return lines.map((l) => l.startsWith("import { Route as") ? imports[--k] : l)
+    .map((l) => l.startsWith("import ") ? l.replaceAll("'", '"') + ";" : l)
+    .join("\n");
+}
+
+/** Run the plugin's setup (the generator runs there) without bundling anything. */
+async function generate(dir: string): Promise<void> {
+  try {
+    await esbuild.build({
+      stdin: { contents: "", loader: "js" },
+      write: false,
+      logLevel: "silent",
+      plugins: [tanstackCodeSplitPlugin(dir, { autoCodeSplitting: true })],
+    });
+  } finally {
+    await esbuild.stop();
+  }
+}
+
+Deno.test({
+  name: "tanstack route tree: a committed tree with the same routes stays byte-identical",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const dir = await fixture();
+  const tree = join(dir, "src", "routeTree.gen.ts");
+  try {
+    await generate(dir);
+    const committed = restyled(await Deno.readTextFile(tree));
+    await Deno.writeTextFile(tree, committed);
+    await generate(dir);
+    assertEquals(await Deno.readTextFile(tree), committed, "the build rewrote the committed tree");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "tanstack route tree: a real route change is still written",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const dir = await fixture();
+  const tree = join(dir, "src", "routeTree.gen.ts");
+  try {
+    await generate(dir);
+    await Deno.writeTextFile(tree, restyled(await Deno.readTextFile(tree)));
+    await Deno.writeTextFile(
+      join(dir, "src", "routes", "contact.tsx"),
+      `import { createFileRoute } from "@tanstack/react-router";\n` +
+        `export const Route = createFileRoute("/contact")({ component: () => null });\n`,
+    );
+    await generate(dir);
+    assertStringIncludes(await Deno.readTextFile(tree), "ContactRouteImport");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("tanstack hook filters: include / exclude / bare patterns, substring strings", () => {
   const filter = { include: /\.tsx$/, exclude: ["tsr-split", "tsr-shared"] };
   assert(filterAdmits(filter, "/app/src/routes/about.tsx"));
