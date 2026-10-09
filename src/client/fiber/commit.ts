@@ -236,6 +236,14 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
   runCommitReport(handle);
+  // 7. A store-driven commit runs its passive effects now, as React does for a SyncLane
+  //    commit: a store that reclaims an unsubscribed entry on its next task (an atom
+  //    registry) must see the re-subscription first, or the rebuilt entry reads as a
+  //    change and the component re-renders again, indefinitely.
+  if (handle.syncPassive) {
+    handle.syncPassive = false;
+    flushPassiveEffects();
+  }
 }
 
 /**

@@ -28,6 +28,16 @@ and this project adheres to
 
 ### Fixed
 
+- **A store-driven render no longer loops when the store reclaims unsubscribed entries.** A
+  `useSyncExternalStore` update now runs the commit's passive effects before returning, as
+  React does for a SyncLane commit. denext ran them on a later 0 ms timer, so a store that drops
+  an entry nobody subscribes to on its own next task (@effect/atom's registry) could reclaim
+  the entry a render had just read before the subscription effect ran; re-subscribing rebuilt
+  it with a new value, which read as a change, and a component deriving its store per render
+  (`useAtomValue(atom, f)` with an inline `f`) re-rendered indefinitely. T3 Code's composer did
+  this on most launches, 30 to 110 renders a second while idle, re-attaching ~50 listeners per
+  render; its WebKit page process grew ~50 MB over two idle minutes.
+
 - **A component without effects holds no effect queues.** Every function component got three
   fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
   after the commit. They are now allocated by the component's first effect of a render and

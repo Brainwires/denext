@@ -107,6 +107,8 @@ function markUpdateSource(fiber: Fiber, fromState: boolean): void {
  */
 export function scheduleStoreUpdate(fiber: Fiber): void {
   markUpdateSource(fiber, false);
+  const handle = rootHandleOf(fiber);
+  if (handle) handle.syncPassive = true;
   scheduleUpdateLane(fiber, SyncLane);
 }
 
