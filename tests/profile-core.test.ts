@@ -5,7 +5,13 @@
 import { assertAlmostEquals, assertEquals, assertStringIncludes } from "@std/assert";
 import { aggregateSelfTime, type RawCpuProfile } from "../src/profile/cpu.ts";
 import { budgetFromRun, evaluateBudget } from "../src/profile/budget.ts";
-import { DEFAULT_LEAK_TOLERANCE_BYTES, type HeapResult, isLeak } from "../src/profile/heap.ts";
+import { captureInteraction } from "../src/profile/core.ts";
+import {
+  DEFAULT_LEAK_TOLERANCE_BYTES,
+  type HeapResult,
+  isLeak,
+  retainedBytes,
+} from "../src/profile/heap.ts";
 import { profileReportLines } from "../src/profile/report.ts";
 import type { ProfileResult } from "../src/profile/types.ts";
 
@@ -132,4 +138,65 @@ Deno.test("profileReportLines: renders header, CPU, heap, and budget verdict", (
   assertStringIncludes(text, "Heap ▸");
   assertStringIncludes(text, "Budget ▸ ✖");
   assertStringIncludes(text, "retained too much");
+});
+
+/**
+ * A fake page + CDP for captureInteraction: each interaction run adds `perRun(i)` bytes that
+ * survive GC; the first run also adds `firstRunOnly` (one-time state: chunks, caches).
+ */
+function fakeBrowser(opts: { base: number; firstRunOnly: number; perRun: (i: number) => number }) {
+  let heap = opts.base;
+  let runs = 0;
+  const page = {
+    goto: () => Promise.resolve(),
+    evaluate: (code: string) => {
+      if (code === "INTERACT") {
+        heap += opts.perRun(runs) + (runs === 0 ? opts.firstRunOnly : 0);
+        runs++;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(heap); // readHeapBytes
+    },
+  };
+  const cdp = {
+    Profiler: {
+      start: () => Promise.resolve(),
+      stop: () => Promise.resolve({ profile: { nodes: [], startTime: 0, endTime: 1 } }),
+    },
+    HeapProfiler: { collectGarbage: () => Promise.resolve() },
+  };
+  return { page, cdp, runs: () => runs };
+}
+
+Deno.test("captureInteraction: first-run state is not a leak when 2+ iterations run", async () => {
+  // 24 MB loaded once on the first run, nothing retained by the later runs.
+  const f = fakeBrowser({ base: 40e6, firstRunOnly: 24e6, perRun: () => 0 });
+  const { heap } = await captureInteraction(f.page, f.cdp, "http://x/", "INTERACT", 3);
+  assertEquals(f.runs(), 3);
+  assertEquals(heap.beforeBytes, 40e6);
+  assertEquals(heap.warmBytes, 64e6);
+  assertEquals(retainedBytes(heap), 0);
+  assertEquals(heap.leaked, false);
+});
+
+Deno.test("captureInteraction: growth that repeats after the first run is a leak", async () => {
+  const f = fakeBrowser({ base: 40e6, firstRunOnly: 24e6, perRun: () => 1e6 });
+  const { heap } = await captureInteraction(f.page, f.cdp, "http://x/", "INTERACT", 3);
+  assertEquals(retainedBytes(heap), 2e6);
+  assertEquals(heap.leaked, true);
+});
+
+Deno.test("captureInteraction: one iteration keeps the post-load baseline", async () => {
+  const f = fakeBrowser({ base: 40e6, firstRunOnly: 24e6, perRun: () => 0 });
+  const { heap } = await captureInteraction(f.page, f.cdp, "http://x/", "INTERACT", 1);
+  assertEquals(heap.warmBytes, undefined);
+  assertEquals(retainedBytes(heap), 24e6);
+  assertEquals(heap.leaked, true);
+});
+
+Deno.test("evaluateBudget + budgetFromRun: the leak budget is measured from the warm heap", () => {
+  const warm: HeapResult = { ...HEAP, warmBytes: 1_150 }; // retained 50 after the first run
+  assertEquals(evaluateBudget({ maxLeakedBytes: 100 }, CPU, warm).passed, true);
+  assertEquals(evaluateBudget({ maxLeakedBytes: 40 }, CPU, warm).passed, false);
+  assertEquals(budgetFromRun(CPU, warm, 1.2).maxLeakedBytes, 60);
 });

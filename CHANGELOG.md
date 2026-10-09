@@ -62,6 +62,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext profile --interact` no longer reports first-run state as a leak.** With
+  `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
+  the heap after the first run and a GC, shown as `warm` in the report. The first run loads
+  what the interaction needs once (lazily loaded route chunks, their compiled code, first-visit
+  data caches); measured from the post-load heap, T3 Code's thread switch reported "+24 MB
+  retained", none of which grows when the switch repeats. One iteration keeps the post-load
+  baseline. Budgets written by `--write-budget` before this change may hold a larger
+  `maxLeakedBytes` than a fresh run needs.
+
 - **A new fiber allocates no context maps.** Every fiber was constructed with two fresh `Map`s
   that reconcile replaced before the fiber rendered. New fibers now share one empty map
   (context maps are never mutated in place): two fewer allocations per mounted element, ~9,000

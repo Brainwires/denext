@@ -11,8 +11,23 @@ export interface HeapResult {
   afterBytes: number;
   /** Used JS heap after a forced GC — what the interaction actually retained. */
   afterGcBytes: number;
+  /**
+   * Interaction mode with 2+ iterations: the used heap after the FIRST iteration and a forced
+   * GC — the leak baseline. The first run pays one-time costs that are not leaks (lazily loaded
+   * route chunks and their compiled code, first-visit data caches); growth that repeats on the
+   * later runs is. Absent for a single iteration and in startup mode.
+   */
+  warmBytes?: number;
   /** True when the post-GC heap didn't return near baseline (a retained-growth signal). */
   leaked: boolean;
+}
+
+/**
+ * Bytes retained after GC relative to the leak baseline: the warm heap ({@link
+ * HeapResult.warmBytes}) when measured, otherwise the pre-interaction heap.
+ */
+export function retainedBytes(heap: HeapResult): number {
+  return heap.afterGcBytes - (heap.warmBytes ?? heap.beforeBytes);
 }
 
 /** Default retained-growth tolerance (bytes) below which post-GC growth isn't a leak. */
