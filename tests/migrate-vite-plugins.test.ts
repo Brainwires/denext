@@ -169,11 +169,15 @@ Deno.test({
     assertEquals(r.spa?.viteEmitters?.map((e) => e.name), ["licensesPlugin"]);
     assertEquals(r.spa?.viteEmitterReview, []);
     const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
-    assertStringIncludes(config, `import { viteEmitterPlugin } from "denext/plugin-kit";`);
+    assertStringIncludes(
+      config,
+      `import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";`,
+    );
     assertStringIncludes(config, `import { licensesPlugin } from "./scripts/licenses.ts";`);
     assertStringIncludes(config, "viteEmitterPlugin(licensesPlugin({");
     const denoJson = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-    assert(denoJson.imports["denext/plugin-kit"], "denext/plugin-kit is mapped");
+    assert(denoJson.imports["denext/plugin-kit/vite-emitter"], "the light entry is mapped");
+    assert(!denoJson.imports["denext/plugin-kit"], "the toolchain-heavy plugin-kit is not");
     // The migrated app exports the file the Vite plugin emits.
     await staticExport(dir);
     assertEquals(

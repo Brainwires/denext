@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Fixed
 
+- **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
+  `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
+  toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm
+  imports. The config is loaded outside the build too (a Deno Desktop app's `desktop.ts` imports
+  it at runtime, and so does the macOS package script), so desktop packaging failed under
+  `nodeModulesDir: "manual"` ("Could not find a matching package for 'npm:esbuild@^0.24.0'"),
+  and a looser setup would have shipped the toolchain in the app. The new entry exports the same
+  function with no npm package and no bundler in its graph; `denext migrate` and the docs use it.
+  `denext/plugin-kit` still re-exports it.
+
 - **The `client:*` directive types type-check under `exactOptionalPropertyTypes`.** With the
   documented `client-directives.d.ts` merged into `@types/react`'s `Attributes`, a component
   that spreads props typed the way component libraries type them (each key `?: T | undefined`,

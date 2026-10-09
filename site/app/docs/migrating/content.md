@@ -217,7 +217,7 @@ config is read, never run):
   startup chunk ([SPA mode › Vite build parity](/docs/spa#vite-build-parity)).
 - A plugin that emits a file from `generateBundle` (`this.emitFile({ type: "asset", … })`),
   imported from your own module, is wired into `denext.config.ts` as
-  `viteEmitterPlugin(<the same call>)` from `denext/plugin-kit`, so the file still lands in the
+  `viteEmitterPlugin(<the same call>)` from `denext/plugin-kit/vite-emitter`, so the file still lands in the
   build and the export. An emitter that also uses other build hooks, is declared inline in
   vite.config, or is called with values from vite.config is listed for review instead (in the
   summary and in `denext migrate --check`).

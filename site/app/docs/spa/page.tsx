@@ -290,7 +290,7 @@ spa: {
       <Code lang="ts">
         {`// denext.config.ts
 import type { DenextConfig } from "denext/server";
-import { viteEmitterPlugin } from "denext/plugin-kit";
+import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";
 import { licensesPlugin } from "./scripts/licenses.ts";
 
 export default {
@@ -303,7 +303,11 @@ export default {
         <code>denext migrate</code>{" "}
         writes this for an emitter imported from the app's own module; one it cannot carry over
         (other build hooks, values from vite.config) is listed for review. See{" "}
-        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>.
+        <a href="/docs/plugins#seam-3--build-steps">Plugins › build steps</a>. Import it from{" "}
+        <code>denext/plugin-kit/vite-emitter</code>, not{" "}
+        <code>denext/plugin-kit</code>: the config is also loaded outside the build (a Deno Desktop
+        app's <code>desktop.ts</code>{" "}
+        imports it at runtime), and the full plugin kit brings the build toolchain along.
       </p>
 
       <h3>

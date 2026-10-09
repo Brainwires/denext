@@ -2178,7 +2178,7 @@ function spaConfigSource(o: {
 /** The generated config's imports for the vite.config's file-emitting plugins. */
 function viteEmitterImports(emitters: readonly MappedViteEmitter[] = []): string {
   if (emitters.length === 0) return "";
-  return `import { viteEmitterPlugin } from "denext/plugin-kit";\n` +
+  return `import { viteEmitterPlugin } from "denext/plugin-kit/vite-emitter";\n` +
     emitters.map((e) => `${e.importLine}\n`).join("");
 }
 
@@ -2857,7 +2857,11 @@ async function migrateSpaProject(
 
   const facts = await spaSourceFacts(dir, deps, options, source);
   // `viteEmitterPlugin` in the generated config.
-  if (facts.viteEmitters.length > 0) imports["denext/plugin-kit"] = R.sub("plugin-kit");
+  // The light entry: a desktop app's `desktop.ts` imports the config at runtime, and
+  // `denext/plugin-kit` would bring the build toolchain (esbuild, sass, mdx) with it.
+  if (facts.viteEmitters.length > 0) {
+    imports["denext/plugin-kit/vite-emitter"] = R.sub("plugin-kit/vite-emitter");
+  }
   const cap = options.capacitor
     ? await spaCapacitorPlan(dir, deps, pm, R, options, facts, source)
     : null;

@@ -388,7 +388,10 @@
     "VNodeType:typeAlias",
     "VProps:interface",
     "ViteEmittedFile:interface",
+    "ViteEmitterBuildContext:interface",
     "ViteEmitterContext:interface",
+    "ViteEmitterDenextPlugin:interface",
+    "ViteEmitterSetupContext:interface",
     "VitePluginLike:interface",
     "apiDefinitionOf:function",
     "bufferedRequest:function",
@@ -418,6 +421,16 @@
     "tapChannel:function",
     "toBase64Url:function",
     "verifyOrigin:function",
+    "viteEmitterPlugin:function"
+  ],
+  "denext/plugin-kit/vite-emitter": [
+    "GenerateBundleHook:typeAlias",
+    "ViteEmittedFile:interface",
+    "ViteEmitterBuildContext:interface",
+    "ViteEmitterContext:interface",
+    "ViteEmitterDenextPlugin:interface",
+    "ViteEmitterSetupContext:interface",
+    "VitePluginLike:interface",
     "viteEmitterPlugin:function"
   ],
   "denext/jsx-runtime": [
