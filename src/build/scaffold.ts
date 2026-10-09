@@ -1495,14 +1495,19 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
  *
- * The end user's Windows machine needs the Microsoft Edge WebView2 runtime for the window
- * (preinstalled on current Windows 10/11); that is a deploy-environment dependency, not
- * baked into the bundle. Outputs into ./dist/.
+ * A webview build (the default \`desktop.backend\`) needs the Microsoft Edge WebView2 runtime on
+ * the end user's machine (preinstalled on current Windows 10/11); that is a deploy-environment
+ * dependency, not baked into the bundle. A CEF build ships Chromium in the bundle instead. A
+ * signed CEF build must be signed with a certificate the target trusts: CEF's bootstrap verifies
+ * the executable's Authenticode chain and exits at launch otherwise (the run warns when this
+ * machine does not trust it; \`--no-sign\` builds an unsigned app that starts). Outputs into
+ * ./dist/.
  */
 
 import {
   buildDesktopBundle,
   buildDesktopMsi,
+  desktopCheckCefSignature,
   desktopHasTool as has,
   desktopMsiProblem,
   desktopOptionalInstaller,
@@ -1512,6 +1517,7 @@ import {
   desktopRun as run,
   desktopSignWindows,
   desktopToolGate,
+  desktopWindowsTargetNote,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
 } from "denext/desktop";
@@ -1536,9 +1542,19 @@ async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<stri
 }
 
 /** Authenticode-sign \`files\` with DENEXT_WINDOWS_CERT through \`signtool\`, batched; without a
- * certificate or signtool, skip with a warning (see desktopSignWindows). */
-async function sign(files: string[]): Promise<void> {
-  await desktopSignWindows(files);
+ * certificate or signtool, skip with a warning (see desktopSignWindows). Whether they were signed. */
+async function sign(files: string[]): Promise<boolean> {
+  return await desktopSignWindows(files);
+}
+
+/** Sign EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime,
+ * CEF's DLLs, any .node), found by its header: the runtime refuses an update of a signed app
+ * unless each one carries the running app's signature. A signed CEF app must be trusted here:
+ * CEF's bootstrap verifies the executable's signature at launch and dies when it is not. */
+async function signBundle(dir: string, exe: string, backend: string): Promise<void> {
+  if (await sign(await desktopPeFiles(dir)) && backend === "cef") {
+    await desktopCheckCefSignature(\`\${dir}/\${exe}\`);
+  }
 }
 
 /** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
@@ -1632,10 +1648,7 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  // EVERY PE file in the bundle (the .exe, <App>.dll, WebView2Loader.dll, the VC++ runtime, CEF's
-  // DLLs, any .node), found by its header: the runtime refuses an update of a signed app unless
-  // each one carries the running app's signature.
-  if (signing) await sign(await desktopPeFiles(dir));
+  if (signing) await signBundle(dir, \`\${name}-\${LABELS[arch]}.exe\`, meta.backend);
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
@@ -1665,14 +1678,9 @@ async function main(): Promise<void> {
 
   console.log("\\n  Built:");
   for (const a of artifacts) console.log("  " + a);
-  console.log(
-    noVcRuntime.length === 0
-      ? "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
-        " app-local, so no VC++ redistributable is required)"
-      : "\\n  (the target needs the Microsoft Edge WebView2 runtime and, for " +
-        noVcRuntime.join(", ") +
-        ", the VC++ 2015-2022 redistributable: the VC++ runtime was not bundled; see above)",
-  );
+  // What the target needs: WebView2 for a webview build (a CEF build ships Chromium), and the
+  // VC++ redistributable for an arch whose runtime could not be bundled.
+  console.log("\\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime));
 }
 
 if (import.meta.main) await main();

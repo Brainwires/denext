@@ -13,8 +13,10 @@
 // (the user supplies a finished master), an auto-detected web favicon is composed.
 
 import { exists } from "@std/fs";
-import { join, resolve } from "@std/path";
+import { join, relative, resolve } from "@std/path";
 import type { SpaConfig } from "../server/config.ts";
+import { resolveIconSource } from "./mobile-icon-source.ts";
+import { decodeImage, encodePng, fitInto } from "./png-raster.ts";
 
 /** The file the composed icon is written to (and the `--icon` the desktop task uses). */
 export const DESKTOP_ICON_FILE = "desktop-icon.png";
@@ -198,4 +200,101 @@ export async function prepareDesktopIcon(
   await writeDesktopIcon(projectDir, composed);
   console.log(`  desktop icon: ${srcRel} (macOS-composed) -> ${DESKTOP_ICON_FILE}`);
   return DESKTOP_ICON_FILE;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The packaged app's icon when none is configured
+// ---------------------------------------------------------------------------------------------
+
+/** The sizes a derived Windows `.ico` carries (256 is the largest an .ico entry describes). */
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256] as const;
+
+/** Where a derived icon is written for each target OS (relative to the project). */
+const DERIVED_DESKTOP_ICONS: Readonly<Record<"darwin" | "linux" | "windows", string>> = {
+  darwin: ".deno-desktop/icon-macos.png",
+  linux: ".deno-desktop/icon-linux.png",
+  windows: ".deno-desktop/icon.ico",
+};
+
+/**
+ * An `.ico` file holding `images` (PNG-compressed entries, which Windows reads since Vista).
+ *
+ * @param images Each image's square size and PNG bytes, smallest first.
+ * @returns The `.ico` bytes.
+ */
+function encodeIco(images: readonly { size: number; png: Uint8Array }[]): Uint8Array {
+  const header = 6 + images.length * 16;
+  const total = images.reduce((n, img) => n + img.png.length, header);
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint16(2, 1, true); // type 1: icon
+  view.setUint16(4, images.length, true);
+  let offset = header;
+  images.forEach((img, i) => {
+    const entry = 6 + i * 16;
+    out[entry] = img.size >= 256 ? 0 : img.size; // 0 means 256
+    out[entry + 1] = img.size >= 256 ? 0 : img.size;
+    view.setUint16(entry + 4, 1, true); // colour planes
+    view.setUint16(entry + 6, 32, true); // bits per pixel
+    view.setUint32(entry + 8, img.png.length, true);
+    view.setUint32(entry + 12, offset, true);
+    out.set(img.png, offset);
+    offset += img.png.length;
+  });
+  return out;
+}
+
+/** The icon bytes for `os` from a raster source's bytes, or `null` when they can't be decoded. */
+async function derivedIconBytes(
+  os: "darwin" | "linux" | "windows",
+  src: Uint8Array,
+): Promise<Uint8Array | null> {
+  if (os !== "windows") return await composeMacOsIcon(src, os === "darwin" ? MAC_ICON_SAFE : 1);
+  try {
+    const raster = await decodeImage(src);
+    const images = [];
+    for (const size of ICO_SIZES) {
+      images.push({ size, png: await encodePng(await fitInto(raster, size)) });
+    }
+    return encodeIco(images);
+  } catch (err) {
+    console.warn(`  desktop icon: .ico failed — ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+/**
+ * Derive the packaged app's icon for `os` from the app's own icon, found the way
+ * `denext mobile assets` finds it (`mobile.icon`, the Capacitor `assets/` folder, the Expo config,
+ * the web manifest, the apple-touch-icon, the largest PNG favicon): a Windows `.ico` (16 to 256 px),
+ * a macOS 1024 px PNG on Apple's icon grid, or a full-tile Linux 1024 px PNG, written to
+ * {@linkcode DERIVED_DESKTOP_ICONS}. Used when `desktop.app.icons.<os>` is unset and none of the
+ * package script's default icon files exists, so the app does not get `deno desktop`'s generic
+ * icon.
+ *
+ * @param root The project.
+ * @param os The target OS.
+ * @returns The icon's path relative to the project, or `undefined` when the app has no icon.
+ */
+export async function deriveDesktopIcon(
+  root: string,
+  os: "darwin" | "linux" | "windows",
+): Promise<string | undefined> {
+  let icon: string | undefined;
+  try {
+    icon = (await resolveIconSource(root)).source?.icon;
+  } catch (err) {
+    console.warn(`  desktop icon: ${err instanceof Error ? err.message : err}`);
+    return undefined;
+  }
+  if (!icon) return undefined;
+  const bytes = await derivedIconBytes(os, await Deno.readFile(icon));
+  if (!bytes) return undefined;
+  const rel = DERIVED_DESKTOP_ICONS[os];
+  const out = join(root, rel);
+  await Deno.mkdir(join(root, ".deno-desktop"), { recursive: true });
+  await Deno.remove(out).catch(() => {}); // never write through a planted symlink
+  await Deno.writeFile(out, bytes);
+  console.log(`  desktop icon: ${relative(root, icon)} -> ${rel}`);
+  return rel;
 }

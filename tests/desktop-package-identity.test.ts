@@ -17,6 +17,7 @@ import { syncDesktopAppConfigAt } from "../src/build/desktop-app-config.ts";
 import { injectAppConfigRedirects } from "../src/build/css.ts";
 import { packageMetaFrom } from "../src/build/desktop-installers.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
+import { encodePng, solid } from "../src/build/png-raster.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -177,6 +178,43 @@ Deno.test("desktopIconArgs: config icon, then deno.json's, then the OS's default
     for (const p of [configured, denoOnly, defaults, bare]) {
       await Deno.remove(p.dir, { recursive: true });
     }
+  }
+});
+
+Deno.test("desktopIconArgs: with no icon set, one is derived from the app's own (apple-touch-icon)", async () => {
+  const { dir, entry } = await project({});
+  try {
+    await Deno.mkdir(join(dir, "public"));
+    const touch = await encodePng(solid(180, 180, { r: 200, g: 40, b: 40 }));
+    await Deno.writeFile(join(dir, "public", "apple-touch-icon.png"), touch);
+    // Windows: an .ico of PNG images, 16 to 256 px (a 256 px entry stores its size as 0).
+    assertEquals(await desktopIconArgs(entry, "windows"), ["--icon", ".deno-desktop/icon.ico"]);
+    const ico = await Deno.readFile(join(dir, ".deno-desktop", "icon.ico"));
+    const view = new DataView(ico.buffer);
+    assertEquals([view.getUint16(0, true), view.getUint16(2, true)], [0, 1]);
+    const count = view.getUint16(4, true);
+    const sizes = Array.from({ length: count }, (_, i) => ico[6 + i * 16] || 256);
+    assertEquals(sizes, [16, 24, 32, 48, 64, 128, 256]);
+    for (let i = 0; i < count; i++) {
+      const offset = view.getUint32(6 + i * 16 + 12, true);
+      assertEquals([...ico.subarray(offset, offset + 4)], [0x89, 0x50, 0x4e, 0x47]); // PNG
+    }
+    // macOS and Linux: a 1024 px PNG each (macOS's on Apple's icon grid).
+    assertEquals(await desktopIconArgs(entry, "darwin"), [
+      "--icon",
+      ".deno-desktop/icon-macos.png",
+    ]);
+    assertEquals(await desktopIconArgs(entry, "linux"), ["--icon", ".deno-desktop/icon-linux.png"]);
+    for (const name of ["icon-macos.png", "icon-linux.png"]) {
+      const png = await Deno.readFile(join(dir, ".deno-desktop", name));
+      assertEquals(new DataView(png.buffer).getUint32(16), 1024, name);
+    }
+    // A default icon file still wins over a derived one.
+    await Deno.mkdir(join(dir, "icons"));
+    await Deno.writeTextFile(join(dir, "icons", "app.ico"), "ico");
+    assertEquals(await desktopIconArgs(entry, "windows"), ["--icon", "icons/app.ico"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 

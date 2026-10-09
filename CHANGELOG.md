@@ -59,6 +59,13 @@ and this project adheres to
   1,235,940 B with this release's fixes, byte for byte the build with the list. `"!pkg"`
   excludes a package, and `"!*"` turns the automatic mode off (`optimizePackageImports: false`
   still turns everything off).
+- **The packaged desktop app's icon comes from the app's own when none is set.** With no
+  `desktop.app.icons.<os>` and none of the package script's default icon files, the package
+  scripts (and `denext desktop run` / `dev`) derive one from the icon `denext mobile assets`
+  would use (`mobile.icon`, the Capacitor `assets/` folder, the Expo config, the web manifest,
+  the apple-touch-icon, the largest PNG favicon): a Windows `.ico` of PNG images from 16 to
+  256 px, a 1024 px macOS PNG on Apple's icon grid, a full-tile 1024 px Linux PNG, written to
+  `.deno-desktop/`. Only an app with no icon at all keeps `deno desktop`'s generic one.
 
 ### Changed
 
@@ -82,6 +89,18 @@ and this project adheres to
   `Relative import path "ms" not prefixed with / or ./ or ../` on Windows only. The loader's
   file reads now take those paths as `C:/…`. A new `windows-resolve` CI job runs the regression
   test on windows-latest.
+- **The Windows package script's closing note follows the backend.** A CEF build ships Chromium,
+  so it no longer says the target needs the Microsoft Edge WebView2 runtime.
+- **The installers' version falls back to `package.json`.** With no deno.json `version`, the
+  `.msi` (and `.deb`, `.rpm`, the CEF executable's version resource) take package.json's
+  `version` before `1.0.0`, and the made-up-version warning names both files.
+- **A CEF build signed with a certificate Windows does not trust is caught.** CEF's bootstrap
+  checks the executable's Authenticode chain with WinVerifyTrust and dies at launch with a FATAL
+  error when it does not reach a trusted root. The Windows package script now checks the signed
+  executable (`Get-AuthenticodeSignature`) and warns with the fix (a CA-issued certificate, or
+  `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
+  CEF app on Windows (a `cef-signing` warning).
+
 - **`denext profile --interact` no longer reports first-run state as a leak.** With
   `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
   the heap after the first run and a GC, shown as `warm` in the report. The first run loads

@@ -197,7 +197,14 @@ export default {
           <code>deno.json</code>, else <code>icons/app.icns</code> / <code>icons/app.ico</code> /
           {" "}
           <code>icons/app.png</code>, else the <code>desktop-icon.png</code>{" "}
-          an export composes. A configured icon that does not exist fails the build.
+          an export composes, else one derived from the app&apos;s own icon, found the way{" "}
+          <code>denext mobile assets</code>{" "}
+          finds it (<code>mobile.icon</code>, the web manifest&apos;s largest icon, the
+          apple-touch-icon, the largest PNG favicon): a Windows <code>.ico</code>{" "}
+          (16 to 256 px), a 1024 px PNG on Apple&apos;s icon grid for macOS, a full-tile one for
+          Linux, written to <code>.deno-desktop/</code>. Only an app with no icon at all gets{" "}
+          <code>deno desktop</code>&apos;s generic one. A configured icon that does not exist fails
+          the build.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
@@ -659,9 +666,12 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         app&apos;s id (so a click on a notification starts the app when it isn&apos;t running),
         telling a portal that is too old (before 1.19) from one that is installed but doesn&apos;t
         start; a systemd user manager (a scheduled notification is posted while the app is closed);
-        a dock that reads launcher badges; and, for a CEF app, the Chromium sandbox the machine
-        allows (unprivileged user namespaces, else only the <code>.deb</code> /{" "}
-        <code>.rpm</code>&apos;s setuid <code>chrome-sandbox</code>, else none as root), with{" "}
+        a dock that reads launcher badges; on Windows, for a CEF app, whether{" "}
+        <code>DENEXT_WINDOWS_CERT</code>{" "}
+        chains to a root the machine trusts (see the signing note below); and, for a CEF app, the
+        Chromium sandbox the machine allows (unprivileged user namespaces, else only the{" "}
+        <code>.deb</code> / <code>.rpm</code>&apos;s setuid{" "}
+        <code>chrome-sandbox</code>, else none as root), with{" "}
         <code>desktop.linux.requireSandbox</code>{" "}
         for an app that would rather not start unsandboxed. It reads the session bus with{" "}
         <code>busctl</code> or <code>gdbus</code>{" "}
@@ -774,9 +784,10 @@ denext desktop package --target-os windows --format msi,zip`}
         you asked for — in <code>--format</code> or the config — fails the run.
       </p>
       <p>
-        Two metadata fallbacks are warned about on every run. With no deno.json <code>version</code>
-        {" "}
-        the installers say <code>1.0.0</code>, so no later build can upgrade them. With no{" "}
+        Two metadata fallbacks are warned about on every run. The version is deno.json&apos;s{" "}
+        <code>version</code>, else{" "}
+        <code>package.json</code>&apos;s; with neither, the installers say{" "}
+        <code>1.0.0</code>, so no later build can upgrade them. With no{" "}
         <code>desktop.app.identifier</code> the app is{" "}
         <code>com.deno.desktop.&lt;name&gt;</code>, which also derives the MSI UpgradeCode: set your
         own before the first release, because changing it later makes the next version install
@@ -3064,7 +3075,17 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           carries the running app&apos;s signature. Unset, nothing is signed.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
-          an RFC 3161 timestamp server (default DigiCert&apos;s).
+          an RFC 3161 timestamp server (default DigiCert&apos;s). A CEF app must be signed with a
+          certificate the target machines trust (a CA-issued code-signing certificate): CEF&apos;s
+          bootstrap checks the executable&apos;s Authenticode chain with WinVerifyTrust and exits at
+          launch with a FATAL error when it does not chain to a trusted root, so a self-signed test
+          certificate makes an app that starts nowhere but where that certificate is trusted. The
+          package script warns when this machine does not trust the signed executable, and{" "}
+          <code>denext desktop doctor</code> checks the certificate itself; build with{" "}
+          <code>--no-sign</code>{" "}
+          to test locally (an unsigned CEF app starts). The closing note names what the target
+          needs: the Microsoft Edge WebView2 runtime for a webview build, nothing of the kind for a
+          CEF build (it ships Chromium).
         </li>
         <li>
           <code>DENEXT_APP_NAME</code> — output base name (defaults to <code>desktop.app.name</code>

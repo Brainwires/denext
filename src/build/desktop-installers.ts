@@ -167,7 +167,10 @@ export async function desktopInstallerPlan(
 export interface DesktopPackageMeta {
   /** The display name (`desktop.app.name` in deno.json): the Start-menu / launcher name. */
   readonly name: string;
-  /** deno.json `version`, or `"1.0.0"` (what `deno desktop` stamps when none is set). */
+  /**
+   * deno.json `version`, else package.json `version`, else `"1.0.0"` (what `deno desktop` stamps
+   * when none is set).
+   */
   readonly version: string;
   /** `desktop.installers.publisher`, else the app name: MSI Manufacturer, deb Maintainer, rpm Vendor. */
   readonly publisher: string;
@@ -213,6 +216,20 @@ export async function readDenoJson(root: string): Promise<Obj> {
   return {};
 }
 
+/** The project's package.json, parsed; `{}` when there is none (or it is not JSON). */
+async function readPackageJson(root: string): Promise<Obj> {
+  try {
+    return (JSON.parse(await Deno.readTextFile(join(root, "package.json"))) ?? {}) as Obj;
+  } catch {
+    return {};
+  }
+}
+
+/** The app version: deno.json `version`, else package.json `version` (`undefined`: neither). */
+function appVersion(deno: unknown, pkg: unknown): string | undefined {
+  return str((deno as Obj | undefined)?.version) ?? str((pkg as Obj | undefined)?.version);
+}
+
 /** The bare schemes of a deep-link list (`"myapp://"` → `"myapp"`), lowercased and deduplicated. */
 function schemes(list: unknown): string[] {
   if (!Array.isArray(list)) return [];
@@ -224,18 +241,21 @@ function schemes(list: unknown): string[] {
 
 /**
  * Resolve {@linkcode DesktopPackageMeta} from deno.json (`version`, `license`, `desktop.app`,
- * `desktop.backend`) and `denext.config.ts` (`desktop.installers`; `desktop.app.name` and
- * `identifier` ahead of deno.json's, its other `desktop.app` keys as the fallback).
+ * `desktop.backend`), `denext.config.ts` (`desktop.installers`; `desktop.app.name` and
+ * `identifier` ahead of deno.json's, its other `desktop.app` keys as the fallback) and
+ * package.json (`version`, when deno.json has none).
  *
  * @param deno The parsed deno.json.
  * @param config The loaded `denext.config.ts` default export.
  * @param fallbackName The name to use when neither file names the app.
+ * @param pkg The parsed package.json, if the project has one.
  * @returns The metadata.
  */
 export function packageMetaFrom(
   deno: unknown,
   config: unknown,
   fallbackName: string,
+  pkg?: unknown,
 ): DesktopPackageMeta {
   const denoApp = field(field(deno, "desktop"), "app");
   const cfgDesktop = field(config, "desktop");
@@ -247,7 +267,7 @@ export function packageMetaFrom(
     `com.deno.desktop.${debianPackageName(name)}`;
   return {
     name,
-    version: str((deno as Obj | undefined)?.version) ?? "1.0.0",
+    version: appVersion(deno, pkg) ?? "1.0.0",
     publisher: str(installers.publisher) ?? name,
     description: str(installers.description) ?? `${name} desktop application`,
     identifier,
@@ -276,34 +296,40 @@ export async function desktopPackageMeta(
   fallbackName: string,
 ): Promise<DesktopPackageMeta> {
   const root = new URL("../", entryUrl);
-  const deno = await readDenoJson(
-    root.protocol === "file:" ? fromFileUrl(root) : ".",
+  const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
+  const deno = await readDenoJson(dir);
+  return packageMetaFrom(
+    deno,
+    await loadConfigBeside(entryUrl),
+    fallbackName,
+    await readPackageJson(dir),
   );
-  return packageMetaFrom(deno, await loadConfigBeside(entryUrl), fallbackName);
 }
 
 /**
  * The warnings for metadata {@linkcode packageMetaFrom} had to make up: version `1.0.0` when
- * deno.json has no `version` (every build then claims the same version, so no installer can
- * upgrade the last), and the identifier `com.deno.desktop.<name>` when no `desktop.app.identifier`
+ * neither deno.json nor package.json has a `version` (every build then claims the same version,
+ * so no installer can upgrade the last), and the identifier `com.deno.desktop.<name>` when no `desktop.app.identifier`
  * is set (it derives the MSI UpgradeCode and names the app to the OS, so setting one LATER makes
  * the next version install beside the old one instead of upgrading it).
  *
  * @param deno The parsed deno.json.
  * @param config The loaded `denext.config.ts` default export.
  * @param meta What {@linkcode packageMetaFrom} resolved from them.
+ * @param pkg The parsed package.json, if the project has one.
  * @returns One line per fallback (none when both are set).
  */
 export function packageMetaWarnings(
   deno: unknown,
   config: unknown,
   meta: DesktopPackageMeta,
+  pkg?: unknown,
 ): string[] {
   const out: string[] = [];
-  if (!str((deno as Obj | undefined)?.version)) {
+  if (!appVersion(deno, pkg)) {
     out.push(
-      `  ⚠ deno.json has no "version": the installers say ${meta.version}. Set one (and raise it ` +
-        "for each release) so a newer installer upgrades the installed app.",
+      `  ⚠ no "version" in deno.json or package.json: the installers say ${meta.version}. Set ` +
+        "one (and raise it for each release) so a newer installer upgrades the installed app.",
     );
   }
   const identifier = str(field(field(config, "desktop"), "app").identifier) ??
@@ -330,8 +356,13 @@ export async function desktopPackageMetaWarnings(
   meta: DesktopPackageMeta,
 ): Promise<string[]> {
   const root = new URL("../", entryUrl);
-  const deno = await readDenoJson(root.protocol === "file:" ? fromFileUrl(root) : ".");
-  return packageMetaWarnings(deno, await loadConfigBeside(entryUrl), meta);
+  const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
+  return packageMetaWarnings(
+    await readDenoJson(dir),
+    await loadConfigBeside(entryUrl),
+    meta,
+    await readPackageJson(dir),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------

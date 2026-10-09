@@ -182,10 +182,19 @@ export {
   desktopSlug,
   desktopToolGate,
   desktopVersionProblem,
+  desktopWindowsTargetNote,
   parseDesktopPackageArgs,
   type PreparedDesktopPackage,
   prepareDesktopPackage,
 } from "./desktop-package-script.ts";
+
+// A CEF app signed with a certificate Windows does not trust dies at launch (CEF's bootstrap runs
+// WinVerifyTrust on itself): the Windows package script checks the signed executable.
+export {
+  desktopCheckCefSignature,
+  type PowerShellRunner,
+  type WindowsTrustDeps,
+} from "./desktop-windows-trust.ts";
 
 /** The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}
  * forwards to when a backend proxy is configured; exported so the handler's signature is public. */

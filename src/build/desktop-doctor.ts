@@ -38,6 +38,12 @@ import {
   type DesktopRuntimeStatus,
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
+import {
+  CEF_SIGNING_FIX,
+  cefCertificateProblem,
+  certificateTrust,
+  type PowerShellRunner,
+} from "./desktop-windows-trust.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -210,6 +216,8 @@ export interface DesktopDoctorOptions {
   readonly deno?: string;
   /** The pin (tests). */
   readonly pin?: DesktopRuntimePin;
+  /** Runs PowerShell for the Windows CEF signing check (default: `powershell.exe`). */
+  readonly powershell?: PowerShellRunner;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -961,6 +969,27 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
   return out;
 }
 
+/**
+ * The Windows CEF signing check: CEF's bootstrap verifies the app's Authenticode signature with
+ * WinVerifyTrust and dies at launch when it does not chain to a trusted root, so a CEF app signed
+ * with an untrusted DENEXT_WINDOWS_CERT (a self-signed test certificate) never starts here.
+ */
+async function cefSigningFindings(
+  env: (key: string) => string | undefined,
+  powershell: PowerShellRunner | undefined,
+): Promise<DesktopDoctorFinding[]> {
+  const cert = env("DENEXT_WINDOWS_CERT")?.trim();
+  if (!cert) return [];
+  const trust = await certificateTrust(cert, env("DENEXT_WINDOWS_CERT_PASSWORD"), {
+    os: "windows",
+    powershell,
+  });
+  const problem = trust ? cefCertificateProblem(trust) : undefined;
+  return problem
+    ? [{ check: "cef-signing", level: "warning", message: problem, fix: CEF_SIGNING_FIX }]
+    : [];
+}
+
 /** The fix for a missing tray host. */
 const TRAY_FIX = "GNOME: install and enable the AppIndicator extension " +
   "(`gnome-shell-extension-appindicator`, then `gnome-extensions enable " +
@@ -1222,7 +1251,8 @@ function linuxFindings(f: LinuxSessionFacts, runtime: DoctorRuntime): DesktopDoc
 }
 
 /**
- * Run the desktop doctor: the pinned runtime, and on Linux the session facts.
+ * Run the desktop doctor: the pinned runtime, on Linux the session facts, and on Windows whether a
+ * CEF app signed with DENEXT_WINDOWS_CERT would start.
  *
  * @param options The runtime status and the seams.
  * @returns The report.
@@ -1249,22 +1279,9 @@ export async function runDesktopDoctor(
       options.deno,
     )
     : null;
-  const checks = ["runtime"];
-  if (linux) {
-    checks.push(
-      "session",
-      "session-bus",
-      "tray-host",
-      "secret-service",
-      "libsecret",
-      "notifications",
-      "portal",
-    );
-    if (runtime.linuxNotifications) {
-      checks.push("notification-clicks", "scheduled-notifications", "badge");
-    }
-    if (runtime.status.backend === "cef") checks.push("cookie-encryption", "sandbox");
-  }
+  const cefSigning = os === "windows" && runtime.status.backend === "cef";
+  const checks = ["runtime", ...(linux ? linuxCheckNames(runtime) : [])];
+  if (cefSigning) checks.push("cef-signing");
   return {
     os,
     runtime,
@@ -1273,8 +1290,29 @@ export async function runDesktopDoctor(
     findings: [
       ...runtimeFindings(runtime, linuxChecks),
       ...(linux ? linuxFindings(linux, runtime) : []),
+      ...(cefSigning
+        ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
+        : []),
     ],
   };
+}
+
+/** The Linux session checks that run for `runtime`, in order. */
+function linuxCheckNames(runtime: DoctorRuntime): string[] {
+  const checks = [
+    "session",
+    "session-bus",
+    "tray-host",
+    "secret-service",
+    "libsecret",
+    "notifications",
+    "portal",
+  ];
+  if (runtime.linuxNotifications) {
+    checks.push("notification-clicks", "scheduled-notifications", "badge");
+  }
+  if (runtime.status.backend === "cef") checks.push("cookie-encryption", "sandbox");
+  return checks;
 }
 
 /** The sandbox a CEF window would run in, for the listing. */
