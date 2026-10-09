@@ -12,6 +12,7 @@
 import { dirname, fromFileUrl, join } from "@std/path";
 import { bundleFailureMessage, denoExecutable, minDepAgeArgs } from "./bundle.ts";
 import type { ProjectPaths } from "./paths.ts";
+import type { Platform } from "./platform-extensions.ts";
 import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 
 export { DESKTOP_PRELOAD_ENV } from "../desktop/preload.ts";
@@ -88,16 +89,34 @@ export async function bundleDesktopPreload(input: DesktopPreloadBundle): Promise
   }
 }
 
+/** The export targets a Deno Desktop window loads: the only ones that carry the preload. */
+const DESKTOP_TARGETS: ReadonlySet<Platform> = new Set(["macos", "windows", "linux"]);
+
 /**
- * The export step: when `desktop.preload` is configured, bundle it (minified) into the export
- * directory at {@link DESKTOP_PRELOAD_FILE}. Shared by the SPA and App Router exports.
+ * The export step: when `desktop.preload` is configured and the export is for a desktop target
+ * (`macos` / `windows` / `linux`, what `denext desktop run` and the package scripts export),
+ * bundle it (minified) into the export directory at {@link DESKTOP_PRELOAD_FILE}. A web, iOS or
+ * Android export never loads it, so it does not carry it. Shared by the SPA and App Router
+ * exports.
  *
  * @param paths The project.
  * @param outDir The export (staging) directory.
+ * @param platform The export's target.
  */
-export async function writeDesktopPreload(paths: ProjectPaths, outDir: string): Promise<void> {
+export async function writeDesktopPreload(
+  paths: ProjectPaths,
+  outDir: string,
+  platform: Platform,
+): Promise<void> {
   const preload = paths.config?.desktop?.preload;
   if (!preload) return;
+  if (!DESKTOP_TARGETS.has(platform)) {
+    console.log(
+      `  desktop preload: not bundled into the ${platform} export (only a macos / windows / ` +
+        "linux export, as `denext desktop run` and the package scripts make, carries it)",
+    );
+    return;
+  }
   console.log(`  desktop preload: bundling ${preload} -> ${DESKTOP_PRELOAD_FILE}`);
   await bundleDesktopPreload({
     projectDir: paths.projectDir,

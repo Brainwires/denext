@@ -235,3 +235,45 @@ for (const [reactNative, option, platform, wantApp, wantPkg] of PACKAGE_CASES) {
     }
   });
 }
+
+/** An app with `desktop.preload`: a SPA, or an App Router page. */
+function preloadApp(spaMode: boolean): Record<string, string> {
+  const desktop = `desktop: { preload: "./pre.ts" }`;
+  return {
+    "pre.ts": `(globalThis as Record<string, unknown>).PRELOAD_RAN = true;\n`,
+    ...(spaMode
+      ? {
+        "denext.config.ts":
+          `export default { mode: "spa", spa: { entry: "./src/main.ts" }, ${desktop} };\n`,
+        "src/main.ts": `console.log("app");\n`,
+      }
+      : {
+        "denext.config.ts": `export default { ${desktop} };\n`,
+        "app/page.tsx": `export default function Page(){ return <main>app</main>; }\n`,
+      }),
+  };
+}
+
+const PRELOAD_CASES: ReadonlyArray<readonly [boolean, Platform, boolean]> = [
+  [true, "ios", false],
+  [true, "macos", true],
+  [false, "web", false],
+  [false, "android", false],
+  [false, "linux", true],
+];
+
+for (const [spaMode, platform, carries] of PRELOAD_CASES) {
+  Deno.test(`${spaMode ? "SPA" : "App Router"} export --platform ${platform}: desktop.preload ${carries ? "is" : "is not"} bundled`, async () => {
+    const dir = await project(preloadApp(spaMode));
+    try {
+      const out = (await staticExport(dir, { platform })).outDir;
+      const preload = await Deno.readTextFile(join(out, "_denext", "desktop-preload.js")).catch(
+        () => null,
+      );
+      if (carries) assertStringIncludes(preload ?? "", "PRELOAD_RAN");
+      else assertEquals(preload, null, `a ${platform} export carries the desktop preload`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}

@@ -939,8 +939,10 @@ export interface DesktopConfig {
   inspectable?: boolean;
   /**
    * A module run in the window before the page's scripts (Electron's preload), e.g.
-   * `"./desktop/preload.ts"` (relative to the project). The export bundles it into one classic
-   * script (`out/_denext/desktop-preload.js`), and the desktop runtime inlines it as the first page
+   * `"./desktop/preload.ts"` (relative to the project). A desktop export (`macos` / `windows` /
+   * `linux`: `denext desktop run`, the package scripts) bundles it into one classic script
+   * (`out/_denext/desktop-preload.js`; a web, iOS or Android export does not carry it), and the
+   * desktop runtime inlines it as the first page
    * script of every top-level document it serves over the memory transport (the denext-pinned
    * runtime), right after the `__denext` global, with its own CSP hash. Never in an iframe, and not
    * under the stock runtime (loopback). It runs in the page's world with the page's privileges

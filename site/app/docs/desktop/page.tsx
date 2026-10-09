@@ -2688,9 +2688,11 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
       </Code>
       <ul>
         <li>
-          The export bundles it into one classic script (<code>out/_denext/desktop-preload.js</code>
-          , imports and dynamic imports inlined). The runtime inlines it right after the{" "}
-          <code>__denext</code>{" "}
+          A desktop export (<code>denext desktop run</code>, the package scripts, or{" "}
+          <code>denext export --platform macos|windows|linux</code>) bundles it into one classic
+          script (<code>out/_denext/desktop-preload.js</code>
+          , imports and dynamic imports inlined); a web, iOS or Android export does not carry it.
+          The runtime inlines it right after the <code>__denext</code>{" "}
           global, before the page's first script, into every top-level document it serves over the
           memory transport, and adds its <code>sha256</code> hash to a strict CSP's{" "}
           <code>script-src</code>. <code>denext desktop dev</code>{" "}

@@ -208,6 +208,12 @@ and this project adheres to
   removed, and listed in the report (`--dry-run` lists them as "would remove"); a file no
   catalog named, or a name that leaves the set's folder, is never touched.
 
+- **A phone or web export no longer carries `desktop.preload`.** Every export bundled the
+  configured preload to `_denext/desktop-preload.js`, so an iOS / Android export shipped it in
+  the app (and over the air) and a web export served it, though only a Deno Desktop window
+  loads it. Only a `macos` / `windows` / `linux` export (what `denext desktop run` and the
+  package scripts make) bundles it now; another export says it left it out.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

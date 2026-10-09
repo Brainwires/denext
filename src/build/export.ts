@@ -62,8 +62,9 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   }, { emitDir: ctx.outDir, builtFiles });
   // 3c. Mobile extras: the appLinks association files and the Background Runner script.
   await writeMobileExportExtras(paths.projectDir, paths.config, ctx.outDir);
-  // 3d. `desktop.preload`, bundled for the desktop runtime to inline first into every page.
-  await writeDesktopPreload(paths, ctx.outDir);
+  // 3d. `desktop.preload` (a desktop target only), bundled for the desktop runtime to inline
+  // first into every page.
+  await writeDesktopPreload(paths, ctx.outDir, ctx.platform);
   // 3e. A platform export names its target (an OTA manifest of it then does too).
   if (ctx.platform !== "web") await writePlatformStamp(ctx.outDir, ctx.platform);
   // Tear down the shared esbuild service the compat SSR build started (one-shot export).

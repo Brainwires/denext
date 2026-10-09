@@ -214,7 +214,7 @@ export async function exportSpa(
     });
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
     // `desktop.preload`: one classic script the desktop runtime inlines first into every page.
-    await writeDesktopPreload(paths, staging);
+    await writeDesktopPreload(paths, staging, platform);
     // A platform export names its target, before the OTA manifest hashes the tree.
     if (platform !== "web") await writePlatformStamp(staging, platform);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
