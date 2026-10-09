@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -211,6 +211,7 @@
     "bench": "deno run -A --config deno.json bench/run.ts",
     "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",
     "bench:pages": "deno run -A --v8-flags=--expose-gc --config deno.json bench/pages/run.ts",
+    "bench:fiber-memory": "deno run -A --v8-flags=--expose-gc --config deno.json bench/fiber-memory/run.ts",
     "test": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/",
     "test:unit": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/,tests/integration/",
     "test:integration": "deno run -A scripts/test-run.ts tests/integration/",

@@ -355,6 +355,9 @@ function configureLiveActivity(options: CapabilityOptions): CapabilityConfig {
 /** `push`: the aps-environment entitlement, AppDelegate forwarding, and FCM's config file. */
 function configurePush(): CapabilityConfig {
   return {
+    // DenextSettings: openAppSettings() for a refused permission, and the delivered-notification
+    // methods behind deliveredNotifications / removeDeliveredNotifications (pushes included).
+    install: SETTINGS_INSTALL,
     entitlements: [{
       label: "aps-environment: development (when absent)",
       apply: (text) => withPlistString(text, "aps-environment", "development", false),
@@ -514,7 +517,10 @@ function configureSettings(): CapabilityConfig {
   return { install: SETTINGS_INSTALL };
 }
 
-/** `local-notifications`: DenextSettings, plus the Android exact-alarm note. */
+/**
+ * `local-notifications`: DenextSettings (openAppSettings, and the delivered-notification methods),
+ * plus the Android exact-alarm note.
+ */
 function configureLocalNotifications(): CapabilityConfig {
   return {
     install: SETTINGS_INSTALL,
@@ -699,7 +705,8 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     version: "^8.1.2",
     capacitorMajor: CAPACITOR_MAJOR,
     androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
-    notes: "requestPushPermission / registerForPush / onPushReceived / onPushTapped",
+    notes: "requestPushPermission / registerForPush / onPushReceived / onPushTapped / " +
+      "deliveredNotifications / removeDeliveredNotifications",
     configure: configurePush,
   },
   filesystem: {
@@ -826,7 +833,8 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     capacitorMajor: CAPACITOR_MAJOR,
     androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
     notes: "scheduleNotification / cancelNotification / pendingNotifications / " +
-      "createNotificationChannel / setNotificationCategories / onLocalNotificationTapped",
+      "createNotificationChannel / setNotificationCategories / onLocalNotificationTapped / " +
+      "deliveredNotifications / removeDeliveredNotifications",
     configure: configureLocalNotifications,
   },
   biometrics: {

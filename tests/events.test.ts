@@ -1,6 +1,6 @@
 // Event-system fidelity: React event props map to the correct DOM event types
-// (onChange -> input, onDoubleClick -> dblclick) and `on*Capture` registers a
-// capture-phase listener that runs before the bubble-phase handler.
+// (onChange -> input, onDoubleClick -> dblclick) and an `on*Capture` handler runs in the
+// capture phase, before the bubble-phase handler.
 
 import { assert, assertEquals } from "@std/assert";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
@@ -51,10 +51,11 @@ Deno.test("on*Capture registers a capture-phase listener (runs before bubble)", 
   }
   createRoot(container as Any).render(h(App, null));
   const btn = container.childNodes[0] as Any;
-  // Both handlers live on the DOM `click` type — the old code produced a
-  // broken `clickcapture` type. Capture must fire first.
-  assert(btn.captureListeners.has("click"), "capture handler must be on `click`");
-  assert(!btn.listeners.has("clickcapture"), "must not create a `clickcapture` type");
+  // Both handlers are dispatched from the root container's DOM `click` listeners (event
+  // delegation) — the old code produced a broken `clickcapture` type. Capture fires first.
+  assert((container as Any).captureListeners.has("click"), "the root listens for capture");
+  assert(!(container as Any).listeners.has("clickcapture"), "no `clickcapture` type");
+  assert(!btn.listeners.has("click") && !btn.captureListeners.has("click"), "none on the button");
   btn.dispatch("click");
   assertEquals(order, ["capture", "bubble"]);
 });

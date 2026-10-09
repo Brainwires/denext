@@ -414,6 +414,7 @@ export interface DesktopNotificationWire {
   readonly body: string;
   readonly data?: Readonly<Record<string, unknown>>;
   readonly categoryId?: string;
+  readonly threadId?: string;
   readonly trigger?: unknown;
 }
 
@@ -443,6 +444,22 @@ export async function notifyPending(): Promise<
 > {
   const out = await desktopRpc<unknown>("notifications", "pending", {});
   return Array.isArray(out) ? out : [];
+}
+
+/**
+ * `deliveredNotifications` on desktop: the notifications the capability posted this run whose
+ * time has come (raw `{ id, threadId?, title?, data? }` records, `id` a string).
+ */
+export async function notifyDelivered(): Promise<
+  Array<{ id?: unknown; threadId?: unknown; title?: unknown; data?: unknown }>
+> {
+  const out = await desktopRpc<unknown>("notifications", "delivered", {});
+  return Array.isArray(out) ? out : [];
+}
+
+/** `removeDeliveredNotifications` on desktop: remove the delivered occurrences of `ids`. */
+export async function notifyRemoveDelivered(ids: readonly number[]): Promise<void> {
+  await desktopRpc("notifications", "removeDelivered", { ids: [...ids] });
 }
 
 /** `setNotificationCategories` on desktop: the action buttons per category id. */

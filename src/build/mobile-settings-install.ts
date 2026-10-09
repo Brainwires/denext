@@ -1,5 +1,5 @@
 // `denext mobile add permissions` (and the capabilities that ask for a permission:
-// local-notifications, biometrics, geolocation, background-location): install the native
+// local-notifications, push, biometrics, geolocation, background-location): install the native
 // `DenextSettings` plugin behind `openAppSettings()` (denext/mobile). iOS:
 // `DenextSettingsPlugin.swift`, added to the Xcode app target and registered by
 // `DenextBridgeViewController` (the OTA one when OTA is installed, else a registering-only one).

@@ -165,6 +165,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * class-instance.ts (−497 B); the dev-only prop warnings moved behind `installDevtools`
  * (−375 B); and two pieces of module-scope residue went (−35 B). Each gate is asserted in
  * {@link assertGatedRuntimeAbsent}.
+ * Re-based 65.5 → 68.5 KB (68,500 B) for root event delegation (React 17+'s model,
+ * fiber/events.ts): the dispatcher, its capture/bubble ordering, portal and nested-root
+ * ownership, focusin/focusout and the derived enter/leave events are +3.9 KB raw (measured
+ * 67,915 B, from 64,039 B). An approved trade: a bubbling handler no longer costs a listener and
+ * a closure per element, re-registered on every render that passes a new function.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -173,7 +178,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 65_500, `shared chunks total ${sharedTotal} bytes (budget 65,500 B raw)`);
+  assert(sharedTotal < 68_500, `shared chunks total ${sharedTotal} bytes (budget 68,500 B raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

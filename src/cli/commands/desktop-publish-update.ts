@@ -19,6 +19,7 @@ import {
   publishAppUpdate,
   resignAppUpdate,
 } from "../../build/app-update.ts";
+import { desktopAppVersion } from "../../build/desktop-installers.ts";
 import { resolveProject } from "../../build/paths.ts";
 
 /** The flags `desktop publish-update` adds to the `desktop` verb. */
@@ -40,7 +41,8 @@ export const PUBLISH_UPDATE_FLAGS: FlagSpec[] = [
     name: "app-version",
     type: "string",
     valueName: "<semver>",
-    help: "publish-update: the version being published (default: deno.json version)",
+    help:
+      "publish-update: the version being published (default: deno.json version, else package.json's)",
   },
   {
     name: "app-id",
@@ -128,19 +130,6 @@ function freshnessFromFlags(
   };
 }
 
-/** deno.json's (or deno.jsonc's) `version`, if any. */
-async function denoJsonVersion(dir: string): Promise<string | undefined> {
-  for (const name of ["deno.json", "deno.jsonc"]) {
-    try {
-      const { readJson } = await import("../../build/json-edit.ts");
-      const v = (readJson(await Deno.readTextFile(join(dir, name))) as { version?: unknown } | null)
-        ?.version;
-      return typeof v === "string" ? v : undefined;
-    } catch { /* not this one */ }
-  }
-  return undefined;
-}
-
 /**
  * Run `denext desktop publish-update` for the project at `dir`: any problem is printed and exits 1.
  *
@@ -179,8 +168,8 @@ async function publishFromFlags(flags: Record<string, unknown>, dir: string): Pr
     "no app identifier: set desktop.app.identifier or pass --app-id",
   );
   const version = required(
-    opt("app-version") ?? await denoJsonVersion(dir),
-    'no version: set deno.json "version" or pass --app-version',
+    opt("app-version") ?? await desktopAppVersion(dir),
+    'no version: set deno.json (or package.json) "version" or pass --app-version',
   );
   const key = await requireKey(opt("key"));
   const r = await publishAppUpdate({

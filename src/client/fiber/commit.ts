@@ -13,6 +13,7 @@ import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef, updateRef } from "../dom-props.ts";
+import { stampFiber } from "../dom-fiber-map.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import { getActivitySupport } from "./activity-support.ts";
@@ -23,15 +24,22 @@ import {
   childrenDom,
   collectDom,
   type CommitEffect,
+  DidRenderBit,
   type Fiber,
+  fiberExt,
+  hasBit,
   type HookCell,
   NoFlags,
   NoLane,
+  OffscreenBit,
   Placement,
   placePortalChildren,
+  ProfilerMountedBit,
   RefAttach,
+  ShowingFallbackBit,
   Snapshot,
   syncChildren,
+  UnmountedBit,
   Update,
 } from "./fiber.ts";
 
@@ -89,8 +97,10 @@ function commitInsertionEffects(wipRoot: Fiber): void {
   const insertionFibers: Fiber[] = [];
   collectInsertionEffects(wipRoot, insertionFibers);
   runCommitEffects(insertionFibers, (f) => {
-    const es = f.insertionEffects;
-    f.insertionEffects = undefined;
+    const x = f.ext;
+    if (x === undefined) return undefined;
+    const es = x.insertionEffects;
+    x.insertionEffects = undefined;
     return es;
   });
 }
@@ -102,6 +112,7 @@ function commitMutation(wipRoot: Fiber): void {
     if (f.tag === "singleton") {
       getSingletonSupport()!.commit(f);
     } else if (f.tag === "host") {
+      stampFiber(f.stateNode, f); // its committed props are now these (event dispatch reads them)
       applyProps(
         f.stateNode as Element,
         f,
@@ -168,11 +179,11 @@ function clearFiberFlags(f: Fiber): void {
   // state bailout (begin-work) compares a pending update against. Only fibers that actually
   // rendered this pass need it: a bailed fiber's hook cells are unchanged, so `committed`
   // already equals `rendered`.
-  if (f.didRender) {
+  if ((f.bits & DidRenderBit) !== 0) {
     if (f.hooks) {
       for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
     }
-    f.didRender = false;
+    f.bits &= ~DidRenderBit;
   }
   if (!descend) return;
   for (let c = f.child; c !== null; c = c.sibling) clearFiberFlags(c);
@@ -301,20 +312,21 @@ function stillHidden(hidden: Element[] | undefined, dom: (Element | Text)[]): El
  * forgets the ones it removed: a long-hidden list would otherwise keep every element it ever had.
  */
 function hideOffscreenPrimary(f: Fiber): void {
-  const first = f.hiddenEls == null;
+  const x = fiberExt(f);
+  const first = x.hiddenEls == null;
   const dom: (Element | Text)[] = [];
   let c = f.child;
-  for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
+  for (let i = 0; c !== null && i < x.primaryCount!; c = c.sibling, i++) {
     collectDom(c, dom);
     if (first) disconnectEffects(c);
   }
-  const els = stillHidden(f.hiddenEls, dom);
+  const els = stillHidden(x.hiddenEls, dom);
   for (const n of dom) {
     if (n.nodeType !== 1 || offscreenPrevStyle.has(n as Element)) continue;
     hideElement(n as Element);
     els.push(n as Element);
   }
-  f.hiddenEls = els;
+  x.hiddenEls = els;
 }
 
 /**
@@ -323,8 +335,9 @@ function hideOffscreenPrimary(f: Fiber): void {
  * `f` is a revealed primary fiber.
  */
 function revealOffscreenPrimary(f: Fiber): void {
-  for (const el of f.hiddenEls!) restoreElement(el);
-  f.hiddenEls = undefined;
+  const x = f.ext!;
+  for (const el of x.hiddenEls!) restoreElement(el);
+  x.hiddenEls = undefined;
   for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
 }
 
@@ -333,10 +346,10 @@ function applyOffscreenVisibility(f: Fiber): void {
   // <Activity> hide their primary children the same way. A Suspense hides only while it is
   // actually showing the fallback; an Activity hides whenever it is offscreen.
   if (f.tag !== "suspense" && f.tag !== "activity") return;
-  const shouldHide = f.offscreen === true && f.primaryCount != null &&
-    (f.tag !== "suspense" || f.showingFallback === true);
+  const shouldHide = hasBit(f, OffscreenBit) && f.ext?.primaryCount != null &&
+    (f.tag !== "suspense" || hasBit(f, ShowingFallbackBit));
   if (shouldHide) hideOffscreenPrimary(f);
-  else if (f.hiddenEls != null) revealOffscreenPrimary(f);
+  else if (f.ext?.hiddenEls != null) revealOffscreenPrimary(f);
 }
 
 /**
@@ -346,7 +359,9 @@ function applyOffscreenVisibility(f: Fiber): void {
  * fight its lifecycle.
  */
 function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell) => void): void {
-  if ((fiber.tag === "suspense" || fiber.tag === "activity") && fiber.hiddenEls != null) return;
+  if ((fiber.tag === "suspense" || fiber.tag === "activity") && fiber.ext?.hiddenEls != null) {
+    return;
+  }
   for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
   if (fiber.tag !== "component" || !fiber.hooks) return;
   for (const cell of fiber.hooks) visit(fiber, cell);
@@ -399,16 +414,17 @@ function reconnectEffects(fiber: Fiber): void {
 function fireProfilers(root: Fiber): void {
   const commitTime = performance.now();
   walk(root, (f) => {
-    if (f.profiler == null) return;
+    const profiler = f.ext?.profiler;
+    if (profiler == null) return;
     let actual = 0;
     let base = 0;
     walk(f, (d) => {
-      actual += d.actualDuration ?? 0;
-      base += d.selfBaseDuration ?? 0;
+      actual += d.ext?.actualDuration ?? 0;
+      base += d.ext?.selfBaseDuration ?? 0;
     });
-    const phase: ProfilerPhase = f.profilerMounted ? "update" : "mount";
-    f.profilerMounted = true;
-    f.profiler.onRender?.(f.profiler.id, phase, actual, base, commitTime - actual, commitTime);
+    const phase: ProfilerPhase = hasBit(f, ProfilerMountedBit) ? "update" : "mount";
+    f.bits |= ProfilerMountedBit;
+    profiler.onRender?.(profiler.id, phase, actual, base, commitTime - actual, commitTime);
   });
 }
 
@@ -501,7 +517,7 @@ export function flushPassiveEffects(): void {
  * a boundary within it.
  */
 function runUnmountCleanups(fiber: Fiber): void {
-  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) {
+  if (__DENEXT_CLASS_COMPONENTS__ && fiber.ext?.classInstance) {
     getClassSupport()?.unmountClassInstance(fiber as never);
   }
   if (!fiber.hooks) return;
@@ -544,7 +560,7 @@ function severFiber(fiber: Fiber): void {
 }
 
 function detachFiber(f: Fiber): void {
-  f.unmounted = true;
+  f.bits |= UnmountedBit;
   f.child = null;
   f.sibling = null;
   f.return = null;
@@ -553,13 +569,16 @@ function detachFiber(f: Fiber): void {
   f.deletions = null;
   // Its own state, cleanups already run: hook cells, effect lists, listener closures.
   f.hooks = undefined;
-  f.insertionEffects = undefined;
   f.pendingEffects = undefined;
   f.passiveEffects = undefined;
   f.listeners = undefined;
-  f.hiddenEls = undefined;
-  f.pendingElement = undefined;
-  f.provValue = undefined;
+  const x = f.ext;
+  if (x !== undefined) {
+    x.insertionEffects = undefined;
+    x.hiddenEls = undefined;
+    x.pendingElement = undefined;
+    x.provValue = undefined;
+  }
 }
 
 export function commitDeletion(fiber: Fiber): void {

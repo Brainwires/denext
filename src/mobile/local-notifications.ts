@@ -23,6 +23,7 @@ import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { createFanout, type Fanout } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 import { deliverTap, type PushTap, type PushTapOptions } from "./push.ts";
+import { trackWebNotification, type WebNotificationLike } from "./delivered-notifications.ts";
 import {
   dateOf,
   int,
@@ -58,7 +59,14 @@ export interface LocalNotificationInput {
   readonly sound?: string;
   /** iOS: the app icon's badge number once it is delivered. */
   readonly badge?: number;
-  /** iOS: the thread it groups under; Android: the group key. */
+  /**
+   * The thread it groups under: iOS's thread identifier (as APNs `thread-id` sets a push's),
+   * Android's group key. `deliveredNotifications` reports it and `removeDeliveredNotifications({
+   * threadId })` clears a thread's notifications, pushes of the same thread included. On Deno
+   * Desktop and the web it groups only for those two calls (the OS does not group there).
+   */
+  readonly threadId?: string;
+  /** The same as `threadId` (which wins when both are given). */
   readonly group?: string;
   /** Android: allow it to fire while the device dozes (at most once per ~9 minutes). */
   readonly allowWhileIdle?: boolean;
@@ -263,11 +271,21 @@ function schemaOf(fn: string, n: LocalNotificationInput): Record<string, unknown
   if (n.categoryId !== undefined) schema.actionTypeId = n.categoryId;
   if (n.sound !== undefined) schema.sound = n.sound;
   if (n.badge !== undefined) schema.badge = n.badge;
-  if (n.group !== undefined) {
-    schema.group = n.group;
-    schema.threadIdentifier = n.group;
+  const thread = threadOf(n);
+  if (thread !== undefined) {
+    schema.group = thread;
+    schema.threadIdentifier = thread;
   }
   return schema;
+}
+
+/** The thread of an input (`threadId`, else `group`), checked. */
+function threadOf(n: LocalNotificationInput): string | undefined {
+  const thread = n.threadId ?? n.group;
+  if (thread !== undefined && typeof thread !== "string") {
+    throw new TypeError("scheduleNotification: threadId must be a string");
+  }
+  return thread;
 }
 
 /** A notification as the Deno Desktop runtime takes it (the input's trigger, checked already). */
@@ -278,6 +296,7 @@ function desktopWire(schema: Record<string, unknown>, n: LocalNotificationInput)
     body: n.body,
     ...(n.data !== undefined ? { data: { ...n.data } } : {}),
     ...(n.categoryId !== undefined ? { categoryId: n.categoryId } : {}),
+    ...(typeof schema.threadIdentifier === "string" ? { threadId: schema.threadIdentifier } : {}),
     ...(n.trigger ? { trigger: n.trigger } : {}),
   };
 }
@@ -292,7 +311,7 @@ function webNotification(): WebNotificationCtor | undefined {
 
 /** The web `Notification` constructor, as far as {@linkcode scheduleNotification} uses it. */
 interface WebNotificationCtor {
-  new (title: string, options?: { body?: string }): unknown;
+  new (title: string, options?: { body?: string; data?: unknown }): WebNotificationLike;
   readonly permission?: string;
 }
 
@@ -341,7 +360,18 @@ export async function scheduleNotification(notification: LocalNotificationInput)
   }
   const show = webNotification();
   if (schema.schedule !== undefined || !show) throw needsPlugin(fn);
-  new show(notification.title, { body: notification.body });
+  const shown = new show(notification.title, {
+    body: notification.body,
+    ...(notification.data !== undefined ? { data: { ...notification.data } } : {}),
+  });
+  trackWebNotification(shown, {
+    id: String(schema.id),
+    title: notification.title,
+    ...(schema.threadIdentifier !== undefined
+      ? { threadId: schema.threadIdentifier as string }
+      : {}),
+    ...(notification.data !== undefined ? { data: { ...notification.data } } : {}),
+  });
   return schema.id as number;
 }
 

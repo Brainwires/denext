@@ -13,10 +13,19 @@ import { buildAs } from "./_app-update-helpers.ts";
 
 const PLATFORM = "aarch64-apple-darwin-webview";
 
-/** A project with an optional identifier / version and a fake packaged app. */
-async function project(opts: { identifier?: string; version?: string; jsonc?: boolean } = {}) {
+/**
+ * A project with an optional identifier / version and a fake packaged app. `packageJson` puts the
+ * version in package.json instead of deno.json (stamped into deno.json at packaging, so the app
+ * is still built as it).
+ */
+async function project(
+  opts: { identifier?: string; version?: string; jsonc?: boolean; packageJson?: boolean } = {},
+) {
   const dir = await Deno.makeTempDir({ prefix: "denext_publish_update_" });
-  const denoJson = opts.version === undefined ? {} : { version: opts.version };
+  const denoJson = opts.version === undefined || opts.packageJson ? {} : { version: opts.version };
+  if (opts.packageJson) {
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify({ version: opts.version }));
+  }
   await Deno.writeTextFile(
     join(dir, opts.jsonc ? "deno.jsonc" : "deno.json"),
     (opts.jsonc ? "// a comment\n" : "") + JSON.stringify(denoJson),
@@ -91,7 +100,10 @@ Deno.test("publish-update: the identifier and version come from the project or t
     assertStringIncludes(r.err, "no app identifier: set desktop.app.identifier or pass --app-id");
     r = await publish(dir, { ...base, "app-id": "com.example.flag" });
     assertEquals(r.code, 1);
-    assertStringIncludes(r.err, 'no version: set deno.json "version" or pass --app-version');
+    assertStringIncludes(
+      r.err,
+      'no version: set deno.json (or package.json) "version" or pass --app-version',
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -159,6 +171,31 @@ Deno.test("publish-update: a signed run writes the archive and a manifest the pu
     assert(entry.url.startsWith("https://u.example.com/rel/"));
     const archive = join(dir, "release", entry.url.slice("https://u.example.com/rel/".length));
     assertEquals((await Deno.stat(archive)).size, entry.size);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("publish-update: with no deno.json version, package.json's is published", async () => {
+  const pair = await generateOtaKeyPair();
+  const dir = await project({ identifier: "com.example.pub", version: "0.7.1", packageJson: true });
+  try {
+    const keyFile = join(dir, "update-key.pem");
+    await Deno.writeTextFile(keyFile, pair.privateKeyPem);
+    const r = await withoutKeyEnv(() =>
+      publish(dir, {
+        artifact: "dist/My App.app",
+        "url-base": "https://u.example.com/",
+        key: keyFile,
+        platform: PLATFORM,
+      })
+    );
+    assertEquals(r.code, 0, r.err);
+    assertStringIncludes(r.out, `published com.example.pub 0.7.1 for ${PLATFORM}`);
+    const manifest = JSON.parse(
+      await Deno.readTextFile(join(dir, "dist", "updates", APP_UPDATE_MANIFEST_FILE)),
+    );
+    assertEquals((await verifyAppUpdateEnvelope(manifest, pair.publicKey)).version, "0.7.1");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

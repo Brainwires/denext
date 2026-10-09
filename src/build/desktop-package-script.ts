@@ -23,6 +23,7 @@ import {
   loadConfigBeside,
   msiProductVersion,
   readDenoJson,
+  stampDenoJsonVersion,
 } from "./desktop-installers.ts";
 import { peVersionWords, stampPeResources } from "./pe-resources.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
@@ -548,6 +549,29 @@ export async function desktopBundleCommand(
 }
 
 /**
+ * Run `build` (a `deno desktop` packaging run) with deno.json carrying the app version: when
+ * deno.json has no `version`, package.json's is written into it for the run and taken out after
+ * (see `stampDenoJsonVersion`), so the bundle `deno desktop` compiles carries the version the
+ * installers and `denext desktop publish-update` go by (deno.json's, else package.json's).
+ *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
+ * @param build The packaging run.
+ * @returns What `build` returned.
+ */
+export async function desktopWithAppVersion<T>(
+  entryUrl: string,
+  build: () => Promise<T>,
+): Promise<T> {
+  const root = new URL("../", entryUrl);
+  const restore = root.protocol === "file:" ? await stampDenoJsonVersion(fromFileUrl(root)) : null;
+  try {
+    return await build();
+  } finally {
+    await restore?.();
+  }
+}
+
+/**
  * Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
@@ -567,7 +591,8 @@ export async function buildDesktopBundle(
   await Deno.remove(o.out, { recursive: true }).catch(() => {});
   const cmd = await desktopBundleCommand(entryUrl, os, o);
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  await desktopRun(cmd, await desktopRuntimeEnv(entryUrl, o.target));
+  const env = await desktopRuntimeEnv(entryUrl, o.target);
+  await desktopWithAppVersion(entryUrl, () => desktopRun(cmd, env));
   if (os === "windows") {
     await desktopWindowsCefLayout(
       o.out,

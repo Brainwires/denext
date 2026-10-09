@@ -22,9 +22,12 @@ import {
 import {
   type CommitEffect,
   type Fiber,
+  fiberExt,
+  hasBit,
   HasEffect,
   type HookCell,
   NoLane,
+  StrictBit,
   TransitionLane,
 } from "./fiber.ts";
 import { isHydrating } from "./hydration.ts";
@@ -56,9 +59,8 @@ export function enterComponentRender(inst: Fiber | null, index: number): void {
 export function resetHookCursor(): void {
   hookIndex = 0;
   renderPhaseUpdateScheduled = false;
-  if (currentFiber !== null && currentFiber.debugValues !== undefined) {
-    currentFiber.debugValues = undefined;
-  }
+  const x = currentFiber?.ext;
+  if (x !== undefined && x.debugValues !== undefined) x.debugValues = undefined;
 }
 
 // Hook kinds — a per-cell tag consumed only by the dev Fast Refresh signature guard
@@ -135,6 +137,7 @@ export function setParkingEffects(on: boolean): void {
  * cleanup → setup) to surface missing cleanup, matching React.
  */
 /** The fiber field an effect is queued on (allocated on first use). */
+/** The fiber's queue to push onto; the insertion queue lives on its `FiberExt`. */
 type EffectQueue = "passiveEffects" | "pendingEffects" | "insertionEffects";
 
 function scheduleEffect(
@@ -146,7 +149,7 @@ function scheduleEffect(
   offscreenAware = true,
 ): void {
   if (suppressEffectQueue || !depsChanged(cell.deps, deps)) return;
-  const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
+  const strictMount = cell.mounted !== true && hasBit(inst, StrictBit) && devHydrationActive();
   cell.mounted = true;
   // This render's deps, recorded on the cell when the effect COMMITS (React's semantics):
   // a render that is discarded (interrupted, or re-run by a render-phase update) must not
@@ -184,7 +187,8 @@ function scheduleEffect(
   entry.cleanup = () => {
     if (typeof cell.cleanup === "function") cell.cleanup();
   };
-  (inst[queue] ??= []).push(entry);
+  if (queue === "insertionEffects") (fiberExt(inst).insertionEffects ??= []).push(entry);
+  else (inst[queue] ??= []).push(entry);
   // Mark the fiber as effect-bearing so the commit-phase collectors can prune to it
   // (bubbleFlags propagates this into ancestors' subtreeFlags at completeWork).
   inst.flags |= HasEffect;
@@ -451,6 +455,6 @@ export const clientDispatcher: Dispatcher = {
     if (!devHydrationActive()) return;
     const inst = currentFiber;
     if (inst === null) return;
-    (inst.debugValues ??= []).push({ index: hookIndex, value, format });
+    (fiberExt(inst).debugValues ??= []).push({ index: hookIndex, value, format });
   },
 };

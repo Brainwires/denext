@@ -226,9 +226,8 @@ export function runtimeDepUrl(spec: string): string | null | undefined {
   // The compat runtime also prebuilds `denext/navigation`, the `denext/expo/*` shims and React
   // Native mode's overlay, which the shared inventory (native @dep too) does not list.
   const dfile = ownValue(DENEXT_RUNTIME_FILE, spec) ?? ownValue(DENEXT_RUNTIME_FILES, spec);
-  if (dfile) return `${DEP_PREFIX}${dfile}`;
-  if (spec === "denext") return `${DEP_PREFIX}react.js`; // bare denext API == the react shim
-  return undefined;
+  // The bare `denext` entry is `denext.js`, the root barrel in the same prebuilt graph.
+  return dfile ? `${DEP_PREFIX}${dfile}` : undefined;
 }
 
 /**

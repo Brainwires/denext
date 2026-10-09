@@ -96,6 +96,66 @@ interface StoredMeta {
   readonly b?: string;
   /** The series, for an occurrence of a repeating notification. */
   readonly r?: SeriesSpec;
+  /** The thread (`threadId`), when it has one. */
+  readonly th?: string;
+}
+
+/** How many notifications the delivered log remembers (the oldest are forgotten first). */
+const MAX_LOGGED = 200;
+
+/** A notification this capability posted, as `delivered` lists it. */
+interface LoggedNotification {
+  readonly id: number;
+  readonly threadId?: string;
+  readonly title: string;
+  readonly data: Record<string, unknown>;
+  /** Each posted occurrence's tag, with its time (ms). */
+  readonly occurrences: Map<string, number>;
+}
+
+/**
+ * The notifications posted during this run, for `delivered` / `removeDelivered`: the runtime can
+ * remove a delivered notification by tag but cannot list the notification centre, so the
+ * capability remembers what it posted (in memory: an earlier run's are not known).
+ */
+function createDeliveredLog(now: () => number) {
+  const log = new Map<number, LoggedNotification>();
+  return {
+    /** Remember that occurrence `tag` of notification `n` was posted for `at`. */
+    posted(n: Omit<LoggedNotification, "occurrences">, tag: string, at: number): void {
+      const entry = log.get(n.id) ?? { ...n, occurrences: new Map<string, number>() };
+      entry.occurrences.set(tag, at);
+      log.delete(n.id);
+      log.set(n.id, entry);
+      if (log.size > MAX_LOGGED) log.delete(log.keys().next().value!);
+    },
+    /** Forget notification `id` (cancelled). */
+    forget(id: number): void {
+      log.delete(id);
+    },
+    /** The notifications with an occurrence whose time has come, newest first. */
+    delivered(): Array<{ id: string; threadId?: string; title: string; data: unknown }> {
+      const t = now();
+      return [...log.values()].reverse()
+        .filter((e) => [...e.occurrences.values()].some((at) => at <= t))
+        .map((e) => ({
+          id: String(e.id),
+          ...(e.threadId !== undefined ? { threadId: e.threadId } : {}),
+          title: e.title,
+          data: e.data,
+        }));
+    },
+    /** Take the tags of `id`'s occurrences whose time has come (they are no longer logged). */
+    takeDelivered(id: number): string[] {
+      const entry = log.get(id);
+      if (!entry) return [];
+      const t = now();
+      const tags = [...entry.occurrences].filter(([, at]) => at <= t).map(([tag]) => tag);
+      for (const tag of tags) entry.occurrences.delete(tag);
+      if (entry.occurrences.size === 0) log.delete(id);
+      return tags;
+    },
+  };
 }
 
 /** The tag prefix of the page's web `Notification`s (`webShow`). */
@@ -274,7 +334,10 @@ export function seriesTimes(series: SeriesSpec, after: number, count: number): n
 function storedData(meta: StoredMeta, data: Record<string, unknown>): unknown {
   const full = { denext: meta, data };
   if (utf8Bytes(JSON.stringify(full)) <= MAX_DATA_BYTES) return full;
-  const lean = { denext: { id: meta.id, ...(meta.r ? { r: meta.r } : {}) }, data };
+  const lean = {
+    denext: { id: meta.id, ...(meta.r ? { r: meta.r } : {}), ...(meta.th ? { th: meta.th } : {}) },
+    data,
+  };
   if (utf8Bytes(JSON.stringify(lean)) <= MAX_DATA_BYTES) return lean;
   throw invalid("data is too large: a desktop notification stores at most 4 KiB of JSON (UTF-8)");
 }
@@ -430,6 +493,7 @@ interface ScheduleRequest {
   readonly data: Record<string, unknown>;
   readonly trigger?: LocalNotificationTrigger;
   readonly categoryId?: string;
+  readonly threadId?: string;
 }
 
 /** The arguments of `schedule`, checked. */
@@ -437,6 +501,7 @@ function scheduleRequest(args: unknown): ScheduleRequest {
   const a = record(args, "arguments");
   const id = checked(() => int("schedule", "id", a.id, -0x80000000, 0x7fffffff));
   const categoryId = a.categoryId === undefined ? undefined : text(a.categoryId, "categoryId");
+  const threadId = a.threadId === undefined ? undefined : text(a.threadId, "threadId");
   return {
     id,
     title: text(a.title, "title"),
@@ -444,6 +509,7 @@ function scheduleRequest(args: unknown): ScheduleRequest {
     data: record(a.data, "data"),
     trigger: triggerOf(a.trigger),
     ...(categoryId !== undefined ? { categoryId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
   };
 }
 
@@ -459,6 +525,7 @@ export function notificationsCapability(
   const api = () => options.api ?? desktopAppApi();
   const now = options.now ?? Date.now;
   const categories = new Map<string, DesktopNotificationAction[]>();
+  const log = createDeliveredLog(now);
   let queue: PullQueue<NotificationTapWire> | undefined;
   let webQueue: PullQueue<WebTapWire> | undefined;
   let cancelTopUp: (() => void) | undefined;
@@ -484,6 +551,7 @@ export function notificationsCapability(
   const cancelId = async (n: DesktopNotificationsApi, id: number) => {
     for (const e of await scheduled(n)) if (ownsTag(e.tag, id)) n.cancel(e.tag);
     n.cancel(tagOf(id));
+    log.forget(id);
   };
 
   /** Queue a click on one of our notifications for the page (the app's, or a web one). */
@@ -523,10 +591,17 @@ export function notificationsCapability(
     const first = checked(() => firstAt(req.trigger, now()));
     if (first === null) throw invalid("the trigger never fires");
     await cancelId(n, req.id);
-    const meta = { id: req.id, t: req.title, b: req.body };
+    const meta = {
+      id: req.id,
+      t: req.title,
+      b: req.body,
+      ...(req.threadId ? { th: req.threadId } : {}),
+    };
+    const logged = { id: req.id, threadId: req.threadId, title: req.title, data: req.data };
     const can = n.capabilities?.() ?? {};
     if (!req.trigger && can.schedule === false) {
-      return showNow({ ...req, tag: tagOf(req.id) }, actions, storedData(meta, req.data));
+      showNow({ ...req, tag: tagOf(req.id) }, actions, storedData(meta, req.data));
+      return log.posted(logged, tagOf(req.id), first);
     }
     if (can.schedule === false) {
       throw new DesktopCapError("unsupported", "notifications cannot be scheduled here", {
@@ -543,7 +618,7 @@ export function notificationsCapability(
         actions,
         data,
       });
-      return;
+      return log.posted(logged, tagOf(req.id), first);
     }
     const series: SeriesSpec = { trigger: req.trigger, anchor: first };
     const room = Math.max(1, MAX_PENDING - (await scheduled(n)).length);
@@ -558,6 +633,7 @@ export function notificationsCapability(
         actions,
         data,
       });
+      log.posted(logged, tagOf(req.id, at), at);
     }
     armTopUp(times);
   };
@@ -579,7 +655,8 @@ export function notificationsCapability(
   ): Promise<{ times: number[]; added: number }> => {
     const times = entries.map(atOf).sort((a, b) => a - b);
     const sample = entries[0];
-    const { meta } = metaOf(sample.data, sample.tag)!;
+    const { meta, data: appData } = metaOf(sample.data, sample.tag)!;
+    const logged = { id: meta.id, threadId: meta.th, title: sample.title ?? "", data: appData };
     const need = Math.min(REPEAT_HORIZON - times.length, room);
     const more = need > 0 ? seriesTimes(meta.r!, times[times.length - 1], need) : [];
     for (const at of more) {
@@ -591,6 +668,7 @@ export function notificationsCapability(
         actions: sample.actions ?? [],
         data: sample.data,
       });
+      log.posted(logged, tagOf(meta.id, at), at);
     }
     return { times: [...times, ...more], added: more.length };
   };
@@ -698,6 +776,27 @@ export function notificationsCapability(
             });
           }
           return out;
+        },
+      },
+      // The notifications posted this run whose time has come (the runtime lists none).
+      delivered: {
+        handler: () => {
+          nativeApi(api());
+          return log.delivered();
+        },
+      },
+      removeDelivered: {
+        handler: (args) => {
+          const ids = (record(args, "arguments").ids ?? []) as unknown;
+          if (!Array.isArray(ids)) throw invalid("ids must be an array");
+          const n = nativeApi(api());
+          for (const id of ids) {
+            const checkedId = checked(() =>
+              int("removeDelivered", "id", id, -0x80000000, 0x7fffffff)
+            );
+            for (const tag of log.takeDelivered(checkedId)) n.cancel(tag);
+          }
+          return null;
         },
       },
       setCategories: {

@@ -243,8 +243,8 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
    The release script checks this itself (`scripts/release-ci.ts`): it refuses
    to start unless the newest ci.yml run on HEAD that ran those jobs has
-   `check`, `integration`, `next-compat`, `coverage` and `ios-export-router`
-   green (it needs `gh`, logged in).
+   `check`, `integration`, `next-compat`, `coverage`, `ios-export-router` and
+   `windows-resolve` green (it needs `gh`, logged in).
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every

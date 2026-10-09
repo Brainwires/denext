@@ -8,6 +8,98 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-10-09
+
+### Added
+
+- **List and clear delivered notifications, per thread: `deliveredNotifications()` /
+  `removeDeliveredNotifications(selector)` in `denext/mobile`.** They cover local notifications
+  and remote pushes alike: iOS `UNUserNotificationCenter` (a thread is the `threadIdentifier`, APNs
+  `aps.thread-id`), Android `NotificationManager.getActiveNotifications()` (the group key; an
+  FCM-drawn push by its `tag`, and a group summary goes with the last notification of its group),
+  the page's own and its service worker's notifications on the web, and on Deno Desktop the
+  notifications denext posted this run (the runtime cannot list the notification centre). A
+  selector takes `ids`, `threadId` and / or `tag`; an empty one is a `TypeError`, and `{ all: true }`
+  clears everything. `scheduleNotification` takes `threadId` (the existing `group` is the same
+  field). The native half is generation 3 of denext's `DenextSettings` plugin, which
+  `denext mobile add local-notifications` and now `push` install; `denext mobile doctor` reports
+  an older one as `settings-generations`.
+
+### Changed
+
+- **A client fiber is half the size: 124 B instead of 244 B in a browser.** Eleven booleans
+  (pending-update kind, StrictMode, Profiler, Suspense / Offscreen state, unmounted, …) share one
+  bit field, and the state only providers, Suspense / Activity / SuspenseList boundaries, error
+  boundaries, roots, class components, `<Profiler>`, form actions and dev tooling use moved to an
+  extension object allocated on first write, so a plain element, text node or function component
+  never pays for it. Every fiber still shares one V8 shape. `deno task bench:fiber-memory`
+  measures it.
+- **An element without event handlers no longer carries an empty listener map.** Every host
+  element allocated one at mount; the first handler now creates it. With the smaller fiber, a
+  10,000-row list of static rows (a component, two elements and two text nodes each) uses 25 %
+  less heap after mounting and 30 % less once it has re-rendered.
+- **Event handlers are delegated to the root, as in React 17+ — and with React's behaviour.**
+  A bubbling handler (`onClick`, `onKeyDown`, `onInput` / `onChange`, `onPointerDown`, `onSubmit`,
+  …) no longer adds a listener and a wrapper closure to its element, nor swaps them on every
+  render that passes a new function: each root container and portal target listens once per
+  event type, and the dispatcher reads the handlers from the elements' committed props.
+  Behaviour now matches React where it used to follow the DOM:
+  - `onFocus` / `onBlur` listen to the bubbling `focusin` / `focusout` (`event.type` still reads
+    `"focus"` / `"blur"`), so a parent's `onFocus` fires when a child gains focus.
+  - `onMouseEnter` / `onMouseLeave` / `onPointerEnter` / `onPointerLeave` are derived from the
+    over/out events: leave runs from the element left up to the common ancestor, then enter from
+    below it down to the element entered.
+  - An event inside a portal bubbles to the components that rendered the portal, not to the DOM
+    ancestors of its target, and a nested root's events reach the outer root's handlers after its
+    own.
+  - `stopPropagation()` in a handler stops the event at the root container, so a `document`
+    listener (a "click outside" handler) no longer sees it; a native listener on an element
+    between the target and the root runs before the bubbling handlers.
+    Events that do not bubble (`onScroll`, `onLoad`, `onError`, media events, `onToggle`, …),
+    `onWheel` / `onTouch*` (a root listener for them would hold scrolling on the main thread) and
+    unknown event types (a custom element's) keep a listener on their element. A 10,000-row list with
+    an `onClick` per row uses 10 % less heap after mounting. The dispatcher adds 3.9 KB (raw) to every
+    app's shared client runtime; the build-smoke budget moves from 65,500 B to 68,500 B.
+    denext/testing's `fireEvent` gains `focus` / `blur` (each sends the focus event, then `focusin` /
+    `focusout`), and its `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer
+    bubble.
+
+### Fixed
+
+- **`import { SwipeableRow } from "denext"` builds in a compatibility-mode app installed from
+  JSR.** The bundler sent `denext/navigation`, `denext/mobile` and the other client subpaths to
+  denext's prebuilt runtime, but not the bare `denext` entry, so it fell through to the
+  deno-loader, which can't load `jsr:@denext/denext` without a lockfile: `denext export` (any
+  platform) and `build` failed with "Failed reading lockfile" or "jsr: specifiers are not
+  supported in the portable loader without a lockfile". It built only with denext linked as a
+  `file://` path, and then bundled a second copy of denext's hooks beside the runtime's. The bare
+  entry is now part of the prebuilt runtime (one copy of the core, and what an app doesn't import
+  is tree-shaken out), and so is every other public client subpath that fell through the same
+  way: `denext/desktop/clerk`, `denext/slot`, `denext/compose-refs`, `denext/next-intl`,
+  `denext/next-intl/navigation`, `denext/next-intl/routing`, `denext/next/head`,
+  `denext/client-only`, `denext/empty`, `denext/jsx-directives`, and the `denext/react*` /
+  `denext/next/*` spellings of the compat modules. Server and tooling subpaths (`denext/testing`,
+  `denext/cli`, `denext/desktop/updater`, …) stay external, as `denext/server` was. In
+  `denext dev`, bare `denext` resolved to the React shim, which has no `SwipeableRow`,
+  `VirtualList` or `choose`; it now resolves to the full entry.
+- **An SPA's stylesheet follows `spa.head`, as Vite's does.** The shell linked the app's
+  stylesheet (and its modulepreloads) ahead of `spa.head`, so an inline `<style>` there (the boot
+  styles `denext migrate` carries over from a Vite `index.html`) came later in the cascade and won
+  every tie with the app's CSS: a boot rule such as `body { font-family: <stack> }` overrode the
+  app's `body { font-family: var(--font-sans) }`, so a runtime font setting or a platform font
+  never reached body text. The stylesheet and modulepreloads now come after `spa.head`, where Vite
+  injects them, in `denext export`, `build` and `dev`.
+- **A desktop app versioned in package.json packages and publishes updates as that version.**
+  The installers already took package.json `version` when deno.json has none, but `deno desktop`
+  reads only deno.json's, so the bundle it compiled (the runtime library's app version a full-app
+  update is checked against, Info.plist, the executable's version resource) said `1.0` or no
+  version while the installers said package.json's, and `denext desktop publish-update` refused
+  with "no version". The package scripts now run `deno desktop` with package.json's version
+  written into deno.json for the build and put back after (`desktopWithAppVersion` from
+  `denext/desktop`; regenerate an existing `scripts/package-macos.ts` with
+  `denext desktop package --regenerate-scripts`), and `publish-update` defaults to the same
+  version: deno.json's, else package.json's (`desktopAppVersion`).
+
 ## [3.4.1] - 2026-10-09
 
 ### Added
@@ -12322,7 +12414,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.2...development
+[3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0

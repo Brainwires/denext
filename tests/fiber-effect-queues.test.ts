@@ -15,7 +15,7 @@ import type { VNode } from "../src/jsx/types.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-const queues = (f: Fiber) => [f.insertionEffects, f.pendingEffects, f.passiveEffects];
+const queues = (f: Fiber) => [f.ext?.insertionEffects, f.pendingEffects, f.passiveEffects];
 
 Deno.test("effect queues are allocated on first use and released after they run", () => {
   const { doc, container } = makeDom();

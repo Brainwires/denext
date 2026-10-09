@@ -850,6 +850,7 @@ import {
   desktopPackageFlags,
   desktopRun as run,
   desktopRuntimeEnv,
+  desktopWithAppVersion,
   parseDesktopPackageArgs,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
@@ -889,7 +890,10 @@ async function buildApp(out: string, target?: string): Promise<void> {
   // ".app") to land exactly at \`out\` — else it writes \`out.app\` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\\.app$/, ""), "desktop.ts");
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  await run(cmd, await desktopRuntimeEnv(import.meta.url, target));
+  const env = await desktopRuntimeEnv(import.meta.url, target);
+  // deno.json's version, else package.json's (stamped into deno.json for the build, then put back),
+  // compiled into the bundle: what the installers and publish-update go by.
+  await desktopWithAppVersion(import.meta.url, () => run(cmd, env));
   // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
   // read from Contents/Resources at launch. Writing into the bundle breaks deno desktop's ad-hoc
   // seal, so a bundle that got one is always re-signed.

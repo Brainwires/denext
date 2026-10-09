@@ -1660,6 +1660,80 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         <code>SCHEDULE_EXACT_ALARM</code> only for alarm and calendar apps.
       </p>
 
+      <h3 id="delivered-notifications">Delivered notifications, per thread</h3>
+      <p>
+        <code>deliveredNotifications()</code>{" "}
+        lists what the notification centre shows for the app, local notifications and remote pushes
+        alike, as <code>{"{ id, threadId?, tag?, title?, data? }"}</code>;{" "}
+        <code>removeDeliveredNotifications(selector)</code> removes them. A selector names{" "}
+        <code>ids</code>, a <code>threadId</code> or a <code>tag</code>{" "}
+        (the criteria given narrow each other); an empty one is a{" "}
+        <code>TypeError</code>, so clearing everything takes an explicit{" "}
+        <code>{"{ all: true }"}</code>. Pending (scheduled) notifications are not touched;{" "}
+        <code>cancelNotification</code> cancels those. Give a local notification a thread with{" "}
+        <code>threadId</code> (the older <code>group</code>{" "}
+        is the same field), and send a push with the same thread:
+      </p>
+      <Code lang="ts">
+        {`import {
+  deliveredNotifications,
+  removeDeliveredNotifications,
+  scheduleNotification,
+} from "denext/mobile";
+
+await scheduleNotification({ title: "Ann", body: "Lunch?", threadId: "chat-7" });
+// APNs: { "aps": { "alert": …, "thread-id": "chat-7" } } groups a push into the same thread.
+
+// The user opened (or muted) chat 7: clear its notifications, pushes included.
+await removeDeliveredNotifications({ threadId: "chat-7" });
+const left = await deliveredNotifications(); // [{ id, threadId?, tag?, title?, data? }, …]`}
+      </Code>
+      <ul>
+        <li>
+          <strong>iOS</strong>:{" "}
+          <code>UNUserNotificationCenter</code>&apos;s delivered notifications. The thread is the
+          content&apos;s <code>threadIdentifier</code> (APNs{" "}
+          <code>aps.thread-id</code>); the id is the request identifier (a local notification&apos;s
+          id as a string, a push&apos;s <code>apns-collapse-id</code> or a generated one);{" "}
+          <code>data</code> is a local notification&apos;s data or a push&apos;s keys other than
+          {" "}
+          <code>aps</code>.
+        </li>
+        <li>
+          <strong>Android</strong>:{" "}
+          <code>NotificationManager.getActiveNotifications()</code>. The thread is the group key
+          (<code>threadId</code> of a local notification); a push FCM draws has no group, but its
+          {" "}
+          <code>tag</code> (FCM&apos;s{" "}
+          <code>android.notification.tag</code>) selects it. An id is unique only with its tag.
+          Group summaries are not listed, and one is removed with the last notification of its
+          group. <code>data</code> is not available (the OS keeps no payload).
+        </li>
+        <li>
+          Both run in denext&apos;s <code>DenextSettings</code> plugin, which{" "}
+          <code>local-notifications</code> and <code>push</code>{" "}
+          install (template generation 3). In a binary built before, both calls reject until the
+          command is re-run and a new binary shipped; <code>denext mobile doctor --store</code> /
+          {" "}
+          <code>--release</code> reports <code>settings-generations</code> for an older plugin.
+        </li>
+        <li>
+          <strong>Deno Desktop</strong> (<code>notifications</code>{" "}
+          capability): the runtime can remove a delivered notification but cannot list the
+          notification centre, so the list is the notifications denext posted during this run of the
+          app whose time has come and that were not removed through denext: one the user dismissed
+          is still listed, and one from an earlier run is not. <code>threadId</code>{" "}
+          groups only for these two calls (the OS does not group them). See{" "}
+          <a href="/docs/desktop#desktop-notifications">desktop notifications</a>.
+        </li>
+        <li>
+          <strong>Web</strong>: the notifications <code>scheduleNotification</code>{" "}
+          showed from this page that are still open, plus the service worker registration&apos;s
+          (<code>getNotifications()</code>; its tag is the id, and <code>data.threadId</code>{" "}
+          the thread).
+        </li>
+      </ul>
+
       <h2 id="biometrics">Biometrics</h2>
       <p>
         <code>biometrics</code> installs <code>@aparajita/capacitor-biometric-auth</code>{" "}

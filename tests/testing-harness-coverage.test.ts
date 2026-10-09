@@ -215,12 +215,15 @@ Deno.test("fireEvent callable form, submit, input, and keyDown all dispatch", as
   const screen = await render(h(Form, null));
   try {
     const input = screen.getByRole("textbox");
-    // The callable form dispatches an arbitrary event type.
-    await fireEvent(input, "focus");
+    // The callable form dispatches an arbitrary event type: onFocus listens to the bubbling
+    // `focusin` (React 17+), which `fireEvent.focus` sends after `focus`.
+    await fireEvent(input, "focusin");
     await screen.fireEvent.input(input, { target: { value: "z" } });
     await screen.fireEvent.keyDown(input, { key: "Enter" });
     await screen.fireEvent.submit(screen.container.children[0]);
     assertEquals(seen, ["focus", "input", "key:Enter", "submit"]);
+    await screen.fireEvent.focus(input);
+    assertEquals(seen.at(-1), "focus");
   } finally {
     await screen.unmount();
   }

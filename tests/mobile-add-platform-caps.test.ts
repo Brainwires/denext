@@ -39,7 +39,9 @@ import {
   renderSettingsTemplate,
   SETTINGS_ANDROID_FILES,
   SETTINGS_IOS_FILES,
+  SETTINGS_TEMPLATE_VERSION,
 } from "../src/build/settings-native-templates.ts";
+import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
@@ -147,7 +149,7 @@ Deno.test("mobile add permissions: no package; DenextSettings on iOS + Android, 
       assert(report.written.includes(path), path);
     }
     const ios = await read(dir, IOS_SETTINGS);
-    assert(ios.startsWith("// denext-settings-template: 2 sha256="));
+    assert(ios.startsWith(`// denext-settings-template: ${SETTINGS_TEMPLATE_VERSION} sha256=`));
     assertEquals(await markedTemplateIntact("settings", ios), true);
     assertStringIncludes(ios, "UIApplication.openSettingsURLString");
     assertStringIncludes(await read(dir, ANDROID_SETTINGS), "ACTION_APPLICATION_DETAILS_SETTINGS");
@@ -165,6 +167,74 @@ Deno.test("mobile add permissions: no package; DenextSettings on iOS + Android, 
     // Idempotent: a second run writes nothing.
     const again = await addMobileCapabilities({ capabilities: ["permissions"], cwd: dir, run });
     assertEquals(again.written, []);
+  });
+});
+
+Deno.test("DenextSettings: the delivered-notification methods, on iOS and Android", () => {
+  assert(SETTINGS_TEMPLATE_VERSION >= 3, "generation 3 added them");
+  const ios = SETTINGS_IOS_FILES["DenextSettingsPlugin.swift"];
+  for (
+    const needle of [
+      "import UserNotifications",
+      'CAPPluginMethod(name: "deliveredNotifications"',
+      'CAPPluginMethod(name: "removeDeliveredNotifications"',
+      "getDeliveredNotifications",
+      "content.threadIdentifier",
+      'info["cap_extra"]',
+      'info.removeValue(forKey: "aps")',
+      "removeDeliveredNotifications(withIdentifiers: ids)",
+    ]
+  ) assertStringIncludes(ios, needle);
+  const android = SETTINGS_ANDROID_FILES["DenextSettingsPlugin.java"];
+  for (
+    const needle of [
+      "public void deliveredNotifications(PluginCall call)",
+      "public void removeDeliveredNotifications(PluginCall call)",
+      "getActiveNotifications()",
+      'out.put("threadId", n.getGroup())',
+      "FLAG_GROUP_SUMMARY",
+      "manager.cancel(tag, id)",
+      "NumberFormatException",
+    ]
+  ) assertStringIncludes(android, needle);
+});
+
+Deno.test("mobile add push: installs DenextSettings (openAppSettings + delivered notifications)", async () => {
+  await inProject({}, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["push"], cwd: dir });
+    assertEquals(plan.native.installs.length, 1);
+    assertStringIncludes(formatCapabilityPlan(plan), "DenextSettings plugin");
+    const report = await addMobileCapabilities({
+      capabilities: ["push"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    for (const path of [IOS_SETTINGS, ANDROID_SETTINGS, BRIDGE, MAIN_ACTIVITY]) {
+      assert(report.written.includes(path), path);
+    }
+    assertStringIncludes(await read(dir, IOS_SETTINGS), "deliveredNotifications");
+    assertStringIncludes(await read(dir, ANDROID_SETTINGS), "getActiveNotifications()");
+  });
+});
+
+Deno.test("mobile doctor: settings-generations flags a DenextSettings plugin from before generation 3", async () => {
+  await inProject({}, async (dir) => {
+    await Deno.writeTextFile(join(dir, "capacitor.config.json"), JSON.stringify({ appId: "a.b" }));
+    await addSettingsToProject({ dir });
+    const doctor = async () =>
+      (await runMobileDoctor({ root: dir, profile: "release" })).findings.filter((f) =>
+        f.check === "settings-generations"
+      );
+    assertEquals(await doctor(), [], "a fresh install is current");
+    await Deno.writeTextFile(
+      join(dir, IOS_SETTINGS),
+      await renderMarkedTemplate("settings", 2, "// plugin 2\n"),
+    );
+    const found = await doctor();
+    assertEquals(found.map((f) => [f.message.split(":")[0], f.level]), [["iOS", "warning"]]);
+    assertStringIncludes(found[0].message, "template generation 2");
+    assertStringIncludes(found[0].message, "deliveredNotifications");
+    assertStringIncludes(found[0].fix, "denext mobile add permissions");
   });
 });
 

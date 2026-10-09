@@ -88,7 +88,7 @@ jobs:
         run: deno task doc-lint
 
   # The client bundle budget on every event, pushes to `development` included: the shared-chunk
-  # total of examples/hello's production build (`assertBundleBudgets`, 65,500 B raw) and the
+  # total of examples/hello's production build (`assertBundleBudgets`, 68,500 B raw) and the
   # tripwires next to it (no Fast Refresh runtime, no Node built-ins, the import gates). It is the
   # one test of tests/integration/build-smoke.test.ts that needs no Node or browser, and the
   # `integration` job that runs the whole file is skipped on a push, so a bundle regression would

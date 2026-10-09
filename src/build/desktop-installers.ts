@@ -230,6 +230,48 @@ function appVersion(deno: unknown, pkg: unknown): string | undefined {
   return str((deno as Obj | undefined)?.version) ?? str((pkg as Obj | undefined)?.version);
 }
 
+/**
+ * The project's app version: deno.json `version`, else package.json `version` (`undefined`:
+ * neither). The installers, the executable's version resource and `denext desktop publish-update`
+ * all go by it.
+ *
+ * @param root The project directory.
+ * @returns The version, or `undefined` when neither file has one.
+ */
+export async function desktopAppVersion(root: string): Promise<string | undefined> {
+  return appVersion(await readDenoJson(root), await readPackageJson(root));
+}
+
+/**
+ * Give deno.json the package.json `version` while `deno desktop` packages the app, when deno.json
+ * has none: `deno desktop` reads only deno.json's, and compiles it into the runtime library (the
+ * version a full-app update is checked against), Info.plist and the executable's version
+ * resource. Without it a package.json-versioned app's installers said one version and the bundle
+ * another. Edits keep deno.json's comments; the returned function puts the file back as it was
+ * (deno.json stays the one place a version is written by hand).
+ *
+ * @param root The project directory.
+ * @returns The restore function, or `null` when nothing was changed.
+ */
+export async function stampDenoJsonVersion(
+  root: string,
+): Promise<(() => Promise<void>) | null> {
+  const version = str((await readPackageJson(root)).version);
+  if (version === undefined) return null;
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const path = join(root, name);
+    const source = await Deno.readTextFile(path).catch(() => null);
+    if (source === null) continue;
+    const { readJson, setJsonValue } = await import("./json-edit.ts");
+    if (str((readJson(source) as Obj | null)?.version) !== undefined) return null;
+    const edited = await setJsonValue(source, ["version"], version);
+    if (!edited.ok) throw new Error(`cannot edit ${path}: ${edited.reason}`);
+    await Deno.writeTextFile(path, edited.source);
+    return () => Deno.writeTextFile(path, source);
+  }
+  return null;
+}
+
 /** The bare schemes of a deep-link list (`"myapp://"` → `"myapp"`), lowercased and deduplicated. */
 function schemes(list: unknown): string[] {
   if (!Array.isArray(list)) return [];

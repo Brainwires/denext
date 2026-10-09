@@ -263,6 +263,8 @@ Deno.test("scaffold: the macOS script passes --icon and names the app from the c
   const synced = mac.indexOf("await syncDesktopAppConfig(import.meta.url)");
   const built = mac.indexOf("await buildArtifacts(opts, name)");
   assert(exported > 0 && exported < synced && synced < built, "export, then sync, then build");
+  // deno desktop runs with the app version (deno.json's, else package.json's) in deno.json.
+  assertStringIncludes(mac, "await desktopWithAppVersion(import.meta.url, () => run(cmd, env));");
 });
 
 Deno.test("config validation: desktop.app.name and desktop.app.icons", () => {

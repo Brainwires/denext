@@ -9,8 +9,14 @@ import {
   ChildrenChanged,
   createWorkInProgress,
   type Fiber,
+  fiberExt,
   Placement,
+  StrictBit,
+  UnderProfilerBit,
 } from "./fiber.ts";
+
+/** The inherited bits a child takes from its parent at every reconcile. */
+const INHERITED_BITS = StrictBit | UnderProfilerBit;
 
 /**
  * Dev Fast Refresh fallback for the unkeyed matcher: find and remove an unused old
@@ -165,13 +171,14 @@ function linkChildFiber(
   fiber.boundary = links.boundary;
   fiber.idParentScope = links.idParentScope;
   fiber.inherited = links.inherited;
-  fiber.strict = returnFiber.strict === true;
-  fiber.underProfiler = returnFiber.underProfiler === true;
+  fiber.bits = (fiber.bits & ~INHERITED_BITS) | (returnFiber.bits & INHERITED_BITS);
   // SuspenseList membership propagates from a list's direct child (the <Suspense>
   // wrapper) to the suspense fiber it renders.
-  if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
-    fiber.listState = returnFiber.listOwnerState;
-    fiber.listIndex = returnFiber.listIndex;
+  const owner = returnFiber.ext;
+  if (owner?.listOwnerState != null && fiber.tag === "suspense") {
+    const x = fiberExt(fiber);
+    x.listState = owner.listOwnerState;
+    x.listIndex = owner.listIndex;
   }
   fiber.sibling = null;
   if (prev) prev.sibling = fiber;

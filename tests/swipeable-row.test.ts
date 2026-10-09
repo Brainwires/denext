@@ -251,7 +251,7 @@ Deno.test("SwipeableRow: actions are buttons; focus opens their side, a press ru
     const button = findAll(container, "data-dnx-swipe-action")[0];
     assertEquals(button.tagName.toLowerCase(), "button");
     assertEquals(button.getAttribute("aria-label"), "Archive thread");
-    button.dispatch("focus");
+    button.dispatch("focusin"); // onFocus listens to the bubbling focusin (React 17+)
     assertEquals(handle!.openSide, "trailing", "keyboard focus reveals the action");
     assertEquals(transformOf(content), "translate3d(-74px, 0, 0)");
     button.dispatch("click");

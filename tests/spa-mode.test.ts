@@ -67,6 +67,25 @@ Deno.test("spaShellHtml: honors title/rootId/lang and links the stylesheet + dev
   assertStringIncludes(html, '<script src="/_denext/dev-reload.js"></script>');
 });
 
+Deno.test("spaShellHtml: the app's stylesheet follows spa.head, where Vite injects it", async () => {
+  // A migrated index.html's inline boot style must not win the cascade over the app's CSS.
+  const html = await spaShellHtml({
+    spa: {
+      entry: "./src/main.tsx",
+      head: "<style>body { font-family: system-ui, sans-serif; }</style>",
+    },
+    scriptSrc: "/assets/index.js",
+    styleHref: "/assets/index.css",
+    preload: ["/assets/chunk-A.js"],
+  });
+  const bootStyle = html.indexOf("<style>body { font-family");
+  const preload = html.indexOf('<link rel="modulepreload" href="/assets/chunk-A.js" />');
+  const sheet = html.indexOf('<link rel="stylesheet" href="/assets/index.css" />');
+  assert(bootStyle > 0 && preload > 0 && sheet > 0, html);
+  assert(bootStyle < preload && preload < sheet, "spa.head, then modulepreloads, then the sheet");
+  assert(sheet < html.indexOf("</head>"));
+});
+
 Deno.test("spaShellHtml: escapes the title (no HTML injection via config)", async () => {
   const html = await spaShellHtml({
     spa: { entry: "./src/main.tsx", title: "<script>x</script>" },

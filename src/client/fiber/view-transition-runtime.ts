@@ -29,6 +29,9 @@ import {
   ChildDeletion,
   ChildrenChanged,
   type Fiber,
+  hasBit,
+  HiddenBit,
+  OffscreenBit,
   Placement,
   SyncLane,
   Update,
@@ -246,7 +249,7 @@ function boundariesIn(
   named: Map<string, Boundary>,
   isTop = true,
 ): void {
-  if (f.hidden === true || (f.tag === "activity" && f.offscreen === true)) return;
+  if (hasBit(f, HiddenBit) || (f.tag === "activity" && hasBit(f, OffscreenBit))) return;
   const m = markerOfFiber(f);
   if (m !== null) {
     const b = { el: f.stateNode as Element, m };
@@ -291,7 +294,7 @@ function scan(f: Fiber, plan: Plan, insideVT: boolean, changed: boolean): void {
 }
 
 function scanChild(c: Fiber, plan: Plan, insideVT: boolean, changed: boolean): void {
-  if (c.hidden === true) return;
+  if (hasBit(c, HiddenBit)) return;
   if (c.alternate === null) return scanFresh(c, plan, insideVT);
   if (c.tag === "activity" && scanActivity(c, plan)) return;
   const flags = c.flags | c.subtreeFlags;
@@ -326,8 +329,8 @@ function scanFresh(c: Fiber, plan: Plan, insideVT: boolean): void {
 
 /** An `<Activity>`: true when handled — hidden content is skipped, a revealed one's boundaries enter. */
 function scanActivity(c: Fiber, plan: Plan): boolean {
-  if (c.offscreen === true) return true;
-  if (c.alternate!.offscreen !== true) return false;
+  if (hasBit(c, OffscreenBit)) return true;
+  if (!hasBit(c.alternate!, OffscreenBit)) return false;
   for (let k = c.child; k !== null; k = k.sibling) boundariesIn(k, plan.enters, plan.enterNamed);
   return true;
 }

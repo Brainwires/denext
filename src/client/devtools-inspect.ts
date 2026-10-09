@@ -15,7 +15,14 @@
 // lazily on request, and the only per-commit cost is the single observer notify the
 // reconciler already guards.
 
-import type { DebugValueEntry, Fiber, HookCell } from "./fiber/fiber.ts";
+import {
+  type DebugValueEntry,
+  type Fiber,
+  hasBit,
+  type HookCell,
+  ShowingFallbackBit,
+  StrictBit,
+} from "./fiber/fiber.ts";
 import {
   clearFiberProps,
   devRootFibers,
@@ -355,7 +362,8 @@ function serializeHooks(fiber: Fiber, names?: ResolvedHookName[]): InspectHook[]
   const cells = fiber.hooks;
   if (!cells || cells.length === 0) return [];
   const rows = cells.map((cell, i) => serializeHookCell(cell, i, names?.[i]));
-  if (fiber.debugValues !== undefined) attachDebugValues(fiber.debugValues, rows);
+  const debugValues = fiber.ext?.debugValues;
+  if (debugValues !== undefined) attachDebugValues(debugValues, rows);
   return rows;
 }
 
@@ -464,12 +472,12 @@ const BADGES_BY_TAG: Partial<Record<Fiber["tag"], (fiber: Fiber) => string[]>> =
     const brand = brandOf(fiber.vnode.type);
     if (brand === REACT_MEMO_TYPE) badges.push("memo");
     else if (brand === REACT_FORWARD_REF_TYPE) badges.push("forwardRef");
-    if (fiber.strict === true) badges.push("StrictMode");
+    if (hasBit(fiber, StrictBit)) badges.push("StrictMode");
     return badges;
   },
-  suspense: (fiber) => fiber.showingFallback === true ? ["Suspense", "fallback"] : ["Suspense"],
+  suspense: (fiber) => hasBit(fiber, ShowingFallbackBit) ? ["Suspense", "fallback"] : ["Suspense"],
   errorboundary: (fiber) =>
-    fiber.__error != null ? ["ErrorBoundary", "errored"] : ["ErrorBoundary"],
+    fiber.ext?.__error != null ? ["ErrorBoundary", "errored"] : ["ErrorBoundary"],
   fragment: (fiber) => {
     const props = fiber.vnode.props as Record<string | symbol, unknown> | null | undefined;
     return props && props[PROVIDER as unknown as string] !== undefined ? ["Context.Provider"] : [];

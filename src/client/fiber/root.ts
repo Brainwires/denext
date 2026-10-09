@@ -29,6 +29,7 @@ import {
   setRootRefresh,
 } from "../vnode-utils.ts";
 import { createFiber, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
+import { listenOn } from "./events.ts";
 import { bootMomentumSafeScroll } from "../momentum-boot.ts";
 
 // Wire the work loop into the scheduler (see `FlushHandlers` for why it is injected).
@@ -141,6 +142,7 @@ function registerRoot(
   pendingElement: VNode | null,
 ): RootHandle {
   const rootFiber = makeRootFiber(container, options?.identifierPrefix);
+  listenOn(container); // event delegation (events.ts): this root's events dispatch from here
   const handle: RootHandle = {
     container,
     current: rootFiber,

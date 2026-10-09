@@ -322,7 +322,7 @@
           "name": "app-version",
           "type": "string",
           "valueName": "<semver>",
-          "description": "publish-update: the version being published (default: deno.json version)"
+          "description": "publish-update: the version being published (default: deno.json version, else package.json's)"
         },
         {
           "name": "app-id",
