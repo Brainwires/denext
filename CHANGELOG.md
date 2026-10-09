@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `client:*` directive types type-check under `exactOptionalPropertyTypes`.** With the
+  documented `client-directives.d.ts` merged into `@types/react`'s `Attributes`, a component
+  that spreads props typed the way component libraries type them (each key `?: T | undefined`,
+  as Base UI's are) onto an element failed `tsc` with TS2375 under
+  `exactOptionalPropertyTypes: true` (T3 Code: 103 errors). Every `ClientDirectives` key now
+  admits an explicit `undefined`, as React's own `Attributes` do.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added
