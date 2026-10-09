@@ -1,0 +1,31 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "name": "denext Clerk",
+      "identifier": "dev.denext.clerk-example",
+      "origin": "denextclerk://app",
+      "deepLinks": [
+        "denextclerk"
+      ],
+      "singleInstance": true
+    },
+    "preload": "./desktop/preload.ts",
+    "window": {
+      "width": 1000,
+      "height": 780,
+      "title": "denext + Clerk"
+    },
+    "capabilities": {
+      "secureStore": true,
+      "authSession": true,
+      "passkeys": {
+        "rpIds": []
+      }
+    }
+  }
+}

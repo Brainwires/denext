@@ -1,0 +1,70 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "identifier": "dev.denext.kitchen-sink",
+      "origin": "kitchensink://app",
+      "deepLinks": [
+        "kitchensink-link"
+      ],
+      "singleInstance": true,
+      "icons": {
+        "linux": "./icons/linux.png"
+      }
+    },
+    "preload": "./desktop/preload.ts",
+    "window": {
+      "width": 980,
+      "height": 760,
+      "title": "denext kitchen sink"
+    },
+    "minSize": {
+      "width": 420,
+      "height": 320
+    },
+    "capabilities": {
+      "echo": true,
+      "secureStore": true,
+      "fs": true,
+      "sqlite": true,
+      "device": true,
+      "dialogs": true,
+      "keepAwake": true,
+      "clipboard": true,
+      "notifications": true,
+      "contextMenu": true,
+      "globalShortcuts": true,
+      "launchAtLogin": true,
+      "authSession": true,
+      "passkeys": {
+        "rpIds": [
+          "denext.dev",
+          "bad_rp.invalid"
+        ]
+      },
+      "shell": {
+        "openExternal": [
+          "https:"
+        ],
+        "openPath": false,
+        "reveal": false,
+        "trash": true
+      },
+      "extensions": [
+        "./desktop/kitchen.ts"
+      ]
+    },
+    "extraPermissions": {
+      "ffi": [
+        "*"
+      ]
+    },
+    "update": {
+      "autoConfirm": false
+    }
+  }
+}

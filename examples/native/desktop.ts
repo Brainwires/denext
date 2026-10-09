@@ -2,10 +2,11 @@
 // window (run `deno task export` first, or `deno task desktop`). The serve + window
 // plumbing lives in denext's desktop runtime; pass `import.meta.url` so `out/`
 // resolves relative to this entry (works from the packaged app too). Native
-// capabilities come from `desktop.capabilities` in `denext.config.ts` (default deny).
-// To reverse-proxy a backend, add `spa.proxy` to `denext.config.ts` and pass
-// `proxy: config.spa?.proxy` below.
-import config from "./denext.config.ts";
+// capabilities come from `desktop.capabilities` in `denext.config.ts` (default deny), and a
+// backend reverse proxy from `spa.proxy`. Both arrive through `.deno-desktop/config.json`, the
+// runtime part of the config that every export, build and `denext desktop` command rewrites, so
+// the config module is never compiled into the app.
+import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
 await runDesktop({

@@ -227,6 +227,13 @@ and this project adheres to
   instead of the root `pnpm-lock.yaml`'s `pnpm add`. A workspace lockfile above the project now
   wins over the project's own `deno.lock`, which names the manager only when there is none.
 
+- **The examples' desktop entries read `.deno-desktop/config.json`.** `examples/native`,
+  `clerk`, `desktop-kitchen-sink` and `rn-desktop` (and the CI relocation smoke's app) still
+  imported `denext.config.ts` in `desktop.ts`, so their packaged apps compiled the config's
+  module graph in. They now import the committed `.deno-desktop/config.json`, as a new
+  scaffold does; a test keeps each committed file equal to what the desktop sync writes from
+  the example's config.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

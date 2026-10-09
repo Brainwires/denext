@@ -163,3 +163,25 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("the examples' desktop entries import .deno-desktop/config.json, committed in sync with the config", async () => {
+  const { desktopRuntimeConfigText } = await import("../src/build/desktop-app-config.ts");
+  for (const example of ["native", "clerk", "desktop-kitchen-sink", "rn-desktop"]) {
+    const dir = join(REPO, "examples", example);
+    const entry = await Deno.readTextFile(join(dir, "desktop.ts"));
+    assertStringIncludes(
+      entry,
+      'import config from "./.deno-desktop/config.json" with { type: "json" };',
+      `${example}/desktop.ts`,
+    );
+    assert(!entry.includes('"./denext.config.ts"'), `${example}/desktop.ts imports the config`);
+    // The file the export's sync rewrites from the config: committed as it would write it, so the
+    // entry type-checks on a fresh clone and `denext desktop run` leaves the folder unchanged.
+    const config = (await import(toFileUrl(join(dir, "denext.config.ts")).href)).default;
+    assertEquals(
+      await Deno.readTextFile(join(dir, DESKTOP_RUNTIME_CONFIG_FILE)),
+      desktopRuntimeConfigText(config),
+      `examples/${example}/${DESKTOP_RUNTIME_CONFIG_FILE} is stale`,
+    );
+  }
+});

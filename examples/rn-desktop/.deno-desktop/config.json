@@ -1,0 +1,20 @@
+{
+  "desktop": {
+    "app": {
+      "identifier": "dev.denext.rn-desktop"
+    },
+    "capabilities": {
+      "secureStore": true,
+      "contextMenu": true,
+      "clipboard": true,
+      "shell": {
+        "openExternal": [
+          "https:"
+        ],
+        "openPath": false,
+        "reveal": false,
+        "trash": false
+      }
+    }
+  }
+}
