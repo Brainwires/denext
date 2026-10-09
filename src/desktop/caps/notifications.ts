@@ -98,6 +98,8 @@ interface StoredMeta {
   readonly r?: SeriesSpec;
   /** The thread (`threadId`), when it has one. */
   readonly th?: string;
+  /** Posted without a sound (`silent`), kept so a series' top-up stays silent. */
+  readonly s?: true;
 }
 
 /** How many notifications the delivered log remembers (the oldest are forgotten first). */
@@ -209,7 +211,13 @@ function unrefTimer(run: () => void, ms: number): () => void {
 /** The Deno process's `Notification` (the Web Notifications API of `deno desktop`). */
 type NotificationCtor = new (
   title: string,
-  options?: { body?: string; tag?: string; data?: unknown; actions?: DesktopNotificationAction[] },
+  options?: {
+    body?: string;
+    tag?: string;
+    data?: unknown;
+    actions?: DesktopNotificationAction[];
+    silent?: boolean;
+  },
 ) => EventTarget;
 
 /**
@@ -335,7 +343,12 @@ function storedData(meta: StoredMeta, data: Record<string, unknown>): unknown {
   const full = { denext: meta, data };
   if (utf8Bytes(JSON.stringify(full)) <= MAX_DATA_BYTES) return full;
   const lean = {
-    denext: { id: meta.id, ...(meta.r ? { r: meta.r } : {}), ...(meta.th ? { th: meta.th } : {}) },
+    denext: {
+      id: meta.id,
+      ...(meta.r ? { r: meta.r } : {}),
+      ...(meta.th ? { th: meta.th } : {}),
+      ...(meta.s ? { s: true } : {}),
+    },
     data,
   };
   if (utf8Bytes(JSON.stringify(lean)) <= MAX_DATA_BYTES) return lean;
@@ -494,6 +507,7 @@ interface ScheduleRequest {
   readonly trigger?: LocalNotificationTrigger;
   readonly categoryId?: string;
   readonly threadId?: string;
+  readonly silent?: true;
 }
 
 /** The arguments of `schedule`, checked. */
@@ -510,6 +524,7 @@ function scheduleRequest(args: unknown): ScheduleRequest {
     trigger: triggerOf(a.trigger),
     ...(categoryId !== undefined ? { categoryId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
+    ...(a.silent === true ? { silent: true as const } : {}),
   };
 }
 
@@ -564,7 +579,7 @@ export function notificationsCapability(
 
   /** Show now where the runtime cannot schedule: the Deno `Notification`, its clicks queued. */
   const showNow = (
-    shown: { title: string; body: string; tag: string },
+    shown: { title: string; body: string; tag: string; silent?: boolean },
     actions: DesktopNotificationAction[],
     data: unknown,
   ) => {
@@ -575,7 +590,13 @@ export function notificationsCapability(
         status: 501,
       });
     }
-    const n = new Ctor(shown.title, { body: shown.body, tag: shown.tag, data, actions });
+    const n = new Ctor(shown.title, {
+      body: shown.body,
+      tag: shown.tag,
+      data,
+      actions,
+      ...(shown.silent ? { silent: true } : {}),
+    });
     const onResponse = (action: string | null) => route({ tag: shown.tag, action, data }, false);
     n.addEventListener("click", () => onResponse(null));
     n.addEventListener(
@@ -596,7 +617,9 @@ export function notificationsCapability(
       t: req.title,
       b: req.body,
       ...(req.threadId ? { th: req.threadId } : {}),
+      ...(req.silent ? { s: true as const } : {}),
     };
+    const quiet = req.silent ? { silent: true } : {};
     const logged = { id: req.id, threadId: req.threadId, title: req.title, data: req.data };
     const can = n.capabilities?.() ?? {};
     if (!req.trigger && can.schedule === false) {
@@ -617,6 +640,7 @@ export function notificationsCapability(
         tag: tagOf(req.id),
         actions,
         data,
+        ...quiet,
       });
       return log.posted(logged, tagOf(req.id), first);
     }
@@ -632,6 +656,7 @@ export function notificationsCapability(
         tag: tagOf(req.id, at),
         actions,
         data,
+        ...quiet,
       });
       log.posted(logged, tagOf(req.id, at), at);
     }
@@ -667,6 +692,7 @@ export function notificationsCapability(
         tag: tagOf(meta.id, at),
         actions: sample.actions ?? [],
         data: sample.data,
+        ...(meta.s ? { silent: true } : {}),
       });
       log.posted(logged, tagOf(meta.id, at), at);
     }
@@ -712,15 +738,23 @@ export function notificationsCapability(
   };
 
   /** Post a web notification now (`webShow`), replacing one with the same key. */
-  const webShow = async (req: { key: string; title: string; body: string }) => {
+  const webShow = async (req: { key: string; title: string; body: string; silent?: true }) => {
     const n = nativeApi(api());
     const tag = `${WEB_TAG_PREFIX}${req.key}`;
     const data = { denext: { w: req.key } };
     n.cancel(tag);
     if ((n.capabilities?.() ?? {}).schedule === false) {
-      return showNow({ title: req.title, body: req.body, tag }, [], data);
+      return showNow({ title: req.title, body: req.body, tag, silent: req.silent }, [], data);
     }
-    await n.schedule({ title: req.title, body: req.body, at: now(), tag, actions: [], data });
+    await n.schedule({
+      title: req.title,
+      body: req.body,
+      at: now(),
+      tag,
+      actions: [],
+      data,
+      ...(req.silent ? { silent: true } : {}),
+    });
   };
 
   if (options.autoTopUp !== false && api()?.notifications) {
@@ -847,6 +881,7 @@ export function notificationsCapability(
             key: a.key,
             title: text(a.title, "title"),
             body: text(a.body ?? "", "body"),
+            ...(a.silent === true ? { silent: true as const } : {}),
           };
           install(ctx);
           await serial(() => webShow(req));

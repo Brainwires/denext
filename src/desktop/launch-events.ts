@@ -161,6 +161,7 @@ export interface DesktopNotificationsApi {
     tag?: string;
     actions?: DesktopNotificationAction[];
     data?: unknown;
+    silent?: boolean;
   }): Promise<string>;
   getScheduled(): Promise<DesktopScheduledNotification[]>;
   cancel(tag: string): void;

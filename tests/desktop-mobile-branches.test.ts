@@ -344,8 +344,10 @@ Deno.test("notifications: desktop schedule / cancel / pending / categories / per
       hour: 9,
       minute: 30,
     });
+    await scheduleNotification({ id: 8, title: "Q", body: "quiet", silent: true });
+    assertEquals(rt.calls[2].args, { id: 8, title: "Q", body: "quiet", silent: true });
     await cancelNotification([5]);
-    assertEquals(rt.calls[2].args, { ids: [5] });
+    assertEquals(rt.calls[3].args, { ids: [5] });
     assertEquals(await pendingNotifications(), [
       { id: 5, title: "T", body: "B", data: { path: "/x" } },
     ]);

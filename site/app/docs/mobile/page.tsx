@@ -1646,6 +1646,16 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         <code>useLocalNotificationTapped</code> is the hook form.
       </p>
       <p>
+        <code>silent: true</code> delivers a notification without a sound: iOS attaches none (a{" "}
+        <code>sound</code> is ignored), Android posts it with the plugin&apos;s <code>silent</code>
+        {" "}
+        flag, the web passes it to{" "}
+        <code>new Notification(title, {"{ silent }"})</code>, and in a Deno Desktop window it goes
+        to the runtime as <code>silent</code>{" "}
+        (the OS mutes it where its platform can; a repeating series stays silent), as does the
+        page&apos;s own web <code>Notification</code> with <code>silent: true</code>.
+      </p>
+      <p>
         <code>setNotificationCategories([...])</code>{" "}
         registers the action buttons (text-input actions included) a notification shows with{" "}
         <code>categoryId</code>. The call replaces every earlier category, so pass the full set.

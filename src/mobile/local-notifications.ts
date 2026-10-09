@@ -57,6 +57,13 @@ export interface LocalNotificationInput {
   readonly categoryId?: string;
   /** A sound file bundled with the app (iOS: in the app bundle; Android: `res/raw`, no extension). */
   readonly sound?: string;
+  /**
+   * Deliver it without a sound. iOS: no sound is attached (`sound` is ignored); Android: it posts
+   * silently (the plugin's `silent` flag, so no channel sound plays); Deno Desktop: passed to the
+   * runtime as `silent`, which the OS notification honours where its platform has a mute (macOS,
+   * Windows, Linux); web: `new Notification(title, { silent })`.
+   */
+  readonly silent?: boolean;
   /** iOS: the app icon's badge number once it is delivered. */
   readonly badge?: number;
   /**
@@ -269,7 +276,10 @@ function schemaOf(fn: string, n: LocalNotificationInput): Record<string, unknown
   if (n.data !== undefined) schema.extra = { ...n.data };
   if (n.channelId !== undefined) schema.channelId = n.channelId;
   if (n.categoryId !== undefined) schema.actionTypeId = n.categoryId;
-  if (n.sound !== undefined) schema.sound = n.sound;
+  if (n.silent === true) {
+    schema.silent = true;
+    schema.sound = null; // iOS: an explicit no-sound; `silent` covers Android
+  } else if (n.sound !== undefined) schema.sound = n.sound;
   if (n.badge !== undefined) schema.badge = n.badge;
   const thread = threadOf(n);
   if (thread !== undefined) {
@@ -296,6 +306,7 @@ function desktopWire(schema: Record<string, unknown>, n: LocalNotificationInput)
     body: n.body,
     ...(n.data !== undefined ? { data: { ...n.data } } : {}),
     ...(n.categoryId !== undefined ? { categoryId: n.categoryId } : {}),
+    ...(n.silent === true ? { silent: true } : {}),
     ...(typeof schema.threadIdentifier === "string" ? { threadId: schema.threadIdentifier } : {}),
     ...(n.trigger ? { trigger: n.trigger } : {}),
   };
@@ -311,7 +322,10 @@ function webNotification(): WebNotificationCtor | undefined {
 
 /** The web `Notification` constructor, as far as {@linkcode scheduleNotification} uses it. */
 interface WebNotificationCtor {
-  new (title: string, options?: { body?: string; data?: unknown }): WebNotificationLike;
+  new (
+    title: string,
+    options?: { body?: string; data?: unknown; silent?: boolean },
+  ): WebNotificationLike;
   readonly permission?: string;
 }
 
@@ -363,6 +377,7 @@ export async function scheduleNotification(notification: LocalNotificationInput)
   const shown = new show(notification.title, {
     body: notification.body,
     ...(notification.data !== undefined ? { data: { ...notification.data } } : {}),
+    ...(notification.silent === true ? { silent: true } : {}),
   });
   trackWebNotification(shown, {
     id: String(schema.id),
