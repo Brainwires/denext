@@ -1337,7 +1337,12 @@ export default {
         <code>DenextBridgeViewController</code> and <code>MainActivity</code>, which it shares with
         {" "}
         <code>add-ota</code>; either can run first). <code>--scheme</code>{" "}
-        registers the callback scheme the way <code>deep-links</code> does.
+        registers the callback scheme the way <code>deep-links</code>{" "}
+        does. A re-run upgrades the unedited files and keeps edited ones;{" "}
+        <code>denext mobile doctor --store</code> / <code>--release</code> reports{" "}
+        <code>auth-session-generations</code>{" "}
+        when the files left behind are from different template generations (an error: an edited file
+        kept beside upgraded ones) or all from an older one (a warning).
       </p>
       <Code lang="bash">
         {`denext mobile add auth-session --scheme myapp`}

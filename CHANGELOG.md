@@ -214,6 +214,13 @@ and this project adheres to
   loads it. Only a `macos` / `windows` / `linux` export (what `denext desktop run` and the
   package scripts make) bundles it now; another export says it left it out.
 
+- **`denext mobile doctor` flags stale auth-session native templates.** As `ota-generations`
+  does for the OTA plugin, the new `auth-session-generations` check (`--store`, `--release`)
+  reads the template markers of the auth-session files on each platform: files from different
+  generations (an edited `DenextAuthSessionPlugin.swift` a later `mobile add auth-session` kept
+  beside an upgraded bridge view controller) are an error, and files that all predate this
+  denext's generation, missing the bridge fixes made since, are a warning.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added

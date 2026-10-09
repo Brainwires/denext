@@ -33,6 +33,7 @@ import {
   type PlannedCommand,
 } from "../src/build/mobile-capabilities.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
+import { mobileDoctorChecks, runMobileDoctor } from "../src/build/mobile-doctor.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
   new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
@@ -683,5 +684,43 @@ Deno.test("mobile add clerk needs exactly one --scheme", async () => {
       }
       assertStringIncludes(error, "exactly one --scheme");
     }
+  });
+});
+
+Deno.test("mobile doctor: stale auth-session template generations (mixed: error; all older: warning)", async () => {
+  await inProject(async (dir) => {
+    await addAuthSessionToProject({ dir });
+    const doctor = async () =>
+      (await runMobileDoctor({ root: dir, profile: "store" })).findings.filter((f) =>
+        f.check === "auth-session-generations"
+      );
+    assertEquals(await doctor(), [], "a fresh install is current");
+    assert(mobileDoctorChecks("store").includes("auth-session-generations"));
+    assert(mobileDoctorChecks("release").includes("auth-session-generations"));
+    // iOS: an edited plugin kept from generation 3 beside the current bridge view controller.
+    await Deno.writeTextFile(
+      join(dir, IOS_PLUGIN),
+      (await renderMarkedTemplate("auth-session", 3, "// plugin 3\n")) + "// mine\n",
+    );
+    // Android: an unedited plugin of generation 2 (its only auth-session file).
+    await Deno.writeTextFile(
+      join(dir, ANDROID_PLUGIN),
+      await renderMarkedTemplate("auth-session", 2, "// plugin 2\n"),
+    );
+    const found = await doctor();
+    assertEquals(found.map((f) => [f.message.split(":")[0], f.level]), [
+      ["iOS", "error"],
+      ["Android", "warning"],
+    ]);
+    assertStringIncludes(
+      found[0].message,
+      `DenextAuthSessionPlugin.swift 3, DenextBridgeViewController.swift ${AUTH_SESSION_TEMPLATE_VERSION}`,
+    );
+    assertStringIncludes(found[0].fix, "add auth-session --force");
+    assertStringIncludes(found[1].message, "template generation 2");
+    assertStringIncludes(found[1].fix, "denext mobile add auth-session");
+    // A re-run upgrades the unedited Android file; the edited iOS one is kept, still mixed.
+    await addAuthSessionToProject({ dir });
+    assertEquals((await doctor()).map((f) => f.message.split(":")[0]), ["iOS"]);
   });
 });
