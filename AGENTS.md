@@ -831,7 +831,7 @@ denext ships tooling so agents get it right the first time:
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). The script
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
-with `check` and `ios-export-router`) are green on HEAD: a push to `development`
+with `check`, `ios-export-router` and `windows-resolve`) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
 (`gh workflow run ci.yml --ref development`, then wait for it). Active
 `development` runs ahead of `main` by design.

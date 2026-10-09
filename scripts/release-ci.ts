@@ -11,6 +11,7 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "next-compat",
   "coverage",
   "ios-export-router",
+  "windows-resolve",
 ];
 
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
