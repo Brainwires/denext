@@ -38,9 +38,14 @@ async function copyAppSource(): Promise<void> {
 async function findSharedChunk(clientDir: string): Promise<string> {
   // The shared runtime chunk is the largest bundle and always exceeds the size
   // floor, so it must have a `.gz` sibling.
+  // Pick by size, not directory order: readDir order differs by filesystem (APFS vs ext4), and
+  // a small chunk under the floor has no `.gz`.
   let chunk: string | undefined;
+  let largest = -1;
   for await (const e of Deno.readDir(clientDir)) {
-    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) chunk = e.name;
+    if (!e.isFile || !/^chunk-.*\.js$/.test(e.name)) continue;
+    const { size } = await Deno.stat(join(clientDir, e.name));
+    if (size > largest) [chunk, largest] = [e.name, size];
   }
   assert(chunk, "expected a shared chunk-*.js in the client output");
   return chunk;
