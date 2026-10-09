@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-09
+
 ### Added
 
 - **`denext/navigation` binds to any history-based router: `HistoryStack` and `HistoryTabs`.**
@@ -109,7 +111,6 @@ and this project adheres to
   executable (`Get-AuthenticodeSignature`) and warns with the fix (a CA-issued certificate, or
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
-
 - **The `progressive` step of the VirtualList browser e2e is deterministic.** It waited fixed
   frames and 400 ms for the slices to finish and compared wall-clock milliseconds, so it flaked
   under load. It now polls (bounded) until no placeholder is left, asserts the rows rendered
@@ -143,12 +144,10 @@ and this project adheres to
   retained", none of which grows when the switch repeats. One iteration keeps the post-load
   baseline. Budgets written by `--write-budget` before this change may hold a larger
   `maxLeakedBytes` than a fresh run needs.
-
 - **A new fiber allocates no context maps.** Every fiber was constructed with two fresh `Map`s
   that reconcile replaced before the fiber rendered. New fibers now share one empty map
   (context maps are never mutated in place): two fewer allocations per mounted element, ~9,000
   for T3 Code's first screen.
-
 - **A store-driven render no longer loops when the store reclaims unsubscribed entries.** A
   `useSyncExternalStore` update now runs the commit's passive effects before returning, as
   React does for a SyncLane commit. denext ran them on a later 0 ms timer, so a store that drops
@@ -158,20 +157,17 @@ and this project adheres to
   (`useAtomValue(atom, f)` with an inline `f`) re-rendered indefinitely. T3 Code's composer did
   this on most launches, 30 to 110 renders a second while idle, re-attaching ~50 listeners per
   render; its WebKit page process grew ~50 MB over two idle minutes.
-
 - **A desktop window fits the display it opens on.** `desktop.window`'s size was applied as
   given, wherever the OS had placed the window. Windows cascades a new window from the top
   left, so T3 Code's 1280×820 on a 1280×800 display ran off the right edge (the close button
   out of reach) and put its composer under the taskbar, on WebView2 and CEF alike. Under
   denext's pinned runtime the size is now capped at the display's work area, and a window the
   OS left partly outside it is moved back in; one that fits keeps the OS's placement.
-
 - **A component without effects holds no effect queues.** Every function component got three
   fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
   after the commit. They are now allocated by the component's first effect of a render and
   released once they run. In T3 Code that is ~5,000 fewer retained arrays (~0.1 MB of JS heap)
   and three fewer allocations per component render.
-
 - **An unmounted subtree is released at once.** Three references kept a deleted
   component's fibers, and with them its hook state, its props and its detached DOM, alive
   after the commit that removed it: the parent's previous buffer still listed the deleted
@@ -182,14 +178,12 @@ and this project adheres to
   (`detachFiberMutation`, `detachFiberAfterEffects`, `detachAlternateSiblings`), and the
   scheduler keeps the component type. In T3 Code, leaving its 2,000-message thread no
   longer keeps 87 of that view's DOM nodes and ~0.5 MB of JS heap until the next render.
-
 - **The `sideEffects` array form is honored.** denext resolves `node_modules` itself and marks
   each resolved file for esbuild; it read only `"sideEffects": false` and treated the array form
   (`["*.css", "./dist/web-components.js"]`) as "every file has side effects", so nothing in such
   a package could be tree-shaken. The files the array names keep their side effects and every
   other file is side-effect free, as esbuild and webpack read it (a pattern with a slash matches
   the package-relative path, one without the file name anywhere).
-
 - **A `module` field that names a missing file no longer falls back to CommonJS.** lucide 0.564's
   `module` (`dist/esm/lucide.js`) is not in its tarball; rollup's `preserveModules` put the entry
   at `dist/esm/lucide/src/lucide.js`. The browser resolver gave up on the package and the build
@@ -199,7 +193,6 @@ and this project adheres to
   below the `module` path (the `source` field's path first). With the barrel changes above,
   T3 Code's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream Vite build
   (1,242,805 B).
-
 - **A build no longer rewrites a committed `routeTree.gen.ts` with the same routes.**
   `spa.tanstackRouter` runs denext's pinned `@tanstack/router-plugin` generator, which orders the
   tree differently from other versions (and never sees a Vite config's inline `quoteStyle` /
@@ -207,7 +200,6 @@ and this project adheres to
   reordered it back. When the regenerated tree holds the committed tree's statements, in any
   order and up to quotes, semicolons and indentation, the committed bytes are put back. A route
   added, renamed or removed is written as before.
-
 - **The desktop entry no longer compiles `denext.config.ts` (and its plugins) into the app.** The
   generated `desktop.ts` imported the config module, so `deno desktop` embedded every plugin the
   config imports, with their build toolchain. The desktop sync that every export, build,
@@ -221,7 +213,6 @@ and this project adheres to
   `import config from "./.deno-desktop/config.json" with { type: "json" };` and remove a
   `proxy: config.spa?.proxy` line. The package scripts still load the config while packaging,
   so the `denext/plugin-kit/vite-emitter` entry below keeps mattering there.
-
 - **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
   `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
   toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm
@@ -231,14 +222,12 @@ and this project adheres to
   and a looser setup would have shipped the toolchain in the app. The new entry exports the same
   function with no npm package and no bundler in its graph; `denext migrate` and the docs use it.
   `denext/plugin-kit` still re-exports it.
-
 - **The `client:*` directive types type-check under `exactOptionalPropertyTypes`.** With the
   documented `client-directives.d.ts` merged into `@types/react`'s `Attributes`, a component
   that spreads props typed the way component libraries type them (each key `?: T | undefined`,
   as Base UI's are) onto an element failed `tsc` with TS2375 under
   `exactOptionalPropertyTypes: true` (T3 Code: 103 errors). Every `ClientDirectives` key now
   admits an explicit `undefined`, as React's own `Attributes` do.
-
 - **A `lists: "denext"` chat opened at the end shows its footer.** With LegendList's DOM build on
   `VirtualList`, T3 Code's 2,000-message thread opened 188 px short of the end: the last message
   sat on the bottom edge and the list footer (the composer's inset, 172 px, plus 16 px of
@@ -247,73 +236,62 @@ and this project adheres to
   the space after the rows read as 0; nothing re-read it once the layout caught up. The list now
   re-reads that space after laying out whenever the last read was covered, so
   `initialScrollAtEnd` ends at the very end, footer included, as LegendList does.
-
 - **LegendList renders its default `drawDistance` (250 px) beyond the viewport.** Without a
   `drawDistance` the engine's own default applied, a whole viewport each side: that chat
   rendered 18 rows where LegendList renders 11. It now renders 12 (React Native mode's
   `LegendList` too).
-
 - **Release-gate flake: the Cron panel test under load.** `tests/ui-config-cron.test.ts` ("what
   a browser posts for the untouched editor is not refused") read `[""]` for the posted tasks at
   load 70: the panel's discovery child overran its 15 s deadline on its cold start, so the page
   (correctly) listed no schedules. The suite tests what the panel renders from a listing, so it
   now gives the child 300 s through a test seam (`setCronDiscoveryBudget`), and says so when the
   listing did not finish; the panel's own deadline is unchanged.
-
 - **Release-gate flake: the leaked-handle listing test under load.**
   `tests/integration/cli-plugin-command.test.ts` ("a plugin that leaks a handle cannot keep a
   listing alive") failed when `denext completions zsh` took 20.6 s against a fixed 20 s bound.
   The leak is an interval, so the regression is a process that never exits: each verb now runs
   beside a leak-free control project at the same moment, and the leaky run fails only while it
   is still alive after 4x the control's time (at least 30 s).
-
 - **A pre-masked app icon is warned about.** The icon `denext mobile assets`, `denext mobile
   build` and `denext migrate` find for a Capacitor shell can be one already rounded for display
   (a rounded rectangle on transparency, as many web manifests and design exports ship). iOS
   applies its own rounded mask, so the app showed a rounded rectangle inside a rounded
   rectangle. The icon report now warns when the chosen icon looks pre-masked and asks for the
   full-bleed square artwork.
-
 - **`denext mobile assets` removes the splash images it replaced.** It rewrote the iOS
   Splash.imageset's `Contents.json` but left the images the old one named behind, unreferenced
   (a dark splash no longer configured, a hand-made set's own file names), so they kept shipping
   in the app bundle. The images the old `Contents.json` named and the new one does not are now
   removed, and listed in the report (`--dry-run` lists them as "would remove"); a file no
   catalog named, or a name that leaves the set's folder, is never touched.
-
 - **A phone or web export no longer carries `desktop.preload`.** Every export bundled the
   configured preload to `_denext/desktop-preload.js`, so an iOS / Android export shipped it in
   the app (and over the air) and a web export served it, though only a Deno Desktop window
   loads it. Only a `macos` / `windows` / `linux` export (what `denext desktop run` and the
   package scripts make) bundles it now; another export says it left it out.
-
 - **`denext mobile doctor` flags stale auth-session native templates.** As `ota-generations`
   does for the OTA plugin, the new `auth-session-generations` check (`--store`, `--release`)
   reads the template markers of the auth-session files on each platform: files from different
   generations (an edited `DenextAuthSessionPlugin.swift` a later `mobile add auth-session` kept
   beside an upgraded bridge view controller) are an error, and files that all predate this
   denext's generation, missing the bridge fixes made since, are a warning.
-
 - **`denext mobile add` in a pnpm (or yarn / npm / bun) workspace uses the workspace's
   manager even beside a stray `deno.lock`.** The nearest lockfile won, so a `deno.lock` that
   `deno task` or a denext run left in a workspace's app made the install `deno add npm:…`
   instead of the root `pnpm-lock.yaml`'s `pnpm add`. A workspace lockfile above the project now
   wins over the project's own `deno.lock`, which names the manager only when there is none.
-
 - **The examples' desktop entries read `.deno-desktop/config.json`.** `examples/native`,
   `clerk`, `desktop-kitchen-sink` and `rn-desktop` (and the CI relocation smoke's app) still
   imported `denext.config.ts` in `desktop.ts`, so their packaged apps compiled the config's
   module graph in. They now import the committed `.deno-desktop/config.json`, as a new
   scaffold does; a test keeps each committed file equal to what the desktop sync writes from
   the example's config.
-
 - **`denext mobile add` runs a Yarn install without lifecycle scripts.** Its `yarn add` ran
   the project's own scripts (a monorepo's `prepare`, a `postinstall`) and its dependencies',
   which the Capacitor plugins never need. It now sets `npm_config_ignore_scripts=true` (Yarn 1)
   and `YARN_ENABLE_SCRIPTS=0` (Berry), as `denext migrate`'s install does; the dry run shows
   them, and the CLI's command runner (shared with `mobile build`) now passes a command's
   environment through.
-
 - **LegendList's `maintainScrollAtEnd.on` flags are honoured.** The LegendList adapter
   accepted `on` but kept the end pinned on every change, so with T3 Code's
   `on: { footerLayout: false }` a composer growing while the timeline sat at its end still
@@ -12344,7 +12322,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.1...development
+[3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0
 [3.3.0]: https://jsr.io/@denext/denext@3.3.0
 [3.2.0]: https://jsr.io/@denext/denext@3.2.0

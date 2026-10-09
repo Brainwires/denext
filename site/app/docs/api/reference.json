@@ -4118,7 +4118,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.0",
+          "signature": "VERSION: 3.4.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16295,6 +16295,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopCheckCefSignature",
+          "slug": "desktopCheckCefSignature",
+          "kind": "function",
+          "signature": "desktopCheckCefSignature(exe: string, deps?: WindowsTrustDeps): Promise<boolean>",
+          "doc": "After signing a CEF app on Windows: warn when the signed <App>.exe will not start here (cefSignatureProblem). Off Windows, or when the probe fails, nothing is said.",
+          "docFull": "After signing a CEF app on Windows: warn when the signed `<App>.exe` will not start here\n({@linkcode cefSignatureProblem}). Off Windows, or when the probe fails, nothing is said.",
+          "params": [
+            {
+              "name": "exe",
+              "doc": "The bundle's executable."
+            },
+            {
+              "name": "deps",
+              "doc": "Seams."
+            }
+          ],
+          "returns": "Whether the executable's signature is fine (true when it could not be checked).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopDenoFlagArgs",
           "slug": "desktopDenoFlagArgs",
           "kind": "function",
@@ -16386,8 +16407,8 @@
           "slug": "desktopIconArgs",
           "kind": "function",
           "signature": "desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>",
-          "doc": "The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists (none: no icon, and deno desktop uses its default). Paths are relative to the project.",
-          "docFull": "The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in\n`denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists\n(none: no icon, and `deno desktop` uses its default). Paths are relative to the project.",
+          "doc": "The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists, else one derived from the app's own icon (deriveDesktopIcon: the web manifest, the apple-touch-icon, … into .deno-desktop/; none: no icon, and deno desktop uses its default). Paths are relative to the project.",
+          "docFull": "The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in\n`denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists,\nelse one derived from the app's own icon (`deriveDesktopIcon`: the web manifest, the\napple-touch-icon, … into `.deno-desktop/`; none: no icon, and `deno desktop` uses its default).\nPaths are relative to the project.",
           "params": [
             {
               "name": "entryUrl",
@@ -17020,6 +17041,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopWindowsTargetNote",
+          "slug": "desktopWindowsTargetNote",
+          "kind": "function",
+          "signature": "desktopWindowsTargetNote(backend: string, noVcRuntime: typeOperator): string",
+          "doc": "The closing note of a Windows package run: what the target machine needs for backend. A webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022 redistributable for each arch in noVcRuntime (the runtime could not be bundled app-local).",
+          "docFull": "The closing note of a Windows package run: what the target machine needs for `backend`. A\nwebview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF\nbuild ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022\nredistributable for each arch in `noVcRuntime` (the runtime could not be bundled app-local).",
+          "params": [
+            {
+              "name": "backend",
+              "doc": "The deno desktop backend (meta.backend: \"webview\" or \"cef\")."
+            },
+            {
+              "name": "noVcRuntime",
+              "doc": "The arches whose bundle has no app-local VC++ runtime."
+            }
+          ],
+          "returns": "The note, in parentheses.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
@@ -17163,6 +17205,18 @@
             }
           ],
           "returns": "The plan.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PowerShellRunner",
+          "slug": "PowerShellRunner",
+          "kind": "typeAlias",
+          "signature": "type PowerShellRunner = (script: string, env: Record<string, string>) => Promise<object | null>",
+          "doc": "Runs a PowerShell script with extra environment; null when PowerShell did not run.",
+          "docFull": "Runs a PowerShell script with extra environment; `null` when PowerShell did not run.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -17334,6 +17388,18 @@
             }
           ],
           "returns": "What changed.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowsTrustDeps",
+          "slug": "WindowsTrustDeps",
+          "kind": "interface",
+          "signature": "interface WindowsTrustDeps",
+          "doc": "Seams for the probes (tests stub them).",
+          "docFull": "Seams for the probes (tests stub them).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
