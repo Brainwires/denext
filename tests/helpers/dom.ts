@@ -211,6 +211,9 @@ export class FakeElement extends FakeNode {
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
     const path: FakeElement[] = [this];
     for (let n = this.parentNode; n instanceof FakeElement; n = n.parentNode) path.push(n);
+    // A browser propagates past <html> to the document (where hydrateDocument's root listens).
+    const doc = (path[path.length - 1] as { parentNode: unknown }).parentNode;
+    const docTarget = doc instanceof FakeDocument ? doc : null;
     const event: FakeEvent = {
       type,
       target: this,
@@ -226,6 +229,10 @@ export class FakeElement extends FakeNode {
       },
       ...extra,
     };
+    if (docTarget) {
+      event.currentTarget = docTarget as unknown as FakeElement;
+      docTarget.docCaptureListeners.get(type)?.forEach((fn) => fn(event));
+    }
     for (let i = path.length - 1; i >= 0 && !event.cancelBubble; i--) {
       event.currentTarget = path[i];
       path[i].captureListeners.get(type)?.forEach((fn) => fn(event));
@@ -234,6 +241,10 @@ export class FakeElement extends FakeNode {
     for (let i = 0; i < last && !event.cancelBubble; i++) {
       event.currentTarget = path[i];
       path[i].listeners.get(type)?.forEach((fn) => fn(event));
+    }
+    if (docTarget && event.bubbles && !event.cancelBubble) {
+      event.currentTarget = docTarget as unknown as FakeElement;
+      docTarget.docListeners.get(type)?.forEach((fn) => fn(event));
     }
   }
 
@@ -281,11 +292,17 @@ function textOf(node: FakeNode): string {
   return node.childNodes.map(textOf).join("");
 }
 
+function isCapture(opt: boolean | { capture?: boolean } | undefined): boolean {
+  return typeof opt === "boolean" ? opt : opt?.capture === true;
+}
+
 export class FakeDocument {
   /** The document body — created on first access, matching a real `document.body`. */
   readonly body: FakeElement;
   readonly documentElement: FakeElement;
-  private docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
+  /** Bubble- and capture-phase listeners; an element event visits them first and last. */
+  readonly docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
+  readonly docCaptureListeners = new Map<string, Set<(event: FakeEvent) => void>>();
 
   /** The document head (a client runtime appends `<link>`s here). */
   readonly head: FakeElement;
@@ -319,17 +336,18 @@ export class FakeDocument {
   addEventListener(
     type: string,
     fn: (event: FakeEvent) => void,
-    _capture?: boolean | { capture?: boolean; once?: boolean },
+    capture?: boolean | { capture?: boolean; once?: boolean },
   ): void {
-    if (!this.docListeners.has(type)) this.docListeners.set(type, new Set());
-    this.docListeners.get(type)!.add(fn);
+    const map = isCapture(capture) ? this.docCaptureListeners : this.docListeners;
+    if (!map.has(type)) map.set(type, new Set());
+    map.get(type)!.add(fn);
   }
   removeEventListener(
     type: string,
     fn: (event: FakeEvent) => void,
-    _capture?: boolean | { capture?: boolean },
+    capture?: boolean | { capture?: boolean },
   ): void {
-    this.docListeners.get(type)?.delete(fn);
+    (isCapture(capture) ? this.docCaptureListeners : this.docListeners).get(type)?.delete(fn);
   }
   /** Test helper: fire a document-level event of `type`. */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
@@ -340,6 +358,7 @@ export class FakeDocument {
       stopPropagation: () => {},
       ...extra,
     } as unknown as FakeEvent;
+    this.docCaptureListeners.get(type)?.forEach((fn) => fn(event));
     this.docListeners.get(type)?.forEach((fn) => fn(event));
   }
   createElementNS(ns: string, tag: string): FakeElement {
