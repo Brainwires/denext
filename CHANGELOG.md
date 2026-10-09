@@ -41,10 +41,12 @@ and this project adheres to
 
   Events that do not bubble (`onScroll`, `onLoad`, `onError`, media events, `onToggle`, …),
   `onWheel` / `onTouch*` (a root listener for them would hold scrolling on the main thread) and
-  unknown event types (a custom element's) keep a listener on their element. A 10,000-row list
-  with an `onClick` per row uses 10 % less heap after mounting. denext/testing's `fireEvent`
-  gains `focus` / `blur` (each sends the focus event, then `focusin` / `focusout`), and its
-  `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer bubble.
+  unknown event types (a custom element's) keep a listener on their element. A 10,000-row list with
+  an `onClick` per row uses 10 % less heap after mounting. The dispatcher adds 3.9 KB (raw) to every
+  app's shared client runtime; the build-smoke budget moves from 65,500 B to 68,500 B.
+  denext/testing's `fireEvent` gains `focus` / `blur` (each sends the focus event, then `focusin` /
+  `focusout`), and its `focus`, `blur`, enter/leave, `load`, `error` and `scroll` events no longer
+  bubble.
 
 ### Fixed
 
