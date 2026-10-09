@@ -108,7 +108,10 @@ Deno.test("mobile add keyboard: installs @capacitor/keyboard, no native edits", 
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["keyboard"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @capacitor/keyboard@^8.0.5", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts @capacitor/keyboard@^8.0.5",
+      "npx cap sync",
+    ]);
     assertEquals(report.written, []);
     assertStringIncludes(report.plan.notes.join("\n"), "useKeyboard()");
     assertEquals(await read(dir, MANIFEST_PATH), MANIFEST);
@@ -119,7 +122,7 @@ Deno.test("mobile add back: @capacitor/app, the manifest attribute, DenextBack +
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["back"], cwd: dir, run });
-    assertEquals(lines(), ["npm install @capacitor/app@^8.1.1", "npx cap sync"]);
+    assertEquals(lines(), ["npm install --ignore-scripts @capacitor/app@^8.1.1", "npx cap sync"]);
     assertEquals(report.written.sort(), [ACTIVITY_PATH, BACK_PLUGIN_PATH, MANIFEST_PATH].sort());
 
     const manifest = await read(dir, MANIFEST_PATH);

@@ -101,6 +101,10 @@ and this project adheres to
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
 
+- **`denext mobile add` no longer runs the project's lifecycle scripts with npm, pnpm or bun.**
+  Only Yarn was told to skip them. The install now passes `--ignore-scripts` (the dry-run line
+  shows it), as `denext migrate --enable-capacitor` does; the Capacitor plugins need no install
+  script.
 - **`denext profile --interact` no longer reports first-run state as a leak.** With
   `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
   the heap after the first run and a GC, shown as `warm` in the report. The first run loads

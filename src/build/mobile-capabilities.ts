@@ -1193,8 +1193,9 @@ async function detectPackageManager(root: string): Promise<DetectedPackageManage
 
 /**
  * `manager`'s command to add `specs` as dependencies. Yarn gets {@link YARN_NO_SCRIPTS_ENV}, as
- * `denext migrate`'s install does: `yarn add` runs lifecycle scripts (the project's own, and its
- * dependencies'), and the Capacitor plugins need none.
+ * `denext migrate`'s install does: an install runs lifecycle scripts (the project's own, and its
+ * dependencies'), and the Capacitor plugins need none. npm, pnpm and bun take `--ignore-scripts`;
+ * Yarn gets {@link YARN_NO_SCRIPTS_ENV}.
  */
 function addCommand(
   manager: PackageManager,
@@ -1217,8 +1218,11 @@ function addCommand(
     : manager === "npm" || manager === "pnpm"
     ? ["--save-exact"]
     : ["--exact"];
-  const env = manager === "yarn" ? { env: YARN_NO_SCRIPTS_ENV } : {};
-  return { cmd: manager, args: [verb, ...flag, ...specs], cwd, ...env };
+  // Yarn Berry rejects `--ignore-scripts`, so Yarn is told through its environment instead.
+  if (manager === "yarn") {
+    return { cmd: manager, args: [verb, ...flag, ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
+  }
+  return { cmd: manager, args: [verb, "--ignore-scripts", ...flag, ...specs], cwd };
 }
 
 /** A plain version (`8.5.2`, `8.0.0-rc.1`): what an exactly pinned dependency holds. */
