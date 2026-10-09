@@ -1334,3 +1334,42 @@ Deno.test("mobile add: a denext project's own deno.lock installs with `deno add 
     assertEquals((await planIn(dir)).packageManager, "npm");
   });
 });
+
+Deno.test("mobile add: a workspace root's lockfile beats a stray deno.lock in the project (pnpm monorepo)", async () => {
+  const pnpmMonorepo = {
+    ".git/HEAD": "",
+    "package.json": JSON.stringify({ name: "mono", private: true, packageManager: "pnpm@10.18.0" }),
+    "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+    "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+  };
+  await inWorkspace(pnpmMonorepo, async (root) => {
+    // `deno task` / a denext CLI run in the app left a deno.lock behind.
+    await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+    const plan = await planIn(root);
+    assertEquals(plan.packageManager, "pnpm");
+    assertEquals(plan.lockfile, "../../pnpm-lock.yaml");
+    assertEquals(plan.install, {
+      cmd: "pnpm",
+      args: ["add", "@capacitor/haptics@^8.0.2"],
+      cwd: root,
+    });
+  });
+  // The same for the other managers' workspace lockfiles.
+  for (
+    const [lockfile, manager] of [["yarn.lock", "yarn"], ["package-lock.json", "npm"], [
+      "bun.lock",
+      "bun",
+    ]]
+  ) {
+    await inWorkspace({ ".git/HEAD": "", "package.json": "{}", [lockfile]: "" }, async (root) => {
+      await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+      assertEquals((await planIn(root)).packageManager, manager, lockfile);
+    });
+  }
+  // With no workspace lockfile above it, the project's own deno.lock still names deno.
+  await inWorkspace({ ".git/HEAD": "", "package.json": "{}" }, async (root) => {
+    await Deno.writeTextFile(join(root, "deno.lock"), "{}");
+    const plan = await planIn(root);
+    assertEquals([plan.packageManager, plan.lockfile], ["deno", "deno.lock"]);
+  });
+});

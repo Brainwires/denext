@@ -476,8 +476,11 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
         <code>@capacitor/core</code>{" "}
         major other than 8, adds the packages with the package manager the nearest lockfile names
-        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts; else
-        a <code>packageManager</code>{" "}
+        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts, and
+        wins over a <code>deno.lock</code> in the project; a project&apos;s own{" "}
+        <code>deno.lock</code> with no such lockfile above it means <code>deno add</code>; else a
+        {" "}
+        <code>packageManager</code>{" "}
         field; else npm), declares any Android permissions they need, and runs{" "}
         <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
         export exists (no <code>index.html</code> in the config&apos;s{" "}

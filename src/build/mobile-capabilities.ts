@@ -1160,21 +1160,27 @@ async function packageManagerFieldIn(dir: string): Promise<PackageManager | unde
 /**
  * The package manager, walking up from the Capacitor project `root` to the repository root
  * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
- * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
- * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder; a `deno.lock`
- * only in `root` itself, for a denext project installed with `deno install`); then the nearest
- * `package.json` `packageManager` field; then npm.
+ * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest npm-family
+ * lockfile (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then
+ * a `deno.lock` in `root` itself, for a denext project installed with `deno install`; then the
+ * nearest `package.json` `packageManager` field; then npm.
  */
 async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
   const dirs = await workspaceAncestors(root);
+  let projectDenoLock: string | undefined;
   for (const dir of dirs) {
     const found = await lockfileIn(dir);
-    // A deno.lock names the project's manager only in the project itself: an npm project nested
-    // in a Deno repository is still an npm project.
-    if (found && (found.manager !== "deno" || dir === root)) {
-      return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    if (found?.manager !== "deno") {
+      if (found) return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+      continue;
     }
+    // A deno.lock names the project's manager only in the project itself (an npm project nested
+    // in a Deno repository is still an npm project), and only when no workspace above it has an
+    // npm-family lockfile: `deno task` or a denext run in a pnpm workspace's app leaves a
+    // deno.lock there, and the workspace's manager still owns the install.
+    if (dir === root) projectDenoLock = found.path;
   }
+  if (projectDenoLock) return { manager: "deno", lockfile: posixRelative(root, projectDenoLock) };
   for (const dir of dirs) {
     const manager = await packageManagerFieldIn(dir);
     if (manager) {

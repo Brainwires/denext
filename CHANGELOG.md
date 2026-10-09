@@ -221,6 +221,12 @@ and this project adheres to
   beside an upgraded bridge view controller) are an error, and files that all predate this
   denext's generation, missing the bridge fixes made since, are a warning.
 
+- **`denext mobile add` in a pnpm (or yarn / npm / bun) workspace uses the workspace's
+  manager even beside a stray `deno.lock`.** The nearest lockfile won, so a `deno.lock` that
+  `deno task` or a denext run left in a workspace's app made the install `deno add npm:…`
+  instead of the root `pnpm-lock.yaml`'s `pnpm add`. A workspace lockfile above the project now
+  wins over the project's own `deno.lock`, which names the manager only when there is none.
+
 ## [3.4.0] - 2026-10-08
 
 ### Added
