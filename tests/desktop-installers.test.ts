@@ -21,6 +21,7 @@ import {
   debianPackageName,
   debMaintainerScript,
   DEFAULT_DESKTOP_INSTALLERS,
+  desktopAppVersion,
   desktopInstallerPlan,
   desktopPackageMeta,
   desktopPackageMetaWarnings,
@@ -40,6 +41,7 @@ import {
   rpmSpec,
   splitFormatList,
   stageLinuxRoot,
+  stampDenoJsonVersion,
   walkBundle,
   wixArch,
   wixSource,
@@ -54,6 +56,7 @@ import {
   desktopSlug,
   desktopToolGate,
   desktopVersionProblem,
+  desktopWithAppVersion,
   parseDesktopPackageArgs,
   type prepareDesktopPackage,
 } from "../src/build/desktop-package-script.ts";
@@ -1051,6 +1054,54 @@ Deno.test("meta: the version falls back to package.json `version`, then 1.0.0; d
   assertEquals(packageMetaWarnings({}, cfg, packageMetaFrom({}, cfg, "Thing", pkg), pkg), []);
   const none = packageMetaWarnings({}, cfg, packageMetaFrom({}, cfg, "Thing"));
   assertStringIncludes(none.join("\n"), 'no "version" in deno.json or package.json');
+});
+
+Deno.test("meta: desktopAppVersion — deno.json's version, else package.json's, else none", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(await desktopAppVersion(dir), undefined);
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify({ version: "0.7.1" }));
+    assertEquals(await desktopAppVersion(dir), "0.7.1");
+    await Deno.writeTextFile(join(dir, "deno.jsonc"), '// app\n{ "version": "2.0.0" }\n');
+    assertEquals(await desktopAppVersion(dir), "2.0.0");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("meta: deno desktop builds with package.json's version stamped into deno.json, then restored", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const entry = toFileUrl(join(dir, "scripts", "package-windows.ts")).href;
+    const original = '{\n  // the app\n  "desktop": { "app": {} }\n}\n';
+    await Deno.writeTextFile(join(dir, "deno.json"), original);
+    // No package.json version: nothing to stamp.
+    assertEquals(await stampDenoJsonVersion(dir), null);
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify({ version: "0.7.1" }));
+    // During the build deno.json carries the version (comments kept); after it, the bytes are back.
+    const during = await desktopWithAppVersion(
+      entry,
+      () => Deno.readTextFile(join(dir, "deno.json")),
+    );
+    assertStringIncludes(during, "// the app");
+    assertEquals(JSON.parse(during.replace("// the app", "")).version, "0.7.1");
+    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), original);
+    // A failed build restores it too.
+    await assertRejects(
+      () => desktopWithAppVersion(entry, () => Promise.reject(new Error("build failed"))),
+      Error,
+      "build failed",
+    );
+    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), original);
+    // deno.json's own version wins: left as it is.
+    const own = JSON.stringify({ version: "2.0.0" });
+    await Deno.writeTextFile(join(dir, "deno.json"), own);
+    assertEquals(await stampDenoJsonVersion(dir), null);
+    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), own);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("meta: desktopPackageMeta reads package.json `version` beside the scripts/ entry", async () => {

@@ -82,6 +82,16 @@ and this project adheres to
 
 ### Fixed
 
+- **A desktop app versioned in package.json packages and publishes updates as that version.**
+  The installers already took package.json `version` when deno.json has none, but `deno desktop`
+  reads only deno.json's, so the bundle it compiled (the runtime library's app version a full-app
+  update is checked against, Info.plist, the executable's version resource) said `1.0` or no
+  version while the installers said package.json's, and `denext desktop publish-update` refused
+  with "no version". The package scripts now run `deno desktop` with package.json's version
+  written into deno.json for the build and put back after (`desktopWithAppVersion` from
+  `denext/desktop`; regenerate an existing `scripts/package-macos.ts` with
+  `denext desktop package --regenerate-scripts`), and `publish-update` defaults to the same
+  version: deno.json's, else package.json's (`desktopAppVersion`).
 - **A platform file's stylesheet reaches its target's build.** `x.mobile.ts`'s
   `import "./a.css"` was left out of `DENEXT_PLATFORM=ios denext export` while the file's JS was
   bundled: the stylesheet crawl (`deno info`) walked the plain files' graph. It now resolves
