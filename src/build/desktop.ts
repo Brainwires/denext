@@ -109,6 +109,7 @@ export {
 
 // The config→capabilities resolver the generated `desktop.ts` entry spreads into `runDesktop`.
 export {
+  type DesktopRuntimeConfig,
   type ResolvedDesktop,
   resolveDesktopCapabilities,
   type ResolveDesktopOptions,
@@ -375,9 +376,10 @@ export interface RunDesktopOptions {
   /** Local server port. Default: env `PORT`, else `8000`. */
   port?: number;
   /**
-   * Backend reverse-proxy config. Generated `desktop.ts` passes
-   * `config.spa?.proxy` from the app's `denext.config.ts` (compiled into the entry,
-   * since the packaged app has no config file at runtime). Omit for no proxy.
+   * Backend reverse-proxy config. The generated `desktop.ts` spreads
+   * `resolveDesktopCapabilities(config)`, which carries `spa.proxy` from
+   * `.deno-desktop/config.json` (the config's runtime slice, compiled into the entry, since
+   * the packaged app has no config file at runtime). Omit for no proxy.
    */
   proxy?: SpaProxyConfig;
   /**

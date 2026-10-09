@@ -7,6 +7,7 @@
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { mfs } from "./migrate-io.ts";
+import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
@@ -305,9 +306,11 @@ function desktopEntry(): string {
 //
 // Native capabilities (\`denext desktop add <cap>\`) are read from \`desktop.capabilities\`
 // in the config and served through the gated bridge — default deny when \`desktop\` is
-// absent. To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\` and pass
-// \`proxy: (config as DenextConfig).spa?.proxy\` below.
-import config from "./denext.config.ts";
+// absent; a backend reverse proxy is \`spa.proxy\`. Both arrive through
+// \`.deno-desktop/config.json\`, the runtime part of \`denext.config.ts\` that every export, build
+// and \`denext desktop\` command rewrites: the config module itself (and any plugin it imports)
+// is never compiled into the app.
+import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
 await runDesktop({
@@ -507,6 +510,9 @@ const GLOBAL_CSS_PLAIN = `:root { font-family: system-ui, sans-serif; }
 
 const TAILWIND_INPUT = `@import "tailwindcss";\n`;
 
+/** The `desktop` section a desktop scaffold writes into `denext.config.ts`. */
+const SCAFFOLD_DESKTOP_CONFIG = { app: { identifier: "com.example.denext" } } as const;
+
 function denextConfig(opts: ScaffoldOptions): string {
   const appBase = opts.srcDir ? "src/app" : "app";
   const lines: string[] = [];
@@ -527,7 +533,7 @@ function denextConfig(opts: ScaffoldOptions): string {
       `    // Unique per app: keys the OS storage dirs and the secureStore keychain service, so`,
       `    // change it to YOUR reverse-DNS id (keep it equal to deno.json's desktop.app.identifier).`,
       `    // secureStore / fs / sqlite refuse to start without it, to avoid sharing data across apps.`,
-      `    app: { identifier: "com.example.denext" },`,
+      `    app: { identifier: "${SCAFFOLD_DESKTOP_CONFIG.app.identifier}" },`,
       `    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>`,
       `  },`,
     );
@@ -576,13 +582,19 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   } else {
     files.push({ path: "public/styles.css", content: GLOBAL_CSS_PLAIN });
   }
-  // The desktop entry imports `./denext.config.ts` to resolve `desktop.capabilities`, so a
-  // desktop scaffold always needs the config file even without tailwind/compiler.
+  // `desktop.capabilities` and the rest of the desktop settings live in `./denext.config.ts`, so
+  // a desktop scaffold always needs the config file even without tailwind/compiler.
   if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) {
     files.push({ path: "desktop.ts", content: desktopEntry() });
+    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
+    // entry type-checks before the first export.
+    files.push({
+      path: DESKTOP_RUNTIME_CONFIG_FILE,
+      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
+    });
     files.push({ path: "icons/README.md", content: desktopIcons() });
     files.push({
       path: "scripts/package-macos.ts",

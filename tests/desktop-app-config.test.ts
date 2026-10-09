@@ -173,6 +173,7 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
   try {
     assertEquals(await syncDesktopAppConfigAt(dir, T3), {
       appJson: "written",
+      runtimeConfig: "written",
       include: "updated",
       identity: "updated",
     });
@@ -190,6 +191,7 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
     // Idempotent: a second run changes nothing.
     assertEquals(await syncDesktopAppConfigAt(dir, T3), {
       appJson: "unchanged",
+      runtimeConfig: "unchanged",
       include: "unchanged",
       identity: "unchanged",
     });
@@ -221,6 +223,7 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     const none = { desktop: { app: { identifier: "com.t3.code" } } };
     assertEquals(await syncDesktopAppConfigAt(dir, none), {
       appJson: "removed",
+      runtimeConfig: "written",
       include: "updated",
       identity: "unchanged",
     });
@@ -237,6 +240,7 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     // No origin and nothing written before: a no-op.
     assertEquals(await syncDesktopAppConfigAt(lone, none), {
       appJson: "none",
+      runtimeConfig: "unchanged",
       include: "unchanged",
       identity: "unchanged",
     });
@@ -319,7 +323,11 @@ Deno.test("launch file: without a config it still turns DevTools off", async () 
       inspectable: false,
       bridgeOrigins: ["app://localhost"],
     });
-    assertEquals(await syncDesktopAppConfig(entry), { appJson: "none", include: "no-deno-json" });
+    assertEquals(await syncDesktopAppConfig(entry), {
+      appJson: "none",
+      runtimeConfig: "written",
+      include: "no-deno-json",
+    });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -359,6 +367,7 @@ Deno.test("sync: deepLinks + singleInstance go to app.json, and deepLinks to den
   try {
     assertEquals(await syncDesktopAppConfigAt(dir, config), {
       appJson: "written",
+      runtimeConfig: "written",
       include: "updated",
       deepLinks: "updated",
       identity: "updated",

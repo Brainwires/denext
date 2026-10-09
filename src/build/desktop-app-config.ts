@@ -6,6 +6,9 @@
 //                            (full-app self-update's baked key) from `desktop.update`,
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
+//   .deno-desktop/config.json  the runtime slice of `denext.config.ts` the generated `desktop.ts`
+//                            imports (`desktop` and `spa.proxy`, JSON-serialized), so the config
+//                            module and the plugins it imports are never compiled into the app
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
 //                            `singleInstance`, `inspectable`, `bridgeOrigins`, and on Linux
 //                            `requireSandbox`), read at process
@@ -31,6 +34,8 @@ import { parseOtaPublicKey } from "./ota-signing.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
+/** The config slice the generated `desktop.ts` imports, relative to the project root. */
+export const DESKTOP_RUNTIME_CONFIG_FILE = ".deno-desktop/config.json";
 /** The webview backend's launch-settings file name. */
 export const LAUFEY_LAUNCH_FILE = "laufey-launch.json";
 
@@ -283,6 +288,8 @@ export async function writeLaufeyLaunchConfig(
 export interface DesktopAppSyncReport {
   /** `.deno-desktop/app.json`: written, already current, removed (origin unset), or absent. */
   readonly appJson: "written" | "unchanged" | "removed" | "none";
+  /** `.deno-desktop/config.json` (the desktop entry's config): written or already current. */
+  readonly runtimeConfig: "written" | "unchanged";
   /** `compile.include` in deno.json: updated, already right, or no deno.json to edit. */
   readonly include: "updated" | "unchanged" | "no-deno-json";
   /** deno.json `desktop.app.deepLinks` (present only when deep links are configured). */
@@ -417,6 +424,44 @@ async function desktopUpdatePublicKey(config: unknown): Promise<string | undefin
   }
 }
 
+/**
+ * The part of the project config the desktop entry reads at runtime: the `desktop` section and
+ * `spa.proxy`, through JSON (so functions, and plugins, are dropped). Everything else in the
+ * config is build-time only.
+ *
+ * @param config The project config.
+ * @returns The `.deno-desktop/config.json` value.
+ */
+function desktopRuntimeConfig(config: unknown): Record<string, unknown> {
+  const c = config as { desktop?: unknown; spa?: { proxy?: unknown } } | null | undefined;
+  const out: Record<string, unknown> = {};
+  if (c?.desktop !== undefined) out.desktop = c.desktop;
+  if (c?.spa?.proxy !== undefined) out.spa = { proxy: c.spa.proxy };
+  return JSON.parse(JSON.stringify(out));
+}
+
+/** `.deno-desktop/config.json`'s text for `config`. */
+export function desktopRuntimeConfigText(config: unknown): string {
+  return JSON.stringify(desktopRuntimeConfig(config), null, 2) + "\n";
+}
+
+/** Write `.deno-desktop/config.json` (when it changed), never through a symlink. */
+async function syncRuntimeConfig(
+  root: string,
+  config: unknown,
+): Promise<DesktopAppSyncReport["runtimeConfig"]> {
+  const dir = join(root, ".deno-desktop");
+  const path = join(root, DESKTOP_RUNTIME_CONFIG_FILE);
+  if ((await isSymlink(dir)) || (await isSymlink(path))) {
+    throw new Error(`refusing to write through a symlink at ${path}`);
+  }
+  const content = desktopRuntimeConfigText(config);
+  if ((await Deno.readTextFile(path).catch(() => undefined)) === content) return "unchanged";
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(path, content);
+  return "written";
+}
+
 /** Write (or remove) `.deno-desktop/app.json`, never through a symlink. */
 async function syncAppJson(
   root: string,
@@ -484,7 +529,8 @@ function configIdentity(config: unknown): Record<string, string> {
 
 /**
  * Bring the project's `.deno-desktop/app.json` and deno.json in line with `desktop.app` in
- * `config`: with an origin, deep-link schemes or `singleInstance`, write `app.json` (origin +
+ * `config`, and write `.deno-desktop/config.json` (the desktop entry's config, see
+ * `desktopRuntimeConfig`): with an origin, deep-link schemes or `singleInstance`, write `app.json` (origin +
  * identifier, `deepLinks`, `singleInstance`) and make sure `compile.include` lists the file
  * (appending to existing entries, idempotent); with none, remove a previous `app.json` and its
  * include entry so the runtime does not keep a stale origin. Configured deep-link schemes are also
@@ -503,6 +549,7 @@ export async function syncDesktopAppConfigAt(
 ): Promise<DesktopAppSyncReport> {
   const body = appJsonBody(config, await desktopUpdatePublicKey(config));
   const appJson = await syncAppJson(root, body);
+  const runtimeConfig = await syncRuntimeConfig(root, config);
   const include = await syncInclude(root, body !== null);
   if (body && include === "no-deno-json") {
     console.warn(
@@ -514,6 +561,7 @@ export async function syncDesktopAppConfigAt(
   const identity = configIdentity(config);
   return {
     appJson,
+    runtimeConfig,
     include,
     ...(schemes.length > 0
       ? { deepLinks: await syncDenoJsonApp(root, { deepLinks: [...schemes] }) }

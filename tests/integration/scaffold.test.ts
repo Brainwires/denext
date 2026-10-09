@@ -169,11 +169,12 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assertStringIncludes(desktop, "runDesktop");
   assertStringIncludes(desktop, "denext/desktop");
   assertStringIncludes(desktop, "import.meta.url");
-  // The entry resolves desktop.capabilities from the config (default deny when absent), so a
-  // desktop scaffold also emits denext.config.ts for the entry to import.
+  // The entry resolves desktop.capabilities from the config's runtime slice (default deny when
+  // absent), written from denext.config.ts; the scaffold emits both.
   assertStringIncludes(desktop, "resolveDesktopCapabilities");
-  assertStringIncludes(desktop, 'import config from "./denext.config.ts"');
+  assertStringIncludes(desktop, 'import config from "./.deno-desktop/config.json"');
   assert(paths.includes("denext.config.ts"), "desktop scaffold emits denext.config.ts");
+  assert(paths.includes(".deno-desktop/config.json"), "and the entry's first config slice");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "desktop run .");

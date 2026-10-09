@@ -72,19 +72,29 @@ export default function Desktop() {
         <code>denext/desktop</code>, so a fix reaches every app:
       </p>
       <Code lang="tsx">
-        {`import config from "./denext.config.ts";
+        {`import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
 await runDesktop({
   importMetaUrl: import.meta.url,
-  // the enabled native capabilities (desktop.capabilities), served through the gated bridge
+  // the enabled native capabilities (desktop.capabilities) and spa.proxy
   ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
 });`}
       </Code>
       <p>
-        <code>denext migrate --desktop</code> writes the same entry, plus{" "}
-        <code>proxy: config.spa?.proxy</code>{" "}
-        to reverse-proxy a backend. An entry written before 2.11 has no{" "}
+        The entry reads <code>.deno-desktop/config.json</code>, not{" "}
+        <code>denext.config.ts</code>: the part of the config the app uses at runtime (the{" "}
+        <code>desktop</code> section and <code>spa.proxy</code>), which every export, build and{" "}
+        <code>denext desktop</code> command (and the package scripts) rewrites from the config.{" "}
+        <code>deno desktop</code>{" "}
+        compiles the entry&apos;s imports into the app, so importing the config module would ship
+        every plugin it imports (and their build toolchain) too. An entry that still imports{" "}
+        <code>./denext.config.ts</code>{" "}
+        keeps working; switch it to the JSON to leave the build-only code out.{" "}
+        <code>resolveDesktopCapabilities</code> also returns <code>spa.proxy</code> as{" "}
+        <code>proxy</code>, so the spread reverse-proxies a backend when the config sets one.{" "}
+        <code>denext migrate --desktop</code>{" "}
+        writes the same entry. An entry written before 2.11 has no{" "}
         <code>resolveDesktopCapabilities</code> spread, so every capability answers{" "}
         <code>unavailable</code>{" "}
         and the page keeps its web path; add the spread to serve the ones you enable.

@@ -18,6 +18,7 @@ import type {
   DenextConfig,
   DesktopCapabilitiesConfig,
   DesktopShellConfig,
+  SpaProxyConfig,
 } from "../../server/config.ts";
 import type { DesktopCapability } from "../extension.ts";
 import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
@@ -95,6 +96,21 @@ export interface ResolvedDesktop {
    * launch once the window has loaded (`false` only when the config turns it off).
    */
   readonly autoConfirmAppUpdate: boolean;
+  /** `spa.proxy`: the backend reverse proxy `runDesktop` serves, when the config sets one. */
+  readonly proxy?: SpaProxyConfig;
+}
+
+/**
+ * What {@link resolveDesktopCapabilities} reads: the project config, or the JSON slice of it the
+ * desktop sync writes to `.deno-desktop/config.json` (`{ desktop, spa: { proxy } }`), which the
+ * generated `desktop.ts` imports so `denext.config.ts` (and every plugin it imports) stays out of
+ * the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
+ */
+export interface DesktopRuntimeConfig {
+  /** The config's `desktop` section (`DenextConfig["desktop"]`). */
+  readonly desktop?: unknown;
+  /** The config's `spa` section; only `spa.proxy` is read. */
+  readonly spa?: unknown;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -166,15 +182,17 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  * error, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a
  * `desktop.app.identifier` — both fail fast at launch.
  *
- * @param config The project config (or its `desktop` block via the whole config); `undefined`
- * yields no capabilities.
+ * @param runtimeConfig The project config, or `.deno-desktop/config.json` (its runtime slice, see
+ * {@link DesktopRuntimeConfig}); `undefined` yields no capabilities.
  * @param options The app id (for storage dirs) and the entry's `import.meta.url` (for extensions).
- * @returns The enabled capabilities, the app-support directory, and whether auth-session is enabled.
+ * @returns The enabled capabilities, the app-support directory, whether auth-session is enabled,
+ * and `spa.proxy`.
  */
 export async function resolveDesktopCapabilities(
-  config: DenextConfig | undefined,
+  runtimeConfig: DesktopRuntimeConfig | undefined,
   options: ResolveDesktopOptions = {},
 ): Promise<ResolvedDesktop> {
+  const config = runtimeConfig as DenextConfig | undefined;
   const desktop = config?.desktop;
   const caps: DesktopCapabilitiesConfig | undefined = desktop?.capabilities;
   // The app identity keys the storage dirs AND the secureStore keychain SERVICE. It MUST be
@@ -210,6 +228,7 @@ export async function resolveDesktopCapabilities(
       (desktop as { update?: { autoConfirm?: unknown } } | undefined)?.update?.autoConfirm !==
         false,
     ...origin,
+    ...(config?.spa?.proxy ? { proxy: config.spa.proxy } : {}),
   };
 
   if (!caps) return { capabilities: [], ...base };
@@ -225,7 +244,7 @@ export async function resolveDesktopCapabilities(
 
 /**
  * The configured `desktop.app.origin`, normalized, or `undefined` when unset. The desktop entry
- * imports `denext.config.ts` directly (the config loader's validation never ran), so the runtime's
+ * imports the config's JSON slice directly (the config loader's validation never ran), so the runtime's
  * rules are enforced here too: an invalid origin, or an origin without a valid identifier, fails
  * fast at launch.
  */

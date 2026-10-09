@@ -176,8 +176,13 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     // desktop.ts
     const desktop = await Deno.readTextFile(join(dir, "desktop.ts"));
     assert(desktop.includes("runDesktop"));
-    assert(desktop.includes('import config from "./denext.config.ts"'));
-    assert(desktop.includes("config.spa?.proxy"));
+    // The entry reads the config's runtime slice (desktop + spa.proxy), never the config
+    // module itself (whose plugins would ship in the app).
+    assert(
+      desktop.includes('import config from "./.deno-desktop/config.json" with { type: "json" }'),
+    );
+    assert(!desktop.includes('from "./denext.config.ts"'));
+    assert(desktop.includes("resolveDesktopCapabilities(config"));
     assertEquals(r.spa?.desktopWritten, true);
 
     // .gitignore ignores the generated build artifacts: build cache, export, the Tailwind

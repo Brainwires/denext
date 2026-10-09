@@ -1274,6 +1274,7 @@
     "DesktopProxyFn:typeAlias",
     "DesktopRunOptions:interface",
     "DesktopRuntime:interface",
+    "DesktopRuntimeConfig:interface",
     "DesktopServeInfo:interface",
     "DesktopSignWindowsDeps:interface",
     "DesktopTrust:typeAlias",

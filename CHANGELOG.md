@@ -53,6 +53,19 @@ and this project adheres to
   order and up to quotes, semicolons and indentation, the committed bytes are put back. A route
   added, renamed or removed is written as before.
 
+- **The desktop entry no longer compiles `denext.config.ts` (and its plugins) into the app.** The
+  generated `desktop.ts` imported the config module, so `deno desktop` embedded every plugin the
+  config imports, with their build toolchain. The desktop sync that every export, build,
+  `denext desktop run|dev` and package script already runs now also writes
+  `.deno-desktop/config.json` (the config's `desktop` section and `spa.proxy`, through JSON), and
+  the entries `denext create --desktop` and `denext migrate --desktop` write import that file.
+  `resolveDesktopCapabilities` takes the JSON as it takes the config and also returns
+  `spa.proxy` as `proxy`, so the entry's one spread covers it. An entry that still imports the
+  config keeps working; to drop the build-only code, change its import to
+  `import config from "./.deno-desktop/config.json" with { type: "json" };` and remove a
+  `proxy: config.spa?.proxy` line. The package scripts still load the config while packaging,
+  so the `denext/plugin-kit/vite-emitter` entry below keeps mattering there.
+
 - **`viteEmitterPlugin` has a light entry, `denext/plugin-kit/vite-emitter`.** Imported from
   `denext/plugin-kit` (as the docs and `denext migrate` wrote it), it brought the whole build
   toolchain into `denext.config.ts`'s module graph: esbuild, sass and @mdx-js/mdx as npm
