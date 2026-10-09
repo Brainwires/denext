@@ -16202,6 +16202,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopAppVersion",
+          "slug": "desktopAppVersion",
+          "kind": "function",
+          "signature": "desktopAppVersion(root: string): Promise<string | undefined>",
+          "doc": "The project's app version: deno.json version, else package.json version (undefined: neither). The installers, the executable's version resource and denext desktop publish-update all go by it.",
+          "docFull": "The project's app version: deno.json `version`, else package.json `version` (`undefined`:\nneither). The installers, the executable's version resource and `denext desktop publish-update`\nall go by it.",
+          "params": [
+            {
+              "name": "root",
+              "doc": "The project directory."
+            }
+          ],
+          "returns": "The version, or undefined when neither file has one.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopBridge",
           "slug": "DesktopBridge",
           "kind": "interface",
@@ -17058,6 +17075,27 @@
             }
           ],
           "returns": "The note, in parentheses.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopWithAppVersion",
+          "slug": "desktopWithAppVersion",
+          "kind": "function",
+          "signature": "desktopWithAppVersion<T>(entryUrl: string, build: () => Promise<T>): Promise<T>",
+          "doc": "Run build (a deno desktop packaging run) with deno.json carrying the app version: when deno.json has no version, package.json's is written into it for the run and taken out after (see stampDenoJsonVersion), so the bundle deno desktop compiles carries the version the installers and denext desktop publish-update go by (deno.json's, else package.json's).",
+          "docFull": "Run `build` (a `deno desktop` packaging run) with deno.json carrying the app version: when\ndeno.json has no `version`, package.json's is written into it for the run and taken out after\n(see `stampDenoJsonVersion`), so the bundle `deno desktop` compiles carries the version the\ninstallers and `denext desktop publish-update` go by (deno.json's, else package.json's).",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "build",
+              "doc": "The packaging run."
+            }
+          ],
+          "returns": "What build returned.",
           "examples": [],
           "denextOnly": true
         },
@@ -18928,6 +18966,44 @@
               "doc": "Where the web engine is, when the build does not provide it."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeliveredNotification",
+          "slug": "DeliveredNotification",
+          "kind": "interface",
+          "signature": "interface DeliveredNotification",
+          "doc": "A notification the app has in the notification centre.",
+          "docFull": "A notification the app has in the notification centre.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "deliveredNotifications",
+          "slug": "deliveredNotifications",
+          "kind": "function",
+          "signature": "deliveredNotifications(): Promise<DeliveredNotification[]>",
+          "doc": "The notifications the app has in the notification centre: local ones and remote pushes alike, most platforms newest first as the OS reports them. Group summaries (Android) are not listed.",
+          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): the notifications denext posted during this run\n  whose time has come and that were not removed through denext. The runtime cannot list the\n  OS's notification centre, so one the user dismissed is still listed, and one from an earlier\n  run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
+          "params": [],
+          "returns": "The delivered notifications.",
+          "examples": [
+            "```ts\nimport { deliveredNotifications } from \"denext/mobile\";\n\nconst unread = (await deliveredNotifications()).filter((n) => n.threadId === chatId).length;\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "DeliveredNotificationSelector",
+          "slug": "DeliveredNotificationSelector",
+          "kind": "interface",
+          "signature": "interface DeliveredNotificationSelector",
+          "doc": "Which delivered notifications removeDeliveredNotifications removes. The criteria given narrow each other (a notification must match every one); { all: true } alone removes every delivered notification.",
+          "docFull": "Which delivered notifications {@linkcode removeDeliveredNotifications} removes. The criteria\ngiven narrow each other (a notification must match every one); `{ all: true }` alone removes\nevery delivered notification.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -21937,6 +22013,25 @@
           "returns": "A promise that settles once the reload is requested. It rejects with a TypeError for a bad kind.",
           "examples": [
             "```ts\nimport { reloadWidgets } from \"denext/mobile\";\n\nawait reloadWidgets(); // e.g. after the user signs out\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "removeDeliveredNotifications",
+          "slug": "removeDeliveredNotifications",
+          "kind": "function",
+          "signature": "removeDeliveredNotifications(selector: DeliveredNotificationSelector): Promise<void>",
+          "doc": "Remove delivered notifications from the notification centre — local ones and remote pushes alike. Pending (scheduled) notifications are not touched: cancelNotification cancels those.",
+          "docFull": "Remove delivered notifications from the notification centre — local ones and remote pushes\nalike. Pending (scheduled) notifications are not touched: `cancelNotification` cancels those.\n\nThe criteria given narrow each other: `{ threadId: \"chat-7\" }` removes the thread's\nnotifications, `{ ids: [\"12\"], threadId: \"chat-7\" }` only those of the ids in that thread. An\nempty selector is a `TypeError` (so a missing argument never clears everything); pass\n`{ all: true }` to remove every one. On Android, a group summary left without notifications in\nits group is removed too. See {@linkcode deliveredNotifications} for what each platform can see.",
+          "params": [
+            {
+              "name": "selector",
+              "doc": "Which notifications to remove."
+            }
+          ],
+          "returns": "A promise that settles once removed.",
+          "examples": [
+            "```ts\nimport { removeDeliveredNotifications } from \"denext/mobile\";\n\n// The user opened (or muted) chat 7: clear its notifications, pushes included.\nawait removeDeliveredNotifications({ threadId: \"chat-7\" });\n```"
           ],
           "denextOnly": true
         },

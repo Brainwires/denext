@@ -82,6 +82,8 @@
  * - {@linkcode scheduleNotification} and the rest of the local-notification API: triggers,
  *   Android channels, categories with action buttons, {@linkcode onLocalNotificationTapped}
  *   (`denext mobile add local-notifications`).
+ * - {@linkcode deliveredNotifications} / {@linkcode removeDeliveredNotifications}: list and clear
+ *   what the notification centre shows, local and push alike, per thread (`threadId`).
  * - {@linkcode isBiometricAvailable} / {@linkcode authenticateBiometric} (`denext mobile add
  *   biometrics`), and `secureStore.set(key, value, { requireBiometric: true })`.
  * - {@linkcode signInWithApple} / {@linkcode signInWithGoogle} / {@linkcode signInNative}: the
@@ -392,6 +394,12 @@ export {
   setNotificationCategories,
   useLocalNotificationTapped,
 } from "./local-notifications.ts";
+export {
+  type DeliveredNotification,
+  deliveredNotifications,
+  type DeliveredNotificationSelector,
+  removeDeliveredNotifications,
+} from "./delivered-notifications.ts";
 export {
   authenticateBiometric,
   type BiometricAuthOptions,

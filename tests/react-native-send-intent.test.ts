@@ -100,7 +100,7 @@ Deno.test("expo-linking sendIntent: React Native's Linking on Android, Unavailab
 const ANDROID_FILE = "DenextSettingsPlugin.java";
 const ANDROID_SETTINGS = `android/app/src/main/java/dev/denext/settings/${ANDROID_FILE}`;
 
-Deno.test("DenextSettings (Android): sendIntent is a plugin method; the generation is 2", () => {
+Deno.test("DenextSettings (Android): sendIntent is a plugin method; the generation is past 1", () => {
   const java = SETTINGS_ANDROID_FILES[ANDROID_FILE];
   assertStringIncludes(java, "    @PluginMethod\n    public void sendIntent(PluginCall call) {");
   // React Native's messages for an empty action and an action nothing handles.
@@ -279,9 +279,14 @@ public class Intent {
 `,
   "android/content/Context.java": `package android.content;
 public class Context {
+    public static final String NOTIFICATION_SERVICE = "notification";
     public static RuntimeException failure;
+    public static android.app.NotificationManager notifications;
     public final java.util.List<String> started = new java.util.ArrayList<>();
     public String getPackageName() { return "com.example.app"; }
+    public Object getSystemService(String name) {
+        return NOTIFICATION_SERVICE.equals(name) ? notifications : null;
+    }
     public void startActivity(Intent intent) {
         if (failure != null) throw failure;
         started.add(intent.action);
@@ -290,6 +295,51 @@ public class Context {
 `,
   "android/app/Activity.java": `package android.app;
 public class Activity extends android.content.Context {}
+`,
+  "android/os/Bundle.java": `package android.os;
+public class Bundle {
+    public final java.util.Map<String, CharSequence> values = new java.util.HashMap<>();
+    public CharSequence getCharSequence(String key) { return values.get(key); }
+}
+`,
+  "android/app/Notification.java": `package android.app;
+public class Notification {
+    public static final int FLAG_GROUP_SUMMARY = 0x00000200;
+    public static final String EXTRA_TITLE = "android.title";
+    public android.os.Bundle extras = new android.os.Bundle();
+    public int flags;
+    public String group;
+    public String getGroup() { return group; }
+}
+`,
+  "android/app/NotificationManager.java": `package android.app;
+public class NotificationManager {
+    public android.service.notification.StatusBarNotification[] active =
+        new android.service.notification.StatusBarNotification[0];
+    public RuntimeException failure;
+    public final java.util.List<String> cancelled = new java.util.ArrayList<>();
+    public android.service.notification.StatusBarNotification[] getActiveNotifications() {
+        if (failure != null) throw failure;
+        return active;
+    }
+    public void cancel(int id) { cancelled.add(String.valueOf(id)); }
+    public void cancel(String tag, int id) { cancelled.add(tag + "#" + id); }
+}
+`,
+  "android/service/notification/StatusBarNotification.java": `package android.service.notification;
+public class StatusBarNotification {
+    private final int id;
+    private final String tag;
+    private final android.app.Notification notification;
+    public StatusBarNotification(int id, String tag, android.app.Notification notification) {
+        this.id = id;
+        this.tag = tag;
+        this.notification = notification;
+    }
+    public int getId() { return id; }
+    public String getTag() { return tag; }
+    public android.app.Notification getNotification() { return notification; }
+}
 `,
   "android/net/Uri.java": `package android.net;
 public class Uri {
@@ -303,7 +353,32 @@ public final class Settings {
 `,
   "com/getcapacitor/JSArray.java": `package com.getcapacitor;
 public class JSArray extends org.json.JSONArray {
-    public JSArray() { super(new java.util.ArrayList<>()); }
+    public final java.util.List<Object> items;
+    public JSArray() { this(new java.util.ArrayList<>()); }
+    public JSArray(java.util.List<Object> items) {
+        super(items);
+        this.items = items;
+    }
+    public JSArray put(Object value) {
+        items.add(value);
+        return this;
+    }
+    public String toString() { return items.toString(); }
+}
+`,
+  "com/getcapacitor/JSObject.java": `package com.getcapacitor;
+public class JSObject extends org.json.JSONObject {
+    private final java.util.Map<String, Object> values;
+    public JSObject() { this(new java.util.TreeMap<>()); }
+    private JSObject(java.util.Map<String, Object> values) {
+        super(values);
+        this.values = values;
+    }
+    public JSObject put(String key, Object value) {
+        values.put(key, value);
+        return this;
+    }
+    public String toString() { return values.toString(); }
 }
 `,
   "com/getcapacitor/Plugin.java": `package com.getcapacitor;
@@ -316,11 +391,13 @@ public class Plugin {
   "com/getcapacitor/PluginCall.java": `package com.getcapacitor;
 public class PluginCall {
     public final String action;
+    public JSArray array;
     public String outcome = "pending";
     public PluginCall(String action) { this.action = action; }
     public String getString(String key) { return "action".equals(key) ? action : null; }
-    public JSArray getArray(String key, JSArray fallback) { return fallback; }
+    public JSArray getArray(String key, JSArray fallback) { return array != null ? array : fallback; }
     public void resolve() { outcome = "resolved"; }
+    public void resolve(JSObject data) { outcome = "resolved " + data; }
     public void reject(String message, String code) { outcome = "rejected " + code + ": " + message; }
 }
 `,
@@ -396,6 +473,105 @@ public final class Harness {
         // React Native's IntentModule catches every exception and rejects with the same message.
         "not permitted: rejected failed: Could not launch Intent with action android.intent.action.CALL.",
         "open, not permitted: rejected failed: The app's settings page could not be opened.",
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "DenextSettings (Android): deliveredNotifications lists the shade, removeDeliveredNotifications cancels (compiled)",
+  ignore: IGNORE_WITHOUT_JDK,
+  async fn() {
+    requireJdk();
+    const dir = await Deno.makeTempDir({ prefix: "denext_delivered_plugin_" });
+    try {
+      for (const [path, text] of Object.entries(PLUGIN_STUBS)) {
+        await Deno.mkdir(join(dir, path, ".."), { recursive: true });
+        await Deno.writeTextFile(join(dir, path), text);
+      }
+      const plugin = join(dir, "dev/denext/settings", ANDROID_FILE);
+      await Deno.mkdir(join(plugin, ".."), { recursive: true });
+      await Deno.writeTextFile(plugin, SETTINGS_ANDROID_FILES[ANDROID_FILE]);
+      await Deno.writeTextFile(
+        join(dir, "dev/denext/settings/Harness.java"),
+        `package dev.denext.settings;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.content.Context;
+import android.service.notification.StatusBarNotification;
+import com.getcapacitor.JSArray;
+import com.getcapacitor.PluginCall;
+public final class Harness {
+    static Notification notification(String title, String group, boolean summary) {
+        Notification n = new Notification();
+        if (title != null) n.extras.values.put(Notification.EXTRA_TITLE, title);
+        n.group = group;
+        if (summary) n.flags |= Notification.FLAG_GROUP_SUMMARY;
+        return n;
+    }
+    static org.json.JSONObject entry(String id, String tag) {
+        java.util.Map<String, Object> m = new java.util.HashMap<>();
+        m.put("id", id);
+        if (tag != null) m.put("tag", tag);
+        return new org.json.JSONObject(m);
+    }
+    static String list() {
+        PluginCall call = new PluginCall(null);
+        new DenextSettingsPlugin().deliveredNotifications(call);
+        return call.outcome;
+    }
+    public static void main(String[] args) {
+        System.out.println("no manager: " + list());
+        NotificationManager manager = new NotificationManager();
+        Context.notifications = manager;
+        manager.active = new StatusBarNotification[] {
+            new StatusBarNotification(7, null, notification("Ann", "chat-1", false)),
+            new StatusBarNotification(0, "FCM-Notification:1", notification(null, null, false)),
+            new StatusBarNotification(100, null, notification(null, "chat-1", true)),
+            new StatusBarNotification(5, null, null),
+        };
+        System.out.println("listed: " + list());
+        manager.failure = new SecurityException("nope");
+        System.out.println("refused: " + list());
+
+        PluginCall none = new PluginCall(null);
+        new DenextSettingsPlugin().removeDeliveredNotifications(none);
+        System.out.println("no array: " + none.outcome);
+        PluginCall remove = new PluginCall(null);
+        remove.array = new JSArray(new java.util.ArrayList<>(java.util.Arrays.asList(
+            entry("7", null), entry("0", "FCM-Notification:1"), entry("x", null), "junk")));
+        new DenextSettingsPlugin().removeDeliveredNotifications(remove);
+        System.out.println("removed: " + remove.outcome + " " + manager.cancelled);
+    }
+}
+`,
+      );
+      const sources = [...Object.keys(PLUGIN_STUBS), `dev/denext/settings/${ANDROID_FILE}`]
+        .map((p) => join(dir, p));
+      sources.push(join(dir, "dev/denext/settings/Harness.java"));
+      const compile = await new Deno.Command("javac", {
+        args: ["-nowarn", "-d", join(dir, "classes"), ...sources],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(compile.success, new TextDecoder().decode(compile.stderr));
+      const run = await new Deno.Command("java", {
+        args: ["-cp", join(dir, "classes"), "dev.denext.settings.Harness"],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(run.success, new TextDecoder().decode(run.stderr));
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split("\n"), [
+        "no manager: resolved {notifications=[]}",
+        "listed: resolved {notifications=[{id=7, threadId=chat-1, title=Ann}, " +
+        "{id=0, tag=FCM-Notification:1}, {id=100, summary=true, threadId=chat-1}, {id=5}]}",
+        "refused: rejected failed: The delivered notifications could not be read.",
+        "no array: rejected invalid: notifications must be an array.",
+        // An id that is not an integer, and an entry that is not an object, are skipped.
+        "removed: resolved [7, FCM-Notification:1#0]",
       ]);
     } finally {
       await Deno.remove(dir, { recursive: true });

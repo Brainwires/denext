@@ -817,6 +817,21 @@ function nativeProject(extra: Record<string, string | null> = {}) {
   };
 }
 
+/**
+ * The capability table with push's DenextSettings install left out: these tests' Xcode project is
+ * a stub with no app target, and the install itself is covered in mobile-add-platform-caps.test.ts.
+ */
+const PUSH_WITHOUT_SETTINGS: Record<string, MobileCapability> = {
+  ...MOBILE_CAPABILITIES,
+  push: {
+    ...MOBILE_CAPABILITIES.push,
+    configure: (options) => ({
+      ...MOBILE_CAPABILITIES.push.configure!(options),
+      install: undefined,
+    }),
+  },
+};
+
 /** Occurrences of `needle` in `text`. */
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 
@@ -955,7 +970,12 @@ Deno.test(
 Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM warning", async () => {
   await inProject(nativeProject(), async (dir) => {
     const { run } = fakeRunner();
-    const report = await addMobileCapabilities({ capabilities: ["push"], cwd: dir, run });
+    const report = await addMobileCapabilities({
+      capabilities: ["push"],
+      cwd: dir,
+      run,
+      table: PUSH_WITHOUT_SETTINGS,
+    });
     assertEquals(
       report.written.sort(),
       [APP_DELEGATE_PATH, ENTITLEMENTS_PATH, MANIFEST_PATH].sort(),
@@ -979,7 +999,12 @@ Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM
     assertStringIncludes(report.plan.warnings[0], "google-services.json");
     assertStringIncludes(report.plan.manual.join("\n"), "production");
 
-    const again = await addMobileCapabilities({ capabilities: ["push"], cwd: dir, run });
+    const again = await addMobileCapabilities({
+      capabilities: ["push"],
+      cwd: dir,
+      run,
+      table: PUSH_WITHOUT_SETTINGS,
+    });
     assertEquals(again.written, []);
     assertEquals(await read(dir, APP_DELEGATE_PATH), delegate);
   });
@@ -1000,6 +1025,7 @@ Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM
         capabilities: ["push"],
         cwd: dir,
         run: fakeRunner().run,
+        table: PUSH_WITHOUT_SETTINGS,
       });
       assertEquals(report.plan.warnings, []);
       assertEquals(report.plan.entitlementsFiles, ["ios/App/App/Custom.entitlements"]);
@@ -1019,7 +1045,7 @@ Deno.test(
       // --app-group: its `install` step wires the App target's CODE_SIGN_ENTITLEMENTS, same as
       // installAppGroup does, before push's own entitlements edit is written.
       const table: Record<string, MobileCapability> = {
-        ...MOBILE_CAPABILITIES,
+        ...PUSH_WITHOUT_SETTINGS,
         "wire-group": {
           capacitorMajor: 8,
           configure: () => ({
@@ -1073,6 +1099,7 @@ Deno.test("mobile add push: an AppDelegate with its own callback, and no ios/ at
       capabilities: ["push"],
       cwd: dir,
       run: fakeRunner().run,
+      table: PUSH_WITHOUT_SETTINGS,
     });
     assertStringIncludes(report.skipped.join("\n"), `${APP_DELEGATE_PATH}: could not add forward`);
     assertEquals(await read(dir, APP_DELEGATE_PATH), custom);
@@ -1082,6 +1109,7 @@ Deno.test("mobile add push: an AppDelegate with its own callback, and no ios/ at
       capabilities: ["push"],
       cwd: dir,
       run: fakeRunner().run,
+      table: PUSH_WITHOUT_SETTINGS,
     });
     assertStringIncludes(report.skipped.join("\n"), "iOS: no ios/App/App/App.entitlements");
     assertStringIncludes(report.skipped.join("\n"), "npx cap add ios");
@@ -1140,7 +1168,11 @@ Deno.test("native config: plist array / URL scheme / intent filter / AppDelegate
 });
 
 Deno.test("denext mobile add: --scheme / --domain are comma-separated lists", async () => {
-  await inProject(nativeProject(), async (dir) => {
+  // A real Capacitor 8 Xcode project: `add push` installs denext's DenextSettings into it.
+  const pbxproj = await Deno.readTextFile(
+    new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
+  );
+  await inProject(nativeProject({ [PBXPROJ_PATH]: pbxproj }), async (dir) => {
     const { run } = fakeRunner();
     const out = await runVerb(
       ["add", "deep-links"],

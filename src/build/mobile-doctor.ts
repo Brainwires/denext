@@ -35,6 +35,7 @@ import {
   AUTH_SESSION_IOS_FILES,
   AUTH_SESSION_TEMPLATE_VERSION,
 } from "./auth-session-native-templates.ts";
+import { SETTINGS_TEMPLATE_VERSION } from "./settings-native-templates.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -1206,6 +1207,59 @@ async function authSessionPlatforms(
   return out;
 }
 
+/** The `DenextSettings` plugin files, per platform. */
+const SETTINGS_TEMPLATE_FILES = {
+  iOS: ["ios/App/App/DenextSettingsPlugin.swift"],
+  Android: ["android/app/src/main/java/dev/denext/settings/DenextSettingsPlugin.java"],
+} as const;
+
+/** The generation that added `deliveredNotifications` / `removeDeliveredNotifications`. */
+const SETTINGS_DELIVERED_GENERATION = 3;
+
+/**
+ * A `DenextSettings` plugin from an older template generation: it lacks what later generations
+ * added (`sendIntent` from 2, the delivered-notification methods from 3), so
+ * `deliveredNotifications` / `removeDeliveredNotifications` reject in that binary.
+ */
+const settingsGenerations: Check = {
+  id: "settings-generations",
+  profiles: ["store", "release"],
+  applies: async (p) => (await settingsPlatforms(p)).length > 0,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const [platform, generation] of await settingsPlatforms(p)) {
+      if (generation >= SETTINGS_TEMPLATE_VERSION) continue;
+      const missing = generation < SETTINGS_DELIVERED_GENERATION
+        ? ": deliveredNotifications / removeDeliveredNotifications reject in this binary"
+        : "";
+      findings.push({
+        check: "settings-generations",
+        level: "warning",
+        message: `${platform}: DenextSettingsPlugin is template generation ${generation}, older ` +
+          `than this denext's ${SETTINGS_TEMPLATE_VERSION}${missing}`,
+        fix: "run `denext mobile add permissions` (or the capability that installed it, such as " +
+          "local-notifications; an unedited file is upgraded, an edited one needs `--force` or " +
+          "the changes merged by hand); then ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
+/** The platforms with a marked `DenextSettings` plugin, and its generation. */
+async function settingsPlatforms(p: MobileProject): Promise<[string, number][]> {
+  const out: [string, number][] = [];
+  for (const platform of ["iOS", "Android"] as const) {
+    const generations = await templateGenerations(
+      p.root,
+      "settings",
+      SETTINGS_TEMPLATE_FILES[platform],
+    );
+    if (generations.size > 0) out.push([platform, Math.min(...generations.values())]);
+  }
+  return out;
+}
+
 /** Every Java / Kotlin source of the Android app outside denext's OTA package, as text. */
 async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
   const out: { path: string; text: string }[] = [];
@@ -1274,6 +1328,7 @@ const CHECKS: readonly Check[] = [
   otaReverify,
   otaGenerations,
   authSessionGenerations,
+  settingsGenerations,
   androidRouteProcessor,
 ];
 

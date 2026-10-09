@@ -179,6 +179,109 @@ Deno.test("notifications: a repeating trigger schedules its next occurrences; ca
   assert(f.cancelled.includes("denext-6"));
 });
 
+Deno.test("notifications: delivered lists what fired this run; removeDelivered clears it by tag", async () => {
+  const f = fakeNotifications();
+  let clock = NOW;
+  const cap = notificationsCapability({
+    api: f.api,
+    autoTopUp: false,
+    now: () => clock,
+    timer: () => () => {},
+  });
+  await call(cap, "schedule", { id: 1, title: "Now", body: "", threadId: "chat-1" });
+  await call(cap, "schedule", {
+    id: 2,
+    title: "Later",
+    body: "",
+    data: { path: "/l" },
+    trigger: { type: "date", date: NOW + 3600_000 },
+  });
+  await call(cap, "schedule", {
+    id: 3,
+    title: "Hourly",
+    body: "",
+    threadId: "chat-1",
+    trigger: { type: "interval", seconds: 3600, repeats: true },
+  });
+  // The thread is stored with the notification (a click and a relaunch read it back).
+  assertEquals(f.scheduled[0].data, {
+    denext: { id: 1, t: "Now", b: "", th: "chat-1" },
+    data: {},
+  });
+  assertEquals(await call(cap, "delivered"), [
+    { id: "1", threadId: "chat-1", title: "Now", data: {} },
+  ]);
+  // Two hours on: the dated one and the series' first two occurrences have fired.
+  clock = NOW + 2 * 3600_000;
+  assertEquals(await call(cap, "delivered"), [
+    { id: "3", threadId: "chat-1", title: "Hourly", data: {} },
+    { id: "2", title: "Later", data: { path: "/l" } },
+    { id: "1", threadId: "chat-1", title: "Now", data: {} },
+  ]);
+  f.cancelled.length = 0;
+  await call(cap, "removeDelivered", { ids: [3, 1, 99] });
+  // Only the fired occurrences go; the series keeps its pending ones.
+  assertEquals(f.cancelled, [
+    `denext-3-${NOW + 3600_000}`,
+    `denext-3-${NOW + 7200_000}`,
+    "denext-1",
+  ]);
+  assertEquals((await call(cap, "pending") as Array<{ id: number }>).map((p) => p.id), [2, 3]);
+  assertEquals(await call(cap, "delivered"), [{ id: "2", title: "Later", data: { path: "/l" } }]);
+  // The next occurrence fires: listed again. A cancel forgets the notification altogether.
+  clock = NOW + 3 * 3600_000;
+  assertEquals((await call(cap, "delivered") as Array<{ id: string }>).map((d) => d.id), [
+    "3",
+    "2",
+  ]);
+  await call(cap, "cancel", { ids: [3] });
+  assertEquals((await call(cap, "delivered") as Array<{ id: string }>).map((d) => d.id), ["2"]);
+  assertEquals(await codeOf(call(cap, "removeDelivered", { ids: "2" })), "validation");
+  assertEquals(await codeOf(call(cap, "removeDelivered", { ids: [1.5] })), "validation");
+  assertEquals(
+    await codeOf(call(cap, "schedule", { id: 4, title: "t", threadId: 4 })),
+    "validation",
+  );
+  const stock = notificationsCapability({ api: {}, autoTopUp: false });
+  assertEquals(await codeOf(call(stock, "delivered")), "unavailable");
+  assertEquals(await codeOf(call(stock, "removeDelivered", { ids: [1] })), "unavailable");
+});
+
+Deno.test("notifications: the delivered log keeps the newest 200, and logs a shown-now and a topped-up one", async () => {
+  const f = fakeNotifications();
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false, now: () => NOW });
+  for (let id = 1; id <= 205; id++) await call(cap, "schedule", { id, title: `n${id}`, body: "" });
+  const listed = await call(cap, "delivered") as Array<{ id: string }>;
+  assertEquals(listed.length, 200);
+  assertEquals(listed[0].id, "205");
+  assertEquals(listed.at(-1)!.id, "6");
+  // Where the runtime cannot schedule, a notification shown now is logged too.
+  const g = fakeNotifications();
+  g.noSchedule();
+  class Shown extends EventTarget {}
+  const now = notificationsCapability({ api: g.api, autoTopUp: false, showNow: Shown });
+  await call(now, "schedule", { id: 9, title: "Hi", body: "", threadId: "t" });
+  assertEquals(await call(now, "delivered"), [{ id: "9", threadId: "t", title: "Hi", data: {} }]);
+  // A series an earlier run left is logged as it is topped up (its thread read back from data).
+  const h = fakeNotifications();
+  const series = {
+    trigger: { type: "interval", seconds: 60, repeats: true },
+    anchor: NOW - 60_000,
+  };
+  h.scheduled.push({
+    tag: `denext-4-${NOW}`,
+    title: "Left",
+    body: "",
+    at: NOW,
+    data: { denext: { id: 4, r: series, th: "chat-4" }, data: { k: 1 } },
+    actions: [],
+  });
+  const later = notificationsCapability({ api: h.api, now: () => NOW, timer: () => () => {} });
+  await until(() => h.scheduled.length === REPEAT_HORIZON, WAIT_MS);
+  // Only the occurrences it posted are known; none has fired yet.
+  assertEquals(await call(later, "delivered"), []);
+});
+
 Deno.test("notifications: a repeating interval counts from its first occurrence", () => {
   const series = {
     trigger: { type: "interval" as const, seconds: 60, repeats: true },

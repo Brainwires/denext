@@ -2141,6 +2141,16 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           and a refusal can be changed only in System Settings. A notification stores at most 4 KiB
           of <code>data</code> (JSON).
         </li>
+        <li>
+          <code>deliveredNotifications()</code> / <code>removeDeliveredNotifications()</code>{" "}
+          (<a href="/docs/mobile#delivered-notifications">delivered notifications</a>): the runtime
+          removes a delivered notification by its tag but has no call that lists the notification
+          centre, so denext lists the notifications it posted during this run of the app whose time
+          has come and that were not removed through denext (the newest 200). One the user dismissed
+          is still listed, one from an earlier run is not, and removing a repeating
+          notification&apos;s delivered occurrences leaves its pending ones scheduled.{" "}
+          <code>threadId</code> groups only for these two calls; the OS does not group them.
+        </li>
       </ul>
       <h3 id="desktop-web-notification">The web Notification API</h3>
       <p>

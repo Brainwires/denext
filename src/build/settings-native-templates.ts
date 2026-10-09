@@ -10,8 +10,16 @@
 //   React Native mode's `Linking.sendIntent()` (React Native's `IntentModule.sendIntent`: extras
 //   are `{ key, value }` with a string, number (put as a double) or boolean value).
 //
-// Generation 2 added `sendIntent` (Android); an unedited generation-1 file is upgraded, and the
-// bump keeps an older denext from rewriting the method away.
+// - Both: `deliveredNotifications()` lists what the notification centre shows for the app (local
+//   notifications and remote pushes alike: iOS `UNUserNotificationCenter.getDeliveredNotifications`,
+//   Android `NotificationManager.getActiveNotifications`) as `{ id, tag?, threadId?, title?, data?,
+//   summary? }`, and `removeDeliveredNotifications({ notifications: [{ id, tag? }] })` removes
+//   them; `deliveredNotifications` / `removeDeliveredNotifications` in denext/mobile select by id,
+//   thread or tag in JavaScript. `local-notifications` and `push` install the plugin for these.
+//
+// Generation 2 added `sendIntent` (Android), generation 3 the delivered-notification methods; an
+// unedited older file is upgraded, and each bump keeps an older denext from rewriting the methods
+// away.
 //
 // Edit these as source: they are compiled only in an app (against Capacitor 8). Every `\``
 // below is an escaped template-literal character.
@@ -24,7 +32,7 @@
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 
 /** The generation of the templates below, stamped into every file the installer writes. */
-export const SETTINGS_TEMPLATE_VERSION = 2;
+export const SETTINGS_TEMPLATE_VERSION = 3;
 
 /**
  * A template as the installer writes it: a first line
@@ -57,6 +65,7 @@ export const SETTINGS_IOS_FILES: Readonly<Record<string, string>> = {
 @preconcurrency import Capacitor
 import Foundation
 import UIKit
+import UserNotifications
 
 /// The native side of \`openAppSettings()\` from \`denext/mobile\`, reached from the web app as
 /// \`window.Capacitor.Plugins.DenextSettings\`. \`DenextBridgeViewController\` registers it.
@@ -64,12 +73,21 @@ import UIKit
 /// - \`open()\`: opens the app's own page in the Settings app
 ///   (\`UIApplication.openSettingsURLString\`), where the user can change a permission they
 ///   refused. Rejects with code \`unavailable\` when the system does not open it.
+/// - \`deliveredNotifications()\`: the app's notifications in Notification Center, local and remote
+///   alike, as \`{ notifications: [{ id, threadId?, title?, data? }] }\`: the request identifier,
+///   the content's \`threadIdentifier\` (APNs \`aps.thread-id\`), and the payload (a local
+///   notification's \`extra\`, else a push's keys other than \`aps\`).
+/// - \`removeDeliveredNotifications({ notifications: [{ id }] })\`: removes those from Notification
+///   Center (\`removeDeliveredNotifications(withIdentifiers:)\`). Rejects with code \`invalid\`
+///   without the array.
 @objc(DenextSettingsPlugin)
 public class DenextSettingsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextSettingsPlugin"
     public let jsName = "DenextSettings"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deliveredNotifications", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "removeDeliveredNotifications", returnType: CAPPluginReturnPromise)
     ]
 
     @objc func open(_ call: CAPPluginCall) {
@@ -87,6 +105,43 @@ public class DenextSettingsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Senda
             }
         }
     }
+
+    @objc func deliveredNotifications(_ call: CAPPluginCall) {
+        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+            let list = delivered.map { DenextSettingsPlugin.deliveredObject($0.request) }
+            call.resolve(["notifications": list])
+        }
+    }
+
+    @objc func removeDeliveredNotifications(_ call: CAPPluginCall) {
+        guard let list = call.getArray("notifications", JSObject.self) else {
+            call.reject("notifications must be an array.", "invalid")
+            return
+        }
+        let ids = list.compactMap { $0["id"] as? String }
+        if !ids.isEmpty {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+        }
+        call.resolve()
+    }
+
+    /// One delivered notification for \`deliveredNotifications()\`.
+    static func deliveredObject(_ request: UNNotificationRequest) -> JSObject {
+        let content = request.content
+        var out: JSObject = ["id": request.identifier]
+        if !content.threadIdentifier.isEmpty { out["threadId"] = content.threadIdentifier }
+        if !content.title.isEmpty { out["title"] = content.title }
+        if var info = JSTypes.coerceDictionaryToJSObject(content.userInfo) {
+            if let extra = info["cap_extra"] {
+                // @capacitor/local-notifications keeps the notification's \`extra\` there.
+                out["data"] = extra
+            } else {
+                info.removeValue(forKey: "aps")
+                if !info.isEmpty { out["data"] = info }
+            }
+        }
+        return out
+    }
 }
 `,
 };
@@ -99,11 +154,16 @@ export const SETTINGS_ANDROID_FILES: Readonly<Record<string, string>> = {
 
 package dev.denext.settings;
 
+import android.app.Notification;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Settings;
+import android.service.notification.StatusBarNotification;
 import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -127,6 +187,14 @@ import org.json.JSONObject;
  * empty action or another extra type, {@code unavailable} when no activity handles it, and
  * {@code failed} when Android refuses to start it (a {@code SecurityException}: an action that
  * needs a permission the app lacks, such as {@code ACTION_CALL}).
+ *
+ * <p>{@code deliveredNotifications()} lists the app's notifications in the shade, local and pushed
+ * alike ({@code NotificationManager.getActiveNotifications()}), as {@code { notifications: [{ id,
+ * tag?, threadId?, title?, summary? }] }}: the id (as a string), the tag, the group key, the title
+ * and whether it is a group summary. {@code removeDeliveredNotifications({ notifications: [{ id,
+ * tag? }] })} cancels each ({@code cancel(tag, id)}); an entry whose id is not an integer is
+ * skipped. Rejects with code {@code invalid} without the array, {@code failed} when Android
+ * refuses to list them.
  */
 @CapacitorPlugin(name = "DenextSettings")
 public class DenextSettingsPlugin extends Plugin {
@@ -174,6 +242,72 @@ public class DenextSettingsPlugin extends Plugin {
             // exported) or anything else: React Native's IntentModule catches every exception and
             // rejects; letting it escape would crash the app through Capacitor's Bridge.
             call.reject("Could not launch Intent with action " + action + ".", "failed");
+        }
+    }
+
+    @PluginMethod
+    public void deliveredNotifications(PluginCall call) {
+        JSArray list = new JSArray();
+        NotificationManager manager = notificationManager();
+        try {
+            if (manager != null) {
+                for (StatusBarNotification sbn : manager.getActiveNotifications()) {
+                    list.put(deliveredObject(sbn));
+                }
+            }
+        } catch (Exception e) {
+            // Never let it escape: Capacitor's Bridge turns a plugin method's exception into a crash.
+            call.reject("The delivered notifications could not be read.", "failed");
+            return;
+        }
+        JSObject out = new JSObject();
+        out.put("notifications", list);
+        call.resolve(out);
+    }
+
+    @PluginMethod
+    public void removeDeliveredNotifications(PluginCall call) {
+        JSArray list = call.getArray("notifications", null);
+        if (list == null) {
+            call.reject("notifications must be an array.", "invalid");
+            return;
+        }
+        NotificationManager manager = notificationManager();
+        for (int i = 0; manager != null && i < list.length(); i++) {
+            JSONObject entry = list.optJSONObject(i);
+            Integer id = entry == null ? null : parseId(entry.optString("id", ""));
+            if (id == null) continue;
+            String tag = entry.optString("tag", "");
+            if (tag.isEmpty()) manager.cancel(id);
+            else manager.cancel(tag, id);
+        }
+        call.resolve();
+    }
+
+    private NotificationManager notificationManager() {
+        return (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+    }
+
+    /** One delivered notification for {@code deliveredNotifications()}. */
+    static JSObject deliveredObject(StatusBarNotification sbn) {
+        JSObject out = new JSObject();
+        out.put("id", String.valueOf(sbn.getId()));
+        if (sbn.getTag() != null) out.put("tag", sbn.getTag());
+        Notification n = sbn.getNotification();
+        if (n == null) return out;
+        if (n.getGroup() != null) out.put("threadId", n.getGroup());
+        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) out.put("summary", true);
+        CharSequence title = n.extras == null ? null : n.extras.getCharSequence(Notification.EXTRA_TITLE);
+        if (title != null) out.put("title", title.toString());
+        return out;
+    }
+
+    /** A notification id from its string form, or null when it is not an integer. */
+    static Integer parseId(String id) {
+        try {
+            return Integer.valueOf(id);
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

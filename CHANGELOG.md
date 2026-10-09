@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **List and clear delivered notifications, per thread: `deliveredNotifications()` /
+  `removeDeliveredNotifications(selector)` in `denext/mobile`.** They cover local notifications
+  and remote pushes alike: iOS `UNUserNotificationCenter` (a thread is the `threadIdentifier`, APNs
+  `aps.thread-id`), Android `NotificationManager.getActiveNotifications()` (the group key; an
+  FCM-drawn push by its `tag`, and a group summary goes with the last notification of its group),
+  the page's own and its service worker's notifications on the web, and on Deno Desktop the
+  notifications denext posted this run (the runtime cannot list the notification centre). A
+  selector takes `ids`, `threadId` and / or `tag`; an empty one is a `TypeError`, and `{ all: true }`
+  clears everything. `scheduleNotification` takes `threadId` (the existing `group` is the same
+  field). The native half is generation 3 of denext's `DenextSettings` plugin, which
+  `denext mobile add local-notifications` and now `push` install; `denext mobile doctor` reports
+  an older one as `settings-generations`.
+
 ### Changed
 
 - **A client fiber is half the size: 124 B instead of 244 B in a browser.** Eleven booleans

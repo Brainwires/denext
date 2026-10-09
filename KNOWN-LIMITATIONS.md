@@ -147,6 +147,9 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   relying party) and are created on the web; on Android the OAuth callback is a custom-scheme
   intent, so another app registered for the scheme could receive it while a sign-in is pending
   (the same exposure as Windows and Linux desktop).
+- **Delivered notifications on Android:** a push FCM draws has no group, so it is selected by its
+  tag (`android.notification.tag`), not a `threadId`; the OS keeps no payload of a drawn
+  notification, so `deliveredNotifications()` reports no `data` there.
 - **JavaScript doesn't run in the page in the background**, and a silent push reaches it only
   while the app runs; `defineBackgroundTask` runs in Capacitor's Background Runner (no DOM).
 - **WebView storage is evictable** (use `denext mobile add storage`); `secureStore` is a plain
@@ -229,7 +232,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   untrusted: the runtime drops clicks it never posted (each carries a MAC from a per-install key,
   `<app data dir>/laufey-notification-key`), but any process of the same user can read that key.
   A notification's tag is at most 256 bytes, its data 4 KiB and an action id 1 KiB (UTF-8): a
-  larger click is dropped, so denext refuses to post one. [Details](https://denext.dev/docs/desktop#desktop-notifications).
+  larger click is dropped, so denext refuses to post one. The runtime cannot list delivered
+  notifications, so `deliveredNotifications()` there lists only what denext posted during this run
+  and has not removed (a notification the user dismissed is still listed, one from an earlier run
+  is not), and `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
 - **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
