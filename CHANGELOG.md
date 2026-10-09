@@ -80,6 +80,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A platform file's stylesheet reaches its target's build.** `x.mobile.ts`'s
+  `import "./a.css"` was left out of `DENEXT_PLATFORM=ios denext export` while the file's JS was
+  bundled: the stylesheet crawl (`deno info`) walked the plain files' graph. It now resolves
+  through the target's platform files on every path: SPA mode (`deno bundle` and esbuild),
+  next-compat App Router export and build, and `denext dev` (bundled, unbundled, and a
+  next-compat app's route CSS), so each target's stylesheet holds its own variants' sheets and
+  not the others'. The unbundled SPA dev loop now links the stylesheets the session's target
+  reaches (it served every stylesheet in the project), and a React Native mode SPA no longer
+  crawls every `.web.*` file for a non-web target.
 - **A bare import resolves on Windows as it does on macOS and Linux.** The esbuild deno-loader's
   resolver runs in WASM, which spells a drive path `/C:/app/package.json`, and Windows refuses
   that spelling (os error 123). Every file it probed while finding the workspace and resolving

@@ -25,6 +25,8 @@ import {
   writeBundleOutput,
 } from "../bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
+import type { GraphImportMap } from "../module-graph.ts";
+import { stylesheetImportMap } from "../platform-imports.ts";
 import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
@@ -118,25 +120,52 @@ export function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string>
 
 /**
  * Where the app's stylesheet imports are crawled from: the SPA entry, plus, in React Native
- * mode, every expo-router route file and every `.web.*` platform file of the app's own source.
- * The crawl (`deno info`) sees neither: route files are imported only by the route context
- * generated at build time (`expo-router/_ctx`), and `./icon` resolves to `icon.tsx` there,
- * while the bundle picks `icon.web.tsx`. Without them a route's `import "./global.css"` or a
- * web component's CSS module was left out of `index.css`.
+ * mode, every expo-router route file. The crawl (`deno info`) does not see the routes: they are
+ * imported only by the route context generated at build time (`expo-router/_ctx`). Without them
+ * a route's `import "./global.css"` was left out of `index.css`.
+ *
+ * The crawl reaches the target's platform files through its redirects ({@linkcode spaCssGraph}).
+ * With platform files turned off (`platformExtensions: false`) React Native mode still bundles
+ * `.web.*` files, so then every `.web.*` file of the app's own source is a root as well (`./icon`
+ * is `icon.tsx` to the crawl while the bundle picks `icon.web.tsx`).
  *
  * @param paths The project.
  * @param entryPath The SPA entry.
+ * @param platform The build target.
  */
-export async function spaCssRoots(paths: ProjectPaths, entryPath: string): Promise<string[]> {
+export async function spaCssRoots(
+  paths: ProjectPaths,
+  entryPath: string,
+  platform: Platform = "web",
+): Promise<string[]> {
   if (reactNativeOptions(paths.config) === null) return [entryPath];
+  const redirected = platformResolution(paths.config, platform) !== null;
   // A Set: the entry is itself a `.web.*` file when migrate wrote it (index.web.ts).
   return [
     ...new Set([
       entryPath,
       ...await expoRouterRouteFiles(paths.projectDir),
-      ...await webPlatformFiles(paths.projectDir),
+      ...(redirected ? [] : await webPlatformFiles(paths.projectDir)),
     ]),
   ];
+}
+
+/**
+ * The import map `platform`'s stylesheet crawl resolves through: its platform files (see
+ * ../platform-imports.ts `stylesheetImportMap`), so a stylesheet only `look.ios.ts` imports is
+ * the iOS build's, as its JS is.
+ *
+ * @param paths The project.
+ * @param platform The build target.
+ * @param tag Distinguishes the alias-copy dir of concurrent crawls (a dev session's generation).
+ */
+export function spaCssGraph(
+  paths: ProjectPaths,
+  platform: Platform,
+  tag = "build",
+): Promise<GraphImportMap> {
+  const copyDir = join(paths.outDir, "platform-imports", `css-${tag}-${platform}`);
+  return stylesheetImportMap(paths.projectDir, paths.config, platform, copyDir);
 }
 
 /** Whether the app is a React Native mode app routed by expo-router (it has `app/`). */
@@ -161,8 +190,16 @@ async function webPlatformFiles(dir: string): Promise<string[]> {
   return found.sort();
 }
 
-/** The app's CSS assets, crawled from `roots` (the SPA entry: the whole app's import root). */
-function spaCss(paths: ProjectPaths, roots: string[], minify: boolean): Promise<AppCss | null> {
+/**
+ * The app's CSS assets, crawled from `roots` (the SPA entry: the whole app's import root) through
+ * the target's `graph`.
+ */
+function spaCss(
+  paths: ProjectPaths,
+  roots: string[],
+  minify: boolean,
+  graph: GraphImportMap,
+): Promise<AppCss | null> {
   return buildAppCss({
     projectDir: paths.projectDir,
     configPath: paths.configPath,
@@ -173,6 +210,7 @@ function spaCss(paths: ProjectPaths, roots: string[], minify: boolean): Promise<
     // alone can't reach.
     entryFiles: roots,
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
+    graph,
   });
 }
 
@@ -388,8 +426,8 @@ export async function bundleSpaInto(
   platform: Platform = "web",
 ): Promise<{ hasStyles: boolean; modules?: readonly string[] }> {
   const spa = paths.config!.spa!;
-  const cssRoots = await spaCssRoots(paths, entryPath);
-  const css = await spaCss(paths, cssRoots, minify);
+  const cssRoots = await spaCssRoots(paths, entryPath, platform);
+  const css = await spaCss(paths, cssRoots, minify, await spaCssGraph(paths, platform));
   // Auto-detect which reconciler-seam runtimes the entry must install. Class components default
   // ON for SPA (an explicit `classComponents:false` opts out) — a compat SPA bundles npm deps
   // that can render class components, which a source scan wouldn't see. `<Activity>`/

@@ -1,15 +1,16 @@
 // A React Native mode SPA's stylesheet: `index.css` must hold the CSS that expo-router route
 // files and `.web.*` platform files import. The crawl behind it (`deno info` from the SPA
-// entry) reaches neither: routes are imported only by the generated `expo-router/_ctx`, and
-// `./icon` resolves to `icon.tsx` there while the bundle picks `icon.web.tsx`. Found on
-// Expo's SDK 57 template (examples/expo-app), whose `@/global.css` (imported by a module the
-// routes use) and a web component's CSS module were missing from the export.
+// entry) reaches the routes only as extra roots (they are imported only by the generated
+// `expo-router/_ctx`), and `icon.web.tsx` through the target's platform redirects (`./icon` is
+// `icon.tsx` to a plain crawl while the bundle picks `icon.web.tsx`). Found on Expo's SDK 57
+// template (examples/expo-app), whose `@/global.css` (imported by a module the routes use) and a
+// web component's CSS module were missing from the export.
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { buildAppCss, extractRouteCss } from "../src/build/css.ts";
 import { resolveProject } from "../src/build/paths.ts";
-import { spaCssRoots } from "../src/build/spa/bundle.ts";
+import { spaCssGraph, spaCssRoots } from "../src/build/spa/bundle.ts";
 
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
   for (const [rel, text] of Object.entries(files)) {
@@ -19,7 +20,7 @@ async function writeTree(root: string, files: Record<string, string>): Promise<v
   }
 }
 
-Deno.test("spaCssRoots: React Native mode crawls expo-router routes and .web.* files", async () => {
+Deno.test("spaCssRoots: React Native mode crawls expo-router routes, and .web.* files through the redirects", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_css_" }));
   try {
     await writeTree(dir, {
@@ -49,7 +50,6 @@ Deno.test("spaCssRoots: React Native mode crawls expo-router routes and .web.* f
       entry,
       join(dir, "src/app/_layout.tsx"),
       join(dir, "src/app/index.tsx"),
-      join(dir, "src/icon.web.tsx"),
     ]);
     const css = await buildAppCss({
       projectDir: dir,
@@ -57,11 +57,15 @@ Deno.test("spaCssRoots: React Native mode crawls expo-router routes and .web.* f
       outDir: paths.outDir,
       minify: false,
       entryFiles: roots,
+      graph: await spaCssGraph(paths, "web"),
     });
     const text = await extractRouteCss(roots, css!);
     assertStringIncludes(text, "--font-mono");
     assertStringIncludes(text, "border-radius");
 
+    // With platform files off, React Native mode still bundles `.web.*` files: they are roots.
+    const off = { ...paths, config: { ...paths.config, platformExtensions: false as const } };
+    assertEquals((await spaCssRoots(off, entry)).at(-1), join(dir, "src/icon.web.tsx"));
     // Outside React Native mode the entry alone is the crawl root.
     assertEquals(await spaCssRoots({ ...paths, config: { mode: "spa" } }, entry), [entry]);
   } finally {

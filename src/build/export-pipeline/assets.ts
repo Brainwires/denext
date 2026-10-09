@@ -17,6 +17,7 @@ import { buildNextCompatFlightEntry, buildNextCompatModules } from "../next-comp
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { boundaryRefLoader, createNextCompatServerLoader } from "../next-compat-loader.ts";
 import { routeId } from "../paths.ts";
+import { stylesheetImportMap } from "../platform-imports.ts";
 import {
   appBoundaryManifest,
   collectPageFontEntries,
@@ -58,11 +59,22 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
     // Route entry sources are the import roots; crawling them finds stylesheets in
     // sibling workspace packages (outside `projectDir`) the walk can't reach.
     entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+    // A next-compat app's esbuild bundles probe the target's platform files, so its stylesheet
+    // crawl resolves them through their redirects (the native path's crawls already do).
+    graph: ctx.compat
+      ? await stylesheetImportMap(
+        ctx.projectDir,
+        paths.config,
+        ctx.platform,
+        join(paths.outDir, "platform-imports", `css-${ctx.platform}`),
+      )
+      : undefined,
   });
   if (!ctx.css) return;
   await primeCssGraph(
     [...new Set(manifest.pages.flatMap(routeSourceFiles))],
     ctx.css.appConfigPath,
+    ctx.css.graph,
   );
   for (const route of manifest.pages) {
     const text = await extractRouteCss(routeSourceFiles(route), ctx.css);
