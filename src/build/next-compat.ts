@@ -826,6 +826,24 @@ function resolveWithinRuntime(args: esbuild.OnResolveArgs): esbuild.OnResolveRes
   return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
 }
 
+/** {@link runtimeEntryPoints} of the running framework, inverted: module URL → prebuilt file. */
+let entryFileByUrl: Map<string, string> | undefined;
+
+/**
+ * The prebuilt runtime file for an absolute URL of one of the framework's own runtime entry
+ * modules (`…/src/runtime/compiler-runtime.ts` → `compiler-runtime.js`), else undefined. Build
+ * transforms (the auto-memo compiler, the AsyncContext transform) import their runtime by such
+ * a URL; left to the deno-loader, it bundled a second copy of denext's hooks.
+ *
+ * @param url The import specifier (a `file:` or `https:` URL).
+ */
+export function compatRuntimeFileForUrl(url: string): string | undefined {
+  entryFileByUrl ??= new Map(
+    Object.entries(runtimeEntryPoints(frameworkRootUrl())).map(([name, u]) => [u, `${name}.js`]),
+  );
+  return entryFileByUrl.get(url);
+}
+
 /**
  * The esbuild plugin that funnels every react-family import (from app code AND
  * npm packages) into the single prebuilt denext runtime, all under one namespace
@@ -860,6 +878,12 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = Object.hasOwn(DENEXT_RUNTIME_FILES, args.path)
           ? DENEXT_RUNTIME_FILES[args.path]
           : undefined;
+        return file ? runtimeFile(file) : null;
+      });
+      // A build transform's runtime import (the auto-memo compiler's `c` / `memoValue`, the
+      // AsyncContext helpers) names its entry by absolute framework URL: the same prebuilt file.
+      build.onResolve({ filter: /^(?:file|https?):\/\// }, (args) => {
+        const file = compatRuntimeFileForUrl(args.path);
         return file ? runtimeFile(file) : null;
       });
       // The expo shims' react-native-web bridge, when React Native mode has not claimed it: an

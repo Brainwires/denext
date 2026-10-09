@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reactCompiler` no longer bundles a second copy of denext's hooks in a compatibility-mode
+  app.** The auto-memo compiler's output imports its memo cache (`c`, `memoValue`) by the
+  absolute URL of denext's `compiler-runtime` module; the client bundle sent that URL to the
+  deno-loader instead of the prebuilt runtime, so every memoized app carried its own copy of the
+  hook dispatcher lookup and `useMemoCache` next to the runtime's. It worked only because the
+  dispatcher is looked up on a global symbol. A build transform's import of any prebuilt runtime
+  entry by framework URL (the compiler's, the AsyncContext transform's) now resolves to the one
+  prebuilt runtime, in `denext export` (every platform) and `build`.
+
 ## [3.4.2] - 2026-10-09
 
 ### Added
