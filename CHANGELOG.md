@@ -101,6 +101,12 @@ and this project adheres to
   `--no-sign` for local testing), and `denext desktop doctor` checks `DENEXT_WINDOWS_CERT` for a
   CEF app on Windows (a `cef-signing` warning).
 
+- **`denext mobile assets` removes the app icon images it replaced.** It rewrote the iOS
+  `AppIcon.appiconset/Contents.json` and left behind the images the previous one named and the
+  new one does not (a dark icon no longer configured, an older catalog's sizes), which kept
+  shipping in the bundle. Like the splash set, it now removes only plain file names the old
+  `Contents.json` referenced (never a path that leaves the folder, never a file no catalog
+  named); the report lists them (`would remove` in a dry run).
 - **`denext mobile assets --icon` warns about a pre-masked icon.** Only the icon the project
   already has was checked for rounded corners on transparency; one passed explicitly (or a
   flavor's) went unchecked. It gets the same check and warning.

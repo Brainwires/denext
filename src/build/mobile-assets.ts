@@ -255,6 +255,7 @@ function iosIconJobs(src: Sources): Job[] {
     path: `${APPICONSET}/Contents.json`,
     what: "asset catalog",
     make: () => Promise.resolve(jsonBytes({ images, info: { author: "xcode", version: 1 } })),
+    replacesImages: images.map((image) => String(image.filename)),
   });
   return jobs;
 }
