@@ -24,6 +24,13 @@ and this project adheres to
 
 ### Fixed
 
+- **An SPA's stylesheet follows `spa.head`, as Vite's does.** The shell linked the app's
+  stylesheet (and its modulepreloads) ahead of `spa.head`, so an inline `<style>` there (the boot
+  styles `denext migrate` carries over from a Vite `index.html`) came later in the cascade and won
+  every tie with the app's CSS: a boot rule such as `body { font-family: <stack> }` overrode the
+  app's `body { font-family: var(--font-sans) }`, so a runtime font setting or a platform font
+  never reached body text. The stylesheet and modulepreloads now come after `spa.head`, where Vite
+  injects them, in `denext export`, `build` and `dev`.
 - **A desktop app versioned in package.json packages and publishes updates as that version.**
   The installers already took package.json `version` when deno.json has none, but `deno desktop`
   reads only deno.json's, so the bundle it compiled (the runtime library's app version a full-app

@@ -379,11 +379,14 @@ export async function spaShellHtml(opts: {
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
     : "";
   const cspMeta = await cspMetaTag(spa, head);
+  // The app's stylesheet follows `spa.head`, where Vite injects it (before `</head>`, after the
+  // page's own head content). A migrated index.html's inline boot `<style>` (`body { font-family:
+  // ... }`) then yields to the app's rules of the same specificity instead of overriding them.
   return `<!doctype html>
 <html lang="${escapeHtml(lang)}">
   <head>
     <meta charset="utf-8" />${cspMeta}${viewport}
-    <title>${escapeHtml(title)}</title>${style}${preload}${head}
+    <title>${escapeHtml(title)}</title>${head}${preload}${style}
   </head>
   <body>
     <div id="${escapeHtml(rootId)}">${loading}</div>
