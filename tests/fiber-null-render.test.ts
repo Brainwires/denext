@@ -19,6 +19,7 @@ import { Suspense, use } from "../src/runtime/suspense.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeElement, type FakeNode, makeDom } from "./helpers/dom.ts";
+import { installHydrationWarning } from "../src/client/fiber/hydration.ts";
 
 // deno-lint-ignore no-explicit-any
 const asEl = (e: FakeElement): any => e;
@@ -228,11 +229,13 @@ Deno.test("hydration: a null component does not claim the server text that follo
   console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
   const dev = globalThis as { __denextDev?: boolean };
   dev.__denextDev = true;
+  installHydrationWarning(); // the dev entries install it (via installDevtools)
   try {
     hydrateRoot(asEl(container), h("div", null, h(Null, null), "hello", h("b", null)));
   } finally {
     console.warn = original;
     delete dev.__denextDev;
+    installHydrationWarning(false);
   }
   assertEquals(warnings, [], "no hydration mismatch");
   assertStrictEquals(container.childNodes[0], div);

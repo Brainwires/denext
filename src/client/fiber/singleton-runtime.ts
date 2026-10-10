@@ -16,7 +16,7 @@
 import { applyProps, domAttrName } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { onErrorFor } from "./boundaries.ts";
-import { hostPropsChanged } from "./complete-work.ts";
+import { completeHostUpdate } from "./complete-work.ts";
 import { isHydrating } from "./hydration.ts";
 import { documentForFiber, fiberToRoot } from "./state.ts";
 import { type Fiber, Update } from "./fiber.ts";
@@ -109,11 +109,7 @@ function scanHydration(el: Element, props: Props): { base: Props; skip: Set<stri
 }
 
 function complete(wip: Fiber): void {
-  if (!wip.listeners) wip.listeners = wip.alternate?.listeners;
-  if (wip.alternate !== null) {
-    if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
-    return;
-  }
+  if (completeHostUpdate(wip)) return;
   wip.flags |= Update; // a mount writes its props in the commit, after a released layout's
   if (isHydrating) {
     hydrated.set(wip, scanHydration(wip.stateNode as Element, wip.vnode.props ?? {}));

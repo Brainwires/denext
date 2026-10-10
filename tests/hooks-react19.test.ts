@@ -15,6 +15,7 @@ import { createContext } from "../src/runtime/context.ts";
 import { useContext } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
+import { installHydrationWarning } from "../src/client/fiber/hydration.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;
@@ -179,6 +180,7 @@ Deno.test("H3: useSyncExternalStore hydrates with the server snapshot, then sync
   const origWarn = console.warn;
   console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
   dev.__denextDev = true;
+  installHydrationWarning(); // the dev entries install it (via installDevtools)
   try {
     const Store = (): VNode => {
       const v = useSyncExternalStore(() => () => {}, () => "client", () => "server");
@@ -201,6 +203,7 @@ Deno.test("H3: useSyncExternalStore hydrates with the server snapshot, then sync
   } finally {
     console.warn = origWarn;
     delete dev.__denextDev;
+    installHydrationWarning(false);
   }
 });
 

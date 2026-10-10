@@ -1,5 +1,5 @@
 // Pure helpers over fibers: tag classification, ancestor searches, tree walks, effect
-// collection, host namespaces and SuspenseList display policy. No module state.
+// collection and host namespaces. No module state.
 
 import { FRAGMENT, PORTAL, type VNode } from "../../jsx/types.ts";
 import { SUSPENSE } from "../../runtime/suspense.ts";
@@ -21,7 +21,6 @@ import {
   NoLane,
   OffscreenBit,
   Placement,
-  ShowingFallbackBit,
 } from "./fiber.ts";
 
 export function devHydrationActive(): boolean {
@@ -151,53 +150,6 @@ export function findErrorBoundary(fiber: Fiber): Fiber | null {
 
 export function componentErrorInfo(fiber: Fiber): { componentStack: string } {
   return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
-}
-
-/**
- * Decide what a `<Suspense>` inside a `<SuspenseList>` shows this render: its
- * content, its fallback, or nothing (`tail`). A boundary is "revealed" only when
- * its own content is ready AND the boundaries before it (per `revealOrder`) are
- * too. Not-yet-ready boundaries render their content to drive their promise (and
- * suspend to a fallback); a resolved-but-order-gated boundary shows its fallback.
- * With `tail` collapsed/hidden only the leading edge renders (a serial tail).
- */
-export function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
-  const st = member.ext!.listState!;
-  const order = st.revealOrder!;
-  // The frozen readiness snapshot for this render, so every member decides against
-  // one consistent state.
-  const ready = st.snapshot;
-  const idx = member.ext!.listIndex!;
-  const revealed = (i: number): boolean => {
-    if (!ready[i]) return false;
-    if (order === "together") return ready.length > 0 && ready.every(Boolean);
-    if (order === "backwards") return ready.slice(i + 1).every(Boolean);
-    return ready.slice(0, i).every(Boolean); // forwards
-  };
-  if (revealed(idx)) return "content";
-  // A boundary not yet revealed shows its fallback. If it hasn't started/finished
-  // its promise (not ready and not already suspended) it renders content once to
-  // drive the promise — which then suspends back to its fallback.
-  const gated = (): "content" | "fallback" =>
-    !ready[idx] && !hasBit(member, ShowingFallbackBit) ? "content" : "fallback";
-  if (st.tail === "collapsed" || st.tail === "hidden") {
-    // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
-    // Length comes from the child count (not `ready.length`, which is empty on the
-    // first render before any member reports readiness).
-    const n = st.count ?? ready.length;
-    const order2 = Array.from({ length: n }, (_, i) => i);
-    const seq = order === "backwards" ? order2.reverse() : order2;
-    const leading = seq.find((i) => !revealed(i));
-    if (idx !== leading) return "hidden";
-    // Drive the leading boundary's promise. `"collapsed"` shows its fallback while
-    // pending; `"hidden"` shows NO fallback (React parity) — it hides instead, so the
-    // fetch still starts (the initial content-drive throws synchronously) but nothing
-    // is painted for the pending tail.
-    const g = gated();
-    return g === "fallback" && st.tail === "hidden" ? "hidden" : g;
-  }
-  // Default tail: boundaries fetch in parallel.
-  return gated();
 }
 
 /**

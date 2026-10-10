@@ -19,6 +19,7 @@ import { VirtualController } from "../src/client/virtual/controller.ts";
 import { px } from "../src/client/virtual/shared.ts";
 import type { VirtualListProps } from "../src/client/virtual/types.ts";
 import { FakeDocument, type FakeElement } from "./helpers/dom.ts";
+import { installHydrationWarning } from "../src/client/fiber/hydration.ts";
 
 type Row = { id: string; text: string };
 const rows = (n: number): Row[] =>
@@ -121,6 +122,7 @@ Deno.test("hydration: adopts the server rows with no mismatch and no visual move
   console.warn = (...a: unknown[]) => warnings.push(a.join(" "));
   console.error = (...a: unknown[]) => warnings.push(a.join(" "));
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  installHydrationWarning(); // the dev entries install it (via installDevtools)
   setDocument(doc as never);
   let root: { unmount(): void } | undefined;
   try {
@@ -131,6 +133,7 @@ Deno.test("hydration: adopts the server rows with no mismatch and no visual move
     console.warn = warn;
     console.error = error;
     delete (globalThis as { __denextDev?: boolean }).__denextDev;
+    installHydrationWarning(false);
   }
   assertEquals(warnings.filter((w) => /hydrat|mismatch/i.test(w)), [], "no hydration mismatch");
   assert(rowEl(5000) === server5000, "the server's row element was adopted, not re-created");
@@ -187,6 +190,7 @@ Deno.test("hydration: the server's inner size equals the client's first render (
   console.warn = (...a: unknown[]) => warnings.push(a.join(" "));
   console.error = (...a: unknown[]) => warnings.push(a.join(" "));
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  installHydrationWarning(); // the dev entries install it (via installDevtools)
   setDocument(doc as never);
   let root: { unmount(): void } | undefined;
   try {
@@ -197,6 +201,7 @@ Deno.test("hydration: the server's inner size equals the client's first render (
     console.warn = warn;
     console.error = error;
     delete (globalThis as { __denextDev?: boolean }).__denextDev;
+    installHydrationWarning(false);
   }
   assertEquals(serverHeight, serverInner[1]);
   assertEquals(warnings.filter((w) => /hydrat|mismatch/i.test(w)), [], "no hydration mismatch");

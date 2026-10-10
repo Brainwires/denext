@@ -151,8 +151,13 @@ type SignalKind = "notFound" | "forbidden" | "unauthorized" | "redirect";
  */
 const FOREIGN_SIGNALS = Symbol.for("denext.foreignSignals");
 
-/** Whether `value` is a library's Next-format error for `kind` (adopted as denext's signal). */
-function foreignSignal(value: object, kind: SignalKind): boolean {
+/**
+ * Whether `value` is denext's `kind` signal: an object carrying its `brand`, or a library's
+ * Next-format error for `kind` (adopted as denext's signal).
+ */
+function isSignal(value: unknown, brand: symbol, kind: SignalKind): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as Record<symbol, unknown>)[brand] === true) return true;
   const recognize = (globalThis as {
     [FOREIGN_SIGNALS]?: (value: object, kind: SignalKind) => boolean;
   })[FOREIGN_SIGNALS];
@@ -164,8 +169,7 @@ function foreignSignal(value: object, kind: SignalKind): boolean {
  * own not-found error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.
  */
 export function isNotFound(value: unknown): value is NotFoundError {
-  if (typeof value !== "object" || value === null) return false;
-  return (value as Record<symbol, unknown>)[NOT_FOUND] === true || foreignSignal(value, "notFound");
+  return isSignal(value, NOT_FOUND, "notFound");
 }
 
 // ---- forbidden() / unauthorized() ------------------------------------------
@@ -217,16 +221,12 @@ export function unauthorized(): never {
 
 /** True if `value` is a {@link ForbiddenError} raised by `forbidden()` (or Next's own). */
 export function isForbidden(value: unknown): value is ForbiddenError {
-  if (typeof value !== "object" || value === null) return false;
-  return (value as Record<symbol, unknown>)[FORBIDDEN] === true ||
-    foreignSignal(value, "forbidden");
+  return isSignal(value, FORBIDDEN, "forbidden");
 }
 
 /** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own). */
 export function isUnauthorized(value: unknown): value is UnauthorizedError {
-  if (typeof value !== "object" || value === null) return false;
-  return (value as Record<symbol, unknown>)[UNAUTHORIZED] === true ||
-    foreignSignal(value, "unauthorized");
+  return isSignal(value, UNAUTHORIZED, "unauthorized");
 }
 
 // ---- redirect() / permanentRedirect() --------------------------------------
@@ -309,8 +309,7 @@ export function permanentRedirect(
  * then given the `url` / `status` / `redirectType` a `RedirectError` has.
  */
 export function isRedirect(value: unknown): value is RedirectError {
-  if (typeof value !== "object" || value === null) return false;
-  return (value as Record<symbol, unknown>)[REDIRECT] === true || foreignSignal(value, "redirect");
+  return isSignal(value, REDIRECT, "redirect");
 }
 
 /**

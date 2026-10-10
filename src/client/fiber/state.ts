@@ -121,13 +121,16 @@ export function rootHandleOf(fiber: Fiber): RootHandle | null {
   return null;
 }
 
-/** Raised by beginWork when a `<Profiler>` rendered, so commitRoot fires onRender. */
-export let anyProfiler = false;
+/**
+ * Set by beginWork when a `<Profiler>` rendered: the Profiler runtime its marker carried
+ * (profiler-runtime.ts), which commitRoot runs to fire onRender. Null until then.
+ */
+export let profilerCommit: ((root: Fiber) => void) | null = null;
 /** Raised by beginWork when a Suspense boundary changed Offscreen state this render. */
 let anyOffscreen = false;
 
-export function noteProfiler(): void {
-  anyProfiler = true;
+export function noteProfiler(fire: (root: Fiber) => void): void {
+  profilerCommit = fire;
 }
 
 export function noteOffscreen(): void {

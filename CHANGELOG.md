@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Every app's shared client runtime is 2 KB smaller (raw), with no change in behaviour.** The
+  `SuspenseList` reveal runtime and the `<Profiler>` commit runtime now travel with their
+  elements, so an app that never renders a `SuspenseList` or a `Profiler` ships neither. The
+  client's dev-only hydration-mismatch warning and async-transition watchdog are installed by
+  `installDevtools` with the other dev warnings, so a production bundle carries neither message.
+  `use()`'s `DENEXT_DEBUG_SUSPENSE` origin trace, which only the server reads, is installed by
+  the server's request pipeline. Three duplicated helpers were merged. `examples/hello`'s shared
+  chunks went from 67,915 B to 65,872 B, and the build-smoke budget moves from 68,500 B to
+  67,400 B.
+
 ## [3.4.3] - 2026-10-10
 
 ### Added

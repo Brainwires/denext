@@ -207,15 +207,10 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
  * content instead of dropping to `default.tsx` (Next.js semantics; `server/slot-state.ts`).
  */
 function slotStateHeader(): Record<string, string> {
-  try {
-    const raw = document.getElementById("__denext_data")?.textContent;
-    const state = raw ? (JSON.parse(raw) as HydrationData).slotState : undefined;
-    return state && Object.keys(state).length > 0
-      ? { "x-denext-slot-state": JSON.stringify(state) }
-      : {};
-  } catch {
-    return {};
-  }
+  const state = (readData() as HydrationData | null)?.slotState;
+  return state && Object.keys(state).length > 0
+    ? { "x-denext-slot-state": JSON.stringify(state) }
+    : {};
 }
 
 /** The prefetch-cache key: the URL plus the slot state it was rendered under. */
@@ -712,14 +707,19 @@ export function retainRoot(root: Root): void {
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
 export function writeDataIsland(data: HydrationData): void {
-  let live = document.getElementById("__denext_data");
+  jsonIsland("__denext_data").textContent = JSON.stringify(data);
+}
+
+/** The live document's JSON island `#<id>`, created (empty, at the end of `<body>`) if absent. */
+function jsonIsland(id: string): HTMLElement {
+  let live = document.getElementById(id);
   if (!live) {
     live = document.createElement("script");
-    live.id = "__denext_data";
+    live.id = id;
     (live as HTMLScriptElement).type = "application/json";
     document.body.appendChild(live);
   }
-  live.textContent = JSON.stringify(data);
+  return live;
 }
 
 /**
@@ -747,18 +747,11 @@ export function setResumabilityReboot(
  */
 function syncScript(parsed: Document, id: string): void {
   const incoming = parsed.getElementById(id);
-  let live = document.getElementById(id);
   if (!incoming) {
-    live?.remove();
+    document.getElementById(id)?.remove();
     return;
   }
-  if (!live) {
-    live = document.createElement("script");
-    live.id = id;
-    (live as HTMLScriptElement).type = "application/json";
-    document.body.appendChild(live);
-  }
-  live.textContent = incoming.textContent;
+  jsonIsland(id).textContent = incoming.textContent;
 }
 
 // ---- Link interception -----------------------------------------------------

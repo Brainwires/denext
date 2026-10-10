@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { renderToReadableStream, streamToString } from "../src/jsx/render-to-stream.ts";
-import { createResource, Suspense, use } from "../src/runtime/suspense.ts";
+import { createResource, setSuspenseOriginTrace, Suspense, use } from "../src/runtime/suspense.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -211,4 +211,36 @@ Deno.test("a boundary that suspended on mount still reveals after its parent re-
   await Promise.resolve();
   flushSync();
   assertEquals(container.innerHTML, "<div><span></span><output>1<b>leaf</b></output></div>");
+});
+
+Deno.test("use(): a pending thenable's origin is recorded only through the installed trace", () => {
+  type Traced = Promise<never> & { _origin?: string };
+  const suspend = (p: Traced): unknown => {
+    try {
+      use(p);
+    } catch (thrown) {
+      return thrown;
+    }
+  };
+  // No trace installed (a client bundle): use() suspends and records nothing.
+  setSuspenseOriginTrace(null);
+  const quiet: Traced = new Promise<never>(() => {});
+  assertEquals(suspend(quiet), quiet);
+  assertEquals(quiet._origin, undefined);
+  // Installed (the server's request pipeline, under DENEXT_DEBUG_SUSPENSE): called once, on the
+  // first suspension of each thenable.
+  const seen: unknown[] = [];
+  setSuspenseOriginTrace((t) => {
+    seen.push(t);
+    t._origin = "traced";
+  });
+  try {
+    const traced: Traced = new Promise<never>(() => {});
+    assertEquals(suspend(traced), traced);
+    assertEquals(suspend(traced), traced);
+    assertEquals(seen, [traced]);
+    assertEquals(traced._origin, "traced");
+  } finally {
+    setSuspenseOriginTrace(null);
+  }
 });

@@ -12,6 +12,7 @@
 
 import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
 import { FRAGMENT } from "../jsx/types.ts";
+import { fireProfilers } from "../client/fiber/profiler-runtime.ts";
 
 /** The commit phase reported to a Profiler's `onRender`. */
 export type ProfilerPhase = "mount" | "update";
@@ -36,8 +37,19 @@ export interface ProfilerProps {
   children?: VNodeChildren;
 }
 
-/** Prop key carrying a Profiler's `{ id, onRender }` to the reconciler. */
+/** Prop key carrying a Profiler's {@link ProfilerMarker} to the reconciler. */
 export const PROFILER_PROP: string = "__dnxProfiler";
+
+/**
+ * A Profiler's `{ id, onRender }` as the reconciler reads it, with the client commit runtime
+ * that fires it: carried on the element so only an app that renders a Profiler bundles it.
+ * @internal
+ */
+export interface ProfilerMarker {
+  id: string;
+  onRender?: ProfilerOnRender;
+  fire: typeof fireProfilers;
+}
 
 /**
  * Measure render timing for `children` and report it to `onRender` after each
@@ -53,7 +65,11 @@ export function Profiler(props: ProfilerProps): VNode {
     key: null,
     props: {
       children: props.children,
-      [PROFILER_PROP]: { id: props.id, onRender: props.onRender },
+      [PROFILER_PROP]: {
+        id: props.id,
+        onRender: props.onRender,
+        fire: fireProfilers,
+      } satisfies ProfilerMarker,
     } as unknown as VProps,
   };
 }

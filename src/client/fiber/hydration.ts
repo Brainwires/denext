@@ -52,6 +52,7 @@ function describeNode(node: Node | null): string {
 }
 
 function warnHydrationMismatch(detail: string): void {
+  if (!devHydrationActive()) return;
   console.warn(
     `denext: hydration mismatch — ${detail}. The client render is used; ` +
       `check for output that differs between server and client (Date.now(), ` +
@@ -155,5 +156,17 @@ function reportHydrationMismatch(fiber: Fiber, detail: string): void {
   if (suppressed(fiber)) return;
   const cb = rootHandleOf(fiber)?.onRecoverableError;
   if (cb) safeCallback(cb, new Error(`Hydration failed: ${detail}`), componentErrorInfo(fiber));
-  else if (devHydrationActive()) warnHydrationMismatch(detail);
+  else warnMismatch?.(detail);
+}
+
+/**
+ * Dev only: the console warning for a mismatch no `onRecoverableError` took. Installed by the
+ * dev entries ({@linkcode installHydrationWarning}, via `installDevtools`), so a production
+ * bundle carries neither the message nor the check; the report pays one `?.`.
+ */
+let warnMismatch: ((detail: string) => void) | null = null;
+
+/** Install (or, with `false`, remove) the dev-only hydration-mismatch warning. */
+export function installHydrationWarning(on = true): void {
+  warnMismatch = on ? warnHydrationMismatch : null;
 }
