@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.4] - 2026-10-10
+
 ### Added
 
 - **Sidecars: a Deno Desktop app runs and supervises its own backend** (`desktop.sidecars`,
@@ -47,7 +49,6 @@ and this project adheres to
   Navigation native-stack / expo-router `screenOptions` in React Native mode. `"minimal"` draws the
   chevron alone with the previous title kept as the button's `aria-label`; `"generic"` reads
   "Back"; `headerBackTitle` keeps working.
-
 - **`spa.shell`: a prerendered, adoptable static shell, so a SPA paints its real layout and
   takes typing before the client bundle has run.** `spa.shell: { component, props?, bootScript?,
   platforms?, readyOn?, maxHoldMs? }` server-renders a pure component into `#root` at
@@ -12584,7 +12585,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.4...development
+[3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1
