@@ -538,7 +538,7 @@ export async function desktopBundleCommand(
     ...await desktopDenoFlagArgs(entryUrl),
     "--include",
     "out",
-    ...await desktopIncludeArgs(entryUrl),
+    ...await desktopIncludeArgs(entryUrl, os),
     ...await desktopNpmArgs(entryUrl),
     "--target",
     o.target,

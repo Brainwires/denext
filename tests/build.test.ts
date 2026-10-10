@@ -193,6 +193,36 @@ Deno.test("appRendersDocumentTags: a document tag in the app's code, not in a co
   }
 });
 
+Deno.test("feature scans read the current sources, never a previous export's bundles", async () => {
+  const { appUsesActivity, appUsesViewTransition } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-out-" });
+  try {
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.writeTextFile(join(dir, "src", "app.tsx"), "export const App = () => <p />;\n");
+    // A stale export from when the app used both (its runtime's dev warning names the
+    // component, so the bundle trips a token scan), wherever the export was written.
+    const bundle = 'console.error("two <ViewTransition name=x> mounted"); var Activity;\n';
+    for (const out of ["out", "out.prev", "www", "ios/App/App/public"]) {
+      await Deno.mkdir(join(dir, out, "_denext", "client"), { recursive: true });
+      await Deno.writeTextFile(join(dir, out, "_denext", "client", "index.js"), bundle);
+      await Deno.writeTextFile(join(dir, out, "sw.js"), bundle);
+    }
+    await Deno.mkdir(join(dir, "dist", "desktop"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "dist", "desktop", "main.js"), bundle);
+    assertEquals(await appUsesViewTransition(dir), false, "the stale export doesn't count");
+    assertEquals(await appUsesActivity(dir), false);
+    // The app's own sources still do, in any folder (a `src/out/` is source, not output).
+    await Deno.mkdir(join(dir, "src", "out"));
+    await Deno.writeTextFile(
+      join(dir, "src", "out", "fade.tsx"),
+      'import { ViewTransition } from "denext";\n',
+    );
+    assertEquals(await appUsesViewTransition(dir), true);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("generateRouteEntry: the host-singleton install is on unless a scan cleared it", () => {
   const route: PageRoute = {
     kind: "page",

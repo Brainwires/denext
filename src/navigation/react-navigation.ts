@@ -172,6 +172,11 @@ export function mapStackOptions(
     headerLargeTitle: bool("headerLargeTitle"),
     headerBackTitle: str("headerBackTitle"),
     headerBackVisible: bool("headerBackVisible"),
+    headerBackButtonDisplayMode: options.headerBackButtonDisplayMode === "default" ||
+        options.headerBackButtonDisplayMode === "generic" ||
+        options.headerBackButtonDisplayMode === "minimal"
+      ? options.headerBackButtonDisplayMode
+      : undefined,
     sheetAllowedDetents: mapDetents(options.sheetAllowedDetents),
     sheetInitialDetentIndex: typeof options.sheetInitialDetentIndex === "number"
       ? options.sheetInitialDetentIndex

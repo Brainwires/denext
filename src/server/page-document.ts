@@ -83,6 +83,7 @@ export function documentOptions(pr: PageRequest) {
   return {
     hydration: hydrationFor(pr),
     clientEntry: config.clientEntryFor?.(pr.page.route),
+    deferredEntry: config.flightBootEntry,
     styles: config.styleHrefsFor?.(pr.page.route),
     devScript: config.devScript,
     devScriptSrc: config.devScriptSrc,

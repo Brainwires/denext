@@ -29,11 +29,18 @@ interface ImageRuntimeConfig {
   imageSizes: number[];
 }
 
-let runtimeConfig: ImageRuntimeConfig = {
-  unoptimized: false,
-  deviceSizes: DEFAULT_DEVICE_SIZES,
-  imageSizes: DEFAULT_IMAGE_SIZES,
-};
+/**
+ * The config lives on a process-wide slot, not in this module: a compatibility-mode server
+ * bundle carries its own copy of the runtime, and the config the server entry (or `denext
+ * export`) sets must reach the copy that renders the page's `<Image>` too.
+ */
+const configSlot = globalThis as { __denextImageConfig?: ImageRuntimeConfig };
+
+/** The current config (the defaults until something sets it). */
+function currentConfig(): ImageRuntimeConfig {
+  return configSlot.__denextImageConfig ??
+    { unoptimized: false, deviceSizes: DEFAULT_DEVICE_SIZES, imageSizes: DEFAULT_IMAGE_SIZES };
+}
 
 /**
  * Set the process-wide image runtime config. The server/dev entry calls this from
@@ -44,16 +51,17 @@ let runtimeConfig: ImageRuntimeConfig = {
  * @param cfg Partial config; unspecified fields keep their current value.
  */
 export function setImageRuntimeConfig(cfg: Partial<ImageRuntimeConfig>): void {
-  runtimeConfig = {
-    unoptimized: cfg.unoptimized ?? runtimeConfig.unoptimized,
-    deviceSizes: cfg.deviceSizes ?? runtimeConfig.deviceSizes,
-    imageSizes: cfg.imageSizes ?? runtimeConfig.imageSizes,
+  const current = currentConfig();
+  configSlot.__denextImageConfig = {
+    unoptimized: cfg.unoptimized ?? current.unoptimized,
+    deviceSizes: cfg.deviceSizes ?? current.deviceSizes,
+    imageSizes: cfg.imageSizes ?? current.imageSizes,
   };
 }
 
 /** The current image runtime config (for embedding into the page for the client). */
 export function getImageRuntimeConfig(): ImageRuntimeConfig {
-  return runtimeConfig;
+  return currentConfig();
 }
 
 /**
@@ -62,9 +70,10 @@ export function getImageRuntimeConfig(): ImageRuntimeConfig {
  * The common case (default optimize) needs no island: the client default already matches.
  */
 export function imageConfigNeedsEmbed(): boolean {
-  return runtimeConfig.unoptimized ||
-    runtimeConfig.deviceSizes !== DEFAULT_DEVICE_SIZES ||
-    runtimeConfig.imageSizes !== DEFAULT_IMAGE_SIZES;
+  const { unoptimized, deviceSizes, imageSizes } = currentConfig();
+  // By value: another runtime copy may have set the config from its own default arrays.
+  return unoptimized || String(deviceSizes) !== String(DEFAULT_DEVICE_SIZES) ||
+    String(imageSizes) !== String(DEFAULT_IMAGE_SIZES);
 }
 
 /** id of the JSON island the server embeds so the client's `<Image>` matches its output. */
@@ -176,10 +185,11 @@ function candidateWidthsFor(
   hasSizes: boolean,
 ): number[] {
   if (loader !== denextImageLoader) {
-    return width ? [width, width * 2] : runtimeConfig.deviceSizes;
+    return width ? [width, width * 2] : currentConfig().deviceSizes;
   }
-  if (hasSizes || width === undefined) return runtimeConfig.deviceSizes;
-  const allowed = [...runtimeConfig.imageSizes, ...runtimeConfig.deviceSizes].sort((a, b) => a - b);
+  const { deviceSizes, imageSizes } = currentConfig();
+  if (hasSizes || width === undefined) return deviceSizes;
+  const allowed = [...imageSizes, ...deviceSizes].sort((a, b) => a - b);
   const atLeast = (target: number) =>
     allowed.find((w) => w >= target) ?? allowed[allowed.length - 1];
   return [...new Set([atLeast(width), atLeast(width * 2)])];
@@ -253,7 +263,7 @@ const IMAGE_ONLY_PROPS = [
  */
 function resolveSources(props: ImageProps, hasSizes: boolean): { src: string; srcset?: string } {
   const { src, srcSet, loader, widths, quality, width, unoptimized } = props;
-  const skip = unoptimized ?? runtimeConfig.unoptimized;
+  const skip = unoptimized ?? currentConfig().unoptimized;
   const effectiveLoader = loader ?? (skip ? undefined : denextImageLoader);
   if (!effectiveLoader || srcSet !== undefined) return { src, srcset: srcSet };
   const candidateWidths = widths ?? candidateWidthsFor(effectiveLoader, width, hasSizes);

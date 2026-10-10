@@ -1,12 +1,7 @@
 // Render phase, part 1: beginWork dispatches on the fiber tag to a per-tag handler
 // that renders / reconciles the fiber's children.
 
-import {
-  devHydrationActive,
-  isClassBoundary,
-  isPlainUnkeyedFragment,
-  suspenseListDisplay,
-} from "./fiber-utils.ts";
+import { devHydrationActive, isClassBoundary, isPlainUnkeyedFragment } from "./fiber-utils.ts";
 import { claimHost, isHydrating } from "./hydration.ts";
 import { resetBoundary } from "./boundaries.ts";
 import { renderComponent } from "./render-component.ts";
@@ -16,11 +11,11 @@ import { getActivitySupport } from "./activity-support.ts";
 
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { enterScope, rootScope } from "../../jsx/tree-id.ts";
-import { SUSPENSE_LIST_PROP } from "../../runtime/suspense.ts";
+import { SUSPENSE_LIST_PROP, type SuspenseListMarker } from "../../runtime/suspense.ts";
 import { PROVIDER } from "../../runtime/context.ts";
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
-import { PROFILER_PROP, type ProfilerOnRender } from "../../runtime/profiler.ts";
+import { PROFILER_PROP, type ProfilerMarker } from "../../runtime/profiler.ts";
 import { toError } from "../../runtime/error-boundary.ts";
 import { normalizeChildren } from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
@@ -41,7 +36,6 @@ import {
   ShowingFallbackBit,
   StateUpdateBit,
   StrictBit,
-  type SuspenseListState,
   UnderProfilerBit,
 } from "./fiber.ts";
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
@@ -163,11 +157,9 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
 
 interface FragmentMarkers {
   strict: boolean;
-  profiler: { id: string; onRender?: ProfilerOnRender } | undefined;
+  profiler: ProfilerMarker | undefined;
   provInfo: { id: symbol; value: unknown } | undefined;
-  listPolicy:
-    | { revealOrder?: SuspenseListState["revealOrder"]; tail?: SuspenseListState["tail"] }
-    | undefined;
+  listPolicy: SuspenseListMarker | undefined;
 }
 
 // A Fragment is denext's overloaded carrier for four symbol-keyed marker props:
@@ -196,7 +188,7 @@ function beginFragment(wip: Fiber): Fiber | null {
   if (profiler) {
     fiberExt(wip).profiler = profiler;
     wip.bits |= UnderProfilerBit;
-    noteProfiler();
+    noteProfiler(profiler.fire);
   }
   const prevProvValue = wip.ext?.provValue;
   const exposed = providerContexts(wip, wip.vnode, wip.inherited);
@@ -220,42 +212,10 @@ function beginFragment(wip: Fiber): Fiber | null {
     exposed,
   );
   // A SuspenseList (a Fragment carrying the reveal-policy marker) coordinates its
-  // direct <Suspense> children's reveal order.
-  if (listPolicy) applySuspenseListPolicy(wip, listPolicy);
+  // direct <Suspense> children's reveal order. The marker carries its own runtime
+  // (suspense-list-runtime.ts), so an app that never renders a SuspenseList ships none.
+  if (listPolicy) listPolicy.apply(wip, listPolicy);
   return wip.child;
-}
-
-// Wire a SuspenseList's shared reveal state onto a Fragment carrying the reveal-policy
-// marker, and tag its direct children with their membership + index (propagated one
-// level to the <Suspense> each renders). Split out of {@linkcode beginFragment}.
-function applySuspenseListPolicy(
-  wip: Fiber,
-  listPolicy: {
-    revealOrder?: SuspenseListState["revealOrder"];
-    tail?: SuspenseListState["tail"];
-  },
-): void {
-  // One shared state object across all buffers (created once, carried by
-  // reference) so a bailed/cloned member always reads fresh reveal state.
-  const x = fiberExt(wip);
-  const st: SuspenseListState = x.listState ??= { members: [], ready: [], snapshot: [] };
-  st.revealOrder = listPolicy.revealOrder;
-  st.tail = listPolicy.tail;
-  // Freeze the persistent readiness so every member this render decides against
-  // one consistent state, then start a fresh roster of scheduling targets.
-  st.snapshot = [...st.ready];
-  st.members = [];
-  // Tag the list's direct children; membership propagates one level to the
-  // <Suspense> each renders (see reconcileChildren).
-  let i = 0;
-  for (let c = wip.child; c !== null; c = c.sibling) {
-    const cx = fiberExt(c);
-    cx.listOwnerState = st;
-    cx.listIndex = i++;
-  }
-  // Record the child count so the collapsed/hidden tail can locate the leading
-  // boundary on the first render (when `snapshot` is still empty).
-  st.count = i;
 }
 
 // Reveal an offscreen boundary's preserved children (a <Suspense> leaving Offscreen, or an
@@ -303,7 +263,7 @@ function resolveSuspenseDisplay(
   inList: boolean,
 ): { display: "content" | "fallback" | "hidden"; children: VNodeChildren } {
   const display = inList
-    ? suspenseListDisplay(wip)
+    ? wip.ext!.listState!.display!(wip)
     : hasBit(wip, ShowingFallbackBit)
     ? "fallback"
     : "content";

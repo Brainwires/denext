@@ -8,7 +8,6 @@
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
-import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 import {
@@ -471,8 +470,9 @@ startGlobalErrorClient(GlobalError);
  * the build-time feature scans ({@linkcode appImportsLive}, {@linkcode appUsesClassComponents},
  * {@linkcode appUsesActivity}): each is a deliberate over-approximation that keeps a runtime
  * whenever its token appears and only drops it when the app never mentions it — so a scan can
- * never false-DROP a feature. Early-returns on the first match; skips `.denext`/
- * `node_modules`/`.git`. A file that can't be read counts as no match.
+ * never false-DROP a feature. Early-returns on the first match. Reads only the app's own
+ * sources ({@linkcode appScanFiles}): never a previous build's output, which would keep a feature
+ * the app has since dropped. A file that can't be read counts as no match.
  */
 async function scanAppSources(
   rootDir: string,
@@ -482,16 +482,43 @@ async function scanAppSources(
   for (const file of extraFiles) {
     if (test(await Deno.readTextFile(file).catch(() => ""))) return true;
   }
-  for await (
-    const entry of walk(rootDir, {
-      exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-      includeDirs: false,
-      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
-    })
-  ) {
-    if (test(await Deno.readTextFile(entry.path))) return true;
+  for await (const file of appScanFiles(rootDir)) {
+    if (test(await Deno.readTextFile(file).catch(() => ""))) return true;
   }
   return false;
+}
+
+/** Folders a feature scan never reads: tooling state and dependencies. */
+const SCAN_SKIP = new Set([".denext", ".git", "node_modules"]);
+/** Project-root folders that hold build output (`denext export`'s default, desktop/mobile builds). */
+const SCAN_SKIP_ROOT = new Set(["out", "dist"]);
+/** The source extensions a feature scan reads. */
+const SCAN_SOURCE = /\.(?:tsx?|jsx?|mjs)$/;
+
+/**
+ * The app's source files under `dir`, for the feature scans. Build output is left out: the
+ * root's `out/` and `dist/`, and any folder holding an export (`_denext/`, so a custom
+ * `denext export --out`, its `.staging`/`.prev` siblings and the copies Capacitor keeps under
+ * `ios/` / `android/` are all skipped). A stale export's bundles name every feature its
+ * last build had, so reading them would keep a runtime the app no longer uses.
+ */
+async function* appScanFiles(dir: string, root = dir): AsyncGenerator<string> {
+  for await (const entry of Deno.readDir(dir)) {
+    const path = join(dir, entry.name);
+    if (entry.isFile) {
+      if (SCAN_SOURCE.test(entry.name)) yield path;
+    } else if (
+      entry.isDirectory && !SCAN_SKIP.has(entry.name) &&
+      !(dir === root && SCAN_SKIP_ROOT.has(entry.name)) && !(await isExportDir(path))
+    ) {
+      yield* appScanFiles(path, root);
+    }
+  }
+}
+
+/** Whether `dir` is a static export (it holds the `_denext/` asset folder every export writes). */
+function isExportDir(dir: string): Promise<boolean> {
+  return Deno.stat(join(dir, "_denext")).then((s) => s.isDirectory, () => false);
 }
 
 /**
@@ -835,10 +862,16 @@ ${classBoot}  await registry.ensure(flight); // this page's islands (code-split 
   // dispatch (data-dnx-h handlers that run without hydration). Lives in a separate
   // chunk, loaded ONLY when a page actually uses one of them, so non-resumable apps
   // bundle none of it.
+  // Resolves to the delegated dispatcher's resumeEvent: the deferred boot (flight-boot.ts) that
+  // imported this entry on an island's trigger hands it the events it buffered meanwhile.
   if (document.getElementById("__denext_islands") || document.querySelector("[data-dnx-h]")) {
-    import("denext/lazy")
-      .then((m) => m.bootResumability(registry))
-      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
+    try {
+      const lazy = await import("denext/lazy");
+      lazy.bootResumability(registry);
+      return lazy.resumeEvent;
+    } catch (err) {
+      console.warn("denext: resumability boot failed:", err && err.message);
+    }
   }
 }
 `;
@@ -929,7 +962,8 @@ setResumabilityReboot((islands, state) => {
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}
-main();
+// Read by the deferred boot (flight-boot.ts), which imports this entry on an island's trigger.
+export const ready = main();
 `;
 }
 

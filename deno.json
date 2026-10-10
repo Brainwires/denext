@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "3.4.3",
+  "version": "3.4.4",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -215,6 +215,7 @@
     "test": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/",
     "test:unit": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/,tests/integration/",
     "test:integration": "deno run -A scripts/test-run.ts tests/integration/",
+    "test:stress": "deno run -A scripts/test-stress.ts",
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
     "test:migration-bed": "deno test -A --unstable-kv tests/migration-bed/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
@@ -284,6 +285,7 @@
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",
     "@denext/swc": "jsr:@denext/swc@^76.0.0",
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
+    "playwright-core": "npm:playwright-core@1.63.0",
     "esbuild": "npm:esbuild@^0.24.0",
     "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0",
     "ws": "npm:ws@^8",

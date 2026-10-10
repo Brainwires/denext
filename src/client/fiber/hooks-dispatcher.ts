@@ -63,13 +63,14 @@ export function resetHookCursor(): void {
   if (x !== undefined && x.debugValues !== undefined) x.debugValues = undefined;
 }
 
-// Hook kinds — a per-cell tag consumed only by the dev Fast Refresh signature guard
-// (see renderComponent). Distinct constant per hook so a same-count reorder across an
-// edit is detected, not just a changed count.
+// Hook kinds — a per-cell tag consumed by the dev Fast Refresh signature guard (see
+// renderComponent) and by the render-phase re-render (which keeps memo cells). Distinct
+// constant per hook so a same-count reorder across an edit is detected, not just a
+// changed count.
 const HK_STATE = 1;
 const HK_REDUCER = 2;
 const HK_EFFECT = 3;
-const HK_MEMO = 4;
+export const HK_MEMO = 4;
 const HK_REF = 5;
 const HK_ID = 6;
 const HK_STORE = 7;

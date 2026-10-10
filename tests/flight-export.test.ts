@@ -145,3 +145,44 @@ Deno.test("staticExport emits hreflang + JSON-LD into per-locale static HTML", a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** Every client JS file of an export, concatenated. */
+async function clientJsOf(outDir: string): Promise<string> {
+  let js = "";
+  const dir = join(outDir, "_denext", "client");
+  for await (const e of Deno.readDir(dir)) {
+    if (e.isFile && e.name.endsWith(".js")) js += await Deno.readTextFile(join(dir, e.name));
+  }
+  return js;
+}
+
+// The ViewTransition marking runtime ships when the app's CURRENT sources use it: an export
+// installs it (like `denext build`), and re-exporting after the usage is removed drops it —
+// the previous export in `out/` names it too, and must not keep it in.
+Deno.test("staticExport gates the ViewTransition runtime on the current sources, not the last export", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_vt_export_" });
+  const island = (body: string) => `"use client"\n${body}\n`;
+  try {
+    await scaffoldApp(dir, {
+      "Fancy.tsx": island(
+        `import { ViewTransition } from "denext";\n` +
+          `export function Fancy(){ return <ViewTransition name="x"><b>VT</b></ViewTransition>; }`,
+      ),
+      "page.tsx":
+        `import { Fancy } from "./Fancy.tsx";\nexport default () => <main><Fancy/></main>;\n`,
+    });
+    const first = await staticExport(dir);
+    assertStringIncludes(await clientJsOf(first.outDir), "view-transition-class");
+    await Deno.writeTextFile(
+      join(dir, "app", "Fancy.tsx"),
+      island(`export function Fancy(){ return <b>plain</b>; }`),
+    );
+    const second = await staticExport(dir);
+    assert(
+      !(await clientJsOf(second.outDir)).includes("view-transition-class"),
+      "the stale export's runtime must not be shipped again",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

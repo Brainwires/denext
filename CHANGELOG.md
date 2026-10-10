@@ -8,6 +8,135 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.4] - 2026-10-10
+
+### Added
+
+- **Sidecars: a Deno Desktop app runs and supervises its own backend** (`desktop.sidecars`,
+  `runDesktop({ sidecars })`, `defineSidecar` from `denext/desktop`), as an Electron app spawns its
+  server. `run: { module }` runs the module in a dedicated worker of the app's own Deno runtime with
+  Node compatibility: no second binary ships, and the worker cannot outlive the app. A Node backend
+  (`nodeModules`) is bundled at packaging and by `denext desktop run` / `dev` into
+  `.deno-desktop/sidecars/<name>/` (npm imports inlined; `node:sea` stubbed) and embedded in the
+  app. The packages it loads with `require` at run time (those with a native addon, only the
+  target OS's prebuilds, and `external` ones; ES-module ones bundled in place) travel as one
+  archive beside it, unpacked into the app's cache folder on the sidecar's first start (once per
+  version, about 0.5 s for T3 Code's 78 MB), where Node's own resolution and native addons work and
+  the backend's own `createRequire(import.meta.url)` finds them: a `node_modules` tree embedded
+  as it is fails `deno desktop` under `--node-modules-dir=none` on a CommonJS re-export. `run: { exec }` spawns a
+  program (a project file is embedded and run from a copy in the app's cache folder), which gets
+  `{name, port, bootstrap, secrets}` as one JSON line on stdin and an open stdin for as long as the
+  app lives. Each sidecar gets a loopback port (`port: "auto"`, kept across restarts; `{port}` in
+  `args`, `PORT` in its environment), readiness checks (`ready.http` / `stdout` / `signal` /
+  `probe`), restarts after a crash with doubling backoff up to `maxAttempts` (`resetAfterMs` after
+  a good run), a graceful stop (`shutdown.graceMs`: `denextSidecar.onShutdown` handlers and
+  `SIGTERM` listeners, then terminate / `SIGKILL`), per-launch `secrets` (`"$random"`) and a
+  `bootstrap` value delivered in memory (never in env or argv), `expose`d values for the page,
+  `logs` to the app's stderr and/or a rotated file, and `proxy: true` to point `spa.proxy` at it
+  (requests wait while it starts or restarts). The host handle `app.sidecar(name)` (`status`,
+  `onStatus`, `restart`, `stop`, `whenReady`) and `stopSidecars()`; the page side
+  `sidecarStatus`, `onSidecarStatus`, `restartSidecar` and `sidecarInfo` in
+  `denext/desktop/client` (token-gated). Sidecars end with the app, and before a full-app update is
+  installed. `permissions` are baked into the package scripts' least-privilege flags (an
+  `--allow-net` of `"*"` now bakes the unscoped flag). `denext desktop add sidecar --name <n>
+  --entry <module> [--node-modules <dir>] | --exec <program> [--ready <path>] [--proxy]` writes
+  one. Under denext's pinned runtime the window's server takes the runtime's in-process page
+  transport (`DENO_SERVE_ADDRESS`), which each isolate's first server would otherwise claim again;
+  `runDesktop` clears it once that server is up. A Linux packaged-app CI test covers serving, a
+  crash restart and orphan safety.
+- **`headerBackButtonDisplayMode` screen option** (`"default" | "generic" | "minimal"`) on
+  `denext/navigation`'s native stacks (`StackLayout`, `StackView`, `HistoryStack`) and React
+  Navigation native-stack / expo-router `screenOptions` in React Native mode. `"minimal"` draws the
+  chevron alone with the previous title kept as the button's `aria-label`; `"generic"` reads
+  "Back"; `headerBackTitle` keeps working.
+- **`spa.shell`: a prerendered, adoptable static shell, so a SPA paints its real layout and
+  takes typing before the client bundle has run.** `spa.shell: { component, props?, bootScript?,
+  platforms?, readyOn?, maxHoldMs? }` server-renders a pure component into `#root` at
+  `denext build`, `export` and `dev`, with the app's stylesheet linked ahead of it (a platform file
+  such as `AppShell.desktop.tsx` is that export target's shell); it replaces `spa.loading`
+  (setting both is a config error). `bootScript` is bundled into one classic script inlined before
+  the shell (a saved theme, before first paint), and an inline script records the text,
+  selection, focus and scroll of each `data-denext-shell-key` field as the user types; under
+  `spa.csp` both are allowed by their hashes. The app's own `createRoot` (react-dom's, React
+  Native Web's `AppRegistry`, Expo's `registerRootComponent`) then mounts into a hidden stage over
+  the shell, which stays painted and interactive, and the app replaces it in one DOM change on its
+  first commit with no Suspense fallback showing, on `shellReady()` (with `readyOn:
+  "shellReady"`), or after `maxHoldMs` (default 5 s). A keyed `<input>` / `<textarea>` gets the
+  typed text through its `onChange`, the caret and the focus in the same task; anything else (an
+  editor) takes it with `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext` and
+  `denext/client`, and `shellReady()` resolves once the swap is done. The adopt runtime ships only
+  in an app that sets `spa.shell`.
+
+### Changed
+
+- **Every app's shared client runtime is 2 KB smaller (raw), with no change in behaviour.** The
+  `SuspenseList` reveal runtime and the `<Profiler>` commit runtime now travel with their
+  elements, so an app that never renders a `SuspenseList` or a `Profiler` ships neither. The
+  client's dev-only hydration-mismatch warning and async-transition watchdog are installed by
+  `installDevtools` with the other dev warnings, so a production bundle carries neither message.
+  `use()`'s `DENEXT_DEBUG_SUSPENSE` origin trace, which only the server reads, is installed by
+  the server's request pipeline. Three duplicated helpers were merged. `examples/hello`'s shared
+  chunks went from 67,915 B to 65,872 B, and the build-smoke budget moves from 68,500 B to
+  67,400 B.
+
+### Fixed
+
+- **`denext desktop package` runs a workspace app's packaging script with npm packages from
+  Deno's cache.** The script was started as `deno run -A scripts/package-<os>.ts`; in a project
+  with a `package.json` / `node_modules` under `nodeModulesDir: "manual"` (a pnpm workspace) its
+  npm imports were looked for in `node_modules`, and Deno rewrote the workspace's root
+  `package.json` from `pnpm-workspace.yaml`. It now gets `--node-modules-dir=none` there, as the
+  script's own `deno desktop` run does.
+- **A component that stores a `useMemo` / `useCallback` result in state during render converges,
+  as in React, instead of throwing "Maximum update depth exceeded".** For each render-phase
+  re-render pass (a component calling its own setter while it renders), the memo's deps were
+  reset to the committed ones. Every pass then recomputed the memo, so a check like
+  `if (last !== merged) setLast(merged)` never held and the component looped. Memo cells now
+  keep the previous pass's value and deps, as React's re-render does. This crashed T3 Code's
+  Usage page.
+- **`<ViewTransition>` animates its nearest host nodes, whatever its children are, as React
+  does.** Before, only a single host child was marked. A component child had to forward the
+  config to its root element itself, and a Fragment, a list or several elements were passed
+  through without animating. Now a component child's rendered hosts are marked (a plain
+  function, `memo`, `forwardRef` or an async Server Component, with no forwarding). Each host
+  in a Fragment or list is marked too: the first keeps `name` and the others get React's
+  `name_1`, `name_2` suffixes. Text is skipped, since it can't be named. A child the server
+  can't run is resolved in the browser to the hosts it renders. That covers a class, a `lazy`
+  and a client component inside a Server Component's `<ViewTransition>`.
+- **`denext export` ships the `<Activity>` and `<ViewTransition>` runtimes when the app uses
+  them.** An App Router export never ran the source scan that `denext build` runs, so an
+  exported `<ViewTransition>` didn't animate and a hidden `<Activity>` rendered visible. The
+  scan also no longer reads build output. It used to read a previous export in `out/`, `dist/`
+  or any folder holding `_denext/` (a custom `--out`, Capacitor's copies under `ios/` and
+  `android/`), whose bundles still name the component. That kept a runtime the app had dropped:
+  an SPA re-exported after removing its `<ViewTransition>` still shipped it (+6.8 KB).
+- **A page whose only client code is deferred islands no longer loads the client runtime up
+  front.** The islands docs said a `client:interaction` island ships no JavaScript until it is
+  touched, but every Flight page loaded `flight.js`, which statically imports the shared runtime
+  chunk: about 76 KB before the first interaction on a resumable route with one island. A
+  production build and `denext export` now also write `flight-boot.js` (1.9 KB, no imports),
+  which the server gives a page with no page root to hydrate whose islands all wait for a
+  trigger (`client:idle` / `visible` / `interaction` / `media`; a resumable route's are all
+  `interaction`). It imports `flight.js` on the first trigger and hands the events that arrived
+  meanwhile to the runtime's dispatcher, so the click that woke the island is replayed, not
+  lost. A page that needs the runtime at once (a page root, a `client:load` / `client:only`
+  island, a resumable handler outside every island such as a `<Link>`'s soft navigation, an
+  `instrumentation-client`) loads `flight.js` as before. Until the runtime loads, a plain link on
+  a deferred page is an ordinary page load. An islands-only export went from 76,452 B of
+  JavaScript before the first interaction to 1,929 B.
+- **`denext export` honours `basePath` and `assetPrefix`.** The exported pages referenced their
+  scripts and stylesheets at `/_denext/client/…`, self-hosted fonts at `/_denext/fonts/…` and
+  imported assets (a compatibility-mode app's `import logo from "./logo.png"`) at
+  `/_denext/client/assets/…`, and rendered `<Link>` hrefs and the client's base path without the
+  `basePath`, so an export hosted under its `basePath` loaded none of them. They now carry the
+  `assetPrefix` (else the `basePath`) and the links the `basePath`, as `denext start` does.
+- **A compatibility-mode app's `<Image>` and `<Link>` see the image config and the `basePath`.**
+  Its server bundle carries its own copy of the denext runtime, which never saw the
+  `images` config the server set (or the `unoptimized` a static export forces, so an exported
+  `<Image>` pointed at the `/_denext/image` optimizer a static host does not have) or the
+  `basePath` (`<Link>` hrefs lacked it under `denext start` too). Both settings now live on a
+  process-wide slot every copy reads.
+
 ## [3.4.3] - 2026-10-10
 
 ### Added
@@ -12456,7 +12585,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.4...development
+[3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1

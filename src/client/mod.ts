@@ -77,6 +77,9 @@ export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense
 export type { SuspenseListProps, SuspenseProps } from "../runtime/suspense.ts";
 export { dynamic } from "../runtime/dynamic.ts";
 
+// `spa.shell` handoff: swap the prerendered shell for the app, and take what was typed into it.
+export { consumeShellHandoff, shellReady, useShellHandoff } from "./shell-handoff.ts";
+export type { ShellHandoff } from "./shell-handoff.ts";
 // First-party auth: the client half of `denextAuth` (also exported from the root `denext`).
 export { SessionProvider, signIn, signOut, useSession } from "./auth.ts";
 // Passkeys (`denextAuth({ passkeys })`): register one, sign in or step up with one.

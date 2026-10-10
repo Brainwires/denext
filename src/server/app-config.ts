@@ -85,6 +85,11 @@ export interface AppConfig {
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
   clientEntryFor?: (route: PageRoute) => string | undefined;
   /**
+   * The Flight entry's deferred boot URL (`flight-boot.js`), when the build wrote one: a Flight
+   * page whose only client code is deferred islands loads it in place of its client entry.
+   */
+  flightBootEntry?: string;
+  /**
    * Browser bundle URL for `global-error.tsx` (a single root file, so a plain URL rather than
    * a per-route resolver). When set, `renderGlobalError` hydrates the global-error document so
    * its `reset` and any author interactivity work; when unset, global-error is server-rendered

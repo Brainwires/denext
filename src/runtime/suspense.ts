@@ -7,6 +7,7 @@
 import { FRAGMENT, type VNode, type VNodeChildren, type VProps } from "../jsx/types.ts";
 import { brand, REACT_SUSPENSE_TYPE } from "./react-brands.ts";
 import { type Context, useContext } from "./hooks.ts";
+import { applySuspenseListPolicy } from "../client/fiber/suspense-list-runtime.ts";
 
 /** Re-exported so the public Suspense API surface stays fully documentable. */
 export type { VNode, VNodeChildren } from "../jsx/types.ts";
@@ -44,8 +45,19 @@ export interface SuspenseListProps {
   tail?: "collapsed" | "hidden";
 }
 
-/** Prop key carrying a SuspenseList's `{ revealOrder, tail }` to the reconciler. */
+/** Prop key carrying a SuspenseList's {@link SuspenseListMarker} to the reconciler. */
 export const SUSPENSE_LIST_PROP: string = "__dnxSuspenseList";
+
+/**
+ * A SuspenseList's reveal policy as the reconciler reads it, with the client runtime that
+ * applies it: carried on the element so only an app that renders a SuspenseList bundles it.
+ * @internal
+ */
+export interface SuspenseListMarker {
+  revealOrder?: SuspenseListProps["revealOrder"];
+  tail?: SuspenseListProps["tail"];
+  apply: typeof applySuspenseListPolicy;
+}
 
 /**
  * `React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>`
@@ -65,7 +77,11 @@ export function SuspenseList(props: SuspenseListProps): VNode {
     type: FRAGMENT as unknown as string,
     props: {
       children: props.children,
-      [SUSPENSE_LIST_PROP]: { revealOrder: props.revealOrder, tail: props.tail },
+      [SUSPENSE_LIST_PROP]: {
+        revealOrder: props.revealOrder,
+        tail: props.tail,
+        apply: applySuspenseListPolicy,
+      } satisfies SuspenseListMarker,
     } as unknown as VProps,
     key: null,
   };
@@ -87,16 +103,18 @@ function isContextUsable(value: unknown): value is Context<unknown> {
     typeof (value as { _id?: unknown })._id === "symbol";
 }
 
-let debugSuspenseFlag: boolean | null = null;
-function debugSuspense(): boolean {
-  if (debugSuspenseFlag === null) {
-    try {
-      debugSuspenseFlag = !!Deno.env.get("DENEXT_DEBUG_SUSPENSE");
-    } catch {
-      debugSuspenseFlag = false;
-    }
-  }
-  return debugSuspenseFlag;
+/**
+ * Records where `use()` first saw a thenable (its `_origin`), or null. The server's request
+ * pipeline installs it ({@linkcode setSuspenseOriginTrace}) — it alone reads `_origin`, under
+ * `DENEXT_DEBUG_SUSPENSE` — so a client bundle carries neither the env read nor the trace.
+ */
+let traceOrigin: ((thenable: { _origin?: string }) => void) | null = null;
+
+/** Install (or clear, with `null`) the suspension-origin trace. Server only. @internal */
+export function setSuspenseOriginTrace(
+  trace: ((thenable: { _origin?: string }) => void) | null,
+): void {
+  traceOrigin = trace;
 }
 
 /**
@@ -125,7 +143,7 @@ export function use<T>(usable: Promise<T> | Context<T>): T {
     tracked._status = "pending";
     // `DENEXT_DEBUG_SUSPENSE=1`: remember where the suspension started, so a thenable that
     // escapes every boundary can be traced (the raw Promise carries no stack of its own).
-    if (debugSuspense()) tracked._origin = new Error("use() suspended here").stack;
+    traceOrigin?.(tracked);
     tracked.then(
       (value) => {
         tracked._status = "fulfilled";

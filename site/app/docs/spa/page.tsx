@@ -124,6 +124,97 @@ export default {
 // in your app: import.meta.env.VITE_API_URL → "https://api.example.com"`}
       </Code>
 
+      <h2 id="shell">Prerendered shell — type before the app starts</h2>
+      <p>
+        A SPA's page is blank (or a <code>spa.loading</code>{" "}
+        spinner) until the client bundle has downloaded, parsed and rendered. With{" "}
+        <code>spa.shell</code>, denext server-renders a component of yours into <code>#root</code>
+        {" "}
+        at <code>build</code>, <code>export</code> and{" "}
+        <code>dev</code>: the first paint is your app's real layout, styled by the app's own
+        stylesheet (linked in <code>&lt;head&gt;</code>{" "}
+        ahead of it, so fonts and sizes are final), and its fields take typing at once. When the app
+        has started it renders off-screen while the shell stays painted and interactive, then
+        replaces it in one commit, carrying over what the user typed — text, selection, focus and
+        scroll. It replaces <code>spa.loading</code> (setting both is a config error).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  mode: "spa",
+  spa: {
+    entry: "./src/main.tsx",
+    shell: {
+      component: "./src/AppShell.tsx", // default export, rendered at build
+      props: { placeholder: "Ask anything" },
+      bootScript: "./src/boot.ts", // optional: runs before first paint (a saved theme)
+      // platforms: ["macos", "windows", "linux"], // targets that carry it (default: all)
+      // readyOn: "shellReady",  // default "first-settled-commit"
+      // maxHoldMs: 5000,        // swap anyway after this long
+    },
+  },
+} satisfies DenextConfig;`}
+      </Code>
+      <p>
+        The shell component is{" "}
+        <strong>pure</strong>: plain elements with the app's class names, no router, store or data,
+        and no stylesheet import of its own. A platform file beside it —{" "}
+        <code>AppShell.desktop.tsx</code>, <code>AppShell.ios.tsx</code>{" "}
+        — is the shell of that export target. Mark each field the user may type into with{" "}
+        <code>data-denext-shell-key</code>; a tiny inline script denext emits records its state as
+        the user types. <code>bootScript</code>{" "}
+        is bundled into one classic script and inlined before the shell markup; under{" "}
+        <code>spa.csp</code> both inline scripts are allowed by their hashes.
+      </p>
+      <Code lang="tsx">
+        {`// src/AppShell.tsx — the same markup and classes the app renders
+export default function AppShell(props: { placeholder: string }) {
+  return (
+    <main className="layout">
+      <header className="bar">My App</header>
+      <textarea className="composer" placeholder={props.placeholder}
+        data-denext-shell-key="composer" />
+    </main>
+  );
+}`}
+      </Code>
+      <p>
+        Nothing changes in the entry: its <code>createRoot(document.getElementById("root"))</code>
+        {" "}
+        (react-dom's, React Native Web's <code>AppRegistry</code>, Expo's{" "}
+        <code>registerRootComponent</code>) mounts into a hidden stage over the shell's box. The app
+        replaces the shell on its first commit with no Suspense fallback showing, or — with{" "}
+        <code>readyOn: "shellReady"</code> — when it calls <code>shellReady()</code> (from{" "}
+        <code>denext</code>), and after <code>maxHoldMs</code>{" "}
+        in any case. An app field with the same key gets the shell field's state: denext fills in an
+        {" "}
+        <code>&lt;input&gt;</code> / <code>&lt;textarea&gt;</code> itself (through its{" "}
+        <code>onChange</code>, so a controlled field's state follows) and moves the focus and caret
+        to it in the same task, so there is no blur flash. Anything else — a rich-text editor —
+        takes the state with <code>useShellHandoff(key)</code> or, outside React,{" "}
+        <code>consumeShellHandoff(key)</code> (each returns it once, or{" "}
+        <code>null</code>), and restores the selection once <code>shellReady()</code> resolves:
+      </p>
+      <Code lang="tsx">
+        {`import { consumeShellHandoff, shellReady } from "denext";
+
+const editor = new Editor({
+  onCreate({ editor }) {
+    const typed = consumeShellHandoff("composer"); // { text, selectionStart, selectionEnd, focused, scrollTop }
+    if (typed) editor.commands.setContent(typed.text);
+    shellReady().then(() => {
+      if (typed?.focused) editor.commands.focus(typed.selectionStart + 1);
+    });
+  },
+});`}
+      </Code>
+      <Callout kind="note">
+        Zero layout shift at the swap is the shell's job: render the same elements with the same
+        classes the app's first screen has. The adopt runtime ships only in an app that sets{" "}
+        <code>spa.shell</code>; the handoff functions are no-ops (and{" "}
+        <code>null</code>) on a page without a shell.
+      </Callout>
+
       <h2>Content-Security-Policy (opt-in)</h2>
       <p>
         A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's

@@ -304,10 +304,12 @@ export function __setAsyncTransitionWarnMs(ms: number): void {
 
 /**
  * Arm a dev-only timer that warns if an async transition is still pending after
- * {@link asyncTransitionWarnMs}. No-op (returns undefined) outside dev, so prod pays
- * nothing. The timer is unref'd so it never keeps a process alive on its own.
+ * {@link asyncTransitionWarnMs}; returns its disarm, or undefined outside dev. The timer is
+ * unref'd so it never keeps a process alive on its own. Installed by the dev entries
+ * ({@linkcode installAsyncTransitionWatchdog}, via `installDevtools`), so a production bundle
+ * carries neither the timer nor its message: the transition pays one `?.`.
  */
-function armAsyncTransitionWatchdog(): ReturnType<typeof setTimeout> | undefined {
+function armAsyncTransitionWatchdog(): (() => void) | undefined {
   if (!devHydrationActive()) return undefined;
   const timer = setTimeout(() => {
     console.warn(
@@ -322,12 +324,14 @@ function armAsyncTransitionWatchdog(): ReturnType<typeof setTimeout> | undefined
   if (typeof Deno !== "undefined") {
     (Deno as { unrefTimer?: (id: number) => void }).unrefTimer?.(timer as unknown as number);
   }
-  return timer;
+  return () => clearTimeout(timer);
 }
 
-/** Disarm the watchdog once the async transition settles. */
-function clearAsyncTransitionWatchdog(timer: ReturnType<typeof setTimeout> | undefined): void {
-  if (timer !== undefined) clearTimeout(timer);
+let watchdog: (() => (() => void) | undefined) | null = null;
+
+/** Install (or, with `false`, remove) the dev-only async-transition watchdog. */
+export function installAsyncTransitionWatchdog(on = true): void {
+  watchdog = on ? armAsyncTransitionWatchdog : null;
 }
 
 let transitionScheduled = false;
@@ -492,10 +496,10 @@ setTransitionScheduler((cb, onComplete) => {
     // `isPending` true forever (and, without scoping, keeps entangling updates).
     // Warn (once per stuck transition) so the footgun is visible in development;
     // never force-settle — that would mask the real never-resolving await in prod.
-    const watchdog = armAsyncTransitionWatchdog();
+    const disarm = watchdog?.();
     const settle = () => {
       asyncTransitionDepth--;
-      clearAsyncTransitionWatchdog(watchdog);
+      disarm?.();
       scheduleTransitionComplete(() => {
         onComplete();
         runSettled();

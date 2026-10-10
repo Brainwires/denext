@@ -280,7 +280,10 @@ export async function desktopLaunchBuildPlan(
   const args = desktopLaunchBuildArgs({
     permissionFlags: desktopBuildFlags(input.config, input.os),
     denoFlags: input.denoFlags,
-    extraArgs: [...await desktopIncludeArgs(scriptUrl), ...await desktopNpmArgs(scriptUrl)],
+    extraArgs: [
+      ...await desktopIncludeArgs(scriptUrl, input.os),
+      ...await desktopNpmArgs(scriptUrl),
+    ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,
     netHosts: input.netHosts,

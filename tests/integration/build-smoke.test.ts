@@ -170,6 +170,14 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * ownership, focusin/focusout and the derived enter/leave events are +3.9 KB raw (measured
  * 67,915 B, from 64,039 B). An approved trade: a bubbling handler no longer costs a listener and
  * a closure per element, re-registered on every render that passes a new function.
+ * Re-based 68.5 → 67.4 KB (67,400 B) after recovering 2,043 B with no change in behaviour
+ * (measured 65,872 B, ~1.5 KB of headroom): the SuspenseList reveal runtime (−778 B) and the
+ * Profiler commit runtime (−238 B) ride their elements' marker props, so they ship only with
+ * `SuspenseList` / `Profiler`; the hydration-mismatch warning and the async-transition watchdog
+ * moved behind `installDevtools` (−636 B); `use()`'s DENEXT_DEBUG_SUSPENSE origin trace is
+ * installed by the server's request pipeline (−146 B); and three duplicated helpers merged
+ * (control-signal predicates −99 B, the soft-nav JSON-island writers −181 B, the singleton
+ * runtime's host-update completion +35 B).
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -178,7 +186,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 68_500, `shared chunks total ${sharedTotal} bytes (budget 68,500 B raw)`);
+  assert(sharedTotal < 67_400, `shared chunks total ${sharedTotal} bytes (budget 67,400 B raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
@@ -214,6 +222,14 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     // Dev-only prop warnings ride `installDevtools` (dom-props.ts's warning seam).
     ["emits raw HTML", "dev-only dangerouslySetInnerHTML warning"],
     ["refused a dangerous URL", "dev-only dangerous-URL warning"],
+    // More dev-only diagnostics on `installDevtools` (hydration.ts's and scheduler.ts's seams).
+    ["hydration mismatch", "dev-only hydration-mismatch warning"],
+    ["async transition has been pending", "dev-only async-transition watchdog"],
+    // The server's request pipeline installs `use()`'s origin trace; no client reads it.
+    ["use() suspended here", "server-only DENEXT_DEBUG_SUSPENSE origin trace"],
+    // Carried by the `SuspenseList` / `Profiler` elements' marker props: 0 bytes unless used.
+    ["collapsed", "SuspenseList reveal runtime"],
+    ["onRender", "Profiler commit runtime"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

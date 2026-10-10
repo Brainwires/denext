@@ -42,6 +42,10 @@ export { installViewTransitionSupport } from "./fiber/view-transition-runtime.ts
 // a document tag (a client root layout's `<html>`/`<body>` adopt the page's own elements), so an
 // app whose document denext or a server layout supplies drops it via tree-shaking.
 export { installSingletonSupport } from "./fiber/singleton-runtime.ts";
+// `spa.shell`: the SPA entry emits `installShellSupport()` (the off-screen render + one-commit
+// swap over the prerendered shell) ONLY when `spa.shell` is configured, so an app without a shell
+// drops it via tree-shaking.
+export { installShellSupport, type ShellSupportOptions } from "./shell-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev DevTools metadata: the per-component source position + hook names the dev

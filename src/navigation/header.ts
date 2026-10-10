@@ -70,7 +70,9 @@ function backControl(
   };
   const common = {
     "data-dnx-back": "",
-    "aria-label": props.options.headerBackTitle ?? props.backTitle ?? "Back",
+    "aria-label": props.options.headerBackButtonDisplayMode === "generic"
+      ? "Back"
+      : props.options.headerBackTitle ?? props.backTitle ?? "Back",
     onClick,
     style: {
       display: "inline-flex",
@@ -163,11 +165,14 @@ function androidHeader(props: StackHeaderProps, showBack: boolean, title: VNodeC
 /** The iOS header: chevron + back label, centered title (hidden under a large title), trailing slot. */
 function iosHeader(props: StackHeaderProps, showBack: boolean, title: VNodeChildren): VNode {
   const { options } = props;
-  const backLabel = options.headerBackTitle ?? props.backTitle ?? "Back";
+  const mode = options.headerBackButtonDisplayMode;
+  const backLabel = mode === "generic"
+    ? "Back"
+    : options.headerBackTitle ?? props.backTitle ?? "Back";
   const back = showBack
     ? backControl(props, [
       chevron(),
-      h("span", {
+      mode === "minimal" ? null : h("span", {
         style: {
           maxWidth: 120,
           overflow: "hidden",

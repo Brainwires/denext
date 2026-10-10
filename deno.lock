@@ -65,6 +65,7 @@
     "npm:graphql-yoga@^5.10.0": "5.22.0_graphql@16.14.2",
     "npm:graphql@^16.9.0": "16.14.2",
     "npm:jsqr@1.4.0": "1.4.0",
+    "npm:playwright-core@1.63.0": "1.63.0",
     "npm:react-native-web@0.21.2": "0.21.2_react@19.3.0_react-dom@19.3.0",
     "npm:sass@^1.80.0": "1.102.0",
     "npm:typescript@5": "5.9.3",
@@ -1744,6 +1745,10 @@
     "picomatch@4.0.7": {
       "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="
     },
+    "playwright-core@1.63.0": {
+      "integrity": "sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==",
+      "bin": true
+    },
     "postcss-value-parser@4.2.0": {
       "integrity": "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ=="
     },
@@ -2086,13 +2091,14 @@
       "npm:effect@^3.22.0",
       "npm:esbuild@0.24",
       "npm:jsqr@1.4.0",
+      "npm:playwright-core@1.63.0",
       "npm:sass@^1.80.0",
       "npm:ws@8"
     ],
     "members": {
       "packages/content-collections": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
@@ -2101,13 +2107,13 @@
       },
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/graphql": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -2115,25 +2121,25 @@
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/openapi": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/react-router": {
         "dependencies": [
-          "jsr:@denext/denext@^3.4.3",
+          "jsr:@denext/denext@^3.4.4",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

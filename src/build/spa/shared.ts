@@ -4,9 +4,10 @@
 import { join, normalize, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
 import { normalizeSpaAssetsDir } from "../../server/config-validate.ts";
-import { computeCsp } from "../../server/csp.ts";
+import { computeCsp, sha256Base64 } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { resolveExportPath } from "../export-paths.ts";
+import { SHELL_CAPTURE_SCRIPT, type SpaShellParts } from "./shell-capture.ts";
 
 /** The client-asset URL prefix (matches the App Router prod server). */
 export const CLIENT_PREFIX = "/_denext/client/";
@@ -114,6 +115,12 @@ export function generateSpaEntry(
 
 /** Which reconciler-seam runtimes the SPA entry should install (class defaults on for SPA). */
 export interface SpaEntrySupport {
+  /**
+   * The `spa.shell` client runtime's install lines (`spaShellInstall`), run ahead of the app so
+   * its `createRoot` mounts off-screen while the prerendered shell stays painted. `""` / unset
+   * without a shell.
+   */
+  shell?: string;
   /** Install the class-component runtime (default true for SPA — error boundaries are common). */
   classComponents?: boolean;
   /** Install the `<Activity>` offscreen scheduler (set when the app uses it). */
@@ -212,6 +219,7 @@ export function supportInstall(support: SpaEntrySupport): string {
       `installSingletonSupport();`,
     );
   }
+  if (support.shell) lines.push(support.shell.trim());
   return lines.length ? lines.join("\n") + "\n" : "";
 }
 
@@ -268,14 +276,49 @@ function warnRawSpaHeadOnce(): void {
  * script, so `script-src 'self'` needs no hashes; inline <style> in `spa.head` is
  * hashed by computeCsp so it stays allowed.
  */
-async function cspMetaTag(spa: SpaConfig, head: string): Promise<string> {
+async function cspMetaTag(
+  spa: SpaConfig,
+  head: string,
+  inlineScripts: readonly string[] = [],
+): Promise<string> {
   if (!spa.csp || spa.csp === "off") return "";
   const route = spa.csp === "strict" ? undefined : spa.csp;
-  const policy = (await computeCsp(head, route))
+  const hashes = await Promise.all(
+    inlineScripts.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
+  );
+  const policy = (await computeCsp(head, {
+    ...route,
+    scriptSrc: [...(route?.scriptSrc ?? []), ...hashes],
+  }))
     .split("; ")
     .filter((d) => !/^frame-ancestors\b/.test(d))
     .join("; ");
   return `\n    <meta http-equiv="Content-Security-Policy" content="${escapeHtml(policy)}" />`;
+}
+
+/**
+ * The mount element (`<div id="root">`) and its inline scripts. Plain, it holds `spa.loading`
+ * (the boot placeholder the app's first render replaces). With a rendered `spa.shell` it is
+ * marked `data-denext-shell` and holds the shell's markup, preceded by the boot script and
+ * followed by the field-capture script ({@linkcode SHELL_CAPTURE_SCRIPT}); `scripts` lists the
+ * inline sources the CSP must hash.
+ */
+function mountElement(
+  rootId: string,
+  loading: string | undefined,
+  shell: SpaShellParts | null | undefined,
+): { html: string; scripts: string[] } {
+  const id = escapeHtml(rootId);
+  if (!shell) return { html: `<div id="${id}">${loading ?? ""}</div>`, scripts: [] };
+  const scripts = shell.bootScript
+    ? [shell.bootScript, SHELL_CAPTURE_SCRIPT]
+    : [SHELL_CAPTURE_SCRIPT];
+  const boot = shell.bootScript ? `<script>${shell.bootScript}</script>\n    ` : "";
+  return {
+    html: `${boot}<div id="${id}" data-denext-shell="">${shell.markup}</div>\n    ` +
+      `<script>${SHELL_CAPTURE_SCRIPT}</script>`,
+    scripts,
+  };
 }
 
 /** Generate the HTML shell that boots the SPA bundle. */
@@ -349,6 +392,8 @@ export async function spaShellHtml(opts: {
    * `viewport-fit=cover` (`reactNative` mode).
    */
   reactNativeRootStyle?: boolean;
+  /** The rendered `spa.shell` for this target (`renderSpaShell`); replaces `spa.loading`. */
+  shell?: SpaShellParts | null;
 }): Promise<string> {
   const { spa } = opts;
   const lang = spa.lang ?? "en";
@@ -373,12 +418,11 @@ export async function spaShellHtml(opts: {
   const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")
     ? ""
     : `\n    <meta name="viewport" content="${viewportContent}" />`;
-  // Boot placeholder rendered inside #root; the app's first render replaces it.
-  const loading = spa.loading ?? "";
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
     : "";
-  const cspMeta = await cspMetaTag(spa, head);
+  const mount = mountElement(rootId, spa.loading, opts.shell);
+  const cspMeta = await cspMetaTag(spa, head + mount.html, mount.scripts);
   // The app's stylesheet follows `spa.head`, where Vite injects it (before `</head>`, after the
   // page's own head content). A migrated index.html's inline boot `<style>` (`body { font-family:
   // ... }`) then yields to the app's rules of the same specificity instead of overriding them.
@@ -389,7 +433,7 @@ export async function spaShellHtml(opts: {
     <title>${escapeHtml(title)}</title>${head}${preload}${style}
   </head>
   <body>
-    <div id="${escapeHtml(rootId)}">${loading}</div>
+    ${mount.html}
     <script type="module" src="${escapeHtml(opts.scriptSrc)}"></script>${devScript}
   </body>
 </html>

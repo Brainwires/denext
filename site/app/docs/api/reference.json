@@ -460,6 +460,23 @@
           "denextOnly": true
         },
         {
+          "name": "consumeShellHandoff",
+          "slug": "consumeShellHandoff",
+          "kind": "function",
+          "signature": "consumeShellHandoff(key: string): ShellHandoff | null",
+          "doc": "Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.",
+          "docFull": "Take what the user typed into the shell field marked `data-denext-shell-key={key}`, once.\nThe first call returns the field's state at that moment and later calls return `null`, as\ndoes a page with no shell or no such field. For code outside React (an editor's `onCreate`)\nthat restores the text and selection itself; call {@linkcode shellReady} right after applying\nit, so nothing typed in between is lost. A key taken here is not filled in by denext at the\nswap, but its field is still focused there when the shell field had focus.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Context",
           "slug": "Context",
           "kind": "interface",
@@ -2617,6 +2634,30 @@
           "denextOnly": true
         },
         {
+          "name": "ShellHandoff",
+          "slug": "ShellHandoff",
+          "kind": "interface",
+          "signature": "interface ShellHandoff",
+          "doc": "What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.",
+          "docFull": "What the user did in one shell field before the app took over: the field's text, its selection\n(character offsets into `text`), whether it had focus, and its scroll position.\n\nFor a `contenteditable` field, `text` is its plain text with a line break for each `<br>` and\neach block (`<div>`, `<p>`) after the first, and the offsets count into that text.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "shellReady",
+          "slug": "shellReady",
+          "kind": "function",
+          "signature": "shellReady(): Promise<void>",
+          "doc": "Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: \"shellReady\" this is the only trigger besides maxHoldMs; with the default (\"first-settled-commit\") it swaps early.",
+          "docFull": "Tell denext the app is ready to replace the prerendered `spa.shell`: the app, rendered\noff-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a\nrender or an effect lands after the commit in progress), and the text, selection, focus and\nscroll of each `data-denext-shell-key` field carry over. With `spa.shell.readyOn: \"shellReady\"`\nthis is the only trigger besides `maxHoldMs`; with the default (`\"first-settled-commit\"`) it\nswaps early.",
+          "params": [],
+          "returns": "Resolves once the app has replaced the shell (at once when the page has no shell or it was already replaced): the moment to restore an editor's selection, now that its element is visible and focusable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Signal",
           "slug": "Signal",
           "kind": "interface",
@@ -3902,6 +3943,23 @@
           "denextOnly": true
         },
         {
+          "name": "useShellHandoff",
+          "slug": "useShellHandoff",
+          "kind": "function",
+          "signature": "useShellHandoff(key: string): ShellHandoff | null",
+          "doc": "consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.",
+          "docFull": "{@linkcode consumeShellHandoff} as a hook: the shell field's state on the component's first\nrender (then the same value for the component's lifetime), or `null`.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useSignal",
           "slug": "useSignal",
           "kind": "function",
@@ -4118,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.3",
+          "signature": "VERSION: 3.4.4",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -4179,8 +4237,8 @@
           "slug": "ViewTransition",
           "kind": "function",
           "signature": "ViewTransition(props: object): VNode",
-          "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
-          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **single host child** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements\nand applies real `view-transition-name` (an automatic one when `name` is unset) and\n`view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`; `\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates.\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nWhere the browser lacks the View Transitions API the commit simply applies. A wrapper whose\nchild isn't a single element (nothing to mark) is a plain passthrough.",
+          "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6481,6 +6539,66 @@
           "signature": "interface DesktopShellConfig",
           "doc": "The shell desktop capability's scoped options (an allowlist per action).",
           "docFull": "The `shell` desktop capability's scoped options (an allowlist per action).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarConfig",
+          "slug": "DesktopSidecarConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarConfig",
+          "doc": "One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).",
+          "docFull": "One {@link DesktopConfig.sidecars} entry: a backend the app runs and supervises (the data form of\n`defineSidecar` from `denext/desktop`, whose `runDesktop({ sidecars })` also takes functions and a\n`bootstrap` value).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarReadyConfig",
+          "slug": "DesktopSidecarReadyConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarReadyConfig",
+          "doc": "DesktopSidecarConfig.ready.",
+          "docFull": "{@link DesktopSidecarConfig.ready}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarRestartConfig",
+          "slug": "DesktopSidecarRestartConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarRestartConfig",
+          "doc": "DesktopSidecarConfig.restart.",
+          "docFull": "{@link DesktopSidecarConfig.restart}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarRunConfig",
+          "slug": "DesktopSidecarRunConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarRunConfig",
+          "doc": "DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.",
+          "docFull": "{@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with\n`nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarShutdownConfig",
+          "slug": "DesktopSidecarShutdownConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarShutdownConfig",
+          "doc": "DesktopSidecarConfig.shutdown.",
+          "docFull": "{@link DesktopSidecarConfig.shutdown}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11109,6 +11227,18 @@
           "denextOnly": true
         },
         {
+          "name": "SpaShellConfig",
+          "slug": "SpaShellConfig",
+          "kind": "interface",
+          "signature": "interface SpaShellConfig",
+          "doc": "The prerendered static shell under SpaConfig.shell.",
+          "docFull": "The prerendered static shell under {@link SpaConfig.shell}.\n\n`component` is server-rendered into the mount element (marked `data-denext-shell`) with the\napp's stylesheet linked in `<head>`, so first paint has the final layout and fonts. Mark each\nfield the user may type into before the app starts (`<textarea>`, `<input>`,\n`contenteditable`) with `data-denext-shell-key=\"<key>\"`: an inline script records its text,\nselection, focus and scroll as the user types. When the app is ready (see {@link readyOn})\nit replaces the shell in one commit, and an app field with the same key gets the state: an\n`<input>` / `<textarea>` is filled in and focused by denext; anything else (an editor) reads it\nwith `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SpaTanstackRouterConfig",
           "slug": "SpaTanstackRouterConfig",
           "kind": "interface",
@@ -12387,6 +12517,23 @@
           "denextOnly": false
         },
         {
+          "name": "consumeShellHandoff",
+          "slug": "consumeShellHandoff",
+          "kind": "function",
+          "signature": "consumeShellHandoff(key: string): ShellHandoff | null",
+          "doc": "Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.",
+          "docFull": "Take what the user typed into the shell field marked `data-denext-shell-key={key}`, once.\nThe first call returns the field's state at that moment and later calls return `null`, as\ndoes a page with no shell or no such field. For code outside React (an editor's `onCreate`)\nthat restores the text and selection itself; call {@linkcode shellReady} right after applying\nit, so nothing typed in between is lost. A key taken here is not filled in by denext at the\nswap, but its field is still focused there when the shell field had focus.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Context",
           "slug": "Context",
           "kind": "interface",
@@ -13639,6 +13786,30 @@
           "denextOnly": true
         },
         {
+          "name": "ShellHandoff",
+          "slug": "ShellHandoff",
+          "kind": "interface",
+          "signature": "interface ShellHandoff",
+          "doc": "What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.",
+          "docFull": "What the user did in one shell field before the app took over: the field's text, its selection\n(character offsets into `text`), whether it had focus, and its scroll position.\n\nFor a `contenteditable` field, `text` is its plain text with a line break for each `<br>` and\neach block (`<div>`, `<p>`) after the first, and the offsets count into that text.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "shellReady",
+          "slug": "shellReady",
+          "kind": "function",
+          "signature": "shellReady(): Promise<void>",
+          "doc": "Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: \"shellReady\" this is the only trigger besides maxHoldMs; with the default (\"first-settled-commit\") it swaps early.",
+          "docFull": "Tell denext the app is ready to replace the prerendered `spa.shell`: the app, rendered\noff-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a\nrender or an effect lands after the commit in progress), and the text, selection, focus and\nscroll of each `data-denext-shell-key` field carry over. With `spa.shell.readyOn: \"shellReady\"`\nthis is the only trigger besides `maxHoldMs`; with the default (`\"first-settled-commit\"`) it\nswaps early.",
+          "params": [],
+          "returns": "Resolves once the app has replaced the shell (at once when the page has no shell or it was already replaced): the moment to restore an editor's selection, now that its element is visible and focusable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "signIn",
           "slug": "signIn",
           "kind": "function",
@@ -14272,6 +14443,23 @@
           "docFull": "Read the current {@link ClientSession}. Must be under a {@link SessionProvider}.",
           "params": [],
           "returns": "The session state plus update().",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useShellHandoff",
+          "slug": "useShellHandoff",
+          "kind": "function",
+          "signature": "useShellHandoff(key: string): ShellHandoff | null",
+          "doc": "consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.",
+          "docFull": "{@linkcode consumeShellHandoff} as a hook: the shell field's state on the component's first\nrender (then the same value for the component's lifetime), or `null`.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
           "examples": [],
           "denextOnly": true
         },
@@ -15898,6 +16086,30 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "resumeEvent",
+          "slug": "resumeEvent",
+          "kind": "function",
+          "signature": "resumeEvent(target: unknown, eventType: string, event: unknown): ResumeResult",
+          "doc": "Handle a delegated event: a qrl dispatches without mounting; otherwise, if the target sits in a pending client:interaction island, resume that island synchronously and replay the event so the just-attached real handler fires.",
+          "docFull": "Handle a delegated event: a qrl dispatches without mounting; otherwise, if the\ntarget sits in a pending `client:interaction` island, resume that island\nsynchronously and replay the event so the just-attached real handler fires.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResumeResult",
+          "slug": "ResumeResult",
+          "kind": "typeAlias",
+          "signature": "type ResumeResult = qrl | resumed | none",
+          "doc": "The outcome of resumeEvent.",
+          "docFull": "The outcome of {@link resumeEvent}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         }
       ]
     },
@@ -16073,6 +16285,25 @@
           "returns": "The same object, typed as given.",
           "examples": [
             "```ts\n// desktop/extensions/scanner.ts  (runs in the Deno process only)\nimport { defineDesktopExtension } from \"denext/desktop\";\nimport { z } from \"zod\";\nexport default defineDesktopExtension({\n  name: \"scanner\",\n  methods: {\n    listDevices: {\n      input: z.object({}),\n      output: z.array(z.string()),\n      permissions: { ffi: [\"./native/libscanner.dylib\"] },\n      handler: () => listDevicesFromFfi(),\n    },\n  },\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "defineSidecar",
+          "slug": "defineSidecar",
+          "kind": "function",
+          "signature": "defineSidecar<D>(definition: D): D",
+          "doc": "Declare a sidecar with its type checked (an identity function, for runDesktop({ sidecars })).",
+          "docFull": "Declare a sidecar with its type checked (an identity function, for `runDesktop({ sidecars })`).",
+          "params": [
+            {
+              "name": "definition",
+              "doc": "The sidecar."
+            }
+          ],
+          "returns": "The same definition.",
+          "examples": [
+            "```ts\nimport { defineSidecar, runDesktop } from \"denext/desktop\";\n\nconst api = defineSidecar({\n  name: \"api\",\n  run: { module: \"./server/main.ts\" },\n  port: \"auto\",\n  ready: { http: \"/health\" },\n  proxy: true,\n});\nconst app = await runDesktop({ importMetaUrl: import.meta.url, sidecars: [api] });\napp.sidecar(\"api\").onStatus((s) => console.log(s.state));\n```"
           ],
           "denextOnly": true
         },
@@ -16448,7 +16679,7 @@
           "name": "desktopIncludeArgs",
           "slug": "desktopIncludeArgs",
           "kind": "function",
-          "signature": "desktopIncludeArgs(entryUrl: string): Promise<string[]>",
+          "signature": "desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]>",
           "doc": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:",
           "docFull": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module\nthe app loads at runtime, and loads each one from the binary, never from the build machine's\ndisk:\n\n- `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches\n  but the runtime fails to load the extension (\"Module not found\"), since `--include out` only\n  bundles the export;\n- `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute\n  local target (`\"denext/desktop\": \"file:///…\"`): a compiled binary resolves such a target to the\n  build machine's path, so a relocatable copy of the map is written and used instead.\n\nReads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →\n`../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.",
           "params": [
@@ -17401,6 +17632,176 @@
           "denextOnly": true
         },
         {
+          "name": "SidecarDefinition",
+          "slug": "SidecarDefinition",
+          "kind": "interface",
+          "signature": "interface SidecarDefinition",
+          "doc": "One sidecar. Data-only fields can live in desktop.sidecars (denext.config.ts); probe, bootstrap and secrets as functions only in runDesktop({ sidecars }), which also overrides a config entry of the same name field by field.",
+          "docFull": "One sidecar. Data-only fields can live in `desktop.sidecars` (`denext.config.ts`); `probe`,\n`bootstrap` and `secrets` as functions only in `runDesktop({ sidecars })`, which also overrides a\nconfig entry of the same name field by field.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarExit",
+          "slug": "SidecarExit",
+          "kind": "interface",
+          "signature": "interface SidecarExit",
+          "doc": "How one run of a sidecar ended.",
+          "docFull": "How one run of a sidecar ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarExposedValue",
+          "slug": "SidecarExposedValue",
+          "kind": "typeAlias",
+          "signature": "type SidecarExposedValue = string | number | boolean | null",
+          "doc": "A value a sidecar shares with the page (SidecarDefinition.expose).",
+          "docFull": "A value a sidecar shares with the page ({@linkcode SidecarDefinition.expose}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarHandle",
+          "slug": "SidecarHandle",
+          "kind": "interface",
+          "signature": "interface SidecarHandle",
+          "doc": "The handle runDesktop's sidecar(name) returns.",
+          "docFull": "The handle `runDesktop`'s `sidecar(name)` returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarInfo",
+          "slug": "SidecarInfo",
+          "kind": "interface",
+          "signature": "interface SidecarInfo",
+          "doc": "What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).",
+          "docFull": "What the page (and a `ready.probe`) learns about a sidecar: `sidecarInfo(name)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarLogs",
+          "slug": "SidecarLogs",
+          "kind": "typeAlias",
+          "signature": "type SidecarLogs = inherit | file | both | none",
+          "doc": "Where a sidecar's output goes: \"inherit\" (default: the app's stderr, each line prefixed [sidecar:<name>]), \"file\" (<app data>/logs/sidecar-<name>.log, rotated at 5 MB), \"both\", or \"none\".",
+          "docFull": "Where a sidecar's output goes: `\"inherit\"` (default: the app's stderr, each line prefixed\n`[sidecar:<name>]`), `\"file\"` (`<app data>/logs/sidecar-<name>.log`, rotated at 5 MB), `\"both\"`,\nor `\"none\"`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarPermissions",
+          "slug": "SidecarPermissions",
+          "kind": "interface",
+          "signature": "interface SidecarPermissions",
+          "doc": "The Deno permissions a sidecar needs, as --allow-* scopes (baked into the packaged app).",
+          "docFull": "The Deno permissions a sidecar needs, as `--allow-*` scopes (baked into the packaged app).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarReady",
+          "slug": "SidecarReady",
+          "kind": "interface",
+          "signature": "interface SidecarReady",
+          "doc": "What makes a sidecar ready: every check given must pass. Without any it is ready once started.",
+          "docFull": "What makes a sidecar ready: every check given must pass. Without any it is ready once started.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarRestart",
+          "slug": "SidecarRestart",
+          "kind": "interface",
+          "signature": "interface SidecarRestart",
+          "doc": "When a sidecar that ended is started again, and how fast.",
+          "docFull": "When a sidecar that ended is started again, and how fast.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarRun",
+          "slug": "SidecarRun",
+          "kind": "typeAlias",
+          "signature": "type SidecarRun = object | object",
+          "doc": "What runs: a module in the app's runtime, or a program.",
+          "docFull": "What runs: a module in the app's runtime, or a program.\n\n`module` is relative to the project (`\"./server/main.ts\"`). Without `nodeModules` it is part of\nthe app's own module graph (resolved through the app's `deno.json`) and embedded as it is. With\n`nodeModules` (a Node backend, e.g. `\"apps/server/dist/bin.mjs\"` and its package's\n`node_modules`) denext bundles it at packaging, every npm import inlined, except the packages\nwith a native addon (`.node`) and those listed in `external`, which are copied whole beside the\nbundle and loaded with `require`.\n\n`exec` is a program path: absolute, a bare name found on `PATH`, or relative to the project\n(`\"./bin/server\"`), which the package scripts copy into the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarShutdown",
+          "slug": "SidecarShutdown",
+          "kind": "interface",
+          "signature": "interface SidecarShutdown",
+          "doc": "How a sidecar is stopped.",
+          "docFull": "How a sidecar is stopped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarState",
+          "slug": "SidecarState",
+          "kind": "typeAlias",
+          "signature": "type SidecarState = idle | starting | ready | backoff | stopping | stopped | failed",
+          "doc": "A sidecar's lifecycle state.",
+          "docFull": "A sidecar's lifecycle state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarStatus",
+          "slug": "SidecarStatus",
+          "kind": "interface",
+          "signature": "interface SidecarStatus",
+          "doc": "A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.",
+          "docFull": "A sidecar's status: what `sidecar(name).status`, `sidecarStatus` and `onSidecarStatus` report.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "stopSidecars",
+          "slug": "stopSidecars",
+          "kind": "function",
+          "signature": "stopSidecars(): Promise<void>",
+          "doc": "Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left.",
+          "docFull": "Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before\n`installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still\nends whatever is left.",
+          "params": [],
+          "returns": "Once every sidecar has stopped.",
+          "examples": [
+            "```ts\nimport { stopSidecars } from \"denext/desktop\";\nimport { installAppUpdateAndRelaunch } from \"denext/desktop/updater\";\n\nawait stopSidecars();\ninstallAppUpdateAndRelaunch();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "stripDesktopCredentials",
           "slug": "stripDesktopCredentials",
           "kind": "function",
@@ -17755,7 +18156,7 @@
           "kind": "function",
           "signature": "installAppUpdateAndRelaunch(options?: object): object",
           "doc": "Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).",
-          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).",
+          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).\n\nThe app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open; to give\nthem their graceful shutdown, `await stopSidecars()` (from `denext/desktop`) before calling it.",
           "params": [
             {
               "name": "options",
@@ -18117,6 +18518,116 @@
           "examples": [
             "```ts\nimport { onDesktopEvent } from \"denext/desktop/client\";\n\nconst stop = onDesktopEvent<{ id: string }>(\"scanner\", \"attached\", ({ id }) => {\n  console.log(\"scanner attached\", id);\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "onSidecarStatus",
+          "slug": "onSidecarStatus",
+          "kind": "function",
+          "signature": "onSidecarStatus(name: string, handler: (status: SidecarStatus) => void): () => void",
+          "doc": "Call handler with the sidecar's status on every change (a status emitted before the page subscribed is delivered once it does). Off desktop it does nothing.",
+          "docFull": "Call `handler` with the sidecar's status on every change (a status emitted before the page\nsubscribed is delivered once it does). Off desktop it does nothing.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The sidecar's name."
+            },
+            {
+              "name": "handler",
+              "doc": "Called with each status."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onSidecarStatus } from \"denext/desktop/client\";\n\nconst stop = onSidecarStatus(\"server\", (s) => setBanner(s.state === \"ready\" ? null : s.state));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "restartSidecar",
+          "slug": "restartSidecar",
+          "kind": "function",
+          "signature": "restartSidecar(name: string): Promise<SidecarStatus>",
+          "doc": "Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt count), e.g. from a \"Restart backend\" button after it failed.",
+          "docFull": "Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt\ncount), e.g. from a \"Restart backend\" button after it `failed`.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The sidecar's name."
+            }
+          ],
+          "returns": "Its status once it is starting again.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sidecarInfo",
+          "slug": "sidecarInfo-fn",
+          "kind": "function",
+          "signature": "sidecarInfo(name: string): Promise<SidecarInfo>",
+          "doc": "What the page may know about a sidecar: its state, loopback port and url, and the values its definition exposes (expose, e.g. a per-launch token the page presents to it).",
+          "docFull": "What the page may know about a sidecar: its state, loopback `port` and `url`, and the values its\ndefinition exposes (`expose`, e.g. a per-launch token the page presents to it).",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The sidecar's name."
+            }
+          ],
+          "returns": "The info.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarInfo",
+          "slug": "SidecarInfo-iface",
+          "kind": "interface",
+          "signature": "interface SidecarInfo",
+          "doc": "What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).",
+          "docFull": "What the page (and a `ready.probe`) learns about a sidecar: `sidecarInfo(name)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarState",
+          "slug": "SidecarState",
+          "kind": "typeAlias",
+          "signature": "type SidecarState = idle | starting | ready | backoff | stopping | stopped | failed",
+          "doc": "A sidecar's lifecycle state.",
+          "docFull": "A sidecar's lifecycle state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sidecarStatus",
+          "slug": "sidecarStatus-fn",
+          "kind": "function",
+          "signature": "sidecarStatus(name: string): Promise<SidecarStatus>",
+          "doc": "The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.",
+          "docFull": "The status of one of the app's sidecars (`desktop.sidecars`): its state (`starting`, `ready`,\n`backoff`, `failed`, …), port, attempts and how its last run ended.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The sidecar's name."
+            }
+          ],
+          "returns": "The status. Rejects not_found for a name the app does not declare, and unavailable off desktop or in an app without sidecars.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarStatus",
+          "slug": "SidecarStatus-iface",
+          "kind": "interface",
+          "signature": "interface SidecarStatus",
+          "doc": "A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.",
+          "docFull": "A sidecar's status: what `sidecar(name).status`, `sidecarStatus` and `onSidecarStatus` report.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         }
       ]

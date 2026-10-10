@@ -8,7 +8,12 @@ export default function RootLayout({ children }: { children: unknown }) {
   return (
     <html lang="en" className={theme}>
       <head>
-        <style>{"main { display: block; }"}</style>
+        <style>
+          {"main { display: block; }" +
+            // The enter class the pair boundary sets: a real animation on each entering host.
+            "@keyframes pair-in { from { opacity: 0 } }" +
+            "::view-transition-new(.pair-in) { animation: 300ms pair-in; }"}
+        </style>
       </head>
       <body data-theme={theme}>
         <button

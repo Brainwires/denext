@@ -50,6 +50,11 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Install Playwright's Chromium and WebKit
+        # tests/e2e/spa-shell.e2e.test.ts drives both engines through playwright-core (pinned in
+        # deno.json); under CI=1 it fails rather than skips when they are missing.
+        run: deno run -A npm:playwright-core@1.63.0 install --with-deps chromium webkit
+
       - name: E2E tests (headless Chromium via astral)
         # astral downloads a pinned Chromium on first run; the suite builds example
         # apps and drives hydration + next-compat pages in a real browser.
@@ -105,3 +110,32 @@ jobs:
 
       - name: Migration beds
         run: deno task test:migration-bed
+
+  # Timer stress: the timer-heavy unit tests (client runtime, mobile, desktop, React Native, Expo,
+  # VirtualList, navigation) under seeded timer jitter (`tests/stress/timer-jitter.ts`), several
+  # runs with different seeds. A stall before timer and microtask callbacks imitates a loaded
+  # machine, so a test that sleeps a fixed time instead of awaiting the work fails here rather
+  # than once in a while on CI. The job summary lists each run's seed; replay a failed one with
+  # `deno task test:stress --seed <seed>`.
+  timer-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # match ci.yml
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Timer stress (10 seeded runs)
+        run: deno task test:stress --runs 10

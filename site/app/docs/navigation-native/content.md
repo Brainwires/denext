@@ -102,6 +102,7 @@ the page's data; `StackLayout`'s `screenOptions` prop sets the defaults for ever
 | `headerShown`                                                           | Draw the native-style header (default `false`).                                                                                                                                              |
 | `headerLargeTitle`                                                      | iOS: a large title that collapses into the header as the screen scrolls.                                                                                                                     |
 | `headerBackTitle`, `headerBackVisible`                                  | The back button's label and visibility.                                                                                                                                                      |
+| `headerBackButtonDisplayMode`                                           | iOS: `"default"` (the previous screen's title), `"generic"` ("Back") or `"minimal"` (the chevron alone; the title stays as its `aria-label`).                                                |
 | `sheetAllowedDetents`, `sheetInitialDetentIndex`, `sheetGrabberVisible` | A `"formSheet"`'s detents, the one it opens at, and its grabber.                                                                                                                             |
 
 From inside a screen, `useStackNavigation()` gives `push`, `pop(count?)`, `popToTop`,

@@ -10,6 +10,9 @@ import { isNotFound } from "../../runtime/error-boundary.ts";
 import { publicEnv } from "../../runtime/public-env.ts";
 import { augmentMetadataConventions } from "../../server/augment-metadata.ts";
 import { renderDocument } from "../../server/document.ts";
+import { setBasePath } from "../../client/navigation.ts";
+import { FLIGHT_BOOT_FILE, hasFlightBoot } from "../flight-boot.ts";
+import { CLIENT_PREFIX } from "../prod-server/assets.ts";
 import { peelLocale } from "../../server/i18n.ts";
 import { renderPage } from "../../server/render-page.ts";
 import { createRequestContext, runWithContext } from "../../server/request-context.ts";
@@ -23,6 +26,7 @@ function renderStatic(
   route: PageRoute,
   params: RouteParams,
   pathname: string,
+  flightBoot: string | undefined,
 ): Promise<string> {
   const { manifest, i18n } = ctx;
   const request = new Request(`http://localhost${pathname}`);
@@ -54,8 +58,9 @@ function renderStatic(
       metadata: rendered.metadata,
       viewport: rendered.viewport,
       clientEntry: clientEntryFor(ctx, route),
+      deferredEntry: flightBoot,
       styles: styleHrefsFor(ctx, route),
-      hydration: { params, searchParams: "", pathname },
+      hydration: { params, searchParams: "", pathname, basePath: ctx.basePath || undefined },
       flight: rendered.flight,
       islands: rendered.islands,
       signalState: rendered.signalState,
@@ -94,10 +99,11 @@ async function writePage(
   route: PageRoute,
   params: RouteParams,
   pathname: string,
+  flightBoot: string | undefined,
 ): Promise<void> {
   let html: string;
   try {
-    html = await renderStatic(ctx, route, params, pathname);
+    html = await renderStatic(ctx, route, params, pathname, flightBoot);
   } catch (err) {
     if (isNotFound(err)) return skip(ctx, pathname, "renders notFound()");
     throw err;
@@ -118,19 +124,39 @@ async function writePage(
  * Render a route for one param set. With i18n, emit one variant per locale: the default
  * locale unprefixed, others under /<locale>/… . Without i18n, a single unprefixed page.
  */
-async function renderParamSet(ctx: ExportContext, route: PageRoute, params: RouteParams) {
+async function renderParamSet(
+  ctx: ExportContext,
+  route: PageRoute,
+  params: RouteParams,
+  flightBoot: string | undefined,
+) {
   const { i18n } = ctx;
   const basePath = fillPattern(route.pattern, params);
   for (const loc of i18n ? i18n.locales : [null]) {
     const isDefault = !i18n || loc === i18n.defaultLocale;
     const pathname = isDefault ? basePath : `/${loc}${basePath === "/" ? "" : basePath}`;
     const localeParams = i18n ? { ...params, locale: loc! } : params;
-    await writePage(ctx, route, localeParams, pathname);
+    await writePage(ctx, route, localeParams, pathname, flightBoot);
   }
 }
 
 /** Render every page (× each static param set). */
 export async function renderAllPages(ctx: ExportContext): Promise<void> {
+  // `<Link>` and `navigate()` prefix the basePath on the server as the production server sets
+  // it up to (the browser reads it from the hydration data).
+  setBasePath(ctx.basePath);
+  try {
+    await renderRoutes(ctx);
+  } finally {
+    setBasePath("");
+  }
+}
+
+async function renderRoutes(ctx: ExportContext): Promise<void> {
+  // The Flight entry's deferred boot, which a page of deferred islands loads instead.
+  const flightBoot = await hasFlightBoot(ctx.clientOut)
+    ? `${ctx.assetBase}${CLIENT_PREFIX}${FLIGHT_BOOT_FILE}`
+    : undefined;
   for (const route of ctx.manifest.pages) {
     const mod = (await ctx.load(route.filePath)) as PageModule;
     // force-dynamic routes render per request; they can't be pre-rendered.
@@ -143,7 +169,7 @@ export async function renderAllPages(ctx: ExportContext): Promise<void> {
       skip(ctx, route.routePath, "dynamic route without generateStaticParams");
       continue;
     }
-    for (const params of paramSets) await renderParamSet(ctx, route, params);
+    for (const params of paramSets) await renderParamSet(ctx, route, params, flightBoot);
   }
 }
 

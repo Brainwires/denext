@@ -111,6 +111,8 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "plugins",
     // …and a plugin's `setup` is a live function either way.
     "plugins[].setup",
+    // The shell component's props: `Record<string, unknown>`, values opaque as `i18n.messages`'.
+    "spa.shell.props",
   ]);
 });
 

@@ -58,6 +58,7 @@ import {
 } from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
+import { desktopNpmArgsFor } from "../../build/desktop-capabilities.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -102,6 +103,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
+    "  denext desktop add sidecar --name api --entry server/main.mjs --node-modules server/node_modules\n" +
+    "                                         Run a backend next to the window (desktop.sidecars)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
     "                                         Sign a full-app update (archive + app-update.json)\n" +
     "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +
@@ -520,7 +523,12 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     console.error(line);
   }
   const formatArgs = format && age.formats ? ["--format", format] : [];
-  await spawnDenoAndExit(["run", "-A", script, ...formatArgs, ...ctx.rest], dir);
+  // A project with a package.json / node_modules runs its script with npm packages from Deno's
+  // cache, as the script's own `deno desktop` does: in `nodeModulesDir: "manual"` (a pnpm
+  // workspace) the bundler's npm imports are not in node_modules, and Deno would rewrite the
+  // workspace's root package.json from pnpm-workspace.yaml.
+  const npmMode = (await desktopNpmArgsFor(dir)).filter((a) => a.startsWith("--node-modules-dir"));
+  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir);
 }
 
 /** What a packaging script predating denext 3.1 lacks. */

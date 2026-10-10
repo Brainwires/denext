@@ -10,7 +10,7 @@
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { useEffect, useState } from "../src/runtime/hooks.ts";
+import { useCallback, useEffect, useMemo, useState } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 
@@ -118,4 +118,49 @@ Deno.test("a mount whose render-phase update also mounts an effect still runs it
   flushSync();
   assertEquals((container.childNodes[0] as unknown as FakeElement).getAttribute("data-n"), "3");
   assertEquals(ran, [3]); // exactly one mount effect, with the converged value
+});
+
+// A memo stored in state during render ("store information from previous renders"), the shape
+// of T3 Code's `useUsage`: `if (last !== merged) setLast(merged)`. React re-renders reusing the
+// work-in-progress hooks, so the memo's deps match the previous PASS and it keeps its identity;
+// the component converges in one extra pass. Restoring the committed memo deps for each pass
+// recomputed it every time, so `last !== merged` held forever ("Maximum update depth exceeded").
+function KeepsLastMerged(
+  { items, calls }: { items: readonly number[]; calls: { memo: number } },
+): VNode {
+  const merged = useMemo(() => {
+    calls.memo++;
+    return { total: items.reduce((a, b) => a + b, 0) };
+  }, [items]);
+  const onPick = useCallback(() => merged.total, [merged]);
+  const [last, setLast] = useState<{ merged: typeof merged; onPick: typeof onPick } | null>(null);
+  if (last?.merged !== merged || last.onPick !== onPick) setLast({ merged, onPick });
+  return h("span", { "data-total": String(last?.merged.total ?? "none") });
+}
+
+Deno.test("a memo stored in state during render converges at mount (memo kept across passes)", () => {
+  const calls = { memo: 0 };
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  createRoot(asEl(container)).render(h(KeepsLastMerged, { items: [1, 2], calls }));
+  flushSync();
+  assertEquals((container.childNodes[0] as unknown as FakeElement).getAttribute("data-total"), "3");
+  assertEquals(calls.memo, 1); // React computes the memo once; the re-render pass reuses it
+});
+
+Deno.test("a memo stored in state during render converges when its deps change", () => {
+  const calls = { memo: 0 };
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const root = createRoot(asEl(container));
+  root.render(h(KeepsLastMerged, { items: [1, 2], calls }));
+  flushSync();
+  // New deps vs the COMMITTED render: the memo recomputes once and the stored copy follows it.
+  root.render(h(KeepsLastMerged, { items: [4, 5, 6], calls }));
+  flushSync();
+  assertEquals(
+    (container.childNodes[0] as unknown as FakeElement).getAttribute("data-total"),
+    "15",
+  );
+  assertEquals(calls.memo, 2);
 });

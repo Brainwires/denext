@@ -47,23 +47,24 @@ interface LocationState {
 
 const listeners = new Set<() => void>();
 
-// The configured basePath (denext.config `basePath`). Set on the server via
-// setBasePath(); read from the hydration payload on the client.
-let configuredBase = "";
+// The configured basePath (denext.config `basePath`). Set on the server via setBasePath(); read
+// from the hydration payload on the client. Kept on a process-wide slot: a compatibility-mode
+// server bundle carries its own copy of this module, whose `<Link>` must see it too.
+const baseSlot = globalThis as { __denextBasePath?: string };
 let clientBaseRead = false;
 
 /** Set the app's basePath so `<Link>`/`navigate()` prefix URLs (SSR + startup). */
 export function setBasePath(basePath: string): void {
-  configuredBase = basePath.replace(/\/$/, "");
+  baseSlot.__denextBasePath = basePath.replace(/\/$/, "");
 }
 
 function basePath(): string {
-  if (!configuredBase && !clientBaseRead && typeof document !== "undefined") {
+  if (!baseSlot.__denextBasePath && !clientBaseRead && typeof document !== "undefined") {
     clientBaseRead = true;
     const bp = readData().basePath;
-    if (bp) configuredBase = bp.replace(/\/$/, "");
+    if (bp) baseSlot.__denextBasePath = bp.replace(/\/$/, "");
   }
-  return configuredBase;
+  return baseSlot.__denextBasePath ?? "";
 }
 
 /** Prefix an app-relative path with basePath (idempotent; skips external URLs). */
@@ -207,15 +208,10 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
  * content instead of dropping to `default.tsx` (Next.js semantics; `server/slot-state.ts`).
  */
 function slotStateHeader(): Record<string, string> {
-  try {
-    const raw = document.getElementById("__denext_data")?.textContent;
-    const state = raw ? (JSON.parse(raw) as HydrationData).slotState : undefined;
-    return state && Object.keys(state).length > 0
-      ? { "x-denext-slot-state": JSON.stringify(state) }
-      : {};
-  } catch {
-    return {};
-  }
+  const state = (readData() as HydrationData | null)?.slotState;
+  return state && Object.keys(state).length > 0
+    ? { "x-denext-slot-state": JSON.stringify(state) }
+    : {};
 }
 
 /** The prefetch-cache key: the URL plus the slot state it was rendered under. */
@@ -712,14 +708,19 @@ export function retainRoot(root: Root): void {
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
 export function writeDataIsland(data: HydrationData): void {
-  let live = document.getElementById("__denext_data");
+  jsonIsland("__denext_data").textContent = JSON.stringify(data);
+}
+
+/** The live document's JSON island `#<id>`, created (empty, at the end of `<body>`) if absent. */
+function jsonIsland(id: string): HTMLElement {
+  let live = document.getElementById(id);
   if (!live) {
     live = document.createElement("script");
-    live.id = "__denext_data";
+    live.id = id;
     (live as HTMLScriptElement).type = "application/json";
     document.body.appendChild(live);
   }
-  live.textContent = JSON.stringify(data);
+  return live;
 }
 
 /**
@@ -747,18 +748,11 @@ export function setResumabilityReboot(
  */
 function syncScript(parsed: Document, id: string): void {
   const incoming = parsed.getElementById(id);
-  let live = document.getElementById(id);
   if (!incoming) {
-    live?.remove();
+    document.getElementById(id)?.remove();
     return;
   }
-  if (!live) {
-    live = document.createElement("script");
-    live.id = id;
-    (live as HTMLScriptElement).type = "application/json";
-    document.body.appendChild(live);
-  }
-  live.textContent = incoming.textContent;
+  jsonIsland(id).textContent = incoming.textContent;
 }
 
 // ---- Link interception -----------------------------------------------------

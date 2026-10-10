@@ -35,6 +35,8 @@ export interface SuspenseListState {
   ready: boolean[];
   /** A frozen copy of {@link SuspenseListState.ready} for one render's decisions. */
   snapshot: boolean[];
+  /** What a member shows this render; set with the policy (suspense-list-runtime.ts). */
+  display?: (member: Fiber) => "content" | "fallback" | "hidden";
 }
 
 /**

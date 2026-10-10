@@ -10,6 +10,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { startTransition } from "../mod.ts";
 import { __setAsyncTransitionWarnMs } from "../src/client/fiber/reconciler.ts";
+import { installAsyncTransitionWatchdog } from "../src/client/fiber/scheduler.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -28,6 +29,7 @@ Deno.test({
       warnings.push(String(a[0] ?? ""));
     };
     __setAsyncTransitionWarnMs(20);
+    installAsyncTransitionWatchdog(); // the dev entries install it (via installDevtools)
     try {
       // Prod (no __denextDev): a never-settling async transition warns nothing.
       g.__denextDev = false;
@@ -50,6 +52,7 @@ Deno.test({
     } finally {
       console.warn = origWarn;
       __setAsyncTransitionWarnMs(10_000);
+      installAsyncTransitionWatchdog(false);
       if (origDev === undefined) delete (g as Any).__denextDev;
       else g.__denextDev = origDev;
     }
@@ -69,6 +72,7 @@ Deno.test({
       warnings.push(String(a[0] ?? ""));
     };
     __setAsyncTransitionWarnMs(40);
+    installAsyncTransitionWatchdog();
     try {
       g.__denextDev = true;
       // A transition that settles quickly (before the threshold) must NOT warn.
@@ -80,6 +84,7 @@ Deno.test({
     } finally {
       console.warn = origWarn;
       __setAsyncTransitionWarnMs(10_000);
+      installAsyncTransitionWatchdog(false);
       if (origDev === undefined) delete (g as Any).__denextDev;
       else g.__denextDev = origDev;
     }

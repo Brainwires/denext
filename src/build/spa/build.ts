@@ -24,6 +24,7 @@ import {
   spaShellHtml,
   STYLE_FILE,
 } from "./shared.ts";
+import { renderSpaShell } from "./shell.ts";
 import { writeMobileExportExtras } from "../mobile-export-extras.ts";
 import { writeDesktopPreload } from "../desktop-preload.ts";
 import { setupPlugins } from "../pipeline-shared.ts";
@@ -68,14 +69,11 @@ async function bundleAndShell(
   shellDir: string,
   platform: Platform = "web",
 ): Promise<readonly string[] | undefined> {
-  const { hasStyles, modules } = await bundleSpaInto(
-    paths,
-    entryPath,
-    clientDir,
-    prodMinify(),
-    false,
-    platform,
-  );
+  const [{ hasStyles, modules }, shell] = await Promise.all([
+    bundleSpaInto(paths, entryPath, clientDir, prodMinify(), false, platform),
+    // `spa.shell`: the prerendered static shell for this target, in place of `spa.loading`.
+    renderSpaShell(paths, platform, prodMinify()),
+  ]);
   // Precompress the client chunks (gzip `.gz` siblings) exactly like the App Router build's
   // finalize step, so the prod server serves them with zero per-request CPU — and so
   // `denext analyze` can report over-the-wire (gzip) sizes for a SPA bundle. `spa.precompress:
@@ -95,6 +93,7 @@ async function bundleAndShell(
     styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
     preload,
     reactNativeRootStyle: reactNativeRootStyle(paths.config),
+    shell,
   });
   await Deno.writeTextFile(join(shellDir, SHELL_FILE), html);
   return modules;

@@ -33,6 +33,8 @@ import { buildShell } from "./devtools-panel/shell.ts";
 import { buildStyles } from "./devtools-panel/styles.ts";
 import { installDuplicateKeyWarning } from "./fiber/reconcile-children.ts";
 import { installDomPropWarnings } from "./dom-props.ts";
+import { installHydrationWarning } from "./fiber/hydration.ts";
+import { installAsyncTransitionWatchdog } from "./fiber/scheduler.ts";
 
 function isDev(): boolean {
   try {
@@ -166,6 +168,8 @@ export function installDevtools(): void {
   // The reconciler's dev-only warnings ride the dev entries too (never a production bundle).
   installDuplicateKeyWarning();
   installDomPropWarnings();
+  installHydrationWarning();
+  installAsyncTransitionWatchdog();
   const api = installInspector();
   if (!api) return;
   installed = true;

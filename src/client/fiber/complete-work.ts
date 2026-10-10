@@ -41,7 +41,7 @@ function createHostInstance(wip: Fiber): Element {
  * identity, like applyProps' own per-prop `oldValue === value` guard — so a `false` here
  * means applyProps would change nothing (it would only re-register identical listeners).
  */
-export function hostPropsChanged(
+function hostPropsChanged(
   prev: Record<string, unknown> | null | undefined,
   next: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -58,17 +58,23 @@ export function hostPropsChanged(
   return count !== 0;
 }
 
+/**
+ * Complete a host update, shared with the singleton runtime: true when `wip` is one (it has
+ * an alternate). The listener map is created by the first handler (dom-props) and shared by
+ * both buffers. applyProps + re-sync are deferred to the commit (mutation) phase — only when
+ * a prop other than `children` changed (React's prepareUpdate diff). applyProps over equal
+ * props is a no-op, so a re-rendered list of unchanged rows commits no work.
+ */
+export function completeHostUpdate(wip: Fiber): boolean {
+  if (!wip.listeners) wip.listeners = wip.alternate?.listeners;
+  if (wip.alternate === null) return false;
+  if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
+  return true;
+}
+
 function completeHost(wip: Fiber): void {
   if (isHydrating) popHydrationCursor();
-  // The listener map is created by the first handler (dom-props) and shared by both buffers.
-  if (!wip.listeners) wip.listeners = wip.alternate?.listeners;
-  if (wip.alternate !== null) {
-    // Update: applyProps + re-sync deferred to the commit (mutation) phase — only when a
-    // prop other than `children` changed (React's prepareUpdate diff). applyProps over
-    // equal props is a no-op, so a re-rendered list of unchanged rows commits no work.
-    if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
-    return;
-  }
+  if (completeHostUpdate(wip)) return;
   // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
   // — a ref callback must fire at commit (after the node is placed), never during this render
   // phase — and flag the fiber so the commit attaches it (see `RefAttach`).

@@ -251,10 +251,19 @@ export interface SpaConfig {
    * background (pair with a pre-paint script in {@link head}), a logo splash, or a spinner —
    * the same role a Vite/CRA `index.html` fills with markup inside `<div id="root">…</div>`.
    * `denext migrate --from vite` carries the source `index.html`'s `#root` content here.
+   * Setting it together with {@link shell} is a config error.
    *
    * @widget textarea
    */
   loading?: string;
+  /**
+   * A prerendered, adoptable static shell: a component server-rendered into `#${rootId}` at
+   * build, export and dev, so the page paints the app's real layout (with the app's CSS) and
+   * its fields accept typing before the client bundle has loaded. The app then renders
+   * off-screen and replaces the shell in one commit, carrying over what was typed. Replaces
+   * {@link loading}. See {@link SpaShellConfig}.
+   */
+  shell?: SpaShellConfig;
   /** `<html lang>` value for the generated shell. Default `"en"`. */
   lang?: string;
   /**
@@ -336,6 +345,56 @@ export interface SpaConfig {
   tanstackRouter?: SpaTanstackRouterConfig;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
+}
+
+/**
+ * The prerendered static shell under {@link SpaConfig.shell}.
+ *
+ * `component` is server-rendered into the mount element (marked `data-denext-shell`) with the
+ * app's stylesheet linked in `<head>`, so first paint has the final layout and fonts. Mark each
+ * field the user may type into before the app starts (`<textarea>`, `<input>`,
+ * `contenteditable`) with `data-denext-shell-key="<key>"`: an inline script records its text,
+ * selection, focus and scroll as the user types. When the app is ready (see {@link readyOn})
+ * it replaces the shell in one commit, and an app field with the same key gets the state: an
+ * `<input>` / `<textarea>` is filled in and focused by denext; anything else (an editor) reads it
+ * with `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext`.
+ */
+export interface SpaShellConfig {
+  /**
+   * The shell component's module, relative to the project root (`"./src/AppShell.tsx"`); its
+   * default export is rendered. It must be pure: plain elements and the app's class names, no
+   * app runtime (no router, store or data), no stylesheet import (the app's own CSS applies). A
+   * platform file beside it (`AppShell.desktop.tsx`, `AppShell.ios.tsx`) is used for that
+   * export target.
+   */
+  component: string;
+  /** Props passed to the component (JSON values). */
+  props?: Record<string, unknown>;
+  /**
+   * A module bundled into one classic script and inlined before the shell markup (with a CSP
+   * hash under `spa.csp`): it runs before first paint, to set `<html>` classes or CSS variables
+   * from `localStorage` (a saved theme) so the shell paints in them.
+   */
+  bootScript?: string;
+  /**
+   * The export targets that carry the shell (`["macos", "windows", "linux"]` for a desktop-only
+   * shell). Default: every target. A target without it gets the plain empty mount element.
+   */
+  platforms?: Array<"web" | "ios" | "android" | "macos" | "windows" | "linux">;
+  /**
+   * When the app replaces the shell. `"first-settled-commit"` (default): its first commit with
+   * no Suspense boundary showing a fallback. `"shellReady"`: when the app calls `shellReady()`
+   * (from `denext`), e.g. once its editor has mounted. `shellReady()` also swaps early under the
+   * default.
+   */
+  readyOn?: "shellReady" | "first-settled-commit";
+  /**
+   * The longest the shell is kept once the app has started, in milliseconds: the app replaces
+   * it then even without a ready signal. Default `5000`.
+   *
+   * @minimum 0
+   */
+  maxHoldMs?: number;
 }
 
 /** TanStack Router build settings under {@link SpaConfig.tanstackRouter}. */
@@ -930,6 +989,17 @@ export interface DesktopConfig {
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
+   * Backends the app runs and supervises next to its window, as an Electron app spawns its server:
+   * `{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second
+   * binary; a Node backend with `nodeModules` is bundled at packaging, its native addons copied),
+   * `{ name, run: { exec } }` spawns a program. Each gets a loopback port (`port: "auto"`), is
+   * started once the window's server is up, checked for readiness (`ready`), restarted with backoff
+   * after a crash (`restart`), stopped with a grace period (`shutdown`) and ended with the app.
+   * `proxy: true` points `spa.proxy` at one. Functions (`ready.probe`, a computed `bootstrap` or
+   * `secrets`) go in `runDesktop({ sidecars })` instead. `denext desktop add sidecar` writes one.
+   */
+  sidecars?: DesktopSidecarConfig[];
+  /**
    * Whether the web inspector (DevTools) can be opened in the window: F12, the context menu,
    * Safari's Develop menu and remote debugging. Default: on in `denext desktop dev` (always) and
    * `denext desktop run`, OFF in a packaged app — set `true` to ship an inspectable build. The
@@ -1014,6 +1084,98 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/**
+ * One {@link DesktopConfig.sidecars} entry: a backend the app runs and supervises (the data form of
+ * `defineSidecar` from `denext/desktop`, whose `runDesktop({ sidecars })` also takes functions and a
+ * `bootstrap` value).
+ */
+export interface DesktopSidecarConfig {
+  /** A unique name: lower-case letters, digits and `-` (`"server"`). */
+  name: string;
+  /** What runs: a module in a worker of the app's runtime, or a program (exactly one of them). */
+  run: DesktopSidecarRunConfig;
+  /** Arguments (`process.argv.slice(2)`, or the program's argv); `{port}` becomes the port. */
+  args?: string[];
+  /** Environment variables (a module sidecar's own `process.env` copy; a program's environment). */
+  env?: Record<string, string>;
+  /** A program's working directory (relative to the app's data folder, or absolute). */
+  cwd?: string;
+  /** A loopback port: `"auto"` picks a free one at launch (kept across restarts), or a number. */
+  port?: "auto" | number;
+  /** The environment variable the port is published under (default `PORT`). */
+  portEnv?: string;
+  /**
+   * Values only the sidecar sees (`denextSidecar.secrets`, or a program's first stdin line), never
+   * in its environment or argv; `"$random"` is 32 random bytes, new each launch.
+   */
+  secrets?: Record<string, string>;
+  /** When it counts as ready; every check given must pass (none: once started). */
+  ready?: DesktopSidecarReadyConfig;
+  /** When an ended sidecar is started again, and how fast. */
+  restart?: DesktopSidecarRestartConfig;
+  /** How it is stopped. */
+  shutdown?: DesktopSidecarShutdownConfig;
+  /** Where its output goes: the app's stderr (default), a log file in the app's data folder, both, or nowhere. */
+  logs?: "inherit" | "file" | "both" | "none";
+  /** Make `spa.proxy` forward to its port (one sidecar at most). */
+  proxy?: boolean;
+  /** Values the page reads with `sidecarInfo(name)`; `"$secret:<NAME>"` exposes a secret. */
+  expose?: Record<string, string>;
+  /** What it needs beyond the app's baseline permissions, baked into the packaged app. */
+  permissions?: DesktopExtraPermissions;
+}
+
+/**
+ * {@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with
+ * `nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.
+ */
+export interface DesktopSidecarRunConfig {
+  /** The module, relative to the project. */
+  module?: string;
+  /** Its `node_modules` folder: a Node backend, bundled at packaging. */
+  nodeModules?: string;
+  /** Packages copied whole rather than bundled (loaded with `require()` at run time). */
+  external?: string[];
+  /** Further entry modules it starts itself (worker scripts), relative to the module. */
+  entries?: string[];
+  /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
+  exec?: string;
+}
+
+/** {@link DesktopSidecarConfig.shutdown}. */
+export interface DesktopSidecarShutdownConfig {
+  /** How long it may take to finish when stopped before it is ended (default 5 000 ms). */
+  graceMs?: number;
+}
+
+/** {@link DesktopSidecarConfig.ready}. */
+export interface DesktopSidecarReadyConfig {
+  /** A path polled on its port until it answers 2xx (`"/health"`). */
+  http?: string;
+  /** A regular expression a line of its output must match. */
+  stdout?: string;
+  /** It calls `globalThis.denextSidecar.ready()` itself (a module sidecar). */
+  signal?: boolean;
+  /** How long a start may take (default 30 000 ms). */
+  timeoutMs?: number;
+  /** How often `http` is retried (default 100 ms). */
+  intervalMs?: number;
+}
+
+/** {@link DesktopSidecarConfig.restart}. */
+export interface DesktopSidecarRestartConfig {
+  /** `"crash"` (default): after a failure; `"always"`: after any end; `"never"`. */
+  on?: "crash" | "always" | "never";
+  /** The first retry's delay, doubled each time (default 500 ms). */
+  backoffMs?: number;
+  /** The longest delay (default 30 000 ms). */
+  maxBackoffMs?: number;
+  /** Consecutive failed starts before it is given up (default 5). */
+  maxAttempts?: number;
+  /** A run that stays ready this long resets the count (default 30 000 ms). */
+  resetAfterMs?: number;
 }
 
 /** {@link DesktopConfig.linux}: Linux launch settings of the packaged app. */

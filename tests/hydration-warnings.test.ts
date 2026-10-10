@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { hydrateRoot, setDocument } from "../src/client/reconciler.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
+import { installHydrationWarning } from "../src/client/fiber/hydration.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 
@@ -18,11 +19,13 @@ function capture(dev: boolean, fn: () => void): string[] {
   const original = console.warn;
   console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
   if (dev) devFlag.__denextDev = true;
+  installHydrationWarning(); // the dev entries install it (via installDevtools)
   try {
     fn();
   } finally {
     console.warn = original;
     delete devFlag.__denextDev;
+    installHydrationWarning(false);
   }
   return warnings;
 }

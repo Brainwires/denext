@@ -11,11 +11,10 @@ import {
 } from "./fiber-utils.ts";
 import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
-import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef, updateRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { getClassSupport } from "./class-support.ts";
-import { anyProfiler, takeOffscreen } from "./state.ts";
+import { profilerCommit, takeOffscreen } from "./state.ts";
 import { getActivitySupport } from "./activity-support.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
 import {
@@ -34,7 +33,6 @@ import {
   OffscreenBit,
   Placement,
   placePortalChildren,
-  ProfilerMountedBit,
   RefAttach,
   ShowingFallbackBit,
   Snapshot,
@@ -244,7 +242,7 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   if (parked.length > 0) getActivitySupport()!.park(parked);
   commitLayoutEffects(layoutFibers);
   // 5b. Profiler onRender.
-  if (anyProfiler) fireProfilers(wipRoot);
+  profilerCommit?.(wipRoot);
   // 6. DevTools.
   runCommitReport(handle);
   // 7. A store-driven commit runs its passive effects now, as React does for a SyncLane
@@ -404,28 +402,6 @@ function disconnectEffects(fiber: Fiber): void {
 /** Re-run the setup of every effect a prior {@linkcode disconnectEffects} tore down. */
 function reconnectEffects(fiber: Fiber): void {
   forEachOffscreenCell(fiber, reconnectCell);
-}
-
-/**
- * For each committed `<Profiler>` boundary, fire its `onRender` with the subtree's
- * `actualDuration` (components that rendered this commit) and `baseDuration` (every
- * component's most-recent render time, so a fully-memoized commit has actual ≪ base).
- */
-function fireProfilers(root: Fiber): void {
-  const commitTime = performance.now();
-  walk(root, (f) => {
-    const profiler = f.ext?.profiler;
-    if (profiler == null) return;
-    let actual = 0;
-    let base = 0;
-    walk(f, (d) => {
-      actual += d.ext?.actualDuration ?? 0;
-      base += d.ext?.selfBaseDuration ?? 0;
-    });
-    const phase: ProfilerPhase = hasBit(f, ProfilerMountedBit) ? "update" : "mount";
-    f.bits |= ProfilerMountedBit;
-    profiler.onRender?.(profiler.id, phase, actual, base, commitTime - actual, commitTime);
-  });
 }
 
 /**

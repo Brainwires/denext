@@ -7,7 +7,7 @@
 import { copyRemoteAddr } from "./remote-addr.ts";
 // Recognize a library's own Next.js-format errors (redirect / notFound / …) as denext's signals.
 import "./next-signals.ts";
-import { isThenable } from "../runtime/suspense.ts";
+import { isThenable, setSuspenseOriginTrace } from "../runtime/suspense.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
@@ -45,6 +45,21 @@ import {
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
 import { endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
+
+// `DENEXT_DEBUG_SUSPENSE=1`: `use()` remembers where each suspension started (`_origin`), so a
+// thenable that escapes every boundary can be traced below (a raw Promise carries no stack of
+// its own). The env is read once, on the first suspension.
+let debugSuspenseFlag: boolean | null = null;
+setSuspenseOriginTrace((thenable) => {
+  if (debugSuspenseFlag === null) {
+    try {
+      debugSuspenseFlag = !!Deno.env.get("DENEXT_DEBUG_SUSPENSE");
+    } catch {
+      debugSuspenseFlag = false;
+    }
+  }
+  if (debugSuspenseFlag) thenable._origin = new Error("use() suspended here").stack;
+});
 
 /**
  * Path canonicalization (before config rules, middleware, and routing): collapse runs

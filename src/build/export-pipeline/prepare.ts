@@ -9,6 +9,7 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
+import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
@@ -17,6 +18,7 @@ import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { exportSpa } from "../spa.ts";
 import {
   assertPlatformFilesResolve,
+  localModulesOutside,
   routeEntryFiles,
   setModuleGraphRedirects,
 } from "../module-graph.ts";
@@ -27,6 +29,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { assetUrlBase } from "../prod-server/assets.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
 import {
@@ -192,6 +195,10 @@ export async function prepareExport(
   // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
   // previous export stays intact (and servable) until the new one is complete — a failed
   // export never leaves an empty `out/`.
+  // The runtime gates `denext build` computes (a source scan, never the previous export).
+  const outside = await localModulesOutside(paths.projectDir, manifest.pages);
+  const usesActivity = await appUsesActivity(paths.projectDir, outside);
+  const usesViewTransition = await appUsesViewTransition(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -204,6 +211,7 @@ export async function prepareExport(
     i18n: options.i18n ?? paths.i18n ?? undefined,
     outDir,
     clientOut,
+    ...assetUrlBase(paths.config),
     load: await exportLoader(paths, platform, platformRedirects),
     platform,
     platformRedirects,
@@ -214,6 +222,8 @@ export async function prepareExport(
     compat: false,
     compatModuleMap: null,
     transforms: {},
+    usesActivity,
+    usesViewTransition,
     pages: 0,
     skipped: [],
   };

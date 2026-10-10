@@ -427,6 +427,11 @@ export type {
   SwipeAction,
 } from "./src/client/swipe-row/swipeable-row.ts";
 
+// `spa.shell` handoff (denext-specific): the app's side of the prerendered static shell — swap
+// it in (`shellReady`) and take what the user typed into it before the app started.
+export { consumeShellHandoff, shellReady, useShellHandoff } from "./src/client/shell-handoff.ts";
+export type { ShellHandoff } from "./src/client/shell-handoff.ts";
+
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 // Typed Server Actions — the client-safe result type + idle-state helper (pair with
@@ -477,4 +482,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "3.4.3";
+export const VERSION = "3.4.4";

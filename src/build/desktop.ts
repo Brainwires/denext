@@ -61,6 +61,9 @@ import {
   applyDesktopWindowSettings,
   type DesktopWindowSettings,
 } from "../desktop/window-config.ts";
+import { mergeSidecars, type SidecarDefinition } from "../desktop/sidecar.ts";
+import type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
+import type { SidecarHost } from "../desktop/sidecar-host.ts";
 
 /** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
 export type { PickedPaths, PickedTarget, PickMode } from "../desktop/picked-paths.ts";
@@ -86,6 +89,26 @@ export {
   type DesktopMainThreadFn,
   type DesktopPermissions,
 } from "../desktop/extension.ts";
+
+// Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
+// `runDesktop({ sidecars })`).
+export {
+  defineSidecar,
+  type SidecarDefinition,
+  type SidecarExit,
+  type SidecarExposedValue,
+  type SidecarInfo,
+  type SidecarLogs,
+  type SidecarPermissions,
+  type SidecarReady,
+  type SidecarRestart,
+  type SidecarRun,
+  type SidecarShutdown,
+  type SidecarState,
+  type SidecarStatus,
+} from "../desktop/sidecar.ts";
+export type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
+export { stopSidecars } from "../desktop/sidecar-registry.ts";
 
 // Which desktop world the app runs in (stock loopback vs the denext-pinned runtime's in-process
 // memory transport at a stable origin): the env the runtime publishes, and the types the handler's
@@ -466,6 +489,18 @@ export interface RunDesktopOptions {
    * `false` leaves it to the app's own `confirmAppUpdate()` call.
    */
   autoConfirmAppUpdate?: boolean;
+  /**
+   * Backends the app runs and supervises next to its window ({@linkcode defineSidecar}): a module in
+   * a worker of the app's own runtime, or a program. Laid over {@link configSidecars} by name (a
+   * field set here replaces the config's), so `probe`, `bootstrap` and `secrets` can be functions.
+   * They start once the window's server is up; {@linkcode DesktopRuntime.sidecar} controls one.
+   */
+  sidecars?: readonly SidecarDefinition[];
+  /**
+   * `desktop.sidecars` from the config (from {@link resolveDesktopCapabilities}); {@link sidecars}
+   * is laid over it.
+   */
+  configSidecars?: readonly SidecarDefinition[];
 }
 
 /**
@@ -484,6 +519,11 @@ export interface DesktopRuntime {
    * for replay, so one emitted before the page subscribes is still delivered.
    */
   emit(cap: string, event: string, data: unknown): void;
+  /**
+   * The handle of one sidecar (`desktop.sidecars` / `runDesktop({ sidecars })`): its `status`,
+   * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
+   */
+  sidecar(name: string): SidecarHandle;
 }
 
 /**
@@ -1153,6 +1193,10 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // handler error include its message; a packaged build stays generic.
   const emitToPage = (cap: string, event: string, data: unknown) => bridge.emit(cap, event, data);
   const appEvents = desktopAppEvents(options, emitToPage, preloadKey);
+  // The sidecars (`desktop.sidecars` + `runDesktop({ sidecars })`): ports and secrets are settled
+  // now, so `spa.proxy` can point at the proxied one; they start once the server is up.
+  const sidecarHost = await createSidecars(options, emitToPage);
+  const backendProxy = sidecarProxy(options, proxy, sidecarHost);
   // The page's control over its own window (state, size, displays, chrome, a guarded close, quit,
   // files dragged in and out): registered whenever a window was adopted.
   const windowCtl = appWindow === undefined ? undefined : createWindowController({
@@ -1173,6 +1217,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       ...appEvents.capabilities,
       ...(windowCtl ? [windowCtl.capability] : []),
       ...(appCtl ? [appCtl.capability] : []),
+      ...(sidecarHost ? [sidecarHost.capability] : []),
     ],
     {
       appSupportDir: options.appSupportDir,
@@ -1186,9 +1231,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   windowCtl?.install();
   appCtl?.install();
   const handle = createDesktopHandler(
-    options,
+    backendProxy.options,
     outDir,
-    proxy,
+    backendProxy.proxy,
     token,
     onBooted,
     devProxy,
@@ -1212,5 +1257,86 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       return new Response("desktop error", { status: 502 });
     },
   }, (req, info) => handle(req, new URL(req.url), info as DesktopServeInfo));
-  return { window: appWindow, trust, emit: (cap, event, data) => bridge.emit(cap, event, data) };
+  startSidecars(sidecarHost);
+  return {
+    window: appWindow,
+    trust,
+    emit: (cap, event, data) => bridge.emit(cap, event, data),
+    sidecar: (name) => {
+      if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
+      return sidecarHost.handle(name);
+    },
+  };
+}
+
+/** The app's sidecar host, or `undefined` when it declares none (the module is then never loaded). */
+async function createSidecars(
+  options: RunDesktopOptions,
+  emit: (cap: string, event: string, data: unknown) => void,
+): Promise<SidecarHost | undefined> {
+  const sidecars = mergeSidecars(options.configSidecars, options.sidecars);
+  if (sidecars.length === 0) return undefined;
+  const { createSidecarHost } = await import("../desktop/sidecar-host.ts");
+  const dataDir = options.appDirs?.data ?? options.appSupportDir;
+  return await createSidecarHost({
+    sidecars,
+    ...(options.importMetaUrl ? { importMetaUrl: options.importMetaUrl } : {}),
+    ...(dataDir ? { dataDir } : {}),
+    ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+    emit,
+  });
+}
+
+/**
+ * The backend proxy as the handler serves it: with a `proxy: true` sidecar, `spa.proxy` forwards to
+ * the sidecar's port, and a request waits (up to the sidecar's ready timeout) while it starts or
+ * restarts, then answers 503 if it is not ready. Without one, `options` and `proxy` as given.
+ */
+function sidecarProxy(
+  options: RunDesktopOptions,
+  proxy: ProxyModule | undefined,
+  host: SidecarHost | undefined,
+): { options: RunDesktopOptions; proxy: ProxyModule | undefined } {
+  const proxied = host?.proxied;
+  if (!proxied || !host) return { options, proxy };
+  if (!options.proxy || !proxy) {
+    throw new Error(
+      `desktop: sidecar "${proxied.name}" sets proxy: true, which needs spa.proxy (its prefixes)`,
+    );
+  }
+  const sidecar = host.handle(proxied.name);
+  const gated = {
+    ...proxy,
+    proxyToBackend: async (...args: Parameters<ProxyModule["proxyToBackend"]>) => {
+      const status = await sidecar.whenReady();
+      if (status.state !== "ready") {
+        return new Response(`sidecar ${proxied.name} is ${status.state}`, {
+          status: 503,
+          headers: { "retry-after": "1" },
+        });
+      }
+      return await proxy.proxyToBackend(...args);
+    },
+  } as ProxyModule;
+  return {
+    options: {
+      ...options,
+      proxy: { ...options.proxy, target: `http://127.0.0.1:${proxied.port}` },
+    },
+    proxy: gated,
+  };
+}
+
+/**
+ * Start the sidecars, once the window's server took the runtime's page transport: under denext's
+ * pinned runtime `DENO_SERVE_ADDRESS` (an in-process `memory:` address) is honoured by the FIRST
+ * server of each isolate, so a worker's own `node:http` / `Deno.serve` would try to take it again
+ * (`AddrInUse`). The window's server has consumed it by now, so it is cleared for everyone after.
+ */
+function startSidecars(host: SidecarHost | undefined): void {
+  if (!host) return;
+  try {
+    Deno.env.delete("DENO_SERVE_ADDRESS");
+  } catch { /* no --allow-env: nothing to clear */ }
+  host.startAll();
 }

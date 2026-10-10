@@ -56,6 +56,7 @@ import {
   STYLE_FILE,
 } from "./shared.ts";
 import { CHUNK_ERROR_SEED, wrapDynamicImports } from "./chunk-error.ts";
+import { spaShellFor, spaShellInstall } from "./shell.ts";
 import { hasPluginBuildSteps } from "../../plugin/mod.ts";
 
 type DependencyGroups = Partial<
@@ -457,6 +458,8 @@ export async function bundleSpaInto(
         singletons,
         expoRouterLinks: await usesExpoRouter(paths),
         reactNative: reactNativeOptions(paths.config) !== null,
+        // `spa.shell` for this target: the app mounts off-screen and swaps the shell out.
+        shell: spaShellInstall(spaShellFor(spa, platform)),
       },
     );
   // React Native mode needs the esbuild path (its resolver and loaders live there).

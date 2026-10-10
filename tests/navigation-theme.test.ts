@@ -255,3 +255,26 @@ Deno.test("TabsView: bar values are themeable custom properties; the icon is mar
   assertStringIncludes(html, "min-height:var(--dnx-tab-min-height, 49px)");
   assertStringIncludes(html, "data-dnx-tab-icon");
 });
+
+Deno.test("StackHeader: headerBackButtonDisplayMode shapes the iOS back label", async () => {
+  const draw = (options: Record<string, unknown>) =>
+    renderToString(
+      h(StackHeader, {
+        options: { title: "Item", ...options },
+        platform: "ios",
+        canGoBack: true,
+        backTitle: "Inbox",
+        onBack() {},
+      }),
+    );
+  const dflt = await draw({});
+  assertStringIncludes(dflt, ">Inbox</span>");
+  assertStringIncludes(dflt, 'aria-label="Inbox"');
+  const minimal = await draw({ headerBackButtonDisplayMode: "minimal" });
+  assertEquals(minimal.includes("<span"), false, "chevron only");
+  assertStringIncludes(minimal, 'aria-label="Inbox"');
+  const generic = await draw({ headerBackButtonDisplayMode: "generic", headerBackTitle: "X" });
+  assertStringIncludes(generic, ">Back</span>");
+  assertStringIncludes(generic, 'aria-label="Back"');
+  assertStringIncludes(await draw({ headerBackTitle: "X" }), ">X</span>");
+});
