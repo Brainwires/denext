@@ -87,16 +87,6 @@ export function reprovidesContext(fiber: Fiber, contextId: symbol): boolean {
   return info !== undefined && info.id === contextId;
 }
 
-/**
- * A provider's value changed: force every descendant that READS `contextId` to render,
- * so a consumer isn't left stale when the memo bailout skips a non-consumer ancestor
- * between it and the provider. Walks the provider's committed subtree (its child links
- * before this render's reconcile), marks each consumer's lane, and threads `childLanes`
- * up to the provider so bailing ancestors still descend to reach it. Stops at a nested
- * provider that re-provides the same context (it shadows the value below). Mirrors
- * React's `propagateContextChange`; runs only on an actual value change of a mounted
- * provider, so a stable-value provider costs nothing.
- */
 /** Whether `node` is a component that read `contextId` during its last render. */
 export function readsContext(node: Fiber, contextId: symbol): boolean {
   return node.tag === "component" && node.readContexts !== undefined &&
