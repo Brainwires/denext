@@ -8,7 +8,15 @@
 //   - `expo-build-properties`: `ios.deploymentTarget` into the Xcode project's
 //     IPHONEOS_DEPLOYMENT_TARGET, `android.minSdkVersion` / `compileSdkVersion` /
 //     `targetSdkVersion` into android/variables.gradle (each only ever raised), and
-//     `android.usesCleartextTraffic` onto `<application>`.
+//     `android.usesCleartextTraffic` onto `<application>`;
+//   - the launch and root-view colours (`userInterfaceStyle`, `backgroundColor`, `splash`, the
+//     `expo-splash-screen` plugin with its `dark` colours; ./expo-appearance.ts), so no white
+//     frame shows before the app's first one: a fixed `UIUserInterfaceStyle` in Info.plist,
+//     the launch storyboard painted with a light / dark asset-catalog colour (and Capacitor's
+//     white placeholder splash image replaced by that colour), the window and WebView painted
+//     from SceneDelegate.swift (a dynamic `UIColor`), and on Android the colours as resources
+//     (`values-night/` for dark) behind the launch theme's `windowSplashScreenBackground` and
+//     the app theme's `android:windowBackground`.
 //
 // The app config is read statically (`readExpoAppConfig`: project code never runs). What it
 // cannot carry is reported: computed values, build properties without a Capacitor
@@ -19,7 +27,23 @@
 // to carry.
 
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
-import { readExpoAppConfig } from "./expo-app-config.ts";
+import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
+import {
+  ANDROID_APP_COLOR,
+  ANDROID_LAUNCH_COLOR,
+  androidColorsXml,
+  type AppearanceColors,
+  colorSetJson,
+  LAUNCH_COLOR_NAME,
+  LAUNCH_SPLASH_FILE,
+  resolveAppearance,
+  type ResolvedAppearance,
+  withLaunchStoryboardColor,
+  withSceneBackground,
+  withStyleItem,
+} from "./expo-appearance.ts";
+import { capacitorPlaceholders } from "./mobile-icon-source.ts";
+import { encodePng, parseHexColor, solid } from "./png-raster.ts";
 import {
   isAndroidName,
   isPlistKey,
@@ -28,11 +52,16 @@ import {
   withPlistDefault,
 } from "./mobile-native-config.ts";
 import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
+import { dirname } from "@std/path";
 
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
 const VARIABLES_GRADLE = "android/variables.gradle";
 const PBXPROJ = "ios/App/App.xcodeproj/project.pbxproj";
+const LAUNCH_STORYBOARD = "ios/App/App/Base.lproj/LaunchScreen.storyboard";
+const SCENE_DELEGATE = "ios/App/App/SceneDelegate.swift";
+const ASSET_CATALOG = "ios/App/App/Assets.xcassets";
+const ANDROID_RES = "android/app/src/main/res";
 
 /** Android permissions every Capacitor app declares already. */
 const IMPLIED_PERMISSIONS = new Set(["android.permission.INTERNET"]);
@@ -128,6 +157,40 @@ async function edit(
   }
 }
 
+/** A text edit of one native file, named for the report. */
+type TextEdit = { label: string; apply: (text: string) => string | null };
+
+/**
+ * The Info.plist edits: the usage strings (a key that is not one, or a computed text, is a
+ * manual item instead), and `UIUserInterfaceStyle` for a fixed appearance.
+ */
+function infoPlistEdits(
+  config: ExpoAppConfig,
+  ios: ResolvedAppearance,
+  report: NativeInstallReport,
+): TextEdit[] {
+  const usage = Object.entries(config.infoPlist).filter(([key]) => /UsageDescription$/.test(key));
+  const edits: TextEdit[] = [];
+  for (const [key, value] of usage) {
+    if (!isPlistKey(key)) {
+      report.manual.push(
+        `Info.plist key ${JSON.stringify(key)}: not a valid Info.plist key (letters, digits, ` +
+          "`_`, `.`, `-`); not written",
+      );
+    } else if (value === null) {
+      report.manual.push(`Info.plist ${key}: its text is computed in code; set it by hand`);
+    } else edits.push({ label: key, apply: (text) => withPlistDefault(text, key, value) });
+  }
+  if (ios.style) {
+    const style = ios.style === "dark" ? "Dark" : "Light";
+    edits.push({
+      label: `UIUserInterfaceStyle ${style}`,
+      apply: (text) => withPlistDefault(text, "UIUserInterfaceStyle", style),
+    });
+  }
+  return edits;
+}
+
 /**
  * Carry the Expo app config at `dir` into its Capacitor shell's native projects (see the module
  * comment). Running it again changes nothing.
@@ -152,29 +215,10 @@ export async function addExpoAppConfigToProject(
     report.skipped.push("no app.json or app.config.* here: nothing to carry over.");
     return report;
   }
-  const usage = Object.entries(config.infoPlist).filter(([key]) => /UsageDescription$/.test(key));
-  const plist = usage.filter(([key]) => {
-    if (isPlistKey(key)) return true;
-    report.manual.push(
-      `Info.plist key ${JSON.stringify(key)}: not a valid Info.plist key (letters, digits, ` +
-        "`_`, `.`, `-`); not written",
-    );
-    return false;
-  });
-  for (const [key, value] of plist) {
-    if (value === null) {
-      report.manual.push(`Info.plist ${key}: its text is computed in code; set it by hand`);
-    }
-  }
-  await edit(
-    dir,
-    INFO_PLIST,
-    plist.filter(([, v]) => v !== null).map(([key, value]) => ({
-      label: key,
-      apply: (text: string) => withPlistDefault(text, key, value!),
-    })),
-    report,
-  );
+  const ios = resolveAppearance(config.appearance.ios);
+  await edit(dir, INFO_PLIST, infoPlistEdits(config, ios, report), report);
+  await carryIosAppearance(dir, ios, report);
+  await carryAndroidAppearance(dir, config, report);
   const build = config.buildProperties;
   const permissions = config.androidPermissions.filter((p) => {
     if (isAndroidName(p)) return !IMPLIED_PERMISSIONS.has(p);
@@ -234,4 +278,192 @@ export async function addExpoAppConfigToProject(
     );
   }
   return report;
+}
+
+/** Whether `path` exists. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Write the project file `rel` (creating its folder), recording written / unchanged. */
+async function writeFile(
+  dir: string,
+  rel: string,
+  content: string | Uint8Array,
+  report: NativeInstallReport,
+): Promise<void> {
+  const path = nativeJoin(dir, rel);
+  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  try {
+    const current = await Deno.readFile(path);
+    if (current.length === bytes.length && current.every((b, i) => b === bytes[i])) {
+      report.unchanged.push(rel);
+      return;
+    }
+  } catch { /* new */ }
+  await Deno.mkdir(dirname(path), { recursive: true });
+  await Deno.writeFile(path, bytes);
+  report.written.push(rel);
+}
+
+/** A small PNG of one colour (`#rrggbb`): the launch screen scales it to fill. */
+async function colorPng(hex: string): Promise<Uint8Array> {
+  return await encodePng(solid(16, 16, parseHexColor(hex)!), { alpha: false });
+}
+
+/**
+ * Replace Capacitor's white placeholder in `Splash.imageset` (which covers the launch screen)
+ * with the launch colour, light and dark. Nothing when the set holds anything else.
+ */
+async function replacePlaceholderSplash(
+  dir: string,
+  launch: AppearanceColors,
+  report: NativeInstallReport,
+): Promise<void> {
+  const placeholder = await capacitorPlaceholders(dir, "ios", "splash");
+  const set = `${ASSET_CATALOG}/Splash.imageset`;
+  const ours = placeholder.some((p) => p.endsWith("Contents.json"));
+  if (placeholder.length === 0) return;
+  const dark = LAUNCH_SPLASH_FILE.replace(/\.png$/, "-dark.png");
+  const images: Record<string, unknown>[] = [
+    { idiom: "universal", filename: LAUNCH_SPLASH_FILE },
+  ];
+  await writeFile(dir, `${set}/${LAUNCH_SPLASH_FILE}`, await colorPng(launch.light), report);
+  if (launch.dark) {
+    await writeFile(dir, `${set}/${dark}`, await colorPng(launch.dark), report);
+    images.push({
+      idiom: "universal",
+      filename: dark,
+      appearances: [{ appearance: "luminosity", value: "dark" }],
+    });
+  }
+  const contents = JSON.stringify({ images, info: { author: "xcode", version: 1 } }, null, 2);
+  await writeFile(dir, `${set}/Contents.json`, contents + "\n", report);
+  if (ours) return;
+  // The placeholder's own images (three scales of the same white square) go with it.
+  for await (const entry of Deno.readDir(nativeJoin(dir, set))) {
+    if (entry.isFile && /^splash-2732x2732(-\d)?\.png$/.test(entry.name)) {
+      await Deno.remove(nativeJoin(dir, set, entry.name));
+      report.written.push(`${set}/${entry.name} (removed: Capacitor's placeholder)`);
+    }
+  }
+}
+
+/** The iOS launch screen, window and WebView colours, and the fixed appearance (Info.plist). */
+async function carryIosAppearance(
+  dir: string,
+  ios: ResolvedAppearance,
+  report: NativeInstallReport,
+): Promise<void> {
+  if (!(await exists(nativeJoin(dir, INFO_PLIST)))) return; // reported with Info.plist
+  if (ios.launch) {
+    const launch = ios.launch;
+    await writeFile(
+      dir,
+      `${ASSET_CATALOG}/${LAUNCH_COLOR_NAME}.colorset/Contents.json`,
+      colorSetJson(launch),
+      report,
+    );
+    await edit(dir, LAUNCH_STORYBOARD, [{
+      label: `the launch view's background to the colour ${LAUNCH_COLOR_NAME} (${
+        describe(launch)
+      })`,
+      apply: (text) => withLaunchStoryboardColor(text, launch),
+    }], report);
+    await replacePlaceholderSplash(dir, launch, report);
+  }
+  if (!ios.app) return;
+  const app = ios.app;
+  if (!(await exists(nativeJoin(dir, SCENE_DELEGATE)))) {
+    report.manual.push(
+      `${SCENE_DELEGATE} is missing: paint the window and the WebView with ${describe(app)} ` +
+        "where the app creates its window",
+    );
+    return;
+  }
+  await edit(dir, SCENE_DELEGATE, [{
+    label: `the window and WebView background (${describe(app)}) after ` +
+      "`window?.makeKeyAndVisible()`",
+    apply: (text) => withSceneBackground(text, app),
+  }], report);
+}
+
+/** `#fff` or `#fff / dark #000`, for a report line. */
+function describe(c: AppearanceColors): string {
+  return c.dark ? `${c.light}, dark ${c.dark}` : c.light;
+}
+
+/** Android's launch and window colours as resources, set on the launch and app themes. */
+async function carryAndroidAppearance(
+  dir: string,
+  config: ExpoAppConfig,
+  report: NativeInstallReport,
+): Promise<void> {
+  const android = resolveAppearance(config.appearance.android);
+  const launch = android.launch ?? android.app;
+  const app = android.app ?? android.launch;
+  if (!launch || !app || !(await exists(nativeJoin(dir, ANDROID_RES)))) return;
+  await writeAndroidColors(dir, launch, app, report);
+  await edit(dir, `${ANDROID_RES}/values/styles.xml`, androidThemeEdits(), report);
+  await androidAppearanceNotes(dir, android, report);
+}
+
+/** `values/denext_background.xml`, and `values-night/` when a colour has a dark variant. */
+async function writeAndroidColors(
+  dir: string,
+  launch: AppearanceColors,
+  app: AppearanceColors,
+  report: NativeInstallReport,
+): Promise<void> {
+  await writeFile(
+    dir,
+    `${ANDROID_RES}/values/denext_background.xml`,
+    androidColorsXml(launch.light, app.light),
+    report,
+  );
+  if (!launch.dark && !app.dark) return;
+  await writeFile(
+    dir,
+    `${ANDROID_RES}/values-night/denext_background.xml`,
+    androidColorsXml(launch.dark ?? launch.light, app.dark ?? app.light),
+    report,
+  );
+}
+
+/** The launch theme's splash background and the app theme's window background. */
+function androidThemeEdits(): TextEdit[] {
+  const item = (style: string, name: string, color: string): TextEdit => ({
+    label: `${name} @color/${color} in ${style}`,
+    apply: (text) => withStyleItem(text, style, name, `@color/${color}`),
+  });
+  return [
+    item("AppTheme.NoActionBarLaunch", "windowSplashScreenBackground", ANDROID_LAUNCH_COLOR),
+    item("AppTheme.NoActionBar", "android:windowBackground", ANDROID_APP_COLOR),
+  ];
+}
+
+/** What Android cannot take from the colours alone: a fixed appearance, the placeholder splash. */
+async function androidAppearanceNotes(
+  dir: string,
+  android: ResolvedAppearance,
+  report: NativeInstallReport,
+): Promise<void> {
+  if (android.style) {
+    const mode = android.style === "dark" ? "YES" : "NO";
+    report.manual.push(
+      `userInterfaceStyle "${android.style}": Android follows the system appearance; to fix it, ` +
+        `call AppCompatDelegate.setDefaultNightMode(MODE_NIGHT_${mode}) in MainActivity.onCreate`,
+    );
+  }
+  if ((await capacitorPlaceholders(dir, "android", "splash")).length > 0) {
+    report.manual.push(
+      "android: the splash image is still Capacitor's placeholder; `denext mobile assets` " +
+        "writes the app's own (light and dark)",
+    );
+  }
 }

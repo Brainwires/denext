@@ -876,7 +876,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./splash-screen.ts",
     pinned: "58.0.4",
     status: "full",
-    notes: "Hold the native splash with the Capacitor plugin's launchAutoHide: false.",
+    notes: "The native splash hides once the app's first frame is drawn (React Native mode, " +
+      "after the root's first commit); preventAutoHideAsync holds it until hideAsync. Needs the " +
+      "Capacitor plugin's launchAutoHide: false, which migrate writes.",
   },
   "expo-status-bar": {
     module: "./status-bar.ts",

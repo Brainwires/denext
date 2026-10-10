@@ -56,6 +56,11 @@ import {
   readMetroResolution,
 } from "./expo-migrate.ts";
 import { type ExpoAppConfig, readExpoAppConfig } from "./expo-app-config.ts";
+import {
+  capacitorAppearanceConfig,
+  pageBackgroundStyle,
+  resolveAppearance,
+} from "./expo-appearance.ts";
 import { findReactNativeWeb } from "./react-native.ts";
 import { CAPACITOR_BUILD_IGNORES } from "./capacitor-pins.ts";
 import {
@@ -1432,12 +1437,19 @@ async function writeCapacitorConfig(
   dir: string,
   plan: CapacitorPlan | undefined,
   written: string[],
+  extra?: Record<string, unknown>,
 ): Promise<CapacitorMigrateInfo | undefined> {
   if (!plan) return undefined;
   const configWritten = plan.writeConfig &&
     await writeIfWritable(
       join(dir, "capacitor.config.ts"),
-      () => capacitorConfigSource(GEN_MARKER, plan.info, placeholderNote(plan.info.appIdSource)),
+      () =>
+        capacitorConfigSource(
+          GEN_MARKER,
+          plan.info,
+          placeholderNote(plan.info.appIdSource),
+          extra,
+        ),
       written,
     );
   return { ...plan.info, configWritten };
@@ -3044,6 +3056,10 @@ async function migrateExpoProject(
   const config = await readExpoAppConfig(dir);
   const title = config.name ?? config.slug ?? (typeof pkg.name === "string" ? pkg.name : "App");
   const identity = capacitorIdentity(config, title);
+  const appearance = {
+    ios: resolveAppearance(config.appearance.ios),
+    android: resolveAppearance(config.appearance.android),
+  };
   const desktopPackages = RN_DESKTOP_PACKAGES.filter((p) => p in deps);
   const nodeModulesDir = manual ? "manual" : "auto";
   const written: string[] = [];
@@ -3060,7 +3076,9 @@ async function migrateExpoProject(
     title,
     envKeys: [],
     tailwind: null,
-    head: expoConfigScript(config.runtimeConfig),
+    // The page's own background before the app's first frame (the app config's colours).
+    head: expoConfigScript(config.runtimeConfig) +
+      pageBackgroundStyle(appearance.ios.app ?? appearance.android.app),
     reactNative: true,
     desktopPackages,
     reactNativeFonts: config.embeddedFonts,
@@ -3072,7 +3090,19 @@ async function migrateExpoProject(
     () => spaConfigSource(facts),
     written,
   );
-  const shell = await writeExpoShell(dir, { deps, pm, R, options, pkg, identity }, written);
+  const shell = await writeExpoShell(
+    dir,
+    {
+      deps,
+      pm,
+      R,
+      options,
+      pkg,
+      identity,
+      capacitorExtra: capacitorAppearanceConfig(appearance.ios, appearance.android),
+    },
+    written,
+  );
   const tasks = {
     ...spaTasks(false, R.cli, false, nodeModulesDir),
     ...capacitorTasks(R.cli, { run: MIGRATED_RUN, installed: pm !== null }),
@@ -3159,6 +3189,8 @@ async function writeExpoShell(
     options: MigrateOptions;
     pkg: Record<string, unknown>;
     identity: { appId: string; appName: string; placeholderId: boolean };
+    /** The app config's colours and SplashScreen settings (./expo-appearance.ts). */
+    capacitorExtra: Record<string, unknown>;
   },
   written: string[],
 ): Promise<{ expo: ExpoMigrateInfo["capacitor"]; capacitor?: CapacitorMigrateInfo }> {
@@ -3166,7 +3198,7 @@ async function writeExpoShell(
   if (!app.options.capacitor) {
     const configWritten = await writeIfWritable(
       join(dir, "capacitor.config.ts"),
-      () => capacitorConfigSource(GEN_MARKER, identity),
+      () => capacitorConfigSource(GEN_MARKER, identity, undefined, app.capacitorExtra),
       written,
     );
     return { expo: { ...identity, configWritten } };
@@ -3183,7 +3215,7 @@ async function writeExpoShell(
     appConfigId: { appId: identity.appId, placeholder: identity.placeholderId },
     options: capacitorOptionsOf(app.options),
   });
-  const capacitor = (await writeCapacitorConfig(dir, plan, written))!;
+  const capacitor = (await writeCapacitorConfig(dir, plan, written, app.capacitorExtra))!;
   const { appId, appName, placeholderId, configWritten } = capacitor;
   return { expo: { appId, appName, placeholderId, configWritten }, capacitor };
 }

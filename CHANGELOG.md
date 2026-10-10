@@ -10,6 +10,24 @@ and this project adheres to
 
 ### Fixed
 
+- **A migrated Expo app no longer flashes white before its first frame in the Capacitor shell.**
+  The native Expo app keeps its splash until the first frame and paints its root view in the app
+  config's colours; the shell showed Capacitor's white placeholder splash, then a WebView page
+  with no background of its own, so a dark app (T3 Code on an iPhone in dark mode) flashed white.
+  `denext migrate --from expo` now reads `userInterfaceStyle`, `backgroundColor`, `splash` and the
+  `expo-splash-screen` plugin's light and `dark` colours (with their `ios.` / `android.`
+  overrides), writes the page's own background into `spa.head` (a `prefers-color-scheme: dark`
+  rule when the colours differ, so the first painted frame is the app's colour) and sets
+  Capacitor's `backgroundColor` and `SplashScreen.launchAutoHide: false` in
+  `capacitor.config.ts`. In React Native mode the native splash hides once the frame of the app's
+  first commit is drawn, as Expo's does, and `expo-splash-screen`'s `preventAutoHideAsync` holds it
+  until `hideAsync` (it used to do nothing). `denext mobile add app-config` writes the native side:
+  `UIUserInterfaceStyle` for a fixed appearance, the launch storyboard painted with a light / dark
+  asset-catalog colour, Capacitor's white placeholder splash image replaced by that colour (still
+  a placeholder to `denext mobile build`, which puts the logo splash in its place), the window and
+  WebView painted from `SceneDelegate.swift` with a dynamic `UIColor`, and on Android the colours as
+  resources (`values-night/` for dark) behind `windowSplashScreenBackground` and
+  `android:windowBackground`.
 - **Deno Desktop on Linux: `secureStore` fails at once on a session with no Secret Service.** On a
   headless or minimal session, libsecret waited on D-Bus for a keyring daemon that never started,
   and the runtime's answer timeout bounds only the unlock prompt, so the first `secureStore.get`
