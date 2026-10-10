@@ -167,7 +167,7 @@ function bundledLauncher(
       await prepareSidecarModules(
         dirname(fromFileUrl(entry)),
         name,
-        cacheDir ?? await Deno.makeTempDir({ prefix: "denext-sidecar-" }),
+        cacheDir ?? await Deno.makeTempDir({ prefix: "denext-sidecar-cache-" }),
       ))();
     let root: string | undefined;
     try {

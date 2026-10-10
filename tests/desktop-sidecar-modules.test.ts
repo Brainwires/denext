@@ -148,6 +148,10 @@ globalThis.denextSidecar.ready();
     await bundleDesktopSidecar({ projectDir: root, definition: def, ffiGranted: true });
     await Deno.remove(join(root, "srv"), { recursive: true });
     const lines: string[] = [];
+    // Without a cache folder the host unpacks into a fresh temp dir: note the ones that exist, to
+    // remove what this test made.
+    const tmp = join(root, "..");
+    const before = new Set([...Deno.readDirSync(tmp)].map((e) => e.name));
     for (const cacheDir of [join(root, "cache"), undefined]) {
       const host = await createSidecarHost({
         sidecars: [{ ...def, logs: "inherit" }],
@@ -162,6 +166,14 @@ globalThis.denextSidecar.ready();
       } finally {
         console.error = orig;
         await host.stopAll();
+      }
+    }
+    for (const e of Deno.readDirSync(tmp)) {
+      // The host's fallback cache (its own prefix), holding this test's sidecar.
+      const ours = e.name.startsWith("denext-sidecar-cache-") &&
+        await Deno.stat(join(tmp, e.name, "sidecars", "api")).then(() => true, () => false);
+      if (!before.has(e.name) && ours) {
+        await Deno.remove(join(tmp, e.name), { recursive: true });
       }
     }
     const out = lines.filter((l) => l.includes("viaImport"));
