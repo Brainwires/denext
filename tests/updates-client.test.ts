@@ -224,48 +224,52 @@ Deno.test("desktop: check reports both targets; an unconfigured one is left out"
   });
 });
 
-Deno.test("desktop: apply installs the overlay, then the app with forwarded progress", async () => {
+Deno.test("desktop: a newer app supersedes the overlay; its install is forwarded with progress", async () => {
   const applied: unknown[] = [];
+  const downloads: unknown[] = [];
   let rtRef: ReturnType<typeof createFakeDesktopRuntime>;
+  const both = () => ({
+    ui: { state: "available", version: "ui-2", required: false, notes: "n" },
+    app: { state: "available", version: "2.0.0", required: true, notes: null },
+  });
   await inDesktop({
-    check: () => ({
-      ui: { state: "available", version: "ui-2", required: false, notes: "n" },
-      app: { state: "available", version: "2.0.0", required: true, notes: null },
-    }),
+    check: both,
     download: async (args) => {
+      downloads.push(args);
       const { target, runId } = args as { target: string; runId: string };
       await until(() => rtRef.openStreams() > 0);
       // A replayed event from an earlier run is ignored.
       rtRef.emit("updates", "progress", { runId: "old", target, percent: 1 });
-      rtRef.emit("updates", "progress", { runId, target, version: "x", percent: 40 });
+      rtRef.emit("updates", "progress", { runId, target, version: "2.0.0", percent: 40 });
       await new Promise((r) => setTimeout(r, 30));
-      return { state: "ready", version: target === "ui" ? "ui-2" : "2.0.0" };
+      return { state: "ready", version: "2.0.0" };
     },
-    apply: (args) => {
-      applied.push(args);
-      return (args as { target: string }).target === "ui"
-        ? { quitting: false, restartRequired: true }
-        : { quitting: true, restartRequired: false };
-    },
+    apply: (args) => (applied.push(args), { quitting: true, restartRequired: false }),
   }, async (rt) => {
     rtRef = rt;
+    // The check lists only the app: its UI comes with it.
+    assertEquals((await checkForUpdates()).updates.map((u) => u.target), ["app"]);
     const rec = recorder();
     const run = applyUpdates({}, rec.listener);
     assertEquals(await settledOrPending(run), "pending"); // relaunching
-    await until(() => applied.length === 2);
-    assertEquals(applied, [{ target: "ui", version: "ui-2" }, { target: "app", version: "2.0.0" }]);
+    await until(() => applied.length === 1);
+    assertEquals(applied, [{ target: "app", version: "2.0.0" }]);
+    assertEquals(downloads.map((d) => (d as { target: string }).target), ["app"]);
     assertEquals(stages(rec.events), [
       "ui:checking",
       "app:checking",
-      "ui:downloading",
-      "ui:ready",
-      "ui:applying",
-      "ui:done",
+      "ui:up-to-date",
       "app:downloading",
       "app:ready",
       "app:applying",
     ]);
-    assertEquals(rec.events[2], { target: "ui", stage: "downloading", version: "x", percent: 40 });
+    assertEquals(rec.events[2], { target: "ui", stage: "up-to-date", code: "superseded" });
+    assertEquals(rec.events[3], {
+      target: "app",
+      stage: "downloading",
+      version: "2.0.0",
+      percent: 40,
+    });
   });
 });
 

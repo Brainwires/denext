@@ -1185,8 +1185,8 @@ export default {
         <a href="/docs/updates">
           <code>denext/updates</code>
         </a>{" "}
-        (the overlay first, then the full app, with progress). The feed&apos;s host joins the
-        packaged app&apos;s <code>--allow-net</code>.
+        (a newer full app when one is on offer, else the overlay, with progress). The feed&apos;s
+        host joins the packaged app&apos;s <code>--allow-net</code>.
       </p>
       <p>
         By hand, pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
@@ -1280,6 +1280,13 @@ try {
         {" "}
         <code>platform</code>) as <code>x-denext-ota-platform</code>, so a{" "}
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
+      </p>
+      <p>
+        <strong>Tied to the app it was installed over.</strong>{" "}
+        The overlay folder records which bundled export the overlay belongs to (the export&apos;s
+        stamped version, else its <code>index.html</code>{" "}
+        hash). When the app itself is replaced (a full-app update, a reinstall), the next launch
+        drops every overlay and staged version and serves the new app&apos;s own UI.
       </p>
       <p>
         <strong>Rollback.</strong> An applied version starts{" "}

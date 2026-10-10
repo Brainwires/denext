@@ -2653,7 +2653,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/updates`
 
-- `applyUpdates(config?: UpdatesConfig, onProgress?: UpdateProgressListener): Promise<UpdatesResult>` — Install every update on offer, reporting each step to onProgress: on a phone the new UI, on Deno Desktop the UI overlay and then the whole app, in a browser the newer deploy. It never throws; a target that failed is listed in failures (and reported as stage: "failed").
+- `applyUpdates(config?: UpdatesConfig, onProgress?: UpdateProgressListener): Promise<UpdatesResult>` — Install every update on offer, reporting each step to onProgress: on a phone the new UI, on Deno Desktop the whole app (or, when no newer app is on offer, the UI overlay), in a browser the newer deploy. It never throws; a target that failed is listed in failures (and reported as stage: "failed").
 - `interface AvailableUpdate` — An update the server offers, verified where the platform verifies before installing.
 - `checkForUpdates(config?: UpdatesConfig): Promise<UpdatesCheck>` — What the server offers this app, on whatever platform it runs. It never throws: a target that could not be checked is listed in failures.
 - `interface DesktopUpdatesConfig` — Which Deno Desktop targets to update (both by default).

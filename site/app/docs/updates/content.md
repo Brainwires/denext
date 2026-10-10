@@ -39,11 +39,11 @@ that needs it, so a page that never calls it ships none of it.
 
 ## What each platform does
 
-| `runtimePlatform()` | Targets          | Check                                            | Apply                                                     |
-| ------------------- | ---------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| `ios` / `android`   | `ui`             | `prepareUiUpdate`: download, verify and stage    | `applyUiUpdate`: the webview reloads into the new UI      |
-| `desktop`           | `ui`, then `app` | the `updates` capability verifies each manifest  | stage + apply the overlay; download, install and relaunch |
-| `web`               | `web`            | the deployed build's version against this page's | `location.reload()`                                       |
+| `runtimePlatform()` | Targets          | Check                                            | Apply                                                          |
+| ------------------- | ---------------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| `ios` / `android`   | `ui`             | `prepareUiUpdate`: download, verify and stage    | `applyUiUpdate`: the webview reloads into the new UI           |
+| `desktop`           | `app`, else `ui` | the `updates` capability verifies each manifest  | download, install and relaunch; else stage + apply the overlay |
+| `web`               | `web`            | the deployed build's version against this page's | `location.reload()`                                            |
 
 Every safety check stays where it was: signatures, the sequence that refuses a downgrade or a
 replayed manifest, a full-app manifest's expiry and the same code signer, the native fingerprint.
@@ -85,10 +85,14 @@ interface UpdateProgress {
 - **A phone** reports `checking` (one native step that also downloads and verifies a newer UI),
   then `ready`, then `applying`, and the page is replaced: the promise does not settle. The new
   page calls `otaBooted()` as usual.
-- **Deno Desktop** reports each target in turn: `checking`, `downloading` with `percent`, `ready`,
-  `applying`, then `done` for the UI overlay (served from the next launch: the result says
-  `restartRequired`; offer a restart with `quitApp()` from `denext/desktop/window`). For the full
-  app, `applying` is the last report: the app quits, swaps itself and relaunches.
+- **Deno Desktop** installs the full app when a newer one is on offer: `checking`, `downloading`
+  with `percent`, `ready`, then `applying` is the last report (the app answers, then quits, swaps
+  itself and relaunches). Its UI comes with it, so the overlay is skipped: `up-to-date` with
+  `code: "superseded"` (and `checkForUpdates` does not list it). Without a newer app, the UI
+  overlay goes through the same stages and ends `done`: it is served from the next launch (the
+  result says `restartRequired`; offer a restart with `quitApp()` from `denext/desktop/window`).
+  An overlay is tied to the app it was installed over: once a new app is installed, every
+  overlay of the old one is dropped at launch and the new app's own UI is served.
 - **A browser** reports `checking`, then `ready` and `applying` before it reloads.
 
 A target with nothing newer ends `up-to-date`; one that failed ends `failed`.

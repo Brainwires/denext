@@ -1,8 +1,8 @@
 /**
  * `denext/updates` in a Deno Desktop window: the `updates` capability (`denext desktop add
- * updates`) checks, downloads and installs the app's signed UI overlay (`desktop.update.ui`) and
- * then the whole app (`desktop.update.manifestUrl`), with the download's progress pushed down the
- * bridge's event stream. The checks themselves (signatures, no downgrade, expiry, replay, the same
+ * updates`) checks, downloads and installs the whole app (`desktop.update.manifestUrl`) when a
+ * newer one is on offer, else the app's signed UI overlay (`desktop.update.ui`), with the
+ * download's progress pushed down the bridge's event stream. The checks themselves (signatures, no downgrade, expiry, replay, the same
  * code signer) run in the app's Deno side. Loaded by {@link ./mod.ts} only in a desktop window.
  *
  * @module
@@ -40,6 +40,7 @@ type Found =
   | { readonly kind: "skip" }
   | { readonly kind: "current" }
   | { readonly kind: "update"; readonly update: AvailableUpdate }
+  | { readonly kind: "superseded" }
   | { readonly kind: "failed"; readonly failure: UpdateFailure };
 
 /** A string field, or `fallback`. */
@@ -113,7 +114,19 @@ async function checkAll(
   }
   const map = new Map<DesktopTarget, Found>();
   for (const t of wanted) map.set(t, found(t, answer?.[t]));
-  return { found: map, failures: [] };
+  return { found: supersede(map), failures: [] };
+}
+
+/**
+ * Leave the UI overlay out when a full-app update is on offer: the new app brings its own UI, and
+ * an overlay built for the running app must not be installed over it (the overlay updater drops
+ * overlays of another bundle at launch anyway). The overlay becomes `superseded`.
+ */
+function supersede(map: Map<DesktopTarget, Found>): Map<DesktopTarget, Found> {
+  if (map.get("app")?.kind === "update" && map.get("ui")?.kind === "update") {
+    map.set("ui", { kind: "superseded" });
+  }
+  return map;
 }
 
 /**
@@ -203,8 +216,9 @@ async function install(
 }
 
 /**
- * Install what the app's Deno side offers: the UI overlay first, then the whole app. A full-app
- * install quits and relaunches the app, so the promise does not settle then.
+ * Install what the app's Deno side offers: the whole app when a newer one is on offer (its UI comes
+ * with it, so the overlay is skipped as `superseded`), else the UI overlay. A full-app install
+ * quits and relaunches the app, so the promise does not settle then.
  *
  * @param config Which targets.
  * @param onProgress Progress reports.
@@ -245,6 +259,10 @@ export async function applyDesktop(
             error: outcome.failure.message,
             code: outcome.failure.code,
           });
+          break;
+        case "superseded":
+          // The full-app update below brings its own UI.
+          onProgress({ target, stage: "up-to-date", code: "superseded" });
           break;
         case "current":
         case "skip":

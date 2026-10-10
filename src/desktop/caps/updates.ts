@@ -7,7 +7,9 @@
  *   overlay from): check, download into staging (every file's SHA-256 checked), then apply (an
  *   atomic pointer swap; the new UI is served from the next launch, under the boot watchdog).
  * - `app`: the whole signed app (`desktop.update.manifestUrl`, denext's pinned runtime): check,
- *   download (size-capped, SHA-256 checked, OS code signature verified), then install and relaunch.
+ *   download (size-capped, SHA-256 checked, OS code signature verified), then install and relaunch:
+ *   `apply` answers `{ quitting: true }` first and the app quits to install just after, so the page
+ *   never sees a lost response for an install that is going ahead.
  *
  * Every trust decision stays where it was: the overlay's signature, sequence and platform checks
  * in `updater.ts`, the full app's in the runtime (signature, no downgrade, expiry, replay, the same
@@ -55,6 +57,11 @@ export interface AppUpdaterApi {
     config: AppUpdaterConfig,
     options: { onProgress?: (progress: AppUpdateProgress) => void; signal?: AbortSignal },
   ): Promise<AppUpdateStaged>;
+  /**
+   * Whether a verified update is staged next to the install (`appUpdateStatus().phase`); rejects
+   * `unsupported` outside denext's pinned runtime.
+   */
+  staged(): Promise<boolean>;
   /** `installAppUpdateAndRelaunch`. */
   install(): Promise<{ quitting: boolean }>;
 }
@@ -69,7 +76,17 @@ export interface UpdatesCapabilityOptions {
   readonly uiApi?: UiUpdaterApi;
   /** The full-app updater (tests pass a fake). */
   readonly appApi?: AppUpdaterApi;
+  /**
+   * Runs the install once `apply` has answered (default: after {@linkcode INSTALL_DELAY_MS}, so the
+   * page receives `{ quitting: true }` before the app quits). Tests run it at once.
+   */
+  readonly schedule?: (install: () => Promise<void>) => void;
+  /** Where an install that fails after `apply` answered is reported (default `console.error`). */
+  readonly log?: (message: string) => void;
 }
+
+/** How long `apply` waits after answering before the app quits to install, in ms. */
+export const INSTALL_DELAY_MS = 250;
 
 /** One target's answer to `check`, as the page receives it. */
 type DesktopTargetCheck =
@@ -105,6 +122,17 @@ const UI_API: UiUpdaterApi = {
 const APP_API: AppUpdaterApi = {
   check: async (config) => (await appUpdater()).checkForAppUpdate(config),
   download: async (config, options) => (await appUpdater()).downloadAppUpdate(config, options),
+  staged: async () => {
+    const mod = await appUpdater();
+    const status = mod.appUpdateStatus();
+    if (status === null) {
+      throw new mod.AppUpdateError(
+        "unsupported",
+        "full-app updates need denext's pinned Deno Desktop runtime (Deno.desktop.updater)",
+      );
+    }
+    return status.phase === "staged";
+  },
   install: async () => (await appUpdater()).installAppUpdateAndRelaunch(),
 };
 
@@ -304,6 +332,9 @@ export function updatesCapability(options: UpdatesCapabilityOptions = {}): Deskt
   const uiApi = options.uiApi ?? UI_API;
   const appApi = options.appApi ?? APP_API;
   const once = exclusive();
+  const schedule = options.schedule ??
+    ((install: () => Promise<void>) => void setTimeout(() => void install(), INSTALL_DELAY_MS));
+  const log = options.log ?? ((message: string) => console.error(`desktop: ${message}`));
   return {
     name: "updates",
     events: ["progress"],
@@ -346,8 +377,23 @@ export function updatesCapability(options: UpdatesCapabilityOptions = {}): Deskt
             try {
               if (target === "app") {
                 configured(options.app, "app");
-                const { quitting } = await appApi.install();
-                return { quitting: quitting === true, restartRequired: false };
+                // Refuse here what the install would refuse later: nothing staged in this run.
+                if (!await appApi.staged()) {
+                  throw new DesktopCapError("not_staged", "no verified app update is staged");
+                }
+                // Answer first, then quit: an install that quits before the response is sent
+                // would read as a failed call to the page whose update is in fact proceeding.
+                schedule(async () => {
+                  try {
+                    const { quitting } = await appApi.install();
+                    if (!quitting) {
+                      log("the app did not quit to install the update (a close was held)");
+                    }
+                  } catch (err) {
+                    log(`installing the app update failed: ${capError(err).message}`);
+                  }
+                });
+                return { quitting: true, restartRequired: false };
               }
               const version = (args as { version?: unknown }).version;
               if (typeof version !== "string" || version === "") {

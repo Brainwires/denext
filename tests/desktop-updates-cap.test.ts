@@ -7,6 +7,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type { DesktopCapability, DesktopCapCtx } from "../src/desktop/extension.ts";
 import {
   type AppUpdaterApi,
+  INSTALL_DELAY_MS,
   type UiUpdaterApi,
   updatesCapability,
 } from "../src/desktop/caps/updates.ts";
@@ -81,7 +82,13 @@ function fakeUi(offer?: string, fail?: Error) {
 /** A fake full-app updater: offers `offer`, reports `steps` of progress while downloading. */
 function fakeApp(
   offer?: string,
-  opts: { fail?: Error; steps?: number[]; quitting?: boolean } = {},
+  opts: {
+    fail?: Error;
+    steps?: number[];
+    quitting?: boolean;
+    staged?: boolean;
+    installFails?: Error;
+  } = {},
 ) {
   let installs = 0;
   const api: AppUpdaterApi = {
@@ -101,7 +108,13 @@ function fakeApp(
       for (const transferred of opts.steps ?? []) onProgress?.({ transferred, total: 1000 });
       return Promise.resolve({ version: offer!, signatureMode: "team", signer: "TEAM" });
     },
-    install: () => (installs++, Promise.resolve({ quitting: opts.quitting ?? true })),
+    staged: () => Promise.resolve(opts.staged ?? true),
+    install: () => {
+      installs++;
+      return opts.installFails
+        ? Promise.reject(opts.installFails)
+        : Promise.resolve({ quitting: opts.quitting ?? true });
+    },
   };
   return { api, installs: () => installs };
 }
@@ -252,23 +265,69 @@ Deno.test("updates.apply ui: switches the pointer; the overlay serves from the n
   );
 });
 
-Deno.test("updates.apply app: installs and quits; a refused quit is reported", async () => {
+Deno.test("updates.apply app: answers { quitting: true } BEFORE the app quits to install", async () => {
   const app = fakeApp("2");
-  const cap = updatesCapability({ app: APP, appApi: app.api });
+  const scheduled: Array<() => Promise<void>> = [];
+  const cap = updatesCapability({
+    app: APP,
+    appApi: app.api,
+    schedule: (install) => void scheduled.push(install),
+  });
   assertEquals(await call(cap, "apply", { target: "app" }), {
     quitting: true,
     restartRequired: false,
   });
+  // The response is out; nothing has quit yet.
+  assertEquals(app.installs(), 0);
+  assertEquals(scheduled.length, 1);
+  await scheduled[0]();
   assertEquals(app.installs(), 1);
-  const held = updatesCapability({ app: APP, appApi: fakeApp("2", { quitting: false }).api });
-  assertEquals(
-    (await call(held, "apply", { target: "app" }) as { quitting: boolean }).quitting,
-    false,
-  );
+});
+
+Deno.test("updates.apply app: the default schedule installs just after answering", async () => {
+  const app = fakeApp("2");
+  const cap = updatesCapability({ app: APP, appApi: app.api });
+  await call(cap, "apply", { target: "app" });
+  assertEquals(app.installs(), 0);
+  const start = Date.now();
+  while (app.installs() === 0 && Date.now() - start < 5000) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assertEquals(app.installs(), 1);
+  assert(Date.now() - start >= INSTALL_DELAY_MS - 50);
+});
+
+Deno.test("updates.apply app: nothing staged is refused up front; a later failure is logged", async () => {
+  const notStaged = updatesCapability({ app: APP, appApi: fakeApp("2", { staged: false }).api });
+  assertEquals(await codeOf(call(notStaged, "apply", { target: "app" })), "not_staged");
   assertEquals(
     await codeOf(call(updatesCapability({}), "apply", { target: "app" })),
     "not_configured",
   );
+  const logged: string[] = [];
+  const now = (install: () => Promise<void>) => void install();
+  for (
+    const opts of [
+      { quitting: false },
+      { installFails: new AppUpdateError("not_staged", "gone") },
+    ]
+  ) {
+    const cap = updatesCapability({
+      app: APP,
+      appApi: fakeApp("2", opts).api,
+      schedule: now,
+      log: (m) => void logged.push(m),
+    });
+    assertEquals(
+      (await call(cap, "apply", { target: "app" }) as { quitting: boolean }).quitting,
+      true,
+    );
+  }
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(logged, [
+    "the app did not quit to install the update (a close was held)",
+    "installing the app update failed: gone",
+  ]);
 });
 
 Deno.test("updates: the real updaters load on demand and refuse safely", async () => {

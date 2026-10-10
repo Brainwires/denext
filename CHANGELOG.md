@@ -13,7 +13,8 @@ and this project adheres to
 - **`denext/updates`: one "update everything" API for every platform.** `checkForUpdates(cfg?)`
   and `applyUpdates(cfg?, onProgress)` dispatch on `runtimePlatform()`: on iOS / Android the
   over-the-air UI (`cfg.ota`; the check stages a verified UI, apply switches to it), on Deno
-  Desktop the signed UI overlay and then the whole app, in a browser a reload when the deployed
+  Desktop a newer whole app when one is on offer (its UI comes with it: the overlay is skipped as
+  `superseded`) else the signed UI overlay, in a browser a reload when the deployed
   build's version (`/_denext/ota.json`, or `cfg.web.versionUrl`) differs from the page's. One
   progress shape everywhere: `{ target: "ui" | "app" | "web", stage: "checking" | "downloading" |
   "ready" | "applying" | "done" | "up-to-date" | "failed", version?, percent?, error?, code? }`.
@@ -22,10 +23,19 @@ and this project adheres to
   `needsStoreUpdate`, and a desktop overlay alone as `restartRequired`. The module is opt-in and
   loads each platform's code on first use. The desktop side is a new **`updates` capability**
   (`denext desktop add updates`, token-gated like the others: `check`, `download` with throttled
-  `progress` events, `apply`), and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
+  `progress` events, `apply`, which answers `{ quitting: true }` before the app quits to install),
+  and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
   configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
   hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
   the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
+
+### Fixed
+
+- **A desktop UI overlay is no longer served over a newer app.** The overlay updater now records
+  the bundled export an overlay was installed over (`bundle.json` in its data folder: the export's
+  stamped version, else its `index.html` hash); at launch, a different bundle (a full-app update,
+  a reinstall) drops every overlay and staged one, so a UI built for the old app never runs on the
+  new one. The accepted sequence and the rejected version are kept.
 
 ## [3.4.4] - 2026-10-10
 

@@ -8,10 +8,10 @@
  *   native side verifies the signature, the sequence (no downgrade), `minNative` and the native
  *   fingerprint before staging anything; a UI that needs a newer binary is reported as
  *   `needsStoreUpdate`.
- * - **Deno Desktop**: the signed UI overlay (`desktop.update.ui`), then the whole app
- *   (`desktop.update.manifestUrl`, denext's pinned runtime: a signed, unexpired, newer manifest
- *   and the same code signer), through the `updates` capability (`denext desktop add updates`),
- *   with download percentages.
+ * - **Deno Desktop**: the whole app (`desktop.update.manifestUrl`, denext's pinned runtime: a
+ *   signed, unexpired, newer manifest and the same code signer) when a newer one is on offer,
+ *   which brings its own UI, else the signed UI overlay (`desktop.update.ui`), through the
+ *   `updates` capability (`denext desktop add updates`), with download percentages.
  * - **A browser tab**: a newer deploy (the version in `_denext/ota.json`, or `web.versionUrl`)
  *   is picked up by reloading.
  *
@@ -122,7 +122,8 @@ export async function checkForUpdates(config: UpdatesConfig = {}): Promise<Updat
 
 /**
  * Install every update on offer, reporting each step to `onProgress`: on a phone the new UI, on
- * Deno Desktop the UI overlay and then the whole app, in a browser the newer deploy. It never
+ * Deno Desktop the whole app (or, when no newer app is on offer, the UI overlay), in a browser
+ * the newer deploy. It never
  * throws; a target that failed is listed in `failures` (and reported as `stage: "failed"`).
  *
  * When installing replaces the running page (a phone's UI switch, a browser reload, a desktop

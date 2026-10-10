@@ -50,7 +50,11 @@ export interface UpdateProgress {
   readonly percent?: number;
   /** Why it failed (`stage: "failed"`). */
   readonly error?: string;
-  /** The machine-readable reason it failed (`stage: "failed"`), e.g. `signature`, `downgrade`. */
+  /**
+   * The machine-readable reason it failed (`stage: "failed"`), e.g. `signature`, `downgrade`; or,
+   * with `stage: "up-to-date"`, `superseded`: a desktop UI overlay skipped because the full-app
+   * update installed with it brings its own UI.
+   */
   readonly code?: string;
 }
 
