@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.5] - 2026-10-10
+
 ### Added
 
 - **`reactNative.fonts`: the fonts an Expo app embeds natively.** The expo-font config plugin
@@ -63,7 +65,6 @@ and this project adheres to
   configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
   hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
   the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
-
 - **Sidecars can start with the user's login-shell environment (`loginShellEnv`).** An app opened
   from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend could not find what
   Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`, `claude`). With
@@ -103,18 +104,17 @@ and this project adheres to
   - props, styles and the memo bailout's shallow compare walk keys with `for…in` instead of
     `Object.keys` / `Object.entries` arrays; the commit's effect list is one flat array, not a
     pair per effect, and its hot loops index arrays instead of allocating iterators.
-
-  | Measure                                                                     |                    3.4.4 |                 Now |
-  | --------------------------------------------------------------------------- | -----------------------: | ------------------: |
-  | T3 Code, JS allocated per thread open (whole page; first / warm open)       |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
-  | T3 Code, denext runtime chunk's share of it                                 |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
-  | T3 Code, WebKit JS heap after the first open                                |           114.5–115.6 MB |      111.3–111.4 MB |
-  | T3 Code, WebKit JS heap after 5 opens                                       |           127.4–127.9 MB |      123.9–124.0 MB |
-  | T3 Code, Chromium heap after 5 / 20 opens                                   | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
-  | T3 Code, Chromium renderer PSS after 20 opens                               |               204–209 MB |          192–194 MB |
-  | `examples/hello`, JS allocated by load + hydration / by 200 clicks          |           1.79 / 10.7 MB |       1.77 / 9.4 MB |
-  | 10k-row list, JS allocated per row: mount / full re-render (with a handler) |            11.8 / 5.2 KB |        8.3 / 2.6 KB |
-  | 10k-row list, retained per row after the re-render (`bench:fiber-memory`)   |                  6,751 B |             6,742 B |
+    | Measure                                                                     |                    3.4.4 |                 Now |
+    | --------------------------------------------------------------------------- | -----------------------: | ------------------: |
+    | T3 Code, JS allocated per thread open (whole page; first / warm open)       |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
+    | T3 Code, denext runtime chunk's share of it                                 |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
+    | T3 Code, WebKit JS heap after the first open                                |           114.5–115.6 MB |      111.3–111.4 MB |
+    | T3 Code, WebKit JS heap after 5 opens                                       |           127.4–127.9 MB |      123.9–124.0 MB |
+    | T3 Code, Chromium heap after 5 / 20 opens                                   | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
+    | T3 Code, Chromium renderer PSS after 20 opens                               |               204–209 MB |          192–194 MB |
+    | `examples/hello`, JS allocated by load + hydration / by 200 clicks          |           1.79 / 10.7 MB |       1.77 / 9.4 MB |
+    | 10k-row list, JS allocated per row: mount / full re-render (with a handler) |            11.8 / 5.2 KB |        8.3 / 2.6 KB |
+    | 10k-row list, retained per row after the re-render (`bench:fiber-memory`)   |                  6,751 B |             6,742 B |
 
 ### Fixed
 
@@ -12723,7 +12723,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.5...development
+[3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2

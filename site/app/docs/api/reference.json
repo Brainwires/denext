@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.4",
+          "signature": "VERSION: 3.4.5",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -26307,6 +26307,18 @@
     {
       "module": "denext/expo/audio",
       "symbols": [
+        {
+          "name": "AudioModule",
+          "slug": "AudioModule",
+          "kind": "variable",
+          "signature": "AudioModule: NativeAudioModule",
+          "doc": "expo-audio's native module object (AudioModule), for code that constructs the classes through it (new AudioModule.AudioRecorder(options)) or calls its functions. The classes and the session and permission calls are the ones this module exports; preloading and the notification permission are not provided and reject with a nativeOnly error.",
+          "docFull": "expo-audio's native module object (`AudioModule`), for code that constructs the classes\nthrough it (`new AudioModule.AudioRecorder(options)`) or calls its functions. The classes and\nthe session and permission calls are the ones this module exports; preloading and the\nnotification permission are not provided and reject with a `nativeOnly` error.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
         {
           "name": "AudioPlayer",
           "slug": "AudioPlayer",
