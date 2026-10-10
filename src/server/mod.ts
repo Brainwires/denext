@@ -277,6 +277,7 @@ export {
   type DesktopSidecarRunConfig,
   type DesktopSidecarShutdownConfig,
   type DesktopSize,
+  type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
   type DesktopWindowConfig,
   type ExperimentalConfig,

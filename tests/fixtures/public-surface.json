@@ -572,6 +572,7 @@
     "DesktopSidecarRunConfig:interface",
     "DesktopSidecarShutdownConfig:interface",
     "DesktopSize:interface",
+    "DesktopUiUpdateConfig:interface",
     "DesktopUpdateConfig:interface",
     "DesktopWindowConfig:interface",
     "Directive:typeAlias",
@@ -1544,6 +1545,21 @@
     "shortcutCapabilities:function",
     "unregisterAllShortcuts:function",
     "unregisterShortcut:function"
+  ],
+  "denext/updates": [
+    "AvailableUpdate:interface",
+    "DesktopUpdatesConfig:interface",
+    "UpdateFailure:interface",
+    "UpdateProgress:interface",
+    "UpdateProgressListener:typeAlias",
+    "UpdateStage:typeAlias",
+    "UpdateTarget:typeAlias",
+    "UpdatesCheck:interface",
+    "UpdatesConfig:interface",
+    "UpdatesResult:interface",
+    "WebUpdatesConfig:interface",
+    "applyUpdates:function",
+    "checkForUpdates:function"
   ],
   "denext/live": [
     "ChannelRef:interface",

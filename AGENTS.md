@@ -453,7 +453,7 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
@@ -591,6 +591,14 @@ default 30 days, `expired`) and carries a growing `sequence` (`replayed`): re-si
 expires with `denext desktop publish-update --resign` (`publish-update` warns when the manifest in
 `--out` expires within 7 days); the artifact must be built as the version
 published (`version_mismatch`).
+One "update everything" button for every platform: `checkForUpdates(cfg?)` / `applyUpdates(cfg?,
+onProgress)` from `denext/updates` (opt-in, client) run the phone's OTA (`cfg.ota`), a Deno Desktop
+app's UI overlay (`desktop.update.ui = { feedUrl, publicKey }`, which `runDesktop` also serves) then
+its full app through the `updates` capability (`denext desktop add updates`, download `percent`),
+or a browser reload when `/_denext/ota.json`'s version (or `cfg.web.versionUrl`) changes. One
+progress shape `{ target: "ui" | "app" | "web", stage, version?, percent?, error?, code? }`; a
+phone UI for another binary is `needsStoreUpdate`; a desktop overlay alone is `restartRequired`;
+a reload / relaunch never settles. Docs: https://denext.dev/docs/updates
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,

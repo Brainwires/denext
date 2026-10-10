@@ -872,6 +872,12 @@ export interface DesktopCapabilitiesConfig {
    * autostart entry, named after `desktop.app.identifier`.
    */
   launchAtLogin?: boolean;
+  /**
+   * The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from
+   * `denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app
+   * ({@link DesktopUpdateConfig.manifestUrl}, denext's pinned runtime), with download progress.
+   */
+  updates?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
   /**
@@ -1285,6 +1291,30 @@ export interface DesktopUpdateConfig {
    * never confirms is rolled back.
    */
   autoConfirm?: boolean;
+  /**
+   * The signed UI overlay: a newer static export served in place of the bundled one, without a new
+   * app build (`denext ota manifest out --sign`, the mobile OTA format). `runDesktop` serves the
+   * active overlay (rolled back if it never boots), and `denext desktop add updates` lets the page
+   * install one (`applyUpdates` from `denext/updates`). Needs {@link DesktopConfig.app}'s
+   * `identifier`: the overlay is kept in the app's own data folder.
+   */
+  ui?: DesktopUiUpdateConfig;
+}
+
+/** {@link DesktopUpdateConfig.ui}: the signed UI overlay's feed. */
+export interface DesktopUiUpdateConfig {
+  /**
+   * The web root the signed export is served from (`${feedUrl}/_denext/ota.json` and each file).
+   * Its host is added to the packaged app's `--allow-net`.
+   */
+  feedUrl: string;
+  /**
+   * The release public key every manifest must be signed with: base64 SPKI (`ota.key.pub` from
+   * `denext ota keygen`) or a `PUBLIC KEY` PEM of an ECDSA P-256 key.
+   */
+  publicKey: string;
+  /** The export's target; default the OS the app runs on. */
+  platform?: "macos" | "windows" | "linux";
 }
 
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */

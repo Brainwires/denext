@@ -89,6 +89,7 @@ export const NAV: {
       { slug: "mobile", label: "Mobile (Capacitor)" },
       { slug: "mobile-build", label: "Mobile builds & submit" },
       { slug: "platform-files", label: "Platform-specific files" },
+      { slug: "updates", label: "Updates everywhere" },
       { slug: "troubleshooting", label: "Troubleshooting" },
     ],
   },

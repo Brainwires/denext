@@ -2600,6 +2600,15 @@ export async function track(order: string) {
         native <code>DenextOta</code> plugin, and a UI that fails to boot rolls itself back.
       </p>
       <p>
+        One button for every platform: <code>checkForUpdates</code> / <code>applyUpdates</code> from
+        {" "}
+        <a href="/docs/updates">
+          <code>denext/updates</code>
+        </a>{" "}
+        run this flow on a phone (prepare, then switch), a Deno Desktop app&apos;s UI overlay and
+        full-app update, and a browser reload, reporting progress in one shape.
+      </p>
+      <p>
         <strong>1. Stamp the export.</strong> The manifest <code>_denext/ota.json</code>{" "}
         lists every file of the export with its SHA-256 and size, plus a <code>version</code>{" "}
         (the SHA-256 over the sorted <code>path&lt;TAB&gt;sha256</code> lines; <code>*.gz</code>

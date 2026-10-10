@@ -1442,6 +1442,10 @@
               "description": "Start the app at login (`getLaunchAtLogin` / `setLaunchAtLogin` in `denext/desktop/app`) through denext's pinned runtime: a macOS login item, a Windows `Run` value, a Linux XDG autostart entry, named after `desktop.app.identifier`.",
               "type": "boolean"
             },
+            "updates": {
+              "description": "The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from `denext/updates`): the signed UI overlay (DesktopUpdateConfig.ui) and the whole app (DesktopUpdateConfig.manifestUrl, denext's pinned runtime), with download progress.",
+              "type": "boolean"
+            },
             "keepAwake": {
               "description": "Prevent the machine from sleeping while held.",
               "type": "boolean"
@@ -1890,6 +1894,32 @@
             "autoConfirm": {
               "description": "Confirm a newly installed version automatically once its window has loaded (the page's `load` event reached the desktop runtime), so an app that never calls `confirmAppUpdate()` does not roll back every update on its next launch. Default `true`. Set `false` to confirm yourself with `confirmAppUpdate()` from `denext/desktop/updater` after your own health check (the backend answered, the user signed in): until then the update stays on trial, and a launch that never confirms is rolled back.",
               "type": "boolean"
+            },
+            "ui": {
+              "description": "The signed UI overlay: a newer static export served in place of the bundled one, without a new app build (`denext ota manifest out --sign`, the mobile OTA format). `runDesktop` serves the active overlay (rolled back if it never boots), and `denext desktop add updates` lets the page install one (`applyUpdates` from `denext/updates`). Needs DesktopConfig.app's `identifier`: the overlay is kept in the app's own data folder.",
+              "type": "object",
+              "properties": {
+                "feedUrl": {
+                  "description": "The web root the signed export is served from (`${feedUrl}/_denext/ota.json` and each file). Its host is added to the packaged app's `--allow-net`.",
+                  "type": "string"
+                },
+                "publicKey": {
+                  "description": "The release public key every manifest must be signed with: base64 SPKI (`ota.key.pub` from `denext ota keygen`) or a `PUBLIC KEY` PEM of an ECDSA P-256 key.",
+                  "type": "string"
+                },
+                "platform": {
+                  "description": "The export's target; default the OS the app runs on.",
+                  "enum": [
+                    "macos",
+                    "windows",
+                    "linux"
+                  ]
+                }
+              },
+              "required": [
+                "feedUrl",
+                "publicKey"
+              ]
             }
           }
         },

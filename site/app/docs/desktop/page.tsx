@@ -1177,7 +1177,19 @@ export default {
         a <a href="#desktop-app-updates">full-app self-update</a> delivers.
       </p>
       <p>
-        Pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
+        The simplest setup is the config: <code>desktop.update.ui</code>{" "}
+        (<code>{"{ feedUrl, publicKey }"}</code>, and <code>desktop.app.identifier</code>{" "}
+        names the folder) makes the generated <code>desktop.ts</code> serve the overlay, and{" "}
+        <code>denext desktop add updates</code> lets the page install one with{" "}
+        <code>applyUpdates()</code> from{" "}
+        <a href="/docs/updates">
+          <code>denext/updates</code>
+        </a>{" "}
+        (the overlay first, then the full app, with progress). The feed&apos;s host joins the
+        packaged app&apos;s <code>--allow-net</code>.
+      </p>
+      <p>
+        By hand, pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
         and to the update calls. All of them run in the Deno process (<code>desktop.ts</code>), not
         in the page:
       </p>
@@ -1292,6 +1304,15 @@ try {
         and notarization. It needs denext&apos;s pinned Deno Desktop runtime (<code>
           Deno.desktop.updater
         </code>), and every update is signed: there is no unsigned path.
+      </p>
+      <p>
+        The calls below run in the Deno process. To let the page run them (an &quot;Update&quot;
+        button with a progress bar), add <code>denext desktop add updates</code> and call{" "}
+        <code>applyUpdates()</code> from{" "}
+        <a href="/docs/updates">
+          <code>denext/updates</code>
+        </a>: it checks, downloads (reporting the percentage), and installs and relaunches, with
+        every check below still made by the runtime.
       </p>
       <Code lang="ts">
         {`// denext.config.ts
@@ -1719,6 +1740,23 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>
               unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
+          </tr>
+          <tr>
+            <td>
+              <code>updates</code>
+            </td>
+            <td>
+              <code>checkForUpdates</code>, <code>applyUpdates</code>{" "}
+              (<code>denext/updates</code>: the <a href="#desktop-updates">UI overlay</a>, then the
+              {" "}
+              <a href="#desktop-app-updates">full app</a>, with download progress)
+            </td>
+            <td>
+              broad <code>--allow-write</code>{" "}
+              (the overlay in the app-support folder); the feed and manifest hosts from{" "}
+              <code>desktop.update</code>
             </td>
             <td>broad</td>
           </tr>

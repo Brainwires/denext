@@ -47,6 +47,7 @@ import { notificationsCapability } from "../src/desktop/caps/notifications.ts";
 import { contextMenuCapability } from "../src/desktop/caps/context-menu.ts";
 import { shortcutsCapability } from "../src/desktop/caps/shortcuts.ts";
 import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts";
+import { updatesCapability } from "../src/desktop/caps/updates.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import { isReservedDataName, refuseReservedDataPath } from "../src/desktop/path-scope.ts";
 import {
@@ -1706,6 +1707,7 @@ const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   "context-menu": () => contextMenuCapability({ api: {} }),
   "global-shortcuts": () => shortcutsCapability({ api: {} }),
   "launch-at-login": () => launchAtLoginCapability({ api: {} }),
+  updates: () => updatesCapability(),
   fs: () => {
     const all = DESKTOP_CAPABILITIES.fs.all!;
     return fsCapability({ dirs: DRIFT_DIRS, read: new Set(all.read), write: new Set(all.write) });

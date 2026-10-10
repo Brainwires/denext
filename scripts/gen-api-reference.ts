@@ -39,6 +39,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/desktop/updater", file: `${ROOT}src/desktop/updater.ts` },
   { module: "denext/desktop/client", file: `${ROOT}src/desktop/client.ts` },
   { module: "denext/mobile", file: `${ROOT}src/mobile/mod.ts` },
+  { module: "denext/updates", file: `${ROOT}src/updates/mod.ts` },
   { module: "denext/navigation", file: `${ROOT}src/navigation/mod.ts` },
   { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
   { module: "denext/feature", file: `${ROOT}src/feature.ts` },

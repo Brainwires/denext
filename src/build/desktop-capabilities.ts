@@ -304,6 +304,21 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "launch-at-login: turn it on only when the user asks (a settings toggle): it makes the app start with every login. macOS 13+ may answer `requires-approval` until the user allows it in System Settings › Login Items; it needs a signed app bundle.",
     ],
   },
+  updates: {
+    key: "updates",
+    value: true,
+    api: ["checkForUpdates (denext/updates)", "applyUpdates"],
+    // The UI overlay is staged and kept under the app-support folder (a broad --allow-write, as for
+    // `fs`); the feed and manifest hosts come from `desktop.update` (`ui.feedUrl`, `manifestUrl`,
+    // `hosts`) and the full-app swap is the pinned runtime's own.
+    all: { write: ["$APPDATA"] },
+    trust: "broad",
+    notes:
+      "the page installs the app's signed updates: the UI overlay (desktop.update.ui) and the full app (desktop.update.manifestUrl, pinned runtime)",
+    manual: [
+      "updates: set desktop.update.ui = { feedUrl, publicKey } (a signed `denext ota manifest` export) and/or desktop.update.manifestUrl + publicKey (`denext desktop publish-update`); a target without its config is reported as not configured.",
+    ],
+  },
   passkeys: {
     key: "passkeys",
     // Fail closed: an empty pin allows no relying party until the project lists its own.
@@ -392,8 +407,13 @@ interface DesktopFlagConfig {
      * extension's own permissions, or any need the catalog can't see); `--regenerate-scripts`
      * preserves it because it lives in the config. */
     readonly extraPermissions?: DesktopPermissionSet;
-    /** Full-app self-update: its manifest host and extra hosts need `--allow-net`. */
-    readonly update?: { readonly manifestUrl?: unknown; readonly hosts?: unknown };
+    /** Self-update: the manifest host, the UI overlay's feed host and extra hosts need
+     * `--allow-net`; the UI overlay (`ui`) is written under the app-support folder. */
+    readonly update?: {
+      readonly manifestUrl?: unknown;
+      readonly hosts?: unknown;
+      readonly ui?: unknown;
+    };
     /** Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`. */
     readonly app?: { readonly deepLinks?: unknown };
     /** Sidecars: their own `permissions`, and what running them takes. */
@@ -419,16 +439,27 @@ function proxyNetHost(
   }
 }
 
-/** The hosts full-app self-update fetches from: the manifest URL's host plus `update.hosts`. */
+/** The host of `url`, or `undefined` (an invalid URL is the config validator's to report). */
+function hostOf(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    return new URL(url).hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The hosts self-update fetches from: the full-app manifest URL's host, the UI overlay's feed host
+ * (`update.ui.feedUrl`) and `update.hosts`.
+ */
 function updateNetHosts(
-  update: { manifestUrl?: unknown; hosts?: unknown } | undefined,
+  update: { manifestUrl?: unknown; hosts?: unknown; ui?: unknown } | undefined,
 ): string[] {
   const hosts: string[] = [];
-  if (typeof update?.manifestUrl === "string") {
-    try {
-      const host = new URL(update.manifestUrl).hostname;
-      if (host) hosts.push(host);
-    } catch { /* an invalid URL is the config validator's to report */ }
+  for (const url of [update?.manifestUrl, (update?.ui as { feedUrl?: unknown })?.feedUrl]) {
+    const host = hostOf(url);
+    if (host) hosts.push(host);
   }
   if (Array.isArray(update?.hosts)) {
     for (const h of update.hosts) if (typeof h === "string" && h) hosts.push(h);
@@ -437,6 +468,20 @@ function updateNetHosts(
 }
 
 const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
+
+/**
+ * Whether the broad `--allow-write` is baked: a capability writes, `extraPermissions` asks (a
+ * per-user path can't be baked), or the UI overlay (`desktop.update.ui`) keeps its boot marker and
+ * staged versions in the app-support folder.
+ */
+function bakesWrite(
+  capFlags: readonly string[],
+  extra: DesktopPermissionSet,
+  cfg: DesktopFlagConfig,
+): boolean {
+  return capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
+    (extra.write?.length ?? 0) > 0 || cfg.desktop?.update?.ui !== undefined;
+}
 /** A flag's values; an unscoped flag (no `=`) is `["*"]`, the whole kind. */
 function valuesOfFlag(flag: string): string[] {
   const eq = flag.indexOf("=");
@@ -540,7 +585,8 @@ function mergePermissionSets(
  *   `NotCapable` under a partial `--allow-sys=<names>`;
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
  *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
- *   (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);
+ *   (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and
+ *   `desktop.update.ui` adds the broad `--allow-write` its overlay needs;
  * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
  *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
@@ -574,9 +620,7 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   if (Array.isArray(cfg.desktop?.app?.deepLinks) && cfg.desktop.app.deepLinks.length > 0) {
     sys.add("*");
   }
-  // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).
-  const needsWrite = capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
-    (extra.write?.length ?? 0) > 0;
+  const needsWrite = bakesWrite(capFlags, extra, cfg);
   // `"*"` grants the whole kind (an unscoped `--allow-ffi`): a Node-API addon extracted from the
   // compiled app's virtual file system has no path that can be named at package time.
   const listFlag = (kind: string, set: Set<string>): string[] =>

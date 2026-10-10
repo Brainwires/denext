@@ -246,6 +246,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "desktop-app": u("src/desktop/app.ts"),
     // `denext/desktop/clerk` — `@clerk/electron`'s bridge over the desktop client RPC.
     "desktop-clerk": u("src/desktop/clerk.ts"),
+    // `denext/updates` — one update API over the OTA client, the desktop bridge and a reload.
+    "updates": u("src/updates/mod.ts"),
     // The React-ecosystem helpers denext exports as subpaths (`denext/slot`,
     // `denext/compose-refs`) and the next-intl compat's client modules.
     "slot": u("src/compat/slot.ts"),
@@ -720,6 +722,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/desktop/window": "desktop-window.js",
   "denext/desktop/app": "desktop-app.js",
   "denext/desktop/clerk": "desktop-clerk.js",
+  "denext/updates": "updates.js",
   "denext/slot": "slot.js",
   "denext/compose-refs": "compose-refs.js",
   "denext/next-intl": "next-intl.js",

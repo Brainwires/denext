@@ -6617,6 +6617,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopUiUpdateConfig",
+          "slug": "DesktopUiUpdateConfig",
+          "kind": "interface",
+          "signature": "interface DesktopUiUpdateConfig",
+          "doc": "DesktopUpdateConfig.ui: the signed UI overlay's feed.",
+          "docFull": "{@link DesktopUpdateConfig.ui}: the signed UI overlay's feed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopUpdateConfig",
           "slug": "DesktopUpdateConfig",
           "kind": "interface",
@@ -16466,8 +16478,8 @@
           "slug": "desktopBuildFlags",
           "kind": "function",
           "signature": "desktopBuildFlags(config: unknown, os: DesktopOs): string[]",
-          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
-          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
+          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
+          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and\n  `desktop.update.ui` adds the broad `--allow-write` its overlay needs;\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
           "params": [
             {
               "name": "config",
@@ -17556,7 +17568,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `updates`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "runtimeConfig",
@@ -24398,6 +24410,185 @@
           "signature": "interface WriteFileOptions",
           "doc": "Options for writeFile.",
           "docFull": "Options for {@linkcode writeFile}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/updates",
+      "symbols": [
+        {
+          "name": "applyUpdates",
+          "slug": "applyUpdates",
+          "kind": "function",
+          "signature": "applyUpdates(config?: UpdatesConfig, onProgress?: UpdateProgressListener): Promise<UpdatesResult>",
+          "doc": "Install every update on offer, reporting each step to onProgress: on a phone the new UI, on Deno Desktop the UI overlay and then the whole app, in a browser the newer deploy. It never throws; a target that failed is listed in failures (and reported as stage: \"failed\").",
+          "docFull": "Install every update on offer, reporting each step to `onProgress`: on a phone the new UI, on\nDeno Desktop the UI overlay and then the whole app, in a browser the newer deploy. It never\nthrows; a target that failed is listed in `failures` (and reported as `stage: \"failed\"`).\n\nWhen installing replaces the running page (a phone's UI switch, a browser reload, a desktop\napp's install-and-relaunch), the promise does not settle. A desktop UI overlay alone is\nserved from the next launch: the result says `restartRequired`. A second call while one runs\nfinds the first's download in progress and reports it (`busy` on desktop).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "Where each platform's updates come from."
+            },
+            {
+              "name": "onProgress",
+              "doc": "Called with each step."
+            }
+          ],
+          "returns": "What happened, when the page keeps running.",
+          "examples": [
+            "```ts\nimport { applyUpdates } from \"denext/updates\";\n\nconst result = await applyUpdates({}, (p) => {\n  status.textContent = `${p.target}: ${p.stage}${p.percent === undefined ? \"\" : ` ${p.percent}%`}`;\n});\nif (result.restartRequired) showRestartPrompt();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "AvailableUpdate",
+          "slug": "AvailableUpdate",
+          "kind": "interface",
+          "signature": "interface AvailableUpdate",
+          "doc": "An update the server offers, verified where the platform verifies before installing.",
+          "docFull": "An update the server offers, verified where the platform verifies before installing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "checkForUpdates",
+          "slug": "checkForUpdates",
+          "kind": "function",
+          "signature": "checkForUpdates(config?: UpdatesConfig): Promise<UpdatesCheck>",
+          "doc": "What the server offers this app, on whatever platform it runs. It never throws: a target that could not be checked is listed in failures.",
+          "docFull": "What the server offers this app, on whatever platform it runs. It never throws: a target that\ncould not be checked is listed in `failures`.\n\nOn a phone the check also downloads and verifies the new UI and stages it (the running UI keeps\nrunning), so what it reports is already verified and {@linkcode applyUpdates} switches at once.\nOn Deno Desktop the app's Deno side verifies each manifest before reporting it. In a browser it\ncompares the deployed build's version with this page's.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "Where each platform's updates come from (only the running platform's part is read)."
+            }
+          ],
+          "returns": "What is on offer.",
+          "examples": [
+            "```ts\nimport { checkForUpdates } from \"denext/updates\";\n\nconst found = await checkForUpdates({ ota: { baseUrl: \"https://api.example.com/mobile-ui\" } });\nfor (const u of found.updates) console.log(`${u.target} ${u.version}`, u.notes ?? \"\");\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopUpdatesConfig",
+          "slug": "DesktopUpdatesConfig",
+          "kind": "interface",
+          "signature": "interface DesktopUpdatesConfig",
+          "doc": "Which Deno Desktop targets to update (both by default).",
+          "docFull": "Which Deno Desktop targets to update (both by default).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdateFailure",
+          "slug": "UpdateFailure",
+          "kind": "interface",
+          "signature": "interface UpdateFailure",
+          "doc": "A target that could not be checked or installed.",
+          "docFull": "A target that could not be checked or installed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdateProgress",
+          "slug": "UpdateProgress",
+          "kind": "interface",
+          "signature": "interface UpdateProgress",
+          "doc": "One progress report from applyUpdates, the same shape on every platform.",
+          "docFull": "One progress report from `applyUpdates`, the same shape on every platform.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdateProgressListener",
+          "slug": "UpdateProgressListener",
+          "kind": "typeAlias",
+          "signature": "type UpdateProgressListener = (progress: UpdateProgress) => void",
+          "doc": "Reports progress (see UpdateProgress).",
+          "docFull": "Reports progress (see {@linkcode UpdateProgress}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdatesCheck",
+          "slug": "UpdatesCheck",
+          "kind": "interface",
+          "signature": "interface UpdatesCheck",
+          "doc": "What checkForUpdates found.",
+          "docFull": "What `checkForUpdates` found.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdatesConfig",
+          "slug": "UpdatesConfig",
+          "kind": "interface",
+          "signature": "interface UpdatesConfig",
+          "doc": "Where each platform's updates come from. Only the running platform's part is read, so one config serves every build.",
+          "docFull": "Where each platform's updates come from. Only the running platform's part is read, so one\nconfig serves every build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdatesResult",
+          "slug": "UpdatesResult",
+          "kind": "interface",
+          "signature": "interface UpdatesResult",
+          "doc": "What applyUpdates did, when it returns (a reload or relaunch never returns).",
+          "docFull": "What `applyUpdates` did, when it returns (a reload or relaunch never returns).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdateStage",
+          "slug": "UpdateStage",
+          "kind": "typeAlias",
+          "signature": "type UpdateStage = checking | downloading | ready | applying | done | up-to-date | failed",
+          "doc": "Where one target's update is:",
+          "docFull": "Where one target's update is:\n\n- `checking`: asking the server what it offers;\n- `downloading`: fetching and verifying it (`percent` when the platform reports it);\n- `ready`: downloaded and verified, not yet switched to;\n- `applying`: switching (the page reloads, or the app relaunches, right after);\n- `done`: switched, where the page keeps running (a desktop UI overlay serves from the next\n  launch);\n- `up-to-date`: nothing newer;\n- `failed`: see `error` and `code`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UpdateTarget",
+          "slug": "UpdateTarget",
+          "kind": "typeAlias",
+          "signature": "type UpdateTarget = ui | app | web",
+          "doc": "What an update replaces:",
+          "docFull": "What an update replaces:\n\n- `ui`: the app's web UI without a new binary (a phone's over-the-air UI, a Deno Desktop app's\n  signed UI overlay);\n- `app`: the whole Deno Desktop app (a new signed build, installed and relaunched);\n- `web`: the page in a browser (a newer deploy, picked up by reloading).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebUpdatesConfig",
+          "slug": "WebUpdatesConfig",
+          "kind": "interface",
+          "signature": "interface WebUpdatesConfig",
+          "doc": "How a browser tab learns that a newer build is deployed.",
+          "docFull": "How a browser tab learns that a newer build is deployed.",
           "params": [],
           "returns": "",
           "examples": [],

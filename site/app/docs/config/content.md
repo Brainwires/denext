@@ -364,7 +364,7 @@ See [Writing a plugin](/docs/plugins).
   capability allowlist (default deny): `secureStore`, `fs`
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
   (`true` or per-action options), `dialogs`, `notifications`, `keepAwake`,
-  `clipboard`, `device`, and `extensions` (module paths of your
+  `clipboard`, `device`, `updates`, and `extensions` (module paths of your
   `defineDesktopExtension` modules). The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
   flags from it. Written by `denext desktop add <capability>`. Distinct from
@@ -373,6 +373,10 @@ See [Writing a plugin](/docs/plugins).
   `desktop.macos` (`{ provisioningProfile, entitlements }`) signs the macOS app with a
   provisioning profile and restricted entitlements such as associated domains; see
   [Desktop apps › Code signing](/docs/desktop#desktop-macos-profile).
+  `desktop.update` holds the self-update feeds: `manifestUrl` + `publicKey` for the
+  full app, and `ui` (`{ feedUrl, publicKey }`) for the signed UI overlay the runtime
+  serves; the `updates` capability lets the page install both
+  ([Updates everywhere](/docs/updates)).
 - **`mobile`** — `MobileConfig`. Capacitor shell settings for
   `denext mobile build` and `denext mobile assets`, such as build `flavors`
   (per-flavor app id, name, server URL, icon and splash). See

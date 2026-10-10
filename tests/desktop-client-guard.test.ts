@@ -25,6 +25,10 @@ const CLIENT_FILES = [
   "src/mobile/clipboard.ts",
   "src/mobile/shell.ts",
   "src/mobile/file-dialogs.ts",
+  "src/updates/mod.ts",
+  "src/updates/desktop.ts",
+  "src/updates/mobile.ts",
+  "src/updates/web.ts",
 ];
 
 Deno.test("desktop client modules use no Deno APIs", async () => {

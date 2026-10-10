@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext/updates`: one "update everything" API for every platform.** `checkForUpdates(cfg?)`
+  and `applyUpdates(cfg?, onProgress)` dispatch on `runtimePlatform()`: on iOS / Android the
+  over-the-air UI (`cfg.ota`; the check stages a verified UI, apply switches to it), on Deno
+  Desktop the signed UI overlay and then the whole app, in a browser a reload when the deployed
+  build's version (`/_denext/ota.json`, or `cfg.web.versionUrl`) differs from the page's. One
+  progress shape everywhere: `{ target: "ui" | "app" | "web", stage: "checking" | "downloading" |
+  "ready" | "applying" | "done" | "up-to-date" | "failed", version?, percent?, error?, code? }`.
+  Every existing check still applies (signatures, sequence, expiry, the same code signer); a phone
+  UI built for another binary (`native_mismatch` / `native_too_old`) is reported as
+  `needsStoreUpdate`, and a desktop overlay alone as `restartRequired`. The module is opt-in and
+  loads each platform's code on first use. The desktop side is a new **`updates` capability**
+  (`denext desktop add updates`, token-gated like the others: `check`, `download` with throttled
+  `progress` events, `apply`), and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
+  configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
+  hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
+  the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
+
 ## [3.4.4] - 2026-10-10
 
 ### Added
