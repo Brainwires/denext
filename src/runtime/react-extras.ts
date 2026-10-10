@@ -4,6 +4,7 @@
 
 import { Fragment, h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
+import { brandOf, isComponentType, REACT_LAZY_TYPE, resolveComponentType } from "./react-brands.ts";
 
 /**
  * Marker used as the `type` of an {@link Activity} VNode so the reconciler recognizes it
@@ -58,31 +59,161 @@ export interface ViewTransitionMarker {
   share?: string | Record<string, string>;
 }
 
-/** The single VNode element child of a `<ViewTransition>`, or null (text / none / many). */
-function singleElementChild(children: VNodeChildren): VNode | null {
-  const one = Array.isArray(children) ? (children.length === 1 ? children[0] : null) : children;
-  return one != null && typeof one === "object" && "type" in (one as object) ? one as VNode : null;
+/**
+ * Where a `<ViewTransition>`'s host instances get their names. React counts a boundary's host
+ * instances in tree order and names them `name`, `name_1`, `name_2`, …; here a component's hosts
+ * are only known once it renders, so each position is a path (one index per component level). A
+ * component that is the LAST position at its level continues its parent's count (nothing follows
+ * it to collide with), which keeps React's flat names for the usual shapes.
+ */
+interface VTScope {
+  /** The boundary's config (its `name` is the base name). */
+  m: ViewTransitionMarker;
+  /** The component levels above this one (empty at the `<ViewTransition>` itself). */
+  path: number[];
+  /** The next position at this level (Fragments and arrays are flat; a component opens a level). */
+  n: number;
+  /** The component scope at the last position taken so far (null when a host took it). */
+  tail: VTScope | null;
+}
+
+/** A host child's config: the boundary's, with the name suffixed by its position. */
+function markerAt(scope: VTScope, i: number): string {
+  const path = scope.path.concat(i);
+  const name = scope.m.name;
+  // The first host keeps the bare name (it pairs with a single-element boundary elsewhere).
+  // Paths are prefix-free (a position is a host OR a component), so each suffix is unique and
+  // stable across renders.
+  const suffixed = name == null || name === "auto" || path.every((x) => x === 0)
+    ? name
+    : `${name}_${path.join("_")}`;
+  return JSON.stringify(suffixed === name ? scope.m : { ...scope.m, name: suffixed });
+}
+
+/** Mark `children` as one level of a boundary (see {@link VTScope}), starting at position `n`. */
+function markLevel(
+  children: VNodeChildren,
+  m: ViewTransitionMarker,
+  path: number[],
+  n: number,
+): VNodeChildren {
+  const scope: VTScope = { m, path, n, tail: null };
+  const out = markHosts(children, scope);
+  // The last position is a component: it continues this level's count.
+  if (scope.tail) {
+    scope.tail.n = scope.tail.path.at(-1)!;
+    scope.tail.path = path;
+  }
+  return out;
+}
+
+/** The element brand + its props, with `props` replaced. */
+function withProps(el: VNode, props: Record<string, unknown>): VNode {
+  return { ...el, props: props as VProps };
+}
+
+/** A component whose rendered output must be marked: a plain function, `memo` or `forwardRef`. */
+function expandable(type: unknown): boolean {
+  if (!isComponentType(type)) return false;
+  const t = type as { prototype?: { isReactComponent?: unknown } } & Record<symbol, unknown>;
+  // A class can't be called; a lazy one hasn't loaded; a client reference must not run on the
+  // server (Flight emits it as a reference). Those carry the config as a prop instead, which the
+  // client's marking runtime resolves to the component's nearest host nodes.
+  return !t.prototype?.isReactComponent && brandOf(type) !== REACT_LAZY_TYPE &&
+    t[Symbol.for("denext.clientRef")] == null;
+}
+
+const VT_SCOPE: unique symbol = /* @__PURE__ */ Symbol("denext.vtScope");
+const expanders = /* @__PURE__ */ new WeakMap<
+  object,
+  (props: Record<PropertyKey, unknown>) => unknown
+>();
+
+/**
+ * The stand-in that renders `type` and marks its output's nearest host nodes. One per component
+ * type (cached), so a child whose type changes remounts as it would unwrapped, and its hooks
+ * stay on one fiber.
+ */
+function expanderFor(type: object): (props: Record<PropertyKey, unknown>) => unknown {
+  let x = expanders.get(type);
+  if (!x) {
+    const { fn, forwardsRef } = resolveComponentType(type);
+    const call = fn as (props: unknown, ref?: unknown) => unknown;
+    x = (props) => {
+      const { [VT_SCOPE]: scope, ...rest } = props;
+      let out;
+      if (forwardsRef) {
+        const { ref, ...noRef } = rest;
+        out = call(noRef, ref);
+      } else out = call(rest);
+      const { m, path, n } = scope as VTScope;
+      const mark = (o: unknown) => markLevel(o as VNodeChildren, m, path, n);
+      return out instanceof Promise ? out.then(mark) : mark(out);
+    };
+    const named = type as { displayName?: string; name?: string };
+    (x as { displayName?: string }).displayName = named.displayName ?? named.name ??
+      (fn as { name?: string })?.name;
+    expanders.set(type, x);
+  }
+  return x;
+}
+
+/**
+ * Mark the nearest host nodes of `children` with the boundary's config (React's
+ * `applyViewTransitionToHostInstances`): a host element takes the attribute and is not entered;
+ * Fragments, arrays, Suspense, providers and portals are looked through; text can't be named; a
+ * component is rendered through {@link expanderFor} so ITS output is marked; a nested
+ * `<ViewTransition>` marks its own.
+ */
+function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
+  if (Array.isArray(children)) return children.map((c) => markHosts(c, scope)) as VNodeChildren;
+  if (children == null || typeof children !== "object" || !("type" in children)) return children;
+  const el = children as VNode;
+  const { type } = el;
+  const props = (el.props ?? {}) as Record<PropertyKey, unknown>;
+  if (typeof type === "string" || (isComponentType(type) && !expandable(type))) {
+    scope.tail = null;
+    return withProps(el, { ...props, [DNX_VT_ATTR]: markerAt(scope, scope.n++) });
+  }
+  if (type === ViewTransition) return el;
+  if (expandable(type)) {
+    const inner: VTScope = { m: scope.m, path: scope.path.concat(scope.n++), n: 0, tail: null };
+    scope.tail = inner;
+    return {
+      ...el,
+      type: expanderFor(type as object) as never,
+      props: { ...props, [VT_SCOPE]: inner } as VProps,
+    };
+  }
+  // Fragment / Suspense / Activity / provider / portal: their content is this boundary's.
+  const next = { ...props };
+  if ("children" in props) next.children = markHosts(props.children as VNodeChildren, scope);
+  if (props.fallback != null) next.fallback = markHosts(props.fallback as VNodeChildren, scope);
+  return withProps(el, next);
 }
 
 /**
  * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is
  * transparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}
- * attribute onto its **single host child** (a DOM attribute survives server rendering AND the
- * Flight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements
- * and applies real `view-transition-name` (an automatic one when `name` is unset) and
- * `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`; `"none"` opts out):
+ * attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the
+ * Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the
+ * first keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child
+ * renders. Text directly inside is not animated (it can't be named). The import-gated marking
+ * runtime finds these elements and applies real `view-transition-name` (an automatic one when
+ * `name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;
+ * `"none"` opts out):
  *
  * - **Same-page updates** (React's triggers): a commit made only of Transition work — a
  *   `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside
  *   `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that
  *   leaves one place and enters another) or updates (its content mutated or its layout moved).
- *   An urgent update never animates.
+ *   An urgent update never animates, and neither does a `useSyncExternalStore` change (React
+ *   renders a store change synchronously even inside `startTransition`).
  * - **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`
  *   in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the
  *   other; the route-level cross-fade applies regardless.
  *
- * Where the browser lacks the View Transitions API the commit simply applies. A wrapper whose
- * child isn't a single element (nothing to mark) is a plain passthrough.
+ * Where the browser lacks the View Transitions API the commit simply applies.
  */
 export function ViewTransition(
   props: {
@@ -99,16 +230,12 @@ export function ViewTransition(
   for (const k of ["name", "default", "enter", "exit", "update", "share"] as const) {
     if (props?.[k] != null) (marker as Record<string, unknown>)[k] = props[k];
   }
-  const child = singleElementChild(props?.children ?? null);
-  // No single element to stamp → transparent passthrough. A wrapper with no config still marks
-  // its child: like React's, it participates under an automatic name.
-  if (child === null) return h(Fragment, null, props?.children);
-  // Clone the child, adding the config attribute. On a host element it lands in the DOM (and
-  // the Flight payload); on a component child the author must forward it — like React, whose
-  // ViewTransition also requires a single element child. Spread the child so its element brand
-  // (`$$typeof`) and any other fields survive — a rebuilt `{ type, key, props }` would make
-  // `isValidElement`/`react-is` misclassify the wrapped child.
-  return { ...child, props: { ...(child.props ?? {}), [DNX_VT_ATTR]: JSON.stringify(marker) } };
+  // A wrapper with no config still marks its hosts: like React's, it participates under an
+  // automatic name. Clones keep each element's brand (`$$typeof`) and key.
+  const out = markLevel(props?.children ?? null, marker, [], 0);
+  return out != null && typeof out === "object" && !Array.isArray(out)
+    ? out as VNode
+    : h(Fragment, null, out);
 }
 
 /**

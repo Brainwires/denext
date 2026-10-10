@@ -71,6 +71,10 @@ export interface ExportContext {
    * `denext build` computes them (empty in next-compat mode, whose esbuild bundles fold flags).
    */
   transforms: Record<string, string>;
+  /** Whether the app renders `<Activity>` (the build's source scan): the client installs its runtime. */
+  readonly usesActivity: boolean;
+  /** Whether the app renders `<ViewTransition>` (the build's source scan): likewise. */
+  readonly usesViewTransition: boolean;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */

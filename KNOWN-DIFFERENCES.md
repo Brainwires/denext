@@ -34,6 +34,17 @@ internal design choice with no observable difference lives in
   synchronous flush collapses the deferred pass, so a test sees the final value at
   once rather than the stale one first. Real event-path rendering defers as React
   does.
+- **A state update is applied when it is set, not per lane.** React queues each update with
+  its lane, so an urgent re-render of a component leaves that component's pending Transition
+  state for the Transition render. denext applies the new value at once, so any re-render of
+  the component reads it. You can see this with `<ViewTransition>` and external stores. A
+  `useSyncExternalStore` change always renders synchronously, even inside `startTransition`,
+  so it never animates, which is also true in React. But when one `startTransition` changes a
+  store and also sets state in a component that reads that store, the store's synchronous
+  render commits that state too, and the `<ViewTransition>` it reveals does not animate. React
+  would animate it in the later Transition render. Keep the animated state in a component
+  that doesn't subscribe to the store, or move the value out of the store into state.
+  Deliberate: one value per hook, with no update queue, keeps the reconciler small.
 - **The class-component runtime loads on demand.** React ships its class support in the
   core; denext ships it as a separate chunk (`denext/class-runtime`) that a page fetches only
   when it needs it. A server-rendered class is preloaded before hydration (the document

@@ -165,6 +165,8 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
       minify: prodMinify(),
       ...exportClientResolution(ctx, server),
       instrumentationClient: ctx.paths.instrumentationClientPath,
+      usesActivity: ctx.usesActivity,
+      usesViewTransition: ctx.usesViewTransition,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
   }
@@ -192,6 +194,8 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       boundary,
       flightFile: FLIGHT_BUNDLE_FILE,
       instrumentationClient: ctx.paths.instrumentationClientPath,
+      usesActivity: ctx.usesActivity,
+      usesViewTransition: ctx.usesViewTransition,
     });
   } else {
     const flightBundle = await bundleFlightEntry(boundary, {
@@ -203,6 +207,8 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       // feature() call agrees with the server render.
       features: featureFlags(ctx.paths.config),
       instrumentationClient: ctx.paths.instrumentationClientPath,
+      usesActivity: ctx.usesActivity,
+      usesViewTransition: ctx.usesViewTransition,
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
   }

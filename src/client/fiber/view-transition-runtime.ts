@@ -128,6 +128,16 @@ function eachMarked(visit: (marker: ViewTransitionMarker, el: Element) => void):
       const m = markerOf(el);
       if (m) visit(m, el);
     }
+    // A component carrying the config (the server couldn't expand it) marks no DOM node itself.
+    componentBoundaries(handle.current, (b) => out.includes(b.el) || visit(b.m, b.el));
+  }
+}
+
+/** Every config-carrying component's boundaries in `f`'s committed tree. */
+function componentBoundaries(f: Fiber | null, visit: (b: Boundary) => void): void {
+  for (; f !== null; f = f.sibling) {
+    if (f.tag === "component") { for (const b of boundariesOfFiber(f) ?? []) visit(b); }
+    componentBoundaries(f.child, visit);
   }
 }
 
@@ -222,9 +232,9 @@ interface Plan {
 const MUTATION = Placement | Update | ChildDeletion | ChildrenChanged;
 const CHILD_LIST = ChildDeletion | ChildrenChanged;
 
-/** A host fiber's `<ViewTransition>` config, or null. */
-function markerOfFiber(f: Fiber): ViewTransitionMarker | null {
-  if (f.tag !== "host") return null;
+/** A fiber's raw `<ViewTransition>` config (a host's attribute, or a component's carried prop). */
+function rawMarker(f: Fiber): ViewTransitionMarker | null {
+  if (f.tag !== "host" && f.tag !== "component") return null;
   const raw = (f.vnode.props as Record<string, unknown> | null)?.[DNX_VT_ATTR];
   if (typeof raw !== "string") return null;
   try {
@@ -232,6 +242,32 @@ function markerOfFiber(f: Fiber): ViewTransitionMarker | null {
   } catch {
     return null;
   }
+}
+
+/** The nearest host nodes under `f` (visible ones; React's host-instance walk). */
+function nearestHosts(f: Fiber | null, out: Element[]): Element[] {
+  for (; f !== null; f = f.sibling) {
+    if (hasBit(f, HiddenBit) || (f.tag === "activity" && hasBit(f, OffscreenBit))) continue;
+    if (f.tag === "host") out.push(f.stateNode as Element);
+    else if (f.tag !== "portal") nearestHosts(f.child, out);
+  }
+  return out;
+}
+
+/**
+ * The boundaries a fiber is: a marked host is one; a component carrying the config (a class, a
+ * lazy or a client-reference child the server could not expand) is one per nearest host node,
+ * named `name`, `name_1`, … as React names a boundary's host instances.
+ */
+function boundariesOfFiber(f: Fiber): Boundary[] | null {
+  const m = rawMarker(f);
+  if (m === null) return null;
+  if (f.tag === "host") return [{ el: f.stateNode as Element, m }];
+  const name = explicitName(m);
+  return nearestHosts(f.child, []).map((el, i) => ({
+    el,
+    m: i === 0 || !name ? m : { ...m, name: `${name}_${i}` },
+  }));
 }
 
 /** A named boundary's explicit name (`"auto"` and unset are automatic). */
@@ -250,12 +286,13 @@ function boundariesIn(
   isTop = true,
 ): void {
   if (hasBit(f, HiddenBit) || (f.tag === "activity" && hasBit(f, OffscreenBit))) return;
-  const m = markerOfFiber(f);
-  if (m !== null) {
-    const b = { el: f.stateNode as Element, m };
-    if (isTop) top.push(b);
-    const name = explicitName(m);
-    if (name) named.set(name, b);
+  const bs = boundariesOfFiber(f);
+  if (bs !== null) {
+    for (const b of bs) {
+      if (isTop) top.push(b);
+      const name = explicitName(b.m);
+      if (name) named.set(name, b);
+    }
     isTop = false;
   }
   for (let c = f.child; c !== null; c = c.sibling) boundariesIn(c, top, named, isTop);
@@ -264,7 +301,8 @@ function boundariesIn(
 /** Whether every top-level DOM node of `f`'s subtree is a boundary (so it isn't a root change). */
 function allTopMarked(f: Fiber): boolean {
   if (f.tag === "text") return false;
-  if (f.tag === "host") return markerOfFiber(f) !== null;
+  if (rawMarker(f) !== null) return true;
+  if (f.tag === "host") return false;
   for (let c = f.child; c !== null; c = c.sibling) if (!allTopMarked(c)) return false;
   return true;
 }
@@ -345,12 +383,11 @@ function classify(
   flags: number,
   insideVT: boolean,
   changed: boolean,
-): ViewTransitionMarker | null {
-  const m = markerOfFiber(c);
+): Boundary[] | null {
+  const m = boundariesOfFiber(c);
   if (m !== null) {
-    const b = { el: c.stateNode as Element, m };
-    if ((flags & MUTATION) !== 0) plan.updates.push(b);
-    else if (changed) plan.layout.push(b);
+    if ((flags & MUTATION) !== 0) plan.updates.push(...m);
+    else if (changed) plan.layout.push(...m);
   } else if (!insideVT && (c.flags & Update) !== 0 && (c.tag === "host" || c.tag === "text")) {
     plan.rootAffected = true;
   }
@@ -641,8 +678,7 @@ function mountedNames(wipRoot: Fiber): Boundary[] {
   const out: Boundary[] = [];
   walkFlagged(wipRoot, Placement, (f) => {
     if (f.alternate !== null || (f.flags & Placement) === 0) return;
-    const m = markerOfFiber(f);
-    if (m !== null && explicitName(m)) out.push({ el: f.stateNode as Element, m });
+    for (const b of boundariesOfFiber(f) ?? []) if (explicitName(b.m)) out.push(b);
   });
   return out;
 }

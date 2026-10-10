@@ -40,6 +40,25 @@ and this project adheres to
   chunks went from 67,915 B to 65,872 B, and the build-smoke budget moves from 68,500 B to
   67,400 B.
 
+### Fixed
+
+- **`<ViewTransition>` animates its nearest host nodes, whatever its children are, as React
+  does.** Before, only a single host child was marked. A component child had to forward the
+  config to its root element itself, and a Fragment, a list or several elements were passed
+  through without animating. Now a component child's rendered hosts are marked (a plain
+  function, `memo`, `forwardRef` or an async Server Component, with no forwarding). Each host
+  in a Fragment or list is marked too: the first keeps `name` and the others get React's
+  `name_1`, `name_2` suffixes. Text is skipped, since it can't be named. A child the server
+  can't run is resolved in the browser to the hosts it renders. That covers a class, a `lazy`
+  and a client component inside a Server Component's `<ViewTransition>`.
+- **`denext export` ships the `<Activity>` and `<ViewTransition>` runtimes when the app uses
+  them.** An App Router export never ran the source scan that `denext build` runs, so an
+  exported `<ViewTransition>` didn't animate and a hidden `<Activity>` rendered visible. The
+  scan also no longer reads build output. It used to read a previous export in `out/`, `dist/`
+  or any folder holding `_denext/` (a custom `--out`, Capacitor's copies under `ios/` and
+  `android/`), whose bundles still name the component. That kept a runtime the app had dropped:
+  an SPA re-exported after removing its `<ViewTransition>` still shipped it (+6.8 KB).
+
 ## [3.4.3] - 2026-10-10
 
 ### Added

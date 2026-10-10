@@ -83,9 +83,8 @@
 ## React, Remix and SPA surface
 
 - **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /
-  `onUpdate` / `onShare`, more than one child (today it needs a single element child, since its
-  config rides an attribute on it), an `<Activity>` going hidden animated as an exit, and an
-  update skipped when the boundary is off-screen.
+  `onUpdate` / `onShare`, an `<Activity>` going hidden animated as an exit, and an update
+  skipped when the boundary is off-screen.
 - **A hidden `<Activity>` holds class lifecycles and refs too:** a class component inside one
   still runs `componentDidMount`, and a hidden subtree's refs stay attached (function
   components' effects already wait until it is shown).

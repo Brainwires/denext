@@ -14,11 +14,13 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import "./helpers/view-transition-runtime.ts";
 import "./helpers/activity-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { Activity, ViewTransition } from "../src/runtime/react-extras.ts";
+import { Activity, DNX_VT_ATTR, ViewTransition } from "../src/runtime/react-extras.ts";
+import { Fragment } from "../src/jsx/jsx-runtime.ts";
 import {
   startTransition,
   useDeferredValue,
   useState,
+  useSyncExternalStore,
   useTransition,
 } from "../src/runtime/hooks.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
@@ -586,4 +588,147 @@ Deno.test("a commit that throws in the view transition's update callback reaches
   assertEquals(errors.map((e) => (e as Error).message), ["commit failed"]);
   flushSync();
   assertEquals(pending, false, "the transition settled");
+});
+
+// ---- Child shapes: the boundary's nearest host nodes, whatever wraps them ------------------
+
+/** Mount `App` and return a setter that toggles its `on` state. */
+function mountToggle(render: (on: boolean) => unknown) {
+  const env = setup();
+  let set: (b: boolean) => void = () => {};
+  function App() {
+    const [on, setOn] = useState(false);
+    set = setOn;
+    return h("main", null, render(on) as never);
+  }
+  createRoot(env.container as Any).render(h(App, null) as VNode);
+  flushSync();
+  return { ...env, set: (b: boolean) => set(b) };
+}
+
+Deno.test("shapes: a component child entering animates the host it renders", async () => {
+  const Card = () => h("div", { "data-testid": "card" }, "card");
+  const env = mountToggle((on) =>
+    on && h(ViewTransition, { name: "c", enter: "in" }, h(Card, null))
+  );
+  startTransition(() => env.set(true));
+  flushSync();
+  await tick();
+  assertEquals(env.calls.length, 1);
+  assertEquals(vtName(env.calls[0].next.get("card")!), "c");
+  assertEquals(vtClass(env.calls[0].next.get("card")!), "in");
+});
+
+Deno.test("shapes: a Fragment of hosts exits as one boundary per host (name, name_1)", () => {
+  const env = mountToggle((on) =>
+    !on &&
+    h(
+      ViewTransition,
+      { name: "pair", exit: "out" },
+      h(
+        Fragment,
+        null,
+        h("p", { "data-testid": "p1" }, "1"),
+        "text",
+        h("p", { "data-testid": "p2" }, "2"),
+      ),
+    )
+  );
+  startTransition(() => env.set(true));
+  flushSync();
+  const old = env.calls[0].old;
+  assertEquals([vtName(old.get("p1")!), vtName(old.get("p2")!)], ["pair", "pair_1"]);
+  assertEquals([vtClass(old.get("p1")!), vtClass(old.get("p2")!)], ["out", "out"]);
+});
+
+Deno.test("shapes: a component child keeps its state across renders (no remount) and its marks", async () => {
+  let bump: () => void = () => {};
+  let mounts = 0;
+  function Counter() {
+    const [n, setN] = useState(() => (mounts++, 0));
+    bump = () => setN(n + 1);
+    return h("p", { "data-testid": "n" }, String(n));
+  }
+  const env = mountToggle((on) =>
+    h(ViewTransition, { name: "n", update: "tick" }, h(Counter, { on }))
+  );
+  startTransition(() => bump());
+  flushSync();
+  await tick();
+  startTransition(() => env.set(true)); // the parent re-renders the boundary too
+  flushSync();
+  await tick();
+  assertEquals(mounts, 1, "the wrapped component kept its fiber");
+  assertStringIncludes((env.container as Any).innerHTML, ">1<");
+  const call = env.calls[0];
+  assertEquals(vtName(call.next.get("n")!), "n", "its own update animates under the name");
+  assertEquals(vtClass(call.next.get("n")!), "tick");
+});
+
+Deno.test("shapes: a child the server can't expand (a client reference) is resolved by the client runtime", async () => {
+  // Flight hands the browser a client component carrying the config as a prop; the component
+  // doesn't forward it, so the runtime finds the component's nearest hosts itself.
+  const Island = () =>
+    h(Fragment, null, h("i", { "data-testid": "i1" }, "1"), h("i", { "data-testid": "i2" }, "2"));
+  const env = mountToggle((on) =>
+    on && h(Island as Any, { [DNX_VT_ATTR]: JSON.stringify({ name: "isl", enter: "in" }) })
+  );
+  startTransition(() => env.set(true));
+  flushSync();
+  await tick();
+  const next = env.calls[0].next;
+  assertEquals([vtName(next.get("i1")!), vtName(next.get("i2")!)], ["isl", "isl_1"]);
+  assertEquals(vtClass(next.get("i1")!), "in");
+});
+
+// ---- External stores (React 19.2: a store change always renders at SyncLane) ---------------
+
+function storeOf(initial: string[]) {
+  let value = initial;
+  const subs = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (v: string[]) => {
+      value = v;
+      for (const s of subs) s();
+    },
+    subscribe: (fn: () => void) => (subs.add(fn), () => subs.delete(fn)),
+  };
+}
+
+Deno.test("a useSyncExternalStore change never animates, even inside startTransition (as in React)", async () => {
+  const env = setup();
+  const store = storeOf(["a"]);
+  let setExtra: (b: boolean) => void = () => {};
+  const item = (id: string) =>
+    h(ViewTransition, { key: id, enter: "in" }, h("li", { "data-testid": id }, id));
+  function Items() {
+    return h("ul", null, useSyncExternalStore(store.subscribe, store.get).map(item));
+  }
+  function Extra() {
+    const [extra, setX] = useState(false);
+    setExtra = setX;
+    return h("ul", null, extra && item("x"));
+  }
+  createRoot(env.container as Any).render(h("main", null, h(Items, null), h(Extra, null)) as VNode);
+  flushSync();
+  startTransition(() => store.set(["a", "b"]));
+  flushSync();
+  assertEquals(env.calls.length, 0, "the store render is synchronous: no view transition");
+  assertStringIncludes((env.container as Any).innerHTML, 'data-testid="b"');
+  // A transition that changes both: the store half commits synchronously first, and the state
+  // half animates on its own (only its boundary enters).
+  startTransition(() => {
+    store.set(["a", "b", "c"]);
+    setExtra(true);
+  });
+  await tick(); // the store's sync render runs first, on its own (as the scheduler does)
+  assertEquals(env.calls.length, 0, "the store's sync commit did not animate");
+  flushSync(); // then the Transition render
+  await tick();
+  assertEquals(env.calls.length, 1, "only the Transition render animates");
+  const call = env.calls[0];
+  assert(call.old.has("c"), "the store's item was committed (sync) before the old capture");
+  assertEquals(vtClass(call.next.get("x")!), "in", "the state update's boundary enters");
+  assertEquals(vtName(call.next.get("c") ?? ""), undefined, "the store's item is not animated");
 });

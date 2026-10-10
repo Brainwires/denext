@@ -73,11 +73,13 @@ export default async function Photo({ params }: { params: { id: string } }) {
 }
 ```
 
-- The wrapper stamps `view-transition-name` on its host child around the swap — before
-  `startViewTransition` on the outgoing element, after the commit on the incoming one —
-  then clears it when the transition finishes.
+- The wrapper stamps `view-transition-name` on its nearest host nodes around the swap: a host
+  child, each host in a Fragment or list (`name`, `name_1`, …), or what a component child
+  renders. It stamps the outgoing elements before `startViewTransition` and the incoming ones
+  after the commit, then clears the stamps when the transition finishes.
 - `addTransitionType("nav-forward")` feeds `startViewTransition({ types })`, and an
   `enter={{ "nav-forward": "slide-left", default: "fade" }}` map resolves against it.
 - It works on every soft-nav path (Flight, isomorphic, full-HTML), and on same-page updates
   made in a Transition (`startTransition`, `useDeferredValue`, a Suspense reveal): an element
-  that enters, exits or moves animates, as with React 19.2. An urgent update is not animated.
+  that enters, exits or moves animates, as with React 19.2. An urgent update is not animated,
+  and neither is a `useSyncExternalStore` change (React renders it synchronously too).
