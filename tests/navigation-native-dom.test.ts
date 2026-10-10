@@ -863,6 +863,15 @@ Deno.test("mapStackOptions translates native-stack options", () => {
   );
 });
 
+Deno.test("mapStackOptions passes headerBackButtonDisplayMode, dropping unknown values", () => {
+  const map = (v: unknown) =>
+    mapStackOptions({ headerBackButtonDisplayMode: v, headerBackTitle: "T" }, { canGoBack: true });
+  assertEquals(map("minimal").headerBackButtonDisplayMode, "minimal");
+  assertEquals(map("generic").headerBackButtonDisplayMode, "generic");
+  assertEquals(map("bogus").headerBackButtonDisplayMode, undefined);
+  assertEquals(map("minimal").headerBackTitle, "T", "headerBackTitle still maps");
+});
+
 Deno.test("createBottomTabNavigatorFactory: badges, jumpTo on press, tabPress on the active tab", async () => {
   const state = {
     key: "tabs-1",

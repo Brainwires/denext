@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`headerBackButtonDisplayMode` screen option** (`"default" | "generic" | "minimal"`) on
+  `denext/navigation`'s native stacks (`StackLayout`, `StackView`, `HistoryStack`) and React
+  Navigation native-stack / expo-router `screenOptions` in React Native mode. `"minimal"` draws the
+  chevron alone with the previous title kept as the button's `aria-label`; `"generic"` reads
+  "Back"; `headerBackTitle` keeps working.
+
 - **`spa.shell`: a prerendered, adoptable static shell, so a SPA paints its real layout and
   takes typing before the client bundle has run.** `spa.shell: { component, props?, bootScript?,
   platforms?, readyOn?, maxHoldMs? }` server-renders a pure component into `#root` at

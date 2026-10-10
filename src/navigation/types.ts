@@ -83,6 +83,12 @@ export interface ScreenOptions {
   readonly headerLargeTitle?: boolean;
   /** iOS: the back button's label (default: the title of the screen below, else "Back"). */
   readonly headerBackTitle?: string;
+  /**
+   * iOS: how the back button reads. `"default"` shows the title of the screen below (or
+   * `headerBackTitle`), `"generic"` shows "Back", `"minimal"` shows the chevron alone (the title
+   * stays as its accessible label).
+   */
+  readonly headerBackButtonDisplayMode?: "default" | "generic" | "minimal";
   /** Whether to draw the back button when the stack can go back (default `true`). */
   readonly headerBackVisible?: boolean;
   /** A `"formSheet"`'s detents (default `["large"]`). */
