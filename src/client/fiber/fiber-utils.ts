@@ -138,6 +138,24 @@ export function findErrorBoundary(fiber: Fiber): Fiber | null {
   return null;
 }
 
+/**
+ * React's "Maximum update depth exceeded", naming the component `name`. In dev it also lists
+ * the components above `fiber` (React's component stack); production builds skip the walk.
+ * Built only when a loop is detected, so the hot paths carry just the call.
+ */
+export function updateDepthError(name: string, fiber?: Fiber | null): Error {
+  let stack = "";
+  if (devHydrationActive()) {
+    for (let n = fiber ?? null; n !== null; n = n.return) {
+      if (n.tag === "component") stack += `\n    in ${componentDisplayName(n.vnode.type)}`;
+    }
+  }
+  return new Error(
+    `denext: Maximum update depth exceeded. <${name}> repeatedly schedules an update during ` +
+      `render (e.g. calling setState unconditionally while rendering).${stack}`,
+  );
+}
+
 export function componentErrorInfo(fiber: Fiber): { componentStack: string } {
   return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
 }

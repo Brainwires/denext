@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **"Maximum update depth exceeded" names the component, as React's error does.** A component
+  that calls its own setter unconditionally while it renders threw the error without saying which
+  component it was; it now names it (`<Looper> repeatedly schedules an update during render`), and
+  in development it also lists the components above it (`in Looper`, `in Panel`, …). The commit
+  loop's variant (an effect that schedules the next render on every commit) names the component
+  that scheduled the last update in the same words. The message is built only when the loop is
+  detected; the shared runtime is 48 B smaller.
 - **A context change re-renders only the consumers inside the provider that changed.** The walk
   that marks a changed provider's consumers followed `return` pointers back up to the provider,
   but a child shared from the other render buffer (one a bailed parent passed on unchanged) still

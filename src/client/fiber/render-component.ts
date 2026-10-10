@@ -25,10 +25,10 @@ import {
   resolveFamilyCurrent,
 } from "../vnode-utils.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
-import { resolveComponentType } from "../../runtime/react-brands.ts";
+import { componentDisplayName, resolveComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
 import { loadClassRuntime } from "../class-loader.ts";
-import { findSuspense } from "./fiber-utils.ts";
+import { findSuspense, updateDepthError } from "./fiber-utils.ts";
 import { scheduleUpdate } from "./scheduler.ts";
 import {
   BailedBit,
@@ -109,10 +109,7 @@ function runRenderPhase(
   while (renderPhaseUpdateScheduled) {
     if (++passes > MAX_RENDER_PHASE_PASSES) {
       resetHookCursor();
-      throw new Error(
-        "denext: Maximum update depth exceeded. A component repeatedly schedules an " +
-          "update during its own render (e.g. calling setState unconditionally while rendering).",
-      );
+      throw updateDepthError(componentDisplayName(inst.vnode.type), inst);
     }
     restoreForReRender(inst, baselineLength);
     resetHookCursor();
