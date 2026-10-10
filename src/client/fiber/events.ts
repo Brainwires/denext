@@ -9,12 +9,14 @@
 // `currentTarget` set to the handler's element for the duration of the call.
 //
 // What stays on the element (dom-props' own listener, as in React): events that do not bubble
-// (scroll, load, error, media events, toggle, …), `wheel` / `touch*` (a non-passive root
-// listener for them would hold every scroll on the main thread), and event types this module
-// does not know (a custom element's events may not bubble). `onFocus` / `onBlur` listen to
-// `focusin` / `focusout` (handlers see `type` "focus" / "blur"), and `onMouseEnter` /
-// `onMouseLeave` / `onPointerEnter` / `onPointerLeave` are derived from the over/out pair, so
-// they fire for the elements actually entered and left, outermost first on enter.
+// (scroll, load, error, media events, toggle, …), `wheel` / `touch*` (dom-props registers
+// `touchstart` / `touchmove` / `wheel` PASSIVE, as React DOM does — see
+// runtime/passive-events.ts — so a handler never holds a scroll on the main thread), and
+// event types this module does not know (a custom element's events may not bubble).
+// `onFocus` / `onBlur` listen to `focusin` / `focusout` (handlers see `type` "focus" /
+// "blur"), and `onMouseEnter` / `onMouseLeave` / `onPointerEnter` / `onPointerLeave` are
+// derived from the over/out pair, so they fire for the elements actually entered and left,
+// outermost first on enter.
 
 import { fiberForNode } from "../dom-fiber-map.ts";
 import { beginEventDispatch, endEventDispatch } from "../event-priority.ts";

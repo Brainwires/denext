@@ -184,7 +184,9 @@ function moveDrag(drag: DragState, e: PointerLike, host: SheetDragHost): boolean
 /**
  * Wire the sheet's drag to `panel` (and its content `scroller`): pointer events move the sheet,
  * a non-passive `touchmove` on the scroller cancels the browser's own pan while the sheet is
- * the one moving. Returns the detach function. Exported for testing.
+ * the one moving (it must be in place before the touch starts — a touch's moves are cancelable
+ * only if a blocking listener covered its start — and it calls `preventDefault` only then).
+ * Returns the detach function. Exported for testing.
  */
 export function attachSheetDrag(
   panel: DragTarget,

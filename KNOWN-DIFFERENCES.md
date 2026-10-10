@@ -30,6 +30,13 @@ internal design choice with no observable difference lives in
   swaps out that boundary's subtree. Deliberate — a boundary that never sees the
   most common runtime error in an app is a weak boundary — but it is a behavioral
   difference; wrap the handler body in `try/catch` when you want React's behavior.
+- **`isDefaultPrevented()` reads the native event's flag.** A handler gets the native event, so
+  after `preventDefault()` in a passive `onTouchStart` / `onTouchMove` / `onWheel` (which the
+  browser ignores, in React too) `e.defaultPrevented` and `e.isDefaultPrevented()` stay `false`,
+  where React's synthetic event reports `true`. Those three handlers listen on their element
+  (passive, as React's root listener is) rather than on the root, so a `stopPropagation()` there
+  also stops the native event before ancestors' own DOM listeners. Deliberate: a root listener
+  would walk the fiber path for every touch move and wheel tick on the page, handled or not.
 - **`useDeferredValue` under `act()` / `flushSync`** — the test renderer's
   synchronous flush collapses the deferred pass, so a test sees the final value at
   once rather than the stale one first. Real event-path rendering defers as React

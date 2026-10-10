@@ -55,7 +55,9 @@ function load(loader: SpaIslandLoader): Promise<VNodeType> {
 /** Fire the island's interaction trigger on the first interaction inside `el`. */
 function listenForInteraction(el: Element): () => void {
   const on = (e: Event): void => void dispatchInteraction(e.target as Element | null);
-  for (const type of INTERACTION_EVENTS) el.addEventListener(type, on);
+  // Passive: the listener only starts the mount, and a non-passive touchstart would hold every
+  // scroll that begins on the placeholder on the main thread.
+  for (const type of INTERACTION_EVENTS) el.addEventListener(type, on, { passive: true });
   return () => {
     for (const type of INTERACTION_EVENTS) el.removeEventListener(type, on);
   };

@@ -167,6 +167,9 @@ export function attachPullGesture(scroller: PullScroller, cb: PullCallbacks): ()
     if (released) cb.onRelease(released);
   };
   scroller.addEventListener("touchstart", onStart, { passive: true });
+  // The one non-passive listener: a pull must cancel the browser's overscroll pan, and whether a
+  // touch's moves are cancelable is decided when it starts, so it cannot be added mid-gesture.
+  // It preventDefaults only while pulling (at the top, moving down), on this scroller alone.
   scroller.addEventListener("touchmove", onMove, { passive: false });
   scroller.addEventListener("touchend", onEnd, { passive: true });
   scroller.addEventListener("touchcancel", onEnd, { passive: true });

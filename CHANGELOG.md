@@ -44,6 +44,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`onTouchStart` / `onTouchMove` / `onWheel` listen passive, as in React.** React DOM registers
+  `touchstart`, `touchmove` and `wheel` as passive listeners (since React 17); denext attached them
+  as ordinary element listeners, so any component with such a handler (Base UI's `ScrollArea`
+  viewport, for one) held every scroll that started on it on the main thread, and on an iPhone a
+  page could stop scrolling. They are now passive, `Capture` variants included, as are the
+  resumability dispatcher's document listeners, a `client:interaction` island's trigger and
+  `useClickOutside`'s `touchstart`. `preventDefault()` inside one is a no-op the browser warns
+  about, as in React; `onTouchEnd` / `onTouchCancel` stay non-passive, as in React.
 - **A desktop UI overlay is no longer served over a newer app.** The overlay updater now records
   the bundled export an overlay was installed over (`bundle.json` in its data folder: the export's
   stamped version, else its `index.html` hash); at launch, a different bundle (a full-app update,

@@ -21,6 +21,7 @@ import {
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
+import { isPassiveEvent } from "../runtime/passive-events.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -357,7 +358,13 @@ function setListener(
         endEventDispatch();
       }
     };
-    el.addEventListener(ev.type, wrapped, ev.capture);
+    // touchstart / touchmove / wheel are passive, as React DOM registers them: a non-passive
+    // one would hold every scroll the element covers on the main thread (iOS especially).
+    el.addEventListener(
+      ev.type,
+      wrapped,
+      isPassiveEvent(ev.type) ? { capture: ev.capture, passive: true } : ev.capture,
+    );
     (state.listeners ??= new Map()).set(key, wrapped);
   } else if (existing) {
     state.listeners!.delete(key);

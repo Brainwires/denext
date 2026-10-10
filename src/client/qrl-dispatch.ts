@@ -13,6 +13,7 @@
 
 import { DNX_H_ATTR, getQrlLoader } from "../runtime/qrl.ts";
 import { dispatchInteraction, INTERACTION_EVENTS, pendingResumeFor } from "./lazy-hydrate.ts";
+import { isPassiveEvent } from "../runtime/passive-events.ts";
 
 /**
  * Parse a `data-dnx-h` value into `{ eventType → qrlId }`. An entry may be
@@ -87,7 +88,13 @@ export function installQrlDispatch(): void {
   for (const type of neededEventTypes(doc)) {
     if (registered.has(type)) continue; // a listener for this type is already live
     registered.add(type);
-    doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
+    // touchstart / touchmove / wheel listen passive, as React DOM's root does: a non-passive
+    // document listener would hold every scroll on the page on the main thread.
+    doc.addEventListener(
+      type,
+      (event) => resumeEvent(event.target, event.type, event),
+      isPassiveEvent(type) ? { passive: true } : false,
+    );
   }
 }
 
