@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Deno Desktop on Linux: `secureStore` fails at once on a session with no Secret Service.** On a
+  headless or minimal session, libsecret waited on D-Bus for a keyring daemon that never started,
+  and the runtime's answer timeout bounds only the unlock prompt, so the first `secureStore.get`
+  hung about 30 s (T3 Code's desktop preload reads its tokens at boot, so its window stayed blank
+  that long). The first call of a session now probes the store: a lookup of an account that is
+  never written (no unlock prompt) races 1.5 s, alongside the runtime's probe of the session. No
+  session bus, no provider, or no answer in time is `backend_unavailable` with that reason, and
+  every later call of the session fails the same way at once. A working store is probed once; a
+  locked keyring's refusal applies to that call only.
 - **`denext mobile` commands use Capacitor's `ios.path` and `android.path`.** `mobile add`, `sync`,
   `build`, `doctor`, `assets`, `privacy`, `fingerprint` and `dev` looked for the native projects in
   `ios/App` and `android/app` whatever the Capacitor config said, so a project that keeps them
