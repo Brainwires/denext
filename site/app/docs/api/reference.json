@@ -460,6 +460,23 @@
           "denextOnly": true
         },
         {
+          "name": "consumeShellHandoff",
+          "slug": "consumeShellHandoff",
+          "kind": "function",
+          "signature": "consumeShellHandoff(key: string): ShellHandoff | null",
+          "doc": "Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.",
+          "docFull": "Take what the user typed into the shell field marked `data-denext-shell-key={key}`, once.\nThe first call returns the field's state at that moment and later calls return `null`, as\ndoes a page with no shell or no such field. For code outside React (an editor's `onCreate`)\nthat restores the text and selection itself; call {@linkcode shellReady} right after applying\nit, so nothing typed in between is lost. A key taken here is not filled in by denext at the\nswap, but its field is still focused there when the shell field had focus.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Context",
           "slug": "Context",
           "kind": "interface",
@@ -2617,6 +2634,30 @@
           "denextOnly": true
         },
         {
+          "name": "ShellHandoff",
+          "slug": "ShellHandoff",
+          "kind": "interface",
+          "signature": "interface ShellHandoff",
+          "doc": "What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.",
+          "docFull": "What the user did in one shell field before the app took over: the field's text, its selection\n(character offsets into `text`), whether it had focus, and its scroll position.\n\nFor a `contenteditable` field, `text` is its plain text with a line break for each `<br>` and\neach block (`<div>`, `<p>`) after the first, and the offsets count into that text.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "shellReady",
+          "slug": "shellReady",
+          "kind": "function",
+          "signature": "shellReady(): Promise<void>",
+          "doc": "Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: \"shellReady\" this is the only trigger besides maxHoldMs; with the default (\"first-settled-commit\") it swaps early.",
+          "docFull": "Tell denext the app is ready to replace the prerendered `spa.shell`: the app, rendered\noff-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a\nrender or an effect lands after the commit in progress), and the text, selection, focus and\nscroll of each `data-denext-shell-key` field carry over. With `spa.shell.readyOn: \"shellReady\"`\nthis is the only trigger besides `maxHoldMs`; with the default (`\"first-settled-commit\"`) it\nswaps early.",
+          "params": [],
+          "returns": "Resolves once the app has replaced the shell (at once when the page has no shell or it was already replaced): the moment to restore an editor's selection, now that its element is visible and focusable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Signal",
           "slug": "Signal",
           "kind": "interface",
@@ -3898,6 +3939,23 @@
             }
           ],
           "returns": "[value, setValue, remove] — UseStorageResult.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useShellHandoff",
+          "slug": "useShellHandoff",
+          "kind": "function",
+          "signature": "useShellHandoff(key: string): ShellHandoff | null",
+          "doc": "consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.",
+          "docFull": "{@linkcode consumeShellHandoff} as a hook: the shell field's state on the component's first\nrender (then the same value for the component's lifetime), or `null`.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
           "examples": [],
           "denextOnly": true
         },
@@ -11109,6 +11167,18 @@
           "denextOnly": true
         },
         {
+          "name": "SpaShellConfig",
+          "slug": "SpaShellConfig",
+          "kind": "interface",
+          "signature": "interface SpaShellConfig",
+          "doc": "The prerendered static shell under SpaConfig.shell.",
+          "docFull": "The prerendered static shell under {@link SpaConfig.shell}.\n\n`component` is server-rendered into the mount element (marked `data-denext-shell`) with the\napp's stylesheet linked in `<head>`, so first paint has the final layout and fonts. Mark each\nfield the user may type into before the app starts (`<textarea>`, `<input>`,\n`contenteditable`) with `data-denext-shell-key=\"<key>\"`: an inline script records its text,\nselection, focus and scroll as the user types. When the app is ready (see {@link readyOn})\nit replaces the shell in one commit, and an app field with the same key gets the state: an\n`<input>` / `<textarea>` is filled in and focused by denext; anything else (an editor) reads it\nwith `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SpaTanstackRouterConfig",
           "slug": "SpaTanstackRouterConfig",
           "kind": "interface",
@@ -12387,6 +12457,23 @@
           "denextOnly": false
         },
         {
+          "name": "consumeShellHandoff",
+          "slug": "consumeShellHandoff",
+          "kind": "function",
+          "signature": "consumeShellHandoff(key: string): ShellHandoff | null",
+          "doc": "Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.",
+          "docFull": "Take what the user typed into the shell field marked `data-denext-shell-key={key}`, once.\nThe first call returns the field's state at that moment and later calls return `null`, as\ndoes a page with no shell or no such field. For code outside React (an editor's `onCreate`)\nthat restores the text and selection itself; call {@linkcode shellReady} right after applying\nit, so nothing typed in between is lost. A key taken here is not filled in by denext at the\nswap, but its field is still focused there when the shell field had focus.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Context",
           "slug": "Context",
           "kind": "interface",
@@ -13639,6 +13726,30 @@
           "denextOnly": true
         },
         {
+          "name": "ShellHandoff",
+          "slug": "ShellHandoff",
+          "kind": "interface",
+          "signature": "interface ShellHandoff",
+          "doc": "What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.",
+          "docFull": "What the user did in one shell field before the app took over: the field's text, its selection\n(character offsets into `text`), whether it had focus, and its scroll position.\n\nFor a `contenteditable` field, `text` is its plain text with a line break for each `<br>` and\neach block (`<div>`, `<p>`) after the first, and the offsets count into that text.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "shellReady",
+          "slug": "shellReady",
+          "kind": "function",
+          "signature": "shellReady(): Promise<void>",
+          "doc": "Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: \"shellReady\" this is the only trigger besides maxHoldMs; with the default (\"first-settled-commit\") it swaps early.",
+          "docFull": "Tell denext the app is ready to replace the prerendered `spa.shell`: the app, rendered\noff-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a\nrender or an effect lands after the commit in progress), and the text, selection, focus and\nscroll of each `data-denext-shell-key` field carry over. With `spa.shell.readyOn: \"shellReady\"`\nthis is the only trigger besides `maxHoldMs`; with the default (`\"first-settled-commit\"`) it\nswaps early.",
+          "params": [],
+          "returns": "Resolves once the app has replaced the shell (at once when the page has no shell or it was already replaced): the moment to restore an editor's selection, now that its element is visible and focusable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "signIn",
           "slug": "signIn",
           "kind": "function",
@@ -14272,6 +14383,23 @@
           "docFull": "Read the current {@link ClientSession}. Must be under a {@link SessionProvider}.",
           "params": [],
           "returns": "The session state plus update().",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useShellHandoff",
+          "slug": "useShellHandoff",
+          "kind": "function",
+          "signature": "useShellHandoff(key: string): ShellHandoff | null",
+          "doc": "consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.",
+          "docFull": "{@linkcode consumeShellHandoff} as a hook: the shell field's state on the component's first\nrender (then the same value for the component's lifetime), or `null`.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The field's data-denext-shell-key."
+            }
+          ],
+          "returns": "The field's state, or null.",
           "examples": [],
           "denextOnly": true
         },

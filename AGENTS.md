@@ -94,6 +94,15 @@ In SPA mode a `client:*` directive defers the mount and code-splits the componen
 `<Chart client:visible client:placeholder={<Spinner />} />` (`load`/`idle`/`visible`/`interaction`/
 `media`/`only`); under `@types/react`, `ClientDirectives` from `denext/jsx-directives` types them.
 
+A SPA can paint and take typing before its bundle runs: `spa.shell: { component:
+"./src/AppShell.tsx", props?, bootScript?, platforms?, readyOn?, maxHoldMs? }` server-renders that
+pure component (same markup and classes as the app's first screen; `AppShell.desktop.tsx` etc. per
+target) into `#root` at build/export/dev, replacing `spa.loading`. Mark fields
+`data-denext-shell-key="composer"`; the app renders off-screen and swaps in on its first settled
+commit (or `shellReady()` from `denext` with `readyOn: "shellReady"`), and a keyed
+`<input>`/`<textarea>` gets the typed text, caret and focus; an editor takes it with
+`useShellHandoff(key)` / `consumeShellHandoff(key)`.
+
 **A route handler (API):**
 
 ```ts

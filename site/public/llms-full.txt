@@ -98,6 +98,15 @@ In SPA mode a `client:*` directive defers the mount and code-splits the componen
 `<Chart client:visible client:placeholder={<Spinner />} />` (`load`/`idle`/`visible`/`interaction`/
 `media`/`only`); under `@types/react`, `ClientDirectives` from `denext/jsx-directives` types them.
 
+A SPA can paint and take typing before its bundle runs: `spa.shell: { component:
+"./src/AppShell.tsx", props?, bootScript?, platforms?, readyOn?, maxHoldMs? }` server-renders that
+pure component (same markup and classes as the app's first screen; `AppShell.desktop.tsx` etc. per
+target) into `#root` at build/export/dev, replacing `spa.loading`. Mark fields
+`data-denext-shell-key="composer"`; the app renders off-screen and swaps in on its first settled
+commit (or `shellReady()` from `denext` with `readyOn: "shellReady"`), and a keyed
+`<input>`/`<textarea>` gets the typed text, caret and focus; an editor takes it with
+`useShellHandoff(key)` / `consumeShellHandoff(key)`.
+
 **A route handler (API):**
 
 ```ts
@@ -871,6 +880,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ComponentPropsWithoutRef<T> = PropsWithoutRef<ComponentProps<T>>` — ComponentProps without ref.
 - `type ComponentPropsWithRef<T> = ComponentProps<T>` — ComponentProps with ref.
 - `type ComponentType<P> = FunctionComponent<P> | ComponentClass<P>` — Either a function or class component.
+- `consumeShellHandoff(key: string): ShellHandoff | null` — Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
 - `createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).
 - `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
@@ -1040,6 +1050,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
 - `type SetStateAction<S> = S | parenthesized` — The updater passed to a state setter (a value or a function of the previous).
 - `type SetStoredValue<T> = (value: T | parenthesized) => void` — A useState-style setter that also accepts an updater function.
+- `interface ShellHandoff` — What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.
+- `shellReady(): Promise<void>` — Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: "shellReady" this is the only trigger besides maxHoldMs; with the default ("first-settled-commit") it swaps early.
 - `interface Signal<T>` — A reactive box holding a single serializable value.
 - `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.
 - `interface SignInOptions` — Options for signIn.
@@ -1130,6 +1142,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useServerInsertedHTML(callback: () => VNodeChildren): void` — Register a callback whose returned markup is inserted into the server-rendered <head>. No-op on the client. Matches Next's useServerInsertedHTML from next/navigation.
 - `useSession(): ClientSession` — Read the current ClientSession. Must be under a SessionProvider.
 - `useSessionStorage<T>(key: string, initialValue: T): UseStorageResult<T>` — Persist state in sessionStorage (cleared when the tab closes), keyed by key, with a useState-style API. Values are JSON-serialized. SSR-safe.
+- `useShellHandoff(key: string): ShellHandoff | null` — consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.
 - `useSignal<T>(initial: T): Signal<T>` — A component-local reactive value. Read signal.value to use it, assign signal.value = next to update it (re-rendering the owning component). Unlike useState, the same Signal object is stable across renders — pass it to a child without re-subscribing the parent.
 - `useState<S>(): tuple` — Declare local component state with no initial value (S | undefined).
 - `type UseStorageResult<T> = tuple` — The tuple returned by useLocalStorage / useSessionStorage: [value, setValue, remove].
@@ -1669,6 +1682,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaConfig` — SPA-mode settings (mode: "spa"). denext bundles SpaConfig.entry as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no app/ directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite main.tsx calling createRoot(...).render(...)), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer.
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
+- `interface SpaShellConfig` — The prerendered static shell under SpaConfig.shell.
 - `interface SpaTanstackRouterConfig` — TanStack Router build settings under SpaConfig.tanstackRouter.
 - `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
 - `spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>` — Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.
@@ -1763,6 +1777,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `capturedScope<T>(): T` — Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits const [a, b] = capturedScope() at the top of a segment whose handler closed over component-local a/b; the values are the capture array passed to qrl (restored from the resume payload on the client). Must be called synchronously at handler entry.
 - `interface ClientSession` — The reactive session state from useSession.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
+- `consumeShellHandoff(key: string): ShellHandoff | null` — Take what the user typed into the shell field marked data-denext-shell-key={key}, once. The first call returns the field's state at that moment and later calls return null, as does a page with no shell or no such field. For code outside React (an editor's onCreate) that restores the text and selection itself; call shellReady right after applying it, so nothing typed in between is lost. A key taken here is not filled in by denext at the swap, but its field is still focused there when the shell field had focus.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
 - `createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).
 - `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
@@ -1860,6 +1875,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
+- `interface ShellHandoff` — What the user did in one shell field before the app took over: the field's text, its selection (character offsets into text), whether it had focus, and its scroll position.
+- `shellReady(): Promise<void>` — Tell denext the app is ready to replace the prerendered spa.shell: the app, rendered off-screen meanwhile, is swapped in before the next paint (in a microtask, so a call from a render or an effect lands after the commit in progress), and the text, selection, focus and scroll of each data-denext-shell-key field carry over. With spa.shell.readyOn: "shellReady" this is the only trigger besides maxHoldMs; with the default ("first-settled-commit") it swaps early.
 - `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.
 - `interface SignInOptions` — Options for signIn.
 - `signInWithPasskey(options?: PasskeySignInOptions): Promise<PasskeySignInResult>` — Sign in with a passkey — or, while the session owes a second factor, complete it with one: {basePath}/passkey/authenticate/options, the browser's get ceremony (the authenticator offers its passkeys for this site), then {basePath}/passkey/authenticate. On success it navigates to callbackUrl unless redirect: false.
@@ -1907,6 +1924,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useSelectedLayoutSegment(parallelRoutesKey?: string): string | null` — The first route segment below the calling layout's level (reactive), or null.
 - `useSelectedLayoutSegments(_parallelRoutesKey?: string): string[]` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
 - `useSession(): ClientSession` — Read the current ClientSession. Must be under a SessionProvider.
+- `useShellHandoff(key: string): ShellHandoff | null` — consumeShellHandoff as a hook: the shell field's state on the component's first render (then the same value for the component's lifetime), or null.
 - `useState<S>(): tuple` — Declare local component state with no initial value (S | undefined).
 - `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.

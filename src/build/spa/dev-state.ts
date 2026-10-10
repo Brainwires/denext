@@ -22,6 +22,8 @@ import { DevEventLog } from "../dev-events.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { bundleSpaInto, spaCssGraph, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
+import { renderSpaShell, spaShellInstall } from "./shell.ts";
+import type { SpaShellParts } from "./shell-capture.ts";
 import {
   CLIENT_PREFIX,
   EXPO_ROUTER_LINKS,
@@ -87,6 +89,11 @@ export interface SpaDevState {
    * dev-plugins.ts): a bundle waits on it, since it may import what a step generates.
    */
   pluginsReady: Promise<void>;
+  /**
+   * The rendered `spa.shell` per `generation:platform` (only the current generation's are
+   * kept): the shell is re-rendered after an edit, once, on the next navigation.
+   */
+  readonly shells: Map<string, Promise<SpaShellParts | null>>;
 }
 
 /**
@@ -119,6 +126,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     unbundledCss: new Map(),
     unbundledCssGen: -1,
     pluginsReady: Promise.resolve(),
+    shells: new Map(),
   };
 }
 
@@ -220,6 +228,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
         activity: activity || rn !== null,
         viewTransition,
         singletons,
+        // One install for every target: on a page without the shell it does nothing.
+        shell: spaShellInstall(st.spa.shell ?? null),
       }) + (rn ? REACT_NATIVE_SPLASH : "") + (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : ""),
       // The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals,
       // and `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).
@@ -280,4 +290,22 @@ export async function getUnbundledCss(
   // An edit meanwhile started another generation: its request extracts afresh.
   if (st.unbundledCssGen === gen) st.unbundledCss.set(platform, text);
   return text;
+}
+
+/**
+ * The rendered `spa.shell` for `platform` at the current generation (rendered once per
+ * generation and target), or null when no shell applies to it.
+ */
+export function devShell(st: SpaDevState, platform: Platform): Promise<SpaShellParts | null> {
+  if (!st.spa.shell) return Promise.resolve(null);
+  const key = `${st.generation}:${platform}`;
+  let hit = st.shells.get(key);
+  if (!hit) {
+    for (const k of st.shells.keys()) if (!k.startsWith(`${st.generation}:`)) st.shells.delete(k);
+    hit = renderSpaShell(st.paths, platform, false);
+    // A failed render is retried on the next navigation (after the fix's edit, or as is).
+    hit.catch(() => st.shells.delete(key));
+    st.shells.set(key, hit);
+  }
+  return hit;
 }

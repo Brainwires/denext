@@ -9,6 +9,7 @@ import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
 import { spaDevReloadScript } from "./dev-reload-script.ts";
 import {
+  devShell,
   ensureBuilt,
   ensureUnbundled,
   getUnbundledCss,
@@ -72,19 +73,31 @@ function htmlResponse(request: Request, html: string, status = 200): Response {
  */
 async function serveShell(st: SpaDevState, request: Request): Promise<Response> {
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
-  if (await ensureUnbundled(st) && st.unbundled) {
-    const css = await getUnbundledCss(st, devPlatformOf(request));
+  const platform = devPlatformOf(request);
+  try {
+    if (await ensureUnbundled(st) && st.unbundled) {
+      const css = await getUnbundledCss(st, platform);
+      const html = await spaShellHtml({
+        spa: st.spa,
+        scriptSrc: st.unbundled.spaEntryUrl(),
+        styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
+        devScriptSrc: DEV_RELOAD_JS_PATH,
+        reactNativeRootStyle: rnRootStyle,
+        shell: await devShell(st, platform),
+      });
+      return htmlResponse(request, html);
+    }
+    await ensureBuilt(st);
+    const prefix = spaClientPrefix(st.spa);
     const html = await spaShellHtml({
       spa: st.spa,
-      scriptSrc: st.unbundled.spaEntryUrl(),
-      styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
+      scriptSrc: `${prefix}${ENTRY_FILE}`,
+      styleHref: st.hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
       devScriptSrc: DEV_RELOAD_JS_PATH,
       reactNativeRootStyle: rnRootStyle,
+      shell: await devShell(st, "web"),
     });
     return htmlResponse(request, html);
-  }
-  try {
-    await ensureBuilt(st);
   } catch (err) {
     const body = `<pre>denext SPA build error:\n\n${escapeHtml(errorMessage(err))}</pre>`;
     return new Response(body, {
@@ -92,15 +105,6 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
-  const prefix = spaClientPrefix(st.spa);
-  const html = await spaShellHtml({
-    spa: st.spa,
-    scriptSrc: `${prefix}${ENTRY_FILE}`,
-    styleHref: st.hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
-    devScriptSrc: DEV_RELOAD_JS_PATH,
-    reactNativeRootStyle: rnRootStyle,
-  });
-  return htmlResponse(request, html);
 }
 
 /** The unbundled module graph (`/_denext/@*`) and its extracted stylesheet, or null. */

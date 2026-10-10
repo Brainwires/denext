@@ -285,6 +285,7 @@
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",
     "@denext/swc": "jsr:@denext/swc@^76.0.0",
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
+    "playwright-core": "npm:playwright-core@1.63.0",
     "esbuild": "npm:esbuild@^0.24.0",
     "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0",
     "ws": "npm:ws@^8",

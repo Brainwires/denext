@@ -50,6 +50,11 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Install Playwright's Chromium and WebKit
+        # tests/e2e/spa-shell.e2e.test.ts drives both engines through playwright-core (pinned in
+        # deno.json); under CI=1 it fails rather than skips when they are missing.
+        run: deno run -A npm:playwright-core@1.63.0 install --with-deps chromium webkit
+
       - name: E2E tests (headless Chromium via astral)
         # astral downloads a pinned Chromium on first run; the suite builds example
         # apps and drives hydration + next-compat pages in a real browser.

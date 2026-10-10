@@ -251,10 +251,19 @@ export interface SpaConfig {
    * background (pair with a pre-paint script in {@link head}), a logo splash, or a spinner —
    * the same role a Vite/CRA `index.html` fills with markup inside `<div id="root">…</div>`.
    * `denext migrate --from vite` carries the source `index.html`'s `#root` content here.
+   * Setting it together with {@link shell} is a config error.
    *
    * @widget textarea
    */
   loading?: string;
+  /**
+   * A prerendered, adoptable static shell: a component server-rendered into `#${rootId}` at
+   * build, export and dev, so the page paints the app's real layout (with the app's CSS) and
+   * its fields accept typing before the client bundle has loaded. The app then renders
+   * off-screen and replaces the shell in one commit, carrying over what was typed. Replaces
+   * {@link loading}. See {@link SpaShellConfig}.
+   */
+  shell?: SpaShellConfig;
   /** `<html lang>` value for the generated shell. Default `"en"`. */
   lang?: string;
   /**
@@ -336,6 +345,56 @@ export interface SpaConfig {
   tanstackRouter?: SpaTanstackRouterConfig;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
+}
+
+/**
+ * The prerendered static shell under {@link SpaConfig.shell}.
+ *
+ * `component` is server-rendered into the mount element (marked `data-denext-shell`) with the
+ * app's stylesheet linked in `<head>`, so first paint has the final layout and fonts. Mark each
+ * field the user may type into before the app starts (`<textarea>`, `<input>`,
+ * `contenteditable`) with `data-denext-shell-key="<key>"`: an inline script records its text,
+ * selection, focus and scroll as the user types. When the app is ready (see {@link readyOn})
+ * it replaces the shell in one commit, and an app field with the same key gets the state: an
+ * `<input>` / `<textarea>` is filled in and focused by denext; anything else (an editor) reads it
+ * with `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext`.
+ */
+export interface SpaShellConfig {
+  /**
+   * The shell component's module, relative to the project root (`"./src/AppShell.tsx"`); its
+   * default export is rendered. It must be pure: plain elements and the app's class names, no
+   * app runtime (no router, store or data), no stylesheet import (the app's own CSS applies). A
+   * platform file beside it (`AppShell.desktop.tsx`, `AppShell.ios.tsx`) is used for that
+   * export target.
+   */
+  component: string;
+  /** Props passed to the component (JSON values). */
+  props?: Record<string, unknown>;
+  /**
+   * A module bundled into one classic script and inlined before the shell markup (with a CSP
+   * hash under `spa.csp`): it runs before first paint, to set `<html>` classes or CSS variables
+   * from `localStorage` (a saved theme) so the shell paints in them.
+   */
+  bootScript?: string;
+  /**
+   * The export targets that carry the shell (`["macos", "windows", "linux"]` for a desktop-only
+   * shell). Default: every target. A target without it gets the plain empty mount element.
+   */
+  platforms?: Array<"web" | "ios" | "android" | "macos" | "windows" | "linux">;
+  /**
+   * When the app replaces the shell. `"first-settled-commit"` (default): its first commit with
+   * no Suspense boundary showing a fallback. `"shellReady"`: when the app calls `shellReady()`
+   * (from `denext`), e.g. once its editor has mounted. `shellReady()` also swaps early under the
+   * default.
+   */
+  readyOn?: "shellReady" | "first-settled-commit";
+  /**
+   * The longest the shell is kept once the app has started, in milliseconds: the app replaces
+   * it then even without a ready signal. Default `5000`.
+   *
+   * @minimum 0
+   */
+  maxHoldMs?: number;
 }
 
 /** TanStack Router build settings under {@link SpaConfig.tanstackRouter}. */

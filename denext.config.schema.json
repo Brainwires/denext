@@ -34,11 +34,59 @@
           }
         },
         "loading": {
-          "description": "Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the boot placeholder shown before the client bundle loads and renders. The framework does not touch it; the app's first render (createRoot/hydrateRoot) replaces `#root`'s children, clearing it. Use it to paint instantly instead of a blank page: a themed background (pair with a pre-paint script in head), a logo splash, or a spinner — the same role a Vite/CRA `index.html` fills with markup inside `<div id=\"root\">…</div>`. `denext migrate --from vite` carries the source `index.html`'s `#root` content here.",
+          "description": "Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the boot placeholder shown before the client bundle loads and renders. The framework does not touch it; the app's first render (createRoot/hydrateRoot) replaces `#root`'s children, clearing it. Use it to paint instantly instead of a blank page: a themed background (pair with a pre-paint script in head), a logo splash, or a spinner — the same role a Vite/CRA `index.html` fills with markup inside `<div id=\"root\">…</div>`. `denext migrate --from vite` carries the source `index.html`'s `#root` content here. Setting it together with shell is a config error.",
           "type": "string",
           "x-denext": {
             "widget": "textarea"
           }
+        },
+        "shell": {
+          "description": "A prerendered, adoptable static shell: a component server-rendered into `#${rootId}` at build, export and dev, so the page paints the app's real layout (with the app's CSS) and its fields accept typing before the client bundle has loaded. The app then renders off-screen and replaces the shell in one commit, carrying over what was typed. Replaces loading. See SpaShellConfig.",
+          "type": "object",
+          "properties": {
+            "component": {
+              "description": "The shell component's module, relative to the project root (`\"./src/AppShell.tsx\"`); its default export is rendered. It must be pure: plain elements and the app's class names, no app runtime (no router, store or data), no stylesheet import (the app's own CSS applies). A platform file beside it (`AppShell.desktop.tsx`, `AppShell.ios.tsx`) is used for that export target.",
+              "type": "string"
+            },
+            "props": {
+              "description": "Props passed to the component (JSON values).",
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "bootScript": {
+              "description": "A module bundled into one classic script and inlined before the shell markup (with a CSP hash under `spa.csp`): it runs before first paint, to set `<html>` classes or CSS variables from `localStorage` (a saved theme) so the shell paints in them.",
+              "type": "string"
+            },
+            "platforms": {
+              "description": "The export targets that carry the shell (`[\"macos\", \"windows\", \"linux\"]` for a desktop-only shell). Default: every target. A target without it gets the plain empty mount element.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "web",
+                  "ios",
+                  "android",
+                  "macos",
+                  "windows",
+                  "linux"
+                ]
+              }
+            },
+            "readyOn": {
+              "description": "When the app replaces the shell. `\"first-settled-commit\"` (default): its first commit with no Suspense boundary showing a fallback. `\"shellReady\"`: when the app calls `shellReady()` (from `denext`), e.g. once its editor has mounted. `shellReady()` also swaps early under the default.",
+              "enum": [
+                "shellReady",
+                "first-settled-commit"
+              ]
+            },
+            "maxHoldMs": {
+              "description": "The longest the shell is kept once the app has started, in milliseconds: the app replaces it then even without a ready signal. Default `5000`.",
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "component"
+          ]
         },
         "lang": {
           "description": "`<html lang>` value for the generated shell. Default `\"en\"`.",

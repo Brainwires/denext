@@ -28,6 +28,7 @@ ignoreDependencies = [
   "@tanstack/router-plugin", # deno.json: npm:@tanstack/router-plugin — spa.tanstackRouter's route splitter (build-time)
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
+  "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",
@@ -165,6 +166,9 @@ entry = [
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
+  # `spa.shell`'s component (and its platform files) and `bootScript`, loaded by path.
+  "**/src/AppShell*.tsx",
+  "**/src/boot.ts",
   # The Expo Router e2e fixture: its `spa.entry` and the routes React Native mode's generated
   # `expo-router/_ctx` imports from app/ (Metro's require.context, which fallow cannot see).
   "tests/e2e/fixtures/rn-expo-router/index.web.ts",

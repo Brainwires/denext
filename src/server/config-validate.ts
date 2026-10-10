@@ -540,6 +540,59 @@ function validateSpaTanstackRouter(value: unknown, fail: Fail): void {
   validateOptionalPath("spa.tanstackRouter.generatedRouteTree", v.generatedRouteTree, fail);
 }
 
+/** The keys of `spa.shell` (a typo would silently drop the setting). */
+const SPA_SHELL_KEYS = ["component", "props", "bootScript", "platforms", "readyOn", "maxHoldMs"];
+/** The export targets `spa.shell.platforms` may name. */
+const SPA_SHELL_PLATFORMS = ["web", "ios", "android", "macos", "windows", "linux"];
+/** The `spa.shell.readyOn` values. */
+const SPA_SHELL_READY_ON = ["first-settled-commit", "shellReady"];
+
+/**
+ * `spa.shell`: `{ component, props?, bootScript?, platforms?, readyOn?, maxHoldMs? }`, and never
+ * together with `spa.loading` (both fill the mount element before the app renders).
+ */
+function validateSpaShell(spa: DenextConfig["spa"], fail: Fail): void {
+  const value: unknown = spa?.shell;
+  if (value === undefined) return;
+  if (!isPlainObject(value)) {
+    fail("spa.shell", 'must be an object (e.g. `{ component: "./src/AppShell.tsx" }`)');
+    return;
+  }
+  if (spa?.loading !== undefined) {
+    fail("spa.loading", "cannot be set together with `spa.shell` (the shell replaces it)");
+  }
+  const unknown = Object.keys(value).find((key) => !SPA_SHELL_KEYS.includes(key));
+  if (unknown !== undefined) {
+    fail(`spa.shell.${unknown}`, `is not a known option (${SPA_SHELL_KEYS.join(", ")})`);
+  }
+  if (typeof value.component !== "string" || value.component === "") {
+    fail("spa.shell.component", "must be a non-empty path to the shell component's module");
+  }
+  validateOptionalPath("spa.shell.bootScript", value.bootScript, fail);
+  validateSpaShellOptions(value, fail);
+}
+
+/** `spa.shell`'s `props`, `platforms`, `readyOn` and `maxHoldMs`. */
+function validateSpaShellOptions(value: Record<string, unknown>, fail: Fail): void {
+  if (value.props !== undefined && !isPlainObject(value.props)) {
+    fail("spa.shell.props", "must be an object of props");
+  }
+  const platforms = value.platforms;
+  if (
+    platforms !== undefined &&
+    !(Array.isArray(platforms) && platforms.every((p) => SPA_SHELL_PLATFORMS.includes(p)))
+  ) {
+    fail("spa.shell.platforms", `must be an array of ${SPA_SHELL_PLATFORMS.join(", ")}`);
+  }
+  if (value.readyOn !== undefined && !SPA_SHELL_READY_ON.includes(value.readyOn as string)) {
+    fail("spa.shell.readyOn", 'must be "first-settled-commit" or "shellReady"');
+  }
+  const hold = value.maxHoldMs;
+  if (hold !== undefined && !(typeof hold === "number" && Number.isFinite(hold) && hold >= 0)) {
+    fail("spa.shell.maxHoldMs", "must be a non-negative number of milliseconds");
+  }
+}
+
 /** An optional project-relative path: a non-empty string when present. */
 function validateOptionalPath(field: string, value: unknown, fail: Fail): void {
   if (value !== undefined && (typeof value !== "string" || value === "")) {
@@ -1212,6 +1265,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateSpaViteManifest(config.spa?.viteManifest, fail);
   validateSpaTanstackRouter(config.spa?.tanstackRouter, fail);
   validateSpaAssetsDir(config.spa?.assetsDir, fail);
+  validateSpaShell(config.spa, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);

@@ -8,6 +8,26 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`spa.shell`: a prerendered, adoptable static shell, so a SPA paints its real layout and
+  takes typing before the client bundle has run.** `spa.shell: { component, props?, bootScript?,
+  platforms?, readyOn?, maxHoldMs? }` server-renders a pure component into `#root` at
+  `denext build`, `export` and `dev`, with the app's stylesheet linked ahead of it (a platform file
+  such as `AppShell.desktop.tsx` is that export target's shell); it replaces `spa.loading`
+  (setting both is a config error). `bootScript` is bundled into one classic script inlined before
+  the shell (a saved theme, before first paint), and an inline script records the text,
+  selection, focus and scroll of each `data-denext-shell-key` field as the user types; under
+  `spa.csp` both are allowed by their hashes. The app's own `createRoot` (react-dom's, React
+  Native Web's `AppRegistry`, Expo's `registerRootComponent`) then mounts into a hidden stage over
+  the shell, which stays painted and interactive, and the app replaces it in one DOM change on its
+  first commit with no Suspense fallback showing, on `shellReady()` (with `readyOn:
+  "shellReady"`), or after `maxHoldMs` (default 5 s). A keyed `<input>` / `<textarea>` gets the
+  typed text through its `onChange`, the caret and the focus in the same task; anything else (an
+  editor) takes it with `useShellHandoff(key)` / `consumeShellHandoff(key)` from `denext` and
+  `denext/client`, and `shellReady()` resolves once the swap is done. The adopt runtime ships only
+  in an app that sets `spa.shell`.
+
 ### Changed
 
 - **Every app's shared client runtime is 2 KB smaller (raw), with no change in behaviour.** The

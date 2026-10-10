@@ -297,6 +297,7 @@ export {
   type SpaConfig,
   type SpaDesktopConfig,
   type SpaProxyConfig,
+  type SpaShellConfig,
   type SpaTanstackRouterConfig,
   type TailwindConfig,
   type TasksConfig,

@@ -29,6 +29,8 @@ export interface DesktopPreloadBundle {
   readonly outFile: string;
   /** Minify (the export does; the dev build does not). */
   readonly minify: boolean;
+  /** The setting named in errors. Default `desktop.preload` (`spa.shell.bootScript` reuses it). */
+  readonly label?: string;
 }
 
 /** `configPath` as a filesystem path, when it is one (a remote framework config is skipped). */
@@ -73,7 +75,7 @@ export async function bundleDesktopPreload(input: DesktopPreloadBundle): Promise
   try {
     if (!(await Deno.stat(entry)).isFile) throw new Error("not a file");
   } catch {
-    throw new Error(`desktop.preload: no module at ${entry}`);
+    throw new Error(`${input.label ?? "desktop.preload"}: no module at ${entry}`);
   }
   await Deno.mkdir(dirname(input.outFile), { recursive: true });
   const { code, stderr } = await new Deno.Command(denoExecutable(), {
@@ -84,7 +86,9 @@ export async function bundleDesktopPreload(input: DesktopPreloadBundle): Promise
   }).output();
   if (code !== 0) {
     throw new Error(
-      `desktop.preload: ${bundleFailureMessage(code, new TextDecoder().decode(stderr))}`,
+      `${input.label ?? "desktop.preload"}: ${
+        bundleFailureMessage(code, new TextDecoder().decode(stderr))
+      }`,
     );
   }
 }
