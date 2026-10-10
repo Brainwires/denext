@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.3] - 2026-10-10
+
 ### Added
 
 - **`scheduleNotification({ silent: true })` in `denext/mobile`: deliver a local notification
@@ -12454,7 +12456,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.3...development
+[3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0
