@@ -442,7 +442,12 @@ export const createBottomTabNavigator = createBottomTabNavigatorFactory(core);
 
 Native-stack options mostly carry the same names (`title`, `animation`, `gestureEnabled`,
 `presentation`, `headerShown`, `headerLargeTitle`, `headerRight`, `sheetAllowedDetents`); a
-press on the active tab emits `tabPress`, which pops a nested stack to its root.
+press on the active tab emits `tabPress`, which pops a nested stack to its root. The bar button
+items (`unstable_headerLeftItems` / `unstable_headerRightItems`) are header buttons: a `button`
+item draws its SF Symbol with `SystemIcon` (else its label), a `menu` item opens its menu with
+`showContextMenu`, and `spacing` and `custom` items are a gap and their element. Each screen's
+content fills the screen as in React Native (the stack's `fillScreens`): a `flex: 1` view takes
+the screen's height, so a list inside it scrolls and virtualizes itself.
 
 ## Limits
 

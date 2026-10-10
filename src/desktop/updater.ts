@@ -233,10 +233,12 @@ const STATE_FILE = "state.json";
 const BOOTING_FILE = "booting.json";
 const VERSIONS_DIR = "versions";
 const STAGING_PREFIX = "staging-";
+const BUNDLE_FILE = "bundle.json";
 
 const pointerPath = (dir: string) => join(dir, CURRENT_FILE);
 const statePath = (dir: string) => join(dir, STATE_FILE);
 const bootingPath = (dir: string) => join(dir, BOOTING_FILE);
+const bundlePath = (dir: string) => join(dir, BUNDLE_FILE);
 const versionDir = (dir: string, version: string) => join(dir, VERSIONS_DIR, version);
 const stagingDir = (dir: string, version: string) => join(dir, `${STAGING_PREFIX}${version}`);
 
@@ -786,6 +788,63 @@ async function rollbackAndServe(
   return rolled ? (await verifyOverlay(dir, rolled.version, publicKey)) ?? bundledOut : bundledOut;
 }
 
+/** The record (`bundle.json`) of the bundled export the overlay state belongs to. */
+interface BundleRecord {
+  readonly bundle: string;
+}
+
+function isBundleRecord(v: unknown): v is BundleRecord {
+  return typeof v === "object" && v !== null &&
+    typeof (v as Record<string, unknown>).bundle === "string";
+}
+
+/**
+ * The identity of the bundled export: its stamped `_denext/ota.json` version (which hashes every
+ * file), else the SHA-256 of its `index.html`, else `null` (nothing to identify it by).
+ */
+async function bundleIdentity(bundledOut: string): Promise<string | null> {
+  const manifest = await readJson(join(bundledOut, OTA_MANIFEST_PATH), isOtaManifest);
+  if (manifest) return `ota:${manifest.version}`;
+  try {
+    return `index:${await sha256Hex(await Deno.readFile(join(bundledOut, "index.html")))}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drop every overlay (and staged one) when the app's bundled export is not the one they were
+ * installed over: a newer app was installed (a full-app update, an installer), and an overlay built
+ * for the old app must never be served over it. The accepted sequence and the rejected version are
+ * kept, so the swap cannot be used to replay an older overlay. Records the current bundle.
+ */
+async function forgetOverlaysOfAnotherBundle(dir: string, bundledOut: string): Promise<void> {
+  const identity = await bundleIdentity(bundledOut);
+  if (identity === null) return;
+  const recorded = await readJson(bundlePath(dir), isBundleRecord);
+  if (recorded?.bundle === identity) return;
+  if (recorded) {
+    await removeFile(pointerPath(dir));
+    await removeFile(bootingPath(dir));
+    await removeDir(join(dir, VERSIONS_DIR));
+    await removeStagingDirs(dir);
+  }
+  await writeJsonAtomic(bundlePath(dir), { bundle: identity } satisfies BundleRecord);
+}
+
+/** Remove every staging dir (a no-op without a data dir). */
+async function removeStagingDirs(dir: string): Promise<void> {
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.isDirectory && entry.name.startsWith(STAGING_PREFIX)) {
+        await removeDir(join(dir, entry.name));
+      }
+    }
+  } catch {
+    // No data dir yet.
+  }
+}
+
 /**
  * The directory the desktop runtime should serve: the active verified overlay, or `bundledOut`.
  *
@@ -795,12 +854,19 @@ async function rollbackAndServe(
  * and the previous good version (or the bundle) is served. A pending version on its FIRST launch
  * is served with a fresh marker armed; {@linkcode desktopBooted} clears it. A confirmed pointer
  * whose files exist is served directly; anything missing falls back to `bundledOut`.
+ *
+ * An overlay is tied to the bundled export it was installed over (`bundle.json`: the export's
+ * stamped version, else its `index.html` hash). When the app itself was replaced — a full-app
+ * update or a reinstall brings a different bundle — every overlay is dropped and the new bundle is
+ * served, so a UI built for the old app never runs on the new one.
  */
 export async function resolveDesktopUiDir(
   bundledOut: string,
   config: DesktopUpdaterConfig,
 ): Promise<string> {
   const dir = dataDirOf(config);
+  // An overlay belongs to the app it was installed over: a newer app's bundle drops it.
+  await forgetOverlaysOfAnotherBundle(dir, bundledOut);
   const pointer = await readPointer(dir);
   if (!pointer) return bundledOut;
 
@@ -894,16 +960,9 @@ export async function desktopUpdateReset(config: DesktopUpdaterConfig): Promise<
   await removeFile(pointerPath(dir));
   await removeFile(statePath(dir));
   await removeFile(bootingPath(dir));
+  await removeFile(bundlePath(dir));
   await removeDir(join(dir, VERSIONS_DIR));
-  try {
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isDirectory && entry.name.startsWith(STAGING_PREFIX)) {
-        await removeDir(join(dir, entry.name));
-      }
-    }
-  } catch {
-    // No data dir yet.
-  }
+  await removeStagingDirs(dir);
 }
 
 // ---------------------------------------------------------------------------------------------

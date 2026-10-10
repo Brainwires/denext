@@ -806,3 +806,45 @@ Deno.test("desktop updater: desktopBooted is best effort, and status/reset toler
     await desktopUpdateReset(missing);
   });
 });
+
+Deno.test("desktop updater: an overlay is dropped once the app's bundled export changes (a new app)", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir("console.log('overlay')");
+  const data = await tmpData();
+  const bundled = await exportDir("console.log('app v1')");
+  await writeOtaManifest(feed, { sequence: 100 }, signingKey);
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: feed, basePath: BASE }));
+  try {
+    // The app v1 launch records its bundle (index.html hash: the bundle is not stamped).
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    const version = (await checkForDesktopUpdate(config)).version!;
+    await prepareDesktopUpdate(config);
+    await applyDesktopUpdate(version, config);
+    const overlay = await resolveDesktopUiDir(bundled, config);
+    assert(overlay !== bundled, "the overlay is served over the bundle it was installed over");
+    await desktopBooted(config);
+    assertEquals(await resolveDesktopUiDir(bundled, config), overlay);
+
+    // A newer app is installed: its bundle differs (here stamped, so its ota.json version names it).
+    await Deno.writeTextFile(join(bundled, "index.html"), "<html>v2</html>");
+    await writeOtaManifest(bundled, { sequence: 1 }, signingKey);
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    const status = await desktopUpdateStatus(config);
+    assertEquals([status.current, status.pending, status.staged], [null, null, null]);
+    // The accepted sequence survives, so the old overlay cannot be replayed onto the new app.
+    assertEquals(status.highestSequence, 100);
+    await assertRejects(() => prepareDesktopUpdate(config), DesktopUpdateError);
+    // Same bundle on the next launch: nothing more is dropped.
+    assertEquals(await resolveDesktopUiDir(bundled, config), bundled);
+    // A reset forgets the bundle record too.
+    await desktopUpdateReset(config);
+    await Deno.stat(join(data, "bundle.json")).then(
+      () => assert(false, "bundle.json survives a reset"),
+      () => {},
+    );
+  } finally {
+    restore();
+    for (const d of [feed, data, bundled]) await Deno.remove(d, { recursive: true });
+  }
+});

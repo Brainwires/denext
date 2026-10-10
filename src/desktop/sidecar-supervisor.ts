@@ -45,6 +45,11 @@ export interface SidecarLaunchContext {
   readonly bootstrap: unknown;
   /** The secrets (per launch of the app). */
   readonly secrets: Readonly<Record<string, string>>;
+  /**
+   * Variables from the user's login shell (`loginShellEnv`), laid under the sidecar's `env`: the
+   * host sets them, per launch of the app.
+   */
+  readonly loginEnv?: Readonly<Record<string, string>>;
   /** Each line of the sidecar's output (`stdout` / `stderr`). */
   onLine(stream: "stdout" | "stderr", line: string): void;
   /** The sidecar said it is ready (`denextSidecar.ready()`). */

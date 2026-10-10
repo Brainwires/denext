@@ -5,6 +5,12 @@ import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
 import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
+import {
+  fontFaceStyle,
+  fontFor,
+  type ReactNativeFont,
+  resolveReactNativeFonts,
+} from "../react-native-fonts.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
 import { spaDevReloadScript } from "./dev-reload-script.ts";
@@ -66,6 +72,31 @@ function htmlResponse(request: Request, html: string, status = 200): Response {
   return new Response(request.method === "HEAD" ? null : html, { status, headers: htmlHeaders });
 }
 
+/** React Native mode's embedded fonts (`reactNative.fonts`), resolved on each request. */
+function devFonts(st: SpaDevState): Promise<ReactNativeFont[]> {
+  return resolveReactNativeFonts(st.paths.config, st.paths.projectDir);
+}
+
+/** An embedded font file, served from where it resolved. */
+async function serveFontFile(file: string, request: Request): Promise<Response> {
+  const body = request.method === "HEAD" ? null : await Deno.readFile(file);
+  return new Response(body, {
+    headers: {
+      "content-type": FONT_TYPES[file.slice(file.lastIndexOf(".") + 1)] ??
+        "application/octet-stream",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+/** Font media types by extension. */
+const FONT_TYPES: Readonly<Record<string, string>> = {
+  ttf: "font/ttf",
+  otf: "font/otf",
+  woff: "font/woff",
+  woff2: "font/woff2",
+};
+
 /**
  * The shell for a navigation. Unbundled loop: the shell points at the unbundled entry
  * (the app graph is served per-module, no whole-bundle build) and links the extracted
@@ -75,6 +106,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
   const platform = devPlatformOf(request);
   try {
+    const fontFaces = fontFaceStyle(await devFonts(st), spaClientPrefix(st.spa));
     if (await ensureUnbundled(st) && st.unbundled) {
       const css = await getUnbundledCss(st, platform);
       const html = await spaShellHtml({
@@ -83,6 +115,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
         styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
         devScriptSrc: DEV_RELOAD_JS_PATH,
         reactNativeRootStyle: rnRootStyle,
+        headPrefix: fontFaces,
         shell: await devShell(st, platform),
       });
       return htmlResponse(request, html);
@@ -95,6 +128,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       styleHref: st.hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
       devScriptSrc: DEV_RELOAD_JS_PATH,
       reactNativeRootStyle: rnRootStyle,
+      headPrefix: fontFaces,
       shell: await devShell(st, "web"),
     });
     return htmlResponse(request, html);
@@ -221,6 +255,8 @@ async function serveFile(
   prefix: string,
 ): Promise<Response> {
   const client = url.pathname.startsWith(prefix);
+  const font = client ? fontFor(await devFonts(st), url.pathname, prefix) : undefined;
+  if (font) return await serveFontFile(font.file, request);
   const local = await bundleOrPublic(st, request, url, prefix, client);
   if (local) return local;
   if (client) return serveClientAsset(st, url.pathname, prefix);

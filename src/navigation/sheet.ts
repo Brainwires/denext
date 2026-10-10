@@ -66,6 +66,11 @@ export interface SheetProps {
   readonly portal?: Element | false;
   /** Extra style for the panel. */
   readonly style?: Readonly<Record<string, string | number | undefined>>;
+  /**
+   * Lay the content out as a flex column it fills (default `false`), as a React Native
+   * `formSheet` screen's: a `flex: 1` view takes the sheet's height.
+   */
+  readonly fillContent?: boolean;
   /** The content. */
   readonly children?: VNodeChildren;
 }
@@ -184,7 +189,9 @@ function moveDrag(drag: DragState, e: PointerLike, host: SheetDragHost): boolean
 /**
  * Wire the sheet's drag to `panel` (and its content `scroller`): pointer events move the sheet,
  * a non-passive `touchmove` on the scroller cancels the browser's own pan while the sheet is
- * the one moving. Returns the detach function. Exported for testing.
+ * the one moving (it must be in place before the touch starts — a touch's moves are cancelable
+ * only if a blocking listener covered its start — and it calls `preventDefault` only then).
+ * Returns the detach function. Exported for testing.
  */
 export function attachSheetDrag(
   panel: DragTarget,
@@ -546,6 +553,7 @@ function sheetTree(c: SheetCtl): VNode {
   const scroll = {
     flex: 1,
     minHeight: 0,
+    ...(props.fillContent ? { display: "flex", flexDirection: "column" } : {}),
     overflowY: g.atLargest ? "auto" : "hidden",
     overscrollBehavior: "contain",
     touchAction: g.atLargest ? "pan-y" : "none",

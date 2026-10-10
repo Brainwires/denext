@@ -383,11 +383,24 @@ function validateDesktopSidecars(sidecars: unknown, spaProxy: unknown, fail: Fai
   }
 }
 
-/** `desktop.update.autoConfirm`: a boolean (the other `desktop.update` keys are checked at package). */
+/**
+ * `desktop.update.autoConfirm`: a boolean; `desktop.update.ui`: a feed URL and a public key (the
+ * other `desktop.update` keys are checked at package).
+ */
 function validateDesktopUpdate(update: unknown, fail: Fail): void {
   const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
   if (autoConfirm !== undefined && typeof autoConfirm !== "boolean") {
     fail("desktop.update.autoConfirm", "must be a boolean");
+  }
+  const ui = (update as { ui?: unknown } | undefined)?.ui;
+  if (ui === undefined) return;
+  if (!isPlainObject(ui)) fail("desktop.update.ui", "must be an object");
+  const { feedUrl, publicKey } = ui as { feedUrl?: unknown; publicKey?: unknown };
+  if (typeof feedUrl !== "string" || !URL.canParse(feedUrl)) {
+    fail("desktop.update.ui.feedUrl", "must be an absolute URL");
+  }
+  if (typeof publicKey !== "string" || publicKey === "") {
+    fail("desktop.update.ui.publicKey", "must be the release public key (base64 SPKI or PEM)");
   }
 }
 
@@ -1151,7 +1164,7 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** `reactNative`'s object options: `lists`, `desktopPackage` and `aliases`. */
+/** `reactNative`'s object options: `lists`, `desktopPackage`, `aliases`, `uniwind`, `fonts`. */
 function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
   if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
     fail("reactNative.lists", 'must be "denext" or "library"');
@@ -1163,6 +1176,32 @@ function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): 
     fail("reactNative.desktopPackage", 'must be "react-native-macos" or "react-native-windows"');
   }
   validateReactNativeAliases(value.aliases, fail);
+  validateUniwind(value.uniwind, fail);
+  validateRnFonts(value.fonts, fail);
+}
+
+/** `reactNative.fonts`: an object of family name → file. */
+function validateRnFonts(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  const ok = typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.entries(value).every(([k, v]) => k !== "" && typeof v === "string" && v !== "");
+  if (!ok) fail("reactNative.fonts", "must be an object of family name → font file");
+}
+
+/** `reactNative.uniwind`: a boolean or `{ extraThemes: string[] }`. */
+function validateUniwind(value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("reactNative.uniwind", "must be a boolean or { extraThemes }");
+    return;
+  }
+  const themes = (value as { extraThemes?: unknown }).extraThemes;
+  if (
+    themes !== undefined &&
+    !(Array.isArray(themes) && themes.every((t) => typeof t === "string" && t !== ""))
+  ) {
+    fail("reactNative.uniwind.extraThemes", "must be an array of theme names");
+  }
 }
 
 /**

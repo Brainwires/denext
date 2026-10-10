@@ -5,7 +5,7 @@ import { bubbleLanes, hostNamespace } from "./fiber-utils.ts";
 import { claimText, isHydrating, popHydrationCursor } from "./hydration.ts";
 import { onErrorFor } from "./boundaries.ts";
 
-import { applyProps, initSelect } from "../dom-props.ts";
+import { applyProps, initSelect, NO_PROPS } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { documentForFiber } from "./state.ts";
@@ -80,8 +80,8 @@ function completeHost(wip: Fiber): void {
   // phase — and flag the fiber so the commit attaches it (see `RefAttach`).
   const fresh = wip.stateNode == null;
   if (fresh) wip.stateNode = createHostInstance(wip);
-  const props = wip.vnode.props ?? {};
-  applyProps(wip.stateNode as Element, wip, {}, props, onErrorFor(wip), false);
+  const props = wip.vnode.props ?? NO_PROPS;
+  applyProps(wip.stateNode as Element, wip, NO_PROPS, props, onErrorFor(wip), false);
   if (props.ref != null) wip.flags |= RefAttach;
   // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
   // untouched, so a separate per-island hydrateRoot can own that DOM.

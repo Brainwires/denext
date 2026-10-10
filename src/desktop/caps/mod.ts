@@ -39,6 +39,8 @@ import { notificationsCapability } from "./notifications.ts";
 import { contextMenuCapability } from "./context-menu.ts";
 import { shortcutsCapability } from "./shortcuts.ts";
 import { launchAtLoginCapability } from "./launch-at-login.ts";
+import { updatesCapability } from "./updates.ts";
+import type { DesktopUpdaterConfig } from "../updater.ts";
 import {
   desktopAppIdentifierError,
   normalizeDesktopDeepLinks,
@@ -99,6 +101,11 @@ export interface ResolvedDesktop {
   readonly autoConfirmAppUpdate: boolean;
   /** `spa.proxy`: the backend reverse proxy `runDesktop` serves, when the config sets one. */
   readonly proxy?: SpaProxyConfig;
+  /**
+   * `desktop.update.ui`: the signed UI overlay `runDesktop` serves (and the `updates` capability
+   * installs), when the config sets one. The overlay is kept under the app's data folder.
+   */
+  readonly updater?: DesktopUpdaterConfig;
   /**
    * `desktop.sidecars`: the backends `runDesktop` runs next to the window (its own `sidecars`
    * option is laid over these by name).
@@ -181,7 +188,7 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
  * `secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,
- * `globalShortcuts`, `launchAtLogin`, and the `echo` diagnostic), plus any `extensions` module
+ * `globalShortcuts`, `launchAtLogin`, `updates`, and the `echo` diagnostic), plus any `extensions` module
  * paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
  * `authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers
  * `unavailable` per call (the page uses its web path), never an error. A bad extension path IS an
@@ -223,6 +230,10 @@ export async function resolveDesktopCapabilities(
   // One per-launch picked-path set, shared by dialogs (adds picks), fs/shell (consult handles) and
   // the files the OS opens with the app.
   const pickedPaths = new PickedPaths();
+  const updater = resolveUiUpdater(
+    (desktop as { update?: { ui?: unknown } } | undefined)?.update?.ui,
+    explicitId,
+  );
   const base = {
     appSupportDir: dirs.data,
     authSessionEnabled,
@@ -235,6 +246,7 @@ export async function resolveDesktopCapabilities(
         false,
     ...origin,
     ...(config?.spa?.proxy ? { proxy: config.spa.proxy } : {}),
+    ...(updater ? { updater } : {}),
     configSidecars: launchSidecars((desktop as { sidecars?: unknown } | undefined)?.sidecars),
   };
 
@@ -245,6 +257,9 @@ export async function resolveDesktopCapabilities(
     appId,
     base: options.base,
     picked: pickedPaths,
+    updater,
+    manifestUrl: (desktop as { update?: { manifestUrl?: unknown } } | undefined)?.update
+      ?.manifestUrl,
   });
   return { capabilities, ...base };
 }
@@ -264,6 +279,37 @@ function resolveAppOrigin(raw: unknown, identifier: string | undefined): string 
   const idError = desktopAppIdentifierError(identifier);
   if (idError) throw new Error(`desktop: invalid desktop.app.identifier: ${idError}`);
   return parsed.value.origin;
+}
+
+/**
+ * `desktop.update.ui` as the overlay updater's config, or `undefined` when unset. Like the other
+ * runtime rules it is checked here (the desktop entry imports the config's JSON slice, which the
+ * config loader never validated): a feed URL, a public key, and a unique `desktop.app.identifier`
+ * (the overlay lives in that app's data folder; a shared default would let apps overwrite each
+ * other's UI).
+ */
+function resolveUiUpdater(
+  raw: unknown,
+  identifier: string | undefined,
+): DesktopUpdaterConfig | undefined {
+  if (raw === undefined) return undefined;
+  const ui = raw as { feedUrl?: unknown; publicKey?: unknown; platform?: unknown } | null;
+  if (typeof ui?.feedUrl !== "string" || ui.feedUrl === "") {
+    throw new Error("desktop: `desktop.update.ui.feedUrl` must be a non-empty URL string");
+  }
+  if (typeof ui.publicKey !== "string" || ui.publicKey === "") {
+    throw new Error("desktop: `desktop.update.ui.publicKey` must be the release public key");
+  }
+  if (identifier === undefined) {
+    throw new Error(
+      "desktop: `desktop.update.ui` needs `desktop.app.identifier`: the UI overlay is kept in the " +
+        "app's own data folder, which the identifier names",
+    );
+  }
+  const platform = ui.platform === "macos" || ui.platform === "windows" || ui.platform === "linux"
+    ? { platform: ui.platform as "macos" | "windows" | "linux" }
+    : {};
+  return { feedUrl: ui.feedUrl, publicKey: ui.publicKey, appId: identifier, ...platform };
 }
 
 /** `desktop.sidecars` for the runtime: the shared validation, failing fast at launch. */
@@ -304,6 +350,10 @@ interface BuiltinCtx {
   readonly appId: string;
   readonly base: string | undefined;
   readonly picked: PickedPaths;
+  /** `desktop.update.ui`, resolved. */
+  readonly updater: DesktopUpdaterConfig | undefined;
+  /** `desktop.update.manifestUrl` as written. */
+  readonly manifestUrl: unknown;
 }
 
 /** The enabled built-ins that keep data on disk or in the keychain (`fs`, `sqlite`, `secureStore`). */
@@ -326,6 +376,18 @@ function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
     ...(caps.globalShortcuts ? [shortcutsCapability()] : []),
     ...(caps.launchAtLogin ? [launchAtLoginCapability()] : []),
   ];
+}
+
+/** The `updates` capability over `desktop.update` (`ui` and `manifestUrl`), when it is enabled. */
+function updateCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapability[] {
+  if (!caps.updates) return [];
+  const manifestUrl = typeof ctx.manifestUrl === "string" && ctx.manifestUrl !== ""
+    ? ctx.manifestUrl
+    : undefined;
+  return [updatesCapability({
+    ...(ctx.updater ? { ui: ctx.updater } : {}),
+    ...(manifestUrl ? { app: { manifestUrl } } : {}),
+  })];
 }
 
 /** The enabled built-ins that reach the OS (shell, dialogs, keep-awake, clipboard, passkeys). */
@@ -361,6 +423,7 @@ async function buildBuiltinCaps(
     ...dataCaps(caps, ctx),
     ...systemCaps(caps, ctx),
     ...appCaps(caps),
+    ...updateCaps(caps, ctx),
   ];
   for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, ctx.base));
   return capabilities;

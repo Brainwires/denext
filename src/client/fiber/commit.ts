@@ -178,8 +178,12 @@ function clearFiberFlags(f: Fiber): void {
   // rendered this pass need it: a bailed fiber's hook cells are unchanged, so `committed`
   // already equals `rendered`.
   if ((f.bits & DidRenderBit) !== 0) {
-    if (f.hooks) {
-      for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
+    const hooks = f.hooks;
+    if (hooks) {
+      for (let i = 0; i < hooks.length; i++) {
+        const cell = hooks[i];
+        if ("rendered" in cell) cell.committed = cell.rendered;
+      }
     }
     f.bits &= ~DidRenderBit;
   }
@@ -201,7 +205,8 @@ function commitLayoutEffects(effects: Fiber[]): void {
     f.pendingEffects = undefined;
     return es;
   });
-  for (const f of effects) {
+  for (let i = 0; i < effects.length; i++) {
+    const f = effects[i];
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
   if (pendingPassive.length > 0) schedulePassiveFlush();
@@ -361,8 +366,9 @@ function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell
     return;
   }
   for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
-  if (fiber.tag !== "component" || !fiber.hooks) return;
-  for (const cell of fiber.hooks) visit(fiber, cell);
+  const hooks = fiber.hooks;
+  if (fiber.tag !== "component" || !hooks) return;
+  for (let i = 0; i < hooks.length; i++) visit(fiber, hooks[i]);
 }
 
 /** Run an effect cell's cleanup and mark it disconnected; a throwing cleanup is routed to a boundary. */
@@ -384,7 +390,7 @@ function reconnectCell(fiber: Fiber, cell: HookCell): void {
   if (cell.disconnected !== true) return;
   cell.disconnected = false;
   try {
-    cell.reconnect!();
+    cell.reconnect!(cell);
   } catch (err) {
     scheduleEffectError(fiber, err);
   }
@@ -419,26 +425,39 @@ export function runCommitEffects(
   fibers: Fiber[],
   take: (f: Fiber) => CommitEffect[] | undefined,
 ): void {
-  const pairs: Array<[Fiber, CommitEffect]> = [];
-  for (const f of fibers) {
+  const queue = queueCommitEffects(fibers, take);
+  for (let i = 0; i < queue.length; i += 2) runEffectPass(queue, i, true);
+  for (let i = 0; i < queue.length; i += 2) runEffectPass(queue, i, false);
+}
+
+/** Drain `fibers`' queues into one flat [fiber, entry, fiber, entry, …] list (no pair tuples). */
+function queueCommitEffects(
+  fibers: Fiber[],
+  take: (f: Fiber) => CommitEffect[] | undefined,
+): Array<Fiber | CommitEffect> {
+  const queue: Array<Fiber | CommitEffect> = [];
+  for (let i = 0; i < fibers.length; i++) {
+    const f = fibers[i];
     const es = take(f);
-    if (es) { for (const e of es) pairs.push([f, e]); }
+    if (es === undefined) continue;
+    for (let j = 0; j < es.length; j++) queue.push(f, es[j]);
   }
-  for (const [f, e] of pairs) {
-    if (typeof e.cleanup === "function") {
-      try {
-        e.cleanup();
-      } catch (err) {
-        scheduleEffectError(f, err); // route to a boundary; don't skip the pass
-      }
-    }
-  }
-  for (const [f, e] of pairs) {
-    try {
-      e();
-    } catch (err) {
-      scheduleEffectError(f, err); // route to a boundary; don't skip the pass
-    }
+  return queue;
+}
+
+/**
+ * Run the entry at `queue[i + 1]` (its fiber at `queue[i]`): its cleanup in the teardown pass,
+ * else its setup. An error routes to a boundary without skipping the rest of the pass.
+ */
+function runEffectPass(queue: Array<Fiber | CommitEffect>, i: number, teardown: boolean): void {
+  const e = queue[i + 1] as CommitEffect;
+  try {
+    if (teardown) {
+      if (typeof e.cleanup === "function") e.cleanup();
+    } else if (typeof e === "function") e();
+    else e.run();
+  } catch (err) {
+    scheduleEffectError(queue[i] as Fiber, err); // route to a boundary; don't skip the pass
   }
 }
 
@@ -496,8 +515,10 @@ function runUnmountCleanups(fiber: Fiber): void {
   if (__DENEXT_CLASS_COMPONENTS__ && fiber.ext?.classInstance) {
     getClassSupport()?.unmountClassInstance(fiber as never);
   }
-  if (!fiber.hooks) return;
-  for (const cell of fiber.hooks) {
+  const hooks = fiber.hooks;
+  if (!hooks) return;
+  for (let i = 0; i < hooks.length; i++) {
+    const cell = hooks[i];
     if (typeof cell.cleanup !== "function") continue;
     try {
       cell.cleanup();

@@ -12,7 +12,7 @@ import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../src/jsx/types.ts";
 import { ErrorBoundary } from "../src/runtime/error-boundary.ts";
-import { fireEventOn } from "../src/testing/dom.ts";
+import { DomEl, fireEventOn } from "../src/testing/dom.ts";
 import { all } from "./helpers/virtual-list.ts";
 import { SpaIsland } from "../src/client/spa-island.ts";
 import {
@@ -242,6 +242,31 @@ Deno.test("SpaIsland client:interaction: the placeholder until the first interac
     assertEquals(imported, 1);
     await screen.unmount();
   });
+});
+
+Deno.test("SpaIsland client:interaction: the trigger listeners are passive (touchstart never holds a scroll)", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const proto = DomEl.prototype as unknown as { addEventListener: (...a: unknown[]) => void };
+  const original = proto.addEventListener;
+  proto.addEventListener = function (this: unknown, type: unknown, fn: unknown, options: unknown) {
+    calls.push([type as string, options]);
+    return original.call(this, type, fn, options);
+  };
+  try {
+    await withScheduler(async () => {
+      const screen = await render(h(SpaIsland as never, {
+        __dnxLoad: loadChart,
+        "client:interaction": true,
+        label: "diff",
+      }));
+      await settle();
+      const touch = calls.find(([type]) => type === "touchstart");
+      assertEquals(touch?.[1], { passive: true });
+      await screen.unmount();
+    });
+  } finally {
+    proto.addEventListener = original;
+  }
 });
 
 Deno.test("SpaIsland: one import per loader; a list's islands share it; the dev timeline records each mount", async () => {

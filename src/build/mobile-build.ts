@@ -20,6 +20,7 @@
 // The artifact is copied to dist/mobile/<platform>[-<flavor>]/ with a <artifact>.json sidecar
 // (app id, version, build number, SHA-256) that `denext mobile submit` reads.
 
+import { stabilizeSpmPluginPaths } from "./spm-plugin-paths.ts";
 import { basename, join } from "@std/path";
 import { toPosixPath } from "./mobile-paths.ts";
 import type { MobileFlavorConfig } from "../server/config.ts";
@@ -617,6 +618,21 @@ async function runStep(c: BuildCommand, deps: MobileBuildDeps): Promise<void> {
   deps.log(`\n  $ ${formatCommand(c)}`);
   const { code } = await deps.run(c);
   if (code !== 0) throw new Error(`\`${c.cmd} ${c.args[0] ?? ""}\` exited with ${code}`);
+  // `cap sync` links the plugins by pnpm's store paths; keep the shell buildable elsewhere.
+  if (isCapSync(c) && c.cwd) logStabilized(await stabilizeSpmPluginPaths(c.cwd), deps.log);
+}
+
+/** Whether `c` is `npx cap sync …`. */
+function isCapSync(c: BuildCommand): boolean {
+  return c.args[0] === "cap" && c.args[1] === "sync";
+}
+
+/** Report the Package.swift plugin paths {@linkcode stabilizeSpmPluginPaths} rewrote. */
+export function logStabilized(
+  changed: ReadonlyArray<readonly [string, string]>,
+  log: (line: string) => void,
+): void {
+  for (const [, after] of changed) log(`  Package.swift: plugin path → ${after}`);
 }
 
 /** Apply the flavor and version overrides (recorded in `snapshot`). */

@@ -8,6 +8,144 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.5] - 2026-10-10
+
+### Added
+
+- **`reactNative.fonts`: the fonts an Expo app embeds natively.** The expo-font config plugin
+  embeds font files in the binary and the app uses them by family name without `useFonts`, so a
+  web build drew them in a fallback font. `reactNative: { fonts: { family: file } }` (a package
+  subpath or a `./` path) gives the SPA shell an `@font-face` rule per family and ships the files
+  with the client (the dev server serves them from the package); `denext migrate --from expo`
+  writes it from the app config.
+- **`denext mobile sync`: a committed iOS shell builds on any checkout.** Under pnpm, `cap sync`
+  links each native plugin into `CapApp-SPM/Package.swift` by its store path
+  (`node_modules/.pnpm/<name>@<version>_<hash>/…`), which another install or layout does not have.
+  `denext mobile sync [ios|android]` runs `cap sync` and rewrites those paths to the package's
+  `node_modules/<name>` entry; `mobile add` and `mobile build` do the same after their sync, and a
+  migrated app's `mobile:sync` task uses it.
+- **React Native mode builds uniwind apps.** With `uniwind` installed, `react-native` resolves to
+  uniwind's web components (except inside uniwind), react-native-web's `StyleSheet` gets uniwind's
+  layered sheet and uniwind's config registers the app's themes, as uniwind's Vite plugin does:
+  the `denext patch` step of the recipe is gone. `reactNative: { uniwind: { extraThemes } }` names
+  the themes beyond `light` / `dark` (`withUniwindConfig`'s option); `uniwind: false` turns it off.
+  Docs: [Recipe: uniwind and Tailwind](/docs/react-native#recipe-uniwind-and-tailwind).
+- **`@legendapp/list/keyboard` and `@legendapp/list/reanimated` run on denext's LegendList.**
+  They wrapped the real list's private `internal` API and failed the build; now
+  `KeyboardAwareLegendList` adds the composer's height (`contentInsetEndAdjustment`, a shared value
+  from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`) as room after the
+  last item, `useKeyboardScrollToEnd` scrolls to the end, and `AnimatedLegendList` keeps
+  `sharedValues` current. The LegendList shim also exports `internal` (its generic helpers), so
+  the package's own `/section-list` builds, and the ref's `reportContentInset({ bottom })` adds
+  room after the last item instead of doing nothing.
+- **React Navigation's bar button items.** A native-stack screen's `unstable_headerLeftItems` /
+  `unstable_headerRightItems` (React Navigation 7.1x) are header buttons: SF Symbol icons through
+  `SystemIcon`, labels, `menu` items through `showContextMenu`, `spacing` and `custom` items. They
+  rendered nothing, so a screen whose only action lived there (a form's checkmark) had no way to
+  submit.
+- **`AudioModule` in the `expo-audio` shim**: the player, recorder, playlist and stream classes and
+  the session and permission calls (`new AudioModule.AudioRecorder(options)` builds).
+- **`@react-native/assets-registry`** (which react-native-svg imports directly) resolves to
+  react-native-web's asset registry in React Native mode.
+- **`denext/updates`: one "update everything" API for every platform.** `checkForUpdates(cfg?)`
+  and `applyUpdates(cfg?, onProgress)` dispatch on `runtimePlatform()`: on iOS / Android the
+  over-the-air UI (`cfg.ota`; the check stages a verified UI, apply switches to it), on Deno
+  Desktop a newer whole app when one is on offer (its UI comes with it: the overlay is skipped as
+  `superseded`) else the signed UI overlay, in a browser a reload when the deployed
+  build's version (`/_denext/ota.json`, or `cfg.web.versionUrl`) differs from the page's. One
+  progress shape everywhere: `{ target: "ui" | "app" | "web", stage: "checking" | "downloading" |
+  "ready" | "applying" | "done" | "up-to-date" | "failed", version?, percent?, error?, code? }`.
+  Every existing check still applies (signatures, sequence, expiry, the same code signer); a phone
+  UI built for another binary (`native_mismatch` / `native_too_old`) is reported as
+  `needsStoreUpdate`, and a desktop overlay alone as `restartRequired`. The module is opt-in and
+  loads each platform's code on first use. The desktop side is a new **`updates` capability**
+  (`denext desktop add updates`, token-gated like the others: `check`, `download` with throttled
+  `progress` events, `apply`, which answers `{ quitting: true }` before the app quits to install),
+  and **`desktop.update.ui`** (`{ feedUrl, publicKey, platform? }`)
+  configures the UI overlay in `denext.config.ts`: the generated `desktop.ts` now serves it (no
+  hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
+  the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
+- **Sidecars can start with the user's login-shell environment (`loginShellEnv`).** An app opened
+  from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend could not find what
+  Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`, `claude`). With
+  `loginShellEnv: true` (or `{ timeoutMs, keys }`) on a `desktop.sidecars` / `runDesktop({ sidecars })`
+  entry, the user's `$SHELL` runs once per launch as a login + interactive shell (sentinel-delimited,
+  rc-file output ignored, the OS's default shell as a fallback), within a budget (default 3 s) that
+  never holds the window up; its `PATH` (ahead of the inherited one) and the `keys` asked for are
+  laid under that sidecar's `env`, module and program sidecars alike, and a bare `run.exec` name is
+  found on it. A failure or a timeout logs one warning and keeps the inherited environment. Only the
+  sidecars that opt in see the variables (never the page, never `DENO_*` / `DENEXT_*`); macOS and
+  Linux, a no-op on Windows. The packaged app's `--allow-run` lists the usual shells. Docs:
+  [Desktop › The user's login-shell environment](/docs/desktop#desktop-sidecars-login-shell).
+
+### Changed
+
+- **Rendering and committing allocate far less.** Opening a thread in T3 Code's phone build
+  (Chromium's sampling heap profiler, iPhone 13 profile) allocated 11.7 MB of JS in denext's
+  runtime chunk on the first open and 19.6 MB on a warm one; it now allocates 3.3 MB and 5.3 MB
+  (−72%). Nothing a component sees changes. Where the churn went:
+  - an element keeps the props object JSX passes it, as React 19's `jsx` does — it is copied
+    only to write a separately passed `key` or `defaultProps` — and `h()` copies once, not twice;
+  - a context provider links one `ContextScope` onto its parent's contexts instead of copying
+    the parent's whole `Map` (a lookup asks each provider up the chain);
+  - `useCallback` keeps `fn` itself (no `() => fn` factory per call); `useMemo`, `useCallback`
+    and effects keep their deps array by reference, as React does, instead of a copy;
+  - a queued effect is one small object instead of three closures plus a copied deps array, and
+    every effect cell reconnects through one shared function; `useState` / `useReducer` /
+    `useSyncExternalStore` no longer allocate a closure context on every call, and
+    `useSyncExternalStore` no longer builds a `[subscribe]` array each render;
+  - children that need no flattening (a `.map()` result, static JSX children) are reconciled from
+    their own array; a component's single rendered child is not wrapped in one; reconciling a
+    changed child list tracks reuse by position (no `Set`, no index map) and passes a parent's
+    host / boundary / contexts as arguments rather than an object per call;
+  - a component render no longer allocates its Fast Refresh resolution, its render-target
+    record or a snapshot of every hook's deps (a render-phase re-render resets only the cells
+    the discarded pass created — the only deps a render changes are `useMemo`'s);
+  - props, styles and the memo bailout's shallow compare walk keys with `for…in` instead of
+    `Object.keys` / `Object.entries` arrays; the commit's effect list is one flat array, not a
+    pair per effect, and its hot loops index arrays instead of allocating iterators.
+    | Measure                                                                     |                    3.4.4 |                 Now |
+    | --------------------------------------------------------------------------- | -----------------------: | ------------------: |
+    | T3 Code, JS allocated per thread open (whole page; first / warm open)       |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
+    | T3 Code, denext runtime chunk's share of it                                 |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
+    | T3 Code, WebKit JS heap after the first open                                |           114.5–115.6 MB |      111.3–111.4 MB |
+    | T3 Code, WebKit JS heap after 5 opens                                       |           127.4–127.9 MB |      123.9–124.0 MB |
+    | T3 Code, Chromium heap after 5 / 20 opens                                   | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
+    | T3 Code, Chromium renderer PSS after 20 opens                               |               204–209 MB |          192–194 MB |
+    | `examples/hello`, JS allocated by load + hydration / by 200 clicks          |           1.79 / 10.7 MB |       1.77 / 9.4 MB |
+    | 10k-row list, JS allocated per row: mount / full re-render (with a handler) |            11.8 / 5.2 KB |        8.3 / 2.6 KB |
+    | 10k-row list, retained per row after the re-render (`bench:fiber-memory`)   |                  6,751 B |             6,742 B |
+
+### Fixed
+
+- **`onTouchStart` / `onTouchMove` / `onWheel` listen passive, as in React.** React DOM registers
+  `touchstart`, `touchmove` and `wheel` as passive listeners (since React 17); denext attached them
+  as ordinary element listeners, so any component with such a handler (Base UI's `ScrollArea`
+  viewport, for one) held every scroll that started on it on the main thread, and on an iPhone a
+  page could stop scrolling. They are now passive, `Capture` variants included, as are the
+  resumability dispatcher's document listeners, a `client:interaction` island's trigger and
+  `useClickOutside`'s `touchstart`. `preventDefault()` inside one is a no-op the browser warns
+  about, as in React; `onTouchEnd` / `onTouchCancel` stay non-passive, as in React.
+- **React Native screens fill the screen, so their lists virtualize.** React Navigation's (and
+  expo-router's) stack drew each screen into a scrolling block, so a `flex: 1` view grew to its
+  content: a FlatList / LegendList rendered every row, scrolled the page instead of itself, and
+  `initialScrollAtEnd` / `alignItemsAtEnd` had nothing to anchor to. The stack's new `fillScreens`
+  (on for React Navigation's) lays each screen, and a `formSheet`'s content (`Sheet`'s new
+  `fillContent`), out as a flex column the content fills.
+- **A tap on a row of a recycled list lands.** With `recycle` (LegendList's `recycleItems`), the
+  row that took focus on the press switched from its recycled cell key to its own key, so it was
+  remounted mid-gesture and the click never fired. A focused row now keeps its cell, also while
+  scrolled out of the window.
+- **An exact `deno.json` import to a local file beats an installed package.** With node
+  resolution on (the default), `"some-native-pkg": "./web/stub.ts"` was ignored while the package
+  was installed, though `denext migrate` tells you to map a native-only package that way; it now
+  applies to the app's imports and every package's, as a prefix alias already did.
+- **A desktop UI overlay is no longer served over a newer app.** The overlay updater now records
+  the bundled export an overlay was installed over (`bundle.json` in its data folder: the export's
+  stamped version, else its `index.html` hash); at launch, a different bundle (a full-app update,
+  a reinstall) drops every overlay and staged one, so a UI built for the old app never runs on the
+  new one. The accepted sequence and the rejected version are kept.
+
 ## [3.4.4] - 2026-10-10
 
 ### Added
@@ -12585,7 +12723,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.5...development
+[3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2

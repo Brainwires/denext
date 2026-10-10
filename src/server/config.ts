@@ -627,6 +627,28 @@ export interface ReactNativeConfig {
    * `react-native-macos` / `react-native-windows` import gets the additions.
    */
   desktopPackage?: "react-native-macos" | "react-native-windows";
+  /**
+   * Fonts the app embeds in its native binary (the expo-font config plugin's `fonts`) and uses
+   * by family name, as family → file: a package subpath
+   * (`"@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf"`) or a `./` path. The SPA
+   * shell gets an `@font-face` rule for each, and the files ship with the client. `denext
+   * migrate --from expo` writes it from the app config.
+   */
+  fonts?: Readonly<Record<string, string>>;
+  /**
+   * Build a [uniwind](https://uniwind.dev) app's Tailwind classes as uniwind's Vite plugin
+   * does, when the app has `uniwind` installed: `react-native` resolves to uniwind's web
+   * components (`className` on every component), react-native-web's stylesheet gets uniwind's
+   * layered one, and uniwind registers `light`, `dark` and `extraThemes` (the `extraThemes`
+   * the app's Metro config passes to `withUniwindConfig`). Compile the app's Tailwind input
+   * with `tailwind: { input, output }`. `false` turns it off.
+   *
+   * @default true
+   */
+  uniwind?: boolean | {
+    /** The themes beyond `light` and `dark` (`withUniwindConfig`'s `extraThemes`). */
+    extraThemes?: readonly string[];
+  };
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
@@ -872,6 +894,12 @@ export interface DesktopCapabilitiesConfig {
    * autostart entry, named after `desktop.app.identifier`.
    */
   launchAtLogin?: boolean;
+  /**
+   * The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from
+   * `denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app
+   * ({@link DesktopUpdateConfig.manifestUrl}, denext's pinned runtime), with download progress.
+   */
+  updates?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
   /**
@@ -1100,6 +1128,14 @@ export interface DesktopSidecarConfig {
   args?: string[];
   /** Environment variables (a module sidecar's own `process.env` copy; a program's environment). */
   env?: Record<string, string>;
+  /**
+   * Start it with the user's login-shell environment (macOS, Linux): `$SHELL` runs once per launch
+   * as a login + interactive shell and its `PATH` (ahead of the inherited one) and any `keys` are
+   * laid under {@link env}, so a backend opened from the Dock finds Homebrew / nvm / asdf tools. A
+   * failure or a shell slower than `timeoutMs` (default 3 000 ms) logs a warning and keeps the
+   * inherited environment. Only this sidecar sees them; never `DENO_*` / `DENEXT_*`.
+   */
+  loginShellEnv?: boolean | DesktopSidecarLoginShellEnvConfig;
   /** A program's working directory (relative to the app's data folder, or absolute). */
   cwd?: string;
   /** A loopback port: `"auto"` picks a free one at launch (kept across restarts), or a number. */
@@ -1142,6 +1178,14 @@ export interface DesktopSidecarRunConfig {
   entries?: string[];
   /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
   exec?: string;
+}
+
+/** {@link DesktopSidecarConfig.loginShellEnv} with options. */
+export interface DesktopSidecarLoginShellEnvConfig {
+  /** How long the login shell may take, 1 to 60 000 ms (default 3 000 ms). */
+  timeoutMs?: number;
+  /** Variables to take from the login shell besides `PATH` (`["SSH_AUTH_SOCK", "LANG"]`). */
+  keys?: string[];
 }
 
 /** {@link DesktopSidecarConfig.shutdown}. */
@@ -1285,6 +1329,30 @@ export interface DesktopUpdateConfig {
    * never confirms is rolled back.
    */
   autoConfirm?: boolean;
+  /**
+   * The signed UI overlay: a newer static export served in place of the bundled one, without a new
+   * app build (`denext ota manifest out --sign`, the mobile OTA format). `runDesktop` serves the
+   * active overlay (rolled back if it never boots), and `denext desktop add updates` lets the page
+   * install one (`applyUpdates` from `denext/updates`). Needs {@link DesktopConfig.app}'s
+   * `identifier`: the overlay is kept in the app's own data folder.
+   */
+  ui?: DesktopUiUpdateConfig;
+}
+
+/** {@link DesktopUpdateConfig.ui}: the signed UI overlay's feed. */
+export interface DesktopUiUpdateConfig {
+  /**
+   * The web root the signed export is served from (`${feedUrl}/_denext/ota.json` and each file).
+   * Its host is added to the packaged app's `--allow-net`.
+   */
+  feedUrl: string;
+  /**
+   * The release public key every manifest must be signed with: base64 SPKI (`ota.key.pub` from
+   * `denext ota keygen`) or a `PUBLIC KEY` PEM of an ECDSA P-256 key.
+   */
+  publicKey: string;
+  /** The export's target; default the OS the app runs on. */
+  platform?: "macos" | "windows" | "linux";
 }
 
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */

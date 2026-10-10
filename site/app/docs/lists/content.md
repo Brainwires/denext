@@ -809,6 +809,14 @@ changes:
 - `@legendapp/list` and `@legendapp/list/react-native`. `@legendapp/list/react`, the DOM
   build, stays the real package unless the top-level `lists: "denext"` is set (see
   [LegendList on the web](#legendlist-on-the-web)).
+- `@legendapp/list/reanimated` and `@legendapp/list/keyboard`, which wrap LegendList's native
+  scroll view: `AnimatedLegendList` is the list with `sharedValues` kept current
+  (`itemLayoutAnimation` and `animatedProps` have no effect), and `KeyboardAwareLegendList` the
+  list with room after the last item for the composer (`contentInsetEndAdjustment`, a shared
+  value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`); the web
+  view's layout follows the keyboard, so its keyboard props have no effect.
+  `useKeyboardScrollToEnd` scrolls to the end (closing the keyboard when asked). The ref's
+  `reportContentInset({ bottom })` adds room after the last item too.
 
 The adapters render with the app's own react-native-web `View`, `StyleSheet` and
 `RefreshControl`, so `style`, `contentContainerStyle`, `columnWrapperStyle` and the header

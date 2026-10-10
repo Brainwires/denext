@@ -18,7 +18,6 @@ import {
 
 import type { VNode } from "../../jsx/types.ts";
 import { enterScope, ID_PATH_PROP, rootScope } from "../../jsx/tree-id.ts";
-import type { DependencyList } from "../../compat/react-types.ts";
 import { setDispatcher } from "../../runtime/hooks.ts";
 import {
   familyResolveActive,
@@ -53,16 +52,14 @@ function asyncClientComponentError(): Error {
 /**
  * Reset a component's hooks to their render-start state before a render-phase
  * re-invocation (React's render-phase update — a component that calls its own
- * `setState`/`dispatch` while rendering itself). denext mutates `cell.deps` in place as
- * it queues effects and store subscriptions, so a naive re-render would compare a hook's
- * new deps against the deps the PREVIOUS (now discarded) sub-render just wrote —
- * suppressing effects that must still queue and dropping them when the effect queues are
- * cleared. Restoring the committed deps (captured in `depsBaseline`) makes each effect /
- * `useSyncExternalStore` subscription re-queue exactly when it changed vs the last
- * COMMITTED render, matching React. Cells created during a discarded sub-render (index
- * past the baseline) are reset to a fresh-mount state so their mount effect re-queues on
- * the final pass. The three effect queues are cleared so only the final sub-render's
- * effects reach the commit.
+ * `setState`/`dispatch` while rendering itself). A cell's deps change during a render only
+ * for `useMemo` / `useCallback`: an effect's or a store subscription's deps are recorded when
+ * it COMMITS (hooks-dispatcher.ts), so the cells that existed when the render started still
+ * hold their committed deps, and each effect / `useSyncExternalStore` subscription re-queues
+ * exactly when it changed vs the last COMMITTED render, matching React. Cells created during a
+ * discarded sub-render (index at or past `baselineLength`, the cell count at render start) are
+ * reset to a fresh-mount state so their mount effect re-queues on the final pass. The three
+ * effect queues are cleared so only the final sub-render's effects reach the commit.
  *
  * `useMemo` / `useCallback` cells are left as the previous pass wrote them: React's
  * re-render reuses the work-in-progress hooks, so a memo whose deps did not change since
@@ -71,18 +68,14 @@ function asyncClientComponentError(): Error {
  * (`if (last !== merged) setLast(merged)`, React's "store information from previous
  * renders") would see a new identity each pass and never converge.
  */
-function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
+function restoreForReRender(inst: Fiber, baselineLength: number): void {
   setSuppressEffectQueue(false); // the discarded pass's queues are cleared below; re-queue
   const hooks = inst.hooks!;
-  for (let i = 0; i < hooks.length; i++) {
+  for (let i = baselineLength; i < hooks.length; i++) {
     const c = hooks[i];
     if (c.kind === HK_MEMO) continue; // keeps the previous pass's value and deps (see above)
-    if (i < depsBaseline.length) {
-      c.deps = depsBaseline[i]; // committed deps: re-queue iff changed vs the last commit
-    } else {
-      c.deps = undefined; // created during a discarded sub-render — treat as a fresh mount
-      c.mounted = false;
-    }
+    c.deps = undefined; // created during a discarded sub-render — treat as a fresh mount
+    c.mounted = false;
   }
   // Effect queues are allocated on a component's first effect of the render (most
   // components schedule none): three empty arrays per render, and per fiber, otherwise.
@@ -98,12 +91,12 @@ function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | un
  * place — reading the updated state — until it stabilizes, with no commit in between;
  * denext does the same here rather than scheduling a whole-tree re-render + commit, which
  * never converges for this idiom (each pass commits, feeding the transition state back on
- * itself) and trips the render-pass guard, aborting the commit. `depsBaseline` is the
- * render-start deps snapshot used to restore hook state between sub-renders.
+ * itself) and trips the render-pass guard, aborting the commit. `baselineLength` is the
+ * render-start cell count used to restore hook state between sub-renders.
  */
 function runRenderPhase(
   inst: Fiber,
-  depsBaseline: Array<DependencyList | undefined>,
+  baselineLength: number,
   type: (props: unknown, ref?: unknown) => VNode,
   props: unknown,
   ref: unknown,
@@ -121,7 +114,7 @@ function runRenderPhase(
           "update during its own render (e.g. calling setState unconditionally while rendering).",
       );
     }
-    restoreForReRender(inst, depsBaseline);
+    restoreForReRender(inst, baselineLength);
     resetHookCursor();
     result = forwardsRef ? type(props, ref) : type(props);
     if (result instanceof Promise) throw asyncClientComponentError();
@@ -162,14 +155,18 @@ interface RefreshResolution {
  * alternate (dev-only; skipped in prod). The pre-swap hook-kind sequence is snapshotted
  * so the signature guard can compare the WHOLE signature (count + order), not just the
  * count — a same-count reorder is unsafe too. Null outside a swap, so prod pays nothing.
+ *
+ * Returns `null` for the production case — no family resolver and no swap: render
+ * `inst.vnode.type` — so a component render allocates no resolution object.
  */
-function resolveRefreshSwap(inst: Fiber): RefreshResolution {
+function resolveRefreshSwap(inst: Fiber): RefreshResolution | null {
   const resolveFR = familyResolveActive();
   const rawType = resolveFR ? resolveFamilyCurrent(inst.vnode.type) : inst.vnode.type;
   const refreshSwap = resolveFR
     ? (inst.alternate?.ext?.lastImpl != null && inst.alternate.ext.lastImpl !== rawType)
     : (inst.alternate !== null && inst.vnode.type !== inst.alternate.vnode.type);
   if (resolveFR) fiberExt(inst).lastImpl = rawType;
+  else if (!refreshSwap) return null;
   const oldKinds = refreshSwap && inst.hooks ? inst.hooks.map((c) => c.kind) : null;
   return { rawType, refreshSwap, oldKinds };
 }
@@ -246,16 +243,15 @@ type RenderFn = (props: unknown, ref?: unknown) => VNode;
  * the raw constructor — so it is rejected; the guard runs only in the wrapped case so
  * the plain-function hot path pays nothing.
  */
-function resolveRenderTarget(rawType: unknown): { type: RenderFn; forwardsRef: boolean } {
+function resolveRenderTarget(rawType: unknown): { fn: unknown; forwardsRef: boolean } {
   const resolved = resolveComponentType(rawType);
-  const type = resolved.fn as RenderFn;
-  if (type !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+  if (resolved.fn !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(resolved.fn)) {
     throw new Error(
       "denext: memo() of a class component is unsupported; wrap the class in a " +
         "function component (or memo the function) instead.",
     );
   }
-  return { type, forwardsRef: resolved.forwardsRef };
+  return resolved;
 }
 
 /**
@@ -296,10 +292,9 @@ function prepareRenderProps(inst: Fiber): unknown {
  * this component's ids. (Class components are not double-rendered — they are gated and
  * comparatively rare.)
  *
- * Each hook's render-start deps are snapshotted so a render-phase update (a component
- * that sets its own state while rendering) can re-invoke and converge locally — denext
- * mutates cell.deps in place, so the baseline is needed to re-queue effects correctly.
- * Cheap ref-copies; on the no-render-phase-update common path the snapshot is unused.
+ * The render-start cell count is kept so a render-phase update (a component that sets its
+ * own state while rendering) can re-invoke and converge locally, resetting the cells the
+ * discarded pass created (see {@linkcode restoreForReRender}).
  */
 function renderWithStrictMode(
   inst: Fiber,
@@ -308,8 +303,8 @@ function renderWithStrictMode(
   ref: unknown,
   forwardsRef: boolean,
 ): VNode | null {
-  const depsBaseline = inst.hooks!.map((c) => c.deps);
-  const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
+  const baselineLength = inst.hooks!.length;
+  const result = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
   if (hasBit(inst, StrictBit) && devHydrationActive()) {
     const localAfterFirst = inst.idScope!.local;
     // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
@@ -317,7 +312,7 @@ function renderWithStrictMode(
     setSuppressEffectQueue(true);
     let second: VNode | null;
     try {
-      second = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
+      second = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
     } finally {
       setSuppressEffectQueue(false);
     }
@@ -338,9 +333,9 @@ function finishComponentRender(
   inst: Fiber,
   t0: number,
   profT0: number,
-  swap: RefreshResolution,
+  swap: RefreshResolution | null,
 ): void {
-  if (swap.refreshSwap && hookSignatureChanged(swap.oldKinds, inst.hooks, hookIndex)) {
+  if (swap?.refreshSwap && hookSignatureChanged(swap.oldKinds, inst.hooks, hookIndex)) {
     reportSignatureChange();
   }
   if (hasBit(inst, UnderProfilerBit)) {
@@ -361,7 +356,7 @@ export function renderComponent(inst: Fiber): VNode | null {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
   const swap = resolveRefreshSwap(inst);
-  setRefreshSwapRender(swap.refreshSwap);
+  setRefreshSwapRender(swap?.refreshSwap ?? false);
   enterComponentRender(inst, 0);
   // Effect queues are allocated on a component's first effect of the render (most
   // components schedule none): three empty arrays per render, and per fiber, otherwise.
@@ -386,7 +381,15 @@ export function renderComponent(inst: Fiber): VNode | null {
     if (__DENEXT_CLASS_COMPONENTS__ && isClassComponent(inst.vnode.type)) {
       return renderClassFiber(inst);
     }
-    const { type, forwardsRef } = resolveRenderTarget(swap.rawType);
+    const rawType = swap === null ? inst.vnode.type : swap.rawType;
+    // A plain function component (the common case) is its own render function.
+    let type = rawType as RenderFn;
+    let forwardsRef = false;
+    if (typeof rawType !== "function") {
+      const target = resolveRenderTarget(rawType);
+      type = target.fn as RenderFn;
+      forwardsRef = target.forwardsRef;
+    }
     const props = prepareRenderProps(inst);
     // forwardRef receives `(props, ref)` with `ref` REMOVED from props, as in React (a
     // render fn that spreads `props` onto a host element must not forward the ref twice).

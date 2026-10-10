@@ -111,14 +111,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "clearAllPreloadedSources",
       "getPreloadedSources",
       "requestNotificationPermissionsAsync",
-      "AudioModule",
       "IOSOutputFormat",
     ],
     notes: "Playback over HTMLAudioElement, recording over MediaRecorder (WebM/MP4, metering " +
       "from a Web Audio analyser; the recorder state's fileSize counts the bytes delivered; " +
       "fileName is ignored). Audio-session calls resolve without effect. Playlists and " +
       "PCM streams are not provided: the AudioPlaylist and AudioStream classes (and the " +
-      "NativeAudioModule type) are stand-ins that throw when constructed.",
+      "NativeAudioModule type) are stand-ins that throw when constructed. `AudioModule` holds " +
+      "the classes and the session and permission calls; its preload and notification-permission " +
+      "members reject.",
   },
   "expo-auth-session": {
     module: "./auth-session.ts",

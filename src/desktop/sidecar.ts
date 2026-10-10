@@ -120,6 +120,17 @@ export interface SidecarShutdown {
  */
 export type SidecarLogs = "inherit" | "file" | "both" | "none";
 
+/**
+ * {@linkcode SidecarDefinition.loginShellEnv} with options: `timeoutMs` bounds the login shell
+ * (default 3 000 ms), `keys` names variables to take from it besides `PATH`.
+ */
+export interface SidecarLoginShellEnv {
+  /** How long the login shell may take before the inherited environment is used (3 000 ms). */
+  readonly timeoutMs?: number;
+  /** Variables to take from the login shell besides `PATH` (never `DENO_*` / `DENEXT_*`). */
+  readonly keys?: readonly string[];
+}
+
 /** A value a sidecar shares with the page ({@linkcode SidecarDefinition.expose}). */
 export type SidecarExposedValue = string | number | boolean | null;
 
@@ -143,6 +154,19 @@ export interface SidecarDefinition {
    * environment is not changed); a program gets them on top of the app's environment.
    */
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Start it with the user's login-shell environment (macOS and Linux; nothing on Windows): an app
+   * opened from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend would not
+   * find what Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`). Once per launch of the
+   * app, when the first sidecar that sets it starts, the user's `$SHELL` runs as a login and
+   * interactive shell and its `PATH` (ahead of the inherited one) and the `keys` asked for are laid
+   * under this sidecar's {@linkcode env}. A shell that fails or takes longer than `timeoutMs`
+   * (default 3 000 ms) logs a warning and the sidecar starts with the inherited environment. The
+   * variables reach only the sidecars that set this, never the page or the app's own environment.
+   * A module sidecar sees them in `process.env` (and so `node:child_process`); a program in its
+   * environment, and a bare `run.exec` name is looked up on that `PATH`.
+   */
+  readonly loginShellEnv?: boolean | SidecarLoginShellEnv;
   /** A program's working directory (relative to the app's data folder, or absolute). */
   readonly cwd?: string;
   /**
@@ -285,6 +309,7 @@ const DEFINITION_KEYS = new Set([
   "run",
   "args",
   "env",
+  "loginShellEnv",
   "cwd",
   "port",
   "portEnv",
@@ -477,6 +502,31 @@ function envError(env: unknown): string | null {
   return null;
 }
 
+/** The problem with `loginShellEnv`, or `null`. */
+function loginShellEnvError(value: unknown): string | null {
+  if (value === undefined || typeof value === "boolean") return null;
+  if (!isObject(value)) return "loginShellEnv must be a boolean or { timeoutMs, keys }";
+  return first([
+    () => unknownOption(value, "loginShellEnv", ["timeoutMs", "keys"]),
+    () =>
+      value.timeoutMs === undefined ||
+        (isMs(value.timeoutMs) && (value.timeoutMs as number) > 0 &&
+          (value.timeoutMs as number) <= 60_000)
+        ? null
+        : "loginShellEnv.timeoutMs must be milliseconds between 1 and 60 000",
+    () => {
+      if (value.keys === undefined) return null;
+      if (!isStringArray(value.keys)) return "loginShellEnv.keys must be a string array";
+      const bad = value.keys.find((k) => !ENV_NAME_RE.test(k));
+      if (bad !== undefined) return `loginShellEnv.keys: "${bad}" is not a variable name`;
+      const reserved = value.keys.find((k) => /^(DENO|DENEXT)_/i.test(k));
+      return reserved === undefined
+        ? null
+        : `loginShellEnv.keys: "${reserved}" is reserved (DENO_* / DENEXT_* are never taken)`;
+    },
+  ]);
+}
+
 /** The problem with `secrets`, or `null`. */
 function secretsError(secrets: unknown): string | null {
   if (secrets === undefined || typeof secrets === "function") return null;
@@ -577,6 +627,7 @@ export function sidecarDefinitionError(definition: unknown): string | null {
     () => restartError(d.restart),
     () => shutdownError(d.shutdown),
     () => envError(d.env),
+    () => loginShellEnvError(d.loginShellEnv),
     () => secretsError(d.secrets),
     () => exposeError(d.expose, d.secrets),
     () => permissionsError(d.permissions),

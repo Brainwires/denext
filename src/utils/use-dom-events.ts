@@ -8,6 +8,7 @@
 
 import { useEffect, useRef } from "../runtime/hooks.ts";
 import type { RefObject } from "../compat/react-types.ts";
+import { isPassiveEvent } from "../runtime/passive-events.ts";
 
 /** Options for {@linkcode useEventListener}. */
 export interface UseEventListenerOptions {
@@ -111,7 +112,11 @@ export function useClickOutside<T extends { contains(node: Node | null): boolean
       const node = event.target as Node | null;
       if (el && node && !el.contains(node)) handlerRef.current(event);
     };
-    for (const name of names) document.addEventListener(name, listener, true);
+    // touchstart / touchmove / wheel listen passive (as React DOM does): a non-passive
+    // document listener would hold every scroll on the page on the main thread.
+    const options = (name: string) =>
+      isPassiveEvent(name) ? { capture: true, passive: true } : true;
+    for (const name of names) document.addEventListener(name, listener, options(name));
     return () => {
       for (const name of names) document.removeEventListener(name, listener, true);
     };

@@ -93,6 +93,13 @@ export interface StackViewProps extends NavigationThemeProps {
    * `aria-live` region; the `title` option, else the document title). Default `true`.
    */
   readonly announceRouteChanges?: boolean;
+  /**
+   * Lay each screen's content out as React Native does (default `false`): the screen body (and
+   * a `formSheet`'s) is a flex column the content fills, so a `flex: 1` view takes the screen's
+   * height and a list inside scrolls (and virtualizes) itself, instead of the body scrolling a
+   * page as tall as its content. React Navigation's and expo-router's stacks set it.
+   */
+  readonly fillScreens?: boolean;
 }
 
 /** What {@linkcode StackView} lets its owner do. */
@@ -719,6 +726,7 @@ function sheetScreen(rt: StackRt, item: ScreenItem): VNode {
     initialDetent: o.sheetInitialDetentIndex,
     grabber: o.sheetGrabberVisible !== false,
     dismissible: o.gestureEnabled !== false,
+    fillContent: rt.props.fillScreens,
     "aria-label": o.title,
     onOpenChange: (open: boolean) => {
       if (!open && item.isTop) rt.props.onPop(index - 1, { animated: false });
@@ -748,6 +756,20 @@ function track(map: Map<string, HTMLElement>, id: string) {
   return (el: HTMLElement | null) => {
     if (el) map.set(id, el);
     else map.delete(id);
+  };
+}
+
+/** A card screen body's style: a scroll container, a flex column the content fills (`fill`). */
+function bodyStyle(fill: boolean): Record<string, string | number> {
+  return {
+    flex: 1,
+    minHeight: 0,
+    ...(fill ? { display: "flex", flexDirection: "column" } : {}),
+    overflowY: "auto",
+    overscrollBehaviorY: "contain",
+    // Horizontal pans stay with the page, so the edge swipe gets them (not a pointercancel).
+    touchAction: "pan-y pinch-zoom",
+    WebkitOverflowScrolling: "touch",
   };
 }
 
@@ -793,15 +815,7 @@ function cardScreen(rt: StackRt, item: ScreenItem): VNode {
           markScrolled(section, top);
           if (large) collapseLargeTitle(section, top);
         },
-        style: {
-          flex: 1,
-          minHeight: 0,
-          overflowY: "auto",
-          overscrollBehaviorY: "contain",
-          // Horizontal pans stay with the page, so the edge swipe gets them (not a pointercancel).
-          touchAction: "pan-y pinch-zoom",
-          WebkitOverflowScrolling: "touch",
-        },
+        style: bodyStyle(rt.props.fillScreens === true),
       },
       large,
       item.content,

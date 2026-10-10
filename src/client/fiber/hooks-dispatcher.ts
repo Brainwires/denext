@@ -27,6 +27,7 @@ import {
   HasEffect,
   type HookCell,
   NoLane,
+  type QueuedEffect,
   StrictBit,
   TransitionLane,
 } from "./fiber.ts";
@@ -132,15 +133,70 @@ export function setParkingEffects(on: boolean): void {
   parking = on;
 }
 
+/** The fiber field an effect is queued on; the insertion queue lives on its `FiberExt`. */
+type EffectQueue = "passiveEffects" | "pendingEffects" | "insertionEffects";
+
+/**
+ * Run `cell`'s most recently committed setup and store its cleanup — the unit an effect's
+ * mount, its StrictMode re-mount and an Offscreen reconnect all run.
+ */
+function mountEffect(cell: HookCell): void {
+  cell.cleanup = cell.create!();
+}
+
+/**
+ * A hook effect queued for the commit: plain data and two prototype methods, where a queued
+ * effect used to be three closures plus a copy of its deps.
+ *
+ * The commit runs every entry's {@linkcode HookEffect.cleanup} (the PREVIOUS render's teardown,
+ * still on the cell) before any entry's {@linkcode HookEffect.run} — React's ordering, so e.g. a
+ * sibling that releases a shared resource in cleanup runs before the sibling that acquires it
+ * in setup.
+ */
+class HookEffect implements QueuedEffect {
+  constructor(
+    readonly cell: HookCell,
+    readonly create: () => (() => void) | void,
+    readonly deps: DependencyList | undefined,
+    readonly strictMount: boolean,
+    readonly offscreenAware: boolean,
+  ) {}
+
+  cleanup(): void {
+    const teardown = this.cell.cleanup;
+    if (typeof teardown === "function") teardown();
+  }
+
+  run(): void {
+    const cell = this.cell;
+    // This render's deps, recorded on the cell when the effect COMMITS (React's semantics):
+    // a render that is discarded (interrupted, or re-run by a render-phase update) must not
+    // leave the cell believing its deps already match the values that never took effect.
+    cell.deps = this.deps;
+    cell.create = this.create;
+    // Remember how to rebuild this effect after an Offscreen hide tore it down. Insertion
+    // effects are excluded — they aren't part of the offscreen cycle.
+    if (this.offscreenAware) {
+      cell.reconnect = mountEffect;
+      // Inside a hidden <Activity>: mount nothing now; the reveal reconnects it.
+      if (parking) {
+        cell.disconnected = true;
+        return;
+      }
+    }
+    mountEffect(cell);
+    if (this.strictMount) {
+      if (typeof cell.cleanup === "function") cell.cleanup();
+      mountEffect(cell);
+    }
+  }
+}
+
 /**
  * Queue an effect for `cell` when its deps changed. Under a StrictMode subtree in
  * development, a mount effect is immediately unmounted and remounted (setup →
  * cleanup → setup) to surface missing cleanup, matching React.
  */
-/** The fiber field an effect is queued on (allocated on first use). */
-/** The fiber's queue to push onto; the insertion queue lives on its `FiberExt`. */
-type EffectQueue = "passiveEffects" | "pendingEffects" | "insertionEffects";
-
 function scheduleEffect(
   inst: Fiber,
   queue: EffectQueue,
@@ -152,42 +208,7 @@ function scheduleEffect(
   if (suppressEffectQueue || !depsChanged(cell.deps, deps)) return;
   const strictMount = cell.mounted !== true && hasBit(inst, StrictBit) && devHydrationActive();
   cell.mounted = true;
-  // This render's deps, recorded on the cell when the effect COMMITS (React's semantics):
-  // a render that is discarded (interrupted, or re-run by a render-phase update) must not
-  // leave the cell believing its deps already match the values that never took effect.
-  const nextDeps = deps ? [...deps] : undefined;
-  // A thunk that runs this render's setup and stores its cleanup — the unit both
-  // the initial mount and an Offscreen reconnect re-run.
-  const mount = () => {
-    cell.cleanup = effect();
-  };
-  // The commit runs all effects' cleanups (below) BEFORE any of their setups —
-  // React's ordering, so e.g. a sibling that releases a shared resource in cleanup
-  // runs before the sibling that acquires it in setup. The setup pass captures the
-  // Offscreen reconnect thunk and performs the StrictMode double-invoke.
-  const entry: CommitEffect = (() => {
-    cell.deps = nextDeps;
-    // Remember how to rebuild this effect after an Offscreen hide tore it down.
-    // Insertion effects are excluded — they aren't part of the offscreen cycle.
-    if (offscreenAware) {
-      cell.reconnect = mount;
-      // Inside a hidden <Activity>: mount nothing now; the reveal reconnects it.
-      if (parking) {
-        cell.disconnected = true;
-        return;
-      }
-    }
-    mount();
-    if (strictMount) {
-      if (typeof cell.cleanup === "function") cell.cleanup();
-      mount();
-    }
-  }) as CommitEffect;
-  // Runs in the commit's cleanup pass: reads cell.cleanup, which at that point is
-  // still the PREVIOUS render's teardown (the setup pass overwrites it).
-  entry.cleanup = () => {
-    if (typeof cell.cleanup === "function") cell.cleanup();
-  };
+  const entry = new HookEffect(cell, effect, deps, strictMount, offscreenAware);
   if (queue === "insertionEffects") (fiberExt(inst).insertionEffects ??= []).push(entry);
   else (inst[queue] ??= []).push(entry);
   // Mark the fiber as effect-bearing so the commit-phase collectors can prune to it
@@ -210,6 +231,11 @@ function snapshotChanged(cell: HookCell, getSnapshot: () => unknown): boolean {
   } catch {
     return true;
   }
+}
+
+/** `depsChanged(prev, [subscribe])` without allocating the one-element array every render. */
+function subscribeChanged(prev: DependencyList | undefined, subscribe: unknown): boolean {
+  return prev === undefined || prev.length !== 1 || !Object.is(prev[0], subscribe);
 }
 
 /**
@@ -267,16 +293,12 @@ function storeSubscriptionEffect(
 }
 
 /**
- * The cell for a stateful hook (useState/useReducer): initialised once from `init`, and
- * re-pointed at the live fiber every render so its setter keeps targeting the live
- * buffer across the double-buffer swap.
+ * The cell for a stateful hook (useState/useReducer), initialised by the caller on its first
+ * render (`inited`), re-pointed at the live fiber every render so its setter keeps targeting
+ * the live buffer across the double-buffer swap.
  */
-function stateCell(kind: number, init: () => unknown): HookCell {
-  const cell = getHook(kind);
-  if (!cell.inited) {
-    cell.value = init();
-    cell.inited = true;
-  }
+function stateCell(cell: HookCell): HookCell {
+  cell.inited = true;
   cell.owner = currentFiber!;
   cell.rendered = cell.value; // what this render reads (see HookCell.rendered)
   return cell;
@@ -298,27 +320,43 @@ function commitCellUpdate(cell: HookCell, next: unknown): void {
   else scheduleUpdate(f, true);
 }
 
+// The closures below are built in their own functions, never inline in a hook: a hook body
+// with a capturing closure allocates its context on EVERY call, even when the closure itself
+// is created only once (mount) or only when deps changed.
+
+/** useState's setter for `cell` (created once per cell). */
+function stateSetter(cell: HookCell): (v: unknown) => void {
+  return (v) => commitCellUpdate(cell, typeof v === "function" ? v(cell.value) : v);
+}
+
+/** useReducer's dispatch for `cell` (created once per cell); applies the latest reducer. */
+function reducerDispatch(cell: HookCell): (action: unknown) => void {
+  return (action) => commitCellUpdate(cell, cell.reducer!(cell.value, action));
+}
+
+/** A store subscription's snapshot check, against `getSnapshot` as of this subscribe. */
+function storeChangeCheck(cell: HookCell, getSnapshot: () => unknown): () => boolean {
+  return () => snapshotChanged(cell, getSnapshot);
+}
+
 export const clientDispatcher: Dispatcher = {
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
-    const cell = stateCell(
-      HK_STATE,
-      () => typeof initial === "function" ? (initial as () => S)() : initial,
-    );
-    if (cell.updater === undefined) {
-      cell.updater = (v: unknown) =>
-        commitCellUpdate(cell, typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v);
+    const hook = getHook(HK_STATE);
+    if (!hook.inited) {
+      hook.value = typeof initial === "function" ? (initial as () => S)() : initial;
     }
+    const cell = stateCell(hook);
+    cell.updater ??= stateSetter(cell);
     return [cell.value as S, cell.updater as (v: S | ((p: S) => S)) => void];
   },
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-    const cell = stateCell(HK_REDUCER, () => init ? init(initialArg) : initialArg);
+    const hook = getHook(HK_REDUCER);
+    if (!hook.inited) hook.value = init ? init(initialArg) : initialArg;
+    const cell = stateCell(hook);
     cell.reducer = reducer as (s: unknown, a: unknown) => unknown; // always use the latest reducer
-    if (cell.updater === undefined) {
-      // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
-      cell.updater = (action: unknown) =>
-        commitCellUpdate(cell, (cell.reducer as (s: S, a: A) => S)(cell.value as S, action as A));
-    }
+    // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
+    cell.updater ??= reducerDispatch(cell);
     return [cell.value as S, cell.updater as (a: A) => void];
   },
 
@@ -331,7 +369,18 @@ export const clientDispatcher: Dispatcher = {
     const cell = getHook(HK_MEMO);
     if (!("value" in cell) || depsChanged(cell.deps, deps)) {
       cell.value = factory();
-      cell.deps = deps ? [...deps] : undefined;
+      cell.deps = deps; // by reference, as React keeps them (each render passes a fresh array)
+    }
+    return cell.value as T;
+  },
+
+  // useMemo's cell (same kind, so the Fast Refresh signature is unchanged) holding `fn` itself:
+  // no `() => fn` factory closure per call.
+  useCallback<T>(fn: T, deps?: DependencyList): T {
+    const cell = getHook(HK_MEMO);
+    if (!("value" in cell) || depsChanged(cell.deps, deps)) {
+      cell.value = fn;
+      cell.deps = deps;
     }
     return cell.value as T;
   },
@@ -388,9 +437,9 @@ export const clientDispatcher: Dispatcher = {
     // effect reconciles to the live client snapshot.
     const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
-    if (depsChanged(cell.deps, [subscribe])) {
+    if (subscribeChanged(cell.deps, subscribe)) {
       (inst.passiveEffects ??= []).push(
-        storeSubscriptionEffect(cell, subscribe, () => snapshotChanged(cell, getSnapshot)),
+        storeSubscriptionEffect(cell, subscribe, storeChangeCheck(cell, getSnapshot)),
       );
       // This push bypasses scheduleEffect, so flag the effect-bearing fiber here too.
       inst.flags |= HasEffect;

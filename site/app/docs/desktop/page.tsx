@@ -1177,7 +1177,19 @@ export default {
         a <a href="#desktop-app-updates">full-app self-update</a> delivers.
       </p>
       <p>
-        Pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
+        The simplest setup is the config: <code>desktop.update.ui</code>{" "}
+        (<code>{"{ feedUrl, publicKey }"}</code>, and <code>desktop.app.identifier</code>{" "}
+        names the folder) makes the generated <code>desktop.ts</code> serve the overlay, and{" "}
+        <code>denext desktop add updates</code> lets the page install one with{" "}
+        <code>applyUpdates()</code> from{" "}
+        <a href="/docs/updates">
+          <code>denext/updates</code>
+        </a>{" "}
+        (a newer full app when one is on offer, else the overlay, with progress). The feed&apos;s
+        host joins the packaged app&apos;s <code>--allow-net</code>.
+      </p>
+      <p>
+        By hand, pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
         and to the update calls. All of them run in the Deno process (<code>desktop.ts</code>), not
         in the page:
       </p>
@@ -1270,6 +1282,13 @@ try {
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
       <p>
+        <strong>Tied to the app it was installed over.</strong>{" "}
+        The overlay folder records which bundled export the overlay belongs to (the export&apos;s
+        stamped version, else its <code>index.html</code>{" "}
+        hash). When the app itself is replaced (a full-app update, a reinstall), the next launch
+        drops every overlay and staged version and serves the new app&apos;s own UI.
+      </p>
+      <p>
         <strong>Rollback.</strong> An applied version starts{" "}
         <em>pending</em>. The next launch serves it once and arms a boot marker; the script{" "}
         <code>runDesktop</code>{" "}
@@ -1292,6 +1311,15 @@ try {
         and notarization. It needs denext&apos;s pinned Deno Desktop runtime (<code>
           Deno.desktop.updater
         </code>), and every update is signed: there is no unsigned path.
+      </p>
+      <p>
+        The calls below run in the Deno process. To let the page run them (an &quot;Update&quot;
+        button with a progress bar), add <code>denext desktop add updates</code> and call{" "}
+        <code>applyUpdates()</code> from{" "}
+        <a href="/docs/updates">
+          <code>denext/updates</code>
+        </a>: it checks, downloads (reporting the percentage), and installs and relaunches, with
+        every check below still made by the runtime.
       </p>
       <Code lang="ts">
         {`// denext.config.ts
@@ -1719,6 +1747,23 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>
               unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
+          </tr>
+          <tr>
+            <td>
+              <code>updates</code>
+            </td>
+            <td>
+              <code>checkForUpdates</code>, <code>applyUpdates</code>{" "}
+              (<code>denext/updates</code>: the <a href="#desktop-updates">UI overlay</a>, then the
+              {" "}
+              <a href="#desktop-app-updates">full app</a>, with download progress)
+            </td>
+            <td>
+              broad <code>--allow-write</code>{" "}
+              (the overlay in the app-support folder); the feed and manifest hosts from{" "}
+              <code>desktop.update</code>
             </td>
             <td>broad</td>
           </tr>
@@ -2575,6 +2620,67 @@ desktop: {
         a native addon end the whole app (they would in Electron&apos;s main process too: give such
         a backend a separate program).
       </p>
+      <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
+      <p>
+        An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop
+        launchers) inherits a minimal environment: <code>PATH</code> is{" "}
+        <code>/usr/bin:/bin:/usr/sbin:/sbin</code>, so a backend cannot find what the user installed
+        with Homebrew, nvm, asdf or mise (<code>git</code>, <code>node</code>, <code>codex</code>,
+        {" "}
+        <code>claude</code>). A sidecar that sets <code>loginShellEnv</code>{" "}
+        starts with the environment a terminal would have, as an Electron app hydrates its own:
+      </p>
+      <Code lang="ts">
+        {`sidecars: [{
+  name: "agent",
+  run: { exec: "codex" },              // a bare name, looked up on the login PATH
+  loginShellEnv: true,                 // or { timeoutMs: 5_000, keys: ["SSH_AUTH_SOCK", "LANG"] }
+}],`}
+      </Code>
+      <ul>
+        <li>
+          Once per launch of the app, when the first sidecar that asks starts (after the window is
+          up, never in its way), the user&apos;s <code>$SHELL</code>{" "}
+          runs as a login and interactive shell (<code>-l -i -c</code>: the same profile and rc
+          files a terminal reads; zsh, bash, fish, ksh, sh and nu) and prints the variables between
+          sentinels, so whatever the rc files print is ignored. A shell that fails is followed by
+          the OS&apos;s default one (<code>/bin/zsh</code> then <code>/bin/bash</code> on macOS,
+          {" "}
+          <code>/bin/bash</code> then <code>/bin/sh</code> on Linux); csh and tcsh are skipped.
+        </li>
+        <li>
+          The read has a budget across every shell tried (<code>timeoutMs</code>, default 3 000 ms;
+          a shell past it is killed). On a failure or a timeout the app logs one warning (
+          <code>desktop: sidecars: could not read the login-shell environment (…)</code>) and the
+          sidecar starts with the inherited environment.
+        </li>
+        <li>
+          <code>PATH</code>{" "}
+          becomes the login shell&apos;s entries followed by the inherited ones it lacks; each of
+          {" "}
+          <code>keys</code>{" "}
+          takes the login shell&apos;s value. They are laid under the sidecar&apos;s own{" "}
+          <code>env</code> (which still wins): a module sidecar sees them in{" "}
+          <code>process.env</code> (and so{" "}
+          <code>node:child_process</code>), a program in its environment, and a bare{" "}
+          <code>run.exec</code> name is looked up on that <code>PATH</code>.
+        </li>
+        <li>
+          Only the sidecars that set it get them: never the page, never the app&apos;s own
+          environment, and never a <code>DENO_*</code> / <code>DENEXT_*</code>{" "}
+          variable (the probe shell starts without them too, and <code>keys</code>{" "}
+          may not name one). On Windows, where a GUI app already gets the user&apos;s environment,
+          it does nothing.
+        </li>
+        <li>
+          The packaged app may run the usual shells (<code>/bin/zsh</code>,{" "}
+          <code>/bin/bash</code>, Homebrew&apos;s and Linuxbrew&apos;s{" "}
+          <code>fish</code>, …), baked into its <code>--allow-run</code>; a <code>$SHELL</code>{" "}
+          elsewhere is refused and the default shell answers instead, unless the sidecar lists it in
+          {" "}
+          <code>permissions.run</code>.
+        </li>
+      </ul>
       <p>
         The app controls them from <code>desktop.ts</code> (<code>app.sidecar("server")</code>:{" "}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}

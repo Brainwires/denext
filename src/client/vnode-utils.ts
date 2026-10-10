@@ -31,48 +31,73 @@ export function normalizeChildren(children: VNodeChildren): VNode[] {
   return out;
 }
 
-/** Children normalized for reconciliation, with the key scope of each. */
-export interface ScopedChildren {
-  nodes: VNode[];
-  /**
-   * `scopes[i]` is the key scope of `nodes[i]`: the path of nested child arrays it came from
-   * (`"1"` for the array in the second child slot, `"1.0"` for an array inside that, …), or
-   * `undefined` for a direct child. `null` when no child came from a nested array, the
-   * common case, so a plain list allocates nothing extra.
-   */
-  scopes: (string | undefined)[] | null;
-}
+/**
+ * The key scope of each child the last {@linkcode normalizeChildrenScoped} call returned:
+ * `childScopes[i]` is the path of nested child arrays `nodes[i]` came from (`"1"` for the array
+ * in the second child slot, `"1.0"` for an array inside that, …), or `undefined` for a direct
+ * child. `null` when no child came from a nested array, the common case, so a plain list
+ * allocates nothing extra. Read it right after the call: the next call overwrites it.
+ */
+export let childScopes: (string | undefined)[] | null = null;
+
+/** The normalized form of no children (shared; never written). */
+const NO_CHILDREN: VNode[] = [];
 
 /**
- * {@linkcode normalizeChildren} that also records each child's key scope. React treats every
- * nested array as its own fragment, so keys are only compared within one array: two sibling
- * `.map()`s may reuse the same keys, and a variable-length list never shifts the identity of
- * the children after it. A top-level `children` array is the direct child list itself.
+ * {@linkcode normalizeChildren} that also records each child's key scope (in
+ * {@linkcode childScopes}). React treats every nested array as its own fragment, so keys are
+ * only compared within one array: two sibling `.map()`s may reuse the same keys, and a
+ * variable-length list never shifts the identity of the children after it. A top-level
+ * `children` array is the direct child list itself.
+ *
+ * The result is read-only: a `children` array that needs no flattening — every entry an
+ * element object, none a nested array, text or hole (`.map()` output, static JSX children) —
+ * is returned as is rather than copied.
  */
-export function normalizeChildrenScoped(children: VNodeChildren): ScopedChildren {
+export function normalizeChildrenScoped(children: VNodeChildren): readonly VNode[] {
+  childScopes = null;
+  if (!Array.isArray(children)) {
+    if (children == null || children === false || children === true) return NO_CHILDREN;
+    return [asVNode(children as VNodeChild)];
+  }
+  if (isFlatElementList(children)) return children as VNode[];
   const nodes: VNode[] = [];
-  let scopes: (string | undefined)[] | null = null;
-  const push = (c: VNodeChild, scope: string | undefined) => {
-    if (c == null || c === false || c === true) return;
-    if (typeof c === "string") nodes.push(textVNode(c));
-    else if (typeof c === "number") nodes.push(textVNode(String(c)));
-    else nodes.push(c as VNode);
-    if (scopes !== null) scopes.push(scope);
+  collectScoped(children, undefined, nodes);
+  return nodes;
+}
+
+/** Whether every entry of `list` is an element object (no array, text, number or hole). */
+function isFlatElementList(list: readonly unknown[]): boolean {
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c === null || typeof c !== "object" || Array.isArray(c)) return false;
+  }
+  return true;
+}
+
+/** A renderable child as a vnode: text for a string or number, the element otherwise. */
+function asVNode(c: VNodeChild): VNode {
+  if (typeof c === "string") return textVNode(c);
+  if (typeof c === "number") return textVNode(String(c));
+  return c as VNode;
+}
+
+/** Flatten `list` (key scope `scope`) into `nodes`, recording scopes in {@linkcode childScopes}. */
+function collectScoped(list: readonly unknown[], scope: string | undefined, nodes: VNode[]): void {
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (Array.isArray(c)) {
+      collectScoped(c, scope === undefined ? String(i) : `${scope}.${i}`, nodes);
+      continue;
+    }
+    if (c == null || c === false || c === true) continue;
+    nodes.push(asVNode(c as VNodeChild));
+    if (childScopes !== null) childScopes.push(scope);
     else if (scope !== undefined) {
-      scopes = new Array<string | undefined>(nodes.length - 1).fill(undefined);
-      scopes.push(scope);
+      childScopes = new Array<string | undefined>(nodes.length - 1).fill(undefined);
+      childScopes.push(scope);
     }
-  };
-  const walk = (list: readonly unknown[], scope: string | undefined) => {
-    for (let i = 0; i < list.length; i++) {
-      const c = list[i];
-      if (Array.isArray(c)) walk(c, scope === undefined ? String(i) : `${scope}.${i}`);
-      else push(c as VNodeChild, scope);
-    }
-  };
-  if (Array.isArray(children)) walk(children, undefined);
-  else push(children as VNodeChild, undefined);
-  return { nodes, scopes };
+  }
 }
 
 // Optional component-family check, installed by the dev Fast Refresh runtime

@@ -21,6 +21,7 @@ import {
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
+import { isPassiveEvent } from "../runtime/passive-events.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -181,9 +182,10 @@ export function applyProps(
   onError: ErrorRouter,
   attachRef = true,
 ): void {
-  // Remove props gone or changed.
-  for (const name of Object.keys(oldProps)) {
-    if (isReconcilerProp(name) || name in newProps) continue;
+  // Remove props gone or changed. (`for…in` + own-key check: Object.keys' keys, in its order,
+  // without the array — applyProps runs for every element a render mounts or changes.)
+  for (const name in oldProps) {
+    if (!hasOwn.call(oldProps, name) || isReconcilerProp(name) || name in newProps) continue;
     removeProp(el, state, name, oldProps[name]);
   }
   // Refs: attach/detach with React-19 semantics (support cleanup-returning callback refs;
@@ -191,11 +193,16 @@ export function applyProps(
   // ref can be compared. A fresh MOUNT skips this (`attachRef: false`) and defers the ref to
   // the commit phase (see `RefAttach`) — a ref callback must not fire during `completeWork`.
   if (attachRef) updateRef(state, oldProps.ref, newProps.ref, el);
-  for (const [name, value] of Object.entries(newProps)) {
-    if (isReconcilerProp(name)) continue;
-    setProp(el, state, name, value, oldProps[name], onError);
+  for (const name in newProps) {
+    if (!hasOwn.call(newProps, name) || isReconcilerProp(name)) continue;
+    setProp(el, state, name, newProps[name], oldProps[name], onError);
   }
 }
+
+const hasOwn = Object.prototype.hasOwnProperty;
+
+/** The props of an element that had none (a fresh mount's "old" props); never written. */
+export const NO_PROPS: Record<string, unknown> = Object.freeze({});
 
 /** Wire a function-valued form `action` to the form's submit event. */
 function setFormAction(
@@ -322,6 +329,33 @@ function parseEvent(prop: string): ParsedEvent {
   return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
+/**
+ * `handler` wrapped so a throw in it routes to the nearest error boundary (React can't catch
+ * event-handler errors; denext can). Built here rather than inline in {@linkcode setListener},
+ * which runs for every `on*` prop — delegated ones included — and would otherwise allocate
+ * the closure's context on each call.
+ */
+function guardedListener(handler: EventListener, onError: ErrorRouter): EventListener {
+  return (event) => {
+    // A state update enqueued synchronously in a DOM event handler is urgent and
+    // must keep its priority even while an async transition is pending — see
+    // event-priority.ts + the reconciler's scheduleUpdate. (No-op unless an async
+    // transition is in flight.)
+    beginEventDispatch();
+    try {
+      addSyntheticEventMembers(event);
+      const r = handler(event) as unknown;
+      if (r && typeof (r as { then?: unknown }).then === "function") {
+        (r as Promise<unknown>).then(undefined, (err) => onError(err));
+      }
+    } catch (err) {
+      onError(err);
+    } finally {
+      endEventDispatch();
+    }
+  };
+}
+
 function setListener(
   el: Element,
   state: HostState,
@@ -337,27 +371,14 @@ function setListener(
   // reads the element's committed props: nothing to attach here.
   if (typeof handler === "function" && delegates(ev.type, ev.capture, prop)) return;
   if (typeof handler === "function") {
-    // Wrap so a throw in the handler routes to the nearest error boundary
-    // (React can't catch event-handler errors; denext can).
-    const wrapped: EventListener = (event) => {
-      // A state update enqueued synchronously in a DOM event handler is urgent and
-      // must keep its priority even while an async transition is pending — see
-      // event-priority.ts + the reconciler's scheduleUpdate. (No-op unless an async
-      // transition is in flight.)
-      beginEventDispatch();
-      try {
-        addSyntheticEventMembers(event);
-        const r = handler(event) as unknown;
-        if (r && typeof (r as { then?: unknown }).then === "function") {
-          (r as Promise<unknown>).then(undefined, (err) => onError(err));
-        }
-      } catch (err) {
-        onError(err);
-      } finally {
-        endEventDispatch();
-      }
-    };
-    el.addEventListener(ev.type, wrapped, ev.capture);
+    const wrapped = guardedListener(handler, onError);
+    // touchstart / touchmove / wheel are passive, as React DOM registers them: a non-passive
+    // one would hold every scroll the element covers on the main thread (iOS especially).
+    el.addEventListener(
+      ev.type,
+      wrapped,
+      isPassiveEvent(ev.type) ? { capture: ev.capture, passive: true } : ev.capture,
+    );
     (state.listeners ??= new Map()).set(key, wrapped);
   } else if (existing) {
     state.listeners!.delete(key);
@@ -483,8 +504,8 @@ export function patchStyle(
   // No live CSSStyleDeclaration (e.g. a minimal test shim): fall back to the whole
   // attribute — the per-property preservation only matters against a real DOM anyway.
   if (!style || typeof style.setProperty !== "function") return setStyleAttribute(el, newStyle);
-  removeStaleStyle(style, oldStyle ?? {}, newStyle);
-  applyChangedStyle(style, oldStyle, newStyle ?? {});
+  removeStaleStyle(style, oldStyle ?? NO_PROPS, newStyle);
+  applyChangedStyle(style, oldStyle, newStyle ?? NO_PROPS);
 }
 
 function setStyleAttribute(el: Element, newStyle: Record<string, unknown> | undefined): void {
@@ -498,7 +519,8 @@ function removeStaleStyle(
   oldStyle: Record<string, unknown>,
   newStyle: Record<string, unknown> | undefined,
 ): void {
-  for (const prop of Object.keys(oldStyle)) {
+  for (const prop in oldStyle) {
+    if (!hasOwn.call(oldStyle, prop)) continue;
     if (!newStyle || !(prop in newStyle)) style.removeProperty(cssPropertyName(prop));
   }
 }
@@ -509,7 +531,9 @@ function applyChangedStyle(
   oldStyle: Record<string, unknown> | undefined,
   newStyle: Record<string, unknown>,
 ): void {
-  for (const [prop, value] of Object.entries(newStyle)) {
+  for (const prop in newStyle) {
+    if (!hasOwn.call(newStyle, prop)) continue;
+    const value = newStyle[prop];
     if (oldStyle && oldStyle[prop] === value) continue;
     const name = cssPropertyName(prop);
     const css = cssPropertyValue(prop, value);

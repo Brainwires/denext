@@ -1066,6 +1066,24 @@ Deno.test("recycle (opt-in): scrolled-in rows reuse cells of the same type inste
   await screen.unmount();
 });
 
+Deno.test("recycle: focusing a row keeps its element (a tap's click lands), also scrolled away", async () => {
+  const screen = await render(list({
+    data: rows(1000),
+    recycle: true,
+    getItemSize: () => 40,
+    viewportSize: 400,
+    renderItem: (r: Row) => h("button", { type: "button" }, r.text),
+  }));
+  const row3 = renderedRows(screen).find((e) => e.getAttribute("data-index") === "3")!;
+  await act(() => fireEventOn(row3.children[0], "focusin"));
+  const focused = renderedRows(screen).find((e) => e.getAttribute("data-index") === "3");
+  assert(focused === row3, "the focused row is the same element, not remounted");
+  await scrollTo(screen, 30_000);
+  const kept = renderedRows(screen).find((e) => e.getAttribute("data-index") === "3");
+  assert(kept === row3, "still the same element while scrolled away");
+  await screen.unmount();
+});
+
 Deno.test("recycle defaults off: a scrolled-in row is a fresh element", async () => {
   const screen = await render(list({
     data: rows(1000),

@@ -1442,6 +1442,10 @@
               "description": "Start the app at login (`getLaunchAtLogin` / `setLaunchAtLogin` in `denext/desktop/app`) through denext's pinned runtime: a macOS login item, a Windows `Run` value, a Linux XDG autostart entry, named after `desktop.app.identifier`.",
               "type": "boolean"
             },
+            "updates": {
+              "description": "The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from `denext/updates`): the signed UI overlay (DesktopUpdateConfig.ui) and the whole app (DesktopUpdateConfig.manifestUrl, denext's pinned runtime), with download progress.",
+              "type": "boolean"
+            },
             "keepAwake": {
               "description": "Prevent the machine from sleeping while held.",
               "type": "boolean"
@@ -1547,6 +1551,30 @@
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "loginShellEnv": {
+                "description": "Start it with the user's login-shell environment (macOS, Linux): `$SHELL` runs once per launch as a login + interactive shell and its `PATH` (ahead of the inherited one) and any `keys` are laid under env, so a backend opened from the Dock finds Homebrew / nvm / asdf tools. A failure or a shell slower than `timeoutMs` (default 3 000 ms) logs a warning and keeps the inherited environment. Only this sidecar sees them; never `DENO_*` / `DENEXT_*`.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "timeoutMs": {
+                        "description": "How long the login shell may take, 1 to 60 000 ms (default 3 000 ms).",
+                        "type": "number"
+                      },
+                      "keys": {
+                        "description": "Variables to take from the login shell besides `PATH` (`[\"SSH_AUTH_SOCK\", \"LANG\"]`).",
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
               },
               "cwd": {
                 "description": "A program's working directory (relative to the app's data folder, or absolute).",
@@ -1890,6 +1918,32 @@
             "autoConfirm": {
               "description": "Confirm a newly installed version automatically once its window has loaded (the page's `load` event reached the desktop runtime), so an app that never calls `confirmAppUpdate()` does not roll back every update on its next launch. Default `true`. Set `false` to confirm yourself with `confirmAppUpdate()` from `denext/desktop/updater` after your own health check (the backend answered, the user signed in): until then the update stays on trial, and a launch that never confirms is rolled back.",
               "type": "boolean"
+            },
+            "ui": {
+              "description": "The signed UI overlay: a newer static export served in place of the bundled one, without a new app build (`denext ota manifest out --sign`, the mobile OTA format). `runDesktop` serves the active overlay (rolled back if it never boots), and `denext desktop add updates` lets the page install one (`applyUpdates` from `denext/updates`). Needs DesktopConfig.app's `identifier`: the overlay is kept in the app's own data folder.",
+              "type": "object",
+              "properties": {
+                "feedUrl": {
+                  "description": "The web root the signed export is served from (`${feedUrl}/_denext/ota.json` and each file). Its host is added to the packaged app's `--allow-net`.",
+                  "type": "string"
+                },
+                "publicKey": {
+                  "description": "The release public key every manifest must be signed with: base64 SPKI (`ota.key.pub` from `denext ota keygen`) or a `PUBLIC KEY` PEM of an ECDSA P-256 key.",
+                  "type": "string"
+                },
+                "platform": {
+                  "description": "The export's target; default the OS the app runs on.",
+                  "enum": [
+                    "macos",
+                    "windows",
+                    "linux"
+                  ]
+                }
+              },
+              "required": [
+                "feedUrl",
+                "publicKey"
+              ]
             }
           }
         },
@@ -2032,6 +2086,34 @@
                 "react-native-macos",
                 "react-native-windows"
               ]
+            },
+            "fonts": {
+              "description": "Fonts the app embeds in its native binary (the expo-font config plugin's `fonts`) and uses by family name, as family → file: a package subpath (`\"@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf\"`) or a `./` path. The SPA shell gets an `@font-face` rule for each, and the files ship with the client. `denext migrate --from expo` writes it from the app config.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "uniwind": {
+              "description": "Build a [uniwind](https://uniwind.dev) app's Tailwind classes as uniwind's Vite plugin does, when the app has `uniwind` installed: `react-native` resolves to uniwind's web components (`className` on every component), react-native-web's stylesheet gets uniwind's layered one, and uniwind registers `light`, `dark` and `extraThemes` (the `extraThemes` the app's Metro config passes to `withUniwindConfig`). Compile the app's Tailwind input with `tailwind: { input, output }`. `false` turns it off.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "extraThemes": {
+                      "description": "The themes beyond `light` and `dark` (`withUniwindConfig`'s `extraThemes`).",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ],
+              "default": true
             }
           }
         }

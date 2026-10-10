@@ -42,8 +42,8 @@ export interface ClassInternals {
 export interface ReconcilerInstance {
   /** The element being rendered (its `type` is the class constructor). */
   vnode: VNode;
-  /** Context values visible to this instance, keyed by context id. */
-  contexts: Map<symbol, unknown>;
+  /** Context values visible to this instance, keyed by context id (a `Map` satisfies it). */
+  contexts: { has(id: symbol): boolean; get(id: symbol): unknown };
   /** Post-commit effects the reconciler drains (mount/update lifecycle is queued here). */
   pendingEffects?: Array<() => void>;
   /** The class fields, on the fiber's lazily allocated extension (absent until first set). */

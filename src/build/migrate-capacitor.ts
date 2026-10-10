@@ -316,7 +316,10 @@ export function capacitorTasks(
     ? "npx cap"
     : `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR_VERSION}`;
   return {
-    "mobile:sync": `deno task export && ${o.run} ${cli} ota manifest out && ${cap} sync`,
+    // `mobile sync` keeps the iOS shell's plugin paths off pnpm's store (installed Capacitor).
+    "mobile:sync": `deno task export && ${o.run} ${cli} ota manifest out && ${
+      o.installed ? `${o.run} ${cli} mobile sync` : `${cap} sync`
+    }`,
     "mobile:ios": `${cap} open ios`,
     "mobile:android": `${cap} open android`,
     "mobile:build:ios": `${o.run} ${cli} mobile build ios`,

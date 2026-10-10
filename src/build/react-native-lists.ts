@@ -5,7 +5,7 @@
 // packages (`@shopify/flash-list`, `@legendapp/list`) resolve to generated modules that build
 // their components the same way. `reactNative: { lists: "library" }` turns both off.
 
-import { dirname } from "@std/path";
+import { dirname, join } from "@std/path";
 import type * as esbuild from "esbuild";
 import {
   LIST_PACKAGES,
@@ -70,6 +70,7 @@ function listPackageOf(spec: string): ListPackage | undefined {
  * @returns The module source.
  */
 export function listPackageSource(pkg: ListPackage): string {
+  if (pkg.integration) return integrationSource(pkg.runtime, pkg.integration);
   const factories = Object.values(pkg.components);
   const animated = Object.entries(pkg.animated ?? {});
   const rn = [...PRIMITIVES, ...(animated.length > 0 ? ["Animated"] : [])].sort();
@@ -85,6 +86,24 @@ export function listPackageSource(pkg: ListPackage): string {
     ),
   ];
   return lines.join("\n") + "\n";
+}
+
+/**
+ * The generated module of a subpath that wraps a list package: its exports from the runtime
+ * factory called with the app's own packages.
+ */
+function integrationSource(
+  runtime: string,
+  integration: NonNullable<ListPackage["integration"]>,
+): string {
+  const { factory, args, exports } = integration;
+  return [
+    ...args.map(([, clause, from]) => `import ${clause} from ${JSON.stringify(from)};`),
+    `import { ${factory} } from "${runtime}";`,
+    `export const { ${exports.join(", ")} } = /* @__PURE__ */ ${factory}(${
+      args.map(([binding]) => binding).join(", ")
+    });`,
+  ].join("\n") + "\n";
 }
 
 /** Every aliased specifier. */
@@ -127,6 +146,20 @@ export function listAdaptersPlugin(projectDir: string): esbuild.Plugin {
         path: args.path,
         namespace: PACKAGE_NAMESPACE,
       }));
+      // A generated module's other bare imports (an integration's `react-native-reanimated`)
+      // resolve as if from a file in the project: the node_modules resolver answers
+      // `file`-namespace importers only.
+      build.onResolve({ filter: /^[^./]/, namespace: PACKAGE_NAMESPACE }, async (args) => {
+        if (args.path.startsWith("denext/") || PACKAGE_FILTER.test(args.path)) return undefined;
+        const result = await build.resolve(args.path, {
+          kind: args.kind,
+          importer: join(projectDir, "denext-generated.js"),
+          namespace: "file",
+          resolveDir: projectDir,
+        });
+        if (result.errors.length > 0) return { errors: result.errors };
+        return { path: result.path, namespace: result.namespace, external: result.external };
+      });
       build.onLoad({ filter: /.*/, namespace: PACKAGE_NAMESPACE }, (args) => ({
         contents: listPackageSource(listPackageOf(args.path)!),
         loader: "js",

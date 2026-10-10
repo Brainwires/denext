@@ -567,11 +567,13 @@
     "DesktopPasskeysConfig:interface",
     "DesktopShellConfig:interface",
     "DesktopSidecarConfig:interface",
+    "DesktopSidecarLoginShellEnvConfig:interface",
     "DesktopSidecarReadyConfig:interface",
     "DesktopSidecarRestartConfig:interface",
     "DesktopSidecarRunConfig:interface",
     "DesktopSidecarShutdownConfig:interface",
     "DesktopSize:interface",
+    "DesktopUiUpdateConfig:interface",
     "DesktopUpdateConfig:interface",
     "DesktopWindowConfig:interface",
     "Directive:typeAlias",
@@ -1314,6 +1316,7 @@
     "SidecarExposedValue:typeAlias",
     "SidecarHandle:interface",
     "SidecarInfo:interface",
+    "SidecarLoginShellEnv:interface",
     "SidecarLogs:typeAlias",
     "SidecarPermissions:interface",
     "SidecarReady:interface",
@@ -1544,6 +1547,21 @@
     "shortcutCapabilities:function",
     "unregisterAllShortcuts:function",
     "unregisterShortcut:function"
+  ],
+  "denext/updates": [
+    "AvailableUpdate:interface",
+    "DesktopUpdatesConfig:interface",
+    "UpdateFailure:interface",
+    "UpdateProgress:interface",
+    "UpdateProgressListener:typeAlias",
+    "UpdateStage:typeAlias",
+    "UpdateTarget:typeAlias",
+    "UpdatesCheck:interface",
+    "UpdatesConfig:interface",
+    "UpdatesResult:interface",
+    "WebUpdatesConfig:interface",
+    "applyUpdates:function",
+    "checkForUpdates:function"
   ],
   "denext/live": [
     "ChannelRef:interface",
@@ -2094,6 +2112,7 @@
     "useAssets:function"
   ],
   "denext/expo/audio": [
+    "AudioModule:variable",
     "AudioPlayer:class",
     "AudioPlayerOptions:interface",
     "AudioPlaylist:class",

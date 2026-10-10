@@ -23,9 +23,11 @@ import type { SidecarDefinition } from "../src/desktop/sidecar.ts";
 import { workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
 import { prepareSidecarModules } from "../src/desktop/sidecar-modules.ts";
 
-/** The bundle's archived packages, unpacked into a fresh cache folder. */
+/** The bundle's archived packages, unpacked into a cache folder in the test's project. */
 async function unpacked(out: string, name: string): Promise<string> {
-  const root = await prepareSidecarModules(out, name, await Deno.makeTempDir());
+  // Inside the test's own temp project (out = <project>/.deno-desktop/sidecars/<name>), which the
+  // test removes.
+  const root = await prepareSidecarModules(out, name, join(out, "..", "..", "..", ".test-cache"));
   assert(root, "the bundle has an archive");
   return root;
 }

@@ -98,6 +98,7 @@ export {
   type SidecarExit,
   type SidecarExposedValue,
   type SidecarInfo,
+  type SidecarLoginShellEnv,
   type SidecarLogs,
   type SidecarPermissions,
   type SidecarReady,

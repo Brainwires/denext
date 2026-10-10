@@ -47,12 +47,14 @@ import { SymbolView } from "../src/expo/symbols.ts";
 import { TextInputWrapper } from "../src/expo/paste-input.ts";
 import { Image } from "../src/expo/image.ts";
 import {
+  AudioModule,
   AudioPlayer,
   AudioPlaylist,
   AudioRecorder,
   AudioStream,
   NativeAudioModule,
   RecordingPresets,
+  setAudioModeAsync,
 } from "../src/expo/audio.ts";
 import { createVideoPlayer, useVideoPlayer, VideoPlayer } from "../src/expo/video.ts";
 import { ImageNativeModule } from "../src/expo/image.ts";
@@ -1474,4 +1476,21 @@ Deno.test("expo-audio (SDK 58): the recorder state counts the recorded bytes", a
     assert(status.url?.startsWith("blob:"));
     URL.revokeObjectURL(status.url!);
   });
+});
+
+Deno.test("expo-audio: AudioModule holds the classes and the session calls; preload rejects", async () => {
+  // Apps construct the recorder through the module: `new AudioModule.AudioRecorder(options)`.
+  const recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  assert(recorder instanceof AudioRecorder);
+  assertEquals(recorder.isRecording, false);
+  assert(AudioModule.AudioPlayer === AudioPlayer);
+  assert(AudioModule.setAudioModeAsync === setAudioModeAsync);
+  assertEquals(await AudioModule.setIsAudioActiveAsync(true), undefined);
+  await assertRejects(() => AudioModule.preload("https://x/a.mp3", 0), Error, "preload");
+  assertEquals(
+    (await AudioModule.getPreloadedSources().catch((e: Error) => e.message)).includes(
+      "getPreloadedSources",
+    ),
+    true,
+  );
 });

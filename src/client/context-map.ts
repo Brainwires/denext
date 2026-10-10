@@ -7,7 +7,33 @@
 import { PROVIDER } from "../runtime/context.ts";
 import { areEqualOf } from "../runtime/memo.ts";
 import type { VNode } from "../jsx/types.ts";
-import { type Fiber, fiberExt } from "./fiber/fiber.ts";
+import { type ContextMap, type Fiber, fiberExt } from "./fiber/fiber.ts";
+
+/**
+ * The contexts visible below a provider: its parent's, with context `id` set to `value`.
+ * A link in a chain rather than a copy of the parent's map — a provider that mounts or
+ * changes value costs one small object however many contexts sit above it. A lookup asks
+ * each provider up the chain until one supplies the id (so a nested provider of the same
+ * context shadows the outer one, as `Map#set` on a copy did).
+ */
+export class ContextScope implements ContextMap {
+  constructor(
+    /** The contexts visible above this provider. */
+    readonly parent: ContextMap,
+    /** The context this provider supplies. */
+    readonly id: symbol,
+    /** The value it supplies. */
+    readonly value: unknown,
+  ) {}
+
+  has(id: symbol): boolean {
+    return this.id === id || this.parent.has(id);
+  }
+
+  get(id: symbol): unknown {
+    return this.id === id ? this.value : this.parent.get(id);
+  }
+}
 
 /**
  * Compute the context map visible to a fragment's children. When the fragment is
@@ -26,8 +52,8 @@ import { type Fiber, fiberExt } from "./fiber/fiber.ts";
 export function providerContexts(
   state: Fiber,
   vnode: VNode,
-  parent: Map<symbol, unknown>,
-): Map<symbol, unknown> {
+  parent: ContextMap,
+): ContextMap {
   const info = vnode.props[PROVIDER as unknown as string] as
     | { id: symbol; value: unknown }
     | undefined;
@@ -39,8 +65,7 @@ export function providerContexts(
   ) {
     return state.contexts; // unchanged provider — reuse the same child-map reference
   }
-  const next = new Map(parent);
-  next.set(info.id, info.value);
+  const next = new ContextScope(parent, info.id, info.value);
   const x = fiberExt(state);
   x.provParent = parent;
   x.provValue = info.value;
@@ -58,8 +83,8 @@ export function propsAndContextEqual(
   type: VNode["type"],
   prevProps: Record<string, unknown>,
   nextProps: Record<string, unknown>,
-  prevContexts: Map<symbol, unknown>,
-  nextContexts: Map<symbol, unknown>,
+  prevContexts: ContextMap,
+  nextContexts: ContextMap,
   readContexts: Set<symbol> | undefined,
 ): boolean {
   // When the inherited maps differ in identity, an ancestor provider re-rendered.

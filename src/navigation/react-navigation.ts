@@ -17,6 +17,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { useEffect, useRef } from "../runtime/hooks.ts";
+import { headerItems } from "./header-items.ts";
 import { StackView } from "./stack-view.ts";
 import { type TabDefinition, TabsView } from "./tabs.ts";
 import type { ScreenOptions, SheetDetent, StackPresentation, StackViewEntry } from "./types.ts";
@@ -147,7 +148,8 @@ function slot(value: unknown, args: Record<string, unknown>): VNodeChildren | un
 /**
  * Native-stack screen options as {@linkcode ScreenOptions}: the names mostly match
  * (`title`, `animation`, `gestureEnabled`, `headerShown`, `headerLargeTitle`, …); the
- * presentations and detents are translated and the header slots rendered.
+ * presentations and detents are translated and the header slots rendered (the bar button
+ * items, `unstable_headerLeftItems` / `unstable_headerRightItems`, as buttons).
  */
 export function mapStackOptions(
   options: Record<string, unknown>,
@@ -183,8 +185,11 @@ export function mapStackOptions(
       : undefined,
     sheetGrabberVisible: bool("sheetGrabberVisible"),
     headerTitle: typeof headerTitle === "string" ? undefined : headerTitle,
-    headerLeft: slot(options.headerLeft, { canGoBack: context.canGoBack }),
-    headerRight: slot(options.headerRight, { canGoBack: context.canGoBack }),
+    // The bar button items (`unstable_header…Items`) override `headerLeft` / `headerRight`.
+    headerLeft: headerItems(options.unstable_headerLeftItems, context) ??
+      slot(options.headerLeft, { canGoBack: context.canGoBack }),
+    headerRight: headerItems(options.unstable_headerRightItems, context) ??
+      slot(options.headerRight, { canGoBack: context.canGoBack }),
   };
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out as ScreenOptions;
@@ -233,6 +238,8 @@ export function createNativeStackNavigatorFactory(
       null,
       h(StackView, {
         entries,
+        // React Native screens: the content fills the screen and its lists scroll themselves.
+        fillScreens: true,
         swipeBack: props.swipeBack as boolean | undefined,
         onPop: (toIndex: number) => {
           const count = state.routes.length - 1 - toIndex;

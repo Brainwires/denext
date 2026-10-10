@@ -31,4 +31,5 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "passkeys",
   "globalShortcuts",
   "launchAtLogin",
+  "updates",
 ] as const;
