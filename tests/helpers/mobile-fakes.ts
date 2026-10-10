@@ -112,6 +112,67 @@ export async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
+/**
+ * Wait until `check()` holds, a macrotask at a time, instead of sleeping a fixed time: on a
+ * loaded machine (the parallel suite) a sleep can end before the work it waits for, and a long
+ * one only makes that rarer. Fails with `what` after `limitMs` of real time.
+ */
+export async function until(
+  check: () => boolean,
+  what = "the condition",
+  limitMs = 10_000,
+): Promise<void> {
+  const start = performance.now();
+  while (!check()) {
+    if (performance.now() - start > limitMs) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+/** A timer the fake clock holds: when it is due, and its callback. */
+type FakeTimer = { at: number; fn: () => void };
+
+/**
+ * A fake clock over `setTimeout` / `clearTimeout` until `restore()`: `tick(ms)` runs the timers
+ * due within `ms` in deadline order (timers their callbacks arm included), so code that
+ * schedules work in time is tested without real waits.
+ */
+export function fakeTimers(): { tick(ms: number): void; restore(): void } {
+  const realSet = g.setTimeout;
+  const realClear = g.clearTimeout;
+  let now = 0;
+  let nextId = 1;
+  const timers = new Map<number, FakeTimer>();
+  g.setTimeout = (fn: () => void, ms = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: now + Math.max(0, Number(ms) || 0), fn });
+    return id;
+  };
+  g.clearTimeout = (id: number) => void timers.delete(id);
+  const nextDue = (target: number) => {
+    let due: [number, FakeTimer] | undefined;
+    for (const entry of timers) {
+      if (entry[1].at <= target && (!due || entry[1].at < due[1].at)) due = entry;
+    }
+    return due;
+  };
+  return {
+    tick(ms) {
+      const target = now + ms;
+      for (let due = nextDue(target); due; due = nextDue(target)) {
+        timers.delete(due[0]);
+        now = due[1].at;
+        due[1].fn();
+      }
+      now = target;
+    },
+    restore() {
+      g.setTimeout = realSet;
+      g.clearTimeout = realClear;
+    },
+  };
+}
+
 /** A manually flushed requestAnimationFrame queue. */
 export function frameQueue() {
   const queue = new Map<number, () => void>();

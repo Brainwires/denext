@@ -415,6 +415,7 @@ export interface DesktopNotificationWire {
   readonly data?: Readonly<Record<string, unknown>>;
   readonly categoryId?: string;
   readonly threadId?: string;
+  readonly silent?: boolean;
   readonly trigger?: unknown;
 }
 

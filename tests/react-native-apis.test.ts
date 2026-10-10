@@ -33,6 +33,7 @@ import { type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   type Any,
   fakePlugin,
+  fakeTimers,
   fakeViewport,
   frameQueue,
   inShell,
@@ -689,22 +690,28 @@ Deno.test("AppState: visibility in a browser; @capacitor/app's inactive / backgr
 
 Deno.test("Vibration: @capacitor/haptics in the shell (RN's wait/vibrate pattern); navigator.vibrate on the web", async () => {
   const haptics = fakePlugin(["vibrate"]);
-  await inShell("android", { Haptics: haptics.plugin }, async () => {
-    Vibration.vibrate();
-    assertEquals(haptics.calls, [["vibrate", { duration: 400 }]]);
-    Vibration.vibrate([0, 30, 20, 40]);
-    await wait(80);
-    assertEquals(haptics.calls.slice(1), [["vibrate", { duration: 30 }], ["vibrate", {
-      duration: 40,
-    }]]);
-    Vibration.vibrate([10, 20], true);
-    await wait(70);
-    Vibration.cancel();
-    const n = haptics.calls.length;
-    assert(n >= 4, "repeats until cancelled");
-    await wait(60);
-    assertEquals(haptics.calls.length, n, "cancel stops the loop");
-  });
+  // The pattern runs on timers; a fake clock steps them (real waits raced a loaded machine).
+  const clock = fakeTimers();
+  try {
+    await inShell("android", { Haptics: haptics.plugin }, () => {
+      Vibration.vibrate();
+      assertEquals(haptics.calls, [["vibrate", { duration: 400 }]]);
+      Vibration.vibrate([0, 30, 20, 40]);
+      assertEquals(haptics.calls.slice(1), [["vibrate", { duration: 30 }]]);
+      clock.tick(49);
+      assertEquals(haptics.calls.length, 2, "the second vibration waits out 30 + 20 ms");
+      clock.tick(1);
+      assertEquals(haptics.calls.slice(2), [["vibrate", { duration: 40 }]]);
+      Vibration.vibrate([10, 20], true);
+      clock.tick(70); // vibrations at 10, 40 and 70 ms
+      assertEquals(haptics.calls.slice(3), Array(3).fill(["vibrate", { duration: 20 }]));
+      Vibration.cancel();
+      clock.tick(300);
+      assertEquals(haptics.calls.length, 6, "cancel stops the loop");
+    });
+  } finally {
+    clock.restore();
+  }
   const patterns: unknown[] = [];
   await withGlobals({ navigator: { vibrate: (p: unknown) => (patterns.push(p), true) } }, () => {
     Vibration.vibrate(100);

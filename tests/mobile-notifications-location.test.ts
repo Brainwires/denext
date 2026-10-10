@@ -100,6 +100,42 @@ Deno.test("scheduleNotification: maps each trigger onto the plugin's schedule", 
   }
 });
 
+Deno.test("scheduleNotification: silent omits the sound, never sends Capacitor's silent, and uses a silent Android channel", async () => {
+  const ios = fakePlugin(LOCAL_METHODS);
+  await inShell("ios", { LocalNotifications: ios.plugin }, async () => {
+    await scheduleNotification({ id: 1, title: "T", body: "B", sound: "ding.wav", silent: true });
+    const schema = scheduled(ios.calls);
+    assertEquals("silent" in schema, false);
+    assertEquals("sound" in schema, false);
+    assertEquals("channelId" in schema, false);
+    assertEquals(ios.calls.some(([m]) => m === "createChannel"), false);
+  });
+  resetLocalNotificationsForTesting();
+  const android = fakePlugin(LOCAL_METHODS);
+  await inShell("android", { LocalNotifications: android.plugin }, async () => {
+    await scheduleNotification({ id: 1, title: "T", body: "B", sound: "ding", silent: true });
+    await scheduleNotification({ id: 2, title: "T", body: "B", silent: true });
+    await scheduleNotification({ id: 3, title: "T", body: "B", silent: true, channelId: "mine" });
+    const created = android.calls.filter(([m]) => m === "createChannel");
+    assertEquals(created.length, 1); // once
+    const channel = created[0][1] as Any;
+    assertEquals([channel.id, channel.importance, channel.vibration], ["denext-silent", 2, false]);
+    assertEquals("sound" in channel, false);
+    const schemas = android.calls.filter(([m]) => m === "schedule").map((c) =>
+      (c[1] as Any).notifications[0]
+    );
+    assertEquals(schemas.map((s: Any) => s.channelId), ["denext-silent", "denext-silent", "mine"]);
+    assertEquals(schemas.some((s: Any) => "silent" in s || "sound" in s), false);
+  });
+  const local = fakePlugin(LOCAL_METHODS);
+  await inShell("ios", { LocalNotifications: local.plugin }, async () => {
+    await scheduleNotification({ id: 2, title: "T", body: "B", sound: "ding.wav" });
+    const schema = scheduled(local.calls);
+    assertEquals(schema.sound, "ding.wav");
+    assertEquals("silent" in schema, false);
+  });
+});
+
 Deno.test("scheduleNotification: validation, random ids, allowWhileIdle", async () => {
   const local = fakePlugin(LOCAL_METHODS);
   await inShell("android", { LocalNotifications: local.plugin }, async () => {
@@ -174,6 +210,18 @@ Deno.test("scheduleNotification: web shows a notification for now, rejects a lat
     Error,
     "local-notifications",
   );
+});
+
+Deno.test("scheduleNotification: web passes silent to the Notification", async () => {
+  const shown: unknown[][] = [];
+  const Notification = Object.assign(function (this: unknown, ...args: unknown[]) {
+    shown.push(args);
+  }, { permission: "granted" });
+  await withGlobals({ Notification }, async () => {
+    await scheduleNotification({ title: "Hi", body: "there", silent: true });
+    await scheduleNotification({ title: "Hi", body: "there", silent: false });
+  });
+  assertEquals(shown, [["Hi", { body: "there", silent: true }], ["Hi", { body: "there" }]]);
 });
 
 Deno.test("nextTriggerDate: computes the next local match", () => {

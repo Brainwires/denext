@@ -271,7 +271,7 @@ function fakeBrowser() {
         islands,
       };
     },
-    pings: () => d.docListeners.get("ping")?.size ?? 0,
+    pings: () => d.listeners.get("ping")?.size ?? 0,
     restore() {
       discardRetainedRoot(); // a fresh page load has none: the next test boots root-less
       for (const [k, v] of saved) {

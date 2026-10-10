@@ -6,7 +6,16 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { useState } from "denext";
 import { h } from "denext/jsx-runtime";
 import { fireEvent, render, userEvent, waitFor } from "denext/testing";
-import { DomDocument, DomEl, DomText, fireEventOn, walkElements } from "../src/testing/dom.ts";
+import {
+  DomDocument,
+  DomEl,
+  DomText,
+  fireEventOn,
+  type ListenerTarget,
+  propagateEvent,
+  type TestEvent,
+  walkElements,
+} from "../src/testing/dom.ts";
 
 // ---- render.ts: queries + miss/ambiguity error branches --------------------
 
@@ -469,6 +478,50 @@ Deno.test("fireEventOn drives capture-then-bubble, stopPropagation, preventDefau
   el.removeEventListener("x", fn);
   fireEventOn(el, "x");
   assertEquals(n, 0);
+});
+
+Deno.test("propagateEvent visits a top (document) node first in capture and last in bubble", () => {
+  const top: ListenerTarget = { listeners: new Map(), captureListeners: new Map() };
+  const html = new DomEl("html");
+  const button = new DomEl("button");
+  html.appendChild(button);
+  const order: string[] = [];
+  const on = (node: ListenerTarget, name: string, type: string, capture: boolean) =>
+    (capture ? node.captureListeners : node.listeners).set(
+      type,
+      new Set([(e: TestEvent) => order.push(e.currentTarget === node ? name : `${name}!`)]),
+    );
+  for (const type of ["click", "focus"]) {
+    on(top, "doc-capture", type, true);
+    on(top, "doc-bubble", type, false);
+    on(html, "html-capture", type, true);
+    on(button, "button", type, false);
+  }
+  propagateEvent([button, html, top], "click");
+  assertEquals(order, ["doc-capture", "html-capture", "button", "doc-bubble"]);
+
+  // A non-bubbling type still captures from the top, but bubbles at the target only.
+  order.length = 0;
+  propagateEvent([button, html, top], "focus");
+  assertEquals(order, ["doc-capture", "html-capture", "button"]);
+
+  // Setting `cancelBubble` stops propagation, as `stopPropagation()` does.
+  order.length = 0;
+  html.captureListeners.set("click", new Set([(e: TestEvent) => (e.cancelBubble = true)]));
+  propagateEvent([button, html, top], "click");
+  assertEquals(order, ["doc-capture"]);
+});
+
+Deno.test("DomEl listener options: only `true` / `{ capture: true }` select the capture phase", () => {
+  const el = new DomEl("div");
+  const fn = () => {};
+  el.addEventListener("wheel", fn, { passive: true });
+  el.addEventListener("click", fn, { capture: true });
+  el.addEventListener("keydown", fn, true);
+  assertEquals([...el.listeners.keys()], ["wheel"]);
+  assertEquals([...el.captureListeners.keys()], ["click", "keydown"]);
+  el.removeEventListener("click", fn, { capture: true });
+  assertEquals(el.captureListeners.get("click")?.size, 0);
 });
 
 Deno.test("walkElements does a depth-first traversal of element nodes only", () => {

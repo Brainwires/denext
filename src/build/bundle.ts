@@ -25,6 +25,7 @@ import {
   type ServerModuleLeak,
 } from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
+import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -1163,6 +1164,11 @@ export async function prepareConfig(
   // The merged config lives in a temp dir, so any relative import-map paths in
   // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
   // absolute against the ORIGINAL config's directory or they break.
+  const appImports = absolutizeImports(base.imports, dirname(configFsPath));
+  // The generated entries and the client transforms import the RUNNING framework by URL; when
+  // the app's own `denext` reaches another copy, fold that copy into this one so the bundle
+  // carries one runtime (./app-framework-root.ts). The same root in the usual case: no entry.
+  const appRoot = await appFrameworkRoot(configFsPath, base, appImports["denext"]);
   base.imports = {
     // Always resolve `denext/live` against the framework: the generated Flight
     // entry imports `<Live>` from it, and it is kept off the main barrels (so
@@ -1182,7 +1188,8 @@ export async function prepareConfig(
     // (and usually does not) list those subpaths, so resolve them against the framework.
     "denext/client-runtime": frameworkFileUrl("src/client/client-runtime.ts"),
     "denext/devtools": frameworkFileUrl("src/devtools.ts"),
-    ...absolutizeImports(base.imports, dirname(configFsPath)),
+    ...foldAppDenext(frameworkRootUrl(), appRoot),
+    ...appImports,
     ...opts.importMap,
   };
   // `links` name directories relative to the config, which now lives in `tmpDir`.
@@ -1190,6 +1197,35 @@ export async function prepareConfig(
   const configPath = join(tmpDir, "deno.merged.json");
   await Deno.writeTextFile(configPath, JSON.stringify(base));
   return configPath;
+}
+
+/** The running framework's version (its `deno.json`), read once. */
+let frameworkVersion: Promise<string> | undefined;
+
+let warnedSkew = false;
+
+/**
+ * The root of the denext copy the app at `configFsPath` imports (./app-framework-root.ts), with a
+ * one-time warning when it is a different published version than the one running the build.
+ */
+async function appFrameworkRoot(
+  configFsPath: string,
+  config: { lock?: unknown },
+  denext: string | undefined,
+): Promise<string> {
+  frameworkVersion ??= readFrameworkJson("deno.json").then((c) => String(c.version ?? ""));
+  const running = { root: frameworkRootUrl(), version: await frameworkVersion };
+  const root = await appDenextRootFor(configFsPath, config, denext, running);
+  const version = root.startsWith(JSR_DENEXT_ROOT) ? root.slice(JSR_DENEXT_ROOT.length, -1) : "";
+  if (version && version !== running.version && !warnedSkew) {
+    warnedSkew = true;
+    console.warn(
+      `denext: this app's denext is ${version} (${denext}), but denext ${running.version} is ` +
+        `building it, so its client bundles run ${running.version}'s runtime. Run the CLI the ` +
+        `app pins (\`deno task build\`) to build with ${version}.`,
+    );
+  }
+  return root;
 }
 
 /**

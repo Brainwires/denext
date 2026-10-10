@@ -91,8 +91,17 @@ interface ListenerMaps<F> {
 
 /** The listener methods an element class declares (see {@link listenerMethods}). */
 export interface ListenerMethods<F> {
-  addEventListener(type: string, fn: F, capture?: boolean): void;
-  removeEventListener(type: string, fn: F, capture?: boolean): void;
+  addEventListener(type: string, fn: F, options?: ListenerOptions): void;
+  removeEventListener(type: string, fn: F, options?: ListenerOptions): void;
+}
+
+/** The DOM's third listener argument: `useCapture`, or an options bag (only `capture` is read). */
+type ListenerOptions = boolean | { capture?: boolean; once?: boolean; passive?: boolean };
+
+/** The listener map `options` selects: capture phase for `true` / `{ capture: true }`. */
+function phaseMap<F>(maps: ListenerMaps<F>, options: ListenerOptions | undefined) {
+  const capture = typeof options === "boolean" ? options : options?.capture === true;
+  return capture ? maps.captureListeners : maps.listeners;
 }
 
 /**
@@ -101,13 +110,13 @@ export interface ListenerMethods<F> {
  * {@link ListenerMethods} through interface merging).
  */
 export const listenerMethods: ListenerMethods<unknown> = {
-  addEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, capture = false) {
-    const map = capture ? this.captureListeners : this.listeners;
+  addEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, options?) {
+    const map = phaseMap(this, options);
     if (!map.has(type)) map.set(type, new Set());
     map.get(type)!.add(fn);
   },
-  removeEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, capture = false) {
-    (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
+  removeEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, options?) {
+    phaseMap(this, options).get(type)?.delete(fn);
   },
 };
 
@@ -246,6 +255,53 @@ const NON_BUBBLING = new Set(
   "focus blur mouseenter mouseleave pointerenter pointerleave load error scroll".split(" "),
 );
 
+/** A node an event visits: its bubble- and capture-phase listener sets, by event type. */
+export type ListenerTarget = ListenerMaps<(event: never) => void>;
+
+/**
+ * Build an event and propagate it along `path` (the target first, then each ancestor up to the
+ * top, which may be a document) as a browser does: a capture phase from the top down, then — for
+ * a bubbling type — a bubble phase from the target back up (just the target otherwise).
+ * `stopPropagation()` (or setting `cancelBubble`) stops it between nodes. Shared by
+ * {@linkcode fireEventOn} and the repo's reconciler test fakes.
+ *
+ * @param path The propagation path, target first; `path[0]` is the event's `target`.
+ * @param type The event type (e.g. `"click"`).
+ * @param init Extra fields merged onto the event (they may override `target`).
+ */
+export function propagateEvent(
+  path: readonly ListenerTarget[],
+  type: string,
+  init: Record<string, unknown> = {},
+): void {
+  const event: TestEvent = {
+    type,
+    target: path[0] as DomEl,
+    currentTarget: path[0] as DomEl,
+    bubbles: !NON_BUBBLING.has(type),
+    cancelBubble: false,
+    defaultPrevented: false,
+    preventDefault() {
+      event.defaultPrevented = true;
+    },
+    stopPropagation() {
+      event.cancelBubble = true;
+    },
+    ...init,
+  };
+  const run = (node: ListenerTarget, map: ListenerTarget["listeners"]) => {
+    event.currentTarget = node as DomEl;
+    map.get(type)?.forEach((fn) => (fn as (event: TestEvent) => void)(event));
+  };
+  // Capture: top → target.
+  for (let i = path.length - 1; i >= 0 && !event.cancelBubble; i--) {
+    run(path[i], path[i].captureListeners);
+  }
+  // Bubble: target → top (just the target for a non-bubbling type).
+  const last = event.bubbles ? path.length : 1;
+  for (let i = 0; i < last && !event.cancelBubble; i++) run(path[i], path[i].listeners);
+}
+
 /**
  * Dispatch an event on `target`, propagating through the tree exactly as a browser
  * would: a capture phase from the root down, then a bubble phase from the target
@@ -257,36 +313,9 @@ const NON_BUBBLING = new Set(
  * @param init Extra fields merged onto the event (e.g. `{ key: "Enter" }`).
  */
 export function fireEventOn(target: DomEl, type: string, init: Record<string, unknown> = {}): void {
-  let stopped = false;
-  const event: TestEvent = {
-    type,
-    target,
-    currentTarget: target,
-    bubbles: !NON_BUBBLING.has(type),
-    cancelBubble: false,
-    defaultPrevented: false,
-    preventDefault() {
-      this.defaultPrevented = true;
-    },
-    stopPropagation() {
-      stopped = true;
-      this.cancelBubble = true;
-    },
-    ...init,
-  };
   const path: DomEl[] = [];
   for (let n: DomEl | null = target; n; n = n.parentNode) path.push(n);
-  // Capture: root → target.
-  for (let i = path.length - 1; i >= 0 && !stopped; i--) {
-    event.currentTarget = path[i];
-    path[i].captureListeners.get(type)?.forEach((fn) => fn(event));
-  }
-  // Bubble: target → root (just the target for a non-bubbling type).
-  const last = event.bubbles ? path.length : 1;
-  for (let i = 0; i < last && !stopped; i++) {
-    event.currentTarget = path[i];
-    path[i].listeners.get(type)?.forEach((fn) => fn(event));
-  }
+  propagateEvent(path, type, init);
 }
 
 /** Depth-first walk of every element under (and including) `root`. */

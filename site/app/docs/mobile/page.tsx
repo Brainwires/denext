@@ -1646,6 +1646,22 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         <code>useLocalNotificationTapped</code> is the hook form.
       </p>
       <p>
+        <code>silent: true</code> delivers a notification without a sound (<code>sound</code>{" "}
+        is then ignored). iOS attaches none. Android 8+ posts it on a <code>denext-silent</code>
+        {" "}
+        channel (low importance: shown, no sound, no vibration) that denext creates once, unless you
+        pass your own{" "}
+        <code>channelId</code>, whose settings then decide; Android 7 and older cannot silence it.
+        Capacitor&apos;s own <code>silent</code>{" "}
+        flag is never sent (it only hides a notification while the app is in the foreground). The
+        web passes it to{" "}
+        <code>new Notification(title, {"{ silent }"})</code>. In a Deno Desktop window it is
+        forwarded to the runtime&apos;s <code>Deno.desktop.notifications.schedule</code> as{" "}
+        <code>silent</code>{" "}
+        (the OS mutes it where its platform can; a repeating series stays silent), as does the
+        page&apos;s own web <code>Notification</code> with <code>silent: true</code>.
+      </p>
+      <p>
         <code>setNotificationCategories([...])</code>{" "}
         registers the action buttons (text-input actions included) a notification shows with{" "}
         <code>categoryId</code>. The call replaces every earlier category, so pass the full set.

@@ -34,6 +34,8 @@ interface FakeOsOptions {
 /** A fake `Deno.desktop` with notifications (what the capability talks to). */
 function fakeOs(options: FakeOsOptions = {}) {
   const scheduled: DesktopScheduledNotification[] = [];
+  /** The tags posted with `silent: true`. */
+  const silent: string[] = [];
   const cancelled: string[] = [];
   const listeners = new Map<string, (e: Event) => void>();
   let answer: (state: string) => void = () => {};
@@ -43,6 +45,7 @@ function fakeOs(options: FakeOsOptions = {}) {
       if (options.scheduleFails) return Promise.reject(new Error("the OS refused the post"));
       const at = scheduled.findIndex((e) => e.tag === o.tag);
       if (at >= 0) scheduled.splice(at, 1);
+      if (o.silent) silent.push(o.tag!);
       scheduled.push({ tag: o.tag!, title: o.title, body: o.body, at: o.at, data: o.data });
       return Promise.resolve(o.tag!);
     },
@@ -66,7 +69,7 @@ function fakeOs(options: FakeOsOptions = {}) {
     listeners.get("notificationresponse")!(
       new CustomEvent("notificationresponse", { detail: { tag, action: null, data } }),
     );
-  return { api, scheduled, cancelled, click, answer: (state: string) => answer(state) };
+  return { api, scheduled, silent, cancelled, click, answer: (state: string) => answer(state) };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -571,6 +574,47 @@ Deno.test("capability: webShow / webClose / webTake validate their arguments", a
     await code(() => stock.methods.webShow.handler({ key: "k", title: "t" }, ctx())),
     "unavailable",
   );
+});
+
+Deno.test("Notification shim: silent: true posts the OS notification without a sound", async () => {
+  const { g, os, end } = page();
+  try {
+    await settle();
+    await g.Notification.requestPermission();
+    new g.Notification("loud", { tag: "a" });
+    new g.Notification("quiet", { tag: "b", silent: true });
+    await settle();
+    assertEquals(os.scheduled.map((e) => e.title).sort(), ["loud", "quiet"]);
+    const quiet = os.scheduled.find((e) => e.title === "quiet")!;
+    assertEquals(os.silent, [quiet.tag]);
+  } finally {
+    await end();
+  }
+});
+
+Deno.test("capability: schedule({ silent }) posts silently and keeps a series' top-up silent", async () => {
+  const os = fakeOs();
+  const cap = notificationsCapability({ api: os.api, autoTopUp: false });
+  await cap.methods.schedule.handler(
+    { id: 1, title: "t", body: "b", data: {}, silent: true },
+    ctx(),
+  );
+  await cap.methods.schedule.handler({ id: 2, title: "t", body: "b", data: {} }, ctx());
+  assertEquals(os.silent, ["denext-1"]);
+  await cap.methods.schedule.handler(
+    {
+      id: 3,
+      title: "t",
+      body: "b",
+      data: {},
+      silent: true,
+      trigger: { type: "interval", seconds: 60, repeats: true },
+    },
+    ctx(),
+  );
+  const series = os.scheduled.filter((e) => e.tag!.startsWith("denext-3-"));
+  assert(series.length > 1);
+  assertEquals(os.silent.filter((t) => t.startsWith("denext-3-")).length, series.length);
 });
 
 const MEMORY: DesktopTrust = { kind: "memory", origin: "myapp://app" };

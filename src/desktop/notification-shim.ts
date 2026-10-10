@@ -27,9 +27,9 @@
  *   known so far, `"default"` when nothing is, as a dismissed browser prompt does; a later answer
  *   still updates `Notification.permission`.
  *
- * The rest of the options (`icon`, `image`, `badge`, `silent`, `requireInteraction`, `actions`,
- * `vibrate`, `renotify`) are kept on the object but not shown: the OS notification has the app's
- * icon, the default sound and no buttons. A dismissal in the OS fires nothing.
+ * `silent: true` posts the OS notification without a sound. The rest of the options (`icon`,
+ * `image`, `badge`, `requireInteraction`, `actions`, `vibrate`, `renotify`) are kept on the object
+ * but not shown: the OS notification has the app's icon, the default sound and no buttons. A dismissal in the OS fires nothing.
  *
  * The function is serialized with `Function.prototype.toString` and inlined into the page, so it is
  * self-contained: it reaches nothing outside its body but its `g` argument (`globalThis` in the
@@ -215,7 +215,12 @@ export function installDesktopNotificationShim(
           live.delete(key);
           return fire(this, "error");
         }
-        return rpc("webShow", { key, title: self.title, body: self.body }).then(
+        return rpc("webShow", {
+          key,
+          title: self.title,
+          body: self.body,
+          ...(self.silent === true ? { silent: true } : {}),
+        }).then(
           () => fire(this, "show"),
           () => {
             if (live.get(key) === this) live.delete(key);

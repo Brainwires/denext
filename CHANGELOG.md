@@ -8,6 +8,48 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.3] - 2026-10-10
+
+### Added
+
+- **`scheduleNotification({ silent: true })` in `denext/mobile`: deliver a local notification
+  without a sound.** iOS attaches no sound (a `sound` is ignored), Android 8+ posts it on a
+  denext-owned low-importance `denext-silent` channel (unless you pass your own `channelId`;
+  Android 7 cannot silence it), the web passes `silent` to
+  `new Notification(title, { silent })`, and Deno Desktop sends `silent` to the runtime's
+  notification schedule (a repeating series' top-up stays silent). The desktop page's own web
+  `Notification` shim now honours `silent: true` too instead of ignoring it.
+
+### Fixed
+
+- **`reactCompiler` no longer bundles a second copy of denext's hooks in a compatibility-mode
+  app.** The auto-memo compiler's output imports its memo cache (`c`, `memoValue`) by the
+  absolute URL of denext's `compiler-runtime` module; the client bundle sent that URL to the
+  deno-loader instead of the prebuilt runtime, so every memoized app carried its own copy of the
+  hook dispatcher lookup and `useMemoCache` next to the runtime's. It worked only because the
+  dispatcher is looked up on a global symbol. A build transform's import of any prebuilt runtime
+  entry by framework URL (the compiler's, the AsyncContext transform's) now resolves to the one
+  prebuilt runtime, in `denext export` (every platform) and `build`.
+- **`denext/testing`'s in-memory DOM reads listener options as a browser does.** An element's
+  `addEventListener(type, fn, { passive: true })` registered a capture-phase listener (any options
+  object read as `useCapture`); only `true` or `{ capture: true }` does now. Assigning
+  `event.cancelBubble = true` in a handler stops propagation, as `stopPropagation()` does.
+- **A native App Router client bundle no longer carries two copies of denext when the app's
+  `denext` is not the framework running the build.** The generated entries
+  (`denext/client-runtime`, `denext/live`, …) and the client transforms' output (the auto-memo
+  compiler's `compiler-runtime`, qrl segments) import the running framework by URL, while `deno
+  bundle` resolves the app's own `denext` through the app's `deno.json`. A CLI run from a checkout
+  or another URL building an app mapped to `jsr:@denext/denext@<a version the checkout does not
+  satisfy>`, a published CLI building an app locked to another version, or an app mapped to
+  another checkout bundled that copy's hooks and reconciler next to the running framework's. The
+  bundle config now folds the app's copy into the running framework (a prefix import-map entry
+  from its root, read from the import map and `deno.lock`): the app's entry modules load as
+  written and everything under them is the running framework's, the one the generated code, the
+  server renderer and unbundled dev (already) use. A different published version is named in a
+  one-time warning, since the app then runs the building CLI's runtime. The published setup (the
+  CLI and the app on the same JSR version) and a checkout the app's range admits were already one
+  copy and are unchanged.
+
 ## [3.4.2] - 2026-10-09
 
 ### Added
@@ -12414,7 +12456,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.3...development
+[3.4.3]: https://jsr.io/@denext/denext@3.4.3
 [3.4.2]: https://jsr.io/@denext/denext@3.4.2
 [3.4.1]: https://jsr.io/@denext/denext@3.4.1
 [3.4.0]: https://jsr.io/@denext/denext@3.4.0

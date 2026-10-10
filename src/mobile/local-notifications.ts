@@ -57,6 +57,16 @@ export interface LocalNotificationInput {
   readonly categoryId?: string;
   /** A sound file bundled with the app (iOS: in the app bundle; Android: `res/raw`, no extension). */
   readonly sound?: string;
+  /**
+   * Deliver it without a sound (`sound` is then ignored). iOS: no sound is attached (the plugin
+   * plays none without one). Android 8+: it posts on a denext-owned low-importance channel
+   * (`denext-silent`: no sound, no vibration, still shown), unless you pass your own `channelId`,
+   * whose settings then decide. Android 7 and older cannot silence it (the plugin sets the
+   * default sound there). Deno Desktop: sent to the runtime as `silent` (the OS mutes it where its
+   * platform can). Web: `new Notification(title, { silent })`. Capacitor's own `silent` flag is
+   * never sent: it only hides a notification while the app is in the foreground.
+   */
+  readonly silent?: boolean;
   /** iOS: the app icon's badge number once it is delivered. */
   readonly badge?: number;
   /**
@@ -252,6 +262,27 @@ function scheduleOf(
   }
 }
 
+/** The id of the channel silent notifications post on (Android 8+). */
+const SILENT_CHANNEL_ID = "denext-silent";
+let silentChannelReady: Promise<string | undefined> | undefined;
+
+/**
+ * Create (once) the low-importance channel a silent notification posts on and return its id; none
+ * outside the Android shell. Importance LOW shows the notification without a sound.
+ */
+function silentChannel(): Promise<string | undefined> {
+  if (nativePlatform() !== "android") return Promise.resolve(undefined);
+  return silentChannelReady ??= createNotificationChannel({
+    id: SILENT_CHANNEL_ID,
+    name: "Silent notifications",
+    importance: 2,
+    vibration: false,
+  }).then(() => SILENT_CHANNEL_ID, (err) => {
+    silentChannelReady = undefined;
+    throw err;
+  });
+}
+
 /** A random positive 32-bit id. */
 function randomId(): number {
   return 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 0x7ffffffe);
@@ -269,7 +300,7 @@ function schemaOf(fn: string, n: LocalNotificationInput): Record<string, unknown
   if (n.data !== undefined) schema.extra = { ...n.data };
   if (n.channelId !== undefined) schema.channelId = n.channelId;
   if (n.categoryId !== undefined) schema.actionTypeId = n.categoryId;
-  if (n.sound !== undefined) schema.sound = n.sound;
+  if (n.silent !== true && n.sound !== undefined) schema.sound = n.sound;
   if (n.badge !== undefined) schema.badge = n.badge;
   const thread = threadOf(n);
   if (thread !== undefined) {
@@ -296,6 +327,7 @@ function desktopWire(schema: Record<string, unknown>, n: LocalNotificationInput)
     body: n.body,
     ...(n.data !== undefined ? { data: { ...n.data } } : {}),
     ...(n.categoryId !== undefined ? { categoryId: n.categoryId } : {}),
+    ...(n.silent === true ? { silent: true } : {}),
     ...(typeof schema.threadIdentifier === "string" ? { threadId: schema.threadIdentifier } : {}),
     ...(n.trigger ? { trigger: n.trigger } : {}),
   };
@@ -311,7 +343,10 @@ function webNotification(): WebNotificationCtor | undefined {
 
 /** The web `Notification` constructor, as far as {@linkcode scheduleNotification} uses it. */
 interface WebNotificationCtor {
-  new (title: string, options?: { body?: string; data?: unknown }): WebNotificationLike;
+  new (
+    title: string,
+    options?: { body?: string; data?: unknown; silent?: boolean },
+  ): WebNotificationLike;
   readonly permission?: string;
 }
 
@@ -355,6 +390,10 @@ export async function scheduleNotification(notification: LocalNotificationInput)
   }
   const plugin = localPlugin();
   if (plugin) {
+    if (notification.silent === true && schema.channelId === undefined) {
+      const channelId = await silentChannel();
+      if (channelId) schema.channelId = channelId;
+    }
     await plugin.schedule({ notifications: [schema] });
     return schema.id as number;
   }
@@ -363,6 +402,7 @@ export async function scheduleNotification(notification: LocalNotificationInput)
   const shown = new show(notification.title, {
     body: notification.body,
     ...(notification.data !== undefined ? { data: { ...notification.data } } : {}),
+    ...(notification.silent === true ? { silent: true } : {}),
   });
   trackWebNotification(shown, {
     id: String(schema.id),
@@ -718,4 +758,5 @@ export function useLocalNotificationTapped(
 export function resetLocalNotificationsForTesting(): void {
   receivedFanout = undefined;
   tappedFanout = undefined;
+  silentChannelReady = undefined;
 }
