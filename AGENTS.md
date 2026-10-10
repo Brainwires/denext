@@ -524,7 +524,18 @@ package from any host under the pinned runtime; macOS apps package on a Mac. `de
 `dev` warn and use the stock runtime when `deno` is not 2.9.7 (`DENO_BIN` points them at a 2.9.7
 binary); `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
 a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
-`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit, sidecar }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop({ sidecars })`,
+`defineSidecar`) — `run: { module }` runs in a worker of the app's own runtime (no second binary;
+`nodeModules` bundles a Node backend at packaging, native addons + `external` copied beside it),
+`run: { exec }` spawns a program (one JSON line on stdin; exit on stdin EOF). `port: "auto"`, `ready`
+(`http` / `stdout` / `signal` / `probe`), `restart` (backoff, `maxAttempts`), `shutdown.graceMs`,
+`secrets` (`"$random"`), `bootstrap`, `expose`, `logs`, `proxy: true` (points `spa.proxy` at it),
+`permissions` (baked). In the module: `globalThis.denextSidecar` (`port`, `bootstrap`, `secrets`,
+`ready()`, `onShutdown`); `import.meta.main` is false. `app.sidecar(name)` (`status`, `onStatus`,
+`restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
+`sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
+--node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a

@@ -15,45 +15,29 @@
 //
 //   deno run -A scripts/ci/desktop-relocation-smoke.ts
 
-import { copy } from "@std/fs";
-import { join, resolve, toFileUrl } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_RUNTIME_CONFIG_FILE,
   desktopRuntimeConfigText,
 } from "../../src/build/desktop-app-config.ts";
+import {
+  copyDenext,
+  denextDenoJson,
+  packageApp,
+  report,
+  requireMacOrLinux,
+  ROOT,
+} from "./_packaged-app.ts";
 
-const ROOT = resolve(import.meta.dirname!, "..", "..");
-const OS = Deno.build.os;
 const APP_NAME = "relocation-smoke";
 const MARKER = "relocation-probe: loaded from the embedded graph";
-/** The Linux bundle directory's suffix per architecture (`dist/<name>-<label>`). */
-const LINUX_LABELS: Record<string, string> = { x86_64: "x64", aarch64: "arm64" };
 
-if (OS !== "darwin" && OS !== "linux") {
-  console.error("desktop-relocation-smoke: macOS / Linux only");
-  Deno.exit(2);
-}
-
-/** Run a command in `cwd`, streaming its output; throw on a non-zero exit. */
-async function run(cmd: string[], cwd: string): Promise<void> {
-  const { code } = await new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    cwd,
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`);
-}
+requireMacOrLinux("desktop-relocation-smoke");
 
 /** Write the app: deno.json (absolute `file:` targets), config, entry, extension, export. */
 async function writeApp(app: string, denext: string, probe: string): Promise<void> {
-  const root = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json")));
-  const rootImports = root.imports as Record<string, string>;
-  const imports: Record<string, string> = {};
-  for (const [key, value] of Object.entries(rootImports)) {
-    imports[key] = value.startsWith("./") ? toFileUrl(join(denext, value)).href : value;
-  }
-  imports["denext/desktop"] = toFileUrl(join(denext, "src", "build", "desktop.ts")).href;
+  const root = await denextDenoJson(denext);
+  const imports = root.imports;
   imports["relocation-probe"] = toFileUrl(join(probe, "probe.ts")).href;
   const desktopApp = { name: APP_NAME, identifier: "dev.denext.relocation-smoke" };
   await Deno.writeTextFile(
@@ -113,14 +97,6 @@ async function writeApp(app: string, denext: string, probe: string): Promise<voi
   );
 }
 
-/** macOS: the `.app`'s `Contents/MacOS/<CFBundleExecutable>`. */
-async function macExecutable(bundle: string): Promise<string> {
-  const plist = await Deno.readTextFile(join(bundle, "Contents", "Info.plist"));
-  const exe = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-  if (!exe) throw new Error(`no CFBundleExecutable in ${bundle}`);
-  return join(bundle, "Contents", "MacOS", exe);
-}
-
 /** Launch `exe` through `desktop-launch-smoke.ts` (listens, stays up, stopped), echoing and
  * returning the app's output and whether the smoke passed. */
 async function launch(exe: string): Promise<{ output: string; ok: boolean }> {
@@ -141,25 +117,11 @@ const probe = join(scratch, "probe");
 const app = join(scratch, "app");
 const problems: string[] = [];
 try {
-  await Deno.mkdir(denext);
   await Deno.mkdir(probe);
   await Deno.mkdir(app);
-  await copy(join(ROOT, "mod.ts"), join(denext, "mod.ts"));
-  await copy(join(ROOT, "src"), join(denext, "src"));
+  await copyDenext(denext);
   await writeApp(app, denext, probe);
-
-  const cli = join(ROOT, "cli.ts");
-  await run(
-    [Deno.execPath(), "run", "-A", cli, "desktop", "package", "--regenerate-scripts", "."],
-    app,
-  );
-  const script = OS === "darwin" ? "package-macos.ts" : "package-linux.ts";
-  await run([Deno.execPath(), "run", "-A", join("scripts", script), "--no-export"], app);
-  // Linux: the bundle directory `dist/<name>-<label>` holds a launcher of the same name.
-  const linuxBundle = `${APP_NAME}-${LINUX_LABELS[Deno.build.arch]}`;
-  const exe = OS === "darwin"
-    ? await macExecutable(join(app, "dist", `${APP_NAME}.app`))
-    : join(app, "dist", linuxBundle, linuxBundle);
+  const exe = await packageApp(app, APP_NAME);
 
   // The build machine's copies are gone: the app must run from what it embedded.
   await Deno.rename(denext, `${denext}.moved`);
@@ -174,10 +136,8 @@ try {
   await Deno.remove(scratch, { recursive: true }).catch(() => {});
 }
 
-if (problems.length > 0) {
-  console.error(`\n✗ desktop relocation smoke:\n  - ${problems.join("\n  - ")}`);
-  Deno.exit(1);
-}
-console.log(
-  "\n✓ desktop relocation smoke: absolute import-map targets load from the packaged app",
+report(
+  "desktop relocation smoke",
+  problems,
+  "absolute import-map targets load from the packaged app",
 );

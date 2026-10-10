@@ -1492,6 +1492,238 @@
             }
           }
         },
+        "sidecars": {
+          "description": "Backends the app runs and supervises next to its window, as an Electron app spawns its server: `{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second binary; a Node backend with `nodeModules` is bundled at packaging, its native addons copied), `{ name, run: { exec } }` spawns a program. Each gets a loopback port (`port: \"auto\"`), is started once the window's server is up, checked for readiness (`ready`), restarted with backoff after a crash (`restart`), stopped with a grace period (`shutdown`) and ended with the app. `proxy: true` points `spa.proxy` at one. Functions (`ready.probe`, a computed `bootstrap` or `secrets`) go in `runDesktop({ sidecars })` instead. `denext desktop add sidecar` writes one.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "A unique name: lower-case letters, digits and `-` (`\"server\"`).",
+                "type": "string"
+              },
+              "run": {
+                "description": "What runs: a module in a worker of the app's runtime, or a program (exactly one of them).",
+                "type": "object",
+                "properties": {
+                  "module": {
+                    "description": "The module, relative to the project.",
+                    "type": "string"
+                  },
+                  "nodeModules": {
+                    "description": "Its `node_modules` folder: a Node backend, bundled at packaging.",
+                    "type": "string"
+                  },
+                  "external": {
+                    "description": "Packages copied whole rather than bundled (loaded with `require()` at run time).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "entries": {
+                    "description": "Further entry modules it starts itself (worker scripts), relative to the module.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "exec": {
+                    "description": "A program: an absolute path, a name on `PATH`, or a file of the project (`\"./bin/server\"`).",
+                    "type": "string"
+                  }
+                }
+              },
+              "args": {
+                "description": "Arguments (`process.argv.slice(2)`, or the program's argv); `{port}` becomes the port.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "description": "Environment variables (a module sidecar's own `process.env` copy; a program's environment).",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "description": "A program's working directory (relative to the app's data folder, or absolute).",
+                "type": "string"
+              },
+              "port": {
+                "description": "A loopback port: `\"auto\"` picks a free one at launch (kept across restarts), or a number.",
+                "anyOf": [
+                  {
+                    "enum": [
+                      "auto"
+                    ]
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "portEnv": {
+                "description": "The environment variable the port is published under (default `PORT`).",
+                "type": "string"
+              },
+              "secrets": {
+                "description": "Values only the sidecar sees (`denextSidecar.secrets`, or a program's first stdin line), never in its environment or argv; `\"$random\"` is 32 random bytes, new each launch.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "ready": {
+                "description": "When it counts as ready; every check given must pass (none: once started).",
+                "type": "object",
+                "properties": {
+                  "http": {
+                    "description": "A path polled on its port until it answers 2xx (`\"/health\"`).",
+                    "type": "string"
+                  },
+                  "stdout": {
+                    "description": "A regular expression a line of its output must match.",
+                    "type": "string"
+                  },
+                  "signal": {
+                    "description": "It calls `globalThis.denextSidecar.ready()` itself (a module sidecar).",
+                    "type": "boolean"
+                  },
+                  "timeoutMs": {
+                    "description": "How long a start may take (default 30 000 ms).",
+                    "type": "number"
+                  },
+                  "intervalMs": {
+                    "description": "How often `http` is retried (default 100 ms).",
+                    "type": "number"
+                  }
+                }
+              },
+              "restart": {
+                "description": "When an ended sidecar is started again, and how fast.",
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "description": "`\"crash\"` (default): after a failure; `\"always\"`: after any end; `\"never\"`.",
+                    "enum": [
+                      "crash",
+                      "always",
+                      "never"
+                    ]
+                  },
+                  "backoffMs": {
+                    "description": "The first retry's delay, doubled each time (default 500 ms).",
+                    "type": "number"
+                  },
+                  "maxBackoffMs": {
+                    "description": "The longest delay (default 30 000 ms).",
+                    "type": "number"
+                  },
+                  "maxAttempts": {
+                    "description": "Consecutive failed starts before it is given up (default 5).",
+                    "type": "number"
+                  },
+                  "resetAfterMs": {
+                    "description": "A run that stays ready this long resets the count (default 30 000 ms).",
+                    "type": "number"
+                  }
+                }
+              },
+              "shutdown": {
+                "description": "How it is stopped.",
+                "type": "object",
+                "properties": {
+                  "graceMs": {
+                    "description": "How long it may take to finish when stopped before it is ended (default 5 000 ms).",
+                    "type": "number"
+                  }
+                }
+              },
+              "logs": {
+                "description": "Where its output goes: the app's stderr (default), a log file in the app's data folder, both, or nowhere.",
+                "enum": [
+                  "inherit",
+                  "file",
+                  "both",
+                  "none"
+                ]
+              },
+              "proxy": {
+                "description": "Make `spa.proxy` forward to its port (one sidecar at most).",
+                "type": "boolean"
+              },
+              "expose": {
+                "description": "Values the page reads with `sidecarInfo(name)`; `\"$secret:<NAME>\"` exposes a secret.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "permissions": {
+                "description": "What it needs beyond the app's baseline permissions, baked into the packaged app.",
+                "type": "object",
+                "properties": {
+                  "read": {
+                    "description": "`--allow-read` paths (usually unnecessary — the baseline is already broad read).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "write": {
+                    "description": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "net": {
+                    "description": "`--allow-net` hosts, e.g. the updater's feed host.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "run": {
+                    "description": "`--allow-run` programs; `[\"*\"]` bakes an unscoped `--allow-run`.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "ffi": {
+                    "description": "`--allow-ffi` libraries; `[\"*\"]` bakes an unscoped `--allow-ffi`, which a Node-API addon (an npm package's prebuilt `.node`) needs: the packaged app loads it from its embedded file system, whose path cannot be named at package time.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "env": {
+                    "description": "`--allow-env` variable names.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sys": {
+                    "description": "`--allow-sys` kinds; `[\"*\"]` bakes an unscoped `--allow-sys`.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "name",
+              "run"
+            ]
+          }
+        },
         "inspectable": {
           "description": "Whether the web inspector (DevTools) can be opened in the window: F12, the context menu, Safari's Develop menu and remote debugging. Default: on in `denext desktop dev` (always) and `denext desktop run`, OFF in a packaged app — set `true` to ship an inspectable build. The package scripts write it to the app's `laufey-launch.json` (`\"inspectable\"`); `run` passes it as `LAUFEY_INSPECTABLE`. Needs denext's pinned runtime (the stock runtime ignores it).",
           "type": "boolean"

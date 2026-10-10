@@ -21,6 +21,7 @@ import type {
   SpaProxyConfig,
 } from "../../server/config.ts";
 import type { DesktopCapability } from "../extension.ts";
+import { type SidecarDefinition, sidecarListError } from "../sidecar.ts";
 import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
 import { echoCapability } from "./echo.ts";
 import { deviceCapability } from "./device.ts";
@@ -98,6 +99,11 @@ export interface ResolvedDesktop {
   readonly autoConfirmAppUpdate: boolean;
   /** `spa.proxy`: the backend reverse proxy `runDesktop` serves, when the config sets one. */
   readonly proxy?: SpaProxyConfig;
+  /**
+   * `desktop.sidecars`: the backends `runDesktop` runs next to the window (its own `sidecars`
+   * option is laid over these by name).
+   */
+  readonly configSidecars: SidecarDefinition[];
 }
 
 /**
@@ -229,6 +235,7 @@ export async function resolveDesktopCapabilities(
         false,
     ...origin,
     ...(config?.spa?.proxy ? { proxy: config.spa.proxy } : {}),
+    configSidecars: launchSidecars((desktop as { sidecars?: unknown } | undefined)?.sidecars),
   };
 
   if (!caps) return { capabilities: [], ...base };
@@ -257,6 +264,14 @@ function resolveAppOrigin(raw: unknown, identifier: string | undefined): string 
   const idError = desktopAppIdentifierError(identifier);
   if (idError) throw new Error(`desktop: invalid desktop.app.identifier: ${idError}`);
   return parsed.value.origin;
+}
+
+/** `desktop.sidecars` for the runtime: the shared validation, failing fast at launch. */
+function launchSidecars(raw: unknown): SidecarDefinition[] {
+  if (raw === undefined) return [];
+  const problem = sidecarListError(raw);
+  if (problem) throw new Error(`desktop: desktop.sidecars${problem}`);
+  return raw as SidecarDefinition[];
 }
 
 /** `desktop.app.deepLinks` for the runtime: the shared validation, failing fast at launch. */

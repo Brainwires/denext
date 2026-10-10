@@ -102,6 +102,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
+    "  denext desktop add sidecar --name api --entry server/main.mjs --node-modules server/node_modules\n" +
+    "                                         Run a backend next to the window (desktop.sidecars)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
     "                                         Sign a full-app update (archive + app-update.json)\n" +
     "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +

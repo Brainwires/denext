@@ -22,6 +22,7 @@ import {
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../desktop/deno-flags.ts";
+import { sidecarListError } from "../desktop/sidecar.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -361,6 +362,27 @@ function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void 
   }
 }
 
+/**
+ * `desktop.sidecars`: each definition (the runtime's own checks), unique names, one `proxy` at
+ * most, and a `proxy: true` sidecar needs `spa.proxy` (its prefixes).
+ */
+function validateDesktopSidecars(sidecars: unknown, spaProxy: unknown, fail: Fail): void {
+  if (sidecars === undefined) return;
+  const problem = sidecarListError(sidecars);
+  if (problem) {
+    const at = /^\[(\d+)\] /.exec(problem);
+    if (at) fail(`desktop.sidecars[${at[1]}]`, problem.slice(at[0].length));
+    fail("desktop.sidecars", problem.trim());
+  }
+  const proxied = (sidecars as { name: string; proxy?: boolean }[]).find((s) => s.proxy === true);
+  if (proxied && spaProxy === undefined) {
+    fail(
+      "desktop.sidecars",
+      `"${proxied.name}" sets proxy: true, which needs spa.proxy (the prefixes to forward)`,
+    );
+  }
+}
+
 /** `desktop.update.autoConfirm`: a boolean (the other `desktop.update` keys are checked at package). */
 function validateDesktopUpdate(update: unknown, fail: Fail): void {
   const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
@@ -441,7 +463,11 @@ function validateDesktopLinux(linux: unknown, fail: Fail): void {
   }
 }
 
-function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
+function validateDesktop(
+  desktop: DenextConfig["desktop"],
+  spaProxy: unknown,
+  fail: Fail,
+): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
     fail("desktop", "must be an object");
@@ -454,6 +480,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
   validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
+  validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
@@ -1270,7 +1297,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);
   validateMobile(config.mobile, fail);
-  validateDesktop(config.desktop, fail);
+  validateDesktop(config.desktop, config.spa?.proxy, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);
   validateReactNative(config, fail);
   validateRouting(config, fail);

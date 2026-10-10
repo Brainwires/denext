@@ -34,6 +34,8 @@
 //     next launch is rolled back and refused from then on. No privilege escalation: an install the user cannot
 //     write (`/Applications` owned by root, Program Files) is `install_not_writable`.
 
+import { killSidecarsNow } from "./sidecar-registry.ts";
+
 /** Why a full-app update step refused (the runtime's codes, plus `unsupported`). */
 export type AppUpdateErrorCode =
   /** The runtime has no `Deno.desktop.updater` (not a Deno Desktop app, or the stock runtime). */
@@ -339,6 +341,9 @@ export async function downloadAppUpdate(
  * the new version, which `runDesktop` confirms once its window has loaded (or, with
  * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
+ * The app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open; to give
+ * them their graceful shutdown, `await stopSidecars()` (from `denext/desktop`) before calling it.
+ *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
  *   request and the helper stands down, leaving the app as it was.
@@ -348,6 +353,7 @@ export function installAppUpdateAndRelaunch(
   options: { force?: boolean } = {},
 ): { quitting: boolean } {
   const updater = requireUpdater();
+  killSidecarsNow();
   try {
     return updater.applyAndRelaunch(options.force === true ? { force: true } : {});
   } catch (err) {

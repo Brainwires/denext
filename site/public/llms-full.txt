@@ -528,7 +528,18 @@ package from any host under the pinned runtime; macOS apps package on a Mac. `de
 `dev` warn and use the stock runtime when `deno` is not 2.9.7 (`DENO_BIN` points them at a 2.9.7
 binary); `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
 a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
-`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit, sidecar }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop({ sidecars })`,
+`defineSidecar`) — `run: { module }` runs in a worker of the app's own runtime (no second binary;
+`nodeModules` bundles a Node backend at packaging, native addons + `external` copied beside it),
+`run: { exec }` spawns a program (one JSON line on stdin; exit on stdin EOF). `port: "auto"`, `ready`
+(`http` / `stdout` / `signal` / `probe`), `restart` (backoff, `maxAttempts`), `shutdown.graceMs`,
+`secrets` (`"$random"`), `bootstrap`, `expose`, `logs`, `proxy: true` (points `spa.proxy` at it),
+`permissions` (baked). In the module: `globalThis.denextSidecar` (`port`, `bootstrap`, `secrets`,
+`ready()`, `onShutdown`); `import.meta.main` is false. `app.sidecar(name)` (`status`, `onStatus`,
+`restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
+`sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
+--node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
@@ -1163,7 +1174,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
 - `interface ViewToken<T>` — One row as onViewableItemsChanged reports it (React Native's ViewToken).
-- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; "none" opts out):
+- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; "none" opts out):
 - `interface VirtualItem` — One positioned row of UseVirtualListResult.items.
 - `VirtualList: (props: VirtualListProps<T>) => VNode` — A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.
 - `type VirtualListAlign = start | center | end | auto` — Where a row lands in the viewport when scrolled to ("auto": the least movement).
@@ -2055,6 +2066,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/lazy`
 
 - `bootResumability(registry: Map<string, unknown>, eager?: boolean, islandsIn?: IslandPayload[], signalStateIn?: Record<string, unknown>): void` — Boot the deferred half of resumability: install delegated qrl dispatch (so serialized data-dnx-h handlers run without hydration), then register every island wrapper for deferred per-island hydration. The generated Flight entry dynamically imports and calls this only when a page carries lazy islands or resumable handlers, so non-resumable apps bundle none of it.
+- `resumeEvent(target: unknown, eventType: string, event: unknown): ResumeResult` — Handle a delegated event: a qrl dispatches without mounting; otherwise, if the target sits in a pending client:interaction island, resume that island synchronously and replay the event so the just-attached real handler fires.
+- `type ResumeResult = qrl | resumed | none` — The outcome of resumeEvent.
 
 ### `denext/desktop`
 
@@ -2069,6 +2082,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>` — The formats built when neither --format nor desktop.installers.<os> names any.
 - `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
+- `defineSidecar<D>(definition: D): D` — Declare a sidecar with its type checked (an identity function, for runDesktop({ sidecars })).
 - `DESKTOP_APP_CONFIG_FILE: .deno-desktop/app.json` — Where the runtime looks for the embedded origin + identifier, relative to the project root.
 - `DESKTOP_APP_ORIGIN_ENV: DENO_DESKTOP_APP_ORIGIN` — The env var the denext-pinned runtime publishes the page origin in (myapp://app).
 - `DESKTOP_BASELINE_FLAGS: typeOperator` — The permissions every packaged desktop binary needs regardless of capabilities, and which the per-capability flags widen rather than replace: - --allow-net=127.0.0.1,localhost: runDesktop binds loopback and any spa.proxy targets a loopback backend, so the distributed binary can't reach the wider network. - --allow-read (broad): serve the embedded out/ AND the per-user OS app-support directory — a path only known on the end-user's machine, so it can't be baked; the runtime's fs/sqlite caps confine what the page can actually reach. - --allow-env (broad): PORT plus the app's own environment.
@@ -2095,7 +2109,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopExportEnv(os: DesktopOs): Record<string, string>` — The environment of a package run's deno task export: the TARGET OS's platform (windows when cross-packaging from a Mac), so the export resolves its .windows / .desktop files, not the host's.
 - `desktopHasTool(cmd: string): Promise<boolean>` — Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.
 - `desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>` — The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists, else one derived from the app's own icon (deriveDesktopIcon: the web manifest, the apple-touch-icon, … into .deno-desktop/; none: no icon, and deno desktop uses its default). Paths are relative to the project.
-- `desktopIncludeArgs(entryUrl: string): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
+- `desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
 - `type DesktopInstallerFormat = indexedAccess` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: typeOperator, add?: typeOperator): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
@@ -2155,6 +2169,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).
 - `interface RunDesktopOptions` — Options for runDesktop (and createDesktopHandler): where to serve the static export from, an optional loopback reverse proxy and request escape hatch, the signed self-updater, the enabled capability bridge, the app-support directory, and whether the loopback OAuth endpoint is enabled. The generated desktop.ts entry spreads resolveDesktopCapabilities into it.
 - `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
+- `interface SidecarDefinition` — One sidecar. Data-only fields can live in desktop.sidecars (denext.config.ts); probe, bootstrap and secrets as functions only in runDesktop({ sidecars }), which also overrides a config entry of the same name field by field.
+- `interface SidecarExit` — How one run of a sidecar ended.
+- `type SidecarExposedValue = string | number | boolean | null` — A value a sidecar shares with the page (SidecarDefinition.expose).
+- `interface SidecarHandle` — The handle runDesktop's sidecar(name) returns.
+- `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
+- `type SidecarLogs = inherit | file | both | none` — Where a sidecar's output goes: "inherit" (default: the app's stderr, each line prefixed [sidecar:<name>]), "file" (<app data>/logs/sidecar-<name>.log, rotated at 5 MB), "both", or "none".
+- `interface SidecarPermissions` — The Deno permissions a sidecar needs, as --allow-* scopes (baked into the packaged app).
+- `interface SidecarReady` — What makes a sidecar ready: every check given must pass. Without any it is ready once started.
+- `interface SidecarRestart` — When a sidecar that ended is started again, and how fast.
+- `type SidecarRun = object | object` — What runs: a module in the app's runtime, or a program.
+- `interface SidecarShutdown` — How a sidecar is stopped.
+- `type SidecarState = idle | starting | ready | backoff | stopping | stopped | failed` — A sidecar's lifecycle state.
+- `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
+- `stopSidecars(): Promise<void>` — Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left.
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
 - `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
@@ -2213,6 +2241,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopWsUrl(): string | undefined` — The pinned runtime's WebSocket relay URL (ws://127.0.0.1:<port>/.deno-desktop-relay/<token>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path to it (desktopWebSocketUrl does), and don't hand it to other code.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
 - `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap: an extension's name (its handlers emit the events it declares with ctx.emit), or a built-in capability that emits events (today only the echo diagnostic's pong). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
+- `onSidecarStatus(name: string, handler: (status: SidecarStatus) => void): () => void` — Call handler with the sidecar's status on every change (a status emitted before the page subscribed is delivered once it does). Off desktop it does nothing.
+- `restartSidecar(name: string): Promise<SidecarStatus>` — Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt count), e.g. from a "Restart backend" button after it failed.
+- `sidecarInfo(name: string): Promise<SidecarInfo>` — What the page may know about a sidecar: its state, loopback port and url, and the values its definition exposes (expose, e.g. a per-launch token the page presents to it).
+- `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
+- `type SidecarState = idle | starting | ready | backoff | stopping | stopped | failed` — A sidecar's lifecycle state.
+- `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
+- `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
 
 ### `denext/mobile`
 

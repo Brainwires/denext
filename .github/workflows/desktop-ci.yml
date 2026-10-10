@@ -26,7 +26,8 @@
 #   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
 #      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`); and a packaged app whose import map
 #      names local modules by absolute path still runs once those sources are moved away
-#      (`scripts/ci/desktop-relocation-smoke.ts`).
+#      (`scripts/ci/desktop-relocation-smoke.ts`); and on Linux a packaged app's sidecars run, restart
+#      and end with it (`scripts/ci/desktop-sidecar-smoke.ts`).
 #   5. Cross-OS packaging on the pinned runtime: `denext desktop package --target-os windows` from
 #      Linux (webview and CEF) and macOS, `--target-os linux` from macOS and Windows. Each bundle's
 #      launcher and every native binary in it are the target's (PE / ELF magic and machine), the
@@ -107,6 +108,7 @@ on:
       - "scripts/desktop-pin-runtime.ts"
       - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-*.ts"
+      - "scripts/ci/_packaged-app.ts"
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
       - "tests/integration/scaffold.test.ts"
@@ -434,6 +436,11 @@ jobs:
       - name: Packaged app with absolute import-map targets, sources moved (macOS)
         if: runner.os == 'macOS'
         run: deno run -A scripts/ci/desktop-relocation-smoke.ts
+      # desktop.sidecars in a packaged app: a bundled Node-style backend in a worker (served, restarted
+      # after an uncaught error on the same port) and an embedded program, neither outliving the app.
+      - name: Packaged app with sidecars (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-sidecar-smoke.ts
 
   # The installer jobs package examples/native with a deep-link scheme added (and, on Windows, two
   # versions), so each installer has a scheme to register and the .msi an upgrade to perform.

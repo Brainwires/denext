@@ -11,11 +11,12 @@
 // `desktop.capabilities.<key>` value is written; everything else keeps its bytes. A key already
 // present is left as the user wrote it.
 
-import { basename, fromFileUrl, join } from "@std/path";
+import { basename, fromFileUrl, isAbsolute, join } from "@std/path";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
+import type { SidecarDefinition } from "../desktop/sidecar.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -395,6 +396,8 @@ interface DesktopFlagConfig {
     readonly update?: { readonly manifestUrl?: unknown; readonly hosts?: unknown };
     /** Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`. */
     readonly app?: { readonly deepLinks?: unknown };
+    /** Sidecars: their own `permissions`, and what running them takes. */
+    readonly sidecars?: unknown;
   };
   readonly spa?: {
     readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
@@ -460,6 +463,65 @@ function bakeableSets(
   return { run, ffi, sys };
 }
 
+/** The `desktop.sidecars` entries of a config (an invalid value reads as none). */
+function configSidecars(cfg: DesktopFlagConfig): SidecarDefinition[] {
+  const raw = cfg.desktop?.sidecars;
+  return Array.isArray(raw) ? raw.filter((d) => typeof d === "object" && d !== null) : [];
+}
+
+/** Whether a program path is one of the project's files (relative, with a folder part). */
+function isProjectProgram(exec: string): boolean {
+  return /[\\/]/.test(exec) && !isAbsolute(exec);
+}
+
+/**
+ * What the sidecars need baked in, as one permission set: each one's own `permissions`; a program
+ * (`run.exec`) its `--allow-run` (unscoped for one of the project's files: the packaged app runs
+ * it from a copy in the app's cache folder, which also needs `--allow-write`); a log file
+ * `--allow-write`.
+ *
+ * @param sidecars The sidecars.
+ * @returns The permissions, merged like `desktop.extraPermissions`.
+ */
+export function sidecarPermissionSet(sidecars: readonly SidecarDefinition[]): DesktopPermissionSet {
+  const out: Record<string, Set<string>> = {};
+  for (const d of sidecars) {
+    for (const [kind, values] of sidecarNeeds(d)) {
+      const set = out[kind] ??= new Set();
+      for (const v of values) set.add(v);
+    }
+  }
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v].sort()]));
+}
+
+/** One sidecar's needs as `[kind, values]`: its `permissions`, its program, its log file. */
+function sidecarNeeds(d: SidecarDefinition): Array<[string, readonly string[]]> {
+  const needs = Object.entries(d.permissions ?? {}).filter(
+    (e): e is [string, readonly string[]] => Array.isArray(e[1]),
+  );
+  const exec = (d.run as { exec?: unknown } | undefined)?.exec;
+  if (typeof exec === "string") {
+    const embedded = isProjectProgram(exec);
+    needs.push(["run", [embedded ? "*" : exec]]);
+    if (embedded) needs.push(["write", ["$CACHE"]]);
+  }
+  if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA"]]);
+  return needs;
+}
+
+/** Two permission sets as one (each kind's values unioned). */
+function mergePermissionSets(
+  a: DesktopPermissionSet,
+  b: DesktopPermissionSet,
+): DesktopPermissionSet {
+  const out: Record<string, string[]> = {};
+  for (const kind of PERMISSION_KINDS) {
+    const values = [...new Set([...(a[kind] ?? []), ...(b[kind] ?? [])])];
+    if (values.length > 0) out[kind] = values;
+  }
+  return out;
+}
+
 /**
  * The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the
  * least-privilege replacement for `-A` in the package scripts — derived from the WHOLE project
@@ -488,7 +550,11 @@ function bakeableSets(
  */
 export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
-  const extra: DesktopPermissionSet = cfg.desktop?.extraPermissions ?? {};
+  // `desktop.extraPermissions` and what the sidecars need, baked the same way.
+  const extra = mergePermissionSets(
+    cfg.desktop?.extraPermissions ?? {},
+    sidecarPermissionSet(configSidecars(cfg)),
+  );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
 
   // net: baseline loopback + a non-loopback spa.proxy host + extraPermissions.net, as ONE flag.
@@ -517,7 +583,8 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
       : [];
 
   return [
-    `--allow-net=${[...net].sort().join(",")}`,
+    // `"*"` (a sidecar or `extraPermissions` that talks to any host) is the unscoped flag.
+    net.has("*") ? "--allow-net" : `--allow-net=${[...net].sort().join(",")}`,
     "--allow-read",
     "--allow-env",
     ...(needsWrite ? ["--allow-write"] : []),
@@ -580,7 +647,7 @@ function configExtensionPaths(config: unknown): string[] {
  * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
  * argv.
  */
-export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
+export async function desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]> {
   let config: unknown;
   try {
     const mod = await import(new URL("../denext.config.ts", entryUrl).href);
@@ -590,10 +657,54 @@ export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
   }
   const includes = configExtensionPaths(config).flatMap((p) => ["--include", p]);
   const projectUrl = new URL("../", entryUrl);
-  const importMap = projectUrl.protocol === "file:"
-    ? await desktopImportMapArgsFor(fromFileUrl(projectUrl))
+  const local = projectUrl.protocol === "file:";
+  const importMap = local ? await desktopImportMapArgsFor(fromFileUrl(projectUrl)) : [];
+  const sidecars = local
+    ? await desktopSidecarIncludeArgs(fromFileUrl(projectUrl), config, os)
     : [];
-  return [...includes, ...importMap];
+  return [...includes, ...sidecars, ...importMap];
+}
+
+/** The bundler's module, imported by a computed specifier so `deno desktop` never embeds esbuild. */
+const SIDECAR_BUNDLER = "./desktop-sidecar-bundle.ts";
+
+/**
+ * The `--include`s of `desktop.sidecars`: a Node backend's bundle (built now, see
+ * `desktop-sidecar-bundle.ts`), a module sidecar's module, and a program sidecar's file when it is
+ * one of the project's (a relative path).
+ *
+ * @param projectDir The project root.
+ * @param config The project config.
+ * @param os The OS packaged for (default: the host's).
+ * @returns The args.
+ */
+export async function desktopSidecarIncludeArgs(
+  projectDir: string,
+  config: unknown,
+  os?: DesktopOs,
+): Promise<string[]> {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const sidecars = configSidecars(cfg);
+  if (sidecars.length === 0) return [];
+  // Typed locally: even a type-only reference would put esbuild in importers' module graphs.
+  const bundler = await import(new URL(SIDECAR_BUNDLER, import.meta.url).href) as {
+    bundleDesktopSidecars(
+      projectDir: string,
+      config: unknown,
+      os?: DesktopOs,
+    ): Promise<Array<{ dir: string }>>;
+  };
+  const reports = await bundler.bundleDesktopSidecars(projectDir, config, os);
+  const args = reports.flatMap((r) => ["--include", r.dir]);
+  for (const d of sidecars) {
+    const run = d.run as { module?: unknown; nodeModules?: unknown; exec?: unknown };
+    if (typeof run.module === "string" && run.nodeModules === undefined) {
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(run.module)) args.push("--include", run.module);
+    } else if (typeof run.exec === "string" && isProjectProgram(run.exec)) {
+      args.push("--include", run.exec);
+    }
+  }
+  return args;
 }
 
 /**

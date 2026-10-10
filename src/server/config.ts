@@ -989,6 +989,17 @@ export interface DesktopConfig {
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
+   * Backends the app runs and supervises next to its window, as an Electron app spawns its server:
+   * `{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second
+   * binary; a Node backend with `nodeModules` is bundled at packaging, its native addons copied),
+   * `{ name, run: { exec } }` spawns a program. Each gets a loopback port (`port: "auto"`), is
+   * started once the window's server is up, checked for readiness (`ready`), restarted with backoff
+   * after a crash (`restart`), stopped with a grace period (`shutdown`) and ended with the app.
+   * `proxy: true` points `spa.proxy` at one. Functions (`ready.probe`, a computed `bootstrap` or
+   * `secrets`) go in `runDesktop({ sidecars })` instead. `denext desktop add sidecar` writes one.
+   */
+  sidecars?: DesktopSidecarConfig[];
+  /**
    * Whether the web inspector (DevTools) can be opened in the window: F12, the context menu,
    * Safari's Develop menu and remote debugging. Default: on in `denext desktop dev` (always) and
    * `denext desktop run`, OFF in a packaged app — set `true` to ship an inspectable build. The
@@ -1073,6 +1084,98 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/**
+ * One {@link DesktopConfig.sidecars} entry: a backend the app runs and supervises (the data form of
+ * `defineSidecar` from `denext/desktop`, whose `runDesktop({ sidecars })` also takes functions and a
+ * `bootstrap` value).
+ */
+export interface DesktopSidecarConfig {
+  /** A unique name: lower-case letters, digits and `-` (`"server"`). */
+  name: string;
+  /** What runs: a module in a worker of the app's runtime, or a program (exactly one of them). */
+  run: DesktopSidecarRunConfig;
+  /** Arguments (`process.argv.slice(2)`, or the program's argv); `{port}` becomes the port. */
+  args?: string[];
+  /** Environment variables (a module sidecar's own `process.env` copy; a program's environment). */
+  env?: Record<string, string>;
+  /** A program's working directory (relative to the app's data folder, or absolute). */
+  cwd?: string;
+  /** A loopback port: `"auto"` picks a free one at launch (kept across restarts), or a number. */
+  port?: "auto" | number;
+  /** The environment variable the port is published under (default `PORT`). */
+  portEnv?: string;
+  /**
+   * Values only the sidecar sees (`denextSidecar.secrets`, or a program's first stdin line), never
+   * in its environment or argv; `"$random"` is 32 random bytes, new each launch.
+   */
+  secrets?: Record<string, string>;
+  /** When it counts as ready; every check given must pass (none: once started). */
+  ready?: DesktopSidecarReadyConfig;
+  /** When an ended sidecar is started again, and how fast. */
+  restart?: DesktopSidecarRestartConfig;
+  /** How it is stopped. */
+  shutdown?: DesktopSidecarShutdownConfig;
+  /** Where its output goes: the app's stderr (default), a log file in the app's data folder, both, or nowhere. */
+  logs?: "inherit" | "file" | "both" | "none";
+  /** Make `spa.proxy` forward to its port (one sidecar at most). */
+  proxy?: boolean;
+  /** Values the page reads with `sidecarInfo(name)`; `"$secret:<NAME>"` exposes a secret. */
+  expose?: Record<string, string>;
+  /** What it needs beyond the app's baseline permissions, baked into the packaged app. */
+  permissions?: DesktopExtraPermissions;
+}
+
+/**
+ * {@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with
+ * `nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.
+ */
+export interface DesktopSidecarRunConfig {
+  /** The module, relative to the project. */
+  module?: string;
+  /** Its `node_modules` folder: a Node backend, bundled at packaging. */
+  nodeModules?: string;
+  /** Packages copied whole rather than bundled (loaded with `require()` at run time). */
+  external?: string[];
+  /** Further entry modules it starts itself (worker scripts), relative to the module. */
+  entries?: string[];
+  /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
+  exec?: string;
+}
+
+/** {@link DesktopSidecarConfig.shutdown}. */
+export interface DesktopSidecarShutdownConfig {
+  /** How long it may take to finish when stopped before it is ended (default 5 000 ms). */
+  graceMs?: number;
+}
+
+/** {@link DesktopSidecarConfig.ready}. */
+export interface DesktopSidecarReadyConfig {
+  /** A path polled on its port until it answers 2xx (`"/health"`). */
+  http?: string;
+  /** A regular expression a line of its output must match. */
+  stdout?: string;
+  /** It calls `globalThis.denextSidecar.ready()` itself (a module sidecar). */
+  signal?: boolean;
+  /** How long a start may take (default 30 000 ms). */
+  timeoutMs?: number;
+  /** How often `http` is retried (default 100 ms). */
+  intervalMs?: number;
+}
+
+/** {@link DesktopSidecarConfig.restart}. */
+export interface DesktopSidecarRestartConfig {
+  /** `"crash"` (default): after a failure; `"always"`: after any end; `"never"`. */
+  on?: "crash" | "always" | "never";
+  /** The first retry's delay, doubled each time (default 500 ms). */
+  backoffMs?: number;
+  /** The longest delay (default 30 000 ms). */
+  maxBackoffMs?: number;
+  /** Consecutive failed starts before it is given up (default 5). */
+  maxAttempts?: number;
+  /** A run that stays ready this long resets the count (default 30 000 ms). */
+  resetAfterMs?: number;
 }
 
 /** {@link DesktopConfig.linux}: Linux launch settings of the packaged app. */

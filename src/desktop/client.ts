@@ -46,6 +46,8 @@ export {
 } from "./bridge-client.ts";
 // Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
 export { desktopWebSocketUrl, desktopWsUrl } from "./ws-origin.ts";
+import type { SidecarInfo, SidecarStatus } from "./sidecar.ts";
+export type { SidecarInfo, SidecarState, SidecarStatus } from "./sidecar.ts";
 
 /** The operating system a Deno Desktop app runs on, as Deno spells it (`Deno.build.os`). */
 export type DesktopOs =
@@ -283,4 +285,62 @@ export async function claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLink
     );
   }
   return await desktopRpc<ClaimDeepLinkSchemeResult>("deepLinks", "claim", { scheme });
+}
+
+/**
+ * The status of one of the app's sidecars (`desktop.sidecars`): its state (`starting`, `ready`,
+ * `backoff`, `failed`, …), port, attempts and how its last run ended.
+ *
+ * @param name The sidecar's name.
+ * @returns The status. Rejects `not_found` for a name the app does not declare, and `unavailable`
+ * off desktop or in an app without sidecars.
+ */
+export async function sidecarStatus(name: string): Promise<SidecarStatus> {
+  return await desktopRpc<SidecarStatus>("sidecars", "status", { name });
+}
+
+/**
+ * Call `handler` with the sidecar's status on every change (a status emitted before the page
+ * subscribed is delivered once it does). Off desktop it does nothing.
+ *
+ * @param name The sidecar's name.
+ * @param handler Called with each status.
+ * @returns A function that unsubscribes.
+ * @example
+ * ```ts
+ * import { onSidecarStatus } from "denext/desktop/client";
+ *
+ * const stop = onSidecarStatus("server", (s) => setBanner(s.state === "ready" ? null : s.state));
+ * ```
+ */
+export function onSidecarStatus(
+  name: string,
+  handler: (status: SidecarStatus) => void,
+): () => void {
+  return subscribeDesktopEvent("sidecars", "status", (data) => {
+    const status = data as SidecarStatus;
+    if (status?.name === name) handler(status);
+  });
+}
+
+/**
+ * Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt
+ * count), e.g. from a "Restart backend" button after it `failed`.
+ *
+ * @param name The sidecar's name.
+ * @returns Its status once it is starting again.
+ */
+export async function restartSidecar(name: string): Promise<SidecarStatus> {
+  return await desktopRpc<SidecarStatus>("sidecars", "restart", { name }, { timeoutMs: 120_000 });
+}
+
+/**
+ * What the page may know about a sidecar: its state, loopback `port` and `url`, and the values its
+ * definition exposes (`expose`, e.g. a per-launch token the page presents to it).
+ *
+ * @param name The sidecar's name.
+ * @returns The info.
+ */
+export async function sidecarInfo(name: string): Promise<SidecarInfo> {
+  return await desktopRpc<SidecarInfo>("sidecars", "info", { name });
 }

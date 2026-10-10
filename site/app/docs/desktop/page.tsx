@@ -2488,6 +2488,112 @@ export default defineDesktopExtension({
         this way, and its window test checks it on all three OSes along with every other capability.
       </p>
 
+      <h2 id="desktop-sidecars">Sidecars: a backend next to the window</h2>
+      <p>
+        An Electron app often spawns its own server and talks to it from the window. A denext
+        desktop app declares such a backend in <code>desktop.sidecars</code> (or{" "}
+        <code>runDesktop({"{ sidecars }"})</code>), and the runtime runs and supervises it: a
+        loopback port, a readiness check, restarts with backoff after a crash, a graceful stop, and
+        an end with the app however the app ends.
+      </p>
+      <ul>
+        <li>
+          <code>run: {"{ module }"}</code> runs a module{" "}
+          <strong>inside the app&apos;s own Deno runtime</strong>, in a dedicated worker with Node
+          compatibility. No second binary ships (a Deno CLI would add about 100 MB), and the worker
+          cannot outlive the app. A Node backend names its{" "}
+          <code>nodeModules</code>: the package scripts and <code>denext desktop run</code>{" "}
+          bundle it into <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
+          (every npm import inlined), copy the packages that carry a native addon (only the target
+          OS&apos;s prebuilds) and those listed in <code>external</code>{" "}
+          beside it, and embed the folder in the app. <code>node:sea</code> answers{" "}
+          <code>isSea() === false</code>.
+        </li>
+        <li>
+          <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
+          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
+          embedded and run from a copy in the app&apos;s cache folder. It gets the sidecar&apos;s
+          variables, and one JSON line on stdin (
+          <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
+          as the app runs, so a program that exits on end-of-file never outlives it.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: { proxy: { target: "http://127.0.0.1:3773", prefixes: ["/api", "/ws"] } },
+desktop: {
+  sidecars: [{
+    name: "server",
+    run: {
+      module: "apps/server/dist/main.mjs",
+      nodeModules: "apps/server/node_modules",
+      external: ["playwright-core"], // loaded with require() at run time, or reads its own files
+    },
+    args: ["--port", "{port}"],
+    env: { MODE: "desktop" },
+    port: "auto",                    // a free loopback port per launch, kept across restarts
+    secrets: { TOKEN: "$random" },   // never in env or argv; 32 random bytes per launch
+    expose: { token: "$secret:TOKEN" }, // what sidecarInfo() hands the page
+    ready: { http: "/health", timeoutMs: 30_000 },
+    restart: { on: "crash", backoffMs: 500, maxAttempts: 5, resetAfterMs: 30_000 },
+    shutdown: { graceMs: 5_000 },
+    logs: "both",                    // the app's stderr and <app data>/logs/sidecar-server.log
+    proxy: true,                     // spa.proxy now forwards to this sidecar's port
+    permissions: { ffi: ["*"], run: ["git"], net: ["api.example.com"] },
+  }],
+},`}
+      </Code>
+      <p>
+        <code>
+          denext desktop add sidecar --name server --entry apps/server/dist/main.mjs --node-modules
+          apps/server/node_modules [--ready /health] [--proxy]
+        </code>{" "}
+        writes such an entry (with <code>permissions.ffi</code> when the <code>node_modules</code>
+        {" "}
+        holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
+      </p>
+      <p>
+        Inside a module sidecar, <code>process.argv.slice(2)</code> is its <code>args</code>,{" "}
+        <code>process.env</code> holds its <code>env</code> and the port (<code>PORT</code>, or{" "}
+        <code>portEnv</code>) in its own copy (the app&apos;s environment is unchanged), and{" "}
+        <code>globalThis.denextSidecar</code> carries <code>name</code>, <code>port</code>,{" "}
+        <code>bootstrap</code> (what an Electron app passes on an extra file descriptor),{" "}
+        <code>secrets</code>, <code>ready()</code> (for{" "}
+        <code>ready: {"{ signal: true }"}</code>) and <code>onShutdown(fn)</code>{" "}
+        (run, with the process&apos;s <code>SIGTERM</code>{" "}
+        listeners, when it is stopped). It is imported, not run as the main module, so{" "}
+        <code>import.meta.main</code> is{" "}
+        <code>false</code>: start the server unconditionally, or when{" "}
+        <code>globalThis.denextSidecar</code> is set. An uncaught error, <code>process.exit()</code>
+        {" "}
+        and a hang end or are ended in the worker only; a V8 out-of-memory abort and a crash inside
+        a native addon end the whole app (they would in Electron&apos;s main process too: give such
+        a backend a separate program).
+      </p>
+      <p>
+        The app controls them from <code>desktop.ts</code> (<code>app.sidecar("server")</code>:{" "}
+        <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}
+        <code>whenReady</code>; <code>stopSidecars()</code> before{" "}
+        <code>installAppUpdateAndRelaunch()</code>{" "}
+        gives them their graceful stop, and the install ends whatever is left), and the page from
+        {" "}
+        <code>denext/desktop/client</code>, token-gated like every bridge call:
+      </p>
+      <Code lang="ts">
+        {`import { onSidecarStatus, restartSidecar, sidecarInfo } from "denext/desktop/client";
+
+const { url, values } = await sidecarInfo("server"); // http://127.0.0.1:<port>, { token }
+const stop = onSidecarStatus("server", (s) => setBanner(s.state === "ready" ? null : s.state));
+await restartSidecar("server"); // after it gave up (state "failed")`}
+      </Code>
+      <p>
+        A module sidecar runs with the app&apos;s permissions (one process):{" "}
+        <code>permissions</code> is baked into the package like{" "}
+        <code>desktop.extraPermissions</code>, and a program of the project bakes an unscoped{" "}
+        <code>--allow-run</code>{" "}
+        (it runs from the cache folder, whose path is only known on the user&apos;s machine).
+      </p>
+
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>
       <p>
         <code>denext desktop run</code>, <code>dev</code>, <code>package</code> and the scaffolded

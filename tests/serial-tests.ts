@@ -90,4 +90,7 @@ export const SERIAL_SOURCES: Readonly<
 /** src modules that change process-wide state without making a test that reaches them serial. */
 export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/fumadocs-mdx-worker.ts": "the entry point of its own `deno run` child process",
+  "src/build/desktop.ts":
+    "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
+    "that declares sidecars, after its own server took it; no test sets or reads that variable",
 };

@@ -10,6 +10,34 @@ and this project adheres to
 
 ### Added
 
+- **Sidecars: a Deno Desktop app runs and supervises its own backend** (`desktop.sidecars`,
+  `runDesktop({ sidecars })`, `defineSidecar` from `denext/desktop`), as an Electron app spawns its
+  server. `run: { module }` runs the module in a dedicated worker of the app's own Deno runtime with
+  Node compatibility: no second binary ships, and the worker cannot outlive the app. A Node backend
+  (`nodeModules`) is bundled at packaging and by `denext desktop run` / `dev` into
+  `.deno-desktop/sidecars/<name>/` (npm imports inlined; packages with a native addon, only the
+  target OS's prebuilds, and `external` ones copied beside it and loaded with `require`; ES-module
+  ones bundled in place; `node:sea` stubbed) and embedded in the app. `run: { exec }` spawns a
+  program (a project file is embedded and run from a copy in the app's cache folder), which gets
+  `{name, port, bootstrap, secrets}` as one JSON line on stdin and an open stdin for as long as the
+  app lives. Each sidecar gets a loopback port (`port: "auto"`, kept across restarts; `{port}` in
+  `args`, `PORT` in its environment), readiness checks (`ready.http` / `stdout` / `signal` /
+  `probe`), restarts after a crash with doubling backoff up to `maxAttempts` (`resetAfterMs` after
+  a good run), a graceful stop (`shutdown.graceMs`: `denextSidecar.onShutdown` handlers and
+  `SIGTERM` listeners, then terminate / `SIGKILL`), per-launch `secrets` (`"$random"`) and a
+  `bootstrap` value delivered in memory (never in env or argv), `expose`d values for the page,
+  `logs` to the app's stderr and/or a rotated file, and `proxy: true` to point `spa.proxy` at it
+  (requests wait while it starts or restarts). The host handle `app.sidecar(name)` (`status`,
+  `onStatus`, `restart`, `stop`, `whenReady`) and `stopSidecars()`; the page side
+  `sidecarStatus`, `onSidecarStatus`, `restartSidecar` and `sidecarInfo` in
+  `denext/desktop/client` (token-gated). Sidecars end with the app, and before a full-app update is
+  installed. `permissions` are baked into the package scripts' least-privilege flags (an
+  `--allow-net` of `"*"` now bakes the unscoped flag). `denext desktop add sidecar --name <n>
+  --entry <module> [--node-modules <dir>] | --exec <program> [--ready <path>] [--proxy]` writes
+  one. Under denext's pinned runtime the window's server takes the runtime's in-process page
+  transport (`DENO_SERVE_ADDRESS`), which each isolate's first server would otherwise claim again;
+  `runDesktop` clears it once that server is up. A Linux packaged-app CI test covers serving, a
+  crash restart and orphan safety.
 - **`headerBackButtonDisplayMode` screen option** (`"default" | "generic" | "minimal"`) on
   `denext/navigation`'s native stacks (`StackLayout`, `StackView`, `HistoryStack`) and React
   Navigation native-stack / expo-router `screenOptions` in React Native mode. `"minimal"` draws the
