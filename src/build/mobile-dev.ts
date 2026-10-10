@@ -38,6 +38,7 @@ import {
 
 export { capacitorConfigFile } from "./capacitor-config.ts";
 import { withPlistDefault, withPlistDictTrue } from "./mobile-native-config.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** A dev server `mobile dev` started or attached to. */
 export interface MobileDevServer {
@@ -126,7 +127,7 @@ async function* nativeCopies(root: string): AsyncGenerator<{
   config: Record<string, unknown>;
 }> {
   for (const [rel, platform] of Object.entries(NATIVE_PLATFORM)) {
-    const text = await Deno.readTextFile(join(root, rel)).catch(() => null);
+    const text = await Deno.readTextFile(nativeJoin(root, rel)).catch(() => null);
     const config = text === null ? null : jsonObject(text);
     if (text !== null && config !== null) yield { rel, platform, text, config };
   }
@@ -147,7 +148,7 @@ export async function enableSessionWebDebugging(root: string): Promise<string[]>
       : {};
     if (block[DEBUG_KEY] === true) continue;
     config[platform] = { ...block, [DEBUG_KEY]: true };
-    await Deno.writeTextFile(join(root, rel), sameLayoutJson(text, config));
+    await Deno.writeTextFile(nativeJoin(root, rel), sameLayoutJson(text, config));
     changed.push(rel);
   }
   return changed;
@@ -176,7 +177,7 @@ export async function pinSessionPlatforms(root: string): Promise<string[]> {
     }
     if (url === server.url) continue;
     config.server = { ...server, url };
-    await Deno.writeTextFile(join(root, rel), sameLayoutJson(text, config));
+    await Deno.writeTextFile(nativeJoin(root, rel), sameLayoutJson(text, config));
     changed.push(rel);
   }
   return changed;
@@ -287,13 +288,13 @@ function backupTargets(root: string, backup: unknown): BackupTargets {
   const { plist: plistEntry, native: nativeEntries } = backup as Record<string, unknown>;
   const files = [config];
   if (plistEntry !== undefined) {
-    const plist = backedUp(root, plistEntry, (path) => path === join(root, IOS_INFO_PLIST));
+    const plist = backedUp(root, plistEntry, (path) => path === nativeJoin(root, IOS_INFO_PLIST));
     if (!plist) throw bad;
     files.push(plist);
   }
   if (nativeEntries === undefined) return { files, native: [] };
   if (!Array.isArray(nativeEntries)) throw bad;
-  const isNative = (path: string) => NATIVE_CONFIGS.some((name) => path === join(root, name));
+  const isNative = (path: string) => NATIVE_CONFIGS.some((name) => path === nativeJoin(root, name));
   const native = nativeEntries.map((entry) => backedUp(root, entry, isNative));
   if (native.some((entry) => entry === null)) throw bad;
   return { files, native: native as BackedUpFile[] };
@@ -432,7 +433,7 @@ function restoreDebugFlag(
 async function scrubNativeConfigs(root: string, backedUpNative: BackedUpFile[]): Promise<string[]> {
   const written: string[] = [];
   for (const name of NATIVE_CONFIGS) {
-    const path = join(root, name);
+    const path = nativeJoin(root, name);
     let text: string;
     try {
       text = await Deno.readTextFile(path);
@@ -460,7 +461,7 @@ async function nativeOriginals(root: string): Promise<BackedUpFile[]> {
   const entries: BackedUpFile[] = [];
   for (const file of NATIVE_CONFIGS) {
     try {
-      entries.push({ file, original: await Deno.readTextFile(join(root, file)) });
+      entries.push({ file, original: await Deno.readTextFile(nativeJoin(root, file)) });
     } catch {
       // not generated yet (no `cap add` for that platform)
     }
@@ -559,6 +560,7 @@ export async function restoreMobileDevSession(
   root: string,
   deps: Pick<MobileDevDeps, "run" | "log">,
 ): Promise<void> {
+  await loadNativeDirs(root);
   const result = await restoreMobileDev(root);
   for (const line of restoreLines(result)) deps.log(line);
   if (result.restored.length + result.scrubbed.length > 0) await copyAfterRestore(deps, root);
@@ -579,7 +581,7 @@ async function plistEdit(
   root: string,
   log: (line: string) => void,
 ): Promise<{ backup: BackedUpFile; edited: string } | null> {
-  const original = await readPlist(join(root, IOS_INFO_PLIST));
+  const original = await readPlist(nativeJoin(root, IOS_INFO_PLIST));
   if (original === null) return null;
   const edited = withLocalNetworkAccess(original);
   if (edited === null) {
@@ -612,7 +614,7 @@ async function applyDevSession(
   await Deno.mkdir(join(root, ".denext"), { recursive: true });
   await Deno.writeTextFile(backupPath(root), JSON.stringify(backup));
   await Deno.writeTextFile(file, edited);
-  if (plist) await Deno.writeTextFile(join(root, IOS_INFO_PLIST), plist.edited);
+  if (plist) await Deno.writeTextFile(nativeJoin(root, IOS_INFO_PLIST), plist.edited);
   return plist !== null;
 }
 
@@ -624,7 +626,9 @@ async function applyDevSession(
 async function androidCleartextWarning(root: string, url: string): Promise<string | null> {
   let manifest: string;
   try {
-    manifest = await Deno.readTextFile(join(root, "android/app/src/main/AndroidManifest.xml"));
+    manifest = await Deno.readTextFile(
+      nativeJoin(root, "android/app/src/main/AndroidManifest.xml"),
+    );
   } catch {
     return null;
   }
@@ -643,7 +647,7 @@ async function androidCleartextWarning(root: string, url: string): Promise<strin
  * `.xcodeproj` (Swift Package Manager projects have no workspace). */
 async function xcodeProject(root: string): Promise<string> {
   try {
-    await Deno.stat(join(root, "ios/App/App.xcworkspace"));
+    await Deno.stat(nativeJoin(root, "ios/App/App.xcworkspace"));
     return "ios/App/App.xcworkspace";
   } catch {
     return "ios/App/App.xcodeproj";
@@ -704,6 +708,7 @@ function nextSteps(server: MobileDevServer, ios: IosSession): string {
  */
 export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDeps): Promise<void> {
   const root = resolve(options.cwd, options.dir ?? ".");
+  await loadNativeDirs(root);
   const healed = await restoreCapacitorConfig(root);
   if (healed) deps.log(`  restored ${healed} from an earlier session that did not exit cleanly`);
   const file = await capacitorConfigFile(root);

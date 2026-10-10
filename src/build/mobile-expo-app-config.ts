@@ -18,7 +18,6 @@
 // with the reason, never written (the shared writers refuse it too). `denext migrate --from expo` suggests this capability when there is something
 // to carry.
 
-import { join } from "@std/path";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import { readExpoAppConfig } from "./expo-app-config.ts";
 import {
@@ -28,6 +27,7 @@ import {
   withManifestPermission,
   withPlistDefault,
 } from "./mobile-native-config.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
@@ -106,7 +106,7 @@ async function edit(
   report: NativeInstallReport,
 ): Promise<void> {
   if (edits.length === 0) return;
-  const text = await readText(join(dir, rel));
+  const text = await readText(nativeJoin(dir, rel));
   if (text === undefined) {
     const platform = rel.split("/")[0];
     report.skipped.push(
@@ -123,7 +123,7 @@ async function edit(
   }
   if (next === text) report.unchanged.push(rel);
   else {
-    await Deno.writeTextFile(join(dir, rel), next);
+    await Deno.writeTextFile(nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
 }
@@ -138,6 +138,7 @@ async function edit(
 export async function addExpoAppConfigToProject(
   { dir }: NativeInstallOptions,
 ): Promise<NativeInstallReport> {
+  await loadNativeDirs(dir);
   const report: NativeInstallReport = {
     written: [],
     upgraded: [],

@@ -23,6 +23,7 @@ import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel } from "./config-edit.ts";
 import { type ExpoIcons, readExpoAppConfig, readJsonFile } from "./expo-app-config.ts";
 import { decodeImage, parseHexColor } from "./png-raster.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Which rule picked the icon. */
 export type IconSourceKind =
@@ -837,7 +838,7 @@ const CAPACITOR_DEFAULTS: Record<string, readonly string[]> = {
 async function isTemplateFile(root: string, rel: string): Promise<boolean> {
   let bytes: Uint8Array;
   try {
-    bytes = await Deno.readFile(join(root, rel));
+    bytes = await Deno.readFile(nativeJoin(root, rel));
   } catch {
     return false;
   }
@@ -861,6 +862,7 @@ export async function capacitorPlaceholders(
   platform: "ios" | "android",
   what: "icon" | "splash",
 ): Promise<string[]> {
+  await loadNativeDirs(root);
   const out: string[] = [];
   for (const rel of Object.keys(CAPACITOR_DEFAULTS)) {
     if (!rel.startsWith(`${platform}/`)) continue;

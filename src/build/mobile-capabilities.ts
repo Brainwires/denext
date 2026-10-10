@@ -53,6 +53,7 @@ import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
 import { YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
+import { loadNativeDirs, nativeJoin, nativeRel } from "./capacitor-native-dirs.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -400,11 +401,13 @@ async function wireQuickActions({ dir }: NativeInstallOptions): Promise<NativeIn
     manual: [],
     skipped: [],
   };
-  const scene = await readText(join(dir, IOS_SCENE_DELEGATE));
+  const scene = await readText(nativeJoin(dir, IOS_SCENE_DELEGATE));
   const rel = scene === undefined ? IOS_APP_DELEGATE : IOS_SCENE_DELEGATE;
-  const text = scene ?? await readText(join(dir, IOS_APP_DELEGATE));
+  const text = scene ?? await readText(nativeJoin(dir, IOS_APP_DELEGATE));
   if (text === undefined) {
-    const hint = await exists(join(dir, "ios")) ? "wire it by hand" : "run `npx cap add ios` first";
+    const hint = await exists(nativeJoin(dir, "ios"))
+      ? "wire it by hand"
+      : "run `npx cap add ios` first";
     report.skipped.push(`iOS: no ${IOS_SCENE_DELEGATE} or ${IOS_APP_DELEGATE} (${hint}).`);
     return report;
   }
@@ -420,7 +423,7 @@ async function wireQuickActions({ dir }: NativeInstallOptions): Promise<NativeIn
   } else if (next === text) {
     report.unchanged.push(rel);
   } else {
-    await Deno.writeTextFile(join(dir, rel), next);
+    await Deno.writeTextFile(nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
   return report;
@@ -1379,7 +1382,7 @@ function configureAll(
 async function entitlementsTarget(
   root: string,
 ): Promise<{ files: string[]; wired: boolean; unresolved: string[] }> {
-  const pbxproj = await readText(join(root, PBXPROJ)) ?? "";
+  const pbxproj = await readText(nativeJoin(root, PBXPROJ)) ?? "";
   const values = [
     ...new Set(appEntitlementValues(pbxproj).map((v) => v.trim().replace(/^\$\(SRCROOT\)\//, ""))),
   ];
@@ -1427,7 +1430,7 @@ async function entitlementSteps(
   target: { wired: boolean; unresolved: string[] },
   edits: readonly NativeEdit[],
 ): Promise<string[]> {
-  if (edits.length === 0 || !(await exists(join(root, PBXPROJ)))) return [];
+  if (edits.length === 0 || !(await exists(nativeJoin(root, PBXPROJ)))) return [];
   const labels = edits.map((e) => e.label).join("; ");
   const steps = target.unresolved.map((v) =>
     `the Xcode project also signs with ${v}, which denext cannot resolve: add ${labels} to it`
@@ -1444,7 +1447,7 @@ async function entitlementSteps(
  * nothing to point at by hand.
  */
 async function appTargetWired(root: string): Promise<boolean> {
-  const pbxproj = await readText(join(root, PBXPROJ));
+  const pbxproj = await readText(nativeJoin(root, PBXPROJ));
   return pbxproj === undefined || appEntitlementValues(pbxproj).length > 0;
 }
 
@@ -1464,7 +1467,7 @@ async function withResolvedEntitlementsNote(plan: CapabilityPlan): Promise<Capab
 async function missingFiles(root: string, required: Record<string, string>): Promise<string[]> {
   const warnings: string[] = [];
   for (const [rel, warning] of Object.entries(required)) {
-    if (await exists(join(root, dirname(rel))) && !(await exists(join(root, rel)))) {
+    if (await exists(nativeJoin(root, dirname(rel))) && !(await exists(nativeJoin(root, rel)))) {
       warnings.push(warning);
     }
   }
@@ -1538,6 +1541,7 @@ export async function planMobileCapabilities(
     capabilityOptions(opts, names, table),
   );
   const root = await findProject(opts.cwd, opts.dir);
+  await loadNativeDirs(root);
   const core = await capacitorCore(root);
   const mismatched = names.filter((n) => table[n].capacitorMajor !== core.major);
   if (mismatched.length > 0) {
@@ -1663,15 +1667,16 @@ async function editNative(
   create?: string,
 ): Promise<void> {
   if (edits.length === 0) return;
-  const path = join(report.plan.root, rel);
+  const path = nativeJoin(report.plan.root, rel);
+  const shown = nativeRel(report.plan.root, rel);
   const platform = rel.split("/")[0];
   const existing = await readText(path);
   const canCreate = create !== undefined && await exists(dirname(path));
   if (existing === undefined && !canCreate) {
-    const hint = await exists(join(report.plan.root, platform))
+    const hint = await exists(nativeJoin(report.plan.root, platform))
       ? "add the entries by hand"
       : `run \`npx cap add ${platform}\` first`;
-    report.skipped.push(`${platform === "ios" ? "iOS" : "Android"}: no ${rel} (${hint}).`);
+    report.skipped.push(`${platform === "ios" ? "iOS" : "Android"}: no ${shown} (${hint}).`);
     return;
   }
   const text = existing ?? create!;
@@ -1679,12 +1684,12 @@ async function editNative(
   for (const edit of edits) next = next === null ? null : edit.apply(next);
   if (next === null) {
     const labels = edits.map((e) => e.label).join("; ");
-    report.skipped.push(`${rel}: could not add ${labels}; add them by hand.`);
+    report.skipped.push(`${shown}: could not add ${labels}; add them by hand.`);
     return;
   }
-  if (next === existing) return void report.unchanged.push(rel);
+  if (next === existing) return void report.unchanged.push(shown);
   await Deno.writeTextFile(path, next);
-  report.written.push(rel);
+  report.written.push(shown);
 }
 
 /** Push each of `items` onto `list` unless it is already there. */

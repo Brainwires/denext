@@ -10,7 +10,6 @@
 // in place; anything customised is left alone and reported as a one-line manual step. Running
 // it twice changes nothing.
 
-import { join } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   manifestMetaDataValue,
@@ -36,6 +35,7 @@ import {
   wireBridgeViewController,
   writeTemplates,
 } from "./mobile-native-install.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Options for {@linkcode addOtaToProject}. */
 export interface AddOtaOptions extends NativeInstallOptions {
@@ -248,23 +248,23 @@ async function installIos(inst: Installer): Promise<void> {
       "(re-run with --force to replace the file).",
   });
   const { [BRIDGE_VC_FILE]: _bridge, ...plugin } = OTA_IOS_FILES;
-  await writeTemplates(inst, join(root, IOS_APP), plugin, OTA_TEMPLATES);
+  await writeTemplates(inst, nativeJoin(root, IOS_APP), plugin, OTA_TEMPLATES);
   notePartialUpgrade(inst, "iOS", mark);
   await inst.edit(
-    join(root, PBXPROJ),
+    nativeJoin(root, PBXPROJ),
     (t) => addSourceFiles(t, Object.keys(OTA_IOS_FILES), { randomId: inst.opts.randomId }).text,
   );
   await wireBridgeViewController(inst);
   await embedPublicKey(
     inst,
-    join(root, IOS_APP, "Info.plist"),
+    nativeJoin(root, IOS_APP, "Info.plist"),
     "iOS",
     { inject: withPlistPublicKey, has: plistHasPublicKey },
     `add the string key ${IOS_PUBLIC_KEY_KEY} (the base64 public key) to the top-level dict.`,
   );
   await pinOrigins(
     inst,
-    join(root, IOS_APP, "Info.plist"),
+    nativeJoin(root, IOS_APP, "Info.plist"),
     "iOS",
     {
       inject: (plist, value) => withPlistString(plist, IOS_ORIGINS_KEY, value, true),
@@ -278,19 +278,19 @@ async function installAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   const root = inst.opts.dir;
   const mark = markReport(inst);
-  await writeTemplates(inst, join(root, ANDROID_OTA_DIR), OTA_ANDROID_FILES, OTA_TEMPLATES);
+  await writeTemplates(inst, nativeJoin(root, ANDROID_OTA_DIR), OTA_ANDROID_FILES, OTA_TEMPLATES);
   notePartialUpgrade(inst, "Android", mark);
   await registerInMainActivity(inst, "ota");
   await embedPublicKey(
     inst,
-    join(root, "android", "app", "src", "main", "AndroidManifest.xml"),
+    nativeJoin(root, "android", "app", "src", "main", "AndroidManifest.xml"),
     "Android",
     { inject: withManifestPublicKey, has: manifestHasPublicKey },
     `add <meta-data android:name="${ANDROID_PUBLIC_KEY_META}" android:value="<base64 public key>" /> inside <application>.`,
   );
   await pinOrigins(
     inst,
-    join(root, "android", "app", "src", "main", "AndroidManifest.xml"),
+    nativeJoin(root, "android", "app", "src", "main", "AndroidManifest.xml"),
     "Android",
     {
       inject: (manifest, value) => withManifestMetaData(manifest, ANDROID_ORIGINS_META, value),
@@ -314,6 +314,7 @@ async function installAndroid(inst: Installer): Promise<void> {
  * @returns What was written, what was already current, and what is left to do by hand.
  */
 export async function addOtaToProject(opts: AddOtaOptions): Promise<AddOtaReport> {
+  await loadNativeDirs(opts.dir);
   const inst: Installer = new NativeInstaller(opts, {
     written: [],
     upgraded: [],

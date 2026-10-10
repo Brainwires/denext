@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext mobile` commands use Capacitor's `ios.path` and `android.path`.** `mobile add`, `sync`,
+  `build`, `doctor`, `assets`, `privacy`, `fingerprint` and `dev` looked for the native projects in
+  `ios/App` and `android/app` whatever the Capacitor config said, so a project that keeps them
+  elsewhere (`ios: { path: "native/ios" }`) was reported as having no iOS project, or had files
+  written to a new `ios/` folder Xcode never builds. They now read both paths from
+  `capacitor.config.*` (defaults `ios` and `android`; a path outside the project is ignored) and
+  name the real files in their reports. A native fingerprint keeps Capacitor's default names for
+  its inputs, so moving the folders alone does not change it.
 - **"Maximum update depth exceeded" names the component, as React's error does.** A component
   that calls its own setter unconditionally while it renders threw the error without saying which
   component it was; it now names it (`<Looper> repeatedly schedules an update during render`), and

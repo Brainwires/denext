@@ -28,6 +28,7 @@ import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop
 import { readJson } from "../../build/json-edit.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -152,7 +153,10 @@ async function routeConformance(
  */
 async function privacyManifestCheck(dir: string): Promise<Check | null> {
   try {
-    if (!(await capacitorConfigFile(dir)) || !(await Deno.stat(join(dir, "ios"))).isDirectory) {
+    if (
+      !(await capacitorConfigFile(dir)) ||
+      !(await Deno.stat(join(dir, (await loadNativeDirs(dir)).ios))).isDirectory
+    ) {
       return null;
     }
   } catch {

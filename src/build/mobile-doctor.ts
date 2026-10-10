@@ -36,6 +36,7 @@ import {
   AUTH_SESSION_TEMPLATE_VERSION,
 } from "./auth-session-native-templates.ts";
 import { SETTINGS_TEMPLATE_VERSION } from "./settings-native-templates.ts";
+import { loadNativeDirs, nativeJoin, nativeRel } from "./capacitor-native-dirs.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -124,7 +125,7 @@ async function readConfigs(root: string): Promise<ConfigSource[]> {
     if (config) out.push({ label: posixRelative(root, file), config });
   }
   for (const rel of NATIVE_CONFIGS) {
-    const text = await readText(join(root, rel));
+    const text = await readText(nativeJoin(root, rel));
     const config = text === null ? null : await readCapacitorConfig(rel, text);
     if (config) out.push({ label: rel, config });
   }
@@ -133,7 +134,7 @@ async function readConfigs(root: string): Promise<ConfigSource[]> {
 
 /** Info.plist's top-level dict, or null when missing or unreadable. */
 async function readInfoPlist(root: string): Promise<PlistDict | null> {
-  const text = await readText(join(root, INFO_PLIST));
+  const text = await readText(nativeJoin(root, INFO_PLIST));
   if (text === null) return null;
   try {
     const node = parsePlist(text);
@@ -163,9 +164,9 @@ async function readMobileProject(root: string, appDir = root): Promise<MobilePro
     webDir: (await isDir(webDir)) ? webDir : null,
     webDirName,
     infoPlist: await readInfoPlist(root),
-    androidManifest: await readText(join(root, ANDROID_MANIFEST)),
-    hasIos: await isDir(join(root, "ios")),
-    hasAndroid: await isDir(join(root, "android")),
+    androidManifest: await readText(nativeJoin(root, ANDROID_MANIFEST)),
+    hasIos: await isDir(nativeJoin(root, "ios")),
+    hasAndroid: await isDir(nativeJoin(root, "android")),
   };
 }
 
@@ -267,12 +268,15 @@ const bridgeFrameGuard: Check = {
   id: "bridge-frame-guard",
   profiles: ["store", "release"],
   run: async (p) => {
-    const text = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
+    const text = await readText(nativeJoin(p.root, BRIDGE_VIEW_CONTROLLER));
     if (text === null || text.includes(FRAME_GUARD_CLASS)) return [];
     return [{
       check: "bridge-frame-guard",
       level: "error",
-      message: `${BRIDGE_VIEW_CONTROLLER} predates the main-frame guard: any iframe in the page ` +
+      message:
+        `${
+          nativeRel(p.root, BRIDGE_VIEW_CONTROLLER)
+        } predates the main-frame guard: any iframe in the page ` +
         "can post native plugin calls to every installed plugin",
       fix: "re-run `denext mobile add-ota` (with OTA) or the `denext mobile add` that wrote " +
         "it: an unedited file is upgraded, an edited one is kept (`--force` replaces it, or copy " +
@@ -302,7 +306,7 @@ async function nestedPage(webDir: string): Promise<string | null> {
 
 /** Every `MainActivity.java`/`.kt` of the Android app, as text. */
 async function mainActivities(root: string): Promise<string[]> {
-  const dir = join(root, "android/app/src/main/java");
+  const dir = nativeJoin(root, "android/app/src/main/java");
   if (!(await isDir(dir))) return [];
   const out: string[] = [];
   for await (
@@ -321,7 +325,7 @@ const ANDROID_EXPORT_ROUTES = "DenextExportRoutes";
 
 /** Whether the iOS bridge has the export router but not its path-traversal guard. */
 async function iosRouterLacksGuard(root: string): Promise<boolean> {
-  const bridge = await readText(join(root, BRIDGE_VIEW_CONTROLLER));
+  const bridge = await readText(nativeJoin(root, BRIDGE_VIEW_CONTROLLER));
   return bridge !== null && bridge.includes(IOS_EXPORT_ROUTER) &&
     !bridge.includes(IOS_EXPORT_ROUTER_GUARD);
 }
@@ -345,7 +349,7 @@ const exportRoutes: Check = {
     if (page === null) return unguarded ? [UNGUARDED_ROUTER] : [];
     const missing: string[] = [];
     if (p.hasIos) {
-      const bridge = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
+      const bridge = await readText(nativeJoin(p.root, BRIDGE_VIEW_CONTROLLER));
       if (bridge === null || !bridge.includes(IOS_EXPORT_ROUTER)) missing.push("iOS");
     }
     if (p.hasAndroid) {
@@ -427,7 +431,7 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
-        message: `${INFO_PLIST}: App Transport Security exception ${key}` +
+        message: `${nativeRel(p.root, INFO_PLIST)}: App Transport Security exception ${key}` +
           (key === "NSAllowsLocalNetworking" ? " (left by a `denext mobile dev` session?)" : ""),
         fix: "remove the exception (App Review asks for a justification of each) and use https",
       });
@@ -436,7 +440,7 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
-        message: `${ANDROID_MANIFEST}: android:usesCleartextTraffic="true"`,
+        message: `${nativeRel(p.root, ANDROID_MANIFEST)}: android:usesCleartextTraffic="true"`,
         fix: "remove it, or scope plain http to named hosts with a network security config",
       });
     }
@@ -452,7 +456,9 @@ const androidDebuggable: Check = {
       ? [{
         check: "android-debuggable",
         level: "error",
-        message: `${ANDROID_MANIFEST}: android:debuggable="true" (Play refuses debuggable uploads)`,
+        message: `${
+          nativeRel(p.root, ANDROID_MANIFEST)
+        }: android:debuggable="true" (Play refuses debuggable uploads)`,
         fix: "remove the attribute; Gradle sets it for debug builds only",
       }]
       : [],
@@ -588,7 +594,10 @@ const usageStrings: Check = {
         out.push({
           check: "usage-strings",
           level: "error",
-          message: `${INFO_PLIST} has no ${key}, which ${name} needs (iOS terminates the app ` +
+          message:
+            `${
+              nativeRel(p.root, INFO_PLIST)
+            } has no ${key}, which ${name} needs (iOS terminates the app ` +
             "when the permission is asked for, and review rejects it)",
           fix: `re-run \`denext mobile add ${name}\`, or add ${key} with a sentence saying why`,
         });
@@ -642,7 +651,7 @@ async function isFile(path: string): Promise<boolean> {
 
 /** Whether any `res/<prefix>*` folder holds a file starting with `name`. */
 async function androidRes(root: string, prefix: string, name: string): Promise<boolean> {
-  const res = join(root, "android/app/src/main/res");
+  const res = nativeJoin(root, "android/app/src/main/res");
   if (!(await isDir(res))) return false;
   for await (const dir of Deno.readDir(res)) {
     if (!dir.isDirectory || !dir.name.startsWith(prefix)) continue;
@@ -680,12 +689,16 @@ async function placeholderIcon(
 /** The iOS App Store icon: missing, or still the placeholder. */
 async function iosIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
   if (!p.hasIos) return [];
-  const icons = await catalogImages(join(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"));
+  const icons = await catalogImages(
+    nativeJoin(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset"),
+  );
   if (icons && icons.length > 0) return await placeholderIcon(p.root, "ios");
   return [{
     check: "app-icons",
     level: "error",
-    message: "ios/App/App/Assets.xcassets/AppIcon.appiconset has no icon image",
+    message: `${
+      nativeRel(p.root, "ios/App/App/Assets.xcassets/AppIcon.appiconset")
+    } has no icon image`,
     fix: ASSET_FIX,
   }];
 }
@@ -699,7 +712,7 @@ async function androidIconFindings(p: MobileProject): Promise<MobileDoctorFindin
   return [{
     check: "app-icons",
     level: "error",
-    message: "android/app/src/main/res has no mipmap*/ic_launcher icon",
+    message: `${nativeRel(p.root, "android/app/src/main/res")} has no mipmap*/ic_launcher icon`,
     fix: ASSET_FIX,
   }];
 }
@@ -717,10 +730,10 @@ const splash: Check = {
     const out: MobileDoctorFinding[] = [];
     if (p.hasIos) {
       const images = await catalogImages(
-        join(p.root, "ios/App/App/Assets.xcassets/Splash.imageset"),
+        nativeJoin(p.root, "ios/App/App/Assets.xcassets/Splash.imageset"),
       );
       const storyboard = await isFile(
-        join(p.root, "ios/App/App/Base.lproj/LaunchScreen.storyboard"),
+        nativeJoin(p.root, "ios/App/App/Base.lproj/LaunchScreen.storyboard"),
       );
       if (!storyboard && (!images || images.length === 0)) {
         out.push({
@@ -735,7 +748,7 @@ const splash: Check = {
       out.push({
         check: "splash",
         level: "warning",
-        message: "android/app/src/main/res has no drawable*/splash image",
+        message: `${nativeRel(p.root, "android/app/src/main/res")} has no drawable*/splash image`,
         fix: ASSET_FIX,
       });
     }
@@ -846,8 +859,8 @@ const DURABLE_STORE_USERS = ["@react-native-async-storage/async-storage", "react
 
 /** Whether the project has a durable native store: DenextStorage, or @capacitor-community/sqlite. */
 async function hasDurableStore(p: MobileProject): Promise<boolean> {
-  if (await isFile(join(p.root, IOS_STORAGE_PLUGIN))) return true;
-  if (await isFile(join(p.root, ANDROID_STORAGE_PLUGIN))) return true;
+  if (await isFile(nativeJoin(p.root, IOS_STORAGE_PLUGIN))) return true;
+  if (await isFile(nativeJoin(p.root, ANDROID_STORAGE_PLUGIN))) return true;
   return (await detectInstalledCapabilities(p.root, MOBILE_CAPABILITIES)).includes("sqlite");
 }
 
@@ -979,7 +992,9 @@ function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): bo
 async function otaPlatforms(p: MobileProject): Promise<(keyof typeof OTA_STORES)[]> {
   const platforms: (keyof typeof OTA_STORES)[] = [];
   for (const platform of ["iOS", "Android"] as const) {
-    if ((await readText(join(p.root, OTA_STORES[platform]))) !== null) platforms.push(platform);
+    if ((await readText(nativeJoin(p.root, OTA_STORES[platform]))) !== null) {
+      platforms.push(platform);
+    }
   }
   return platforms;
 }
@@ -1059,7 +1074,7 @@ function perOtaPlatform(
  */
 const otaReverify: Check = perOtaPlatform("ota-reverify", async (p, platform) => {
   for (const [file, marker] of OTA_REVERIFY_MARKERS[platform]) {
-    if ((await readText(join(p.root, file)))?.includes(marker)) continue;
+    if ((await readText(nativeJoin(p.root, file)))?.includes(marker)) continue;
     return {
       message: `${platform}: the over-the-air UI plugin predates re-verification: a downloaded ` +
         "UI is checked only when it arrives, so a file changed on the device afterwards is served",
@@ -1099,7 +1114,7 @@ async function templateGenerations(
 ): Promise<Map<string, number>> {
   const generations = new Map<string, number>();
   for (const file of files) {
-    const generation = templateGeneration(family, await readText(join(root, file)));
+    const generation = templateGeneration(family, await readText(nativeJoin(root, file)));
     if (generation !== null) generations.set(file.slice(file.lastIndexOf("/") + 1), generation);
   }
   return generations;
@@ -1264,7 +1279,7 @@ async function settingsPlatforms(p: MobileProject): Promise<[string, number][]> 
 async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
   const out: { path: string; text: string }[] = [];
   for (const base of ["android/app/src/main/java", "android/app/src/main/kotlin"]) {
-    const dir = join(root, base);
+    const dir = nativeJoin(root, base);
     if (!(await isDir(dir))) continue;
     for await (const e of walk(dir, { includeDirs: false, exts: [".java", ".kt"] })) {
       const rel = posixRelative(root, e.path);
@@ -1348,6 +1363,7 @@ export async function runMobileDoctor(opts: MobileDoctorOptions): Promise<Mobile
   if (!(await capacitorConfigFile(opts.root))) {
     throw new Error(`no Capacitor project (capacitor.config.*) in ${opts.root}`);
   }
+  await loadNativeDirs(opts.root);
   const project = await readMobileProject(opts.root, opts.appDir ?? opts.root);
   const checks: Check[] = [];
   for (const check of CHECKS) {

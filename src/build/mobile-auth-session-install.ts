@@ -7,7 +7,6 @@
 // mobile-native-install.ts). The callback scheme's Android intent filter is written by the
 // `auth-session` capability's `--scheme`, not here. Running it twice changes nothing.
 
-import { join } from "@std/path";
 import {
   AUTH_SESSION_ANDROID_FILES,
   AUTH_SESSION_IOS_FILES,
@@ -26,6 +25,7 @@ import {
   registerInMainActivity,
   writeTemplates,
 } from "./mobile-native-install.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Android package the plugin uses (kept apart from the app's own package). */
 const ANDROID_AUTH_DIR = "android/app/src/main/java/dev/denext/authsession";
@@ -41,7 +41,12 @@ async function installIos(inst: Installer): Promise<void> {
       "make capacitorDidLoad() call `bridge?.registerPluginInstance(DenextAuthSessionPlugin())` " +
       "after super.capacitorDidLoad().",
   });
-  await writeTemplates(inst, join(root, IOS_APP), AUTH_SESSION_IOS_FILES, AUTH_SESSION_TEMPLATES);
+  await writeTemplates(
+    inst,
+    nativeJoin(root, IOS_APP),
+    AUTH_SESSION_IOS_FILES,
+    AUTH_SESSION_TEMPLATES,
+  );
   const files = [BRIDGE_VC_FILE, ...Object.keys(AUTH_SESSION_IOS_FILES)];
   await compileIntoAppAndWireBridge(inst, files);
 }
@@ -50,7 +55,7 @@ async function installAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   await writeTemplates(
     inst,
-    join(inst.opts.dir, ANDROID_AUTH_DIR),
+    nativeJoin(inst.opts.dir, ANDROID_AUTH_DIR),
     AUTH_SESSION_ANDROID_FILES,
     AUTH_SESSION_TEMPLATES,
   );

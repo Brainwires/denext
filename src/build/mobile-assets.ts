@@ -32,6 +32,7 @@ import {
   silhouette,
   solid,
 } from "./png-raster.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Android's density buckets and their scale over mdpi. */
 const DENSITIES = [
@@ -330,8 +331,9 @@ async function supersededImages(
 ): Promise<string[]> {
   let images: unknown;
   try {
-    images = (JSON.parse(await Deno.readTextFile(join(root, contents))) as { images?: unknown })
-      .images;
+    images =
+      (JSON.parse(await Deno.readTextFile(nativeJoin(root, contents))) as { images?: unknown })
+        .images;
   } catch {
     return [];
   }
@@ -343,7 +345,9 @@ async function supersededImages(
     if (isPlainFileName(name) && !keep.includes(name)) names.add(name);
   }
   const out: string[] = [];
-  for (const name of names) if (await isFile(join(root, set, name))) out.push(`${set}/${name}`);
+  for (const name of names) {
+    if (await isFile(nativeJoin(root, set, name))) out.push(`${set}/${name}`);
+  }
   return out;
 }
 
@@ -554,7 +558,7 @@ function assetJobs(
 /** Whether `root/<dir>` exists as a directory. */
 async function hasDir(root: string, dir: string): Promise<boolean> {
   try {
-    return (await Deno.stat(join(root, dir))).isDirectory;
+    return (await Deno.stat(nativeJoin(root, dir))).isDirectory;
   } catch {
     return false;
   }
@@ -579,6 +583,7 @@ export async function generateMobileAssets(
     dryRun?: boolean;
   } = {},
 ): Promise<AssetsReport> {
+  await loadNativeDirs(root);
   const wanted = opts.platforms ?? ["ios", "android"];
   const platforms: AssetPlatform[] = [];
   for (const p of wanted) if (await hasDir(root, p)) platforms.push(p);
@@ -601,11 +606,11 @@ export async function generateMobileAssets(
   }
   if (!opts.dryRun) {
     for (const job of jobs) {
-      const path = join(root, job.path);
+      const path = nativeJoin(root, job.path);
       await Deno.mkdir(dirname(path), { recursive: true });
       await Deno.writeFile(path, await job.make());
     }
-    for (const path of removed) await Deno.remove(join(root, path));
+    for (const path of removed) await Deno.remove(nativeJoin(root, path));
   }
   const files = jobs.map(({ path, what, size }) => (size ? { path, what, size } : { path, what }));
   return { root, platforms, files, warnings, removed, dryRun: opts.dryRun === true };
