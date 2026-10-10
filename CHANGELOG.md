@@ -48,6 +48,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A component that stores a `useMemo` / `useCallback` result in state during render converges,
+  as in React, instead of throwing "Maximum update depth exceeded".** For each render-phase
+  re-render pass (a component calling its own setter while it renders), the memo's deps were
+  reset to the committed ones. Every pass then recomputed the memo, so a check like
+  `if (last !== merged) setLast(merged)` never held and the component looped. Memo cells now
+  keep the previous pass's value and deps, as React's re-render does. This crashed T3 Code's
+  Usage page.
 - **`<ViewTransition>` animates its nearest host nodes, whatever its children are, as React
   does.** Before, only a single host child was marked. A component child had to forward the
   config to its root element itself, and a Fragment, a list or several elements were passed

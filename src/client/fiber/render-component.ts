@@ -8,6 +8,7 @@ import {
   clientDispatcher,
   currentFiber,
   enterComponentRender,
+  HK_MEMO,
   hookIndex,
   renderPhaseUpdateScheduled,
   resetHookCursor,
@@ -62,12 +63,20 @@ function asyncClientComponentError(): Error {
  * past the baseline) are reset to a fresh-mount state so their mount effect re-queues on
  * the final pass. The three effect queues are cleared so only the final sub-render's
  * effects reach the commit.
+ *
+ * `useMemo` / `useCallback` cells are left as the previous pass wrote them: React's
+ * re-render reuses the work-in-progress hooks, so a memo whose deps did not change since
+ * the previous PASS returns the same value. Restoring the committed deps instead would
+ * recompute it every pass, and a component that stores that memo in state during render
+ * (`if (last !== merged) setLast(merged)`, React's "store information from previous
+ * renders") would see a new identity each pass and never converge.
  */
 function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
   setSuppressEffectQueue(false); // the discarded pass's queues are cleared below; re-queue
   const hooks = inst.hooks!;
   for (let i = 0; i < hooks.length; i++) {
     const c = hooks[i];
+    if (c.kind === HK_MEMO) continue; // keeps the previous pass's value and deps (see above)
     if (i < depsBaseline.length) {
       c.deps = depsBaseline[i]; // committed deps: re-queue iff changed vs the last commit
     } else {
