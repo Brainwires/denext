@@ -21,6 +21,14 @@ import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { SidecarDefinition } from "../src/desktop/sidecar.ts";
 import { workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { prepareSidecarModules } from "../src/desktop/sidecar-modules.ts";
+
+/** The bundle's archived packages, unpacked into a fresh cache folder. */
+async function unpacked(out: string, name: string): Promise<string> {
+  const root = await prepareSidecarModules(out, name, await Deno.makeTempDir());
+  assert(root, "the bundle has an archive");
+  return root;
+}
 
 /** Write `files` (path → text) under `root`. */
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
@@ -82,14 +90,20 @@ Deno.test("bundleDesktopSidecar: npm imports inlined, native and external packag
     assertEquals([...report.copied].sort(), ["extpkg", "nativedep", "nativepkg"]);
     assertEquals(report.warnings, []);
     const out = join(root, ".deno-desktop", "sidecars", "api");
+    assertEquals(
+      await Deno.stat(join(out, "node_modules")).then(() => true, () => false),
+      false,
+      "no node_modules tree is embedded: the packages are archived",
+    );
+    const mods = await unpacked(out, "api");
     const main = await Deno.readTextFile(join(out, "main.mjs"));
     assert(main.includes("hi from puredep"), "the pure dependency is inlined");
     assert(!main.includes("external data"), "the external package is not");
-    const prebuilds = [...Deno.readDirSync(join(out, "node_modules", "nativepkg", "prebuilds"))]
+    const prebuilds = [...Deno.readDirSync(join(mods, "node_modules", "nativepkg", "prebuilds"))]
       .map((e) => e.name);
     assertEquals(prebuilds, ["linux-x64"], "other OSes' prebuilt addons are left out");
     assertEquals(
-      await Deno.stat(join(out, "node_modules", "puredep")).then(() => true, () => false),
+      await Deno.stat(join(mods, "node_modules", "puredep")).then(() => true, () => false),
       false,
     );
 
@@ -97,7 +111,10 @@ Deno.test("bundleDesktopSidecar: npm imports inlined, native and external packag
     await Deno.rename(join(root, "server"), join(root, "server.moved"));
     const lines: string[] = [];
     let ready = 0;
-    const inst = await workerSidecarLauncher({ entry: toFileUrl(join(out, "main.mjs")).href })({
+    const inst = await workerSidecarLauncher({
+      entry: toFileUrl(join(out, "main.mjs")).href,
+      requireBase: join(mods, "sidecar.cjs"),
+    })({
       definition: SIDECAR,
       bootstrap: null,
       secrets: {},
@@ -127,7 +144,8 @@ Deno.test("bundleDesktopSidecar: windows keeps win32 prebuilds; a missing ffi gr
       definition: { ...SIDECAR, permissions: {} },
       os: "windows",
     });
-    const prebuilds = join(root, ".deno-desktop/sidecars/api/node_modules/nativepkg/prebuilds");
+    const mods = await unpacked(join(root, ".deno-desktop/sidecars/api"), "api");
+    const prebuilds = join(mods, "node_modules/nativepkg/prebuilds");
     assertEquals([...Deno.readDirSync(prebuilds)].map((e) => e.name), ["win32-x64"]);
     assertEquals(report.warnings.length, 1);
     assertMatch(report.warnings[0], /native addons \(nativepkg\).*ffi/);
@@ -393,6 +411,7 @@ Deno.test("bundleDesktopSidecar: scoped, ESM-only, .cjs and .mjs externals; othe
     };
     const report = await bundleDesktopSidecar({ projectDir: root, definition: def, os: "linux" });
     const out = join(root, ".deno-desktop/sidecars/edge");
+    const mods = await unpacked(out, "edge");
     assert(await Deno.stat(join(out, "worker.mjs")).then(() => true), "an extra entry is bundled");
     assertEquals([...report.natives].sort(), [
       "linuxnative",
@@ -406,9 +425,11 @@ Deno.test("bundleDesktopSidecar: scoped, ESM-only, .cjs and .mjs externals; othe
     assert(report.copied.includes("linuxnative"));
     assert(!report.copied.includes("macnative") && !report.copied.includes("notlinux"));
     assert(report.copied.includes("esmonly") && report.copied.includes("mjsmain"));
-    const esm = JSON.parse(await Deno.readTextFile(join(out, "node_modules/esmonly/package.json")));
+    const esm = JSON.parse(
+      await Deno.readTextFile(join(mods, "node_modules/esmonly/package.json")),
+    );
     assertEquals([esm.version, esm.type, esm.main], ["2.0.0", "module", "./index.mjs"]);
-    assert(await Deno.stat(join(out, "node_modules/cjsmain/main.cjs")).then(() => true));
+    assert(await Deno.stat(join(mods, "node_modules/cjsmain/main.cjs")).then(() => true));
     const warned = report.warnings.join("\n");
     assertMatch(warned, /external package notinstalled is not installed/);
     assertMatch(warned, /linuxnative needs gone, which is not installed/);
@@ -416,7 +437,10 @@ Deno.test("bundleDesktopSidecar: scoped, ESM-only, .cjs and .mjs externals; othe
 
     const lines: string[] = [];
     let ready = 0;
-    const inst = await workerSidecarLauncher({ entry: toFileUrl(join(out, "main.mjs")).href })({
+    const inst = await workerSidecarLauncher({
+      entry: toFileUrl(join(out, "main.mjs")).href,
+      requireBase: join(mods, "sidecar.cjs"),
+    })({
       definition: def,
       bootstrap: null,
       secrets: {},

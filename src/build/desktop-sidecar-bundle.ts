@@ -26,6 +26,7 @@ import {
   type SidecarDefinition,
 } from "../desktop/sidecar.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
+import { packSidecarModules } from "../desktop/sidecar-modules.ts";
 
 /** What {@linkcode bundleDesktopSidecar} wrote. */
 export interface SidecarBundleReport {
@@ -66,7 +67,8 @@ export default { isSea, getAsset, getRawAsset, getAssetAsBlob, getAssetKeys };
 /** `require`, `__filename` and `__dirname` for the bundle's CommonJS parts and copied packages. */
 const BANNER = 'import { createRequire as __denextCreateRequire } from "node:module";\n' +
   'import { fileURLToPath as __denextFileURLToPath } from "node:url";\n' +
-  "const require = __denextCreateRequire(import.meta.url);\n" +
+  // The sidecar's worker sets the `require` of its unpacked packages (see sidecar-modules.ts).
+  "const require = globalThis.__denextSidecarRequire ?? __denextCreateRequire(import.meta.url);\n" +
   "const __filename = __denextFileURLToPath(import.meta.url);\n" +
   'const __dirname = __filename.slice(0, Math.max(__filename.lastIndexOf("/"), __filename.lastIndexOf("\\\\")));\n';
 
@@ -554,14 +556,11 @@ async function bundleEsmCopies(
   }
 }
 
-/** The bytes of the bundle's own files and of the packages bundled in place. */
-async function bundleBytes(out: string, bundled: readonly string[]): Promise<number> {
+/** The bytes of the bundle's files (the archive included). */
+async function bundleBytes(out: string): Promise<number> {
   let bytes = 0;
   for await (const e of Deno.readDir(out)) {
     if (e.isFile) bytes += (await Deno.stat(join(out, e.name))).size;
-  }
-  for (const name of bundled) {
-    bytes += (await Deno.stat(join(out, "node_modules", ...name.split("/"), "index.mjs"))).size;
   }
   return bytes;
 }
@@ -608,14 +607,26 @@ export async function bundleDesktopSidecar(
   const plugin = sidecarPlugin(state);
   const build = (points: Record<string, string>, outdir: string, what: string) =>
     runEsbuild({ points, outdir, plugin, nodeModules, failure: `sidecar "${def.name}" (${what})` });
+  // The packages loaded at run time are staged as a `node_modules` tree, then archived (see
+  // sidecar-modules.ts): the compile must never see them as code.
+  const stage = join(out, ".modules");
   let bundled: string[];
   try {
     await build(entryPointsOf(entry, run.entries ?? []), out, run.module);
-    bundled = await bundleEsmCopies(state, out, build);
+    bundled = await bundleEsmCopies(state, stage, build);
   } finally {
     await esbuild.stop().catch(() => {});
   }
-  const copied = await copyPackages(state.toCopy, out, platform, state.warnings, new Set(bundled));
+  const copied = await copyPackages(
+    state.toCopy,
+    stage,
+    platform,
+    state.warnings,
+    new Set(bundled),
+  );
+  const names = [...bundled, ...copied.names];
+  if (names.length > 0) await packSidecarModules(stage, out);
+  await Deno.remove(stage, { recursive: true }).catch(() => {});
   if (state.natives.size > 0 && options.ffiGranted !== true) {
     state.warnings.push(
       `loads native addons (${[...state.natives].join(", ")}): add permissions: { ffi: ["*"] } ` +
@@ -625,9 +636,9 @@ export async function bundleDesktopSidecar(
   return {
     name: def.name,
     dir: relDir,
-    copied: [...bundled, ...copied.names],
+    copied: names,
     natives: [...state.natives],
-    bytes: await bundleBytes(out, bundled) + copied.bytes,
+    bytes: await bundleBytes(out),
     warnings: state.warnings,
   };
 }

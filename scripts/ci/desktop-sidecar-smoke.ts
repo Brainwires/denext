@@ -1,8 +1,15 @@
 // CI test of `desktop.sidecars` in a PACKAGED desktop app (Linux under Xvfb, macOS): a tiny app
 // with two sidecars, packaged with the scaffolded script on denext's pinned runtime, then launched.
 //
-// - `api`: a Node-style backend (`node:http`, an npm dependency from its own `node_modules`, so it
-//   is bundled into `.deno-desktop/sidecars/api/`) running in a worker of the app's own runtime,
+// The app has the shape of a real one: a root `package.json`, `pnpm-workspace.yaml` and
+// `node_modules` (so packaging runs with `--node-modules-dir=none`), and it is packaged through
+// `denext desktop package`.
+//
+// - `api`: a Node-style backend (`node:http`, an ES module npm dependency that is inlined, a real
+//   Node-API addon installed with npm (`@napi-rs/keyring`) and a native CommonJS package that
+//   re-exports a dependency the way TypeScript emits it (`__exportStar(require("dep"))`): both
+//   loaded with `require` at run time, so archived beside the bundle in
+//   `.deno-desktop/sidecars/api/`) running in a worker of the app's own runtime,
 //   on an `"auto"` loopback port, ready when `/health` answers. It must serve, survive an uncaught
 //   error by being restarted on the same port (the app stays up), and be gone with the app.
 // - `prog`: a program (a shell script of the project, embedded in the binary and run from a copy
@@ -22,9 +29,12 @@ import {
   packageApp,
   report,
   requireMacOrLinux,
+  run,
 } from "./_packaged-app.ts";
 
 const APP_NAME = "sidecar-smoke";
+/** The Node-API addon the backend loads. */
+const KEYRING = "1.3.0";
 const TIMEOUT_MS = Number(Deno.env.get("DESKTOP_SIDECAR_SMOKE_TIMEOUT_MS") ?? 120_000);
 
 requireMacOrLinux("desktop-sidecar-smoke");
@@ -44,6 +54,8 @@ const CONFIG = {
         ready: { http: "/health", timeoutMs: 20_000 },
         restart: { backoffMs: 200 },
         proxy: true,
+        // Node-API addons load from the app's cache folder.
+        permissions: { ffi: ["*"] },
       },
       { name: "prog", run: { exec: "./bin/prog.sh" }, args: ["--marker", "sidecar-smoke-prog"] },
     ],
@@ -76,18 +88,64 @@ async function writeApp(app: string, denext: string): Promise<void> {
       "});\n" +
       'app.sidecar("api").onStatus((s) => console.error(`smoke: api ${s.state}`));\n',
   );
+  // A real Node-API addon, installed as an app would (npm, its own platform package).
+  await Deno.mkdir(join(app, "sidecar"), { recursive: true });
+  await run(
+    [
+      "npm",
+      "install",
+      "--no-save",
+      "--no-package-lock",
+      "--prefix",
+      "sidecar",
+      `@napi-rs/keyring@${KEYRING}`,
+    ],
+    app,
+  );
   const files: Record<string, string> = {
     "sidecar/server.mjs": `import http from "node:http";
 import { shout } from "smoke-dep";
+import { createRequire } from "node:module";
+// As a backend loads a package itself, from its own module (not through the bundle's require).
+const { reexported } = createRequire(import.meta.url)("cjs-native");
+import { Entry } from "@napi-rs/keyring";
 const server = http.createServer((req, res) => {
   if (req.url === "/health") return res.end("ok");
   if (req.url === "/crash") { res.end("bye"); setTimeout(() => { throw new Error("smoke crash"); }, 20); return; }
-  res.end(JSON.stringify({ greeting: shout(process.env.GREETING), port: globalThis.denextSidecar.port }));
+  res.end(JSON.stringify({
+    greeting: shout(process.env.GREETING),
+    port: globalThis.denextSidecar.port,
+    cjs: reexported,
+    keyring: typeof Entry,
+  }));
 });
 server.listen(Number(process.env.PORT), "127.0.0.1");
 `,
-    "sidecar/package.json":
-      '{"name":"smoke-sidecar","type":"module","dependencies":{"smoke-dep":"1"}}',
+    "sidecar/package.json": JSON.stringify({
+      name: "smoke-sidecar",
+      type: "module",
+      dependencies: { "smoke-dep": "1", "cjs-native": "1", "@napi-rs/keyring": KEYRING },
+    }),
+    // Native (a gypfile) CommonJS, re-exporting a dependency through tslib-style __exportStar.
+    "sidecar/node_modules/cjs-native/package.json":
+      '{"name":"cjs-native","type":"commonjs","main":"./src/index.js","gypfile":true,"dependencies":{"cjs-inner":"1"}}',
+    "sidecar/node_modules/cjs-native/src/index.js": `"use strict";
+var __createBinding = (this && this.__createBinding) || function (o, m, k) {
+  Object.defineProperty(o, k, { enumerable: true, get: function () { return m[k]; } });
+};
+var __exportStar = (this && this.__exportStar) || function (m, exports) {
+  for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("cjs-inner"), exports);
+`,
+    "sidecar/node_modules/cjs-inner/package.json": '{"name":"cjs-inner","main":"i.js"}',
+    "sidecar/node_modules/cjs-inner/i.js": 'exports.reexported = "through __exportStar";\n',
+    // The workspace around the app.
+    "package.json": '{"name":"smoke-root","private":true}',
+    "pnpm-workspace.yaml": 'packages:\n  - "sidecar"\n',
+    "node_modules/left-pad/package.json": '{"name":"left-pad","version":"1.3.0","main":"i.js"}',
+    "node_modules/left-pad/i.js": "module.exports = (s) => s;\n",
     "sidecar/node_modules/smoke-dep/package.json":
       '{"name":"smoke-dep","version":"1.0.0","type":"module","exports":"./index.js"}',
     "sidecar/node_modules/smoke-dep/index.js":
@@ -163,7 +221,13 @@ try {
   if (!ready) throw new Error("the api sidecar never became ready");
   const port = Number(ready[1]);
   const first = await get(`http://127.0.0.1:${port}/`);
-  if (first?.text !== JSON.stringify({ greeting: "HELLO FROM THE SIDECAR", port })) {
+  const want = {
+    greeting: "HELLO FROM THE SIDECAR",
+    port,
+    cjs: "through __exportStar",
+    keyring: "function",
+  };
+  if (first?.text !== JSON.stringify(want)) {
     problems.push(`the api sidecar answered ${JSON.stringify(first)}`);
   }
   if (!await waitFor(/\[sidecar:prog\] prog got \{"name":"prog","port":null/)) {

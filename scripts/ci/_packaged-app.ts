@@ -56,8 +56,8 @@ export async function denextDenoJson(denext: string): Promise<{
 }
 
 /**
- * Package the app in `app` with the scaffolded script for this OS (regenerated from the current
- * template, no export) and return the executable to launch.
+ * Package the app in `app` with `denext desktop package` (the scaffolded script for this OS,
+ * regenerated from the current template; no export) and return the executable to launch.
  */
 export async function packageApp(app: string, appName: string): Promise<string> {
   const cli = join(ROOT, "cli.ts");
@@ -65,8 +65,11 @@ export async function packageApp(app: string, appName: string): Promise<string> 
     [Deno.execPath(), "run", "-A", cli, "desktop", "package", "--regenerate-scripts", "."],
     app,
   );
-  const script = Deno.build.os === "darwin" ? "package-macos.ts" : "package-linux.ts";
-  await run([Deno.execPath(), "run", "-A", join("scripts", script), "--no-export"], app);
+  // Through the verb, as an app packages: it picks the script's npm mode for the project.
+  await run(
+    [Deno.execPath(), "run", "-A", cli, "desktop", "package", ".", "--", "--no-export"],
+    app,
+  );
   // Linux: the bundle directory `dist/<name>-<label>` holds a launcher of the same name.
   const os = Deno.build.os as "darwin" | "linux";
   const bundle = os === "darwin"

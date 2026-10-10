@@ -2504,10 +2504,15 @@ export default defineDesktopExtension({
           cannot outlive the app. A Node backend names its{" "}
           <code>nodeModules</code>: the package scripts and <code>denext desktop run</code>{" "}
           bundle it into <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
-          (every npm import inlined), copy the packages that carry a native addon (only the target
-          OS&apos;s prebuilds) and those listed in <code>external</code>{" "}
-          beside it, and embed the folder in the app. <code>node:sea</code> answers{" "}
-          <code>isSea() === false</code>.
+          (every npm import inlined) and embed the folder in the app. The packages it loads with
+          {" "}
+          <code>require</code>{" "}
+          at run time (those that carry a native addon, with only the target OS&apos;s prebuilds,
+          and those listed in{" "}
+          <code>external</code>) travel as one archive beside it and are unpacked into the
+          app&apos;s cache folder on the sidecar&apos;s first start, once per version, where the
+          backend&apos;s own <code>createRequire(import.meta.url)</code> finds them too.{" "}
+          <code>node:sea</code> answers <code>isSea() === false</code>.
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}

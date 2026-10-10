@@ -15,9 +15,13 @@ and this project adheres to
   server. `run: { module }` runs the module in a dedicated worker of the app's own Deno runtime with
   Node compatibility: no second binary ships, and the worker cannot outlive the app. A Node backend
   (`nodeModules`) is bundled at packaging and by `denext desktop run` / `dev` into
-  `.deno-desktop/sidecars/<name>/` (npm imports inlined; packages with a native addon, only the
-  target OS's prebuilds, and `external` ones copied beside it and loaded with `require`; ES-module
-  ones bundled in place; `node:sea` stubbed) and embedded in the app. `run: { exec }` spawns a
+  `.deno-desktop/sidecars/<name>/` (npm imports inlined; `node:sea` stubbed) and embedded in the
+  app. The packages it loads with `require` at run time (those with a native addon, only the
+  target OS's prebuilds, and `external` ones; ES-module ones bundled in place) travel as one
+  archive beside it, unpacked into the app's cache folder on the sidecar's first start (once per
+  version, about 0.5 s for T3 Code's 78 MB), where Node's own resolution and native addons work and
+  the backend's own `createRequire(import.meta.url)` finds them: a `node_modules` tree embedded
+  as it is fails `deno desktop` under `--node-modules-dir=none` on a CommonJS re-export. `run: { exec }` spawns a
   program (a project file is embedded and run from a copy in the app's cache folder), which gets
   `{name, port, bootstrap, secrets}` as one JSON line on stdin and an open stdin for as long as the
   app lives. Each sidecar gets a loopback port (`port: "auto"`, kept across restarts; `{port}` in
@@ -76,6 +80,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop package` runs a workspace app's packaging script with npm packages from
+  Deno's cache.** The script was started as `deno run -A scripts/package-<os>.ts`; in a project
+  with a `package.json` / `node_modules` under `nodeModulesDir: "manual"` (a pnpm workspace) its
+  npm imports were looked for in `node_modules`, and Deno rewrote the workspace's root
+  `package.json` from `pnpm-workspace.yaml`. It now gets `--node-modules-dir=none` there, as the
+  script's own `deno desktop` run does.
 - **A component that stores a `useMemo` / `useCallback` result in state during render converges,
   as in React, instead of throwing "Maximum update depth exceeded".** For each render-phase
   re-render pass (a component calling its own setter while it renders), the memo's deps were

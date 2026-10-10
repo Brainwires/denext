@@ -18,7 +18,8 @@
  * @module
  */
 
-import { join, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { prepareSidecarModules } from "./sidecar-modules.ts";
 import { encodeBase64Url } from "@std/encoding/base64url";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import {
@@ -133,7 +134,8 @@ async function defaultLauncher(
   if ("module" in def.run) {
     const path = sidecarModulePath(def);
     const entry = /^[a-z][a-z0-9+.-]*:/i.test(path) ? path : new URL(path, base).href;
-    return workerSidecarLauncher({ entry });
+    if (def.run.nodeModules === undefined) return workerSidecarLauncher({ entry });
+    return bundledLauncher(def.name, entry, options.cacheDir);
   }
   const program = await resolveSidecarProgram(
     def.run.exec,
@@ -148,6 +150,35 @@ async function defaultLauncher(
     ? def.cwd
     : join(options.dataDir, def.cwd);
   return execSidecarLauncher({ program, ...(cwd ? { cwd } : {}) });
+}
+
+/**
+ * A bundled Node backend's launcher: its archived packages are unpacked into the cache folder on
+ * its first start (once per version), and its `require()` resolves from there.
+ */
+function bundledLauncher(
+  name: string,
+  entry: string,
+  cacheDir: string | undefined,
+): SidecarLauncher {
+  let modules: Promise<string | undefined> | undefined;
+  return async (ctx) => {
+    modules ??= (async () =>
+      await prepareSidecarModules(
+        dirname(fromFileUrl(entry)),
+        name,
+        cacheDir ?? await Deno.makeTempDir({ prefix: "denext-sidecar-" }),
+      ))();
+    let root: string | undefined;
+    try {
+      root = await modules;
+    } catch (err) {
+      modules = undefined; // retried on the next start
+      throw err;
+    }
+    const requireBase = root === undefined ? undefined : join(root, "sidecar.cjs");
+    return await workerSidecarLauncher({ entry, ...(requireBase ? { requireBase } : {}) })(ctx);
+  };
 }
 
 /** The largest log file before it is rotated to `.1`. */

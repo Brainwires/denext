@@ -58,6 +58,7 @@ import {
 } from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
+import { desktopNpmArgsFor } from "../../build/desktop-capabilities.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -522,7 +523,12 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     console.error(line);
   }
   const formatArgs = format && age.formats ? ["--format", format] : [];
-  await spawnDenoAndExit(["run", "-A", script, ...formatArgs, ...ctx.rest], dir);
+  // A project with a package.json / node_modules runs its script with npm packages from Deno's
+  // cache, as the script's own `deno desktop` does: in `nodeModulesDir: "manual"` (a pnpm
+  // workspace) the bundler's npm imports are not in node_modules, and Deno would rewrite the
+  // workspace's root package.json from pnpm-workspace.yaml.
+  const npmMode = (await desktopNpmArgsFor(dir)).filter((a) => a.startsWith("--node-modules-dir"));
+  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir);
 }
 
 /** What a packaging script predating denext 3.1 lacks. */

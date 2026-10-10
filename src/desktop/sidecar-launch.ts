@@ -32,6 +32,7 @@ import type { SidecarInstance, SidecarLauncher } from "./sidecar-supervisor.ts";
  * `exit`, `error`, `done` (shutdown handlers finished).
  */
 const SIDECAR_WORKER_WRAPPER = `import process from "node:process";
+import Module, { createRequire } from "node:module";
 const post = (m) => { try { self.postMessage(m); } catch { /* host gone */ } };
 const handlers = [];
 const decoder = new TextDecoder();
@@ -83,6 +84,17 @@ self.onmessage = async (e) => {
   if (m?.t === "shutdown") return void shutdown();
   if (m?.t !== "init") return;
   process.argv = [process.execPath, m.path, ...m.args];
+  if (m.requireBase) {
+    globalThis.__denextSidecarRequire = createRequire(m.requireBase);
+    // The backend's own createRequire(import.meta.url) resolves from the bundle: every lookup in
+    // this worker also searches the unpacked packages.
+    const extra = m.modulesPath;
+    const paths = Module._nodeModulePaths;
+    Module._nodeModulePaths = function (from) {
+      const found = paths.call(this, from);
+      return found.includes(extra) ? found : [...found, extra];
+    };
+  }
   try { process.env = { ...process.env, ...m.env }; } catch { /* keep the shared view */ }
   globalThis.denextSidecar = Object.freeze({
     name: m.name,
@@ -108,6 +120,11 @@ let wrapperUrl: string | undefined;
 export interface WorkerLauncherOptions {
   /** The module's URL (`file:` in the app's file system or its embedded one). */
   readonly entry: string;
+  /**
+   * A file path the bundle's `require()` resolves from (its unpacked packages, see
+   * `sidecar-modules.ts`); without it, from the module itself.
+   */
+  readonly requireBase?: string;
   /** The worker constructor (tests pass a fake). */
   readonly Worker?: typeof Worker;
 }
@@ -175,6 +192,12 @@ export function workerSidecarLauncher(options: WorkerLauncherOptions): SidecarLa
       port,
       bootstrap: ctx.bootstrap,
       secrets: ctx.secrets,
+      ...(options.requireBase
+        ? {
+          requireBase: options.requireBase,
+          modulesPath: join(dirname(options.requireBase), "node_modules"),
+        }
+        : {}),
     });
     const instance: SidecarInstance = {
       exited,

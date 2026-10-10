@@ -506,6 +506,10 @@ function sidecarNeeds(d: SidecarDefinition): Array<[string, readonly string[]]> 
     if (embedded) needs.push(["write", ["$CACHE"]]);
   }
   if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA"]]);
+  // A Node backend's packages are unpacked into the cache folder (sidecar-modules.ts).
+  if ((d.run as { nodeModules?: unknown } | undefined)?.nodeModules !== undefined) {
+    needs.push(["write", ["$CACHE"]]);
+  }
   return needs;
 }
 

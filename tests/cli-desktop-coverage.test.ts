@@ -409,6 +409,31 @@ Deno.exit(3);
   }
 });
 
+Deno.test("desktop package: a pnpm workspace's script runs with npm packages from Deno's cache", async () => {
+  const dir = await tempDir("denext_desktop_pkg_pnpm_");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const pkg = '{"name":"root","private":true}\n';
+    await Deno.writeTextFile(join(dir, "package.json"), pkg);
+    await Deno.writeTextFile(join(dir, "pnpm-workspace.yaml"), 'packages:\n  - "apps/*"\n');
+    await Deno.writeTextFile(join(dir, "deno.json"), '{"nodeModulesDir":"manual"}\n');
+    // Under the manual mode the script's npm import would be looked for in node_modules.
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-linux.ts"),
+      `await import("npm:esbuild@^0.24.0");\nDeno.exit(0);\n`,
+    );
+    const r = await runVerb(["package"], dir, { "target-os": "linux" });
+    assertEquals(r.code, 0, r.err);
+    assertEquals(
+      await Deno.readTextFile(join(dir, "package.json")),
+      pkg,
+      "package.json is untouched",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop package: a pre-3.1 script is warned about, and --format is not passed to it", async () => {
   const dir = await tempDir("denext_desktop_pkg_legacy_");
   try {
