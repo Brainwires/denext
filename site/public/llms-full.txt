@@ -1360,6 +1360,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
+- `interface DesktopSidecarLoginShellEnvConfig` — DesktopSidecarConfig.loginShellEnv with options.
 - `interface DesktopSidecarReadyConfig` — DesktopSidecarConfig.ready.
 - `interface DesktopSidecarRestartConfig` — DesktopSidecarConfig.restart.
 - `interface DesktopSidecarRunConfig` — DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.
@@ -2188,6 +2189,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SidecarExposedValue = string | number | boolean | null` — A value a sidecar shares with the page (SidecarDefinition.expose).
 - `interface SidecarHandle` — The handle runDesktop's sidecar(name) returns.
 - `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
+- `interface SidecarLoginShellEnv` — SidecarDefinition.loginShellEnv with options: timeoutMs bounds the login shell (default 3 000 ms), keys names variables to take from it besides PATH.
 - `type SidecarLogs = inherit | file | both | none` — Where a sidecar's output goes: "inherit" (default: the app's stderr, each line prefixed [sidecar:<name>]), "file" (<app data>/logs/sidecar-<name>.log, rotated at 5 MB), "both", or "none".
 - `interface SidecarPermissions` — The Deno permissions a sidecar needs, as --allow-* scopes (baked into the packaged app).
 - `interface SidecarReady` — What makes a sidecar ready: every check given must pass. Without any it is ready once started.

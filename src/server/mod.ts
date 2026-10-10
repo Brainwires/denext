@@ -272,6 +272,7 @@ export {
   type DesktopPasskeysConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
+  type DesktopSidecarLoginShellEnvConfig,
   type DesktopSidecarReadyConfig,
   type DesktopSidecarRestartConfig,
   type DesktopSidecarRunConfig,

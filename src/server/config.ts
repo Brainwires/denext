@@ -1106,6 +1106,14 @@ export interface DesktopSidecarConfig {
   args?: string[];
   /** Environment variables (a module sidecar's own `process.env` copy; a program's environment). */
   env?: Record<string, string>;
+  /**
+   * Start it with the user's login-shell environment (macOS, Linux): `$SHELL` runs once per launch
+   * as a login + interactive shell and its `PATH` (ahead of the inherited one) and any `keys` are
+   * laid under {@link env}, so a backend opened from the Dock finds Homebrew / nvm / asdf tools. A
+   * failure or a shell slower than `timeoutMs` (default 3 000 ms) logs a warning and keeps the
+   * inherited environment. Only this sidecar sees them; never `DENO_*` / `DENEXT_*`.
+   */
+  loginShellEnv?: boolean | DesktopSidecarLoginShellEnvConfig;
   /** A program's working directory (relative to the app's data folder, or absolute). */
   cwd?: string;
   /** A loopback port: `"auto"` picks a free one at launch (kept across restarts), or a number. */
@@ -1148,6 +1156,14 @@ export interface DesktopSidecarRunConfig {
   entries?: string[];
   /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
   exec?: string;
+}
+
+/** {@link DesktopSidecarConfig.loginShellEnv} with options. */
+export interface DesktopSidecarLoginShellEnvConfig {
+  /** How long the login shell may take, 1 to 60 000 ms (default 3 000 ms). */
+  timeoutMs?: number;
+  /** Variables to take from the login shell besides `PATH` (`["SSH_AUTH_SOCK", "LANG"]`). */
+  keys?: string[];
 }
 
 /** {@link DesktopSidecarConfig.shutdown}. */

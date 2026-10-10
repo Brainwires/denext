@@ -7,7 +7,9 @@
  *
  * Per launch of the app, before anything starts: an `"auto"` port is picked (a free loopback port,
  * kept across restarts), the secrets are resolved (`"$random"` → 32 random bytes), and the
- * page-visible values (`expose`, `"$secret:<NAME>"` resolved).
+ * page-visible values (`expose`, `"$secret:<NAME>"` resolved). The user's login-shell environment
+ * (`loginShellEnv`, see `sidecar-login-env.ts`) is read once, when the first sidecar that asks for
+ * it starts, and laid under the `env` of those sidecars only.
  *
  * Orphan safety: a module sidecar is a worker of the app's process and cannot outlive it; a program
  * sidecar is sent `SIGTERM` when the app exits (`unload`) or installs a full-app update, and its
@@ -44,6 +46,13 @@ import {
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
 import { registerSidecarStopper } from "./sidecar-registry.ts";
+import {
+  captureLoginShellEnv,
+  LOGIN_SHELL_TIMEOUT_MS,
+  loginEnvPatch,
+  type LoginShellCapture,
+  type LoginShellCaptureOptions,
+} from "./sidecar-login-env.ts";
 
 /** The bridge capability name the page side calls. */
 const SIDECARS_CAPABILITY = "sidecars";
@@ -70,6 +79,10 @@ export interface SidecarHostOptions {
   readonly fetch?: typeof fetch;
   /** The log file size that rotates it to `.1` (default 5 MB; tests pass a small one). */
   readonly logRotateBytes?: number;
+  /** Read the login-shell environment (tests pass a fake). */
+  readonly captureLoginShellEnv?: (options: LoginShellCaptureOptions) => Promise<LoginShellCapture>;
+  /** The app's `PATH` the login shell's is merged with (default `Deno.env`; tests). */
+  readonly inheritedPath?: string;
 }
 
 /** The sidecars of the app, as `runDesktop` drives them. */
@@ -224,14 +237,77 @@ function logSink(
   };
 }
 
+/** The variables of the login environment a sidecar asked for (`loginShellEnv.keys`). */
+function loginKeys(def: SidecarDefinition): readonly string[] {
+  return typeof def.loginShellEnv === "object" ? def.loginShellEnv.keys ?? [] : [];
+}
+
+/**
+ * The login-shell environment of the sidecars that ask for it, read once per launch of the app,
+ * when the first of them starts: every name any of them asked for, within the longest budget.
+ * A failure is logged once and reads as no variables. `undefined` when none asks.
+ */
+function loginShellSource(
+  sidecars: readonly SidecarDefinition[],
+  options: SidecarHostOptions,
+): (() => Promise<Readonly<Record<string, string>> | undefined>) | undefined {
+  const asking = sidecars.filter((d) => d.loginShellEnv !== undefined && d.loginShellEnv !== false);
+  if (asking.length === 0) return undefined;
+  const names = [...new Set(asking.flatMap(loginKeys))];
+  const timeoutMs = Math.max(
+    ...asking.map((d) =>
+      typeof d.loginShellEnv === "object" && d.loginShellEnv.timeoutMs !== undefined
+        ? d.loginShellEnv.timeoutMs
+        : LOGIN_SHELL_TIMEOUT_MS
+    ),
+  );
+  const capture = options.captureLoginShellEnv ?? captureLoginShellEnv;
+  let pending: Promise<Readonly<Record<string, string>> | undefined> | undefined;
+  return () =>
+    pending ??= capture({ names, timeoutMs }).then((result) => {
+      if (result.ok) return result.env;
+      if (result.reason !== "") {
+        console.error(
+          `desktop: sidecars: could not read the login-shell environment (${result.reason}); ` +
+            "starting with the inherited one",
+        );
+      }
+      return undefined;
+    });
+}
+
+/** `launch` with the login-shell variables `def` asked for laid into each start's context. */
+function withLoginEnv(
+  launch: SidecarLauncher,
+  def: SidecarDefinition,
+  source: (() => Promise<Readonly<Record<string, string>> | undefined>) | undefined,
+  inheritedPath: () => string | undefined,
+): SidecarLauncher {
+  if (!source || def.loginShellEnv === undefined || def.loginShellEnv === false) return launch;
+  return async (ctx) => {
+    const captured = await source();
+    if (!captured) return await launch(ctx);
+    return await launch({
+      ...ctx,
+      loginEnv: loginEnvPatch(captured, loginKeys(def), inheritedPath()),
+    });
+  };
+}
+
 /** One sidecar's supervisor: its launcher, secrets and values, logs, and status reporting. */
 async function buildSupervisor(
   def: SidecarDefinition,
   port: number | undefined,
   options: SidecarHostOptions,
+  loginEnv?: () => Promise<Readonly<Record<string, string>> | undefined>,
 ): Promise<SidecarSupervisor> {
   const secrets = await resolveSecrets(def);
-  const launch = await (options.launcher?.(def) ?? defaultLauncher(def, options));
+  const launch = withLoginEnv(
+    await (options.launcher?.(def) ?? defaultLauncher(def, options)),
+    def,
+    loginEnv,
+    () => "inheritedPath" in options ? options.inheritedPath : Deno.env.get("PATH"),
+  );
   const supervisor = createSidecarSupervisor({
     definition: def,
     launch,
@@ -271,10 +347,11 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
   if (problem) throw new Error(`desktop: sidecars${problem}`);
   const pick = options.pickPort ?? freePort;
   const supervisors = new Map<string, SidecarSupervisor>();
+  const loginEnv = loginShellSource(options.sidecars, options);
   let proxied: { name: string; port: number } | undefined;
   for (const def of options.sidecars) {
     const port = def.port === "auto" ? pick() : def.port;
-    supervisors.set(def.name, await buildSupervisor(def, port, options));
+    supervisors.set(def.name, await buildSupervisor(def, port, options, loginEnv));
     if (def.proxy === true && port !== undefined) proxied = { name: def.name, port };
   }
 

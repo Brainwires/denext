@@ -6557,6 +6557,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopSidecarLoginShellEnvConfig",
+          "slug": "DesktopSidecarLoginShellEnvConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarLoginShellEnvConfig",
+          "doc": "DesktopSidecarConfig.loginShellEnv with options.",
+          "docFull": "{@link DesktopSidecarConfig.loginShellEnv} with options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopSidecarReadyConfig",
           "slug": "DesktopSidecarReadyConfig",
           "kind": "interface",
@@ -17698,6 +17710,18 @@
           "signature": "interface SidecarInfo",
           "doc": "What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).",
           "docFull": "What the page (and a `ready.probe`) learns about a sidecar: `sidecarInfo(name)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SidecarLoginShellEnv",
+          "slug": "SidecarLoginShellEnv",
+          "kind": "interface",
+          "signature": "interface SidecarLoginShellEnv",
+          "doc": "SidecarDefinition.loginShellEnv with options: timeoutMs bounds the login shell (default 3 000 ms), keys names variables to take from it besides PATH.",
+          "docFull": "{@linkcode SidecarDefinition.loginShellEnv} with options: `timeoutMs` bounds the login shell\n(default 3 000 ms), `keys` names variables to take from it besides `PATH`.",
           "params": [],
           "returns": "",
           "examples": [],

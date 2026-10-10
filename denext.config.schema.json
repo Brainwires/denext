@@ -1552,6 +1552,30 @@
                   "type": "string"
                 }
               },
+              "loginShellEnv": {
+                "description": "Start it with the user's login-shell environment (macOS, Linux): `$SHELL` runs once per launch as a login + interactive shell and its `PATH` (ahead of the inherited one) and any `keys` are laid under env, so a backend opened from the Dock finds Homebrew / nvm / asdf tools. A failure or a shell slower than `timeoutMs` (default 3 000 ms) logs a warning and keeps the inherited environment. Only this sidecar sees them; never `DENO_*` / `DENEXT_*`.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "timeoutMs": {
+                        "description": "How long the login shell may take, 1 to 60 000 ms (default 3 000 ms).",
+                        "type": "number"
+                      },
+                      "keys": {
+                        "description": "Variables to take from the login shell besides `PATH` (`[\"SSH_AUTH_SOCK\", \"LANG\"]`).",
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
               "cwd": {
                 "description": "A program's working directory (relative to the app's data folder, or absolute).",
                 "type": "string"

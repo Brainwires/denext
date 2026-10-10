@@ -6,17 +6,19 @@
  *
  * A module sidecar runs behind a small wrapper (a `blob:` module, so nothing extra has to be
  * compiled into the app) that, before importing the module: sets `process.argv` (the module's
- * path, then the sidecar's `args`), gives the worker its own `process.env` with the sidecar's
- * `env` and port on top (the app's environment is not changed), installs `globalThis.denextSidecar`
- * (`name`, `port`, `bootstrap`, `secrets`, `ready()`, `onShutdown(fn)`), and routes its console and
- * `process.stdout` / `process.stderr` to the app as lines. An uncaught error, `process.exit()` and
+ * path, then the sidecar's `args`), gives the worker its own `process.env` with the login-shell
+ * variables it asked for (`loginShellEnv`), its `env` and its port on top (the app's environment
+ * is not changed), installs `globalThis.denextSidecar` (`name`, `port`, `bootstrap`, `secrets`,
+ * `ready()`, `onShutdown(fn)`), and routes its console and `process.stdout` / `process.stderr` to
+ * the app as lines. An uncaught error, `process.exit()` and
  * `self.close()` end the worker only, never the app. What a worker cannot contain: a V8
  * out-of-memory abort and a crash in a native addon end the whole app.
  *
- * A program gets the sidecar's `env` and port on top of the app's environment (without the
- * runtime's own `DENO_SERVE_ADDRESS` / `DENO_DESKTOP_*`), and one JSON line on stdin:
- * `{"name","port","bootstrap","secrets"}`. Its stdin then stays open for as long as the app runs, so
- * a program that exits on end-of-file on stdin never outlives the app, however the app ends.
+ * A program gets the login-shell variables it asked for, its `env` and its port on top of the app's
+ * environment (without the runtime's own `DENO_SERVE_ADDRESS` / `DENO_DESKTOP_*`), and one JSON
+ * line on stdin: `{"name","port","bootstrap","secrets"}`. Its stdin then stays open for as long as
+ * the app runs, so a program that exits on end-of-file on stdin never outlives the app, however
+ * the app ends.
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -25,7 +27,11 @@
 
 import { basename, dirname, fromFileUrl, isAbsolute, join } from "@std/path";
 import type { SidecarExit } from "./sidecar.ts";
-import type { SidecarInstance, SidecarLauncher } from "./sidecar-supervisor.ts";
+import type {
+  SidecarInstance,
+  SidecarLaunchContext,
+  SidecarLauncher,
+} from "./sidecar-supervisor.ts";
 
 /**
  * The worker's wrapper module. Messages in: `init` (once), `shutdown`. Out: `line`, `ready`,
@@ -129,13 +135,19 @@ export interface WorkerLauncherOptions {
   readonly Worker?: typeof Worker;
 }
 
-/** The variables a sidecar is given: its `env`, then the port under `portEnv`. */
+/**
+ * The variables a sidecar is given: those from the login shell (when it asked), its `env`, then
+ * the port under `portEnv`.
+ */
 function sidecarEnv(
-  env: Readonly<Record<string, string>> | undefined,
-  portEnv: string,
-  port: number | undefined,
+  ctx: SidecarLaunchContext,
 ): Record<string, string> {
-  return { ...(env ?? {}), ...(port !== undefined ? { [portEnv]: String(port) } : {}) };
+  const def = ctx.definition;
+  return {
+    ...(ctx.loginEnv ?? {}),
+    ...(def.env ?? {}),
+    ...(ctx.port !== undefined ? { [def.portEnv ?? "PORT"]: String(ctx.port) } : {}),
+  };
 }
 
 /** `args` with `{port}` replaced. */
@@ -188,7 +200,7 @@ export function workerSidecarLauncher(options: WorkerLauncherOptions): SidecarLa
       entry: options.entry,
       path: options.entry.startsWith("file:") ? fromFileUrl(options.entry) : options.entry,
       args: sidecarArgs(def.args, port),
-      env: sidecarEnv(def.env, def.portEnv ?? "PORT", port),
+      env: sidecarEnv(ctx),
       port,
       bootstrap: ctx.bootstrap,
       secrets: ctx.secrets,
@@ -308,10 +320,7 @@ export function execSidecarLauncher(options: ExecLauncherOptions): SidecarLaunch
       args: sidecarArgs(def.args, ctx.port),
       ...(options.cwd ? { cwd: options.cwd } : {}),
       clearEnv: true,
-      env: execSidecarEnv(
-        Deno.env.toObject(),
-        sidecarEnv(def.env, def.portEnv ?? "PORT", ctx.port),
-      ),
+      env: execSidecarEnv(Deno.env.toObject(), sidecarEnv(ctx)),
       stdin: "piped",
       stdout: "piped",
       stderr: "piped",

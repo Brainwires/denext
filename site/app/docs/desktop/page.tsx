@@ -2620,6 +2620,67 @@ desktop: {
         a native addon end the whole app (they would in Electron&apos;s main process too: give such
         a backend a separate program).
       </p>
+      <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
+      <p>
+        An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop
+        launchers) inherits a minimal environment: <code>PATH</code> is{" "}
+        <code>/usr/bin:/bin:/usr/sbin:/sbin</code>, so a backend cannot find what the user installed
+        with Homebrew, nvm, asdf or mise (<code>git</code>, <code>node</code>, <code>codex</code>,
+        {" "}
+        <code>claude</code>). A sidecar that sets <code>loginShellEnv</code>{" "}
+        starts with the environment a terminal would have, as an Electron app hydrates its own:
+      </p>
+      <Code lang="ts">
+        {`sidecars: [{
+  name: "agent",
+  run: { exec: "codex" },              // a bare name, looked up on the login PATH
+  loginShellEnv: true,                 // or { timeoutMs: 5_000, keys: ["SSH_AUTH_SOCK", "LANG"] }
+}],`}
+      </Code>
+      <ul>
+        <li>
+          Once per launch of the app, when the first sidecar that asks starts (after the window is
+          up, never in its way), the user&apos;s <code>$SHELL</code>{" "}
+          runs as a login and interactive shell (<code>-l -i -c</code>: the same profile and rc
+          files a terminal reads; zsh, bash, fish, ksh, sh and nu) and prints the variables between
+          sentinels, so whatever the rc files print is ignored. A shell that fails is followed by
+          the OS&apos;s default one (<code>/bin/zsh</code> then <code>/bin/bash</code> on macOS,
+          {" "}
+          <code>/bin/bash</code> then <code>/bin/sh</code> on Linux); csh and tcsh are skipped.
+        </li>
+        <li>
+          The read has a budget across every shell tried (<code>timeoutMs</code>, default 3 000 ms;
+          a shell past it is killed). On a failure or a timeout the app logs one warning (
+          <code>desktop: sidecars: could not read the login-shell environment (…)</code>) and the
+          sidecar starts with the inherited environment.
+        </li>
+        <li>
+          <code>PATH</code>{" "}
+          becomes the login shell&apos;s entries followed by the inherited ones it lacks; each of
+          {" "}
+          <code>keys</code>{" "}
+          takes the login shell&apos;s value. They are laid under the sidecar&apos;s own{" "}
+          <code>env</code> (which still wins): a module sidecar sees them in{" "}
+          <code>process.env</code> (and so{" "}
+          <code>node:child_process</code>), a program in its environment, and a bare{" "}
+          <code>run.exec</code> name is looked up on that <code>PATH</code>.
+        </li>
+        <li>
+          Only the sidecars that set it get them: never the page, never the app&apos;s own
+          environment, and never a <code>DENO_*</code> / <code>DENEXT_*</code>{" "}
+          variable (the probe shell starts without them too, and <code>keys</code>{" "}
+          may not name one). On Windows, where a GUI app already gets the user&apos;s environment,
+          it does nothing.
+        </li>
+        <li>
+          The packaged app may run the usual shells (<code>/bin/zsh</code>,{" "}
+          <code>/bin/bash</code>, Homebrew&apos;s and Linuxbrew&apos;s{" "}
+          <code>fish</code>, …), baked into its <code>--allow-run</code>; a <code>$SHELL</code>{" "}
+          elsewhere is refused and the default shell answers instead, unless the sidecar lists it in
+          {" "}
+          <code>permissions.run</code>.
+        </li>
+      </ul>
       <p>
         The app controls them from <code>desktop.ts</code> (<code>app.sidecar("server")</code>:{" "}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}

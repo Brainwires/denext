@@ -17,6 +17,7 @@ import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
+import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -523,15 +524,25 @@ function isProjectProgram(exec: string): boolean {
  * What the sidecars need baked in, as one permission set: each one's own `permissions`; a program
  * (`run.exec`) its `--allow-run` (unscoped for one of the project's files: the packaged app runs
  * it from a copy in the app's cache folder, which also needs `--allow-write`); a log file
- * `--allow-write`.
+ * `--allow-write`; `loginShellEnv` (on macOS and Linux) the shells it may run
+ * ({@linkcode LOGIN_SHELL_PATHS}).
  *
  * @param sidecars The sidecars.
+ * @param os The target OS (without it, no login shells).
  * @returns The permissions, merged like `desktop.extraPermissions`.
  */
-export function sidecarPermissionSet(sidecars: readonly SidecarDefinition[]): DesktopPermissionSet {
+export function sidecarPermissionSet(
+  sidecars: readonly SidecarDefinition[],
+  os?: DesktopOs,
+): DesktopPermissionSet {
   const out: Record<string, Set<string>> = {};
   for (const d of sidecars) {
-    for (const [kind, values] of sidecarNeeds(d)) {
+    const needs = sidecarNeeds(d);
+    const loginShell = d.loginShellEnv !== undefined && d.loginShellEnv !== false;
+    if (loginShell && (os === "darwin" || os === "linux")) {
+      needs.push(["run", LOGIN_SHELL_PATHS[os]]);
+    }
+    for (const [kind, values] of needs) {
       const set = out[kind] ??= new Set();
       for (const v of values) set.add(v);
     }
@@ -603,7 +614,7 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
   const extra = mergePermissionSets(
     cfg.desktop?.extraPermissions ?? {},
-    sidecarPermissionSet(configSidecars(cfg)),
+    sidecarPermissionSet(configSidecars(cfg), os),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
 

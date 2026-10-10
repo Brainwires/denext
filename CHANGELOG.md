@@ -29,6 +29,19 @@ and this project adheres to
   hand-written `runDesktop({ updater })`), and its feed host and the overlay's write access join
   the packaged app's least-privilege flags. Docs: [Updates everywhere](/docs/updates).
 
+- **Sidecars can start with the user's login-shell environment (`loginShellEnv`).** An app opened
+  from the Dock or a desktop launcher inherits a minimal `PATH`, so a backend could not find what
+  Homebrew, nvm, asdf or mise installed (`git`, `node`, `codex`, `claude`). With
+  `loginShellEnv: true` (or `{ timeoutMs, keys }`) on a `desktop.sidecars` / `runDesktop({ sidecars })`
+  entry, the user's `$SHELL` runs once per launch as a login + interactive shell (sentinel-delimited,
+  rc-file output ignored, the OS's default shell as a fallback), within a budget (default 3 s) that
+  never holds the window up; its `PATH` (ahead of the inherited one) and the `keys` asked for are
+  laid under that sidecar's `env`, module and program sidecars alike, and a bare `run.exec` name is
+  found on it. A failure or a timeout logs one warning and keeps the inherited environment. Only the
+  sidecars that opt in see the variables (never the page, never `DENO_*` / `DENEXT_*`); macOS and
+  Linux, a no-op on Windows. The packaged app's `--allow-run` lists the usual shells. Docs:
+  [Desktop › The user's login-shell environment](/docs/desktop#desktop-sidecars-login-shell).
+
 ### Fixed
 
 - **A desktop UI overlay is no longer served over a newer app.** The overlay updater now records
