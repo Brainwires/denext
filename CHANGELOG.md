@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A context change re-renders only the consumers inside the provider that changed.** The walk
+  that marks a changed provider's consumers followed `return` pointers back up to the provider,
+  but a child shared from the other render buffer (one a bailed parent passed on unchanged) still
+  pointed at that buffer's parent, so the walk climbed past the provider and marked consumers
+  elsewhere: a `memo` consumer beside the provider, under another provider of the same context or
+  in a portal outside it re-rendered on every change. The walk now re-points each fiber it visits
+  at the one it came from, as React's does. With a router-style context over 200 memo rows, half
+  of them outside the provider, a navigation renders 100 rows instead of 200; the shared runtime
+  is 55 B smaller.
+
 ## [3.4.5] - 2026-10-10
 
 ### Added

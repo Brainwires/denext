@@ -170,8 +170,8 @@ Deno.test("nested providers shadow, siblings stay apart, and a changed value rea
   setTheme("light");
   flushSync();
   assertEquals((container as FakeElement).textContent, "a:light/2b:inner/0c:none/0");
-  assert(renders.includes("a"), "the consumer whose context value changed re-rendered");
-  assert(!renders.includes("b"), "the shadowed consumer's value did not change: it bailed");
+  // Only "a": "b" is shadowed by the inner provider and "c" is outside the changed provider.
+  assertEquals(renders, ["a"]);
   root.unmount();
 });
 

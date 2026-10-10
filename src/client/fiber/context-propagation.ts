@@ -9,35 +9,41 @@ import type { Fiber } from "./fiber.ts";
  * including) the provider, so bailing ancestors still descend to reach it. Both buffers
  * are marked so the update survives whichever one the next render starts from.
  */
-function markConsumerDirty(node: Fiber, provider: Fiber, lane: number): void {
+function markConsumer(node: Fiber, provider: Fiber, lane: number): void {
   node.lanes |= lane;
   if (node.alternate) node.alternate.lanes |= lane;
-  for (let p: Fiber | null = node.return; p !== null; p = p.return) {
-    p.childLanes |= lane;
-    if (p.alternate) p.alternate.childLanes |= lane;
-    if (p === provider) return;
+  while (node !== provider) {
+    node = node.return!;
+    node.childLanes |= lane;
+    if (node.alternate) node.alternate.childLanes |= lane;
   }
 }
 
-/** Depth-first advance bounded to the provider's subtree; null once it is exhausted. */
-function nextInSubtree(node: Fiber, provider: Fiber, descend: boolean): Fiber | null {
-  if (descend && node.child !== null) return node.child;
-  while (node.sibling === null) {
-    if (node.return === null || node.return === provider) return null;
-    node = node.return;
-  }
-  return node.sibling;
+/** The nearest of `node` and its ancestors that has a sibling, or the provider. */
+function climb(node: Fiber, provider: Fiber): Fiber {
+  while (node !== provider && node.sibling === null) node = node.return!;
+  return node;
 }
 
+/**
+ * Depth-first walk of the provider's subtree, marking every consumer of `contextId`. Each
+ * step re-points the fiber it moves to at the fiber it came from (`return`), as React's walk
+ * does: a child shared from the other buffer (a bailed parent re-links nothing) still points
+ * at that buffer's parent, and following such a pointer climbed past the provider — the walk
+ * then marked consumers outside its subtree. A nested provider of the same context shadows
+ * the value below it.
+ */
 export function propagateContextChange(provider: Fiber, contextId: symbol, lane: number): void {
-  let node: Fiber | null = provider.child;
-  while (node !== null) {
-    let descend = true;
-    if (readsContext(node, contextId)) {
-      markConsumerDirty(node, provider, lane);
-    } else if (node.tag === "fragment" && reprovidesContext(node, contextId)) {
-      descend = false; // a nested same-context provider shadows the value below
+  for (let node = provider, next = provider.child;;) {
+    if (next === null) {
+      if ((next = climb(node, provider)) === provider) return;
+      node = next.return!;
+      next = next.sibling!;
     }
-    node = nextInSubtree(node, provider, descend);
+    next.return = node;
+    node = next;
+    next = node.child;
+    if (readsContext(node, contextId)) markConsumer(node, provider, lane);
+    else if (node.tag === "fragment" && reprovidesContext(node, contextId)) next = null;
   }
 }
