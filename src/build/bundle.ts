@@ -1129,29 +1129,57 @@ export function entryCode(output: BundleOutput): string {
  * file URLs) pass through unchanged.
  */
 /**
- * The import-map PREFIX aliases of a deno config (`"~/": "./src/"` → `["~/", absDir]`), for
- * resolving alias imports the way `denext migrate` emits them. A value may be an absolute
- * `file://` URL or a relative `./`/`../` path (resolved against the config's own directory);
- * anything else (jsr:/npm:/https:) is not a directory alias. Empty when the config is absent
- * or unparseable — only relative imports resolve then.
+ * A deno config's import-map entries that point at local files, for resolving alias imports
+ * the way `denext migrate` emits them and the web stubs of native-only packages:
+ *
+ * - `prefixes`: the PREFIX aliases (`"~/": "./src/"` → `["~/", absDir]`); a value may be an
+ *   absolute `file://` URL or a `./` / `../` path (resolved against the config's directory);
+ * - `exact`: the EXACT entries whose value is a `./` / `../` path (`"some-pkg":
+ *   "./web/some-pkg.ts"` → `"some-pkg"` → absPath).
+ *
+ * Anything else (jsr:/npm:/https:) is not a local alias. Empty when the config is absent or
+ * unparseable — only relative imports resolve then.
  */
-export async function readAliasPrefixes(configPath: string): Promise<Array<[string, string]>> {
-  const out: Array<[string, string]> = [];
-  let imports: Record<string, unknown> = {};
-  try {
-    imports =
-      (JSON.parse(await Deno.readTextFile(configPath)) as { imports?: Record<string, unknown> })
-        .imports ?? {};
-  } catch {
-    return out;
-  }
+export async function readLocalAliases(configPath: string): Promise<LocalAliases> {
+  const out: LocalAliases = { prefixes: [], exact: new Map() };
   const baseDir = dirname(configPath);
-  for (const [k, v] of Object.entries(imports)) {
-    if (typeof v !== "string" || !k.endsWith("/")) continue;
-    if (v.startsWith("file://")) out.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
-    else if (v.startsWith("./") || v.startsWith("../")) out.push([k, resolve(baseDir, v)]);
+  for (const [k, v] of Object.entries(await importMapOf(configPath))) {
+    if (typeof v !== "string") continue;
+    if (k.endsWith("/")) addPrefixAlias(out, k, v, baseDir);
+    else if (isRelativePath(v)) out.exact.set(k, resolve(baseDir, v));
   }
   return out;
+}
+
+/** The local aliases of a deno config ({@linkcode readLocalAliases}). */
+export interface LocalAliases {
+  /** Prefix aliases: `[key ending in "/", absolute directory]`. */
+  readonly prefixes: Array<[string, string]>;
+  /** Exact aliases: key → absolute file. */
+  readonly exact: Map<string, string>;
+}
+
+/** A deno config's `imports` (empty when it is absent or unparseable). */
+async function importMapOf(configPath: string): Promise<Record<string, unknown>> {
+  try {
+    return (JSON.parse(await Deno.readTextFile(configPath)) as {
+      imports?: Record<string, unknown>;
+    }).imports ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Whether an import-map value is a `./` / `../` path. */
+function isRelativePath(v: string): boolean {
+  return v.startsWith("./") || v.startsWith("../");
+}
+
+/** Record the prefix alias `key` → `value` when the value is a local directory. */
+function addPrefixAlias(out: LocalAliases, key: string, value: string, baseDir: string): void {
+  if (value.startsWith("file://")) {
+    out.prefixes.push([key, fromFileUrl(value.endsWith("/") ? value : value + "/")]);
+  } else if (isRelativePath(value)) out.prefixes.push([key, resolve(baseDir, value)]);
 }
 
 export function absolutizeImports(

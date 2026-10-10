@@ -68,6 +68,11 @@ import type {
   VirtualizedListProps,
 } from "./lists/types.ts";
 
+export {
+  internal,
+  legendKeyboardExports,
+  legendReanimatedExports,
+} from "./lists/legend-integrations.ts";
 export type {
   AnchoredEndSpaceConfig,
   AnchoredEndSpaceReadyInfo,
@@ -380,7 +385,10 @@ export interface LegendListRef {
   getScrollResponder(): ScrollResponder | null;
   /** The list's state now. */
   getState(): LegendListState;
-  /** Does nothing. */
+  /**
+   * Set content insets measured outside the list (a composer over its end), merged over
+   * `contentInset`; `null` clears them. The end one is room after the last item.
+   */
   reportContentInset(inset?: Record<string, number> | null): void;
   /** Scroll item `index` into view with the least movement. */
   scrollIndexIntoView(params: { animated?: boolean; index: number }): Promise<void>;
@@ -864,6 +872,7 @@ function legendHandle(
   keyOf: (item: unknown, i: number) => string,
   hub: ListenHub,
   dom: boolean,
+  report: (inset: Record<string, number> | null) => void,
 ): LegendListRef {
   const c = () => core.current;
   const responder = (): ScrollResponder | null =>
@@ -894,7 +903,7 @@ function legendHandle(
     getScrollableNode: () => c()?.getScrollableNode() ?? null,
     getScrollResponder: responder,
     getState: () => currentState(core, latest, keyOf, hub),
-    reportContentInset() {},
+    reportContentInset: (inset) => report(inset ? { ...inset } : null),
     scrollIndexIntoView: (params) => intoView(params.index, params.animated),
     scrollItemIntoView: (params) =>
       intoView(latest.current.data.indexOf(params.item), params.animated),
@@ -1017,8 +1026,8 @@ function legendViewability(
  */
 export function createLegendList(prim: ListPrimitives): (props: LegendListProps<unknown>) => VNode {
   const dom = prim.dom === true;
-  function LegendList(props: LegendListProps<unknown>): VNode {
-    const core = useRef<CoreHandle | null>(null);
+  function LegendList(given: LegendListProps<unknown>): VNode {
+    const { props, report, core } = useListState(given);
     const childData = useMemo(() => childItems(props.children), [props.children]);
     const data = props.data ?? childData;
     const packing = usePacking(
@@ -1032,7 +1041,7 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
     const keyOf = useKeyOf(props.keyExtractor);
     const [bus, wanted] = useBus(core);
     const { hub, notify, queue } = useListenHub(core, latest, keyOf);
-    useImperativeHandle(props.ref, () => legendHandle(core, latest, keyOf, hub, dom), [keyOf]);
+    useLegendHandle(props.ref, { core, latest, keyOf, hub, dom, report });
     useLegendLoad(props);
     const onScrollFrame = useScrollFrame(props, core, bus, data, packing, keyOf, notify);
     const render = useLegendRender(props, data, packing, prim);
@@ -1064,6 +1073,43 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
     return h(CoreList, { list, prim, engine, coreRef: core });
   }
   return LegendList;
+}
+
+/** Hook: the list's ref methods ({@linkcode legendHandle}) on `ref`. */
+function useLegendHandle(
+  ref: Ref<LegendListRef> | undefined,
+  c: {
+    core: { current: CoreHandle | null };
+    latest: LegendLatest;
+    keyOf: (item: unknown, i: number) => string;
+    hub: ListenHub;
+    dom: boolean;
+    report: (inset: Record<string, number> | null) => void;
+  },
+): void {
+  useImperativeHandle(
+    ref,
+    () => legendHandle(c.core, c.latest, c.keyOf, c.hub, c.dom, c.report),
+    [c.keyOf],
+  );
+}
+
+/**
+ * Hook: the list's own state — its engine handle (`core`) and the insets the ref's
+ * `reportContentInset` set — with `props` carrying those insets merged over their
+ * `contentInset`.
+ */
+function useListState(given: LegendListProps<unknown>): {
+  props: LegendListProps<unknown>;
+  report: (inset: Record<string, number> | null) => void;
+  core: { current: CoreHandle | null };
+} {
+  const core = useRef<CoreHandle | null>(null);
+  const [reported, report] = useState<Record<string, number> | null>(null);
+  const props = reported
+    ? { ...given, contentInset: { ...given.contentInset, ...reported } }
+    : given;
+  return { props, report, core };
 }
 
 /** The cell wrapper for a one-column list (a grid's rows hold several items: none). */

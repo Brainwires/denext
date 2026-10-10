@@ -1164,7 +1164,7 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** `reactNative`'s object options: `lists`, `desktopPackage` and `aliases`. */
+/** `reactNative`'s object options: `lists`, `desktopPackage`, `aliases` and `uniwind`. */
 function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
   if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
     fail("reactNative.lists", 'must be "denext" or "library"');
@@ -1176,6 +1176,23 @@ function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): 
     fail("reactNative.desktopPackage", 'must be "react-native-macos" or "react-native-windows"');
   }
   validateReactNativeAliases(value.aliases, fail);
+  validateUniwind(value.uniwind, fail);
+}
+
+/** `reactNative.uniwind`: a boolean or `{ extraThemes: string[] }`. */
+function validateUniwind(value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("reactNative.uniwind", "must be a boolean or { extraThemes }");
+    return;
+  }
+  const themes = (value as { extraThemes?: unknown }).extraThemes;
+  if (
+    themes !== undefined &&
+    !(Array.isArray(themes) && themes.every((t) => typeof t === "string" && t !== ""))
+  ) {
+    fail("reactNative.uniwind.extraThemes", "must be an array of theme names");
+  }
 }
 
 /**

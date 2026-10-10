@@ -798,3 +798,27 @@ export class NativeAudioModule {
     throw nativeOnly("expo-audio", "NativeAudioModule");
   }
 }
+
+/**
+ * expo-audio's native module object (`AudioModule`), for code that constructs the classes
+ * through it (`new AudioModule.AudioRecorder(options)`) or calls its functions. The classes and
+ * the session and permission calls are the ones this module exports; preloading and the
+ * notification permission are not provided and reject with a `nativeOnly` error.
+ */
+export const AudioModule: NativeAudioModule = {
+  setIsAudioActiveAsync,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+  getRecordingPermissionsAsync,
+  requestNotificationPermissionsAsync: () =>
+    Promise.reject(nativeOnly("expo-audio", "requestNotificationPermissionsAsync")),
+  preload: () => Promise.reject(nativeOnly("expo-audio", "preload")),
+  clearPreloadedSource: () => Promise.reject(nativeOnly("expo-audio", "clearPreloadedSource")),
+  clearAllPreloadedSources: () =>
+    Promise.reject(nativeOnly("expo-audio", "clearAllPreloadedSources")),
+  getPreloadedSources: () => Promise.reject(nativeOnly("expo-audio", "getPreloadedSources")),
+  AudioPlayer,
+  AudioRecorder,
+  AudioPlaylist,
+  AudioStream,
+};

@@ -2112,6 +2112,7 @@
     "useAssets:function"
   ],
   "denext/expo/audio": [
+    "AudioModule:variable",
     "AudioPlayer:class",
     "AudioPlayerOptions:interface",
     "AudioPlaylist:class",

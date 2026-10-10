@@ -10,6 +10,29 @@ and this project adheres to
 
 ### Added
 
+- **React Native mode builds uniwind apps.** With `uniwind` installed, `react-native` resolves to
+  uniwind's web components (except inside uniwind), react-native-web's `StyleSheet` gets uniwind's
+  layered sheet and uniwind's config registers the app's themes, as uniwind's Vite plugin does:
+  the `denext patch` step of the recipe is gone. `reactNative: { uniwind: { extraThemes } }` names
+  the themes beyond `light` / `dark` (`withUniwindConfig`'s option); `uniwind: false` turns it off.
+  Docs: [Recipe: uniwind and Tailwind](/docs/react-native#recipe-uniwind-and-tailwind).
+- **`@legendapp/list/keyboard` and `@legendapp/list/reanimated` run on denext's LegendList.**
+  They wrapped the real list's private `internal` API and failed the build; now
+  `KeyboardAwareLegendList` adds the composer's height (`contentInsetEndAdjustment`, a shared value
+  from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`) as room after the
+  last item, `useKeyboardScrollToEnd` scrolls to the end, and `AnimatedLegendList` keeps
+  `sharedValues` current. The LegendList shim also exports `internal` (its generic helpers), so
+  the package's own `/section-list` builds, and the ref's `reportContentInset({ bottom })` adds
+  room after the last item instead of doing nothing.
+- **React Navigation's bar button items.** A native-stack screen's `unstable_headerLeftItems` /
+  `unstable_headerRightItems` (React Navigation 7.1x) are header buttons: SF Symbol icons through
+  `SystemIcon`, labels, `menu` items through `showContextMenu`, `spacing` and `custom` items. They
+  rendered nothing, so a screen whose only action lived there (a form's checkmark) had no way to
+  submit.
+- **`AudioModule` in the `expo-audio` shim**: the player, recorder, playlist and stream classes and
+  the session and permission calls (`new AudioModule.AudioRecorder(options)` builds).
+- **`@react-native/assets-registry`** (which react-native-svg imports directly) resolves to
+  react-native-web's asset registry in React Native mode.
 - **`denext/updates`: one "update everything" API for every platform.** `checkForUpdates(cfg?)`
   and `applyUpdates(cfg?, onProgress)` dispatch on `runtimePlatform()`: on iOS / Android the
   over-the-air UI (`cfg.ota`; the check stages a verified UI, apply switches to it), on Deno
@@ -52,6 +75,20 @@ and this project adheres to
   resumability dispatcher's document listeners, a `client:interaction` island's trigger and
   `useClickOutside`'s `touchstart`. `preventDefault()` inside one is a no-op the browser warns
   about, as in React; `onTouchEnd` / `onTouchCancel` stay non-passive, as in React.
+- **React Native screens fill the screen, so their lists virtualize.** React Navigation's (and
+  expo-router's) stack drew each screen into a scrolling block, so a `flex: 1` view grew to its
+  content: a FlatList / LegendList rendered every row, scrolled the page instead of itself, and
+  `initialScrollAtEnd` / `alignItemsAtEnd` had nothing to anchor to. The stack's new `fillScreens`
+  (on for React Navigation's) lays each screen, and a `formSheet`'s content (`Sheet`'s new
+  `fillContent`), out as a flex column the content fills.
+- **A tap on a row of a recycled list lands.** With `recycle` (LegendList's `recycleItems`), the
+  row that took focus on the press switched from its recycled cell key to its own key, so it was
+  remounted mid-gesture and the click never fired. A focused row now keeps its cell, also while
+  scrolled out of the window.
+- **An exact `deno.json` import to a local file beats an installed package.** With node
+  resolution on (the default), `"some-native-pkg": "./web/stub.ts"` was ignored while the package
+  was installed, though `denext migrate` tells you to map a native-only package that way; it now
+  applies to the app's imports and every package's, as a prefix alias already did.
 - **A desktop UI overlay is no longer served over a newer app.** The overlay updater now records
   the bundled export an overlay was installed over (`bundle.json` in its data folder: the export's
   stamped version, else its `index.html` hash); at launch, a different bundle (a full-app update,

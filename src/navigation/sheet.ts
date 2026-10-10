@@ -66,6 +66,11 @@ export interface SheetProps {
   readonly portal?: Element | false;
   /** Extra style for the panel. */
   readonly style?: Readonly<Record<string, string | number | undefined>>;
+  /**
+   * Lay the content out as a flex column it fills (default `false`), as a React Native
+   * `formSheet` screen's: a `flex: 1` view takes the sheet's height.
+   */
+  readonly fillContent?: boolean;
   /** The content. */
   readonly children?: VNodeChildren;
 }
@@ -548,6 +553,7 @@ function sheetTree(c: SheetCtl): VNode {
   const scroll = {
     flex: 1,
     minHeight: 0,
+    ...(props.fillContent ? { display: "flex", flexDirection: "column" } : {}),
     overflowY: g.atLargest ? "auto" : "hidden",
     overscrollBehavior: "contain",
     touchAction: g.atLargest ? "pan-y" : "none",

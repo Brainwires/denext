@@ -33,6 +33,7 @@ on:
       # What the shims, React Native mode's build modules and the parity scripts import directly:
       # the list layer, denext/mobile, the hooks, context and JSX runtime the shims build on, and
       # the build modules React Native mode's bundle options come from.
+      - "src/build/installed-package.ts"
       - "src/build/native-module-scan.ts"
       - "src/build/next-compat.ts"
       - "src/build/reanimated*.ts"

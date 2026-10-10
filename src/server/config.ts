@@ -627,6 +627,20 @@ export interface ReactNativeConfig {
    * `react-native-macos` / `react-native-windows` import gets the additions.
    */
   desktopPackage?: "react-native-macos" | "react-native-windows";
+  /**
+   * Build a [uniwind](https://uniwind.dev) app's Tailwind classes as uniwind's Vite plugin
+   * does, when the app has `uniwind` installed: `react-native` resolves to uniwind's web
+   * components (`className` on every component), react-native-web's stylesheet gets uniwind's
+   * layered one, and uniwind registers `light`, `dark` and `extraThemes` (the `extraThemes`
+   * the app's Metro config passes to `withUniwindConfig`). Compile the app's Tailwind input
+   * with `tailwind: { input, output }`. `false` turns it off.
+   *
+   * @default true
+   */
+  uniwind?: boolean | {
+    /** The themes beyond `light` and `dark` (`withUniwindConfig`'s `extraThemes`). */
+    extraThemes?: readonly string[];
+  };
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */

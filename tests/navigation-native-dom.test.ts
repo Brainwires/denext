@@ -872,6 +872,73 @@ Deno.test("mapStackOptions passes headerBackButtonDisplayMode, dropping unknown 
   assertEquals(map("minimal").headerBackTitle, "T", "headerBackTitle still maps");
 });
 
+Deno.test("bar button items: unstable_headerRightItems are header buttons; they override headerRight", async () => {
+  const pressed: string[] = [];
+  const state = { key: "stack-1", index: 0, routes: [{ key: "r0", name: "add" }] };
+  const { core } = fakeCore(state, {
+    r0: {
+      title: "Add environment",
+      headerRight: () => h("span", null, "plain headerRight"),
+      unstable_headerRightItems: ({ canGoBack }: { canGoBack: boolean }) => [
+        {
+          type: "button",
+          label: "Add",
+          accessibilityLabel: "Add environment",
+          icon: { type: "sfSymbol", name: "checkmark" },
+          onPress: () => pressed.push(`add:${canGoBack}`),
+        },
+        { type: "spacing", spacing: 6 },
+        { type: "button", label: "Later", disabled: true, onPress: () => pressed.push("later") },
+        { type: "custom", element: h("i", { "data-custom": "" }, "custom") },
+      ],
+    },
+  });
+  const { container } = docWithData({});
+  const root = createRoot(container as Any);
+  const { Navigator } = (createNativeStackNavigatorFactory(core) as Any)();
+  root.render(h(Navigator, {}));
+  await settle();
+  const items = findAll(container, "data-dnx-header-item");
+  assertEquals(items.map((b) => b.getAttribute("aria-label")), ["Add environment", "Later"]);
+  assert(!container.textContent.includes("plain headerRight"), "the items override headerRight");
+  assertEquals(findAll(container, "data-dnx-system-icon", "checkmark").length, 1, "SF Symbol icon");
+  assertStringIncludes(container.textContent, "Later", "no icon: the label");
+  assertEquals(findAll(container, "data-custom").length, 1, "a custom item's element");
+  items[0].dispatch("click", { button: 0 });
+  assertEquals(pressed, ["add:false"]);
+  assertEquals(items[1].getAttribute("disabled") !== null, true);
+  root.unmount();
+});
+
+Deno.test("fillScreens: React Navigation screens fill a flex-column body; Sheet fillContent", async () => {
+  const state = { key: "stack-1", index: 0, routes: [{ key: "r0", name: "list" }] };
+  const { core } = fakeCore(state, { r0: { title: "List" } });
+  const { container } = docWithData({});
+  const root = createRoot(container as Any);
+  const { Navigator } = (createNativeStackNavigatorFactory(core) as Any)();
+  root.render(h(Navigator, {}));
+  await settle();
+  const body = findAll(container, "data-dnx-screen-body")[0];
+  assertEquals(body.style.getPropertyValue("display"), "flex");
+  assertEquals(body.style.getPropertyValue("flex-direction"), "column");
+  root.unmount();
+  // A formSheet screen's content: the sheet's scroll box is a flex column too.
+  const sheet = createRoot(container as Any);
+  sheet.render(h(Sheet, { open: true, portal: false, fillContent: true }, h("p", null, "s")));
+  await settle();
+  const panel = findAll(container, "data-dnx-sheet-panel")[0];
+  const scroll = panel.childNodes[panel.childNodes.length - 1] as FakeElement;
+  assertEquals(scroll.style.getPropertyValue("display"), "flex", "the sheet's content fills it");
+  sheet.unmount();
+  // A plain StackView (a web page) keeps the scrolling block body.
+  const page = createRoot(container as Any);
+  page.render(h(StackView, { entries: [entry("a", h("p", null, "page"))], onPop: () => {} }));
+  await settle();
+  const pageBody = findAll(container, "data-dnx-screen-body")[0];
+  assertEquals(pageBody.style.getPropertyValue("display"), "");
+  page.unmount();
+});
+
 Deno.test("createBottomTabNavigatorFactory: badges, jumpTo on press, tabPress on the active tab", async () => {
   const state = {
     key: "tabs-1",

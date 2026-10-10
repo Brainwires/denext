@@ -26,6 +26,16 @@ export interface ListPackage {
   readonly animated?: Readonly<Record<string, string>>;
   /** Exports re-exported from the runtime module (`"local as exported"` renames one). */
   readonly reexports: readonly string[];
+  /**
+   * A subpath that wraps the package's list (`@legendapp/list/keyboard`): its exports come from
+   * a runtime `factory` called with `args` in order, each bound by an import of the app's own
+   * packages (`[binding, import clause, specifier]`), instead of `components` / `reexports`.
+   */
+  readonly integration?: {
+    readonly factory: string;
+    readonly args: readonly (readonly [string, string, string])[];
+    readonly exports: readonly string[];
+  };
   /** Runtime exports of the package deliberately not provided. */
   readonly omitted: readonly string[];
   /** Why. */
@@ -73,9 +83,50 @@ export const LIST_PACKAGES: Readonly<Record<string, ListPackage>> = {
       "useSyncLayout",
       "useViewability",
       "useViewabilityAmount",
+      "internal",
     ],
     omitted: [],
-    notes: "`@legendapp/list/react` (the DOM build), `/section-list`, `/animated`, " +
-      "`/reanimated` and `/keyboard` keep resolving to the real package.",
+    notes: "`@legendapp/list/react` (the DOM build), `/section-list`, `/animated` and " +
+      "`/keyboard-legacy` keep resolving to the real package (which builds on this one: " +
+      "`internal` holds the generic helpers they import; the list-state ones are not provided).",
+  },
+  "@legendapp/list/reanimated": {
+    specifiers: ["@legendapp/list/reanimated"],
+    runtime: "denext/react-native/legend-list",
+    pinned: "3.4.0",
+    components: {},
+    reexports: [],
+    integration: {
+      factory: "legendReanimatedExports",
+      args: [["LegendList", "{ LegendList }", "@legendapp/list/react-native"]],
+      exports: ["AnimatedLegendList"],
+    },
+    omitted: [],
+    notes: "`AnimatedLegendList` is the list with `sharedValues` kept current; " +
+      "`itemLayoutAnimation` and `animatedProps` have no effect.",
+  },
+  "@legendapp/list/keyboard": {
+    specifiers: ["@legendapp/list/keyboard"],
+    runtime: "denext/react-native/legend-list",
+    pinned: "3.4.0",
+    components: {},
+    reexports: [],
+    integration: {
+      factory: "legendKeyboardExports",
+      args: [
+        ["Reanimated", "* as Reanimated", "react-native-reanimated"],
+        ["LegendList", "{ LegendList }", "@legendapp/list/react-native"],
+        ["Keyboard", "{ Keyboard }", "react-native"],
+      ],
+      exports: [
+        "KeyboardAwareLegendList",
+        "useKeyboardChatComposerInset",
+        "useKeyboardScrollToEnd",
+      ],
+    },
+    omitted: [],
+    notes: "`KeyboardAwareLegendList` adds the composer's height (`contentInsetEndAdjustment`, " +
+      "a shared value) and `contentInsetEndStaticAdjustment` after the last item; the web " +
+      "view's layout follows the keyboard, so the keyboard props have no effect.",
   },
 };

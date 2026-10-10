@@ -48,7 +48,24 @@ async function writeTree(root: string, files: Record<string, string>): Promise<v
  * JSX in a `.js` file, and app source with a `.web.tsx` sibling.
  */
 const FIXTURE: Record<string, string> = {
-  "deno.json": "{}\n",
+  // An exact import-map entry to a local file: a web stub for an installed native-only package.
+  "deno.json": JSON.stringify({ imports: { "native-only": "./stubs/native-only.ts" } }),
+  "stubs/native-only.ts": 'export const which = "WEB_STUB";\n',
+  "node_modules/native-only/package.json": JSON.stringify({
+    name: "native-only",
+    main: "index.js",
+  }),
+  "node_modules/native-only/index.js": 'export const which = "NATIVE_PACKAGE";\n',
+  "node_modules/uses-native-only/package.json": JSON.stringify({
+    name: "uses-native-only",
+    module: "index.js",
+  }),
+  "node_modules/uses-native-only/index.js": 'export { which as depWhich } from "native-only";\n',
+  // react-native-svg imports React Native's asset-registry package directly.
+  "node_modules/svg-lib/package.json": JSON.stringify({ name: "svg-lib", module: "index.js" }),
+  "node_modules/svg-lib/index.js":
+    'import { getAssetByID } from "@react-native/assets-registry/registry";\n' +
+    "export const svgAsset = getAssetByID();\n",
   "node_modules/react-native/package.json": JSON.stringify({
     name: "react-native",
     main: "index.js",
@@ -84,10 +101,14 @@ import { depView } from "dep";
 import { thing } from "pkg/lib/thing";
 import { el } from "pkg/lib/jsx";
 import { comp } from "./comp";
+import { which } from "native-only";
+import { depWhich } from "uses-native-only";
+import { svgAsset } from "svg-lib";
 function attempt(fn) { try { fn(); return "no error"; } catch (err) { return err.message; } }
 export const result = {
   View, DeepView, depView, thing, comp, el,
   asset: getAssetByID(),
+  svgAsset, which, depWhich,
   dev: __DEV__,
   global: global === globalThis,
   expoOs: process.env.EXPO_OS,
@@ -138,6 +159,9 @@ Deno.test("reactNative bundle: react-native-web wins for every importer; .web.* 
   assertEquals(r.depView, "RNW_VIEW", "a dependency's import of react-native too");
   assertEquals(r.DeepView, "RNW_VIEW", "Libraries/…/View → react-native-web's exports/View");
   assertEquals(r.asset, "RNW_ASSET_REGISTRY", "Libraries/Image/AssetRegistry → modules/");
+  assertEquals(r.svgAsset, "RNW_ASSET_REGISTRY", "@react-native/assets-registry → the same");
+  assertEquals(r.which, "WEB_STUB", "an exact import-map entry beats the installed package");
+  assertEquals(r.depWhich, "WEB_STUB", "for a dependency's import of it too");
   assertEquals(r.comp, "WEB_COMP", "relative import: comp.web.tsx beats comp.tsx");
   assertEquals(r.thing, "WEB_THING", "package subpath: thing.web.js beats thing.js");
   assertEquals(r.el, "JSX_IN_JS", "JSX in a node_modules .js parses");
@@ -336,6 +360,7 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.plugins.map((p) => p.name), [
     "denext-native-module-scan",
     "denext-react-native-desktop",
+    "denext-react-native-uniwind",
     "denext-react-native-web",
     "denext-react-native-patches",
     "denext-expo-router-ctx",
@@ -346,7 +371,11 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
     "denext-react-native-aliases",
   ]);
   assertEquals(on.usesActivity, true, "the navigators need the Activity runtime");
-  const off = reactNativeBundleOptions({ reactNative: { expoShims: false } }, "/p", false)!;
+  const off = reactNativeBundleOptions(
+    { reactNative: { expoShims: false, uniwind: false } },
+    "/p",
+    false,
+  )!;
   assertEquals(
     off.plugins.map((p) => p.name),
     [
@@ -360,7 +389,7 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
       "denext-reanimated-worklets",
       "denext-react-native-aliases",
     ],
-    "expoShims: false",
+    "expoShims: false, uniwind: false",
   );
 });
 

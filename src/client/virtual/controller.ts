@@ -935,10 +935,9 @@ export class VirtualController<T> {
     if (detached >= 0) this.#addRow(out, keyIndex, detached, "sticky-detached", gate);
     this.#detachedKey = detached >= 0 ? this.keyAt(detached) : null;
     for (const p of persisted) if (p < first) this.#addRow(out, keyIndex, p, "persisted", gate);
-    const flowStart = out.length;
     for (let i = first; i <= last; i++) this.#addRow(out, keyIndex, i, "flow", gate);
-    if (recycle) this.#recycle(out, flowStart, sticky);
     for (const p of persisted) if (p > last) this.#addRow(out, keyIndex, p, "persisted", gate);
+    if (recycle) this.#recycle(out, sticky);
     this.#keyIndex = keyIndex;
     if (progressive) this.#pruneReady(keyIndex);
     return out;
@@ -1014,14 +1013,19 @@ export class VirtualController<T> {
     return detached;
   }
 
-  /** Give the flow rows from `from` on recycled cell keys (sticky and focused rows keep theirs). */
-  #recycle(out: RowView<T>[], from: number, sticky: ReadonlySet<number>): void {
-    const flow = out.slice(from).filter((r) => !sticky.has(r.index) && r.key !== this.focusKey);
-    if (flow.length === 0) return;
+  /**
+   * Give the flow and persisted rows recycled cell keys (sticky rows keep theirs). A row keeps
+   * its cell for as long as it is rendered: focusing it, or scrolling it out of the window while
+   * focused (persisted), must not change its key, or the reconciler remounts it mid-gesture (a
+   * tap that focuses a row lost its click).
+   */
+  #recycle(out: RowView<T>[], sticky: ReadonlySet<number>): void {
+    const pooled = out.filter((r) => r.placement !== "sticky-detached" && !sticky.has(r.index));
+    if (pooled.length === 0) return;
     this.#pool ??= new RecyclePool();
-    const cells = this.#pool.assign(flow.map((r) => ({ key: r.key, type: r.type })));
-    const byKey = new Map<Key, string>(flow.map((r, i) => [r.key, cells[i]]));
-    for (let i = from; i < out.length; i++) {
+    const cells = this.#pool.assign(pooled.map((r) => ({ key: r.key, type: r.type })));
+    const byKey = new Map<Key, string>(pooled.map((r, i) => [r.key, cells[i]]));
+    for (let i = 0; i < out.length; i++) {
       const cell = byKey.get(out[i].key);
       if (cell !== undefined) out[i] = { ...out[i], cell };
     }

@@ -65,9 +65,10 @@ import {
   frameworkImports,
   frameworkRootUrl,
   loaderConfigPath,
+  type LocalAliases,
   minDepAgeConfig,
-  readAliasPrefixes,
   readFrameworkJson,
+  readLocalAliases,
 } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
 import {
@@ -541,15 +542,22 @@ export function probeSourceFile(
  * deno-loader rejects them, so many real codebases that write `import { x } from "."`
  * fail without this); otherwise a path-alias prefix (`~/` → absDir).
  */
-function appImportBase(
-  spec: string,
-  importer: string,
-  prefixes: Array<[string, string]>,
-): string | null {
+function appImportBase(spec: string, importer: string, aliases: LocalAliases): string | null {
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
     return importer ? resolve(dirname(importer), spec) : null;
   }
-  for (const [key, absDir] of prefixes) {
+  return aliasBase(spec, aliases);
+}
+
+/**
+ * The base an import-map alias names, or null. An exact entry to a local file wins over an
+ * installed package of that name, for every importer (the web stub of a native-only package,
+ * as Metro's resolver aliases); then the prefix aliases.
+ */
+function aliasBase(spec: string, aliases: LocalAliases): string | null {
+  const exact = aliases.exact.get(spec);
+  if (exact !== undefined) return exact;
+  for (const [key, absDir] of aliases.prefixes) {
     if (spec === key.slice(0, -1) || spec.startsWith(key)) {
       return resolve(absDir, spec.slice(key.length));
     }
@@ -587,8 +595,8 @@ export function appResolverPlugin(
       : probeSourceFile(base, exts);
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
-  let prefixes: Array<[string, string]> | null = null;
-  const ensure = async () => prefixes ??= await readAliasPrefixes(configPath);
+  let aliases: LocalAliases | null = null;
+  const ensure = async () => aliases ??= await readLocalAliases(configPath);
   return {
     name: "denext-app-resolver",
     setup(build) {

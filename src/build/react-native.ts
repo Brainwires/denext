@@ -86,6 +86,8 @@ import { EXPO_FILTER, EXPO_RN_BRIDGE, expoShimSpecifier } from "./expo-shims.ts"
 import { expoRouterContextPlugin } from "./expo-router.ts";
 import { expoRouterNavigatorsPlugin } from "./expo-router-navigators.ts";
 import { listAdaptersPlugin } from "./react-native-lists.ts";
+import { uniwindPlugin, uniwindThemes } from "./react-native-uniwind.ts";
+import { findInstalledPackage } from "./installed-package.ts";
 import { reanimatedWorkletsPlugin } from "./reanimated.ts";
 import { patchForOffload } from "./reanimated-offload.ts";
 import { desktopReactNativePlugin } from "./react-native-desktop.ts";
@@ -238,7 +240,24 @@ const REACT_DOM_ENTRY_EXPORTS = ["unstable_batchedUpdates"] as const;
  * `react-native` itself or any `react-native/…` subpath (not `react-native-web`, etc.), and
  * the `denext/expo/*` shims' bridge to react-native-web's primitives.
  */
-const REACT_NATIVE_FILTER = new RegExp(`^(?:react-native(?:/.*)?|${EXPO_RN_BRIDGE})$`);
+const REACT_NATIVE_FILTER = new RegExp(
+  `^(?:react-native(?:/.*)?|@react-native/assets-registry(?:/registry(?:\\.js)?)?|${EXPO_RN_BRIDGE})$`,
+);
+
+/**
+ * React Native's asset-registry package, which its `Libraries/Image/AssetRegistry` re-exports.
+ * Libraries import it directly (react-native-svg resolves `require`d images through
+ * `@react-native/assets-registry/registry`); under pnpm it is not even reachable from them, as
+ * it is React Native's dependency. It is react-native-web's registry, the one its `Image` reads.
+ */
+const ASSET_REGISTRY_PACKAGE = "@react-native/assets-registry";
+
+/** The `react-native` specifier `path` stands for (the bridge, the asset-registry package). */
+function reactNativeSpecifier(path: string): string {
+  if (path === EXPO_RN_BRIDGE) return "react-native";
+  if (path.startsWith(ASSET_REGISTRY_PACKAGE)) return "react-native/Libraries/Image/AssetRegistry";
+  return path;
+}
 
 /**
  * The build-time globals React Native code expects: `__DEV__` (Metro's dev flag; true in dev,
@@ -263,19 +282,8 @@ export function reactNativeDefines(dev: boolean): Record<string, string> {
  *
  * @param projectDir Where the lookup starts.
  */
-export async function findReactNativeWeb(projectDir: string): Promise<string | null> {
-  let dir = projectDir;
-  for (;;) {
-    const candidate = join(dir, "node_modules", WEB_PACKAGE);
-    try {
-      if ((await Deno.stat(join(candidate, "package.json"))).isFile) {
-        return await Deno.realPath(candidate);
-      }
-    } catch { /* not here — keep walking up */ }
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
+export function findReactNativeWeb(projectDir: string): Promise<string | null> {
+  return findInstalledPackage(projectDir, WEB_PACKAGE);
 }
 
 /**
@@ -979,7 +987,7 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
             }],
           };
         }
-        const spec = args.path === EXPO_RN_BRIDGE ? "react-native" : args.path;
+        const spec = reactNativeSpecifier(args.path);
         const native = nativeDeepImport(spec);
         if (native) return { path: native, namespace: NATIVE_NAMESPACE, sideEffects: false };
         const file = await resolveReactNativeSpecifier(dir, spec);
@@ -1076,6 +1084,12 @@ export function expoShimPlugin(): esbuild.Plugin {
   };
 }
 
+/** The uniwind plugin, unless `reactNative.uniwind` is `false` (see react-native-uniwind.ts). */
+function uniwindPlugins(config: DenextConfig | null | undefined, projectDir: string) {
+  const themes = uniwindThemes(config);
+  return themes ? [uniwindPlugin(projectDir, themes)] : [];
+}
+
 /** What React Native mode adds to the SPA's compat bundle. */
 export interface ReactNativeBundleOptions {
   /** The `define` entries ({@linkcode reactNativeDefines}). */
@@ -1121,6 +1135,9 @@ export function reactNativeBundleOptions(
       // Ahead of the react-native-web resolver: `desktopPackage` claims app-source
       // `react-native` imports first.
       desktopReactNativePlugin(options.desktopPackage),
+      // Ahead of the react-native-web resolver too: with uniwind installed, `react-native` is
+      // its web components (which then import react-native-web through the resolver below).
+      ...uniwindPlugins(config, projectDir),
       reactNativeWebPlugin(projectDir),
       reactNativePatchesPlugin(),
       expoRouterContextPlugin(projectDir),
