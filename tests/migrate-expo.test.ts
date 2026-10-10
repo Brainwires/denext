@@ -79,6 +79,7 @@ const VARIANTS = {
 const variant = VARIANTS[APP_VARIANT];
 const personal = env.PERSONAL === "1";
 const sqlitePlugin = ["expo-sqlite", { enableFTS: true }];
+const dmSans = { regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf" };
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "acme-app",
@@ -100,6 +101,15 @@ const config: ExpoConfig = {
     "expo-secure-store",
     ...(personal ? [] : [sqlitePlugin, "./plugins/withThing.cjs"]),
     ["expo-camera", { cameraPermission: "cam" }],
+    ["expo-font", {
+      ios: { fonts: [dmSans.regular] },
+      android: {
+        fonts: [
+          { fontFamily: "DMSans-Regular", fontDefinitions: [{ path: dmSans.regular, weight: 400 }] },
+          { fontFamily: "Mono", fontDefinitions: [{ path: "./a.ttf" }, { path: "./b.ttf" }] },
+        ],
+      },
+    }],
   ],
   extra: { eas: { projectId: "abc" }, token: env.TOKEN },
 } satisfies ExpoConfig;
@@ -199,6 +209,14 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
       "name",
       "scheme",
     ]);
+    // The expo-font plugin's embedded fonts become reactNative.fonts (Android's family names).
+    assert(e.config.notes.some((n) => n.includes('"Mono" has several font files')));
+    const cfgSource = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(
+      cfgSource,
+      '"DMSans-Regular": "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",',
+    );
+    assertStringIncludes(cfgSource, "  reactNative: {\n");
     assertEquals(e.capacitor.appId, "com.example.acmeapp", "a placeholder from the slug");
     assertEquals(e.capacitor.placeholderId, true);
     assertEquals(e.capacitor.appName, "acme-app");
@@ -261,7 +279,7 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
     // The generated files.
     const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
     assertStringIncludes(cfg, 'mode: "spa"');
-    assertStringIncludes(cfg, "reactNative: true,");
+    assertStringIncludes(cfg, "reactNative: {\n    // The fonts the expo-font");
     assertStringIncludes(cfg, 'entry: "./index.ts"');
     assertStringIncludes(cfg, "precompress: false");
     assertStringIncludes(cfg, "__DENEXT_EXPO_CONFIG__");
@@ -499,7 +517,7 @@ Deno.test("migrate CLI: the Expo report", async () => {
     assertStringIncludes(out, 'NSMicrophoneUsageDescription = "Voice for Acme"');
     assertStringIncludes(out, "NSLocalNetworkUsageDescription = (computed in code)");
     assertStringIncludes(out, "android.permission.RECORD_AUDIO");
-    assertStringIncludes(out, "uniwind recipe");
+    assertStringIncludes(out, "uniwind runs built in");
     assertStringIncludes(out, "extraNodeModules): @acme/generated-licenses");
   });
 });

@@ -243,6 +243,11 @@ export interface ExpoAppConfig {
   buildProperties?: ExpoBuildProperties;
   /** Hosts of `ios.associatedDomains` `applinks:` entries. */
   linkDomains: string[];
+  /**
+   * The fonts the expo-font config plugin embeds natively, as family → file (the
+   * `reactNative.fonts` a web build declares). Empty when the app lists none statically.
+   */
+  embeddedFonts?: Record<string, string>;
   /** The statically known subset the app reads at run time (`expo-constants`). */
   runtimeConfig: Record<string, unknown>;
   /** The app icon, adaptive-icon layers and splash the config names. */
@@ -460,6 +465,55 @@ function pluginUsageStrings(value: unknown): Record<string, string | null> {
   return out;
 }
 
+/**
+ * The fonts the expo-font config plugin embeds (`["expo-font", { fonts, ios, android }]`), as
+ * family → file. Android's `{ fontFamily, fontDefinitions: [{ path }] }` entries name the family
+ * the app uses; a plain path (`fonts`, `ios.fonts`, Android's string entries) is used by its file
+ * name without the extension, as Android does (on iOS by its PostScript name, usually the same
+ * for a family's single file). A family with several definitions (weights of one name) is
+ * reported in `notes`, not carried.
+ */
+function embeddedFontsOf(value: unknown, notes: string[]): Record<string, string> {
+  const options = expoFontOptions(value);
+  if (!options) return {};
+  const out: Record<string, string> = {};
+  const android = listOf(at(options, ["android", "fonts"]));
+  // Android's named entries carry the families; without them, every path is used by its name.
+  const named = android.some((f) => typeof f === "object" && f !== null);
+  const paths = named ? [] : [...listOf(options.fonts), ...listOf(at(options, ["ios", "fonts"]))];
+  for (const f of [...paths, ...android]) addFont(out, f, notes);
+  return out;
+}
+
+/** The expo-font plugin's options (`["expo-font", { … }]`), or undefined. */
+function expoFontOptions(value: unknown): Record<string, unknown> | undefined {
+  const entry = listOf(value).find((e) => Array.isArray(e) && e[0] === "expo-font");
+  const options = Array.isArray(entry) ? known(entry[1]) : undefined;
+  return options && typeof options === "object" ? options as Record<string, unknown> : undefined;
+}
+
+/** Record one plugin font: a path (by its file name) or `{ fontFamily, fontDefinitions }`. */
+function addFont(out: Record<string, string>, font: unknown, notes: string[]): void {
+  if (typeof font !== "object" || font === null) {
+    const file = str(font);
+    if (file) out[file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "")] = file;
+    return;
+  }
+  const family = str((font as Record<string, unknown>).fontFamily);
+  const defs = listOf((font as Record<string, unknown>).fontDefinitions);
+  const path = str(at(defs[0], ["path"]));
+  if (!family) return;
+  if (path && defs.length === 1) out[family] = path;
+  else {notes.push(
+      `expo-font: "${family}" has several font files; declare each weight's @font-face by hand`,
+    );}
+}
+
+/** `value` as a list (a non-array is empty). */
+function listOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 /** Config plugin names: `"expo-camera"` or `["expo-camera", {…}]`. */
 function pluginNames(value: unknown): string[] {
   const list = Array.isArray(value) ? value : [];
@@ -561,6 +615,10 @@ export async function readExpoAppConfig(dir: string): Promise<ExpoAppConfig> {
     buildProperties: buildPropertiesOf(at(d, ["plugins"])) ??
       buildPropertiesOf(at(json, ["plugins"])),
     linkDomains: [...new Set(both("ios", "associatedDomains").flatMap(applinksHost))],
+    embeddedFonts: {
+      ...embeddedFontsOf(at(json, ["plugins"]), notes),
+      ...embeddedFontsOf(at(d, ["plugins"]), notes),
+    },
     runtimeConfig: runtimeSubset(json, d),
     icons: iconsOf(d, json),
     unresolved: [...new Set(unresolved)],

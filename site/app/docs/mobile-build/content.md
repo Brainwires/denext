@@ -29,6 +29,18 @@ denext mobile submit android --track internal
 Every verb takes `--dir <capacitor project>` (default: the current directory), `--dry-run` and
 `--json`.
 
+### A committed iOS shell under pnpm
+
+Capacitor's CLI links each native plugin into the iOS shell (`ios/App/CapApp-SPM/Package.swift`)
+by the path it resolved for the npm package: its real path, which under pnpm is the store
+(`node_modules/.pnpm/<name>@<version>_<hash>/node_modules/<name>`). That path changes with every
+version or peer bump and does not exist on another layout, so a committed `ios/` stops building
+elsewhere. `denext mobile sync [ios|android]` runs `npx cap sync` and then rewrites each such path
+to the package's own `node_modules/<name>` entry (the same folder, as Node resolves it), which every
+install of the same dependencies recreates; `denext mobile add` and `denext mobile build` do the
+same after their `cap sync`, and a migrated app's `mobile:sync` task runs it. Commit the shell after
+one of them, not after a bare `npx cap sync`.
+
 ## Icons and splash
 
 `denext mobile assets` reads one icon, ideally a 1024×1024 or larger square, and writes:

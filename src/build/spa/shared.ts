@@ -392,6 +392,8 @@ export async function spaShellHtml(opts: {
    * `viewport-fit=cover` (`reactNative` mode).
    */
   reactNativeRootStyle?: boolean;
+  /** Head markup that goes ahead of `spa.head` (React Native mode's `@font-face` rules). */
+  headPrefix?: string;
   /** The rendered `spa.shell` for this target (`renderSpaShell`); replaces `spa.loading`. */
   shell?: SpaShellParts | null;
 }): Promise<string> {
@@ -407,7 +409,7 @@ export async function spaShellHtml(opts: {
     .join("");
   if (spa.head) warnRawSpaHeadOnce();
   const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
-  const head = rnStyle + (spa.head ? `\n    ${spa.head}` : "");
+  const head = rnStyle + (opts.headPrefix ?? "") + (spa.head ? `\n    ${spa.head}` : "");
   // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
   // replaces the default instead of competing with it. React Native mode's default covers the
   // whole screen, as a React Native app does: without `viewport-fit=cover` every safe-area

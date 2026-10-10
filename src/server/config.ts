@@ -628,6 +628,14 @@ export interface ReactNativeConfig {
    */
   desktopPackage?: "react-native-macos" | "react-native-windows";
   /**
+   * Fonts the app embeds in its native binary (the expo-font config plugin's `fonts`) and uses
+   * by family name, as family → file: a package subpath
+   * (`"@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf"`) or a `./` path. The SPA
+   * shell gets an `@font-face` rule for each, and the files ship with the client. `denext
+   * migrate --from expo` writes it from the app config.
+   */
+  fonts?: Readonly<Record<string, string>>;
+  /**
    * Build a [uniwind](https://uniwind.dev) app's Tailwind classes as uniwind's Vite plugin
    * does, when the app has `uniwind` installed: `react-native` resolves to uniwind's web
    * components (`className` on every component), react-native-web's stylesheet gets uniwind's

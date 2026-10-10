@@ -1164,7 +1164,7 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** `reactNative`'s object options: `lists`, `desktopPackage`, `aliases` and `uniwind`. */
+/** `reactNative`'s object options: `lists`, `desktopPackage`, `aliases`, `uniwind`, `fonts`. */
 function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
   if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
     fail("reactNative.lists", 'must be "denext" or "library"');
@@ -1177,6 +1177,15 @@ function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): 
   }
   validateReactNativeAliases(value.aliases, fail);
   validateUniwind(value.uniwind, fail);
+  validateRnFonts(value.fonts, fail);
+}
+
+/** `reactNative.fonts`: an object of family name → file. */
+function validateRnFonts(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  const ok = typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.entries(value).every(([k, v]) => k !== "" && typeof v === "string" && v !== "");
+  if (!ok) fail("reactNative.fonts", "must be an object of family name → font file");
 }
 
 /** `reactNative.uniwind`: a boolean or `{ extraThemes: string[] }`. */

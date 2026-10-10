@@ -152,7 +152,11 @@ export default config;
     // The mobile:* tasks run the app's installed Capacitor CLI and denext's own CLI.
     const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
     assertStringIncludes(deno.tasks["mobile:sync"], "deno task export && deno run -A ");
-    assertStringIncludes(deno.tasks["mobile:sync"], " ota manifest out && npx cap sync");
+    assertStringIncludes(deno.tasks["mobile:sync"], " ota manifest out && deno run -A ");
+    assert(
+      String(deno.tasks["mobile:sync"]).endsWith(" mobile sync"),
+      "`denext mobile sync`: cap sync, then the iOS plugin paths kept off pnpm's store",
+    );
     assertEquals(deno.tasks["mobile:ios"], "npx cap open ios");
     assertEquals(deno.tasks["mobile:android"], "npx cap open android");
     assertStringIncludes(deno.tasks["mobile:build:ios"], "--node-modules-dir=none");

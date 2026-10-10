@@ -2100,6 +2100,8 @@ function spaConfigSource(o: {
   desktopPackages?: readonly string[];
   /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
   noPrecompress?: boolean;
+  /** `reactNative.fonts`: the fonts the expo-font config plugin embeds natively. */
+  reactNativeFonts?: Readonly<Record<string, string>>;
   /** The `mobile` block pinning the app icon migrate found, and the source it came from. */
   mobileIcon?: MobileIconFacts;
   /** `spa.tanstackRouter` (TanStack Router's `autoCodeSplitting`, from vite.config). */
@@ -2140,7 +2142,7 @@ function spaConfigSource(o: {
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
     viteEmitterLines(o.viteEmitters) +
-    (o.reactNative ? reactNativeConfigLines(o.desktopPackages ?? []) : "") +
+    (o.reactNative ? reactNativeConfigLines(o.desktopPackages ?? [], o.reactNativeFonts) : "") +
     // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
@@ -2306,20 +2308,35 @@ const MIGRATED_DESKTOP_DENO_FLAGS = ["--node-modules-dir=none", "--exclude-unuse
  * `desktopPackage`, which does the same for the app's source; with both, the choice is left
  * commented (one web build takes one flavor).
  */
-function reactNativeConfigLines(desktopPackages: readonly string[]): string {
+function reactNativeConfigLines(
+  desktopPackages: readonly string[],
+  fonts: Readonly<Record<string, string>> = {},
+): string {
+  const fontLines = Object.keys(fonts).length === 0
+    ? ""
+    : `    // The fonts the expo-font config plugin embeds natively, as @font-face rules.\n` +
+      `    fonts: {\n${
+        Object.entries(fonts).map(([f, p]) => `      ${JSON.stringify(f)}: ${JSON.stringify(p)},\n`)
+          .join("")
+      }    },\n`;
   if (desktopPackages.length === 1) {
     return `  // The app's \`react-native\` imports resolve as ${
       desktopPackages[0]
     } (as Metro does).\n` +
-      `  reactNative: { desktopPackage: ${JSON.stringify(desktopPackages[0])} },\n`;
+      (fontLines
+        ? `  reactNative: {\n    desktopPackage: ${
+          JSON.stringify(desktopPackages[0])
+        },\n${fontLines}  },\n`
+        : `  reactNative: { desktopPackage: ${JSON.stringify(desktopPackages[0])} },\n`);
   }
+  const value = fontLines ? `{\n${fontLines}  }` : "true";
   if (desktopPackages.length > 1) {
-    return `  reactNative: true,\n` +
+    return `  reactNative: ${value},\n` +
       `  // Pick the desktop flavor the app's \`react-native\` imports resolve as:\n` +
       desktopPackages.map((p) => `  // reactNative: { desktopPackage: ${JSON.stringify(p)} },\n`)
         .join("");
   }
-  return `  reactNative: true,\n`;
+  return `  reactNative: ${value},\n`;
 }
 
 /** The generated stylesheet beside a Tailwind input: `./src/styles.css` → `./src/styles.gen.css`. */
@@ -3046,6 +3063,7 @@ async function migrateExpoProject(
     head: expoConfigScript(config.runtimeConfig),
     reactNative: true,
     desktopPackages,
+    reactNativeFonts: config.embeddedFonts,
     noPrecompress: true,
     ...icon.facts,
   };

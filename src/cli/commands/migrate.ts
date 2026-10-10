@@ -398,8 +398,9 @@ function reportExpoShell(e: NonNullable<MigrateResult["expo"]>, capacitor: boole
   }
   if (e.tailwindInput) {
     console.log(
-      `    Tailwind (${e.tailwindInput}): uniwind / NativeWind styling needs the guide's ` +
-        "uniwind recipe; it is not wired automatically.",
+      `    Tailwind (${e.tailwindInput}): compile it with \`tailwind: { input, output }\`; ` +
+        "uniwind runs built in (set reactNative.uniwind.extraThemes, run `uniwind " +
+        "generate-artifacts`), NativeWind needs the guide's recipe.",
     );
   }
 }

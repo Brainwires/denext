@@ -256,8 +256,9 @@ function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: Migra
     ...(e.tailwindInput
       ? [{
         item: e.tailwindInput,
-        reason: "uniwind / NativeWind styling is not wired automatically; follow the guide's " +
-          "uniwind recipe",
+        reason: "compile it with `tailwind: { input, output }` (uniwind runs built in: set " +
+          "`reactNative.uniwind.extraThemes`, run `uniwind generate-artifacts`; NativeWind: the " +
+          "guide's recipe)",
       }]
       : []),
   ];

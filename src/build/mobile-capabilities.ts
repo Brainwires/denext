@@ -11,6 +11,7 @@
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
+import { stabilizeSpmPluginPaths } from "./spm-plugin-paths.ts";
 import { dirname, join, resolve } from "@std/path";
 import { posixRelative } from "./mobile-paths.ts";
 import {
@@ -1076,7 +1077,7 @@ async function isCapacitorProject(dir: string): Promise<boolean> {
  * `capacitor.config.*` and a `package.json`. An explicit `dir` never falls back to `cwd`:
  * a mistyped `--dir` would otherwise change whichever project the shell happens to be in.
  */
-async function findProject(cwd: string, dir: string | undefined): Promise<string> {
+export async function findProject(cwd: string, dir: string | undefined): Promise<string> {
   const root = dir === undefined ? cwd : resolve(cwd, dir);
   if (!(await isCapacitorProject(root))) {
     throw new Error(
@@ -1771,6 +1772,12 @@ export async function addMobileCapabilities(
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
   await editNative(report, VARIABLES_GRADLE, plan.native.variablesGradle);
   await mergePrivacy(report);
-  if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
+  if (plan.sync) {
+    await runChecked(opts.run, plan.sync, report.ran);
+    // `cap sync` links the plugins by pnpm's store paths; keep the shell buildable elsewhere.
+    for (const [, after] of await stabilizeSpmPluginPaths(plan.root)) {
+      report.written.push(`Package.swift plugin path → ${after}`);
+    }
+  }
   return { ...report, plan: await withResolvedEntitlementsNote(plan) };
 }

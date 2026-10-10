@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **`reactNative.fonts`: the fonts an Expo app embeds natively.** The expo-font config plugin
+  embeds font files in the binary and the app uses them by family name without `useFonts`, so a
+  web build drew them in a fallback font. `reactNative: { fonts: { family: file } }` (a package
+  subpath or a `./` path) gives the SPA shell an `@font-face` rule per family and ships the files
+  with the client (the dev server serves them from the package); `denext migrate --from expo`
+  writes it from the app config.
+- **`denext mobile sync`: a committed iOS shell builds on any checkout.** Under pnpm, `cap sync`
+  links each native plugin into `CapApp-SPM/Package.swift` by its store path
+  (`node_modules/.pnpm/<name>@<version>_<hash>/…`), which another install or layout does not have.
+  `denext mobile sync [ios|android]` runs `cap sync` and rewrites those paths to the package's
+  `node_modules/<name>` entry; `mobile add` and `mobile build` do the same after their sync, and a
+  migrated app's `mobile:sync` task uses it.
 - **React Native mode builds uniwind apps.** With `uniwind` installed, `react-native` resolves to
   uniwind's web components (except inside uniwind), react-native-web's `StyleSheet` gets uniwind's
   layered sheet and uniwind's config registers the app's themes, as uniwind's Vite plugin does:

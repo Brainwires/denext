@@ -555,6 +555,22 @@ request's promise (the browser may still finish the download into its cache).
 `@expo/vector-icons` works as it is: each icon set loads its `.ttf` through the `expo-font`
 shim (the build emits the font as a file) and draws its glyph as text in that font.
 
+Fonts the app embeds natively with the expo-font config plugin (`["expo-font", { fonts }]`) and
+then uses by family name, with no `useFonts`, are declared with `reactNative.fonts`, family → file
+(a package subpath or a `./` path): the SPA shell gets an `@font-face` rule for each (`font-display:
+block`, as an embedded font is there before the first frame) and the files ship with the client
+under `<client prefix>fonts/`. `denext migrate --from expo` writes it from the app config (Android's
+`fontFamily` names, else each file's name); a family with several files is left to you.
+
+```ts
+reactNative: {
+  fonts: {
+    "DMSans-Regular": "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
+    "DMSans-Bold": "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
+  },
+},
+```
+
 ## Expo APIs
 
 In React Native mode each `expo-*` package below resolves to a `denext/expo/*` module with the

@@ -1,5 +1,10 @@
 // SPA mode: the production build (`.denext/client/`) and the static export (`out/`).
 
+import {
+  copyReactNativeFonts,
+  fontFaceStyle,
+  resolveReactNativeFonts,
+} from "../react-native-fonts.ts";
 import { copy, ensureDir, walk } from "@std/fs";
 import { dirname, join, relative } from "@std/path";
 import { syncDesktopAppConfigAt } from "../desktop-app-config.ts";
@@ -87,12 +92,16 @@ async function bundleAndShell(
   const prefix = spaClientPrefix(paths.config!.spa);
   const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE, prefix))
     .map((name) => `${prefix}${name}`);
+  // React Native mode's embedded fonts: the files ship with the client, the shell declares them.
+  const fonts = await resolveReactNativeFonts(paths.config, paths.projectDir);
+  await copyReactNativeFonts(fonts, clientDir);
   const html = await spaShellHtml({
     spa: paths.config!.spa!,
     scriptSrc: `${prefix}${ENTRY_FILE}`,
     styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
     preload,
     reactNativeRootStyle: reactNativeRootStyle(paths.config),
+    headPrefix: fontFaceStyle(fonts, prefix),
     shell,
   });
   await Deno.writeTextFile(join(shellDir, SHELL_FILE), html);

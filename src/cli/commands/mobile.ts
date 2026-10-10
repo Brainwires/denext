@@ -62,9 +62,12 @@ import {
   type AddCapabilitiesReport,
   addMobileCapabilities,
   type CommandRunner,
+  findProject,
   formatCapabilityPlan,
   formatCapabilityTable,
 } from "../../build/mobile-capabilities.ts";
+import { logStabilized } from "../../build/mobile-build.ts";
+import { stabilizeSpmPluginPaths } from "../../build/spm-plugin-paths.ts";
 import {
   type MobileDevServer,
   restoreMobileDevSession,
@@ -696,6 +699,35 @@ async function mobileFingerprint(ctx: CommandContext): Promise<void> {
 }
 
 /**
+ * `denext mobile sync [ios|android]`: `npx cap sync` in the Capacitor project, then the iOS
+ * shell's plugin paths rewritten from pnpm's store to `node_modules/<name>` (see
+ * `stabilizeSpmPluginPaths`), so a committed `ios/` builds on another checkout.
+ */
+async function mobileSync(ctx: CommandContext, run: CommandRunner): Promise<void> {
+  const args = ["cap", "sync", ...syncPlatform(ctx.positionals[1])];
+  try {
+    const root = await findProject(resolve(ctx.global.cwd ?? "."), stringFlag(ctx.flags.dir));
+    const { code } = await run({ cmd: "npx", args, cwd: root });
+    if (code !== 0) throw new Error(`\`npx ${args.join(" ")}\` exited with ${code}.`);
+    logStabilized(await stabilizeSpmPluginPaths(root), (line) => console.log(line));
+  } catch (err) {
+    fail(`denext mobile sync: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** `mobile sync`'s platform argument as `cap sync` arguments (none: both). */
+function syncPlatform(platform: string | undefined): string[] {
+  if (platform === undefined) return [];
+  if (platform === "ios" || platform === "android") return [platform];
+  fail(`denext mobile sync: unknown platform "${platform}" (expected ios or android).`);
+}
+
+/** A string flag's value, or undefined. */
+function stringFlag(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
  * Build the `mobile` verb with `run` as the subprocess runner for `add` (tests pass a fake).
  *
  * @param run Runs `add`'s package install and `cap sync`.
@@ -708,6 +740,7 @@ export function createMobileCommand(run: CommandRunner = runInheritedCommand): C
       const action = ctx.positionals[0];
       if (action === "add-ota") return await addOta(ctx);
       if (action === "add") return await addCapabilities(ctx, run);
+      if (action === "sync") return await mobileSync(ctx, run);
       if (action === "dev") return await mobileDev(ctx, run);
       if (action === "fingerprint") return await mobileFingerprint(ctx);
       if (action === "privacy") return await mobilePrivacy(ctx);
@@ -719,7 +752,7 @@ export function createMobileCommand(run: CommandRunner = runInheritedCommand): C
       fail(
         `denext mobile: unknown action "${
           action ?? ""
-        }" (expected: add, add-ota, dev, fingerprint, privacy, doctor, inspect, assets, build, submit).`,
+        }" (expected: add, add-ota, sync, dev, fingerprint, privacy, doctor, inspect, assets, build, submit).`,
       );
     },
   };
@@ -795,6 +828,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  `mobile dev --restore`, restores it first. The restore also takes the dev URL out of\n" +
     "  the native config copies itself, so they are clean even when `cap copy` fails because\n" +
     "  the webDir was never built (export and `npx cap copy` before a release build).\n" +
+    "\n" +
+    "  sync: `npx cap sync` (ios, android or both), then the iOS shell's CapApp-SPM/Package.swift\n" +
+    "  plugin paths rewritten from pnpm's store (node_modules/.pnpm/<name>@<version>_<hash>/…) to\n" +
+    "  the package's node_modules/<name> entry, so a committed ios/ builds on any checkout of the\n" +
+    "  same dependencies. `add` and `build` do the same after their `cap sync`.\n" +
     "\n" +
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
@@ -933,13 +971,13 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     {
       name: "action",
       help:
-        "add | add-ota | dev | fingerprint | privacy | doctor | inspect | assets | build | submit",
+        "add | add-ota | sync | dev | fingerprint | privacy | doctor | inspect | assets | build | submit",
       required: true,
     },
     {
       name: "args",
       help:
-        "add: capability names (see --list); add-ota, fingerprint, privacy, doctor, inspect: the Capacitor project (default: .); dev: the denext project (default: .); build, submit: ios or android",
+        "add: capability names (see --list); add-ota, fingerprint, privacy, doctor, inspect: the Capacitor project (default: .); dev: the denext project (default: .); sync: ios or android (default: both); build, submit: ios or android",
       variadic: true,
     },
   ],
