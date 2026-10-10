@@ -451,6 +451,24 @@ async function resolveBare(
   return { path: args.path, namespace: "denext-require" };
 }
 
+/**
+ * The stand-in for a package loaded at run time. An ES module package comes back from `require`
+ * as its namespace, and esbuild hands a `.mjs` importer's default import the whole
+ * `module.exports` (Node's rule for CommonJS), so the namespace's `default` is what is exported,
+ * with the named exports read through to the namespace (a primitive `default` alone is exported
+ * as it is).
+ */
+function requireStub(specifier: string): string {
+  return `const m = require(${JSON.stringify(specifier)});
+const esm = m && m[Symbol.toStringTag] === "Module" && "default" in m;
+const d = esm ? m.default : undefined;
+const named = esm && Object.keys(m).some((k) => k !== "default" && k !== "__esModule");
+module.exports = typeof d === "function" || (typeof d === "object" && d !== null)
+  ? new Proxy(d, { get: (t, k) => (k in m ? m[k] : Reflect.get(t, k)), has: (t, k) => k in m || k in t })
+  : esm && !named ? d : m;
+`;
+}
+
 /** The bundler plugin: `node:sea` stubbed, native and `external` packages left to `require`. */
 function sidecarPlugin(state: BundleState): esbuild.Plugin {
   return {
@@ -463,7 +481,7 @@ function sidecarPlugin(state: BundleState): esbuild.Plugin {
       }));
       build.onResolve({ filter: /^[^./]/ }, (args) => resolveBare(build, args, state));
       build.onLoad({ filter: /.*/, namespace: "denext-require" }, (args) => ({
-        contents: `module.exports = require(${JSON.stringify(args.path)});`,
+        contents: requireStub(args.path),
         loader: "js",
       }));
     },
@@ -645,9 +663,6 @@ function ffiGranted(def: SidecarDefinition, config: unknown): boolean {
  * @param os The OS packaged for (default: the host's).
  * @returns The reports.
  */
-// Loaded by `desktopIncludeArgs` through a computed specifier (esbuild must stay out of the app's
-// graph), which the analysis cannot follow.
-// fallow-ignore-next-line unused-export
 export async function bundleDesktopSidecars(
   projectDir: string,
   config: unknown,

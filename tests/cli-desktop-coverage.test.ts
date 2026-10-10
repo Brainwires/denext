@@ -710,3 +710,106 @@ Deno.test("desktop package --regenerate-scripts: a second run is up to date; an 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** Run `desktop add sidecar …` (string flags as the CLI parser sets them). */
+async function runAddSidecar(
+  dir: string,
+  flags: Record<string, string | boolean>,
+  json = false,
+): Promise<{ code: number; out: string; err: string }> {
+  const cap = capture();
+  const exit = stubExit();
+  let code = 0;
+  try {
+    await desktopCommand.run(
+      makeCtx({
+        positionals: ["add", "sidecar"],
+        flags: flags as Record<string, boolean>,
+        global: { cwd: dir, json },
+      }),
+    );
+  } catch (e) {
+    if (!String(e).includes("__exit__")) throw e;
+    code = exit.calls[0];
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  return { code, out: cap.logs.join("\n"), err: cap.errs.join("\n") };
+}
+
+Deno.test("desktop add sidecar: --dry-run, then a module, an exec with --ready/--proxy, --json, and refusals", async () => {
+  const dir = await tempDir("denext_desktop_add_sidecar_");
+  try {
+    await Deno.mkdir(join(dir, "server", "node_modules", "dep"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "server", "node_modules", "dep", "package.json"),
+      '{"name":"dep"}',
+    );
+    const dry = await runAddSidecar(dir, {
+      name: "api",
+      entry: "server/main.mjs",
+      "node-modules": "server/node_modules",
+      "dry-run": true,
+    });
+    assertEquals(dry.code, 0, dry.err);
+    assertStringIncludes(dry.out, "--dry-run (nothing changed)");
+    assertStringIncludes(dry.out, ".deno-desktop/sidecars/api");
+    assertEquals(await exists(join(dir, "denext.config.ts")), false);
+    const real = await runAddSidecar(dir, {
+      name: "api",
+      entry: "server/main.mjs",
+      "node-modules": "server/node_modules",
+    });
+    assertEquals(real.code, 0, real.err);
+    const prog = await runAddSidecar(
+      dir,
+      { name: "go", exec: "./bin/go", ready: "/health", proxy: true },
+      true,
+    );
+    assertEquals(prog.code, 0, prog.err);
+    const report = JSON.parse(prog.out);
+    assertEquals(report.sidecar.ready, { http: "/health" });
+    assertEquals(report.sidecar.proxy, true);
+    assertStringIncludes(report.notes.join("\n"), "stdin");
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(config, '"api"');
+    assertStringIncludes(config, '"go"');
+    // Neither --entry nor --exec, an invalid name, and a name already used.
+    for (
+      const [flags, msg] of [
+        [{ name: "x" }, "--entry <module> or --exec"],
+        [{ name: "Bad", exec: "x" }, "invalid sidecar"],
+        [{ name: "go", exec: "./bin/go" }, "used twice"],
+      ] as const
+    ) {
+      const bad = await runAddSidecar(dir, flags);
+      assertEquals(bad.code, 1);
+      assertStringIncludes(bad.err, msg);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop add sidecar: a config whose desktop is code is refused with the entry to add by hand", async () => {
+  const dir = await tempDir("denext_desktop_add_sidecar_code_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "const desktop = { app: {} };\nexport default { desktop: makeDesktop() };\nfunction makeDesktop() { return desktop; }\n",
+    );
+    const res = await runAddSidecar(dir, { name: "go", exec: "go-server" });
+    assertEquals(res.code, 1);
+    assertStringIncludes(res.err, "Add by hand to desktop.sidecars");
+    const missing = await runAddSidecar(dir, {
+      name: "api",
+      entry: "x.mjs",
+      "node-modules": "nope",
+    });
+    assertEquals(missing.code, 1);
+    assertStringIncludes(missing.err, "no node_modules folder");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

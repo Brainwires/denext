@@ -1351,6 +1351,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
+- `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
+- `interface DesktopSidecarReadyConfig` — DesktopSidecarConfig.ready.
+- `interface DesktopSidecarRestartConfig` — DesktopSidecarConfig.restart.
+- `interface DesktopSidecarRunConfig` — DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.
+- `interface DesktopSidecarShutdownConfig` — DesktopSidecarConfig.shutdown.
 - `interface DesktopSize` — A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).
 - `interface DesktopUpdateConfig` — DesktopConfig.update: full-app self-update.
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.

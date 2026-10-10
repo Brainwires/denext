@@ -6,7 +6,11 @@
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { bundleDesktopSidecar, isNativePackage } from "../src/build/desktop-sidecar-bundle.ts";
+import {
+  bundleDesktopSidecar,
+  bundleDesktopSidecars,
+  isNativePackage,
+} from "../src/build/desktop-sidecar-bundle.ts";
 import {
   desktopBuildFlags,
   desktopSidecarIncludeArgs,
@@ -299,4 +303,219 @@ Deno.test("config validation: desktop.sidecars is checked, and proxy needs spa.p
       proxy: { target: "http://127.0.0.1:3773", prefixes: ["/api"] },
     }),
   );
+});
+
+/** A backend touching the bundler's rarer paths (see the test below). */
+const EDGES: Record<string, string> = {
+  "srv/main.mjs": `
+import { pure } from "@scope/pure";
+import esm from "esmonly";
+import cjs from "cjsmain";
+import mjs from "mjsmain";
+import nested from "nestedexp";
+import libtype from "libtype";
+console.log(JSON.stringify({ pure: pure(), esm: esm(), cjs, mjs, nested, libtype }));
+globalThis.denextSidecar?.ready();
+`,
+  "srv/worker.mjs": 'console.log("worker entry");\n',
+  // A scoped, side-effect-free pure package: inlined.
+  "srv/node_modules/@scope/pure/package.json":
+    '{"name":"@scope/pure","sideEffects":false,"exports":{".":{"import":"./i.mjs"}}}',
+  "srv/node_modules/@scope/pure/i.mjs": 'export const pure = () => "pure";\n',
+  // External, ESM-only (require would load an ES module): bundled in place.
+  "srv/node_modules/esmonly/package.json":
+    '{"name":"esmonly","version":"2.0.0","type":"module","exports":"./index.js","dependencies":{"@scope/pure":"1"}}',
+  "srv/node_modules/esmonly/index.js":
+    'import { pure } from "@scope/pure";\nexport default () => "esm+" + pure();\n',
+  // External, a .cjs main: copied as it is.
+  "srv/node_modules/cjsmain/package.json": '{"name":"cjsmain","main":"./main.cjs"}',
+  "srv/node_modules/cjsmain/main.cjs": 'module.exports = "cjs";\n',
+  // External, an .mjs main: bundled in place.
+  "srv/node_modules/mjsmain/package.json":
+    '{"name":"mjsmain","version":"1.0.0","main":"lib/m.mjs"}',
+  "srv/node_modules/mjsmain/lib/m.mjs": 'export default "mjs";\n',
+  // Native, for another OS only: never copied. One for Linux with a missing required dep.
+  "srv/node_modules/macnative/package.json": '{"name":"macnative","os":["darwin"],"gypfile":true}',
+  "srv/node_modules/notlinux/package.json": '{"name":"notlinux","os":["!linux"],"napi":{}}',
+  "srv/node_modules/linuxnative/package.json":
+    '{"name":"linuxnative","os":["linux"],"binary":{},"dependencies":{"gone":"1"}}',
+  // Nested export conditions, inlined.
+  "srv/node_modules/nestedexp/package.json":
+    '{"name":"nestedexp","exports":{".":{"node":{"import":"./n.mjs"}},"./x":["./x.js"]}}',
+  "srv/node_modules/nestedexp/n.mjs": 'export default "nested";\n',
+  // External whose main sits under a folder that declares "type": "module": bundled in place.
+  "srv/node_modules/libtype/package.json": '{"name":"libtype","main":"lib/x.js"}',
+  "srv/node_modules/libtype/lib/package.json": '{"type":"module"}',
+  "srv/node_modules/libtype/lib/x.js": 'export default "libtype";\n',
+  // Two Linux natives sharing a dependency (copied once); one with a non-array `os`.
+  "srv/node_modules/nat-a/package.json":
+    '{"name":"nat-a","gypfile":true,"os":"linux","dependencies":{"shared":"1"}}',
+  "srv/node_modules/nat-b/package.json":
+    '{"name":"nat-b","gypfile":true,"dependencies":{"shared":"1"}}',
+  "srv/node_modules/shared/package.json": '{"name":"shared"}',
+  // Installed but not a dependency of the backend's package.json: not looked at.
+  "srv/node_modules/unlisted/package.json": '{"name":"unlisted","gypfile":true}',
+  "srv/package.json": JSON.stringify({
+    name: "srv",
+    dependencies: Object.fromEntries(
+      [
+        "@scope/pure",
+        "esmonly",
+        "cjsmain",
+        "mjsmain",
+        "macnative",
+        "notlinux",
+        "linuxnative",
+        "nestedexp",
+        "libtype",
+        "nat-a",
+        "nat-b",
+      ].map((n) => [n, "1"]),
+    ),
+  }),
+  // A folder without a manifest, and a dot folder: not packages.
+  "srv/node_modules/notapkg/readme.txt": "",
+  "srv/node_modules/.bin/x": "",
+};
+
+Deno.test("bundleDesktopSidecar: scoped, ESM-only, .cjs and .mjs externals; other OSes' natives; missing deps", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-edges-" });
+  try {
+    await writeTree(root, EDGES);
+    const def: SidecarDefinition = {
+      name: "edge",
+      run: {
+        module: "srv/main.mjs",
+        nodeModules: "srv/node_modules",
+        external: ["esmonly", "cjsmain", "mjsmain", "libtype", "notinstalled"],
+        entries: ["worker.mjs"],
+      },
+    };
+    const report = await bundleDesktopSidecar({ projectDir: root, definition: def, os: "linux" });
+    const out = join(root, ".deno-desktop/sidecars/edge");
+    assert(await Deno.stat(join(out, "worker.mjs")).then(() => true), "an extra entry is bundled");
+    assertEquals([...report.natives].sort(), [
+      "linuxnative",
+      "macnative",
+      "nat-a",
+      "nat-b",
+      "notlinux",
+    ]);
+    assert(report.copied.includes("shared") && !report.copied.includes("unlisted"));
+    assert(report.copied.includes("libtype"));
+    assert(report.copied.includes("linuxnative"));
+    assert(!report.copied.includes("macnative") && !report.copied.includes("notlinux"));
+    assert(report.copied.includes("esmonly") && report.copied.includes("mjsmain"));
+    const esm = JSON.parse(await Deno.readTextFile(join(out, "node_modules/esmonly/package.json")));
+    assertEquals([esm.version, esm.type, esm.main], ["2.0.0", "module", "./index.mjs"]);
+    assert(await Deno.stat(join(out, "node_modules/cjsmain/main.cjs")).then(() => true));
+    const warned = report.warnings.join("\n");
+    assertMatch(warned, /external package notinstalled is not installed/);
+    assertMatch(warned, /linuxnative needs gone, which is not installed/);
+    assertMatch(warned, /native addons/);
+
+    const lines: string[] = [];
+    let ready = 0;
+    const inst = await workerSidecarLauncher({ entry: toFileUrl(join(out, "main.mjs")).href })({
+      definition: def,
+      bootstrap: null,
+      secrets: {},
+      onLine: (_s, l) => lines.push(l),
+      onReadySignal: () => ready++,
+    });
+    const end = Date.now() + 10_000;
+    while (ready === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+    await inst.stop(0);
+    assertEquals(ready, 1, `${lines.join("\n")} ${JSON.stringify(await inst.exited)}`);
+    assertEquals(JSON.parse(lines[0]), {
+      pure: "pure",
+      esm: "esm+pure",
+      cjs: "cjs",
+      mjs: "mjs",
+      nested: "nested",
+      libtype: "libtype",
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("isNativePackage: a folder without a manifest is judged by its files", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-native-nomanifest-" });
+  try {
+    await writeTree(root, { "gyp/binding.gyp": "{}", "none/x.js": "", "bad/package.json": "{" });
+    assertEquals(await isNativePackage(join(root, "gyp")), true);
+    assertEquals(await isNativePackage(join(root, "none")), false);
+    assertEquals(await isNativePackage(join(root, "bad")), false);
+    assertEquals(await isNativePackage(join(root, "missing")), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("desktopSidecarIncludeArgs: an app-wide ffi grant silences the warning; a removed sidecar's folder is tidied", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-include2-" });
+  try {
+    await writeTree(root, BACKEND);
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => warns.push(a.join(" "));
+    try {
+      await desktopSidecarIncludeArgs(root, {
+        desktop: {
+          extraPermissions: { ffi: ["*"] },
+          sidecars: [{ ...SIDECAR, permissions: {} }],
+        },
+      }, "linux");
+    } finally {
+      console.warn = orig;
+    }
+    assertEquals(warns, []);
+    // No Node backend any more: the stale bundle goes, the module sidecar is still included.
+    const args = await desktopSidecarIncludeArgs(root, {
+      desktop: { sidecars: [{ name: "m", run: { module: "jsr:@x/y" } }] },
+    }, "linux");
+    assertEquals(args, []);
+    assertEquals(
+      await Deno.stat(join(root, ".deno-desktop/sidecars/api")).then(() => true, () => false),
+      false,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("bundleDesktopSidecars: the host's OS by default, a sidecar with nothing to copy", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-plain-" });
+  try {
+    await writeTree(root, {
+      "srv/main.mjs":
+        'import fs from "node:fs";\nimport { pure } from "@scope/pure";\nconsole.log(pure(), typeof fs);\n',
+      "srv/node_modules/@scope/pure/package.json": '{"name":"@scope/pure","main":"i.js"}',
+      "srv/node_modules/@scope/pure/i.js": 'exports.pure = () => "p";\n',
+    });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => logs.push(a.join(" "));
+    try {
+      const reports = await bundleDesktopSidecars(root, {
+        desktop: {
+          sidecars: [{
+            name: "plain",
+            run: { module: "srv/main.mjs", nodeModules: "srv/node_modules" },
+          }],
+        },
+      });
+      assertEquals(reports[0].copied, []);
+      assertEquals(reports[0].warnings, []);
+    } finally {
+      console.log = orig;
+    }
+    assertMatch(
+      logs.join("\n"),
+      /sidecar plain: bundled into \.deno-desktop\/sidecars\/plain \([\d.]+ MB\)/,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });

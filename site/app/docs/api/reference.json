@@ -6545,6 +6545,66 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopSidecarConfig",
+          "slug": "DesktopSidecarConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarConfig",
+          "doc": "One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).",
+          "docFull": "One {@link DesktopConfig.sidecars} entry: a backend the app runs and supervises (the data form of\n`defineSidecar` from `denext/desktop`, whose `runDesktop({ sidecars })` also takes functions and a\n`bootstrap` value).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarReadyConfig",
+          "slug": "DesktopSidecarReadyConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarReadyConfig",
+          "doc": "DesktopSidecarConfig.ready.",
+          "docFull": "{@link DesktopSidecarConfig.ready}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarRestartConfig",
+          "slug": "DesktopSidecarRestartConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarRestartConfig",
+          "doc": "DesktopSidecarConfig.restart.",
+          "docFull": "{@link DesktopSidecarConfig.restart}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarRunConfig",
+          "slug": "DesktopSidecarRunConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarRunConfig",
+          "doc": "DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.",
+          "docFull": "{@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with\n`nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSidecarShutdownConfig",
+          "slug": "DesktopSidecarShutdownConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarShutdownConfig",
+          "doc": "DesktopSidecarConfig.shutdown.",
+          "docFull": "{@link DesktopSidecarConfig.shutdown}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopSize",
           "slug": "DesktopSize",
           "kind": "interface",

@@ -67,6 +67,8 @@ export interface SidecarHostOptions {
   readonly clock?: SidecarClock;
   /** `fetch` for `ready.http` (tests). */
   readonly fetch?: typeof fetch;
+  /** The log file size that rotates it to `.1` (default 5 MB; tests pass a small one). */
+  readonly logRotateBytes?: number;
 }
 
 /** The sidecars of the app, as `runDesktop` drives them. */
@@ -155,6 +157,7 @@ const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 function logSink(
   def: SidecarDefinition,
   dataDir: string | undefined,
+  rotateBytes = LOG_ROTATE_BYTES,
 ): (stream: "stdout" | "stderr", line: string) => void {
   const mode = def.logs ?? SIDECAR_DEFAULTS.logs;
   const toConsole = mode === "inherit" || mode === "both";
@@ -170,7 +173,7 @@ function logSink(
     try {
       await Deno.mkdir(join(dataDir!, "logs"), { recursive: true });
       const size = await Deno.stat(path).then((s) => s.size, () => 0);
-      if (size + text.length > LOG_ROTATE_BYTES) {
+      if (size + text.length > rotateBytes) {
         await Deno.rename(path, `${path}.1`).catch(() => {});
       }
       await Deno.writeTextFile(path, text, { append: true });
@@ -204,7 +207,7 @@ async function buildSupervisor(
     ...(port !== undefined ? { port } : {}),
     secrets,
     values: resolveValues(def, secrets),
-    onLine: logSink(def, options.dataDir),
+    onLine: logSink(def, options.dataDir, options.logRotateBytes),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
