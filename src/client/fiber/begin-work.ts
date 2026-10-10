@@ -18,7 +18,7 @@ import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import { PROFILER_PROP, type ProfilerMarker } from "../../runtime/profiler.ts";
 import { toError } from "../../runtime/error-boundary.ts";
 import { normalizeChildren } from "../vnode-utils.ts";
-import { propsAndContextEqual, providerContexts } from "../context-map.ts";
+import { ContextScope, propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
 import { LIBRARY_ELEMENT } from "../../runtime/library-elements.ts";
 import {
@@ -98,7 +98,9 @@ function ownUpdateIsNoop(wip: Fiber, current: Fiber | null): boolean {
   // Only an update that state setters scheduled can be a no-op; a lane pending for any other
   // reason (a suspended child's retry, a retained hidden-subtree lane) is real work.
   if (forced || !fromState || !current) return false;
-  for (const cell of wip.hooks ?? []) {
+  const hooks = wip.hooks;
+  for (let i = 0; hooks !== undefined && i < hooks.length; i++) {
+    const cell = hooks[i];
     if (!("rendered" in cell)) continue; // not a stateful cell
     // Never committed (only an abandoned render saw it) or changed since the last commit.
     if (!("committed" in cell) || !Object.is(cell.value, cell.committed)) return false;
@@ -148,9 +150,13 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   // Profiler (symbol-keyed), and unwrapping those would drop their behavior (e.g. a
   // Provider's value would stop reaching descendants). React never puts props on a
   // Fragment, so restricting to plain fragments costs no React parity.
+  // A rendered array is one nested child list (its keys scoped as such): wrap it. Anything
+  // else reconciles as the single child it is, with no wrapper array.
   const childrenToReconcile: VNodeChildren = isPlainUnkeyedFragment(rendered)
     ? ((rendered as VNode).props?.children ?? null) as VNodeChildren
-    : [rendered];
+    : Array.isArray(rendered)
+    ? [rendered]
+    : rendered;
   reconcileChildren(wip, childrenToReconcile, wip.host, childBoundary, wip.inherited);
   return wip.child;
 }
@@ -355,8 +361,7 @@ function beginElement(wip: Fiber): Fiber | null {
     if (typeof act === "function") {
       const x = fiberExt(wip);
       x.formStatus ??= createFormStatusSignal();
-      childInherited = new Map(wip.inherited);
-      childInherited.set(FormStatusContext._id, x.formStatus);
+      childInherited = new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
     }
   }
   reconcileChildren(

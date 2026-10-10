@@ -77,6 +77,45 @@ and this project adheres to
   Linux, a no-op on Windows. The packaged app's `--allow-run` lists the usual shells. Docs:
   [Desktop › The user's login-shell environment](/docs/desktop#desktop-sidecars-login-shell).
 
+### Changed
+
+- **Rendering and committing allocate far less.** Opening a thread in T3 Code's phone build
+  (Chromium's sampling heap profiler, iPhone 13 profile) allocated 11.7 MB of JS in denext's
+  runtime chunk on the first open and 19.6 MB on a warm one; it now allocates 3.3 MB and 5.3 MB
+  (−72%). Nothing a component sees changes. Where the churn went:
+  - an element keeps the props object JSX passes it, as React 19's `jsx` does — it is copied
+    only to write a separately passed `key` or `defaultProps` — and `h()` copies once, not twice;
+  - a context provider links one `ContextScope` onto its parent's contexts instead of copying
+    the parent's whole `Map` (a lookup asks each provider up the chain);
+  - `useCallback` keeps `fn` itself (no `() => fn` factory per call); `useMemo`, `useCallback`
+    and effects keep their deps array by reference, as React does, instead of a copy;
+  - a queued effect is one small object instead of three closures plus a copied deps array, and
+    every effect cell reconnects through one shared function; `useState` / `useReducer` /
+    `useSyncExternalStore` no longer allocate a closure context on every call, and
+    `useSyncExternalStore` no longer builds a `[subscribe]` array each render;
+  - children that need no flattening (a `.map()` result, static JSX children) are reconciled from
+    their own array; a component's single rendered child is not wrapped in one; reconciling a
+    changed child list tracks reuse by position (no `Set`, no index map) and passes a parent's
+    host / boundary / contexts as arguments rather than an object per call;
+  - a component render no longer allocates its Fast Refresh resolution, its render-target
+    record or a snapshot of every hook's deps (a render-phase re-render resets only the cells
+    the discarded pass created — the only deps a render changes are `useMemo`'s);
+  - props, styles and the memo bailout's shallow compare walk keys with `for…in` instead of
+    `Object.keys` / `Object.entries` arrays; the commit's effect list is one flat array, not a
+    pair per effect, and its hot loops index arrays instead of allocating iterators.
+
+  | Measure                                                                     |                    3.4.4 |                 Now |
+  | --------------------------------------------------------------------------- | -----------------------: | ------------------: |
+  | T3 Code, JS allocated per thread open (whole page; first / warm open)       |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
+  | T3 Code, denext runtime chunk's share of it                                 |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
+  | T3 Code, WebKit JS heap after the first open                                |           114.5–115.6 MB |      111.3–111.4 MB |
+  | T3 Code, WebKit JS heap after 5 opens                                       |           127.4–127.9 MB |      123.9–124.0 MB |
+  | T3 Code, Chromium heap after 5 / 20 opens                                   | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
+  | T3 Code, Chromium renderer PSS after 20 opens                               |               204–209 MB |          192–194 MB |
+  | `examples/hello`, JS allocated by load + hydration / by 200 clicks          |           1.79 / 10.7 MB |       1.77 / 9.4 MB |
+  | 10k-row list, JS allocated per row: mount / full re-render (with a handler) |            11.8 / 5.2 KB |        8.3 / 2.6 KB |
+  | 10k-row list, retained per row after the re-render (`bench:fiber-memory`)   |                  6,751 B |             6,742 B |
+
 ### Fixed
 
 - **`onTouchStart` / `onTouchMove` / `onWheel` listen passive, as in React.** React DOM registers

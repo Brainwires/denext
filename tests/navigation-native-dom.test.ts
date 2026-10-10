@@ -910,6 +910,72 @@ Deno.test("bar button items: unstable_headerRightItems are header buttons; they 
   root.unmount();
 });
 
+Deno.test("bar button items: a menu item opens its menu and runs the chosen action", async () => {
+  const pressed: string[] = [];
+  const state = { key: "stack-1", index: 0, routes: [{ key: "r0", name: "doc" }] };
+  const { core } = fakeCore(state, {
+    r0: {
+      title: "Doc",
+      unstable_headerRightItems: () => [{
+        type: "menu",
+        label: "More",
+        menu: {
+          title: "Actions",
+          items: [
+            {
+              type: "action",
+              label: "Hidden",
+              hidden: true,
+              onPress: () => pressed.push("hidden"),
+            },
+            { type: "action", label: "Rename", icon: { type: "sfSymbol", name: "pencil" } },
+            {
+              type: "submenu",
+              label: "Danger",
+              items: [{
+                label: "Delete",
+                destructive: true,
+                onPress: () => pressed.push("delete"),
+              }],
+            },
+          ],
+        },
+      }],
+    },
+  });
+  const { container } = docWithData({});
+  const root = createRoot(container as Any);
+  const { Navigator } = (createNativeStackNavigatorFactory(core) as Any)();
+  root.render(h(Navigator, {}));
+  await settle();
+  // The iOS shell's native menu: it picks the submenu's "Delete" (the hidden entry is dropped,
+  // so the visible ones are "0" and "1", and "Delete" is "1.0").
+  const shown: unknown[] = [];
+  const g = globalThis as Record<string, unknown>;
+  const saved = Object.getOwnPropertyDescriptor(g, "Capacitor");
+  g.Capacitor = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      DenextContextMenu: {
+        show: (options: unknown) => (shown.push(options), Promise.resolve({ selectedId: "1.0" })),
+      },
+    },
+  };
+  try {
+    findAll(container, "data-dnx-header-item")[0].dispatch("click", { button: 0 });
+    for (let i = 0; i < 50 && pressed.length === 0; i++) await settle(1);
+  } finally {
+    if (saved) Object.defineProperty(g, "Capacitor", saved);
+    else delete g.Capacitor;
+  }
+  assertEquals(pressed, ["delete"]);
+  const options = shown[0] as { title?: string; items: Array<{ id: string; title?: string }> };
+  assertEquals(options.title, "Actions");
+  assertEquals(options.items.map((i) => i.id), ["0", "1"]);
+  root.unmount();
+});
+
 Deno.test("fillScreens: React Navigation screens fill a flex-column body; Sheet fillContent", async () => {
   const state = { key: "stack-1", index: 0, routes: [{ key: "r0", name: "list" }] };
   const { core } = fakeCore(state, { r0: { title: "List" } });

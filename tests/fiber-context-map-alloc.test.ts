@@ -19,7 +19,7 @@ Deno.test("new fibers share one empty context map", () => {
   const b = createFiber("host", h("span", null) as VNode);
   assertStrictEquals(a.inherited, b.inherited);
   assertStrictEquals(a.contexts, a.inherited);
-  assertEquals(a.inherited.size, 0);
+  assertEquals((a.inherited as Map<symbol, unknown>).size, 0);
 });
 
 Deno.test("providers still reach consumers, and the shared map stays empty", () => {
@@ -34,5 +34,8 @@ Deno.test("providers still reach consumers, and the shared map stays empty", () 
   );
   flushSync();
   assertEquals(container.textContent, "darklight");
-  assertEquals(createFiber("host", h("i", null) as VNode).inherited.size, 0);
+  assertEquals(
+    (createFiber("host", h("i", null) as VNode).inherited as Map<symbol, unknown>).size,
+    0,
+  );
 });

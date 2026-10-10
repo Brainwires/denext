@@ -80,6 +80,12 @@ export interface Dispatcher {
    * not called — the inspector applies it lazily when it reads the value.
    */
   useDebugValue?(value: unknown, format?: (value: unknown) => unknown): void;
+  /**
+   * Memoize `fn` itself until `deps` change. Optional: without it the public
+   * {@link useCallback} goes through {@link Dispatcher.useMemo} with a factory returning
+   * `fn` — a closure per call, which the client fiber dispatcher avoids by implementing this.
+   */
+  useCallback?<T>(fn: T, deps?: DependencyList): T;
 }
 
 /**
@@ -184,7 +190,13 @@ export function useCallback<T extends (...args: never[]) => unknown>(
   fn: T,
   deps?: DependencyList,
 ): T {
-  return dispatcher().useMemo(() => fn, deps);
+  const d = dispatcher();
+  return d.useCallback ? d.useCallback(fn, deps) : memoizedCallback(d, fn, deps);
+}
+
+/** {@link useCallback} on a dispatcher without its own: a memo whose factory returns `fn`. */
+function memoizedCallback<T>(d: Dispatcher, fn: T, deps?: DependencyList): T {
+  return d.useMemo(() => fn, deps);
 }
 
 /**

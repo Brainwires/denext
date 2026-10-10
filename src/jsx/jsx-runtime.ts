@@ -22,24 +22,35 @@ export type { JSX } from "./types.ts";
  * Create a virtual DOM node. Shared by both `jsx` (single/no child) and
  * `jsxs` (static children array) — the distinction only matters to React's
  * key warnings, which we don't need.
+ *
+ * The props object a JSX compiler passes is a fresh literal per call, so — as React 19's `jsx`
+ * does — it becomes the element's props as is, unless something must be written into it: a
+ * separately passed `key`, or a component's `defaultProps`. Only then is it copied first.
  */
 function createElement(
   type: VNodeType,
   props: (VProps & { children?: VNodeChildren }) | null,
   key?: Key,
 ): VNode {
+  if (props !== null && key === undefined && defaultPropsOf(type) === undefined) {
+    return element(type, props);
+  }
   const normalized: VProps = props ? { ...props } : {};
   if (key !== undefined) normalized.key = key;
   applyDefaultProps(type, normalized as Record<string, unknown>);
-  const resolvedKey = normalized.key ?? null;
+  return element(type, normalized);
+}
+
+/** The element over `props`, which is already final (its key is read from it). */
+function element(type: VNodeType, props: VProps): VNode {
   // `$$typeof` is a literal own field (not `Object.defineProperty`) so V8 keeps a
   // monomorphic hidden class on this hot path — this is the shape React itself ships.
   // Its value is a symbol, so `JSON.stringify` drops it (no Flight wire-size cost).
   return {
     $$typeof: REACT_ELEMENT_TYPE,
     type,
-    props: normalized,
-    key: resolvedKey,
+    props,
+    key: props.key ?? null,
   };
 }
 
@@ -50,16 +61,21 @@ function createElement(
  * live on the inner component (exposed as `.type`), so fall back to it.
  */
 function applyDefaultProps(type: VNodeType, props: Record<string, unknown>): void {
-  if (typeof type !== "function" && (typeof type !== "object" || type === null)) return;
-  const t = type as {
-    defaultProps?: Record<string, unknown>;
-    type?: { defaultProps?: Record<string, unknown> };
-  };
-  const defaults = t.defaultProps ?? t.type?.defaultProps;
+  const defaults = defaultPropsOf(type);
   if (!defaults) return;
   for (const k in defaults) {
     if (props[k] === undefined) props[k] = defaults[k];
   }
+}
+
+/** `type`'s `defaultProps` (a `memo(Inner)` wrapper's live on `Inner`, its `.type`), if any. */
+function defaultPropsOf(type: VNodeType): Record<string, unknown> | undefined {
+  if (typeof type !== "function" && (typeof type !== "object" || type === null)) return undefined;
+  const t = type as {
+    defaultProps?: Record<string, unknown>;
+    type?: { defaultProps?: Record<string, unknown> };
+  };
+  return t.defaultProps ?? t.type?.defaultProps ?? undefined;
 }
 
 /** JSX factory for elements with zero or one child (automatic runtime). */
@@ -101,5 +117,7 @@ export function h(
   const merged: VProps = props ? { ...props } : {};
   if (children.length === 1) merged.children = children[0];
   else if (children.length > 1) merged.children = children as VNodeChildren;
-  return createElement(type, merged, merged.key);
+  // `merged` is this call's own copy: no second copy for the key or the defaults.
+  applyDefaultProps(type, merged as Record<string, unknown>);
+  return element(type, merged);
 }

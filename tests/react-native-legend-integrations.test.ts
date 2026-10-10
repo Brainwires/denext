@@ -151,6 +151,35 @@ Deno.test("AnimatedLegendList: the list, with sharedValues kept current", async 
   await screen.unmount();
 });
 
+Deno.test("AnimatedLegendList: onScroll feeds the shared scroll offset along the list's axis", async () => {
+  // A stand-in list that hands back the onScroll it was given.
+  let onScroll: ((event: unknown) => void) | undefined;
+  function FakeList(props: Record<string, unknown>): VNode {
+    onScroll = props.onScroll as typeof onScroll;
+    return h("div", null);
+  }
+  const { AnimatedLegendList } = legendReanimatedExports(FakeList as never);
+  const seen: unknown[] = [];
+  const offset = sharedValue(-1);
+  const event = { nativeEvent: { contentOffset: { x: 7, y: 42 } } };
+  const vertical = await render(h(AnimatedLegendList, {
+    sharedValues: { scrollOffset: offset },
+    onScroll: (e: unknown) => seen.push(e),
+  }));
+  await act(() => onScroll!(event));
+  assertEquals([offset.value, seen], [42, [event]], "y, and the app's own onScroll still runs");
+  await act(() => onScroll!({}));
+  assertEquals(offset.value, 42, "an event without an offset keeps the last one");
+  await vertical.unmount();
+  const across = await render(h(AnimatedLegendList, {
+    horizontal: true,
+    sharedValues: { scrollOffset: offset },
+  }));
+  await act(() => onScroll!(event));
+  assertEquals(offset.value, 7, "a horizontal list reads x");
+  await across.unmount();
+});
+
 Deno.test("internal: the generic helpers @legendapp/list's own subpaths import", () => {
   const { typedForwardRef, typedMemo, useCombinedRef, useLatestRef } = internal as Record<
     string,

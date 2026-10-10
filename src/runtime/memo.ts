@@ -14,6 +14,8 @@ export type PropsComparator = (
   next: Record<string, unknown>,
 ) => boolean;
 
+const hasOwn = Object.prototype.hasOwnProperty;
+
 /**
  * Shallow-compare two prop objects: equal when they have the same keys and every
  * value is `Object.is`-equal. This is the default bailout comparator.
@@ -23,14 +25,18 @@ export function shallowEqualProps(
   b: Record<string, unknown>,
 ): boolean {
   if (a === b) return true;
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const key of aKeys) {
-    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
-    if (!Object.is(a[key], b[key])) return false;
+  // Own enumerable keys via `for…in` + an own-key check: the bailout runs for every component
+  // a parent re-renders, and two `Object.keys` arrays per call were its whole cost.
+  let count = 0;
+  for (const key in a) {
+    if (!hasOwn.call(a, key)) continue;
+    if (!hasOwn.call(b, key) || !Object.is(a[key], b[key])) return false;
+    count++;
   }
-  return true;
+  for (const key in b) {
+    if (hasOwn.call(b, key) && --count < 0) return false;
+  }
+  return count === 0;
 }
 
 /**

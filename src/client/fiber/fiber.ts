@@ -13,6 +13,19 @@ import type { FormStatusSignal } from "../../runtime/form-status.ts";
 import type { ProfilerOnRender } from "../../runtime/profiler.ts";
 import type { IdScope } from "../../jsx/tree-id.ts";
 
+/**
+ * The context values visible at a fiber, by context id: what `useContext` reads. Never
+ * mutated in place — a provider derives a new one (see `ContextScope` in context-map.ts) — so
+ * its identity is an exact "did any context above change" signal for the bailout. A `Map`
+ * satisfies it.
+ */
+export interface ContextMap {
+  /** Whether a provider above supplies context `id`. */
+  has(id: symbol): boolean;
+  /** The value the nearest provider of context `id` supplies. */
+  get(id: symbol): unknown;
+}
+
 /** Reveal coordination shared by a SuspenseList and its member boundaries. */
 export interface SuspenseListState {
   /** Reveal order from the `<SuspenseList>` marker (unset ⇒ no coordination). */
@@ -63,7 +76,19 @@ export type FiberTag =
  * cleanups first, then all their setups (React's ordering) — so a class-lifecycle
  * thunk (a plain function with no `cleanup`) participates only in the setup pass.
  */
-export type CommitEffect = (() => void) & { cleanup?: () => void };
+export type CommitEffect = ((() => void) & { cleanup?: () => void }) | QueuedEffect;
+
+/**
+ * A commit entry that is an object rather than a callable thunk (a hook effect — see
+ * `HookEffect` in hooks-dispatcher.ts): the commit calls `cleanup()` in its teardown pass and
+ * `run()` in its setup pass.
+ */
+export interface QueuedEffect {
+  /** The setup pass: run the effect. */
+  run(): void;
+  /** The teardown pass: run the previous render's cleanup. */
+  cleanup(): void;
+}
 
 /** A hook cell (identical shape to the recursive reconciler's). */
 export interface HookCell {
@@ -86,9 +111,15 @@ export interface HookCell {
    * Effect cells (passive/layout, not insertion): re-run the most-recently-committed
    * setup and store its cleanup. Used to reconnect an Offscreen subtree on reveal —
    * the cell keeps its state, but its side effect is torn down while hidden and
-   * rebuilt when shown again.
+   * rebuilt when shown again. Called with the cell itself, so one shared function serves
+   * every effect cell (it re-runs {@link HookCell.create}).
    */
-  reconnect?: () => void;
+  reconnect?: (cell: HookCell) => void;
+  /**
+   * Effect cells (passive/layout): the most recently COMMITTED setup, which `reconnect` re-runs.
+   * Recorded at commit, so reconnecting needs no closure per cell or per queued effect.
+   */
+  create?: () => (() => void) | void;
   /** Effect cell currently torn down by an Offscreen hide (awaiting reconnect). */
   disconnected?: boolean;
   /**
@@ -244,7 +275,7 @@ class FiberExt {
    */
   insertionEffects: CommitEffect[] | undefined;
   /** A provider fragment's memo of the parent map and value its derived map was built from. */
-  provParent: Map<symbol, unknown> | undefined;
+  provParent: ContextMap | undefined;
   provValue: unknown;
   /**
    * Dev only: this render's `useDebugValue` calls (not hook cells — see DebugValueEntry).
@@ -346,8 +377,8 @@ export interface Fiber {
   // map this fiber exposes to its children; for a provider fragment it is the
   // derived map (and doubles as the provider memo cache), otherwise it equals
   // `inherited`.
-  inherited: Map<symbol, unknown>;
-  contexts: Map<symbol, unknown>;
+  inherited: ContextMap;
+  contexts: ContextMap;
   // The context ids this fiber READ during its last render (via useContext / use /
   // Consumer). Lets the memo bailout re-render a consumer only when a context it
   // actually reads changed value — instead of when any ancestor provider re-rendered
@@ -383,7 +414,7 @@ export interface Fiber {
  * mutated in place (a provider derives a new map, `providerContexts`), and reconcile replaces
  * a new fiber's map before it renders, so two fresh `Map`s per fiber were garbage.
  */
-const NO_CONTEXT: Map<symbol, unknown> = new Map();
+const NO_CONTEXT: ContextMap = new Map();
 
 /**
  * A fiber. Every field is a class field, declared up front, so all fibers share ONE hidden
@@ -411,8 +442,8 @@ class FiberNode implements Fiber {
   bits = 0;
   host: Fiber | null = null;
   boundary: Fiber | null = null;
-  inherited: Map<symbol, unknown> = NO_CONTEXT;
-  contexts: Map<symbol, unknown> = NO_CONTEXT;
+  inherited: ContextMap = NO_CONTEXT;
+  contexts: ContextMap = NO_CONTEXT;
   hooks: Fiber["hooks"];
   pendingEffects: Fiber["pendingEffects"];
   passiveEffects: Fiber["passiveEffects"];
