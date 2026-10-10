@@ -215,6 +215,7 @@
     "test": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/",
     "test:unit": "deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/,tests/integration/",
     "test:integration": "deno run -A scripts/test-run.ts tests/integration/",
+    "test:stress": "deno run -A scripts/test-stress.ts",
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
     "test:migration-bed": "deno test -A --unstable-kv tests/migration-bed/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",

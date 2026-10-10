@@ -42,6 +42,17 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   cwd (`inChild` from `tests/helpers/isolated.ts`). A file that must change process-wide state
   goes in `tests/serial-tests.ts`: `deno task test` (`scripts/test-run.ts`) runs those files one
   at a time after the parallel pass, and `tests/serial-tests.test.ts` fails on an unlisted one.
+- **Await the work, never sleep for it.** A test that sleeps a fixed time while the code under
+  test arms its own timer later fails now and then on a loaded machine. Wait for the event
+  itself, flush with `act()`, or run on a fake clock (`fakeTimers()` in
+  `tests/helpers/mobile-fakes.ts`); a longer sleep only hides the race.
+  **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
+  mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
+  left out, see `scripts/test-stress.ts`) with the `tests/stress/timer-jitter.ts` preload, which
+  stalls the thread for up to 40 ms before timer and microtask callbacks, from a seeded PRNG.
+  Each run prints its seed and the summary lists the failed ones; replay one with
+  `deno task test:stress --seed <seed> [files]`. `--runs N` runs N seeds, `--max-ms` and `--p`
+  change the longest stall and the stall chance. The nightly workflow runs it ten times.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
   network-bound suites `check` never runs; the nightly workflow
   (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real

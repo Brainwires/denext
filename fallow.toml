@@ -117,6 +117,8 @@ entry = [
   "scripts/*.ts",
   # CI-only scripts run via `deno run` from a workflow (e.g. the desktop secureStore round-trip).
   "scripts/ci/*.ts",
+  # The timer-stress preload, loaded by `deno test --preload` from scripts/test-stress.ts.
+  "tests/stress/timer-jitter.ts",
   # More file conventions denext loads by PATH, not import: the project config, the
   # request middleware, the instrumentation hook, and the App Router metadata files.
   "**/denext.config.ts",
