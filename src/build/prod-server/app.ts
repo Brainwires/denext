@@ -172,6 +172,7 @@ export async function createProdApp(
     publicDir: paths.publicDir,
     emittedDir: join(paths.outDir, EMITTED_DIR),
     clientEntryFor: assets.clientEntryFor,
+    flightBootEntry: assets.flightBootEntry,
     styleHrefsFor: assets.styleHrefsFor,
     globalErrorEntry: assets.globalErrorEntry,
     matchExternal: getPluginRequestHandler(),

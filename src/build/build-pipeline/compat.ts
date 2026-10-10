@@ -12,6 +12,7 @@ import {
 import { stopNextCompat } from "../next-compat.ts";
 import { routeId } from "../paths.ts";
 import { compatBuildOptions, compatModuleList } from "../pipeline-shared.ts";
+import { writeFlightBoot } from "../flight-boot.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** The options every compat bundling call shares. */
@@ -61,6 +62,8 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
     usesSingletons: ctx.usesSingletons,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
+  // The deferred boot a page of deferred islands loads instead (build/flight-boot.ts).
+  await writeFlightBoot(ctx.clientDir, ctx.paths.instrumentationClientPath);
 }
 
 /** Compat client bundles for the interactive (hydrated) routes. */

@@ -16,6 +16,7 @@ import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import { inlinedRootFlight } from "../jsx/flight-inline.ts";
+import { DEFERRED_STRATEGIES } from "../runtime/lazy-directive.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
@@ -114,6 +115,12 @@ export interface DocumentOptions {
   hydration?: HydrationData;
   /** URL of the client runtime entry script. */
   clientEntry?: string;
+  /**
+   * URL of the Flight entry's deferred boot (`flight-boot.js`), when the build wrote one: a page
+   * whose only client code is deferred islands loads it instead of {@link clientEntry}, and the
+   * client runtime only when an island's trigger fires (see {@linkcode deferredBootEntry}).
+   */
+  deferredEntry?: string;
   /** Viewport/theme metadata; replaces the default `<meta name="viewport">`. */
   viewport?: Viewport;
   /** Stylesheet URLs to link in `<head>` (extracted CSS for the route). */
@@ -244,11 +251,13 @@ function hydrationScripts(opts: DocumentOptions, clientEntry: string): string {
   let scripts = "";
   if (imageConfigNeedsEmbed()) scripts += jsonIsland(IMAGE_CONFIG_ID, getImageRuntimeConfig());
   scripts += jsonIsland("__denext_data", opts.hydration);
+  let rootFlight: FlightNode | undefined;
   if (opts.flight !== undefined) {
     // A page whose client parts are all carved islands inlines `null` (a root-less boot), not
     // a JSON copy of its static HTML — see flight-inline.ts.
+    rootFlight = inlinedRootFlight(opts.flight);
     scripts += `<script id="__denext_flight" type="application/json">${
-      serializeFlight(inlinedRootFlight(opts.flight))
+      serializeFlight(rootFlight)
     }</script>`;
   }
   if (opts.islands && opts.islands.length > 0) {
@@ -265,7 +274,50 @@ function hydrationScripts(opts: DocumentOptions, clientEntry: string): string {
   // Read from the render scope (per request; a cached PPR shell re-seeds it on a hit), so
   // every document path — buffered, streamed, PPR, export — carries it without threading.
   if (takeClassRendered()) scripts += jsonIsland(CLASS_MARKER_ID, 1);
-  return scripts + `<script type="module" src="${escapeHtml(clientEntry)}"></script>`;
+  const entry = deferredBootEntry(opts, rootFlight) ?? clientEntry;
+  return scripts + `<script type="module" src="${escapeHtml(entry)}"></script>`;
+}
+
+/**
+ * The deferred boot to load instead of the Flight entry, or null: when the build wrote one
+ * ({@link DocumentOptions.deferredEntry}) and the page's only client code is deferred islands
+ * — no page root to hydrate (its inlined Flight is `null`), every island waits for a trigger
+ * (`client:idle` / `visible` / `interaction` / `media`; a resumable route's are all
+ * `interaction`), and no resumable handler sits outside every island (a `<Link>` on a resumable
+ * route, whose soft navigation needs the runtime). The boot imports the Flight entry on the
+ * first trigger (build/flight-boot.ts), and makes the same handler check itself, which covers a
+ * streamed body this one cannot see.
+ */
+function deferredBootEntry(
+  opts: Pick<DocumentOptions, "deferredEntry" | "islands" | "bodyHtml">,
+  rootFlight: FlightNode | undefined,
+): string | null {
+  if (!opts.deferredEntry || rootFlight !== null || !opts.islands?.length) return null;
+  const deferred = opts.islands.every((island) => DEFERRED_STRATEGIES.includes(island.strategy));
+  if (!deferred || handlerOutsideIslands(opts.bodyHtml ?? "")) return null;
+  return opts.deferredEntry;
+}
+
+/** An island wrapper's open tag, any other `<div>`'s, a `</div>`, or a handler host's open tag. */
+const HANDLER_SCAN_RE = /<div\b([^>]*)>|<\/div>|<[a-z][^>]*?\sdata-dnx-h="/g;
+
+/**
+ * Whether the server HTML stamps a resumable handler (`data-dnx-h`) on an element outside every
+ * island wrapper. The renderer escapes `<`, `>` and `"` in text and attribute values, so every
+ * match is a real tag; island wrappers are `<div>`s, so `<div>` nesting says when one closes.
+ */
+function handlerOutsideIslands(html: string): boolean {
+  let islandDepth = 0; // `<div>`s open since the outermost island wrapper opened
+  for (const [tag, divAttrs] of html.matchAll(HANDLER_SCAN_RE)) {
+    if (tag === "</div>") {
+      if (islandDepth > 0) islandDepth--;
+    } else if (divAttrs === undefined) {
+      if (islandDepth === 0) return true; // a handler host outside every island
+    } else if (islandDepth > 0) islandDepth++;
+    else if (/\sdata-dnx-island\b/.test(divAttrs)) islandDepth = 1;
+    else if (/\sdata-dnx-h="/.test(divAttrs)) return true;
+  }
+  return false;
 }
 
 /**

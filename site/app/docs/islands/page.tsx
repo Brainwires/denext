@@ -11,7 +11,7 @@ export default function Islands() {
     <DocsShell
       active="islands"
       title="Islands & hydration"
-      lead="A client:* directive turns a 'use client' component into an island: it hydrates on its own schedule instead of eagerly with the page. Each island stays inert server-rendered HTML until its strategy fires — a real IntersectionObserver, requestIdleCallback, or matchMedia — so an interaction island can ship zero JavaScript until you actually touch it. denext has full 6/6 Astro-style directive parity, on React's own 'use client' model — plus resumability Astro lacks."
+      lead="A client:* directive turns a 'use client' component into an island: it hydrates on its own schedule instead of eagerly with the page. Each island stays inert server-rendered HTML until its strategy fires — a real IntersectionObserver, requestIdleCallback, or matchMedia — so a page whose only client code is deferred islands loads a 2 KB boot script and fetches the client runtime when the first island wakes — an interaction island may never fetch it. denext has full 6/6 Astro-style directive parity, on React's own 'use client' model — plus resumability Astro lacks."
     >
       <h2>What an island is</h2>
       <p>
@@ -167,6 +167,30 @@ export default function Chart() { /* … */ }
         The <code>display:contents</code> wrapper adds no box, so it never affects layout. See{" "}
         <a href="/docs/resumability">Resumability</a> for how state (<code>useSignal</code>/
         <code>useStore</code>) and code-split handlers (<code>qrl</code>) ride along.
+      </p>
+
+      <h2>What a page loads up front</h2>
+      <p>
+        In a production build and a{" "}
+        <code>denext export</code>, a page whose only client code is islands that wait (<code>
+          client:idle
+        </code>, <code>client:visible</code>, <code>client:interaction</code>,{" "}
+        <code>client:media</code>) loads a boot script of about 2 KB with no imports instead of the
+        client runtime. It watches the islands' triggers, and on the first one it fetches the
+        runtime, which wakes that island; an interaction that arrived meanwhile (the click that woke
+        it, the rest of its gesture) is handed to the runtime and replayed, so it is not lost. A
+        resumable route's islands all wait for an interaction, so such a page loads the boot alone
+        until it is touched.
+      </p>
+      <p>
+        The runtime loads with the page as before when something needs it right away: a page root to
+        hydrate (a client component that is not a carved island), a <code>client:load</code> or{" "}
+        <code>client:only</code> island, a resumable handler outside every island (a{" "}
+        <code>&lt;Link&gt;</code>
+        's soft navigation), or an <code>instrumentation-client</code>{" "}
+        file, which must run before the app. Until the runtime has loaded, a plain link on a
+        deferred page is an ordinary page load rather than a client-side navigation. The development
+        server always loads the runtime up front.
       </p>
 
       <h2>Nested islands defer independently</h2>

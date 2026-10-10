@@ -26,6 +26,18 @@ const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
   "only",
 ];
 
+/**
+ * The strategies whose islands wait for a trigger (idle, a scroll into view, an interaction, a
+ * media query): a page whose only client code is such islands can defer loading the client
+ * runtime until the first one fires (build/flight-boot.ts).
+ */
+export const DEFERRED_STRATEGIES: readonly HydrationStrategy[] = [
+  "idle",
+  "visible",
+  "interaction",
+  "media",
+];
+
 /** The prop key the server stamps a resolved strategy under on a Flight boundary. */
 export const STRATEGY_PROP = "__dnxHydrate";
 

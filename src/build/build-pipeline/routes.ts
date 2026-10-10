@@ -18,6 +18,7 @@ import { extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
+import { writeFlightBoot } from "../flight-boot.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE, log } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
@@ -180,4 +181,6 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
+  // The deferred boot a page of deferred islands loads instead (build/flight-boot.ts).
+  await writeFlightBoot(ctx.clientDir, ctx.paths.instrumentationClientPath);
 }

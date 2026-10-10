@@ -58,6 +58,32 @@ and this project adheres to
   or any folder holding `_denext/` (a custom `--out`, Capacitor's copies under `ios/` and
   `android/`), whose bundles still name the component. That kept a runtime the app had dropped:
   an SPA re-exported after removing its `<ViewTransition>` still shipped it (+6.8 KB).
+- **A page whose only client code is deferred islands no longer loads the client runtime up
+  front.** The islands docs said a `client:interaction` island ships no JavaScript until it is
+  touched, but every Flight page loaded `flight.js`, which statically imports the shared runtime
+  chunk: about 76 KB before the first interaction on a resumable route with one island. A
+  production build and `denext export` now also write `flight-boot.js` (1.9 KB, no imports),
+  which the server gives a page with no page root to hydrate whose islands all wait for a
+  trigger (`client:idle` / `visible` / `interaction` / `media`; a resumable route's are all
+  `interaction`). It imports `flight.js` on the first trigger and hands the events that arrived
+  meanwhile to the runtime's dispatcher, so the click that woke the island is replayed, not
+  lost. A page that needs the runtime at once (a page root, a `client:load` / `client:only`
+  island, a resumable handler outside every island such as a `<Link>`'s soft navigation, an
+  `instrumentation-client`) loads `flight.js` as before. Until the runtime loads, a plain link on
+  a deferred page is an ordinary page load. An islands-only export went from 76,452 B of
+  JavaScript before the first interaction to 1,929 B.
+- **`denext export` honours `basePath` and `assetPrefix`.** The exported pages referenced their
+  scripts and stylesheets at `/_denext/client/…`, self-hosted fonts at `/_denext/fonts/…` and
+  imported assets (a compatibility-mode app's `import logo from "./logo.png"`) at
+  `/_denext/client/assets/…`, and rendered `<Link>` hrefs and the client's base path without the
+  `basePath`, so an export hosted under its `basePath` loaded none of them. They now carry the
+  `assetPrefix` (else the `basePath`) and the links the `basePath`, as `denext start` does.
+- **A compatibility-mode app's `<Image>` and `<Link>` see the image config and the `basePath`.**
+  Its server bundle carries its own copy of the denext runtime, which never saw the
+  `images` config the server set (or the `unoptimized` a static export forces, so an exported
+  `<Image>` pointed at the `/_denext/image` optimizer a static host does not have) or the
+  `basePath` (`<Link>` hrefs lacked it under `denext start` too). Both settings now live on a
+  process-wide slot every copy reads.
 
 ## [3.4.3] - 2026-10-10
 

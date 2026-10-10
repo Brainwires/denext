@@ -29,6 +29,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { assetUrlBase } from "../prod-server/assets.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
 import {
@@ -210,6 +211,7 @@ export async function prepareExport(
     i18n: options.i18n ?? paths.i18n ?? undefined,
     outDir,
     clientOut,
+    ...assetUrlBase(paths.config),
     load: await exportLoader(paths, platform, platformRedirects),
     platform,
     platformRedirects,

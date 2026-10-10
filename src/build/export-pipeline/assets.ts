@@ -25,6 +25,7 @@ import {
   compatModuleList,
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
+import { writeFlightBoot } from "../flight-boot.ts";
 import { exportBuildDir, exportClientResolution, type ExportContext } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
@@ -108,14 +109,18 @@ function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
  * place renumbered its module exports under the build's manifest.
  */
 function exportCompatOptions(ctx: ExportContext) {
+  const options = compatBuildOptions(
+    ctx.projectDir,
+    ctx.paths,
+    ctx.css?.importMap,
+    ctx.clientOut,
+    ctx.platform,
+  );
   return {
-    ...compatBuildOptions(
-      ctx.projectDir,
-      ctx.paths,
-      ctx.css?.importMap,
-      ctx.clientOut,
-      ctx.platform,
-    ),
+    ...options,
+    // An imported asset's URL (server render and client bundle alike) carries the asset base,
+    // since a static host serves `out/` where the app lives (under `basePath`, or a CDN).
+    assets: { ...options.assets, publicPath: ctx.assetBase + options.assets.publicPath },
     outDir: exportBuildDir(ctx.paths),
   };
 }
@@ -212,6 +217,8 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
   }
+  // The deferred boot a page of deferred islands loads instead (build/flight-boot.ts).
+  await writeFlightBoot(ctx.clientOut, ctx.paths.instrumentationClientPath);
   // Tag through the (compat-aware) loader so the tagged instances are the ones the page
   // bundles reference.
   const load = boundaryRefLoader(ctx.load);
@@ -223,7 +230,8 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
  * Self-host Google fonts for the static export, exactly as the prod build does — so a
  * static site never makes a runtime request to fonts.googleapis.com. Force-load every
  * route module so its `next/font` loaders register, collect the stylesheets, download
- * them under out/_denext/fonts (where a static host serves FONTS_PUBLIC_PREFIX), and
+ * them under out/_denext/fonts (where a static host serves FONTS_PUBLIC_PREFIX, below the
+ * asset base: `assetPrefix` or `basePath`), and
  * install the map; `renderFontStyles` then inlines the local `@font-face` rather than a
  * Google <link>. Best-effort: an unfetchable font (offline build) stays a runtime link.
  */
@@ -231,6 +239,10 @@ export async function selfHostExportFonts(ctx: ExportContext): Promise<void> {
   const fontEntries = await collectPageFontEntries(ctx.manifest.pages, ctx.load);
   if (fontEntries.length === 0) return;
   setSelfHostedFonts(
-    await selfHostFonts(fontEntries, join(ctx.outDir, "_denext", "fonts"), FONTS_PUBLIC_PREFIX),
+    await selfHostFonts(
+      fontEntries,
+      join(ctx.outDir, "_denext", "fonts"),
+      ctx.assetBase + FONTS_PUBLIC_PREFIX,
+    ),
   );
 }

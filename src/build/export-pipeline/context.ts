@@ -11,6 +11,7 @@ import { join } from "@std/path";
 import { routeId } from "../paths.ts";
 import type { Platform } from "../platform-extensions.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import { CLIENT_PREFIX } from "../prod-server/assets.ts";
 
 export interface StaticExportResult {
   /** Absolute path of the output directory. */
@@ -46,6 +47,14 @@ export interface ExportContext {
   readonly finalOutDir: string;
   /** `<outDir>/_denext/client` — bundles + stylesheets. */
   readonly clientOut: string;
+  /** `basePath` without its trailing slash (`""` when unset): the pages' links carry it. */
+  readonly basePath: string;
+  /**
+   * What every client asset URL starts with (`assetPrefix`, else `basePath`; `""` when
+   * neither is set), as the production server's: a host serving `out/` under the base path
+   * (or the CDN serving `_denext/`) resolves them.
+   */
+  readonly assetBase: string;
   /** The module loader the render uses (wrapped for Cache Components / next-compat). */
   load: ModuleLoader;
   /** Route paths with a Flight (RSC) boundary — they share one Flight bundle. */
@@ -116,13 +125,15 @@ export function exportClientResolution(
 /** The hydration script for a route, or none for a static route. */
 export function clientEntryFor(ctx: ExportContext, route: PageRoute): string | undefined {
   if (ctx.staticRoutes.has(route.routePath)) return undefined; // static → no hydration script
-  if (ctx.flightRoutes.has(route.routePath)) return `/_denext/client/${FLIGHT_BUNDLE_FILE}`;
-  return `/_denext/client/${routeId(route.routePath)}.js`;
+  if (ctx.flightRoutes.has(route.routePath)) {
+    return `${ctx.assetBase}${CLIENT_PREFIX}${FLIGHT_BUNDLE_FILE}`;
+  }
+  return `${ctx.assetBase}${CLIENT_PREFIX}${routeId(route.routePath)}.js`;
 }
 
 /** The stylesheet links for a route (when it has one). */
 export function styleHrefsFor(ctx: ExportContext, route: PageRoute): string[] | undefined {
   return ctx.cssRoutes.has(route.routePath)
-    ? [`/_denext/client/${routeId(route.routePath)}.css`]
+    ? [`${ctx.assetBase}${CLIENT_PREFIX}${routeId(route.routePath)}.css`]
     : undefined;
 }

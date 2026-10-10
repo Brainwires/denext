@@ -1544,7 +1544,9 @@
     "useSubscription:function"
   ],
   "denext/lazy": [
-    "bootResumability:function"
+    "ResumeResult:typeAlias",
+    "bootResumability:function",
+    "resumeEvent:function"
   ],
   "denext/class-runtime": [
     "installClassSupport:function"

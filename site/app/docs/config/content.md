@@ -27,11 +27,12 @@ Router from `app/` (or `src/app/`) with sensible defaults.
 
 - **`basePath`** — `string`. Serve the whole app under a sub-path (e.g.
   `/docs`). It's stripped before routing and re-added to generated links and
-  asset URLs.
+  asset URLs, in `denext start` and in a `denext export` (host `out/` at that
+  sub-path).
 - **`trailingSlash`** — `boolean` (default `false`). Enforce a trailing slash on
   page URLs, 308-redirecting to normalize.
 - **`assetPrefix`** — `string`. Prefix for client bundle/asset URLs — point it
-  at a CDN origin.
+  at a CDN origin (in an export, the CDN serves `out/_denext/`).
 - **`redirects`** — `() => RedirectRule[]`. Declarative redirects, evaluated
   once at startup. Each rule is `{ source, destination, permanent? }`;
   `source`/`destination` support `:name` and `:name*` params. `permanent: true`

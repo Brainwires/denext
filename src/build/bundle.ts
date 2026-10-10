@@ -862,10 +862,16 @@ ${classBoot}  await registry.ensure(flight); // this page's islands (code-split 
   // dispatch (data-dnx-h handlers that run without hydration). Lives in a separate
   // chunk, loaded ONLY when a page actually uses one of them, so non-resumable apps
   // bundle none of it.
+  // Resolves to the delegated dispatcher's resumeEvent: the deferred boot (flight-boot.ts) that
+  // imported this entry on an island's trigger hands it the events it buffered meanwhile.
   if (document.getElementById("__denext_islands") || document.querySelector("[data-dnx-h]")) {
-    import("denext/lazy")
-      .then((m) => m.bootResumability(registry))
-      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
+    try {
+      const lazy = await import("denext/lazy");
+      lazy.bootResumability(registry);
+      return lazy.resumeEvent;
+    } catch (err) {
+      console.warn("denext: resumability boot failed:", err && err.message);
+    }
   }
 }
 `;
@@ -956,7 +962,8 @@ setResumabilityReboot((islands, state) => {
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}
-main();
+// Read by the deferred boot (flight-boot.ts), which imports this entry on an island's trigger.
+export const ready = main();
 `;
 }
 

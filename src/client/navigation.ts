@@ -47,23 +47,24 @@ interface LocationState {
 
 const listeners = new Set<() => void>();
 
-// The configured basePath (denext.config `basePath`). Set on the server via
-// setBasePath(); read from the hydration payload on the client.
-let configuredBase = "";
+// The configured basePath (denext.config `basePath`). Set on the server via setBasePath(); read
+// from the hydration payload on the client. Kept on a process-wide slot: a compatibility-mode
+// server bundle carries its own copy of this module, whose `<Link>` must see it too.
+const baseSlot = globalThis as { __denextBasePath?: string };
 let clientBaseRead = false;
 
 /** Set the app's basePath so `<Link>`/`navigate()` prefix URLs (SSR + startup). */
 export function setBasePath(basePath: string): void {
-  configuredBase = basePath.replace(/\/$/, "");
+  baseSlot.__denextBasePath = basePath.replace(/\/$/, "");
 }
 
 function basePath(): string {
-  if (!configuredBase && !clientBaseRead && typeof document !== "undefined") {
+  if (!baseSlot.__denextBasePath && !clientBaseRead && typeof document !== "undefined") {
     clientBaseRead = true;
     const bp = readData().basePath;
-    if (bp) configuredBase = bp.replace(/\/$/, "");
+    if (bp) baseSlot.__denextBasePath = bp.replace(/\/$/, "");
   }
-  return configuredBase;
+  return baseSlot.__denextBasePath ?? "";
 }
 
 /** Prefix an app-relative path with basePath (idempotent; skips external URLs). */
