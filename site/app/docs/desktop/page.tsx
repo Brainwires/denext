@@ -1865,7 +1865,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         {" "}
         resolves{" "}
         <code>{'{ stored: "session" }'}</code>). That copy is not secret and lasts until the window
-        closes; a later keychain write of the key clears it.
+        closes; <code>get</code>{" "}
+        also reads it when the keychain answers with no value for the key (a value the keychain
+        holds wins), a later keychain write of the key clears it and <code>delete</code>{" "}
+        clears both.
       </Callout>
       <Callout kind="note">
         <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}

@@ -557,9 +557,11 @@ denext mobile add haptics share network secure-store`}
           page&apos;s <code>sessionStorage</code>{" "}
           instead, with one console warning naming the reason. That copy is{" "}
           <strong>not secret</strong>{" "}
-          (any script on the origin reads it) and ends with the tab, surviving a reload. A later
-          keychain <code>set</code> of the key clears it, <code>delete</code> clears both, and{" "}
-          <code>requireBiometric</code>{" "}
+          (any script on the origin reads it) and ends with the tab, surviving a reload.{" "}
+          <code>get</code>{" "}
+          with the option also reads it when the OS store answers with no value for the key (a value
+          the OS store holds wins). A later keychain <code>set</code> of the key clears it,{" "}
+          <code>delete</code> clears both, and <code>requireBiometric</code>{" "}
           never falls back. Without the option a refusal still rejects.
         </li>
         <li>

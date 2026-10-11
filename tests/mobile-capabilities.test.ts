@@ -546,6 +546,51 @@ Deno.test("secureStore: native SecureStorage internal* calls with the plugin's p
   await assertRejects(() => secureStore.set("k", 1 as Any), TypeError, "must be a string");
 });
 
+Deno.test('secureStore: native fallback "session" when the plugin refuses the write but reads null', async () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  sessionStorage.clear();
+  const items = new Map<string, string>();
+  let refuseSet = true;
+  const plugin = {
+    internalGetItem: ({ prefixedKey }: { prefixedKey: string }) =>
+      Promise.resolve({ data: items.get(prefixedKey) ?? null }),
+    internalSetItem: ({ prefixedKey, data }: { prefixedKey: string; data: string }) => {
+      if (refuseSet) return Promise.reject(new Error("keychain write refused"));
+      items.set(prefixedKey, data);
+      return Promise.resolve();
+    },
+    internalRemoveItem: ({ prefixedKey }: { prefixedKey: string }) =>
+      Promise.resolve({ success: items.delete(prefixedKey) }),
+  };
+  try {
+    await inShell({ SecureStorage: plugin }, async () => {
+      assertEquals(await secureStore.set("tok", "t1", { fallback: "session" }), {
+        stored: "session",
+      });
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t1");
+      assertEquals(await secureStore.get("tok"), null);
+      // The plugin's own value wins over a session copy.
+      items.set("capacitor-storage_other", "os");
+      sessionStorage.setItem("denext:secure-store:session:other", "session");
+      assertEquals(await secureStore.get("other", { fallback: "session" }), "os");
+      // A successful plugin write clears the stale copy; delete clears both.
+      refuseSet = false;
+      assertEquals(await secureStore.set("tok", "t2", { fallback: "session" }), {
+        stored: "keychain",
+      });
+      assertEquals(sessionStorage.getItem("denext:secure-store:session:tok"), null);
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t2");
+      await secureStore.delete("other");
+      assertEquals(sessionStorage.getItem("denext:secure-store:session:other"), null);
+      assertEquals(items.has("capacitor-storage_other"), false);
+    });
+  } finally {
+    console.warn = warn;
+    sessionStorage.clear();
+  }
+});
+
 /** A minimal IndexedDB: one database, one store, requests settling asynchronously. */
 function fakeIndexedDB() {
   const data = new Map<string, unknown>();

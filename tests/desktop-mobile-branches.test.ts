@@ -194,6 +194,48 @@ Deno.test("secureStore: a later keychain write clears the session copy; delete c
   });
 });
 
+Deno.test('secureStore: fallback "session" reads the copy when the keychain refused the write but its read resolves null', async () => {
+  await withSession(async (warnings) => {
+    const kv = new Map<string, string>();
+    let refuseSet = true;
+    await inDesktop({
+      secureStore: {
+        // A store that refuses writes yet answers reads with "no such item" (not a refusal).
+        get: (a) => kv.get((a as { key: string }).key) ?? null,
+        set: (a) => {
+          if (refuseSet) throw { code: "backend_unavailable", message: "the keyring is locked" };
+          kv.set((a as { key: string }).key, (a as { value: string }).value);
+        },
+        delete: (a) => void kv.delete((a as { key: string }).key),
+      },
+    }, async () => {
+      assertEquals(await secureStore.set("tok", "t1", { fallback: "session" }), {
+        stored: "session",
+      });
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t1");
+      // Without the option the session copy is never consulted.
+      assertEquals(await secureStore.get("tok"), null);
+      assertEquals(await secureStore.get("nope", { fallback: "session" }), null);
+      // An OS value wins over a session copy.
+      kv.set("other", "os");
+      sessionStorage.setItem("denext:secure-store:session:other", "session");
+      assertEquals(await secureStore.get("other", { fallback: "session" }), "os");
+      // A successful keychain write clears the stale copy; delete clears both.
+      refuseSet = false;
+      assertEquals(await secureStore.set("tok", "t2", { fallback: "session" }), {
+        stored: "keychain",
+      });
+      assertEquals(sessionStorage.getItem("denext:secure-store:session:tok"), null);
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t2");
+      await secureStore.delete("other");
+      assertEquals(sessionStorage.getItem("denext:secure-store:session:other"), null);
+      assertEquals(kv.has("other"), false);
+      assertEquals(await secureStore.get("other", { fallback: "session" }), null);
+    });
+    assertEquals(warnings.length, 1, "one warning per page");
+  });
+});
+
 Deno.test("secureStore: fallback never covers requireBiometric", async () => {
   await withSession(async () => {
     await inDesktop({ secureStore: refusing() }, async () => {

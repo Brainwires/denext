@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`secureStore.get(key, { fallback: "session" })` finds the session copy when the OS store reads
+  `null`.** The copy a refused `set(…, { fallback: "session" })` left in `sessionStorage` was read
+  only when the OS read REJECTED; a store that refuses writes but answers reads with "no such item"
+  (the Capacitor plugin, a desktop keychain) resolved `null` and the value was lost. `get` with the
+  fallback now answers from the copy when the OS store holds nothing for the key; a value the OS
+  store holds still wins, a successful OS `set` clears the copy and `delete` clears both.
+
 - **`feature("KEY")` in a plain `.ts` / `.mts` / `.js` / `.mjs` client module is folded at build.**
   The native App Router build folded only `.tsx` / `.jsx` sources, so a hook or store calling
   `feature()` kept the runtime call and its untaken branch shipped. The fold now covers every
