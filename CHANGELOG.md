@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`feature("KEY")` in a plain `.ts` / `.mts` / `.js` / `.mjs` client module is folded at build.**
+  The native App Router build folded only `.tsx` / `.jsx` sources, so a hook or store calling
+  `feature()` kept the runtime call and its untaken branch shipped. The fold now covers every
+  project module a client bundle can contain (the same client-graph set the `asyncContext` pass
+  instruments, crawled once for both); a module only the server tree reaches reads the flag at
+  runtime, as before.
+
 - **`Sheet`'s grabber no longer shows the focus ring after a tap or a click.** The grabber is a
   button, so pointer focus drew the browser's outline around the pill. The sheet now installs a
   `[data-dnx-sheet-grabber]:focus:not(:focus-visible)` rule: keyboard focus (`:focus-visible`)

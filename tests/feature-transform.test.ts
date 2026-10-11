@@ -5,6 +5,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import { compileFeatureModules, transformFeatures } from "../src/build/feature-transform.ts";
+import { clientTransforms } from "../src/build/build-pipeline/transforms.ts";
+import { computeBoundaryRoutes, resetModuleGraphCache } from "../src/build/module-graph.ts";
+import { resolveProject } from "../src/build/paths.ts";
+import { scanRoutes } from "../src/router/manifest.ts";
 import { bundleSourceFiles } from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import type * as esbuild from "esbuild";
@@ -152,6 +156,54 @@ Deno.test("the fold reads the top-level `features` config key", async () => {
     // No flags configured anywhere → the plugin is not even installed.
     assertEquals(spaSourceTransformPlugin(dir, {}), undefined);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// The build's fold covers a plain `.ts` / `.mts` / `.js` / `.mjs` module a client bundle can
+// contain (a hook or store calling `feature()`), not just `.tsx` / `.jsx`; a module only the
+// server tree reaches is left alone (it reads the flag at runtime).
+Deno.test("clientTransforms (features): client .ts/.mts/.js/.mjs modules are folded, server-only ones are not", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_feature_sources_" }));
+  const flagged = (name: string) => `${IMPORT}export const ${name} = feature("FLAG");\n`;
+  const files: Record<string, string> = {
+    // A Flight route: the island and its modules ship, the page's data module does not.
+    "app/page.tsx":
+      `import { Island } from "./island.tsx";\nimport { serverOnly } from "./data.ts";\n` +
+      `export default function Page() { return [serverOnly, Island]; }\n`,
+    "app/data.ts": flagged("serverOnly"),
+    "app/island.tsx": `"use client";\n${IMPORT}import { a } from "./a.ts";\n` +
+      `import { b } from "./b.mts";\nimport { c } from "./c.js";\nimport { d } from "./d.mjs";\n` +
+      `export function Island() { return [feature("FLAG"), a, b, c, d]; }\n`,
+    "app/a.ts": flagged("a"),
+    "app/b.mts": flagged("b"),
+    "app/c.js": flagged("c"),
+    "app/d.mjs": flagged("d"),
+  };
+  try {
+    for (const [name, src] of Object.entries(files)) {
+      await Deno.mkdir(join(dir, name, ".."), { recursive: true });
+      await Deno.writeTextFile(join(dir, name), src);
+    }
+    const paths = await resolveProject(dir);
+    const manifest = await scanRoutes(paths.appDir);
+    const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+    assertEquals([...flightRoutes], ["/"]);
+    const map = await clientTransforms({
+      projectDir: dir,
+      paths: { ...paths, config: { features: { FLAG: true } } },
+      manifest,
+      flightRoutes,
+    });
+    const url = (p: string) => toFileUrl(join(dir, p)).href;
+    for (const p of ["app/island.tsx", "app/a.ts", "app/b.mts", "app/c.js", "app/d.mjs"]) {
+      assert(map[url(p)], `${p} was not folded`);
+      const code = await Deno.readTextFile(new URL(map[url(p)]));
+      assertEquals(code.includes('feature("FLAG")'), false, `${p} kept the call`);
+    }
+    assertEquals(map[url("app/data.ts")], undefined, "app/data.ts (server-only) was folded");
+  } finally {
+    resetModuleGraphCache();
     await Deno.remove(dir, { recursive: true });
   }
 });
