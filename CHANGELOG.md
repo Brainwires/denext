@@ -27,6 +27,15 @@ and this project adheres to
 
 ### Fixed
 
+- **An island imported only through an import-map alias hydrates when the build runs from another
+  folder.** The client-boundary and hydration crawls ran `deno info` in the caller's working
+  directory, so Deno took the import map found there, not the app's: `denext build ./app`,
+  `denext export ./app` or `denext dev ./app` run from a parent folder (and an in-process
+  `build(dir)`) could not resolve `@/components/Counter.tsx` (`"@/": "./"`), missed the
+  `"use client"` island behind it, and shipped the route as static HTML ("1 static route(s) ship no
+  client JS") that never hydrated. The crawls now run in the folder of the app's `deno.json`, as
+  Deno does for a command run in the project, on `build`, `export` and both dev loops. A build run
+  inside the app folder (`deno task build`) was not affected.
 - **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the
   Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
   before `keyboardWillShow`, so nothing covers the page and React Native mode's

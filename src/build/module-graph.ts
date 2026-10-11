@@ -284,16 +284,44 @@ export interface GraphImportMap {
   readonly originals?: Readonly<Record<string, string>>;
 }
 
-/** The import-map redirects every crawl resolves through (see {@linkcode setModuleGraphRedirects}). */
-let graphRedirects: GraphRedirects = null;
+/** A crawl's resolution: the app's deno config and the redirects applied on top of it. */
+interface GraphScope {
+  configPath: string | null;
+  redirects: GraphRedirects;
+}
 
-/** Redirects scoped to one async call tree ({@linkcode withModuleGraphRedirects}). */
-const scopedRedirects = new AsyncLocalStorage<GraphRedirects>();
+/** The resolution every crawl uses (see {@linkcode setModuleGraphRedirects}). */
+let graphScope: GraphScope = { configPath: null, redirects: null };
+
+/** Resolution scoped to one async call tree ({@linkcode withModuleGraphRedirects}). */
+const scopedRedirects = new AsyncLocalStorage<GraphScope>();
+
+/** The resolution the current crawl uses: its scope's, else the process-wide one. */
+function activeScope(): GraphScope {
+  return scopedRedirects.getStore() ?? graphScope;
+}
 
 /** The redirects the current crawl resolves through: its scope's, else the process-wide set. */
 function activeRedirects(): GraphRedirects {
-  const scoped = scopedRedirects.getStore();
-  return scoped === undefined ? graphRedirects : scoped;
+  return activeScope().redirects;
+}
+
+/**
+ * The folder `deno info` runs in so it discovers the app's own config, as Deno does for a command
+ * run in the project: the import map (`"@/": "./"`) then resolves an aliased import even when the
+ * build runs from another directory (`denext build ./app`, an in-process `build(dir)`). Null when
+ * no local config is known (a framework config fetched over the network, or none set).
+ */
+function appConfigDir(): string | null {
+  const { configPath } = activeScope();
+  if (!configPath) return null;
+  if (!configPath.startsWith("file://") && /^[a-z][a-z0-9+.-]+:\/\//i.test(configPath)) return null;
+  const path = configPath.startsWith("file://") ? fromFileUrl(configPath) : configPath;
+  try {
+    return Deno.statSync(path).isFile ? dirname(path) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The redirect record for `importMap` over `configPath`, or null when there is nothing to apply. */
@@ -318,7 +346,7 @@ export function setModuleGraphRedirects(
   configPath: string | null,
   map: GraphImportMap = { importMap: {} },
 ): void {
-  graphRedirects = redirectsOf(configPath, map);
+  graphScope = { configPath, redirects: redirectsOf(configPath, map) };
 }
 
 /**
@@ -335,7 +363,7 @@ export function withModuleGraphRedirects<T>(
   map: GraphImportMap,
   fn: () => Promise<T>,
 ): Promise<T> {
-  return scopedRedirects.run(redirectsOf(configPath, map), fn);
+  return scopedRedirects.run({ configPath, redirects: redirectsOf(configPath, map) }, fn);
 }
 
 /**
@@ -476,10 +504,13 @@ async function spawnDenoInfo(
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
+    const configDir = appConfigDir();
     const command = new Deno.Command(denoExecutable(), {
-      // A process whose working directory was deleted (a test that removed its temp cwd) can't
-      // spawn `deno info` from it; run from the first entry's folder instead.
-      ...(liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
+      // Run in the app's folder so Deno discovers its config (and import map) as it does for the
+      // app's own commands. Without one: a process whose working directory was deleted (a test
+      // that removed its temp cwd) can't spawn `deno info` from it; run from the first entry's
+      // folder instead.
+      ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
       args: [
