@@ -37,6 +37,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
+import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
 import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
@@ -191,7 +192,8 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
     spawn: (cli) =>
       forwardShutdown(
         new Deno.Command(denoExecutable(), {
-          args: ["run", "-A", ...minDepAgeArgs(), cli, ...Deno.args],
+          // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
+          args: ["run", "-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs(), cli, ...Deno.args],
           env: { DENEXT_PINNED_ACTIVE: "1" },
           stdin: "inherit",
           stdout: "inherit",

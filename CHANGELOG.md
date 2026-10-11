@@ -45,6 +45,17 @@ and this project adheres to
 
 ### Fixed
 
+- **denext no longer makes Deno rewrite a pnpm workspace's root `package.json`.** Deno 2.9 reads
+  `pnpm-workspace.yaml` only to migrate it: when a process in a pnpm workspace member's manual
+  `node_modules` cannot find an `npm:` package there, it writes a `workspaces` field into the root
+  `package.json` and fails. The `deno run` of the CLI that denext starts itself (the export
+  `denext mobile build` runs, the dev server behind `mobile dev` and `desktop dev`, `denext ui`'s
+  children and a compiled binary's hand-off to the pinned CLI) loaded the CLI's own npm build
+  dependencies (esbuild) that way. In a pnpm workspace those children now run with
+  `--node-modules-dir=none`, as the tasks `denext migrate` writes already did; elsewhere their
+  command line is unchanged. The migrating guide says the flag is needed only on the command you
+  type.
+
 - **`denext mobile build` replaces Capacitor's placeholder splash on its own.** It replaced the
   splash only together with a placeholder icon, so an app whose icon was already its own kept the
   Capacitor logo on its launch screen. Each of the two is now replaced while it is still the
