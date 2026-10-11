@@ -136,16 +136,23 @@ for (const unbundled of [true, false]) {
       cwd: elsewhere,
       env: { DENEXT_DEV_UNBUNDLED: unbundled ? "1" : "0" },
       stdout: "null",
-      stderr: "null",
+      stderr: "piped",
     }).spawn();
+    // Keep the server's stderr: a cold CI cache can take a while, and a real failure should say why.
+    let errText = "";
+    const errDone = (async () => {
+      const dec = new TextDecoder();
+      for await (const c of child.stderr) errText = (errText + dec.decode(c)).slice(-4000);
+    })();
     const text = async (path: string) =>
-      await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
+      await (await fetch(`http://localhost:${port}${path}`)).text();
     try {
       let html = "";
-      for (let i = 0; i < 240 && !html; i++) { // up to ~60 s for the server to come up
+      for (let i = 0; i < 720 && !html; i++) { // up to ~3 min for the server to come up (cold cache)
         html = await text("/").catch(() => "");
         if (!html) await new Promise((r) => setTimeout(r, 250));
       }
+      assert(html, `the dev server never answered; its stderr ended with:\n${errText}`);
       assertStringIncludes(html, "COUNT_MARK");
       assertStringIncludes(html, "/_denext/flight.js", "the page boots the Flight islands");
       const entry = await text("/_denext/flight.js");
@@ -159,6 +166,7 @@ for (const unbundled of [true, false]) {
     } finally {
       child.kill("SIGTERM");
       await child.status;
+      await errDone;
       await Deno.remove(elsewhere, { recursive: true });
       await Deno.remove(dir, { recursive: true });
     }
