@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.9] - 2026-10-11
+
 ### Fixed
 
 - **A plain chat scroller keeps its last rows in view when the iOS shell resizes.** React Native
@@ -18,7 +20,6 @@ and this project adheres to
   scroll view without moving the content, and a chat whose end was in view (within 20 px) as
   the keyboard opened stays pinned to its end through the lift, the resize, a suggestion bar
   and the hide, until the user scrolls away from it.
-
 - **`KeyboardAvoidingView`, `KeyboardStickyView` and React Native mode's keyboard views lift
   while the iOS keyboard slides in.** In the Capacitor shell with `resize: "native"` (the
   default), `"body"` or `"ionic"` they read the visual viewport, which `@capacitor/keyboard`
@@ -27,13 +28,11 @@ and this project adheres to
   measurement: the will-show height (animated over the keyboard's 250 ms) less however far the
   shell has resized the WebView / `<body>` / `ion-app` since, so the lift drops at once as the
   resize lands and nothing is lifted twice.
-
 - **A module sidecar no longer sees the worker's `location`.** A `desktop.sidecars` `run: { module }`
   backend runs in a `blob:` worker, whose `WorkerLocation` reads origin `"null"`, so a library that
   resolves URLs against `location.origin + location.pathname` (Effect's `Url.make`, behind every
   `HttpClient` request) built `nullnull/<uuid>/…` and every request failed with `Invalid URL`. The
   worker now hides `globalThis.location` before the module loads, as Node's main thread has none.
-
 - **`secureStore`'s `fallback: "session"` takes only a genuine OS-store refusal.** Every rejection
   that was not a `TypeError` fell back to `sessionStorage`, so a desktop `validation` or `forbidden`
   error over the bridge, a bridge `timeout` or a programming error was swallowed into the not-secret
@@ -13010,7 +13009,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.8...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.9...development
+[3.4.9]: https://jsr.io/@denext/denext@3.4.9
 [3.4.8]: https://jsr.io/@denext/denext@3.4.8
 [3.4.7]: https://jsr.io/@denext/denext@3.4.7
 [3.4.6]: https://jsr.io/@denext/denext@3.4.6
