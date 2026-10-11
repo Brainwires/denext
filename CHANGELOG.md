@@ -32,6 +32,16 @@ and this project adheres to
   `defaultPrevented` and `isDefaultPrevented()` `true` for the rest of that dispatch, as React's
   synthetic event does; a native listener still reads the browser's own flag. Both differences
   are gone from KNOWN-DIFFERENCES.md.
+- **Every app's shared client runtime is 1.8 KB smaller (raw), with no change in behaviour.**
+  Dev Fast Refresh's per-render step (which implementation a component renders, the refresh-swap
+  check and its hook-signature guard) and the per-module root refresh are installed by
+  `enableFastRefresh`, so a production bundle carries neither. The client reconciler's long
+  error texts ("Rendered more hooks…", "Maximum update depth exceeded…", an async component or a
+  `memo()`'d class on the client) are installed with the dev warnings and by `denext/testing`; a
+  production bundle throws `denext: error <code> in <Component>`, and the codes are listed on the
+  Troubleshooting page. The AsyncContext `Variable` ships only in an `asyncContext` build, and the
+  fiber extension spells each field name once. `examples/hello`'s shared chunks went from
+  67,385 B to 65,590 B, and the build-smoke budget moves from 67,400 B to 67,100 B.
 
 ## [3.4.6] - 2026-10-11
 

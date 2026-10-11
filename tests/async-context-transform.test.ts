@@ -10,6 +10,7 @@ import {
   transformAsyncContext,
 } from "../src/build/async-context-transform.ts";
 import { swcParse } from "../src/build/swc-ast.ts";
+import { Variable } from "../src/runtime/async-context.ts";
 
 const RUNTIME = new URL("../src/runtime/async-context.ts", import.meta.url).href;
 
@@ -201,11 +202,12 @@ Deno.test("compileAsyncContextModules: redirects changed modules + flips the mod
   assert(map[toFileUrl(withAwait).href], "awaiting module redirected");
   assertEquals(map[toFileUrl(noAwait).href], undefined, "plain module not redirected");
 
-  // The mode module is redirected to a generated `= true`.
+  // The mode module is redirected to a generated one exporting the transition-identity
+  // `Variable` — the framework's own class, so the transformed modules' context reaches it.
   const modeKey = Object.keys(map).find((k) => k.endsWith("async-context-mode.ts"));
   assert(modeKey, "mode module present in the map");
-  const modeText = await Deno.readTextFile(new URL(map[modeKey!]));
-  assertEquals(modeText.trim(), "export const asyncContextScopingEnabled = true;");
+  const mode = await import(map[modeKey!]);
+  assert(mode.transitionScope instanceof Variable, "the mode module exports a Variable");
 
   await Deno.remove(srcDir, { recursive: true }).catch(() => {});
   await Deno.remove(outDir, { recursive: true }).catch(() => {});

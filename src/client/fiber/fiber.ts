@@ -262,50 +262,63 @@ const OWN_BITS = ForceRenderBit | StateUpdateBit | UnmountedBit;
 // ---- The Fiber node --------------------------------------------------------
 
 /**
+ * Every {@link FiberExt} field: first the four a work-in-progress twin does not carry
+ * (`insertionEffects`, reset on each render, and the dev / Profiler `lastImpl`, `profiler`,
+ * `actualDuration`), then {@link CARRIED_EXT_FIELDS}. One string, so the minified bundle spells
+ * each name once instead of in a field list plus a copy statement each.
+ */
+const EXT_FIELDS =
+  "insertionEffects lastImpl profiler actualDuration provParent provValue debugValues formStatus selfBaseDuration primaryCount hiddenEls listState listIndex listOwnerState __error pendingElement classInstance __snapshot __prevProps __prevState"
+    .split(" ");
+/** The {@link FiberExt} fields {@link carryExt} copies onto a work-in-progress twin. */
+const CARRIED_EXT_FIELDS = EXT_FIELDS.slice(4);
+
+/**
  * A fiber's rarely used state: providers, Suspense / Activity / SuspenseList bookkeeping,
  * error boundaries, the root's element, class components, the Profiler, form actions and
  * dev-only records. Allocated on the first write ({@link fiberExt}); most fibers (plain host
  * elements, text, function components) never have one, so these fields cost them nothing.
- * Every field is declared here, so all extensions share one hidden class.
+ * Every field is declared here AND listed in {@link EXT_FIELDS} (a new field must be added to
+ * both): the constructor sets them all in that order, so all extensions share one hidden class.
  */
 class FiberExt {
   /**
    * The INSERTION effect queue (useInsertionEffect) — run synchronously at commit *before*
    * DOM mutation, so CSS-in-JS style insertion precedes any layout read.
    */
-  insertionEffects: CommitEffect[] | undefined;
+  declare insertionEffects: CommitEffect[] | undefined;
   /** A provider fragment's memo of the parent map and value its derived map was built from. */
-  provParent: ContextMap | undefined;
-  provValue: unknown;
+  declare provParent: ContextMap | undefined;
+  declare provValue: unknown;
   /**
    * Dev only: this render's `useDebugValue` calls (not hook cells — see DebugValueEntry).
    * Cleared at the start of every render pass; carried on a bailout like readContexts.
    */
-  debugValues: DebugValueEntry[] | undefined;
+  declare debugValues: DebugValueEntry[] | undefined;
   /** Host `<form action={fn}>` only: the per-form pending signal backing useFormStatus,
    * persisted across renders and carried between buffers. */
-  formStatus: FormStatusSignal | undefined;
+  declare formStatus: FormStatusSignal | undefined;
   /**
    * Dev per-module HMR only: the component implementation this fiber last rendered with
    * (after family-current substitution). Compared against the resolved impl on the next
    * render to detect a per-module refresh swap. Never set in production.
    */
-  lastImpl: unknown;
+  declare lastImpl: unknown;
   /**
    * Profiler timing. `profiler` marks a <Profiler> boundary. `actualDuration` is this
    * fiber's own render time this pass (0 if it bailed); `selfBaseDuration` is its
    * most-recent render time (persisted, for baseDuration).
    */
-  profiler: { id: string; onRender?: ProfilerOnRender } | undefined;
-  actualDuration: number | undefined;
-  selfBaseDuration: number | undefined;
+  declare profiler: { id: string; onRender?: ProfilerOnRender } | undefined;
+  declare actualDuration: number | undefined;
+  declare selfBaseDuration: number | undefined;
   /**
    * Offscreen (see {@link OffscreenBit}): how many of the boundary's top-level children are
    * the (hidden) primary vs the fallback; `hiddenEls` records the host elements hidden at
    * commit (via an inline `display:none !important`) so reveal can restore their prior style.
    */
-  primaryCount: number | undefined;
-  hiddenEls: Element[] | undefined;
+  declare primaryCount: number | undefined;
+  declare hiddenEls: Element[] | undefined;
   /**
    * SuspenseList coordination. A single {@link SuspenseListState} object is shared by the
    * list fragment and its member <Suspense> fibers across all buffers, so a bailed/cloned
@@ -313,19 +326,24 @@ class FiberExt {
    * SuspenseList's direct children so membership propagates one level to the <Suspense>
    * each renders.
    */
-  listState: SuspenseListState | undefined;
-  listIndex: number | undefined;
-  listOwnerState: SuspenseListState | undefined;
+  declare listState: SuspenseListState | undefined;
+  declare listIndex: number | undefined;
+  declare listOwnerState: SuspenseListState | undefined;
   /** Error-boundary-only (function ErrorBoundary): the caught error whose fallback is
    * currently rendered, or null/undefined when showing real children. */
-  __error: unknown;
+  declare __error: unknown;
   /** Root-only: the element to render into the container. */
-  pendingElement: VNode | null | undefined;
+  declare pendingElement: VNode | null | undefined;
   /** Class-component only (gated) — the field names the class runtime reads. */
-  classInstance: unknown;
-  __snapshot: unknown;
-  __prevProps: unknown;
-  __prevState: unknown;
+  declare classInstance: unknown;
+  declare __snapshot: unknown;
+  declare __prevProps: unknown;
+  declare __prevState: unknown;
+  constructor() {
+    // Every field in one fixed order (EXT_FIELDS), so all extensions share one hidden class
+    // — the shape the field declarations used to give, without spelling each name twice.
+    for (const k of EXT_FIELDS) (this as unknown as Record<string, unknown>)[k] = undefined;
+  }
 }
 
 /** An extension with every field unset: the source {@link carryExt} resets a twin from. */
@@ -549,22 +567,9 @@ function carryExt(wip: Fiber, current: Fiber): void {
   const to = fiberExt(wip);
   const src = from ?? EMPTY_EXT;
   to.insertionEffects = undefined;
-  to.provParent = src.provParent;
-  to.provValue = src.provValue;
-  to.debugValues = src.debugValues;
-  to.formStatus = src.formStatus;
-  to.selfBaseDuration = src.selfBaseDuration;
-  to.primaryCount = src.primaryCount;
-  to.hiddenEls = src.hiddenEls;
-  to.listState = src.listState;
-  to.listIndex = src.listIndex;
-  to.listOwnerState = src.listOwnerState;
-  to.__error = src.__error;
-  to.pendingElement = src.pendingElement;
-  to.classInstance = src.classInstance;
-  to.__prevProps = src.__prevProps;
-  to.__prevState = src.__prevState;
-  to.__snapshot = src.__snapshot;
+  for (const k of CARRIED_EXT_FIELDS) {
+    (to as unknown as Record<string, unknown>)[k] = (src as unknown as Record<string, unknown>)[k];
+  }
 }
 
 /** Merge a completed fiber's flags into its own `subtreeFlags` accumulator. */

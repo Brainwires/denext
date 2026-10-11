@@ -17,6 +17,10 @@ import {
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
+import { installErrorTexts } from "../src/client/fiber/error-texts.ts";
+
+// The full error texts a dev build installs (a production bundle throws the short form).
+installErrorTexts();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

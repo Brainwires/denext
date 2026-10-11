@@ -3,6 +3,8 @@
 // of one component render.
 
 import { devHydrationActive } from "./fiber-utils.ts";
+import { ERR_MORE_HOOKS, reconcilerError } from "./errors.ts";
+import { componentDisplayName } from "../../runtime/react-brands.ts";
 import {
   duringRender,
   renderLanes,
@@ -105,10 +107,7 @@ function getHook(kind: number): HookCell {
     // and so does denext — silently growing the cell list would pair states with the wrong
     // hooks. A Fast Refresh swap of an edited component is the one legitimate growth.
     if (hooks.length > 0 && inst.alternate !== null && !refreshSwapRender) {
-      throw new Error(
-        "Rendered more hooks than during the previous render. Hooks must be called in the " +
-          "same order on every render (not inside conditions, loops or after an early return).",
-      );
+      throw reconcilerError(ERR_MORE_HOOKS, componentDisplayName(inst.vnode.type));
     }
     hooks.push({});
   }

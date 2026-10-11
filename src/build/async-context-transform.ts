@@ -324,7 +324,7 @@ export async function transformAsyncContext(
  * redirects. Server rendering keeps the originals (the transform is behavior-neutral
  * there), so SSR/hydration stay aligned. Unchanged modules are omitted.
  *
- * Also emits the mode module (`async-context-mode.ts` → `true`) as a redirect so the
+ * Also emits the mode module (`async-context-mode.ts` → a `Variable`) as a redirect so the
  * reconciler flips into identity scoping for this build.
  *
  * @param files Absolute paths of candidate source modules.
@@ -336,8 +336,11 @@ export async function compileAsyncContextModules(
 ): Promise<Record<string, string>> {
   const dir = join(opts.outDir, "asyncctx");
   const map = await writeTransformedModules(files, dir, (source) => transformAsyncContext(source));
-  // Flip the reconciler into scoping mode by redirecting the mode module to `true`.
-  const modeSrc = "export const asyncContextScopingEnabled = true;\n";
+  // Flip the reconciler into scoping mode by redirecting the mode module to one that exports
+  // the transition-identity variable (the original exports `null`).
+  const modeSrc = `import { Variable } from ${
+    JSON.stringify(frameworkFileUrl("src/runtime/async-context.ts"))
+  };\nexport const transitionScope = new Variable();\n`;
   const modeOut = join(dir, "mode.ts");
   await Deno.writeTextFile(modeOut, modeSrc);
   const modeUrl = frameworkFileUrl("src/runtime/async-context-mode.ts");

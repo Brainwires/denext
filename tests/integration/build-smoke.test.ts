@@ -178,6 +178,15 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * installed by the server's request pipeline (−146 B); and three duplicated helpers merged
  * (control-signal predicates −99 B, the soft-nav JSON-island writers −181 B, the singleton
  * runtime's host-update completion +35 B).
+ * Re-based 67.4 → 67.1 KB (67,100 B) after recovering 1,795 B with no change in behaviour,
+ * once root touch/wheel delegation (67,385 B, 15 B under the old budget) had used up the
+ * headroom (measured 65,590 B, ~1.5 KB of headroom): dev Fast Refresh's per-render swap
+ * resolution and the per-module root refresh are installed by `enableFastRefresh`
+ * (refresh-swap.ts, −674 B); the reconciler's long error texts became codes whose full text
+ * `installDevtools` and `denext/testing` install (errors.ts / error-texts.ts, −469 B); the
+ * fiber extension's fields are listed once, for its shape and for the twin carry (−338 B);
+ * and the AsyncContext `Variable` ships only in an `asyncContext` build, whose mode module now
+ * exports it (−306 B). Each gate is asserted in {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -186,7 +195,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 67_400, `shared chunks total ${sharedTotal} bytes (budget 67,400 B raw)`);
+  assert(sharedTotal < 67_100, `shared chunks total ${sharedTotal} bytes (budget 67,100 B raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
@@ -230,6 +239,14 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     // Carried by the `SuspenseList` / `Profiler` elements' marker props: 0 bytes unless used.
     ["collapsed", "SuspenseList reveal runtime"],
     ["onRender", "Profiler commit runtime"],
+    // The reconciler's full error texts ride `installDevtools` / `denext/testing` (errors.ts);
+    // a production bundle throws the codes.
+    ["Rendered more hooks", "reconciler error texts"],
+    ["Maximum update depth", "reconciler error texts"],
+    // Dev Fast Refresh's per-render swap resolution, installed by `enableFastRefresh`.
+    ["oldKinds", "dev Fast Refresh swap resolution"],
+    // The AsyncContext `Variable` ships only in an `asyncContext` build (async-context-mode.ts).
+    ['"defaultValue"in', "AsyncContext Variable"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

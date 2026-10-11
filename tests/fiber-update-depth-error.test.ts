@@ -9,6 +9,10 @@ import { useLayoutEffect, useState } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { updateDepthError } from "../src/client/fiber/fiber-utils.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
+import { installErrorTexts } from "../src/client/fiber/error-texts.ts";
+
+// The full error texts a dev build installs (a production bundle throws the short form).
+installErrorTexts();
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;

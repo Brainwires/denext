@@ -9,7 +9,7 @@ import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
 import { setTransitionScheduler, setTransitionSettledHook } from "../../runtime/hooks.ts";
 import { Variable } from "../../runtime/async-context.ts";
-import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
+import { transitionScope } from "../../runtime/async-context-mode.ts";
 import { inEventDispatch } from "../event-priority.ts";
 import {
   type Fiber,
@@ -135,7 +135,7 @@ export function scheduleUpdate(fiber: Fiber, fromState = false): void {
   // own post-`await` continuations. `transitionDepth > 0` (a synchronous
   // startTransition callback) still wins, so wrapping in startTransition inside a
   // handler is honored.
-  const isTransition = asyncCtxScoping
+  const isTransition = transitionVar
     ? transitionVar.get() != null
     : transitionDepth > 0 || (asyncTransitionDepth > 0 && !inEventDispatch());
   scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
@@ -280,16 +280,18 @@ let asyncTransitionDepth = 0;
 // build transform when `asyncContext` is on. `scheduleUpdate` reads it
 // (in scoping mode) so only updates enqueued inside a transition's context are
 // deferred; unrelated urgent updates in the pending window keep their priority.
-const transitionVar = new Variable<object | null>();
-
-// Seeded from the build-swapped `const` (false by default; the build redirects the
-// module to `true` under `asyncContext`). A mutable so tests can drive the
-// scoping path without the build; production reads the seed and never calls the setter.
-let asyncCtxScoping = asyncContextScopingEnabled;
+// Non-null exactly when scoping is on: seeded from the build-swapped mode module (`null` by
+// default; under `asyncContext` the build redirects it to a module exporting a `Variable`),
+// so without `asyncContext` the AsyncContext `Variable` never enters the bundle. Mutable so
+// tests can drive the scoping path without the build; production reads the seed and never
+// calls the setter.
+let transitionVar: Variable<object | null> | null = transitionScope;
+let scopingVar: Variable<object | null> | null = transitionVar;
 
 /** Test-only: toggle AsyncContext transition scoping (production uses the build seed). */
 export function __setAsyncContextScoping(on: boolean): void {
-  asyncCtxScoping = on;
+  scopingVar ??= new Variable<object | null>();
+  transitionVar = on ? scopingVar : null;
 }
 
 // Dev-only: how long an async transition may stay pending before we warn it looks
@@ -472,8 +474,8 @@ setTransitionScheduler((cb, onComplete) => {
   try {
     // In scoping mode, run the callback inside a fresh transition identity so its
     // updates — including those after an instrumented `await` — are attributable to
-    // THIS transition (see scheduleUpdate + transitionVar). Off, this DCEs to `cb()`.
-    result = asyncCtxScoping ? transitionVar.run({}, cb) : cb();
+    // THIS transition (see scheduleUpdate + transitionVar). Off (null), it is just `cb()`.
+    result = transitionVar ? transitionVar.run({}, cb) : cb();
   } catch (err) {
     // A synchronous throw in the transition callback must still clear `isPending`
     // — otherwise the transition wedges "pending" forever. Schedule onComplete

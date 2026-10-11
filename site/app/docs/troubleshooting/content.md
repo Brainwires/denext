@@ -315,6 +315,21 @@ value afterwards:
   the warning for that element's own text, as in React — one level, never its descendants —
   and the client value still wins. The marker never reaches the DOM.
 
+## `denext: error <code> in <Component>` in production
+
+**Cause.** A production client bundle carries only the code of the reconciler's own errors,
+not their full text (a dev build, `denext dev`, and `denext/testing` throw the full message):
+
+| Code | Full message                                                                     |
+| ---- | -------------------------------------------------------------------------------- |
+| 1    | Rendered more hooks than during the previous render (a conditional hook)         |
+| 2    | Maximum update depth exceeded: the component schedules an update on every render |
+| 3    | An async component rendered on the client (async components are server-only)     |
+| 4    | `memo()` of a class component (wrap the class in a function component instead)   |
+
+**Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
+dev warnings; the component the production error names is where to start.
+
 ## `ReferenceError: window is not defined` (or `document`, `localStorage`)
 
 **Cause.** The code ran on the server — Deno has no `window` at all — either at

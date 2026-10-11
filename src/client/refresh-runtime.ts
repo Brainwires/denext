@@ -21,6 +21,7 @@ import {
   setSignatureChangeHandler,
 } from "./vnode-utils.ts";
 import { installDevFamilies } from "./dev-family.ts";
+import { installRefreshSwap } from "./fiber/refresh-swap.ts";
 
 /** A component family: every function ref that is the "same component" across edits. */
 interface Family {
@@ -112,6 +113,7 @@ let installed = false;
 export function enableFastRefresh(): void {
   if (installed) return;
   installed = true;
+  installRefreshSwap();
   setFamilyMatch(sameFamily);
   // Framework components (e.g. `VirtualList`) register through the global seam, so a bundled
   // refresh that re-evaluates them reconciles in place too (see dev-family.ts).
