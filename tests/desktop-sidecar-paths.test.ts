@@ -335,7 +335,7 @@ Deno.test({
       await until(() => lines.length >= 1);
       await inst.stop(200);
       assertEquals((await inst.exited).signal, "SIGKILL");
-      assertEquals(lines[0], join(dir, "work"));
+      assertEquals(lines[0], join(await Deno.realPath(dir), "work"));
       assertEquals(lines.at(-1), "partial");
       await inst.stop(10); // already gone
     } finally {
