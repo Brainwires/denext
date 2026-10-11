@@ -562,8 +562,9 @@ denext mobile add haptics share network secure-store`}
           <code>&quot;session&quot;</code>. Opt in with <code>{'{ fallback: "session" }'}</code> on
           {" "}
           <code>set</code> and <code>get</code> and a refusal by the OS store (on desktop,{" "}
-          <code>backend_unavailable</code>: a locked or absent Linux keyring) keeps the value in the
-          page&apos;s <code>sessionStorage</code>{" "}
+          <code>backend_unavailable</code> /{" "}
+          <code>store_failed</code>, e.g. a locked or absent Linux keyring; any other error still
+          rejects) keeps the value in the page&apos;s <code>sessionStorage</code>{" "}
           instead, with one console warning naming the reason. That copy is{" "}
           <strong>not secret</strong>{" "}
           (any script on the origin reads it) and ends with the tab, surviving a reload.{" "}

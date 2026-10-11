@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "../runtime/hooks.ts";
 import { nativePlatform } from "./bridge.ts";
-import { watchInset } from "./keyboard.ts";
+import { watchInset, watchShellKeyboard } from "./keyboard.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
 /** The keyboard as {@linkcode useKeyboard} and {@linkcode onKeyboardChange} report it. */
@@ -246,10 +246,16 @@ export async function setKeyboardResizeMode(mode: KeyboardResizeMode): Promise<v
 
 /** How far the keyboard covers the page's layout viewport, and how fast it moves. */
 export interface KeyboardOverlap {
-  /** The covered height in CSS px (`0` when the WebView resizes around the keyboard). */
+  /** The covered height in CSS px (`0` once the WebView has resized around the keyboard). */
   readonly px: number;
-  /** The keyboard's animation duration in ms, when known. */
+  /** The keyboard's animation duration in ms, when the change moves with the keyboard. */
   readonly duration?: number;
+  /**
+   * The keyboard's height, covering the page or not (absent: `px`). In the iOS shell `px` falls
+   * below it once the shell has resized the app around the keyboard; the difference is what
+   * the resize took.
+   */
+  readonly height?: number;
 }
 
 /** The web overlap: VirtualKeyboard when the page opted in, else the visual viewport's loss. */
@@ -261,28 +267,21 @@ function watchWebOverlap(emit: (overlap: KeyboardOverlap) => void): () => void {
 /**
  * Report how much of the layout viewport the keyboard covers, now and on every change: the
  * part {@linkcode KeyboardAvoidingView} and {@linkcode KeyboardStickyView} move out of its way.
- * Where the WebView resizes around the keyboard (Android, iOS `resize: "native"`) that is 0, so
- * nothing is lifted twice. The iOS shell with `resize: "none"` reports the native keyboard
- * height on will-show (in step with the keyboard's animation); everywhere else it is the
- * visual viewport's loss. Internal to `denext/mobile`; not re-exported.
+ * Where the WebView resizes around the keyboard that part shrinks as the resize lands, so
+ * nothing is lifted twice. In the iOS shell with `@capacitor/keyboard` it follows will-show /
+ * will-hide (animated over the keyboard's duration) less however far the shell has resized the
+ * WebView / `<body>` / `ion-app` since, which it does only after the keyboard's animation: the
+ * whole keyboard until then, and `0` once it has (at once, with no animation; with
+ * `resize: "none"` the whole keyboard throughout). Everywhere else it is the visual viewport's
+ * loss (Android resizes the WebView itself, so that is 0). Internal to `denext/mobile`; not
+ * re-exported.
  */
 export function watchKeyboardOverlap(emit: (overlap: KeyboardOverlap) => void): () => void {
-  const plugin = keyboardPlugin();
-  let stop = watchWebOverlap(emit);
-  if (!plugin || nativePlatform() !== "ios" || typeof plugin.getResizeMode !== "function") {
-    return () => stop();
-  }
-  let active = true;
-  plugin.getResizeMode().then((result) => {
-    if (!active || result?.mode !== "none") return;
-    stop();
-    stop = watchNative(
-      plugin,
-      (state) => emit({ px: state.height, duration: state.animationDuration }),
-    );
-  }, () => {});
-  return () => {
-    active = false;
-    stop();
-  };
+  let last: KeyboardOverlap | undefined;
+  const shell = watchShellKeyboard(({ px, height, animated }) => {
+    if (last && last.px === px && last.height === height) return;
+    last = { px, height, ...(animated ? { duration: IOS_KEYBOARD_MS } : {}) };
+    emit(last);
+  });
+  return shell ?? watchWebOverlap(emit);
 }

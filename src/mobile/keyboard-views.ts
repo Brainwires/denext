@@ -144,11 +144,13 @@ function checkBehavior(behavior: string): KeyboardAvoidingBehavior {
  * amount (a bottom bar the keyboard hides anyway).
  *
  * "Covered" is the part of the keyboard over the page's layout viewport, which is 0 where the
- * WebView resizes around the keyboard (Android; the iOS shell with `@capacitor/keyboard`'s
- * default `resize: "native"`); the view then leaves layout alone. In the iOS shell with
- * `resize: "none"` it follows the keyboard's will-show / will-hide, animated over the
- * keyboard's own duration; on the web it follows the visual viewport (see
- * {@linkcode onKeyboardChange}). It renders without any avoidance during SSR.
+ * WebView has resized around the keyboard; the view then leaves layout alone. In the iOS shell
+ * with `@capacitor/keyboard` it follows the keyboard's will-show / will-hide, animated over the
+ * keyboard's own duration, so it lifts as the keyboard slides in; with `resize: "native"` (the
+ * default), `"body"` or `"ionic"` the shell resizes the app only after the animation, and the
+ * lift drops at once as that resize lands (no double lift), while with `resize: "none"` it
+ * stays. On Android (the WebView resizes itself) and the web it follows the visual viewport
+ * (see {@linkcode onKeyboardChange}). It renders without any avoidance during SSR.
  *
  * @param props The view's props; unknown props pass through to the `<div>`.
  * @returns The `<div>`.
@@ -198,8 +200,9 @@ function stickyTranslate(overlap: number, offset: KeyboardStickyViewProps["offse
  * screen: see the chat-composer recipe on /docs/mobile.
  *
  * Like {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the
- * page, so where the WebView resizes around the keyboard it stays put (the resize already
- * moved it). `offset` adds a fixed shift in each state.
+ * page, so once the WebView has resized around the keyboard it stays put (the resize already
+ * moved it); in the iOS shell it rides the keyboard while it slides in, before the shell's
+ * resize lands. `offset` adds a fixed shift in each state.
  *
  * @param props The view's props; unknown props pass through to the `<div>`.
  * @returns The `<div>`.

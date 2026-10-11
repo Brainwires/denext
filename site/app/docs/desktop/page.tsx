@@ -1868,7 +1868,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         closes; <code>get</code>{" "}
         also reads it when the keychain answers with no value for the key (a value the keychain
         holds wins), a later keychain write of the key clears it and <code>delete</code>{" "}
-        clears both.
+        clears both. Only a refusal (<code>backend_unavailable</code>,{" "}
+        <code>store_failed</code>) falls back: a <code>validation</code>, <code>forbidden</code> or
+        {" "}
+        <code>timeout</code> error still rejects.
       </Callout>
       <Callout kind="note">
         <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}

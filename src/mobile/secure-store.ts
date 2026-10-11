@@ -162,9 +162,50 @@ function session(): Storage | undefined {
   }
 }
 
-/** Whether `err` is the OS store refusing (not a usage error such as a bad key or value). */
+/**
+ * The desktop `secureStore` capability's refusal codes: the OS store is absent, locked or
+ * rejected the write (`backend_unavailable`, `store_failed`), or the capability is not enabled
+ * (`unavailable`). Any other code (`validation`, `forbidden`, `timeout`, …) is not a refusal.
+ */
+const DESKTOP_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "backend_unavailable",
+  "store_failed",
+  "unavailable",
+]);
+
+/** The secure-storage plugin's usage-error codes: a bad call, not the OS store refusing. */
+const PLUGIN_USAGE_CODES: ReadonlySet<string> = new Set(["missingKey", "invalidData"]);
+
+/** The plugin rejections {@linkcode fromPlugin} classified as OS-store refusals. */
+const pluginRefusals = new WeakSet<object>();
+
+/** `err`'s string `code`, or `undefined`. */
+function codeOf(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * Run a secure-storage plugin call, marking its rejection as an OS-store refusal unless it is a
+ * usage error (a `TypeError`, or the plugin's `missingKey` / `invalidData`).
+ */
+async function fromPlugin<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    const usage = err instanceof TypeError || PLUGIN_USAGE_CODES.has(codeOf(err) ?? "");
+    if (!usage && typeof err === "object" && err !== null) pluginRefusals.add(err);
+    throw err;
+  }
+}
+
+/**
+ * Whether `err` is the OS store refusing: a desktop refusal code, or a plugin rejection
+ * {@linkcode fromPlugin} marked. A validation error, a bridge failure or a programming error is not.
+ */
 function isRefusal(err: unknown): boolean {
-  return !(err instanceof TypeError);
+  if (typeof err !== "object" || err === null || err instanceof TypeError) return false;
+  return pluginRefusals.has(err) || DESKTOP_REFUSAL_CODES.has(codeOf(err) ?? "");
 }
 
 /** The `sessionStorage` to fall back to for refusal `err`, when the caller opted in and it can. */
@@ -326,7 +367,9 @@ async function osGet(key: string): Promise<string | null | undefined> {
   if (desktop) return desktop.value;
   const plugin = securePlugin();
   if (!plugin) return undefined;
-  const { data } = await plugin.internalGetItem({ prefixedKey: NATIVE_PREFIX + key, sync: false });
+  const { data } = await fromPlugin(() =>
+    plugin.internalGetItem({ prefixedKey: NATIVE_PREFIX + key, sync: false })
+  );
   return typeof data === "string" ? data : null;
 }
 
@@ -341,12 +384,16 @@ async function osSet(
   }
   const plugin = securePlugin();
   if (!plugin) return false;
-  await plugin.internalSetItem({
-    prefixedKey: NATIVE_PREFIX + key,
-    data,
-    sync: false,
-    access: options?.requireBiometric === true ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY : WHEN_UNLOCKED,
-  });
+  await fromPlugin(() =>
+    plugin.internalSetItem({
+      prefixedKey: NATIVE_PREFIX + key,
+      data,
+      sync: false,
+      access: options?.requireBiometric === true
+        ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY
+        : WHEN_UNLOCKED,
+    })
+  );
   return true;
 }
 

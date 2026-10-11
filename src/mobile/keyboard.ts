@@ -103,18 +103,34 @@ function watchStyle(el: unknown, cb: () => void): () => void {
   return () => mo.disconnect();
 }
 
+/** One report of the iOS shell's keyboard (see {@linkcode watchShellKeyboard}). */
+export interface ShellKeyboardReport {
+  /** px of the page the keyboard covers: its height less how far the shell has resized. */
+  readonly px: number;
+  /** The keyboard's height (`0` while it is hidden), covering the page or not. */
+  readonly height: number;
+  /**
+   * Whether a will-show / will-hide caused the report, so the change moves with the keyboard's
+   * animation. `false` when the shell's resize did (it lands at once) and for the first report.
+   */
+  readonly animated: boolean;
+}
+
 /**
- * The inset in the iOS shell with `@capacitor/keyboard`. The plugin takes the keyboard's
+ * The keyboard in the iOS shell with `@capacitor/keyboard`. The plugin takes the keyboard's
  * notifications away from WebKit, so the visual viewport does not move; it reports the keyboard
  * on will-show / will-hide and, in its `native` / `body` / `ionic` modes, resizes the WebView /
- * `<body>` / `ion-app` only once the keyboard's animation has run (plus 200 ms). The inset is the
- * will-show height less how far the shell has resized the app since: the whole keyboard while it
- * slides in over the page, `0` once the app has shrunk around it, and the whole keyboard
- * throughout with `resize: "none"`. A bottom-anchored view that adds the inset as room (a chat:
- * `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole way, with
- * no jump when the resize lands.
+ * `<body>` / `ion-app` only once the keyboard's animation has run (plus 200 ms). The covered px
+ * is the will-show height less how far the shell has resized the app since: the whole keyboard
+ * while it slides in over the page, `0` once the app has shrunk around it, and the whole
+ * keyboard throughout with `resize: "none"`. A bottom-anchored view that adds it as room (a
+ * chat: `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole
+ * way, with no jump when the resize lands.
  */
-function watchShellInset(plugin: ShellKeyboard, onInset: (px: number) => void): () => void {
+function watchShellReports(
+  plugin: ShellKeyboard,
+  onReport: (report: ShellKeyboardReport) => void,
+): () => void {
   let mode = "native"; // the plugin's default until it says otherwise
   let height = 0;
   let base = 0;
@@ -123,19 +139,20 @@ function watchShellInset(plugin: ShellKeyboard, onInset: (px: number) => void): 
     const el = resizedElement(mode);
     return el ? el.getBoundingClientRect().height : num(globalThis.innerHeight);
   };
-  const report = () => {
+  const report = (animated: boolean) => {
     const resized = mode === "none" ? 0 : Math.max(0, base - size());
-    onInset(Math.max(0, Math.round(height - resized)));
+    onReport({ px: Math.max(0, Math.round(height - resized)), height, animated });
   };
+  const resized = () => report(false);
   const watch = () => {
     unwatch();
     const g = globalThis as { addEventListener?: unknown; removeEventListener?: unknown };
-    const stopStyle = watchStyle(resizedElement(mode), report);
+    const stopStyle = watchStyle(resizedElement(mode), resized);
     const listens = typeof g.addEventListener === "function";
-    if (listens) globalThis.addEventListener("resize", report);
+    if (listens) globalThis.addEventListener("resize", resized);
     unwatch = () => {
       stopStyle();
-      if (listens) globalThis.removeEventListener("resize", report);
+      if (listens) globalThis.removeEventListener("resize", resized);
       unwatch = () => {};
     };
   };
@@ -145,12 +162,12 @@ function watchShellInset(plugin: ShellKeyboard, onInset: (px: number) => void): 
       watch();
     }
     height = Math.max(0, Math.round(num(info?.keyboardHeight)));
-    report();
+    report(true);
   }));
   const offHide = listenerDisposer(plugin.addListener("keyboardWillHide", () => {
     height = 0;
     unwatch();
-    report();
+    report(true);
   }));
   let active = true;
   plugin.getResizeMode?.().then((result) => {
@@ -160,7 +177,7 @@ function watchShellInset(plugin: ShellKeyboard, onInset: (px: number) => void): 
     base = size(); // the shell resizes only after the animation: still the full size
     watch();
   }, () => {});
-  onInset(0);
+  onReport({ px: 0, height: 0, animated: false });
   return () => {
     active = false;
     offShow();
@@ -174,12 +191,24 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Where the inset comes from: the iOS shell's keyboard plugin, else the visual viewport. */
-function watchKeyboardInset(onInset: (px: number) => void): () => void {
+/**
+ * In the iOS shell with `@capacitor/keyboard`, report the keyboard now and on every change (see
+ * {@linkcode ShellKeyboardReport}) and return a stop function; elsewhere report nothing and
+ * return `undefined` (the caller falls back to the visual viewport). Internal to
+ * `denext/mobile` (the inset and the keyboard views' overlap share it); not re-exported.
+ */
+export function watchShellKeyboard(
+  onReport: (report: ShellKeyboardReport) => void,
+): (() => void) | undefined {
   const plugin = nativePlatform() === "ios"
     ? nativePlugin<ShellKeyboard>("Keyboard", ["addListener"])
     : undefined;
-  return plugin ? watchShellInset(plugin, onInset) : watchInset(onInset);
+  return plugin ? watchShellReports(plugin, onReport) : undefined;
+}
+
+/** Where the inset comes from: the iOS shell's keyboard plugin, else the visual viewport. */
+function watchKeyboardInset(onInset: (px: number) => void): () => void {
+  return watchShellKeyboard(({ px }) => onInset(px)) ?? watchInset(onInset);
 }
 
 /** How many live installs own each custom property (created on first install). */

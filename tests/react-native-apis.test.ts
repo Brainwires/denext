@@ -131,6 +131,65 @@ Deno.test("Keyboard (iOS shell): Did follows Will after UIKit's 250 ms, with the
   }
 });
 
+Deno.test("Keyboard: removeListener, emit, listenerCount and removeAllListeners() for every event", async () => {
+  const kb = fakePlugin(KEYBOARD_METHODS);
+  try {
+    assertEquals(Keyboard.listenerCount("keyboardWillShow"), 0, "no hub yet");
+    Keyboard.emit("keyboardWillShow", {} as Any); // nothing to call, no hub created
+    Keyboard.removeListener("keyboardWillShow", () => {});
+    Keyboard.removeAllListeners();
+    resetKeyboardForTesting(); // no hub: nothing to stop
+    await inShell("android", { Keyboard: kb.plugin }, async () => {
+      const seen: string[] = [];
+      const show = () => void seen.push("show");
+      const hide = () => void seen.push("hide");
+      Keyboard.addListener("keyboardWillShow", show);
+      Keyboard.addListener("keyboardDidHide", hide);
+      await settle();
+      assertEquals(Keyboard.listenerCount("keyboardWillShow"), 1);
+      const event = {
+        duration: 0,
+        easing: "linear" as const,
+        endCoordinates: { screenX: 0, screenY: 0, width: 0, height: 0 },
+        isEventFromThisApp: true,
+      };
+      Keyboard.emit("keyboardWillShow", event);
+      assertEquals(seen, ["show"], "emit calls the event's listeners");
+      Keyboard.removeListener("keyboardWillShow", show);
+      assertEquals(Keyboard.listenerCount("keyboardWillShow"), 0);
+      Keyboard.removeAllListeners(null);
+      assertEquals(Keyboard.listenerCount("keyboardDidHide"), 0, "null clears every event");
+      kb.fire("keyboardWillShow", { keyboardHeight: 200 });
+      kb.fire("keyboardWillHide");
+      assertEquals(seen, ["show"]);
+      Keyboard.scheduleLayoutAnimation(event); // a web view has nothing to animate
+    }, { document: {}, innerWidth: 400, innerHeight: 800 });
+  } finally {
+    resetKeyboardForTesting();
+  }
+});
+
+Deno.test("Keyboard (iOS shell): a reset drops the pending Did events; no viewport reads 0 x 0", async () => {
+  const kb = fakePlugin(KEYBOARD_METHODS);
+  const clock = fakeTimers();
+  try {
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const seen: string[] = [];
+      Keyboard.addListener("keyboardDidShow", () => void seen.push("did"));
+      await settle();
+      kb.fire("keyboardWillShow", { keyboardHeight: 336 });
+      assertEquals(Keyboard.metrics(), { screenX: 0, screenY: -336, width: 0, height: 336 });
+      resetKeyboardForTesting();
+      clock.tick(300);
+      assertEquals(seen, [], "the reset cleared the 250 ms timer");
+      assertEquals(kb.listening(), 0, "and stopped the watcher");
+    }, { document: {}, innerWidth: undefined, innerHeight: undefined });
+  } finally {
+    clock.restore();
+    resetKeyboardForTesting();
+  }
+});
+
 // ---- KeyboardAvoidingView ----------------------------------------------------
 
 /** A fake react-native-web View: flattens its style array into `data-style`, keeps onLayout. */
@@ -183,6 +242,82 @@ Deno.test("KeyboardAvoidingView: RN's overlap formula over the view's frame, per
       root.unmount();
     }
   });
+});
+
+Deno.test("KeyboardAvoidingView: a lifted height view keeps its resting height across re-layouts", async () => {
+  const vv = fakeViewport(800);
+  const frames = frameQueue();
+  const globals = {
+    innerHeight: 800,
+    visualViewport: vv,
+    requestAnimationFrame: frames.request,
+    cancelAnimationFrame: frames.cancel,
+  };
+  await withGlobals(globals, () => {
+    const layouts: Array<(e: Any) => void> = [];
+    const reported: number[] = [];
+    const KAV = createKeyboardAvoidingView(fakeView(layouts) as Any);
+    const { root, container } = mount(() =>
+      h(KAV as Any, {
+        behavior: "height",
+        onLayout: (e: Any) => void reported.push(e.nativeEvent.layout.height),
+      }, "x")
+    );
+    const layout = (y: number, height: number) =>
+      flushSync(() =>
+        layouts.at(-1)!({ nativeEvent: { layout: { x: 0, y, width: 300, height } } })
+      );
+    const height = () => styleData(container.firstChild).height;
+    layout(100, 700);
+    layout(100, 700); // the same frame again: nothing changes
+    vv.height = 500;
+    vv.fire("resize");
+    flushSync(() => frames.flush());
+    assertEquals(height(), 400);
+    layout(100, 400); // the shrunk view reports its own height: not the one it shrinks from
+    assertEquals(height(), 400);
+    layout(120, 400); // it moved down 20 px: the overlap grows by 20 from the resting height
+    assertEquals(height(), 380);
+    assertEquals(reported, [700, 700, 400, 400], "the app's onLayout still hears every layout");
+    vv.height = 800;
+    vv.fire("resize");
+    flushSync(() => frames.flush());
+    assertEquals(height(), undefined, "unlifted");
+    root.unmount();
+  });
+});
+
+Deno.test("KeyboardAvoidingView (iOS shell): pads while the keyboard slides in, then lets the WebView's resize take over", async () => {
+  const kb = fakePlugin(KEYBOARD_METHODS, { getResizeMode: { mode: "native" } });
+  const g = globalThis as Any;
+  try {
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const layouts: Array<(e: Any) => void> = [];
+      const KAV = createKeyboardAvoidingView(fakeView(layouts) as Any);
+      const { root, container } = mount(() => h(KAV as Any, { behavior: "padding" }, "x"));
+      await settle();
+      flushSync(() =>
+        layouts.at(-1)!({ nativeEvent: { layout: { x: 0, y: 100, width: 300, height: 700 } } })
+      );
+      const style = () => styleData(container.firstChild);
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+      assertEquals(style().paddingBottom, 300, "lifted before the shell's resize");
+      assertEquals([style().transitionProperty, style().transitionDuration], [
+        "padding-bottom",
+        "250ms",
+      ]);
+      g.innerHeight = 500; // the shell shrinks the WebView after the animation
+      flushSync(() => g.dispatchEvent(new Event("resize")));
+      flushSync(() =>
+        layouts.at(-1)!({ nativeEvent: { layout: { x: 0, y: 100, width: 300, height: 400 } } })
+      );
+      assertEquals(style().paddingBottom, 0, "the resize made the room: no double lift");
+      assertEquals(style().transitionProperty, undefined, "and it lands at once");
+      root.unmount();
+    }, { innerHeight: 800 });
+  } finally {
+    resetKeyboardForTesting();
+  }
 });
 
 // ---- BackHandler -------------------------------------------------------------

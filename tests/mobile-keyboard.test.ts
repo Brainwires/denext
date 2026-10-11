@@ -27,6 +27,8 @@ import {
   withGlobals,
 } from "./helpers/mobile-fakes.ts";
 
+const g = globalThis as Any;
+
 /** The Keyboard plugin's methods denext may call. */
 const KEYBOARD_METHODS = ["hide", "setResizeMode", "getResizeMode"];
 
@@ -256,16 +258,86 @@ Deno.test("KeyboardAvoidingView: iOS resize none follows will-show, animated ove
   }, globals);
 });
 
-Deno.test("KeyboardAvoidingView: iOS resize native leaves layout alone (the WebView shrinks)", async () => {
+/**
+ * A faked iOS shell resize for `mode`: `shrink(px)` resizes what `@capacitor/keyboard` resizes
+ * (the WebView's innerHeight for native, `<body>` for body) and tells the page as the shell
+ * does (a window resize; the inline style on `<body>`).
+ */
+function shellResize(mode: "native" | "body") {
+  let bodyHeight = 800;
+  const mutations = new Set<() => void>();
+  const MutationObserver = class {
+    constructor(readonly cb: () => void) {}
+    observe() {
+      mutations.add(this.cb);
+    }
+    disconnect() {
+      mutations.delete(this.cb);
+    }
+  };
+  const document = Object.assign(new Target(), {
+    body: { getBoundingClientRect: () => ({ height: bodyHeight }) },
+  });
+  return {
+    globals: mode === "body" ? { document, MutationObserver } : {},
+    observers: () => mutations.size,
+    shrink(px: number) {
+      if (mode === "native") {
+        g.innerHeight = 800 - px;
+        g.dispatchEvent(new Event("resize"));
+      } else {
+        bodyHeight = 800 - px;
+        for (const cb of [...mutations]) cb();
+      }
+    },
+  };
+}
+
+// Capacitor 8's Keyboard plugin keeps the visual viewport still and resizes the WebView (native)
+// or <body> only after the keyboard's animation + 200 ms: the view lifts as the keyboard slides
+// in, and drops the lift at once (no transition) when the resize lands, so it is never lifted
+// twice.
+Deno.test("KeyboardAvoidingView: iOS resize native / body lifts until the shell's resize lands", async () => {
+  for (const mode of ["native", "body"] as const) {
+    const kb = fakePlugin(KEYBOARD_METHODS, { getResizeMode: { mode } });
+    const vv = fakeViewport(800);
+    const { globals } = viewportEnv(vv);
+    const shell = shellResize(mode);
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const { root, container } = mount(() => h(KeyboardAvoidingView as Any, null));
+      await settle();
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 336 }));
+      assertEquals(styleOf(container, "padding-bottom"), "336px", `${mode}: before the resize`);
+      assertEquals(styleOf(container, "transition"), "padding-bottom 250ms ease-out");
+      flushSync(() => shell.shrink(336));
+      assertEquals(styleOf(container, "padding-bottom"), "", `${mode}: no double lift`);
+      assertEquals(styleOf(container, "transition"), "", `${mode}: the resize lands at once`);
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 380 })); // suggestion bar
+      assertEquals(styleOf(container, "padding-bottom"), "44px", `${mode}: the bar still covers`);
+      flushSync(() => kb.fire("keyboardWillHide"));
+      assertEquals(styleOf(container, "padding-bottom"), "");
+      assertEquals(shell.observers(), 0, "the resize watch stops with the keyboard");
+      root.unmount();
+      await settle();
+      assertEquals(kb.listening(), 0);
+    }, { ...globals, ...shell.globals });
+  }
+});
+
+Deno.test("KeyboardStickyView: iOS resize native rides the keyboard until the WebView shrinks", async () => {
   const kb = fakePlugin(KEYBOARD_METHODS, { getResizeMode: { mode: "native" } });
   const vv = fakeViewport(800);
   const { globals } = viewportEnv(vv);
+  const shell = shellResize("native");
   await inShell("ios", { Keyboard: kb.plugin }, async () => {
-    const { root, container } = mount(() => h(KeyboardAvoidingView as Any, null));
+    const { root, container } = mount(() => h(KeyboardStickyView as Any, null, "composer"));
     await settle();
-    flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 336 }));
-    assertEquals(styleOf(container, "padding-bottom"), "");
-    assertEquals(kb.listening(), 0, "no native listener: the visual viewport decides");
+    flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+    assertEquals(styleOf(container, "transform"), "translateY(-300px)");
+    flushSync(() => shell.shrink(300));
+    assertEquals(styleOf(container, "transform"), "", "the WebView's resize moved it already");
+    flushSync(() => g.dispatchEvent(new Event("resize"))); // a repeat changes nothing
+    assertEquals(styleOf(container, "transform"), "");
     root.unmount();
   }, globals);
 });

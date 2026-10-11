@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.8",
+          "signature": "VERSION: 3.4.9",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -20186,7 +20186,7 @@
           "kind": "function",
           "signature": "KeyboardAvoidingView(props: KeyboardAvoidingViewProps): VNode",
           "doc": "A <div> that makes room for the on-screen keyboard, like React Native's KeyboardAvoidingView: with behavior=\"padding\" (the default) it adds the covered height to its bottom padding, with \"height\" it shrinks its height by it (from style.height, else 100%), and with \"position\" it moves up by it. keyboardVerticalOffset subtracts a fixed amount (a bottom bar the keyboard hides anyway).",
-          "docFull": "A `<div>` that makes room for the on-screen keyboard, like React Native's\n`KeyboardAvoidingView`: with `behavior=\"padding\"` (the default) it adds the covered height to\nits bottom padding, with `\"height\"` it shrinks its height by it (from `style.height`, else\n`100%`), and with `\"position\"` it moves up by it. `keyboardVerticalOffset` subtracts a fixed\namount (a bottom bar the keyboard hides anyway).\n\n\"Covered\" is the part of the keyboard over the page's layout viewport, which is 0 where the\nWebView resizes around the keyboard (Android; the iOS shell with `@capacitor/keyboard`'s\ndefault `resize: \"native\"`); the view then leaves layout alone. In the iOS shell with\n`resize: \"none\"` it follows the keyboard's will-show / will-hide, animated over the\nkeyboard's own duration; on the web it follows the visual viewport (see\n{@linkcode onKeyboardChange}). It renders without any avoidance during SSR.",
+          "docFull": "A `<div>` that makes room for the on-screen keyboard, like React Native's\n`KeyboardAvoidingView`: with `behavior=\"padding\"` (the default) it adds the covered height to\nits bottom padding, with `\"height\"` it shrinks its height by it (from `style.height`, else\n`100%`), and with `\"position\"` it moves up by it. `keyboardVerticalOffset` subtracts a fixed\namount (a bottom bar the keyboard hides anyway).\n\n\"Covered\" is the part of the keyboard over the page's layout viewport, which is 0 where the\nWebView has resized around the keyboard; the view then leaves layout alone. In the iOS shell\nwith `@capacitor/keyboard` it follows the keyboard's will-show / will-hide, animated over the\nkeyboard's own duration, so it lifts as the keyboard slides in; with `resize: \"native\"` (the\ndefault), `\"body\"` or `\"ionic\"` the shell resizes the app only after the animation, and the\nlift drops at once as that resize lands (no double lift), while with `resize: \"none\"` it\nstays. On Android (the WebView resizes itself) and the web it follows the visual viewport\n(see {@linkcode onKeyboardChange}). It renders without any avoidance during SSR.",
           "params": [
             {
               "name": "props",
@@ -20253,7 +20253,7 @@
           "kind": "function",
           "signature": "KeyboardStickyView(props: KeyboardStickyViewProps): VNode",
           "doc": "A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is the composer of a chat screen: see the chat-composer recipe on /docs/mobile.",
-          "docFull": "A `<div>` that rides on top of the on-screen keyboard: while the keyboard covers the page it\nmoves up by the covered height (a compositor-only `translateY`), and back down when the\nkeyboard hides. Place it at the bottom of the screen yourself (`position: fixed` /\n`sticky`, `bottom: 0`); the view only adds the transform. This is the composer of a chat\nscreen: see the chat-composer recipe on /docs/mobile.\n\nLike {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the\npage, so where the WebView resizes around the keyboard it stays put (the resize already\nmoved it). `offset` adds a fixed shift in each state.",
+          "docFull": "A `<div>` that rides on top of the on-screen keyboard: while the keyboard covers the page it\nmoves up by the covered height (a compositor-only `translateY`), and back down when the\nkeyboard hides. Place it at the bottom of the screen yourself (`position: fixed` /\n`sticky`, `bottom: 0`); the view only adds the transform. This is the composer of a chat\nscreen: see the chat-composer recipe on /docs/mobile.\n\nLike {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the\npage, so once the WebView has resized around the keyboard it stays put (the resize already\nmoved it); in the iOS shell it rides the keyboard while it slides in, before the shell's\nresize lands. `offset` adds a fixed shift in each state.",
           "params": [
             {
               "name": "props",
