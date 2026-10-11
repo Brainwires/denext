@@ -10,6 +10,7 @@ import { fromFileUrl, join } from "@std/path";
 import { cliInvocation } from "../src/ui/proc.ts";
 import { cliNpmModeArgs, inPnpmWorkspace } from "../src/build/pnpm-workspace.ts";
 import { migrateProject } from "../src/build/migrate.ts";
+import { scaffoldFiles } from "../src/build/scaffold.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));
 
@@ -118,6 +119,50 @@ Deno.test("pnpm workspace: migrate + export leave the root package.json byte-ide
       const bare = await deno(["run", "-A", probe], app);
       assertNotEquals(bare.code, 0, bare.out);
       assertNotEquals(await Deno.readTextFile(pkg), ROOT_PACKAGE_JSON, "without the flag");
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("pnpm workspace: a package script run directly loads denext/desktop off the pnpm tree", async () => {
+  const { root, app } = await workspace();
+  const pkg = join(root, "package.json");
+  try {
+    // denext/desktop stands in for a module that needs a framework npm dependency (the sidecar
+    // bundler's esbuild): loading it is enough to show where npm packages resolve from.
+    await Deno.writeTextFile(
+      join(app, "desktop-stub.ts"),
+      'import "npm:esbuild@^0.24.0";\nconsole.log("denext/desktop loaded");\nDeno.exit(0);\n',
+    );
+    await Deno.writeTextFile(
+      join(app, "deno.json"),
+      JSON.stringify({
+        nodeModulesDir: "manual",
+        imports: { "denext/desktop": "./desktop-stub.ts" },
+      }),
+    );
+    const scripts = scaffoldFiles({ dir: app, desktop: true })
+      .filter((f) => /^scripts\/package-(macos|linux|windows)\.ts$/.test(f.path));
+    assertEquals(scripts.length, 3);
+    for (const script of scripts) {
+      await Deno.mkdir(join(app, "scripts"), { recursive: true });
+      await Deno.writeTextFile(join(app, script.path), script.content);
+      // As the script's own header says to run it: `deno run -A scripts/package-<os>.ts`.
+      const run = await deno(["run", "-A", script.path], app);
+      assertEquals(run.code, 0, `${script.path}: ${run.out}`);
+      assert(run.out.includes("denext/desktop loaded"), `${script.path}: ${run.out}`);
+      assertEquals(await Deno.readTextFile(pkg), ROOT_PACKAGE_JSON, script.path);
+    }
+    // The shape the scripts had before: a static import, resolved in the app's manual mode.
+    if (Deno.version.deno.startsWith("2.9.")) {
+      await Deno.writeTextFile(
+        join(app, "scripts", "static.ts"),
+        'import "denext/desktop";\n',
+      );
+      const bare = await deno(["run", "-A", "scripts/static.ts"], app);
+      assertNotEquals(bare.code, 0, bare.out);
+      assertNotEquals(await Deno.readTextFile(pkg), ROOT_PACKAGE_JSON, "a static import");
     }
   } finally {
     await Deno.remove(root, { recursive: true });

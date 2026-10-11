@@ -41,20 +41,41 @@
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
-import {
+import type { DesktopPackageMeta } from "denext/desktop";
+
+// Load denext/desktop with --node-modules-dir=none, so its own build dependencies (esbuild, ws)
+// come from Deno's cache whatever this project's node_modules mode is: in a pnpm workspace
+// (nodeModulesDir "manual") Deno would look for them in node_modules, fail, and rewrite the root
+// package.json from pnpm-workspace.yaml. The script re-runs itself once under that flag.
+if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
+  const age = Deno.env.get("DENEXT_MIN_DEP_AGE");
+  const { code } = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "-A",
+      "--node-modules-dir=none",
+      ...(age ? ["--min-dep-age=" + age] : []),
+      import.meta.url,
+      ...Deno.args,
+    ],
+    env: { DENEXT_DESKTOP_NPM: "none" },
+  }).spawn().status;
+  Deno.exit(code);
+}
+
+const {
   buildDesktopBundle,
   buildDesktopDeb,
   buildDesktopRpm,
   buildDesktopTarball,
   desktopPackageArches,
-  type DesktopPackageMeta,
   desktopRequireTool,
-  desktopRun as run,
+  desktopRun: run,
   desktopToolGate,
   desktopVersionProblem,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
-} from "denext/desktop";
+} = await import("denext/desktop");
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",

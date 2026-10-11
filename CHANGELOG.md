@@ -45,6 +45,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A desktop package script run directly works in a pnpm workspace.** `deno run -A
+  scripts/package-<os>.ts` resolved `denext/desktop`'s own npm build dependencies (the sidecar
+  bundler's esbuild) in the app's `nodeModulesDir: "manual"` mode, where they are not, so the run
+  failed and Deno rewrote the root `package.json` from `pnpm-workspace.yaml` (`denext desktop
+  package` already ran the script with `--node-modules-dir=none`). The scaffolded scripts now load
+  `denext/desktop` dynamically after re-running themselves once under `--node-modules-dir=none`,
+  whatever the project's mode; `denext desktop package` tells them it already did. Existing
+  projects pick this up with `denext desktop package --regenerate-scripts`.
+
 - **denext no longer makes Deno rewrite a pnpm workspace's root `package.json`.** Deno 2.9 reads
   `pnpm-workspace.yaml` only to migrate it: when a process in a pnpm workspace member's manual
   `node_modules` cannot find an `npm:` package there, it writes a `workspaces` field into the root

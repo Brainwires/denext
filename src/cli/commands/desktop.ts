@@ -528,7 +528,11 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // workspace) the bundler's npm imports are not in node_modules, and Deno would rewrite the
   // workspace's root package.json from pnpm-workspace.yaml.
   const npmMode = (await desktopNpmArgsFor(dir)).filter((a) => a.startsWith("--node-modules-dir"));
-  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir);
+  // A script already under --node-modules-dir=none need not re-run itself to get it (its guard).
+  const env = npmMode.includes("--node-modules-dir=none")
+    ? { DENEXT_DESKTOP_NPM: "none" }
+    : undefined;
+  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir, env);
 }
 
 /** What a packaging script predating denext 3.1 lacks. */
