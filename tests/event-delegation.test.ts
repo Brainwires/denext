@@ -307,3 +307,176 @@ Deno.test("a nested root's events reach the outer root's handlers after its own"
   el(islandHost, 0).dispatch("click");
   assertEquals(order, ["inner", "outer main"]);
 });
+
+// Touch and wheel ride the same delegation (React 17+ listens to them on the root, touchstart /
+// touchmove / wheel passive): order, propagation scope, portals and React's
+// `isDefaultPrevented()` after a `preventDefault()` the browser ignores.
+
+Deno.test("touch and wheel: capture root → target, then bubble target → root", () => {
+  const order: string[] = [];
+  const log = (s: string) => () => order.push(s);
+  const { container } = mount(
+    h(
+      "div",
+      {
+        onTouchStart: log("outer touchstart"),
+        onTouchStartCapture: log("outer touchstart capture"),
+        onWheel: log("outer wheel"),
+        onWheelCapture: log("outer wheel capture"),
+        onTouchEnd: log("outer touchend"),
+      },
+      h("div", {
+        onTouchStart: log("inner touchstart"),
+        onTouchStartCapture: log("inner touchstart capture"),
+        onTouchMove: log("inner touchmove"),
+        onWheel: log("inner wheel"),
+        onWheelCapture: log("inner wheel capture"),
+        onTouchEnd: log("inner touchend"),
+        onTouchCancel: log("inner touchcancel"),
+      }),
+    ) as VNode,
+  );
+  const inner = el(container, 0, 0);
+  for (const type of ["touchstart", "touchmove", "wheel", "touchend", "touchcancel"]) {
+    inner.dispatch(type);
+  }
+  assertEquals(order, [
+    "outer touchstart capture",
+    "inner touchstart capture",
+    "inner touchstart",
+    "outer touchstart",
+    "inner touchmove",
+    "outer wheel capture",
+    "inner wheel capture",
+    "inner wheel",
+    "outer wheel",
+    "inner touchend",
+    "outer touchend",
+    "inner touchcancel",
+  ]);
+  assertEquals(inner.listeners.size + inner.captureListeners.size, 0, "nothing on the element");
+});
+
+Deno.test("touch / wheel stopPropagation: ancestors' native listeners below the root still run", () => {
+  const order: string[] = [];
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const page = doc.createElement("section");
+  page.appendChild(container);
+  doc.body.appendChild(page);
+  createRoot(container as Any).render(
+    h(
+      "div",
+      { onWheel: () => order.push("outer handler") },
+      h("div", {
+        onWheel: (e: Event) => {
+          order.push("inner handler");
+          e.stopPropagation();
+        },
+      }),
+    ),
+  );
+  flushSync();
+  const outer = el(container, 0);
+  // A native listener on a rendered ancestor (below the root) and one above the root.
+  outer.addEventListener("wheel", () => order.push("outer native"));
+  page.addEventListener("wheel", () => order.push("above-root native"));
+  el(container, 0, 0).dispatch("wheel");
+  // The native bubble reaches <div> before the root dispatches; the stop at the root then keeps
+  // the event from the outer handler and from everything above the root, as in React.
+  assertEquals(order, ["outer native", "inner handler"]);
+});
+
+Deno.test("touch and wheel in a portal bubble to the components that rendered it", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const target = doc.createElement("div");
+  const order: string[] = [];
+  createRoot(container as Any).render(
+    h(
+      "section",
+      {
+        onWheel: () => order.push("section wheel"),
+        onTouchMove: () => order.push("section touchmove"),
+      },
+      createPortal(
+        h("div", {
+          onWheel: () => order.push("portal wheel"),
+          onTouchMove: () => order.push("portal touchmove"),
+        }) as Any,
+        target as Any,
+      ) as Any,
+    ),
+  );
+  flushSync();
+  assert(target.listeners.has("wheel") && target.captureListeners.has("touchmove"));
+  el(target, 0).dispatch("wheel");
+  el(target, 0).dispatch("touchmove");
+  assertEquals(order, ["portal wheel", "section wheel", "portal touchmove", "section touchmove"]);
+});
+
+/**
+ * Deliver a REAL, non-cancelable event (as in a passive listener: `preventDefault()` leaves the
+ * native flag false) to `container`'s root listeners, with `target` as its target.
+ */
+function fireAtRoot(container: FakeElement, target: FakeElement, event: Event): void {
+  Object.defineProperty(event, "target", { value: target, configurable: true });
+  Object.defineProperty(event, "currentTarget", { value: container, configurable: true });
+  for (const map of [container.captureListeners, container.listeners]) {
+    map.get(event.type)?.forEach((fn: Any) => fn(event));
+  }
+}
+
+Deno.test("preventDefault in a passive handler: the event reads prevented for that dispatch", () => {
+  const seen: string[] = [];
+  let held: Any = null;
+  const { container } = mount(
+    h(
+      "div",
+      {
+        onTouchMoveCapture: (e: Any) => {
+          e.preventDefault();
+          seen.push(`capture ${e.defaultPrevented} ${e.isDefaultPrevented()}`);
+        },
+        onTouchMove: (e: Any) => seen.push(`outer ${e.defaultPrevented} ${e.isDefaultPrevented()}`),
+      },
+      h("div", {
+        onTouchMove: (e: Any) => {
+          held = e;
+          seen.push(`inner before ${e.isDefaultPrevented()}`);
+          e.preventDefault();
+          seen.push(`inner after ${e.defaultPrevented} ${e.isDefaultPrevented()}`);
+        },
+      }),
+    ) as VNode,
+  );
+  const ev = new Event("touchmove", { bubbles: true, cancelable: false });
+  fireAtRoot(container, el(container, 0, 0), ev);
+  assertEquals(seen, [
+    "capture true true",
+    // React dispatches the capture and the bubble phase with separate synthetic events, each
+    // starting from the native flag.
+    "inner before false",
+    "inner after true true",
+    "outer true true",
+  ]);
+  assertEquals(held, ev, "the handler's event is the native event");
+  assertEquals(ev.defaultPrevented, false, "the native flag, once the dispatch is over");
+  assert(!Object.hasOwn(ev, "defaultPrevented"), "nothing left shadowed");
+});
+
+Deno.test("preventDefault on a cancelable event still sets the native flag", () => {
+  let inHandler: unknown = null;
+  const { container } = mount(
+    h("div", {
+      onWheel: (e: Any) => {
+        e.preventDefault();
+        inHandler = [e.defaultPrevented, e.isDefaultPrevented()];
+      },
+    }) as VNode,
+  );
+  const ev = new Event("wheel", { bubbles: true, cancelable: true });
+  fireAtRoot(container, el(container, 0), ev);
+  assertEquals(inHandler, [true, true]);
+  assertEquals(ev.defaultPrevented, true);
+});

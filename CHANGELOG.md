@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Touch and wheel handlers are dispatched from the root, as in React.** `onTouchStart`,
+  `onTouchMove`, `onTouchEnd`, `onTouchCancel`, `onWheel` and their `Capture` variants now ride
+  root event delegation like every other bubbling event: each root and portal container listens
+  once (`touchstart`, `touchmove` and `wheel` passive, `touchend` / `touchcancel` not, as React DOM
+  registers them), and an element with such a handler registers no listener of its own. So a
+  `stopPropagation()` in one no longer stops the native event before the DOM listeners of the
+  elements between it and the root, as with React's root listener. After `preventDefault()` in a
+  passive handler (a no-op for the browser, in React too) the event now reports
+  `defaultPrevented` and `isDefaultPrevented()` `true` for the rest of that dispatch, as React's
+  synthetic event does; a native listener still reads the browser's own flag. Both differences
+  are gone from KNOWN-DIFFERENCES.md.
+
 ## [3.4.6] - 2026-10-11
 
 ### Fixed

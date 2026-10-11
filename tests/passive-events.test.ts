@@ -1,8 +1,9 @@
 // React DOM listens to `touchstart`, `touchmove` and `wheel` PASSIVE (React 17+'s
 // `addTrappedEventListener`), so a component with `onTouchMove` / `onWheel` never holds a scroll
 // on the main thread; `touchend` / `touchcancel` stay non-passive. denext registers the same
-// options wherever it listens for a handler prop or an interaction: the element listener
-// dom-props attaches, the resumability dispatcher on the document and `useClickOutside`.
+// options wherever it listens for a handler prop or an interaction: the root / portal container
+// listeners of event delegation (fiber/events.ts), the resumability dispatcher on the document
+// and `useClickOutside`.
 
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -51,7 +52,7 @@ Deno.test("isPassiveEvent: React DOM's passive list — touchstart, touchmove, w
   ) assert(!isPassiveEvent(type), type);
 });
 
-Deno.test("onTouchStart / onTouchMove / onWheel (and Capture) register passive element listeners", () => {
+Deno.test("the root listens to touchstart / touchmove / wheel passive; the element registers nothing", () => {
   const noop = () => {};
   recording(FakeElement.prototype, (calls) => {
     const { doc, container } = makeDom();
@@ -71,10 +72,14 @@ Deno.test("onTouchStart / onTouchMove / onWheel (and Capture) register passive e
     );
     flushSync();
     const viewport = container.childNodes[0];
-    const own = calls.filter((c) => c.target === viewport);
-    const seen = own.map((c) => `${c.type}${capture(c.options) ? "!" : ""}:${passive(c.options)}`);
+    assertEquals(calls.filter((c) => c.target === viewport), [], "no element listener");
+    const touchWheel = ["touchstart", "touchmove", "touchend", "touchcancel", "wheel"];
+    const seen = calls.filter((c) => c.target === container && touchWheel.includes(c.type))
+      .map((c) => `${c.type}${capture(c.options) ? "!" : ""}:${passive(c.options)}`);
     assertEquals(seen.sort(), [
+      "touchcancel!:false",
       "touchcancel:false",
+      "touchend!:false",
       "touchend:false",
       "touchmove!:true",
       "touchmove:true",
@@ -83,11 +88,14 @@ Deno.test("onTouchStart / onTouchMove / onWheel (and Capture) register passive e
       "wheel!:true",
       "wheel:true",
     ]);
+    // Every other delegated type keeps a plain (non-passive) listener.
+    const rest = calls.filter((c) => c.target === container && !touchWheel.includes(c.type));
+    assert(rest.length > 0 && rest.every((c) => !passive(c.options)));
     root.unmount();
   });
 });
 
-Deno.test("a passive handler still runs, and a changed or removed one is (un)registered", () => {
+Deno.test("a passive handler still runs, and a changed or removed one stops firing", () => {
   const seen: string[] = [];
   const { doc, container } = makeDom();
   setDocument(doc as Any);
@@ -102,8 +110,9 @@ Deno.test("a passive handler still runs, and a changed or removed one is (un)reg
   flushSync();
   el.dispatch("touchmove");
   el.dispatch("wheel");
-  assertEquals(seen, ["a", "w", "b"], "the old touchmove and the wheel listener are gone");
-  assertEquals(el.listeners.get("touchmove")?.size, 1, "one touchmove listener, not two");
+  assertEquals(seen, ["a", "w", "b"], "the new touchmove handler runs, the wheel one is gone");
+  assertEquals(el.listeners.size + el.captureListeners.size, 0, "nothing on the element");
+  assertEquals(container.listeners.get("touchmove")?.size, 1, "one root touchmove listener");
   root.unmount();
 });
 

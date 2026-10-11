@@ -21,7 +21,6 @@ import {
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
-import { isPassiveEvent } from "../runtime/passive-events.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -367,18 +366,13 @@ function setListener(
   const key = prop; // key by React prop name so distinct props never collide
   const existing = state.listeners?.get(key);
   if (existing) el.removeEventListener(ev.type, existing, ev.capture);
-  // A bubbling event is dispatched from the root / portal container (fiber/events.ts), which
-  // reads the element's committed props: nothing to attach here.
-  if (typeof handler === "function" && delegates(ev.type, ev.capture, prop)) return;
   if (typeof handler === "function") {
+    // A bubbling event (touch and wheel included) is dispatched from the root / portal
+    // container (fiber/events.ts), which reads the element's committed props: nothing to
+    // attach here.
+    if (delegates(ev.type, ev.capture, prop)) return;
     const wrapped = guardedListener(handler, onError);
-    // touchstart / touchmove / wheel are passive, as React DOM registers them: a non-passive
-    // one would hold every scroll the element covers on the main thread (iOS especially).
-    el.addEventListener(
-      ev.type,
-      wrapped,
-      isPassiveEvent(ev.type) ? { capture: ev.capture, passive: true } : ev.capture,
-    );
+    el.addEventListener(ev.type, wrapped, ev.capture);
     (state.listeners ??= new Map()).set(key, wrapped);
   } else if (existing) {
     state.listeners!.delete(key);

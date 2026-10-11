@@ -1,13 +1,19 @@
-// Real-browser E2E: React DOM registers `touchstart`, `touchmove` and `wheel` listeners PASSIVE
+// Real-browser E2E: React DOM listens to `touchstart`, `touchmove` and `wheel` on the ROOT, PASSIVE
 // (React 17+), so a component with `onTouchMove` / `onWheel` (Base UI's ScrollArea viewport, for
 // one) never holds a scroll on the main thread. In Chromium AND WebKit through Playwright, the
 // fixture (tests/e2e/fixtures/passive-listeners) is built and served with `addEventListener`
 // instrumented from the first script on, and the test asserts:
-//   1. the viewport's handlers registered touchstart / touchmove / wheel listeners, every one of
-//      them passive, and nothing on the page registered a non-passive one;
-//   2. `touchend` stays non-passive, as in React;
+//   1. the viewport's handlers registered nothing on the viewport; the root container listens to
+//      touchstart / touchmove / wheel (capture and bubble) passive, and nothing on the page
+//      registered a non-passive one;
+//   2. `touchend` / `touchcancel` stay non-passive on the root, as in React;
 //   3. a real wheel over the viewport runs `onWheel` and scrolls, although the handler calls
-//      `preventDefault()` (a no-op in a passive listener, in React too).
+//      `preventDefault()` (a no-op in a passive listener, in React too); the handler's event reads
+//      `defaultPrevented` / `isDefaultPrevented()` true, as React's synthetic event does, and the
+//      native flag reads false once the dispatch is over;
+//   4. the handler's `stopPropagation()` stops the native event at the root: <main>'s own wheel
+//      listener (below the root) ran, the document's did not;
+//   5. a tap runs `onTouchStart` / `onTouchEnd` through the root.
 // Set DENEXT_E2E_SCREENSHOTS=<dir> to keep a screenshot of each browser.
 //
 // Needs Playwright's Chromium and WebKit (`deno run -A npm:playwright-core@1.63.0 install
@@ -50,8 +56,21 @@ interface Registration {
   passive: boolean;
   capture: boolean;
   testid: string | null;
+  id: string | null;
   /** Where it was registered (named in a failure). */
   stack: string;
+}
+
+/** What the fixture's handlers saw (tests/e2e/fixtures/passive-listeners/src/app.tsx). */
+interface Seen {
+  touchstart: number;
+  touchend: number;
+  wheel: number;
+  wheelPrevented: boolean[];
+  wheelIsPrevented: boolean[];
+  wheelPreventedAfter: boolean[];
+  mainNative: number;
+  documentNative: number;
 }
 
 /** Records every `addEventListener` call (installed before any page script runs). */
@@ -71,6 +90,7 @@ function instrument(): void {
       passive: o.passive === true,
       capture: typeof options === "boolean" ? options : o.capture === true,
       testid: (this as unknown as Element).getAttribute?.("data-testid") ?? null,
+      id: (this as unknown as Element).id ?? null,
       stack: new Error().stack ?? "",
     });
     return original.call(this, type, listener, options);
@@ -78,7 +98,7 @@ function instrument(): void {
 }
 
 async function scenario(engine: Engine, browser: Browser, origin: string): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 }, hasTouch: true });
   try {
     await page.addInitScript(instrument);
     await page.goto(origin + "/");
@@ -92,10 +112,17 @@ async function scenario(engine: Engine, browser: Browser, origin: string): Promi
       !c.stack.includes("InjectedScript")
     );
     assertEquals(scrollBlocking, [], `${engine.name}: no non-passive touch/wheel listener`);
-    const own = calls.filter((c) => c.testid === "viewport")
-      .map((c) => `${c.type}${c.capture ? "!" : ""}:${c.passive ? "passive" : "active"}`)
-      .sort();
-    assertEquals(own, [
+    const TOUCH_WHEEL = ["touchstart", "touchmove", "touchend", "touchcancel", "wheel"];
+    const label = (c: Registration) =>
+      `${c.type}${c.capture ? "!" : ""}:${c.passive ? "passive" : "active"}`;
+    const own = calls.filter((c) => c.testid === "viewport").map(label);
+    assertEquals(own, [], `${engine.name}: the viewport registers nothing of its own`);
+    const root = calls.filter((c) => c.id === "root" && TOUCH_WHEEL.includes(c.type))
+      .map(label).sort();
+    assertEquals(root, [
+      "touchcancel!:active",
+      "touchcancel:active",
+      "touchend!:active",
       "touchend:active",
       "touchmove!:passive",
       "touchmove:passive",
@@ -108,14 +135,25 @@ async function scenario(engine: Engine, browser: Browser, origin: string): Promi
     const box = (await page.locator("[data-testid=viewport]").boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, 300);
-    await page.waitForFunction(() =>
-      document.querySelector("[data-testid=viewport]")!.scrollTop > 0 &&
-      (globalThis as unknown as { __seen: { wheel: number } }).__seen.wheel > 0
-    );
-    const prevented = await page.evaluate(() =>
-      (globalThis as unknown as { __seen: { wheelPrevented: boolean[] } }).__seen.wheelPrevented
-    );
-    assert(prevented.length > 0 && prevented.every((p) => p === false), String(prevented));
+    await page.waitForFunction(() => {
+      const s = (globalThis as unknown as { __seen: Seen }).__seen;
+      // WebKit animates a wheel scroll: wait for most of the 300 px, not the first frame.
+      return document.querySelector("[data-testid=viewport]")!.scrollTop >= 200 && s.wheel > 0 &&
+        s.wheelPreventedAfter.length === s.wheel;
+    });
+    const seen = await page.evaluate(() => (globalThis as unknown as { __seen: Seen }).__seen);
+    const all = (xs: boolean[], v: boolean) => xs.length > 0 && xs.every((x) => x === v);
+    assert(all(seen.wheelPrevented, true), `defaultPrevented ${seen.wheelPrevented}`);
+    assert(all(seen.wheelIsPrevented, true), `isDefaultPrevented() ${seen.wheelIsPrevented}`);
+    assert(all(seen.wheelPreventedAfter, false), `native flag ${seen.wheelPreventedAfter}`);
+    assert(seen.mainNative > 0, "<main>'s native listener (below the root) ran");
+    assertEquals(seen.documentNative, 0, "stopPropagation stopped the event at the root");
+
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + 20);
+    await page.waitForFunction(() => {
+      const s = (globalThis as unknown as { __seen: Seen }).__seen;
+      return s.touchstart > 0 && s.touchend > 0;
+    });
     if (SHOTS) {
       await Deno.mkdir(SHOTS, { recursive: true });
       await page.screenshot({ path: join(SHOTS, `passive-listeners-${engine.name}.png`) });
@@ -126,7 +164,8 @@ async function scenario(engine: Engine, browser: Browser, origin: string): Promi
 }
 
 Deno.test({
-  name: "e2e: onTouchMove / onWheel listen passive and never block scrolling (Chromium, WebKit)",
+  name:
+    "e2e: touch / wheel handlers ride the root's passive listeners and never block scrolling (Chromium, WebKit)",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
@@ -145,7 +184,7 @@ Deno.test({
       const browser = await engine.launch();
       try {
         await t.step(
-          `${engine.name}: passive listeners, and a wheel scrolls through onWheel`,
+          `${engine.name}: root passive listeners, a wheel scrolls through onWheel, a tap`,
           () => scenario(engine, browser, server.origin),
         );
       } finally {
