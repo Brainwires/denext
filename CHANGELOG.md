@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`Sheet`'s grabber no longer shows the focus ring after a tap or a click.** The grabber is a
+  button, so pointer focus drew the browser's outline around the pill. The sheet now installs a
+  `[data-dnx-sheet-grabber]:focus:not(:focus-visible)` rule: keyboard focus (`:focus-visible`)
+  still shows the ring, pointer focus does not.
+
 - **A native-stack screen with no `title` shows its route name in the header.** React Native
   mode's `createNativeStackNavigator` (and expo-router's `Stack`) drew an empty header when a
   screen set neither `title` nor `headerTitle`, and dropped a string `headerTitle`; the title now
