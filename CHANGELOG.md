@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A SPA build folds `feature("KEY")` in plain `.ts` / `.mts` / `.js` / `.mjs` modules too.**
+  The SPA's esbuild (compat) production build ran the fold only over `.tsx` / `.jsx` components,
+  so a hook or store calling `feature()` kept the runtime call (still reading the configured
+  value) and its untaken branch shipped. The fold now also covers the app's own plain modules
+  that import `denext/feature`; any other module, and everything in `node_modules`, loads as
+  before, untouched.
+
 - **`secureStore.get(key, { fallback: "session" })` finds the session copy when the OS store reads
   `null`.** The copy a refused `set(…, { fallback: "session" })` left in `sessionStorage` was read
   only when the OS read REJECTED; a store that refuses writes but answers reads with "no such item"

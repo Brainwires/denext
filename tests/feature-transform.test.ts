@@ -12,6 +12,7 @@ import { scanRoutes } from "../src/router/manifest.ts";
 import { bundleSourceFiles } from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
+import { staticExport } from "../src/build/export.ts";
 import type * as esbuild from "esbuild";
 
 const IMPORT = `import { feature } from "denext/feature";\n`;
@@ -125,17 +126,19 @@ async function loadThrough(
   path: string,
 ): Promise<string | undefined> {
   assert(plugin, "the feature fold is enabled for this config");
-  let fn: ((args: { path: string }) => Promise<{ contents: string } | null>) | undefined;
+  type OnLoad = (args: { path: string }) => Promise<{ contents: string } | null>;
+  const loads: Array<{ filter: RegExp; fn: OnLoad }> = [];
   plugin.setup(
     {
-      onLoad: (_f: unknown, cb: typeof fn) => {
-        fn = cb;
-      },
+      initialOptions: {},
+      onLoad: ({ filter }: { filter: RegExp }, fn: OnLoad) => loads.push({ filter, fn }),
       onResolve: () => {},
     } as unknown as esbuild.PluginBuild,
   );
-  assert(fn, "the plugin registered no onLoad");
-  return (await fn({ path }))?.contents;
+  // esbuild runs the first `onLoad` whose filter matches.
+  const load = loads.find((l) => l.filter.test(path));
+  assert(load, `the plugin registered no onLoad for ${path}`);
+  return (await load.fn({ path }))?.contents;
 }
 
 Deno.test("the fold reads the top-level `features` config key", async () => {
@@ -268,4 +271,81 @@ Deno.test("e2e: an OFF flag DCEs the gated branch + its import from deno bundle"
 Deno.test("e2e: an ON flag keeps the gated branch in deno bundle", async () => {
   const all = await bundleWithFold(true);
   assertStringIncludes(all, "GATED_MARKER_TOKEN");
+});
+
+// The SPA compat (esbuild) production build folds `feature()` in the app's plain `.ts` / `.mts` /
+// `.js` / `.mjs` modules too, not only its `.tsx` / `.jsx` components: an OFF flag's branch (and
+// the marker string it alone carries) is gone from the shipped bundle.
+Deno.test({
+  name: "SPA export (esbuild path): feature() folds in .ts/.mts/.js/.mjs modules",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_feature_" });
+  const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
+  const gated = (name: string) =>
+    `${IMPORT}export function ${name}() {\n` +
+    `  if (feature("FLAG")) return "OFF_BRANCH_${name.toUpperCase()}";\n` +
+    `  return "KEPT_${name.toUpperCase()}";\n}\n`;
+  const files: Record<string, string> = {
+    "deno.json": JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "react" },
+      imports: {
+        "denext": abs("mod.ts"),
+        "denext/feature": abs("src/feature.ts"),
+        "denext/jsx-runtime": abs("src/jsx/jsx-runtime.ts"),
+        "denext/jsx-dev-runtime": abs("src/jsx/jsx-runtime.ts"),
+        "denext/server": abs("src/server/mod.ts"),
+        "denext/client": abs("src/client/mod.ts"),
+        "react": abs("src/compat/react.ts"),
+        "react/jsx-runtime": abs("src/jsx/jsx-runtime.ts"),
+      },
+    }),
+    "denext.config.ts": `export default { mode: "spa", compatibilityMode: true, ` +
+      `features: { FLAG: false }, spa: { entry: "./src/main.ts" } };\n`,
+    "src/main.ts": `import { a } from "./a.ts";\nimport { b } from "./b.mts";\n` +
+      `import { c } from "./c.js";\nimport { d } from "./d.mjs";\n` +
+      `(globalThis as Record<string, unknown>).fns = [a, b, c, d];\n`,
+    "src/a.ts": gated("a"),
+    "src/b.mts": gated("b"),
+    "src/c.js": gated("c"),
+    "src/d.mjs": gated("d"),
+  };
+  try {
+    for (const [name, src] of Object.entries(files)) {
+      await Deno.mkdir(join(dir, name, ".."), { recursive: true });
+      await Deno.writeTextFile(join(dir, name), src);
+    }
+    await staticExport(dir);
+    const client = join(dir, "out", "_denext", "client");
+    let all = "";
+    for await (const e of Deno.readDir(client)) {
+      if (e.isFile && e.name.endsWith(".js")) all += await Deno.readTextFile(join(client, e.name));
+    }
+    for (const name of ["a", "b", "c", "d"]) {
+      assertStringIncludes(all, `KEPT_${name.toUpperCase()}`);
+      assertEquals(
+        all.includes(`OFF_BRANCH_${name.toUpperCase()}`),
+        false,
+        `${name}: the OFF flag's branch shipped`,
+      );
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("SPA transform plugin: a plain module without the denext/feature import is not claimed", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_feature_plain_" });
+  try {
+    const plugin = spaSourceTransformPlugin(dir, { features: { FLAG: true } });
+    const plain = join(dir, "util.ts");
+    await Deno.writeTextFile(plain, `export const feature = (k: string) => k;\nfeature("FLAG");\n`);
+    assertEquals(await loadThrough(plugin, plain), undefined);
+    const flagged = join(dir, "store.mts");
+    await Deno.writeTextFile(flagged, `${IMPORT}export const on = feature("FLAG");\n`);
+    assertStringIncludes(await loadThrough(plugin, flagged) ?? "", "export const on = true;");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

@@ -407,8 +407,9 @@ function onLoadOf(plugin: esbuild.Plugin): (args: LoadArgs) => Promise<LoadResul
   let fn: ((args: LoadArgs) => Promise<LoadResult>) | undefined;
   plugin.setup(
     {
+      // The first `onLoad` registered is the component one (a plugin may add more after it).
       onLoad: (_filter: unknown, cb: (args: LoadArgs) => Promise<LoadResult>) => {
-        fn = cb;
+        fn ??= cb;
       },
       onResolve: () => {},
     } as unknown as esbuild.PluginBuild,
