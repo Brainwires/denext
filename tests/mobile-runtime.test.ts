@@ -636,7 +636,16 @@ Deno.test("installKeyboardInset (iOS shell): will-show height less the shell's r
       assertEquals(inset(), mode === "none" ? "302px" : "0px", `${mode}: after the resize`);
       kb.fire("keyboardWillHide");
       assertEquals(inset(), "0px");
-      assertEquals(mutations.length, 0, "the style observer stops with the keyboard");
+      assertEquals(mutations.length, mode === "ionic" ? 1 : 0, "watching for the grow-back");
+      if (mode === "native") {
+        g.innerHeight = 800;
+        g.dispatchEvent(new Event("resize"));
+      } else if (mode === "ionic") {
+        ionHeight = 800;
+        for (const cb of [...mutations]) cb();
+      }
+      assertEquals(inset(), "0px");
+      assertEquals(mutations.length, 0, "the style observer stops once the shell grew back");
       dispose();
       await settle();
       assertEquals(kb.listening(), 0);

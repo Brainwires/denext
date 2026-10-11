@@ -18,6 +18,13 @@ and this project adheres to
   puts a list that was at its end (within 20 px) as the layout viewport shrank back at its end;
   a list scrolled away, an inverted one, `keyboardLiftBehavior: "never"` and a frozen lift are
   left alone.
+- **An inverted chat scrolled away from its end keeps its rows put as the iOS keyboard hides.**
+  With `resize: "native"` / `"body"` / `"ionic"` the Capacitor shell grows the app back only
+  after will-hide's animation, and the keyboard watch stopped at will-hide, so an inverted
+  `KeyboardChatScrollView` that had not lifted (`keyboardLiftBehavior: "whenAtEnd"` away from
+  its end) stayed scrolled past the resize's room and its rows jumped down by the keyboard's
+  height when the shell grew back. The watch now outlives will-hide until the shell has grown
+  the app back (at most a second), and such a list scrolls back as it does.
 
 ## [3.4.9] - 2026-10-11
 

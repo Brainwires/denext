@@ -232,6 +232,11 @@ function scroller(el: Any, content: number, view: () => number) {
      * part): 0 when the last row sits right above the keyboard.
      */
     belowEnd: () => content - (el.scrollTop + view() - room()),
+    /**
+     * Inverted (flipped: scroll offset 0 at the bottom, the room before the content): px from
+     * the view's top to content offset `at`, which stays put while the visible rows do.
+     */
+    invertedTop: (at: number) => view() - (at + room() - el.scrollTop),
   };
 }
 
@@ -398,6 +403,37 @@ Deno.test("KeyboardChatScrollView (Android Chrome): a content resize keeps a cha
   });
 });
 
+// An inverted chat scrolled away from its end ("whenAtEnd": not lifted) keeps its rows in place
+// as the keyboard covers it (the room before the content is scrolled past) and once the shell
+// has resized around it (the room gave way). The shell grows the app back only after will-hide's
+// animation: the rows must stay put through that too.
+Deno.test("KeyboardChatScrollView (iOS shell): an inverted chat scrolled away keeps its rows through the hide and the shell's grow-back", async () => {
+  for (const mode of ["native", "body"] as const) {
+    const kb = fakePlugin(["hide", "getResizeMode"], { getResizeMode: { mode } });
+    const shell = iosShell(mode);
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const { root, container } = mount(() =>
+        h(KeyboardChatScrollView, { inverted: true, keyboardLiftBehavior: "whenAtEnd" }, "chat")
+      );
+      await settle();
+      const el = container.childNodes[0];
+      const chat = scroller(el, 2000, shell.view);
+      el.scrollTop = 300;
+      const top = chat.invertedTop(1000);
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: not lifted as the keyboard covers it`);
+      flushSync(() => shell.resize(500));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: the resize took the room`);
+      flushSync(() => kb.fire("keyboardWillHide"));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: will-hide moves nothing yet`);
+      flushSync(() => shell.resize(800));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: the rows stay put as the shell grows`);
+      assertEquals(el.scrollTop, 300, `${mode}: back where it started`);
+      root.unmount();
+    }, shell.globals);
+  }
+});
+
 Deno.test("pinsOnShrink: a list at its end as the view shrinks, unless never, inverted or frozen", () => {
   // The view shrank by 300 and still shows the rows it did: the end is 300 px below it.
   const shrunk = { scrollTop: 1200, clientHeight: 500, scrollHeight: 2000 };
@@ -409,4 +445,41 @@ Deno.test("pinsOnShrink: a list at its end as the view shrinks, unless never, in
   assertEquals(pinsOnShrink({ freeze: { value: true } }, shrunk, 300), false);
   assertEquals(pinsOnShrink({}, null, 300), false, "no scroll container");
   assertEquals(pinsOnShrink({}, shrunk, 0), false, "nothing shrank");
+});
+
+Deno.test("liftStep: an inverted list not lifted scrolls back only as the shell grows the app back", () => {
+  const open = liftStep(NO_LIFT, 300, "whenAtEnd", at(300), true);
+  assertEquals(open, { state: { padding: 300, shift: -1 }, scrollBy: 300 });
+  const resized = liftStep(open.state, 0, "whenAtEnd", at(600), true, {
+    up: true,
+    absorbed: 300,
+    resized: 300,
+  });
+  assertEquals(resized, { state: { padding: 0, shift: -1 }, scrollBy: 0 });
+  const hidden = { up: false, resized: 300, wasUp: true };
+  const hide = liftStep(resized.state, 0, "whenAtEnd", at(600), true, hidden);
+  assertEquals(hide, { state: { padding: 0, shift: -1, regrow: 300 }, scrollBy: 0 });
+  const half = liftStep(hide.state, 0, "whenAtEnd", at(600), true, { up: false, resized: 120 });
+  assertEquals(half, { state: { padding: 0, shift: -1, regrow: 120 }, scrollBy: -180 });
+  assertEquals(liftStep(half.state, 0, "whenAtEnd", at(420), true, { up: false, resized: 0 }), {
+    state: NO_LIFT,
+    scrollBy: -120,
+  });
+  // Hidden with a suggestion bar's room left: the room goes now, the resize as the shell grows.
+  const bar = { padding: 40, shift: -1 };
+  assertEquals(liftStep(bar, 0, "whenAtEnd", at(640), true, hidden), {
+    state: { padding: 0, shift: -1, regrow: 300 },
+    scrollBy: -40,
+  });
+  // A lifted inverted list, or a non-inverted one, owes nothing: they drop with the shell.
+  const lifted = { padding: 0, shift: 300 };
+  assertEquals(liftStep(lifted, 0, "always", at(0), true, hidden), { state: NO_LIFT, scrollBy: 0 });
+  assertEquals(liftStep(resized.state, 0, "whenAtEnd", MIDDLE, false, hidden), {
+    state: NO_LIFT,
+    scrollBy: 0,
+  });
+  assertEquals(liftStep(NO_LIFT, 0, "always", at(0), true, { up: false, resized: 300 }), {
+    state: NO_LIFT,
+    scrollBy: 0,
+  }, "not up before: nothing owed");
 });

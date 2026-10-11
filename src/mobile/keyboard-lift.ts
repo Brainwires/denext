@@ -15,8 +15,9 @@
  * the page, so nothing lifts. In the iOS shell the keyboard first slides in over the page and
  * the shell resizes the app around it afterwards: the room then gives way to the shrunk scroll
  * view without moving the content, and a list whose end was in view as the keyboard opened
- * (and lifted with it) stays pinned to its end through the lift, the resize and the hide.
- * Android (the shell, and Chrome resizing content) shrinks the WebView
+ * (and lifted with it) stays pinned to its end through the lift, the resize and the hide; an
+ * inverted list that was not lifted keeps its rows in place until the shell has grown the app
+ * back after the hide. Android (the shell, and Chrome resizing content) shrinks the WebView
  * itself before the keyboard reports, so nothing covers the page: a list at its end as the
  * WebView shrinks is put back at its end instead (not `"never"`; an inverted list's end stays
  * in view by itself). Internal to `denext/mobile`; not re-exported.
@@ -62,6 +63,11 @@ export interface LiftState {
    * list's end stays in view by itself). Set only while true.
    */
   readonly pinned?: true;
+  /**
+   * After the keyboard hid: px the shell still has to grow the app back by, which an inverted
+   * list that was not lifted scrolls back as it does, so its rows stay put. Set only while > 0.
+   */
+  readonly regrow?: number;
 }
 
 /** What a keyboard change carries besides the covered height. */
@@ -70,6 +76,10 @@ export interface LiftChange {
   readonly up?: boolean;
   /** px of the change the shell took by resizing the app: the scroll view shrank by it. */
   readonly absorbed?: number;
+  /** px the shell has the app resized by now (the iOS shell; it lasts past the hide). */
+  readonly resized?: number;
+  /** Whether the keyboard was up before this change. */
+  readonly wasUp?: boolean;
 }
 
 /** No keyboard. */
@@ -133,7 +143,7 @@ export function liftStep(
   change: LiftChange = {},
 ): { state: LiftState; scrollBy: number } {
   const up = change.up ?? effective > 0;
-  if (!up) return closeStep(state, behavior, inverted);
+  if (!up) return closeStep(state, behavior, inverted, change);
   const absorbed = Math.max(0, change.absorbed ?? 0);
   if (effective === state.padding && absorbed === 0) return { state, scrollBy: 0 };
   if (state.padding === 0 && state.shift < 0) {
@@ -151,18 +161,35 @@ export function liftStep(
   };
 }
 
-/** The keyboard hid: a lifted list drops back (unless persistent); the browser clamps the rest. */
+/** {@linkcode NO_LIFT}, still waiting for the shell to grow the app back by `regrow` px. */
+function regrowing(regrow: number): LiftState {
+  return regrow > 0 ? { ...NO_LIFT, regrow } : NO_LIFT;
+}
+
+/**
+ * The keyboard hid (or, after it did, the shell grew the app back): a lifted list drops back
+ * (unless persistent); the browser clamps the rest. An inverted list that was not lifted is
+ * scrolled past its room; what the shell's resize took is given back only as the shell grows
+ * the app back after will-hide, and the list scrolls back by it then, so its rows stay put.
+ */
 function closeStep(
   state: LiftState,
   behavior: KeyboardLiftBehavior,
   inverted: boolean,
+  change: LiftChange,
 ): { state: LiftState; scrollBy: number } {
   const lifted = state.shift >= 0;
-  if (state.padding === 0 && !lifted) return { state: NO_LIFT, scrollBy: 0 };
+  const resized = Math.max(0, change.resized ?? 0);
+  // What the shell still owes: from the hide, or from an earlier report since.
+  const owed = state.regrow ?? (change.wasUp && inverted && !lifted ? resized : 0);
+  const grown = Math.max(0, owed - resized);
+  if (state.padding === 0 && !lifted) {
+    return { state: regrowing(owed - grown), scrollBy: grown > 0 ? -grown : 0 };
+  }
   const scrollBy = inverted
     ? scrollFor(lifted, -state.padding, true)
     : scrollFor(lifted && behavior !== "persistent", -state.shift, false);
-  return { state: NO_LIFT, scrollBy };
+  return { state: regrowing(owed), scrollBy };
 }
 
 /** The keyboard opened over `effective` px: the room, and the lift `behavior` asks for. */
@@ -265,9 +292,10 @@ export function useKeyboardLift(node: () => unknown, options: KeyboardLiftOption
   useEffect(() => {
     if (!enabled) return;
     let last = { px: 0, height: 0 };
-    const stop = watchKeyboardOverlap(({ px, height = px }) => {
+    const stop = watchKeyboardOverlap(({ px, height = px, resized }) => {
       // What the shell's resize took: the keyboard kept its height, the covered part shrank.
       const absorbed = (height - last.height) - (px - last.px);
+      const wasUp = last.height > 0;
       last = { px, height };
       const o = latest.current;
       if (frozen(o.freeze)) return;
@@ -277,6 +305,8 @@ export function useKeyboardLift(node: () => unknown, options: KeyboardLiftOption
       const step = liftStep(prev, effective, o.behavior ?? "always", el, !!o.inverted, {
         up: height > 0,
         absorbed,
+        resized,
+        wasUp,
       });
       state.current = step.state;
       if (prev.pinned && (step.state.pinned || height === 0)) {

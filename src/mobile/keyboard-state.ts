@@ -256,6 +256,11 @@ export interface KeyboardOverlap {
    * the resize took.
    */
   readonly height?: number;
+  /**
+   * px the iOS shell has the app resized by (absent elsewhere). It outlives the keyboard: after
+   * will-hide it falls to 0 as the shell grows the app back.
+   */
+  readonly resized?: number;
 }
 
 /** The web overlap: VirtualKeyboard when the page opted in, else the visual viewport's loss. */
@@ -272,15 +277,16 @@ function watchWebOverlap(emit: (overlap: KeyboardOverlap) => void): () => void {
  * will-hide (animated over the keyboard's duration) less however far the shell has resized the
  * WebView / `<body>` / `ion-app` since, which it does only after the keyboard's animation: the
  * whole keyboard until then, and `0` once it has (at once, with no animation; with
- * `resize: "none"` the whole keyboard throughout). Everywhere else it is the visual viewport's
+ * `resize: "none"` the whole keyboard throughout), and `resized` follows the shell's grow-back
+ * after will-hide. Everywhere else it is the visual viewport's
  * loss (Android resizes the WebView itself, so that is 0). Internal to `denext/mobile`; not
  * re-exported.
  */
 export function watchKeyboardOverlap(emit: (overlap: KeyboardOverlap) => void): () => void {
   let last: KeyboardOverlap | undefined;
-  const shell = watchShellKeyboard(({ px, height, animated }) => {
-    if (last && last.px === px && last.height === height) return;
-    last = { px, height, ...(animated ? { duration: IOS_KEYBOARD_MS } : {}) };
+  const shell = watchShellKeyboard(({ px, height, resized, animated }) => {
+    if (last && last.px === px && last.height === height && last.resized === resized) return;
+    last = { px, height, resized, ...(animated ? { duration: IOS_KEYBOARD_MS } : {}) };
     emit(last);
   });
   return shell ?? watchWebOverlap(emit);

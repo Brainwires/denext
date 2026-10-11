@@ -18,6 +18,7 @@ import {
 import {
   type Any,
   fakePlugin,
+  fakeTimers,
   fakeViewport,
   frameQueue,
   inShell,
@@ -316,12 +317,43 @@ Deno.test("KeyboardAvoidingView: iOS resize native / body lifts until the shell'
       assertEquals(styleOf(container, "padding-bottom"), "44px", `${mode}: the bar still covers`);
       flushSync(() => kb.fire("keyboardWillHide"));
       assertEquals(styleOf(container, "padding-bottom"), "");
-      assertEquals(shell.observers(), 0, "the resize watch stops with the keyboard");
+      if (mode === "body") assertEquals(shell.observers(), 1, "watching for the grow-back");
+      flushSync(() => shell.shrink(0));
+      assertEquals(styleOf(container, "padding-bottom"), "");
+      assertEquals(shell.observers(), 0, "the resize watch stops once the shell grew back");
       root.unmount();
       await settle();
       assertEquals(kb.listening(), 0);
     }, { ...globals, ...shell.globals });
   }
+});
+
+// The watch outlives will-hide only while the shell owes the grow-back, and at most a second.
+Deno.test("KeyboardAvoidingView: iOS shell stops waiting for the grow-back after a second", async () => {
+  const kb = fakePlugin(KEYBOARD_METHODS, { getResizeMode: { mode: "body" } });
+  const vv = fakeViewport(800);
+  const { globals } = viewportEnv(vv);
+  const shell = shellResize("body");
+  await inShell("ios", { Keyboard: kb.plugin }, async () => {
+    const { root } = mount(() => h(KeyboardAvoidingView as Any, null));
+    await settle();
+    const clock = fakeTimers();
+    try {
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+      flushSync(() => kb.fire("keyboardWillHide"));
+      assertEquals(shell.observers(), 0, "hidden before the resize: nothing owed");
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+      flushSync(() => shell.shrink(300));
+      flushSync(() => kb.fire("keyboardWillHide"));
+      clock.tick(999);
+      assertEquals(shell.observers(), 1, "still waiting for the grow-back");
+      clock.tick(1);
+      assertEquals(shell.observers(), 0, "given up after a second");
+    } finally {
+      clock.restore();
+    }
+    root.unmount();
+  }, { ...globals, ...shell.globals });
 });
 
 Deno.test("KeyboardStickyView: iOS resize native rides the keyboard until the WebView shrinks", async () => {
