@@ -95,24 +95,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // server-side and hydrates only the islands via the compat flight bundle.
   const compat = await detectNextCompat(paths);
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
-  // The web target's platform files (`.web.tsx`): file-URL redirects on the native path (the
-  // compat bundles probe them), which every crawl below resolves through too.
-  const platformRedirects = compat
-    ? {}
-    : await projectPlatformRedirects(projectDir, paths.config, "web");
-  const platformImports = compat ? { importMap: {}, originals: {} } : await platformImportMap(
-    projectDir,
-    platformRedirects,
-    join(paths.outDir, "platform-imports", "web"),
-  );
-  setModuleGraphRedirects(paths.configPath, platformImports);
-  if (!compat) {
-    await assertPlatformFilesResolve(
-      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
-      projectDir,
-      platformResolution(paths.config, "web"),
-    );
-  }
+  const platformRedirects = await webPlatformFiles(projectDir, paths, manifest, compat);
   // In compat mode the boundary includes `"use client"` files inside npm packages too.
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages, {
     npm: compat ? npmBoundaryByImporter : undefined,
@@ -123,27 +106,8 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // `<ViewTransition>` defined there counts as used. npm packages are not scanned (their
   // sources are opaque to a token scan) — the class runtime covers them by loading on demand.
   const outside = await localModulesOutside(projectDir, manifest.pages);
-  // The class-component runtime is a code-split chunk the generated entry loads on demand
-  // when the server-rendered document says a class rendered ("lazy" — the default, and what
-  // makes a class hidden in a dependency work in production). The scan is a preload hint:
-  // when the app's own sources name a class (or `classComponents: true`), install it eagerly
-  // and skip the round trip. `classComponents: false` keeps it out entirely ("off").
-  // Computed here (before native + Flight bundling) so both route paths see it.
-  const classRuntime: ClassRuntimeMode = paths.config?.classComponents === false
-    ? "off"
-    : paths.config?.classComponents === true || await appUsesClassComponents(projectDir, outside)
-    ? "eager"
-    : "lazy";
-  // Gate the Activity offscreen scheduler: install it only when the app renders `<Activity>`
-  // (a build scan). Computed here (like classRuntime) so native + Flight route paths both
-  // see it. An app can't use Activity without naming it, so the scan can't false-drop.
-  const usesActivity = await appUsesActivity(projectDir, outside);
-  // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
-  // renders `<ViewTransition>` (a build scan).
-  const usesViewTransition = await appUsesViewTransition(projectDir, outside);
-  // Gate the host-singleton runtime: install it only when the app renders a document tag (a
-  // client root layout's `<html>`/`<body>` adopt the page's own elements).
-  const usesSingletons = await appRendersDocumentTags(projectDir, outside);
+  const { classRuntime, usesActivity, usesViewTransition, usesSingletons } =
+    await runtimeFeatureScans(projectDir, paths, outside);
   return {
     projectDir,
     paths,
@@ -170,4 +134,65 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     usesSingletons,
     compatServerModules: {},
   };
+}
+
+/**
+ * The web target's platform files (`.web.tsx`): file-URL redirects on the native path (the
+ * compat bundles probe them), which every crawl of the build resolves through too.
+ */
+async function webPlatformFiles(
+  projectDir: string,
+  paths: ProjectPaths,
+  manifest: BuildContext["manifest"],
+  compat: boolean,
+): Promise<BuildContext["platformRedirects"]> {
+  const platformRedirects = compat
+    ? {}
+    : await projectPlatformRedirects(projectDir, paths.config, "web");
+  const platformImports = compat ? { importMap: {}, originals: {} } : await platformImportMap(
+    projectDir,
+    platformRedirects,
+    join(paths.outDir, "platform-imports", "web"),
+  );
+  setModuleGraphRedirects(paths.configPath, platformImports);
+  if (!compat) {
+    await assertPlatformFilesResolve(
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+      projectDir,
+      platformResolution(paths.config, "web"),
+    );
+  }
+  return platformRedirects;
+}
+
+/** Which on-demand runtimes the build installs, from scans of the app's own sources. */
+async function runtimeFeatureScans(
+  projectDir: string,
+  paths: ProjectPaths,
+  outside: Awaited<ReturnType<typeof localModulesOutside>>,
+): Promise<
+  Pick<BuildContext, "classRuntime" | "usesActivity" | "usesViewTransition" | "usesSingletons">
+> {
+  // The class-component runtime is a code-split chunk the generated entry loads on demand
+  // when the server-rendered document says a class rendered ("lazy" — the default, and what
+  // makes a class hidden in a dependency work in production). The scan is a preload hint:
+  // when the app's own sources name a class (or `classComponents: true`), install it eagerly
+  // and skip the round trip. `classComponents: false` keeps it out entirely ("off").
+  // Computed here (before native + Flight bundling) so both route paths see it.
+  const classRuntime: ClassRuntimeMode = paths.config?.classComponents === false
+    ? "off"
+    : paths.config?.classComponents === true || await appUsesClassComponents(projectDir, outside)
+    ? "eager"
+    : "lazy";
+  // Gate the Activity offscreen scheduler: install it only when the app renders `<Activity>`
+  // (a build scan). Computed here (like classRuntime) so native + Flight route paths both
+  // see it. An app can't use Activity without naming it, so the scan can't false-drop.
+  const usesActivity = await appUsesActivity(projectDir, outside);
+  // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
+  // renders `<ViewTransition>` (a build scan).
+  const usesViewTransition = await appUsesViewTransition(projectDir, outside);
+  // Gate the host-singleton runtime: install it only when the app renders a document tag (a
+  // client root layout's `<html>`/`<body>` adopt the page's own elements).
+  const usesSingletons = await appRendersDocumentTags(projectDir, outside);
+  return { classRuntime, usesActivity, usesViewTransition, usesSingletons };
 }

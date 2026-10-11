@@ -5,7 +5,7 @@ import { join } from "@std/path";
 import { timed } from "../../runtime/timing.ts";
 import { EMITTED_DIR, getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
-import { createApp } from "../../server/app.ts";
+import { type AppConfig, createApp } from "../../server/app.ts";
 import {
   cacheStoreKind,
   PageCache,
@@ -16,11 +16,13 @@ import {
   configuredDesktopAppOrigin,
   resolveCacheComponents,
   resolveConfigRules,
+  type ResolvedRules,
   resolveLive,
   resolveServerOptions,
   resolveStreaming,
 } from "../../server/config.ts";
 import {
+  type Instrumentation,
   loadInstrumentation,
   runRegister,
   setNextRuntimeEnv,
@@ -156,6 +158,25 @@ export async function createProdApp(
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
+  const rules = await bootProdServices(paths, info);
+  const appHandler = createApp(prodAppConfig(
+    paths,
+    manifest,
+    info,
+    { flightRoutes, boundary },
+    assets,
+    load,
+    { middlewareRunner, instrumentation, rules },
+  ));
+  if (flightRoutes.size > 0) installProdLiveHub(paths, appHandler);
+  return appHandler;
+}
+
+/**
+ * The process-lifetime services the server boots with: the scheduled tasks, the durable default
+ * cache store and the stale-page sweep. Returns the denext.config redirect/rewrite/header rules.
+ */
+async function bootProdServices(paths: ProjectPaths, info: BuildInfo): Promise<ResolvedRules> {
   // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
   await bootScheduledTasks(paths.projectDir, paths.config ?? undefined, paths.outDir);
@@ -166,7 +187,25 @@ export async function createProdApp(
       : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
   );
   sweepStalePagesAfterStartup(paths, info);
-  const appHandler = createApp({
+  return rules;
+}
+
+/** The {@linkcode createApp} configuration of the production server. */
+function prodAppConfig(
+  paths: ProjectPaths,
+  manifest: RouteManifest,
+  info: BuildInfo,
+  { flightRoutes, boundary }: FlightBoundary,
+  assets: AssetResolvers,
+  load: ModuleLoader,
+  boot: {
+    middlewareRunner: MiddlewareRunner | null;
+    instrumentation: Instrumentation;
+    rules: ResolvedRules;
+  },
+): AppConfig {
+  const { middlewareRunner, instrumentation, rules } = boot;
+  return {
     getManifest: () => manifest,
     load,
     publicDir: paths.publicDir,
@@ -205,16 +244,23 @@ export async function createProdApp(
     // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
     // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
     ...resolveServerOptions(paths.config),
+  };
+}
+
+/**
+ * Mount the Live Server Components WebSocket hub (only an app with a Flight route can carry a
+ * `<Live>` boundary).
+ */
+function installProdLiveHub(
+  paths: ProjectPaths,
+  appHandler: (request: Request) => Promise<Response>,
+): void {
+  // Strict same-origin for the Live handshake; a Deno Desktop window's own
+  // `desktop.app.origin` (exactly) counts as same-origin.
+  const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
+  installLiveHub({
+    appHandler,
+    originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
+    config: resolveLive(paths.config),
   });
-  if (flightRoutes.size > 0) {
-    // Strict same-origin for the Live handshake; a Deno Desktop window's own
-    // `desktop.app.origin` (exactly) counts as same-origin.
-    const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
-    installLiveHub({
-      appHandler,
-      originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
-      config: resolveLive(paths.config),
-    });
-  }
-  return appHandler;
 }

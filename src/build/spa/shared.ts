@@ -377,7 +377,8 @@ function reactNativeRootStyleTag(rootId: string): string {
   return `\n    <style>html,body,${root}{height:100%;margin:0}${root}{display:flex}</style>`;
 }
 
-export async function spaShellHtml(opts: {
+/** What {@linkcode spaShellHtml} renders the SPA's `index.html` from. */
+interface SpaShellHtmlOptions {
   spa: SpaConfig;
   /** URL of the client entry bundle (e.g. `/_denext/client/index.js`). */
   scriptSrc: string;
@@ -396,30 +397,17 @@ export async function spaShellHtml(opts: {
   headPrefix?: string;
   /** The rendered `spa.shell` for this target (`renderSpaShell`); replaces `spa.loading`. */
   shell?: SpaShellParts | null;
-}): Promise<string> {
+}
+
+export async function spaShellHtml(opts: SpaShellHtmlOptions): Promise<string> {
   const { spa } = opts;
   const lang = spa.lang ?? "en";
   const title = spa.title ?? "denext app";
   const rootId = spa.rootId ?? "root";
-  const style = opts.styleHref
-    ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.styleHref)}" />`
-    : "";
-  const preload = (opts.preload ?? [])
-    .map((href) => `\n    <link rel="modulepreload" href="${escapeHtml(href)}" />`)
-    .join("");
   if (spa.head) warnRawSpaHeadOnce();
   const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
   const head = rnStyle + (opts.headPrefix ?? "") + (spa.head ? `\n    ${spa.head}` : "");
-  // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
-  // replaces the default instead of competing with it. React Native mode's default covers the
-  // whole screen, as a React Native app does: without `viewport-fit=cover` every safe-area
-  // inset (SafeAreaView, react-native-safe-area-context) reads 0 in the iOS shell.
-  const viewportContent = opts.reactNativeRootStyle
-    ? "width=device-width, initial-scale=1, viewport-fit=cover"
-    : "width=device-width, initial-scale=1";
-  const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")
-    ? ""
-    : `\n    <meta name="viewport" content="${viewportContent}" />`;
+  const viewport = viewportMeta(spa.head, opts.reactNativeRootStyle === true);
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
     : "";
@@ -432,7 +420,7 @@ export async function spaShellHtml(opts: {
 <html lang="${escapeHtml(lang)}">
   <head>
     <meta charset="utf-8" />${cspMeta}${viewport}
-    <title>${escapeHtml(title)}</title>${head}${preload}${style}
+    <title>${escapeHtml(title)}</title>${head}${assetLinks(opts.preload, opts.styleHref)}
   </head>
   <body>
     ${mount.html}
@@ -440,6 +428,30 @@ export async function spaShellHtml(opts: {
   </body>
 </html>
 `;
+}
+
+/**
+ * The default viewport `<meta>`. An app-supplied viewport (`viewport-fit=cover` for iOS safe
+ * areas, `interactive-widget`) replaces the default instead of competing with it. React Native
+ * mode's default covers the whole screen, as a React Native app does: without
+ * `viewport-fit=cover` every safe-area inset (SafeAreaView, react-native-safe-area-context) reads
+ * 0 in the iOS shell.
+ */
+function viewportMeta(head: string | undefined, reactNative: boolean): string {
+  const viewportContent = reactNative
+    ? "width=device-width, initial-scale=1, viewport-fit=cover"
+    : "width=device-width, initial-scale=1";
+  return /<meta\b[^>]*\bname=["']viewport["']/i.test(head ?? "")
+    ? ""
+    : `\n    <meta name="viewport" content="${viewportContent}" />`;
+}
+
+/** The `<link rel="modulepreload">` tags for `preload`, then the app's stylesheet `<link>`. */
+function assetLinks(preload: string[] | undefined, styleHref: string | undefined): string {
+  const style = styleHref ? `\n    <link rel="stylesheet" href="${escapeHtml(styleHref)}" />` : "";
+  return (preload ?? [])
+    .map((href) => `\n    <link rel="modulepreload" href="${escapeHtml(href)}" />`)
+    .join("") + style;
 }
 
 /** Resolve the SPA config + absolute entry path, throwing a clear error if absent. */

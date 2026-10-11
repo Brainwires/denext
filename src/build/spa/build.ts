@@ -12,7 +12,7 @@ import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
 import type { Platform } from "../platform-extensions.ts";
-import { type DenextConfig, reactNativeRootStyle } from "../../server/config.ts";
+import { type DenextConfig, reactNativeRootStyle, type SpaConfig } from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
@@ -227,33 +227,42 @@ export async function exportSpa(
     if (platform !== "web") await writePlatformStamp(staging, platform);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
     await stashSourceMapsIfHidden(staging, paths.outDir);
-    // `spa.viteManifest`: `.vite/manifest.json` listing the content-hashed client files, for a
-    // server that reads Vite's manifest to serve them as immutable.
-    if (viteManifest) {
-      const count = await writeViteManifest(staging, viteManifest);
-      console.log(
-        `  Vite manifest: .vite/manifest.json (${count} hashed file${count === 1 ? "" : "s"})`,
-      );
-    }
-    // Last, once every file of the export is in place: the OTA manifest hashes the final
-    // tree (`*.gz` siblings excluded), so nothing may be written after it.
-    // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped
-    // with a `sequence` (the Unix time) so installed apps refuse an older signed release.
-    if (spa.ota === true) {
-      const { version, files, signature, sequence } = await writeOtaManifest(
-        staging,
-        {},
-        await loadOtaSigningKey(),
-      );
-      console.log(
-        `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
-          signature ? `, signed, sequence ${sequence}` : ""
-        })`,
-      );
-    }
+    await writeExportManifests(staging, spa, viteManifest);
   });
   await prepareDesktopExport(paths.projectDir, paths.config);
   return { outDir, pages: 1, skipped: [] };
+}
+
+/** The export's manifests, written last: `spa.viteManifest`'s, then the OTA manifest. */
+async function writeExportManifests(
+  staging: string,
+  spa: SpaConfig,
+  viteManifest: ViteManifest | null,
+): Promise<void> {
+  // `spa.viteManifest`: `.vite/manifest.json` listing the content-hashed client files, for a
+  // server that reads Vite's manifest to serve them as immutable.
+  if (viteManifest) {
+    const count = await writeViteManifest(staging, viteManifest);
+    console.log(
+      `  Vite manifest: .vite/manifest.json (${count} hashed file${count === 1 ? "" : "s"})`,
+    );
+  }
+  // Last, once every file of the export is in place: the OTA manifest hashes the final
+  // tree (`*.gz` siblings excluded), so nothing may be written after it.
+  // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped
+  // with a `sequence` (the Unix time) so installed apps refuse an older signed release.
+  if (spa.ota === true) {
+    const { version, files, signature, sequence } = await writeOtaManifest(
+      staging,
+      {},
+      await loadOtaSigningKey(),
+    );
+    console.log(
+      `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
+        signature ? `, signed, sequence ${sequence}` : ""
+      })`,
+    );
+  }
 }
 
 /**
