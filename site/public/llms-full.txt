@@ -1177,7 +1177,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 3.4.5` — The denext framework version.
+- `VERSION: 3.4.6` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -4212,7 +4212,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `hide(): void` — Hide the splash screen, without waiting.
 - `hideAsync(): Promise<void>` — Hide the splash screen.
-- `preventAutoHideAsync(): Promise<boolean>` — Keep the splash screen up until hideAsync. The native hold comes from the plugin's launchAutoHide: false; this call has nothing to change.
+- `preventAutoHideAsync(): Promise<boolean>` — Keep the splash screen up after the app's first frame, until hideAsync. Call it at module scope, before the first render.
 - `setOptions(_options: SplashScreenOptions): void` — Set the fade options. The Capacitor plugin takes them from its config, so this does nothing.
 - `interface SplashScreenOptions` — Options for setOptions.
 

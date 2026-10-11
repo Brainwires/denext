@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.6] - 2026-10-11
+
 ### Fixed
 
 - **A migrated Expo app no longer flashes white before its first frame in the Capacitor shell.**
@@ -12777,7 +12779,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.6...development
+[3.4.6]: https://jsr.io/@denext/denext@3.4.6
 [3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3
