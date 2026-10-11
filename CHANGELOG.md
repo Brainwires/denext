@@ -42,6 +42,15 @@ and this project adheres to
   its end) stayed scrolled past the resize's room and its rows jumped down by the keyboard's
   height when the shell grew back. The watch now outlives will-hide until the shell has grown
   the app back (at most a second), and such a list scrolls back as it does.
+- **`denext dev` serves a next-compat app's shells their own platform files.** A compat drop-in
+  App Router app's dev build (the esbuild server render, the client entries and the Flight
+  islands) was built for `web` only, so `denext mobile dev` and `denext desktop dev` rendered
+  and hydrated the `web` files while the native App Router path and SPA mode took each target's.
+  Each target whose platform files resolve unlike `web`'s now gets a build of its own (its
+  Flight boundary crawled through its files, its islands served for it, unbundled or bundled),
+  built on the target's first request after an edit and kept beside `web`'s, so two shells on
+  one dev server never rebuild each other's. A target with no files of its own shares `web`'s
+  build, so an app without platform files builds once as before.
 
 ## [3.4.9] - 2026-10-11
 

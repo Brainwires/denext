@@ -18,7 +18,7 @@ import { createDevHandler } from "./dev-server/handler.ts";
 import { createDevLoader } from "./dev-server/loaders.ts";
 import { forgetTaggedClients } from "../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../runtime/server-action.ts";
-import { getManifest } from "./dev-server/manifest.ts";
+import { compatLoaderFor } from "./dev-server/manifest.ts";
 import { createDevState, type DevServerOptions, type DevState } from "./dev-server/state.ts";
 import { watch } from "./dev-server/watch.ts";
 import { effectiveDevOrigins } from "./dev-server/lan.ts";
@@ -118,10 +118,12 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   // A new session tags its own modules (a module id is a project-relative path's hash).
   forgetTaggedClients();
   forgetTaggedServers();
-  st.load = createDevLoader(st, () => getManifest(st), () => isCompat(st));
+  st.load = createDevLoader(st, (p) => compatLoaderFor(st, p), () => isCompat(st));
   // A query-less twin used only to tag `"use client"` boundaries, so the tagged module
   // instance matches the (query-less) one a page transitively imports at render.
-  st.tagLoad = createDevLoader(st, () => getManifest(st), () => isCompat(st), { bust: false });
+  st.tagLoad = createDevLoader(st, (p) => compatLoaderFor(st, p), () => isCompat(st), {
+    bust: false,
+  });
   const appHandler = createDevApp(st);
   // Watch app + public dirs and invalidate on change (closes cleanly on shutdown).
   void watch(st);

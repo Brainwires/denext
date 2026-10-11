@@ -33,6 +33,28 @@ export async function devPlatformRedirects(
   return await st.platformScanner.redirects(st.paths.config, platform);
 }
 
+/** Whether two redirect maps resolve the same way. */
+function sameRedirects(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+/**
+ * The target whose builds `platform` shares this generation: `web` when its platform files
+ * resolve as web's do (an app with none, or none that `platform` picks differently), else
+ * `platform` itself. Read from the session's scan on both App Router paths (a next-compat
+ * app's esbuild bundles probe the same files the redirects name).
+ *
+ * @param st The dev state.
+ * @param platform The requested target.
+ */
+export async function devBuildTarget(st: DevState, platform: Platform): Promise<Platform> {
+  if (platform === "web") return "web";
+  const own = await st.platformScanner.redirects(st.paths.config, platform);
+  const web = await st.platformScanner.redirects(st.paths.config, "web");
+  return sameRedirects(own, web) ? "web" : platform;
+}
+
 /**
  * Start watching which project files exist (../platform-watch.ts): a created, removed or
  * renamed platform file (or the plain file of a module that has them) forgets the scan and
@@ -115,7 +137,8 @@ export function devPlatformImports(
  * The import map `platform`'s route stylesheets are crawled through: {@linkcode devPlatformImports}
  * on the native path; for a next-compat app (whose esbuild bundles probe the platform files, so
  * it has no redirects there) the target's redirects all the same, so a stylesheet only
- * `Badge.ios.tsx` imports is the iOS session's.
+ * `Badge.ios.tsx` imports is the iOS session's. A next-compat app's own-target Flight boundary
+ * is crawled through it too (./manifest.ts).
  *
  * @param st The dev state.
  * @param platform The target.

@@ -99,9 +99,11 @@ The dev server serves `web` by default. A shell that names its target gets that 
 The page's server render, its modules, its bundled routes (an MDX route, or every route under
 `DENEXT_DEV_UNBUNDLED=0`) and its Flight boundary follow the target, so a variant may be an
 island where the plain file is a Server Component; each target's transforms and bundles are
-cached apart. A next-compat app is the exception: its dev server render is one esbuild bundle
-per edit, built for `web`, so in `denext dev` every shell gets the `web` files, islands
-included. Its platform exports take each target's files.
+cached apart. A next-compat app's dev build (its server render and client bundles, one esbuild
+pass per edit) is built per target the same way: a shell whose platform files resolve unlike
+`web`'s gets a build of its own on its first request after an edit, kept beside `web`'s, so a
+phone and a desktop window on one dev server never rebuild each other's. A target with no files
+of its own shares `web`'s build.
 
 The dev server scans the project for platform files once and keeps the result: editing a file
 never rescans, but an edit to any source file the app imports (in `components/` or `lib/` as much
