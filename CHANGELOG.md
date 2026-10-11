@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the
+  Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
+  before `keyboardWillShow`, so nothing covers the page and React Native mode's
+  `KeyboardChatScrollView` / `KeyboardAwareLegendList` never lifted: the scroll view shrank with
+  its scroll offset unchanged and its last rows went under the keyboard. Their keyboard lift now
+  puts a list that was at its end (within 20 px) as the layout viewport shrank back at its end;
+  a list scrolled away, an inverted one, `keyboardLiftBehavior: "never"` and a frozen lift are
+  left alone.
+
 ## [3.4.9] - 2026-10-11
 
 ### Fixed

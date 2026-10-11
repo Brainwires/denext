@@ -16,7 +16,10 @@
  * the shell resizes the app around it afterwards: the room then gives way to the shrunk scroll
  * view without moving the content, and a list whose end was in view as the keyboard opened
  * (and lifted with it) stays pinned to its end through the lift, the resize and the hide.
- * Internal to `denext/mobile`; not re-exported.
+ * Android (the shell, and Chrome resizing content) shrinks the WebView
+ * itself before the keyboard reports, so nothing covers the page: a list at its end as the
+ * WebView shrinks is put back at its end instead (not `"never"`; an inverted list's end stays
+ * in view by itself). Internal to `denext/mobile`; not re-exported.
  *
  * @module
  */
@@ -182,17 +185,62 @@ function frozen(freeze: KeyboardLiftOptions["freeze"]): boolean {
   return typeof freeze === "object" && freeze !== null ? !!freeze.value : !!freeze;
 }
 
+/**
+ * Whether a list keeps its end in view as its scroll view shrinks by `by` px with nothing
+ * covering the page (Android, and Chrome resizing content, shrink the WebView around the
+ * keyboard): it was at its end as the shrink began and its content moves (not `"never"`, not
+ * frozen). An inverted list's end stays in view by itself.
+ */
+export function pinsOnShrink(
+  options: KeyboardLiftOptions,
+  metrics: LiftMetrics | null,
+  by: number,
+): boolean {
+  return by > 0 && options.behavior !== "never" && !options.inverted &&
+    !frozen(options.freeze) && !!metrics && isAtEnd(metrics, false, by);
+}
+
+/** A scroll container, with the metrics the lift reads. */
+type ScrollEl = LiftMetrics & { scrollTop: number };
+
 /** Scroll `el` to the end of its content. */
-function toEnd(el: LiftMetrics & { scrollTop: number }): void {
+function toEnd(el: ScrollEl): void {
   el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
 }
 
 /** A scroll container's metrics, or null when `node` is not one. */
-function metricsOf(node: unknown): (LiftMetrics & { scrollTop: number }) | null {
+function metricsOf(node: unknown): ScrollEl | null {
   const el = node as Partial<LiftMetrics> | null;
   return el && typeof el.scrollTop === "number" && typeof el.scrollHeight === "number"
-    ? el as LiftMetrics & { scrollTop: number }
+    ? el as ScrollEl
     : null;
+}
+
+/** The layout viewport's height (the WebView's, where it resizes around the keyboard). */
+function layoutHeight(): number {
+  const h = (globalThis as { innerHeight?: unknown }).innerHeight;
+  return typeof h === "number" && Number.isFinite(h) ? h : 0;
+}
+
+/**
+ * Call `onShrink(px)` each time a window or visual-viewport resize finds the layout viewport
+ * shorter than the last one did (by `px`). Returns a stop function.
+ */
+function watchLayoutShrink(onShrink: (px: number) => void): () => void {
+  let height = layoutHeight();
+  const check = () => {
+    const now = layoutHeight();
+    if (now < height) onShrink(height - now);
+    height = now;
+  };
+  const candidates: unknown[] = [globalThis, globalThis.visualViewport];
+  const targets = candidates.filter((t): t is EventTarget =>
+    typeof (t as Partial<EventTarget> | null | undefined)?.addEventListener === "function"
+  );
+  for (const t of targets) t.addEventListener("resize", check);
+  return () => {
+    for (const t of targets) t.removeEventListener("resize", check);
+  };
 }
 
 /**
@@ -242,8 +290,17 @@ export function useKeyboardLift(node: () => unknown, options: KeyboardLiftOption
       } else pending.current += step.scrollBy;
       setPadding(step.state.padding);
     });
+    // Nothing covers the page where the WebView shrinks around the keyboard (Android): a list
+    // at its end as its view shrinks is put back at its end.
+    const stopShrink = watchLayoutShrink((by) => {
+      const s = state.current;
+      const el = metricsOf(nodeRef.current());
+      const idle = last.height === 0 && s.padding === 0 && s.shift < 0;
+      if (el && idle && pinsOnShrink(latest.current, el, by)) toEnd(el);
+    });
     return () => {
       stop();
+      stopShrink();
       state.current = NO_LIFT;
       pending.current = 0;
       snap.current = false;
