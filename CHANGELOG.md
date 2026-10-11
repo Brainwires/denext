@@ -45,6 +45,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext migrate --desktop` no longer writes a redundant `desktop.denoFlags`.** It wrote
+  `["--node-modules-dir=none", "--exclude-unused-npm"]` into the generated `denext.config.ts`;
+  `denext desktop run | dev | package` add both flags themselves for any npm project. The agent
+  guide (AGENTS.md, llms.txt) and the desktop guide no longer say a pnpm workspace needs them.
+
 - **The desktop docs and `denext desktop` no longer tell a pnpm workspace to set `desktop.denoFlags`.**
   `denext desktop run | dev | package` printed a hint, and the desktop guide and the config
   reference said, that a pnpm workspace member (`nodeModulesDir: "manual"`) needs

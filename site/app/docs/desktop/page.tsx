@@ -150,13 +150,12 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
         <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
-        <code>denext migrate --desktop</code>{" "}
-        writes that task for you, and writes the two resolution flags to{" "}
-        <code>desktop.denoFlags</code> in the generated <code>denext.config.ts</code> so{" "}
+        <code>denext migrate --desktop</code> writes that task for you;{" "}
         <code>denext desktop run</code>, <code>dev</code> and <code>package</code>{" "}
-        pass them too. The bundle is named and identified from <code>desktop.app</code> in{" "}
-        <code>denext.config.ts</code> (migrate sets <code>name</code> to the page title; add an{" "}
-        <code>identifier</code>): <code>export</code> copies it into{" "}
+        add the two resolution flags themselves. The bundle is named and identified from{" "}
+        <code>desktop.app</code> in <code>denext.config.ts</code> (migrate sets <code>name</code>
+        {" "}
+        to the page title; add an <code>identifier</code>): <code>export</code> copies it into{" "}
         <code>deno.json</code>, which is where the task&apos;s <code>deno desktop</code> reads it.
       </Callout>
       <h3 id="desktop-app-identity">The app's name, identifier and icon</h3>
@@ -254,14 +253,9 @@ export default {
           them.
         </li>
         <li>
-          denext does not add <code>--node-modules-dir=none</code>{" "}
-          on its own: it moves npm resolution from the workspace&apos;s <code>node_modules</code>
-          {" "}
-          to Deno&apos;s cache, so pnpm patches, overrides and linked packages stop applying. In a
-          pnpm workspace with <code>nodeModulesDir: "manual"</code> and no{" "}
-          <code>--node-modules-dir</code> in <code>desktop.denoFlags</code>,{" "}
-          <code>denext desktop run</code>, <code>dev</code> and <code>package</code>{" "}
-          print the line to add instead.
+          The npm-resolution flags denext adds move resolution from the workspace&apos;s{" "}
+          <code>node_modules</code>{" "}
+          to Deno&apos;s cache, so pnpm patches and overrides do not apply inside the bundle.
         </li>
       </ul>
       <h3 id="desktop-absolute-imports">Local modules mapped by absolute path</h3>
