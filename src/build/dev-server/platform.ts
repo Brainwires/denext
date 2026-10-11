@@ -12,7 +12,12 @@ import {
   stylesheetImportMap,
 } from "../platform-imports.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
-import { devPlatformOf, keepPlatformScanner, type Platform } from "../platform-extensions.ts";
+import {
+  devPlatformOf,
+  keepPlatformScanner,
+  type Platform,
+  sharedBuildTarget,
+} from "../platform-extensions.ts";
 import { watchProjectStructure } from "../platform-watch.ts";
 import { currentContext } from "../../server/request-context.ts";
 import type { DevState } from "./state.ts";
@@ -33,12 +38,6 @@ export async function devPlatformRedirects(
   return await st.platformScanner.redirects(st.paths.config, platform);
 }
 
-/** Whether two redirect maps resolve the same way. */
-function sameRedirects(a: Record<string, string>, b: Record<string, string>): boolean {
-  const ka = Object.keys(a);
-  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
-}
-
 /**
  * The target whose builds `platform` shares this generation: `web` when its platform files
  * resolve as web's do (an app with none, or none that `platform` picks differently), else
@@ -48,11 +47,8 @@ function sameRedirects(a: Record<string, string>, b: Record<string, string>): bo
  * @param st The dev state.
  * @param platform The requested target.
  */
-export async function devBuildTarget(st: DevState, platform: Platform): Promise<Platform> {
-  if (platform === "web") return "web";
-  const own = await st.platformScanner.redirects(st.paths.config, platform);
-  const web = await st.platformScanner.redirects(st.paths.config, "web");
-  return sameRedirects(own, web) ? "web" : platform;
+export function devBuildTarget(st: DevState, platform: Platform): Promise<Platform> {
+  return sharedBuildTarget(platform, (p) => st.platformScanner.redirects(st.paths.config, p));
 }
 
 /**

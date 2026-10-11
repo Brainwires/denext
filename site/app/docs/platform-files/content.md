@@ -102,8 +102,10 @@ island where the plain file is a Server Component; each target's transforms and 
 cached apart. A next-compat app's dev build (its server render and client bundles, one esbuild
 pass per edit) is built per target the same way: a shell whose platform files resolve unlike
 `web`'s gets a build of its own on its first request after an edit, kept beside `web`'s, so a
-phone and a desktop window on one dev server never rebuild each other's. A target with no files
-of its own shares `web`'s build.
+phone and a desktop window on one dev server never rebuild each other's. A SPA's bundled loop
+(`DENEXT_DEV_UNBUNDLED=0`) builds per target the same way: each session's entry bundle,
+stylesheet and `spa.shell` are its target's. A target with no files of its own shares `web`'s
+build.
 
 The dev server scans the project for platform files once and keeps the result: editing a file
 never rescans, but an edit to any source file the app imports (in `components/` or `lib/` as much

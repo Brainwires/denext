@@ -36,6 +36,13 @@ and this project adheres to
   client JS") that never hydrated. The crawls now run in the folder of the app's `deno.json`, as
   Deno does for a command run in the project, on `build`, `export` and both dev loops. A build run
   inside the app folder (`deno task build`) was not affected.
+- **A SPA's bundled dev loop serves each shell its own platform files.** Under
+  `DENEXT_DEV_UNBUNDLED=0`, `denext mobile dev` / `denext desktop dev` against a SPA got the `web`
+  build (entry bundle, stylesheet and `spa.shell`) whatever the session's target, while the
+  unbundled loop and the App Router dev paths took each target's. The bundled loop now builds per
+  target: a session whose platform files resolve unlike `web`'s (or that renders another
+  `spa.shell`) gets a build of its own on its first request after an edit, kept beside `web`'s
+  (`.denext/spa-dev/<gen>-<target>`), and a target with no files of its own shares `web`'s build.
 - **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the
   Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
   before `keyboardWillShow`, so nothing covers the page and React Native mode's

@@ -47,12 +47,14 @@ function errorMessage(err: unknown): string {
  */
 async function serveClientAsset(
   st: SpaDevState,
+  request: Request,
   pathname: string,
   prefix: string,
 ): Promise<Response> {
   let dir: string;
   try {
-    dir = await ensureBuilt(st);
+    // The session's target's build (its platform files), as the shell that loads it.
+    dir = (await ensureBuilt(st, devPlatformOf(request))).dir;
   } catch (err) {
     console.error("denext: SPA bundle error", err);
     const body = `console.error(${
@@ -120,16 +122,17 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       });
       return htmlResponse(request, html);
     }
-    await ensureBuilt(st);
+    // The bundled loop builds the session's target: its platform files and its `spa.shell`.
+    const { hasStyles } = await ensureBuilt(st, platform);
     const prefix = spaClientPrefix(st.spa);
     const html = await spaShellHtml({
       spa: st.spa,
       scriptSrc: `${prefix}${ENTRY_FILE}`,
-      styleHref: st.hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
+      styleHref: hasStyles ? `${prefix}${STYLE_FILE}` : undefined,
       devScriptSrc: DEV_RELOAD_JS_PATH,
       reactNativeRootStyle: rnRootStyle,
       headPrefix: fontFaces,
-      shell: await devShell(st, "web"),
+      shell: await devShell(st, platform),
     });
     return htmlResponse(request, html);
   } catch (err) {
@@ -212,11 +215,12 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
  */
 async function bundleFirst(
   st: SpaDevState,
+  request: Request,
   pathname: string,
   prefix: string,
 ): Promise<Response | null> {
   if (await ensureUnbundled(st)) return null;
-  const asset = await serveClientAsset(st, pathname, prefix);
+  const asset = await serveClientAsset(st, request, pathname, prefix);
   if (asset.status !== 404) return asset;
   await asset.body?.cancel();
   return null;
@@ -235,7 +239,7 @@ async function bundleOrPublic(
   client: boolean,
 ): Promise<Response | null> {
   const shared = client && prefix !== CLIENT_PREFIX;
-  const built = shared ? await bundleFirst(st, url.pathname, prefix) : null;
+  const built = shared ? await bundleFirst(st, request, url.pathname, prefix) : null;
   if (built || (client && !shared)) return built;
   const accEnc = request.headers.get("accept-encoding") ?? undefined;
   return await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
@@ -259,7 +263,7 @@ async function serveFile(
   if (font) return await serveFontFile(font.file, request);
   const local = await bundleOrPublic(st, request, url, prefix, client);
   if (local) return local;
-  if (client) return serveClientAsset(st, url.pathname, prefix);
+  if (client) return serveClientAsset(st, request, url.pathname, prefix);
   if (wantsShell(request, url.pathname)) return serveShell(st, request);
   return new Response("not found", { status: 404 });
 }
