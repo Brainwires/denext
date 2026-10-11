@@ -256,8 +256,8 @@ function keyboardTransition(property: string, duration: number | undefined): obj
  * `contentContainerStyle`); without one it is a plain `View`, as in React Native. The overlap
  * is React Native's own formula over the view's `onLayout` frame, with the keyboard's top at
  * the layout viewport's height minus the part of the keyboard that covers the page, which is 0
- * where the web view resizes around the keyboard (Android, the iOS shell's default `resize`),
- * so nothing is lifted twice.
+ * once the web view has resized around the keyboard (Android; the iOS shell's `resize` modes
+ * other than `"none"`, after the keyboard's animation), so nothing is lifted twice.
  *
  * @param View react-native-web's `View` (React Native mode passes it in).
  * @returns The component.

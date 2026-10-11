@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`KeyboardAvoidingView`, `KeyboardStickyView` and React Native mode's keyboard views lift
+  while the iOS keyboard slides in.** In the Capacitor shell with `resize: "native"` (the
+  default), `"body"` or `"ionic"` they read the visual viewport, which `@capacitor/keyboard`
+  keeps still, so they stayed put for the ~450 ms before the shell's delayed resize landed and
+  the keyboard covered what they should have lifted. They now share `useKeyboardInset()`'s
+  measurement: the will-show height (animated over the keyboard's 250 ms) less however far the
+  shell has resized the WebView / `<body>` / `ion-app` since, so the lift drops at once as the
+  resize lands and nothing is lifted twice.
+
 - **A module sidecar no longer sees the worker's `location`.** A `desktop.sidecars` `run: { module }`
   backend runs in a `blob:` worker, whose `WorkerLocation` reads origin `"null"`, so a library that
   resolves URLs against `location.origin + location.pathname` (Effect's `Url.make`, behind every
