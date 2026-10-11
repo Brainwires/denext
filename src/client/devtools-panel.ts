@@ -36,6 +36,7 @@ import { installDomPropWarnings } from "./dom-props.ts";
 import { installHydrationWarning } from "./fiber/hydration.ts";
 import { installAsyncTransitionWatchdog } from "./fiber/scheduler.ts";
 import { installErrorTexts } from "./fiber/error-texts.ts";
+import { installDevRender } from "./fiber/dev-render.ts";
 
 function isDev(): boolean {
   try {
@@ -172,6 +173,7 @@ export function installDevtools(): void {
   installHydrationWarning();
   installAsyncTransitionWatchdog();
   installErrorTexts();
+  installDevRender();
   const api = installInspector();
   if (!api) return;
   installed = true;

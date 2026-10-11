@@ -22,6 +22,14 @@ and this project adheres to
   `[data-dnx-sheet-grabber]:focus:not(:focus-visible)` rule: keyboard focus (`:focus-visible`)
   still shows the ring, pointer focus does not.
 
+- **Production client bundles no longer carry StrictMode's dev double-invoke or the
+  `useDebugValue` recorder.** Both only act in development, yet the reconciler shipped the
+  StrictMode boundary check, its second render pass and the debug-value recording in every
+  build. They are now installed by the dev entries (`installDevtools`) and `denext/testing`, as
+  the other dev-only diagnostics are, so a production bundle drops them: examples/hello's shared
+  runtime is 237 B smaller (65,590 → 65,353 B raw). Development behaviour is unchanged; in
+  production StrictMode stays a plain Fragment and `useDebugValue` a no-op.
+
 - **A native-stack header shows a string `headerTitle` over `title`.** When a screen set both,
   React Native mode's `createNativeStackNavigator` drew `title`; React Navigation draws
   `headerTitle` (its `getHeaderTitle`), and so does denext now, in the bar, the iOS large title

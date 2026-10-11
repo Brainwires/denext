@@ -26,6 +26,7 @@ import { clearComponentMeta, registerComponentMeta } from "../src/client/devtool
 import { registerFamily, sameFamily } from "../src/client/refresh-runtime.ts";
 import { setFamilyMatch, setSignatureChangeHandler } from "../src/client/vnode-utils.ts";
 import { installRefreshSwap } from "../src/client/fiber/refresh-swap.ts";
+import { installDevRender } from "../src/client/fiber/dev-render.ts";
 import { mountPanel } from "../src/client/devtools-panel.ts";
 import { buildSnapshot, type InspectSnapshot } from "../src/client/devtools-inspect-sink.ts";
 import { parseSnapshot } from "../src/build/dev-server/devtools-snapshot.ts";
@@ -34,6 +35,8 @@ import { hookStateText } from "../src/mcp/devtools.ts";
 // The dev refresh runtime installs this (`enableFastRefresh`); these tests drive the
 // reconciler's family hooks directly.
 installRefreshSwap();
+// The dev entries install the `useDebugValue` recorder (and StrictMode) via `installDevtools`.
+installDevRender();
 
 // deno-lint-ignore no-explicit-any
 const asAny = (v: unknown): any => v;

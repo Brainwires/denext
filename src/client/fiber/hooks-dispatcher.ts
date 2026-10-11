@@ -496,14 +496,28 @@ export const clientDispatcher: Dispatcher = {
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
     scheduleEffect(inst, "insertionEffects", getHook(HK_INSERTION), effect, deps, false);
   },
-
-  // Cell-free on purpose: no getHook, so adding/removing a call never changes the hook
-  // signature the Fast Refresh guard compares. Dev only — production returns after one
-  // flag read, allocating nothing. `format` is stored and applied lazily by the inspector.
-  useDebugValue(value: unknown, format?: (value: unknown) => unknown): void {
-    if (!devHydrationActive()) return;
-    const inst = currentFiber;
-    if (inst === null) return;
-    (fiberExt(inst).debugValues ??= []).push({ index: hookIndex, value, format });
-  },
 };
+
+/**
+ * `useDebugValue`'s recorder. Cell-free on purpose: no getHook, so adding/removing a call never
+ * changes the hook signature the Fast Refresh guard compares. `format` is stored and applied
+ * lazily by the inspector. Dev only: {@linkcode installDebugValues} puts it on the dispatcher,
+ * and without it the public `useDebugValue` is a no-op (the dispatcher has no method).
+ */
+function recordDebugValue(value: unknown, format?: (value: unknown) => unknown): void {
+  if (!devHydrationActive()) return;
+  const inst = currentFiber;
+  if (inst === null) return;
+  (fiberExt(inst).debugValues ??= []).push({ index: hookIndex, value, format });
+}
+
+/**
+ * Install (`true`) or remove (`false`) the client dispatcher's `useDebugValue` recorder. Called
+ * from the dev path only (`installDevtools`, via `installStrictMode`), so a production bundle
+ * never contains it.
+ */
+export function installDebugValues(on = true): void {
+  const d = clientDispatcher as { useDebugValue?: typeof recordDebugValue };
+  if (on) d.useDebugValue = recordDebugValue;
+  else delete d.useDebugValue;
+}
