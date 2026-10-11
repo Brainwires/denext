@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.10] - 2026-10-11
+
 ### Added
 
 - **A module sidecar can start a child of itself.** A backend that re-runs its own entry with a
@@ -13076,7 +13078,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.9...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.10...development
+[3.4.10]: https://jsr.io/@denext/denext@3.4.10
 [3.4.9]: https://jsr.io/@denext/denext@3.4.9
 [3.4.8]: https://jsr.io/@denext/denext@3.4.8
 [3.4.7]: https://jsr.io/@denext/denext@3.4.7
