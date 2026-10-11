@@ -2633,6 +2633,82 @@ desktop: {
         a native addon end the whole app (they would in Electron&apos;s main process too: give such
         a backend a separate program).
       </p>
+      <h3 id="desktop-sidecars-children">A child of the sidecar: its own module as a process</h3>
+      <p>
+        A backend often starts itself again with a subcommand: a server that launches an MCP stdio
+        bridge or an agent by re-running its own entry (an Electron app does{" "}
+        <code>spawn(process.execPath, [script, "mcp-bridge"])</code> with{" "}
+        <code>ELECTRON_RUN_AS_NODE</code>). In a module sidecar <code>process.execPath</code>{" "}
+        is the app, so <code>globalThis.denextSidecar</code> starts the child for it:
+      </p>
+      <Code lang="ts">
+        {`// apps/server/main.mjs, the module of the "server" sidecar
+const sc = globalThis.denextSidecar;
+if (sc.child) {
+  runBridge(process.argv.slice(2)); // ["mcp-bridge", "--stdio"]: stdin / stdout are the child's
+} else {
+  startServer(sc.port);
+}
+
+// in the server: a node:child_process child, stdin / stdout / stderr piped
+const bridge = sc.spawnSelf(["mcp-bridge", "--stdio"], { env: { ...process.env, LOG: "1" } });
+bridge.stdout.on("data", onMessage);
+bridge.on("close", (code) => console.log("bridge exited", code));
+
+// or your own spawn (it must keep the "ipc" channel):
+const { command, args, env, stdio } = sc.childCommand(["mcp-bridge"]);
+spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
+      </Code>
+      <ul>
+        <li>
+          The child is the app&apos;s own executable run again as{" "}
+          <code>&lt;app&gt; run &lt;desktop.ts&gt; …args</code>{" "}
+          with an IPC channel, which Deno Desktop runs as a headless worker: no window, no web
+          engine and no single-instance check. denext&apos;s pinned runtime admits such a launch
+          only for its own parent (a per-launch token it hands the app&apos;s forks that have an IPC
+          channel) and only for a module the app embeds. The entry&apos;s <code>runDesktop</code>
+          {" "}
+          sees <code>DENEXT_SIDECAR_CHILD</code>{" "}
+          first, removes it, and runs the sidecar&apos;s module instead of a window:{" "}
+          <code>process.argv.slice(2)</code> is <code>args</code>, <code>denextSidecar.child</code>
+          {" "}
+          is <code>true</code>{" "}
+          (no port, bootstrap or secrets: pass what the child needs on its stdin), and the process
+          ends with the module&apos;s exit code once its work is done (
+          <code>process.exitCode</code>,{" "}
+          <code>process.exit(n)</code>, or 1 after an uncaught error). A bundled Node backend loads
+          its unpacked packages in the child too.
+        </li>
+        <li>
+          <code>runDesktop</code> then resolves with <code>sidecarChild</code>{" "}
+          set to the sidecar&apos;s name and no window: code after it in <code>desktop.ts</code>
+          {" "}
+          runs in the child too, so guard it with <code>if (!app.sidecarChild)</code>.
+        </li>
+        <li>
+          The child has the app&apos;s baked permissions, nothing more, and opens no listener. The
+          sidecar needs <code>permissions.run</code> to cover the app&apos;s executable:{" "}
+          <code>["*"]</code>, since its installed path is only known on the user&apos;s machine
+          (<code>spawnSelf</code> throws the reason when the app may not run it).
+        </li>
+        <li>
+          The runtime&apos;s launcher prints two lines on stdout before any JavaScript runs (
+          <code>Runtime loaded successfully from: …</code>, <code>Runtime started</code>);{" "}
+          <code>spawnSelf</code>{" "}
+          removes them, so a line protocol starts clean. A spawn of your own from{" "}
+          <code>childCommand</code> sees them.
+        </li>
+        <li>
+          It works in <code>denext desktop run</code> / <code>dev</code>{" "}
+          and in a packaged app on macOS, Windows and Linux; under <code>deno run desktop.ts</code>
+          {" "}
+          the child is <code>deno run</code>{" "}
+          with the permissions the app holds unscoped. An unmodified{" "}
+          <code>spawn(process.execPath, …)</code>{" "}
+          without an IPC channel starts a second copy of the app instead: use{" "}
+          <code>spawnSelf</code>.
+        </li>
+      </ul>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
         An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop

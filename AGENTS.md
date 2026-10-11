@@ -532,7 +532,10 @@ Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop
 (`http` / `stdout` / `signal` / `probe`), `restart` (backoff, `maxAttempts`), `shutdown.graceMs`,
 `secrets` (`"$random"`), `bootstrap`, `expose`, `logs`, `proxy: true` (points `spa.proxy` at it),
 `permissions` (baked). In the module: `globalThis.denextSidecar` (`port`, `bootstrap`, `secrets`,
-`ready()`, `onShutdown`); `import.meta.main` is false. `app.sidecar(name)` (`status`, `onStatus`,
+`ready()`, `onShutdown`); `import.meta.main` is false. A child of itself (Electron's
+`spawn(process.execPath, [script, "mcp-bridge"])`): `denextSidecar.spawnSelf(args)` (or
+`childCommand(args)` → `{ command, args, env, stdio }` with `"ipc"`) re-runs the app's executable
+headless on the same module (`denextSidecar.child` is true; needs `permissions.run`). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
 --node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars

@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A module sidecar can start a child of itself.** A backend that re-runs its own entry with a
+  subcommand (an MCP stdio bridge, an agent; Electron's `spawn(process.execPath, [script,
+  "mcp-bridge"])` with `ELECTRON_RUN_AS_NODE`) could not inside a `desktop.sidecars`
+  `run: { module }` worker, whose `process.execPath` is the app. `globalThis.denextSidecar` now has
+  `spawnSelf(args, options)` (a `node:child_process` child) and `childCommand(args)` (its
+  `{ command, args, env, stdio }` for your own spawn): the app's executable runs again as a
+  headless worker of the Deno Desktop runtime (no window, no web engine, no single-instance check),
+  the entry's `runDesktop` runs that sidecar's module with `process.argv.slice(2)` = `args` and
+  `denextSidecar.child === true` instead of a window, and the process ends with the module's exit
+  code. The child has the app's baked permissions and nothing more, opens no listener, gets no
+  secrets or bootstrap, and its stdout starts clean (the runtime's two start-up lines are
+  removed). It needs the sidecar's `permissions.run` to cover the app's executable (`["*"]`, as
+  its installed path is the user's). `runDesktop` resolves with `sidecarChild` set in a child.
+  Docs: [Desktop › A child of the sidecar](/docs/desktop#desktop-sidecars-children).
+
 ### Fixed
 
 - **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the

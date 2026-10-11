@@ -61,7 +61,7 @@ import {
   applyDesktopWindowSettings,
   type DesktopWindowSettings,
 } from "../desktop/window-config.ts";
-import { mergeSidecars, type SidecarDefinition } from "../desktop/sidecar.ts";
+import { mergeSidecars, SIDECAR_CHILD_ENV, type SidecarDefinition } from "../desktop/sidecar.ts";
 import type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
 import type { SidecarHost } from "../desktop/sidecar-host.ts";
 
@@ -525,6 +525,14 @@ export interface DesktopRuntime {
    * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
    */
   sidecar(name: string): SidecarHandle;
+  /**
+   * Set when this launch is a child a module sidecar started (`denextSidecar.spawnSelf` /
+   * `childCommand`): the sidecar's name. `runDesktop` then ran that sidecar's module headless
+   * instead of serving a window, and resolved once it was loaded with no window, no server and no
+   * sidecars; the process ends when the module's work is done. Code after `runDesktop` in the entry
+   * runs in the child too, so guard it with this.
+   */
+  readonly sidecarChild?: string;
 }
 
 /**
@@ -1109,6 +1117,9 @@ function isPageNavigation(request: Request): boolean {
  */
 // fallow-ignore-next-line complexity -- server bootstrap (starts Deno.serve); not unit-tested, CRAP is coverage-estimated
 export async function runDesktop(options: RunDesktopOptions = {}): Promise<DesktopRuntime> {
+  // A child a module sidecar started of the app runs that sidecar's module, nothing else.
+  const child = await runAsSidecarChild(options);
+  if (child) return child;
   const bundledOut = resolveOutDir(options);
   // With the updater on, prefer the verified overlay in the app-support dir (the boot watchdog
   // rolls back a version that failed to boot last launch); without it, serve the bundle as before.
@@ -1267,6 +1278,39 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
+  };
+}
+
+/**
+ * When this launch is a child of one of the app's module sidecars ({@linkcode SIDECAR_CHILD_ENV},
+ * see `src/desktop/sidecar-child.ts`), run that sidecar's module and return the child's inert
+ * runtime; otherwise `undefined` (and the sidecar-child module is never loaded).
+ */
+async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRuntime | undefined> {
+  let marked = false;
+  try {
+    marked = Deno.env.get(SIDECAR_CHILD_ENV) !== undefined;
+  } catch { /* no --allow-env: not a child */ }
+  if (!marked) return undefined;
+  const { readSidecarChildLaunch, runSidecarChild } = await import("../desktop/sidecar-child.ts");
+  const launch = readSidecarChildLaunch(
+    options.importMetaUrl,
+    mergeSidecars(options.configSidecars, options.sidecars),
+  );
+  if (!launch) return undefined;
+  if (!options.importMetaUrl) throw new Error("desktop: a sidecar's child needs importMetaUrl");
+  await runSidecarChild(launch, {
+    importMetaUrl: options.importMetaUrl,
+    ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+  });
+  return {
+    window: undefined,
+    trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
+    emit: () => {},
+    sidecar: (name) => {
+      throw new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`);
+    },
+    sidecarChild: launch.name,
   };
 }
 

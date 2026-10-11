@@ -9,10 +9,11 @@
  * path, then the sidecar's `args`), gives the worker its own `process.env` with the login-shell
  * variables it asked for (`loginShellEnv`), its `env` and its port on top (the app's environment
  * is not changed), installs `globalThis.denextSidecar` (`name`, `port`, `bootstrap`, `secrets`,
- * `ready()`, `onShutdown(fn)`), and routes its console and `process.stdout` / `process.stderr` to
- * the app as lines. An uncaught error, `process.exit()` and
- * `self.close()` end the worker only, never the app. What a worker cannot contain: a V8
- * out-of-memory abort and a crash in a native addon end the whole app.
+ * `ready()`, `onShutdown(fn)`, and `childCommand(args)` / `spawnSelf(args, options)`, which start
+ * the app's executable again as a child running this module: see `sidecar-child.ts`), and routes
+ * its console and `process.stdout` / `process.stderr` to the app as lines. An uncaught error,
+ * `process.exit()` and `self.close()` end the worker only, never the app. What a worker cannot
+ * contain: a V8 out-of-memory abort and a crash in a native addon end the whole app.
  *
  * A program gets the login-shell variables it asked for, its `env` and its port on top of the app's
  * environment (without the runtime's own `DENO_SERVE_ADDRESS` / `DENO_DESKTOP_*`), and one JSON
@@ -27,18 +28,22 @@
 
 import { basename, dirname, fromFileUrl, isAbsolute, join } from "@std/path";
 import type { SidecarExit } from "./sidecar.ts";
+import { type SidecarChildBase, sidecarChildHelpersUrl } from "./sidecar-child.ts";
 import type {
   SidecarInstance,
   SidecarLaunchContext,
   SidecarLauncher,
 } from "./sidecar-supervisor.ts";
 
+/** Where the wrapper's import of the child helpers' `blob:` URL goes. */
+const HELPERS_URL = "__DENEXT_SIDECAR_CHILD_HELPERS__";
+
 /**
  * The worker's wrapper module. Messages in: `init` (once), `shutdown`. Out: `line`, `ready`,
  * `exit`, `error`, `done` (shutdown handlers finished).
  */
 const SIDECAR_WORKER_WRAPPER = `import process from "node:process";
-import Module, { createRequire } from "node:module";
+import { childHelpers, installRequireBase } from "${HELPERS_URL}";
 const post = (m) => { try { self.postMessage(m); } catch { /* host gone */ } };
 const handlers = [];
 const decoder = new TextDecoder();
@@ -94,17 +99,9 @@ self.onmessage = async (e) => {
   if (m?.t === "shutdown") return void shutdown();
   if (m?.t !== "init") return;
   process.argv = [process.execPath, m.path, ...m.args];
-  if (m.requireBase) {
-    globalThis.__denextSidecarRequire = createRequire(m.requireBase);
-    // The backend's own createRequire(import.meta.url) resolves from the bundle: every lookup in
-    // this worker also searches the unpacked packages.
-    const extra = m.modulesPath;
-    const paths = Module._nodeModulePaths;
-    Module._nodeModulePaths = function (from) {
-      const found = paths.call(this, from);
-      return found.includes(extra) ? found : [...found, extra];
-    };
-  }
+  // The backend's own createRequire(import.meta.url) resolves from the bundle: every lookup in
+  // this worker also searches the unpacked packages.
+  if (m.requireBase) installRequireBase(m.requireBase, m.modulesPath);
   try { process.env = { ...process.env, ...m.env }; } catch { /* keep the shared view */ }
   globalThis.denextSidecar = Object.freeze({
     name: m.name,
@@ -113,6 +110,8 @@ self.onmessage = async (e) => {
     secrets: Object.freeze({ ...m.secrets }),
     ready: () => post({ t: "ready" }),
     onShutdown: (fn) => { if (typeof fn === "function") handlers.push(fn); },
+    child: false,
+    ...childHelpers(m.child),
   });
   try {
     await import(m.entry);
@@ -135,6 +134,11 @@ export interface WorkerLauncherOptions {
    * `sidecar-modules.ts`); without it, from the module itself.
    */
   readonly requireBase?: string;
+  /**
+   * How the sidecar starts children of the app (`denextSidecar.childCommand` / `spawnSelf`); without
+   * it they throw.
+   */
+  readonly child?: SidecarChildBase;
   /** The worker constructor (tests pass a fake). */
   readonly Worker?: typeof Worker;
 }
@@ -170,7 +174,9 @@ export function workerSidecarLauncher(options: WorkerLauncherOptions): SidecarLa
   return (ctx) => {
     const def = ctx.definition;
     wrapperUrl ??= URL.createObjectURL(
-      new Blob([SIDECAR_WORKER_WRAPPER], { type: "text/javascript" }),
+      new Blob([SIDECAR_WORKER_WRAPPER.replace(HELPERS_URL, sidecarChildHelpersUrl())], {
+        type: "text/javascript",
+      }),
     );
     const worker = new WorkerCtor(wrapperUrl, { type: "module", name: `sidecar:${def.name}` });
     let settle!: (exit: SidecarExit) => void;
@@ -208,6 +214,7 @@ export function workerSidecarLauncher(options: WorkerLauncherOptions): SidecarLa
       port,
       bootstrap: ctx.bootstrap,
       secrets: ctx.secrets,
+      child: options.child ?? { error: `sidecar ${def.name}: no child command (no app entry)` },
       ...(options.requireBase
         ? {
           requireBase: options.requireBase,

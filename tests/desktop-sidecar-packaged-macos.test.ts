@@ -3,8 +3,10 @@
 // sidecar is bundled at packaging (a pure dependency inlined, an `external` one archived in
 // `modules.pack` and unpacked into the app's cache folder at launch), started by the packaged app,
 // answers its `ready: { http }` probe, is reachable from the page through `spa.proxy`
-// (`proxy: true`) with the per-launch secret it shares with the page (`expose`), and is gone (its
-// port closed) once the page quits the app.
+// (`proxy: true`) with the per-launch secret it shares with the page (`expose`), starts a child of
+// the app running its own module headless (`denextSidecar.spawnSelf`: stdin echoed to a stdout free
+// of the runtime's start-up lines, its exit code, the unpacked package loaded in the child too), and
+// is gone (its port closed) once the page quits the app.
 //
 // The page reports through the app's own `onRequest` (`/_probe/report`, printed on stdout) and then
 // quits with `window.close()`. It opens a real window for a few seconds, so it needs a logged-in
@@ -78,6 +80,7 @@ function project(): Record<string, string> {
       secrets: { TOKEN: "$random" },
       expose: { token: "$secret:TOKEN" },
       proxy: true,
+      permissions: { run: ["*"] }, // spawnSelf: the app's own executable, whose path is the user's
     }],
   },
 };
@@ -104,6 +107,8 @@ async function probe() {
     report.info = { state: info.state, port: info.port, url: info.url, hasToken: typeof info.values.token === "string" };
     const res = await fetch("/api/hello", { headers: { "x-probe-token": String(info.values.token) } });
     report.proxied = { status: res.status, body: await res.json() };
+    const child = await fetch("/api/child", { headers: { "x-probe-token": String(info.values.token) } });
+    report.child = { status: child.status, body: await child.json() };
     report.status = (await sidecarStatus("server")).state;
   } catch (err) {
     report.error = String(err && err.stack || err);
@@ -115,12 +120,47 @@ async function probe() {
 probe();
 `,
     "server/main.mjs": `import http from "node:http";
+import process from "node:process";
 import { greet } from "puredep";
 import ext from "extpkg";
 
-const { port, secrets } = globalThis.denextSidecar;
+const sc = globalThis.denextSidecar;
+// A child of the app running this module (spawnSelf below): echo stdin, exit with a code.
+function childMain() {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (d) => input += d);
+  process.stdin.on("end", () => {
+    process.stdout.write("child:" + JSON.stringify({ argv: process.argv.slice(2), input, ext: ext.readOwnFile() }) + "\\n");
+    process.exitCode = 7;
+  });
+}
+// Start a child of the app and answer with what it did.
+function childRoute(res) {
+  const child = sc.spawnSelf(["mcp-bridge", "--stdio"]);
+  let out = "", err = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (d) => out += d);
+  child.stderr.on("data", (d) => err += d);
+  child.on("error", (e) => { err += String(e); });
+  child.stdin.end("ping");
+  child.on("close", (code) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ code, out, err: err.slice(-2000) }));
+  });
+}
+if (sc.child) childMain();
+else serve();
+
+function serve() {
+const { port, secrets } = sc;
 const server = http.createServer((req, res) => {
   if (req.url === "/health") return res.end("ok");
+  if (req.url.startsWith("/api/child")) {
+    if (req.headers["x-probe-token"] !== secrets.TOKEN) { res.statusCode = 403; return res.end("{}"); }
+    return childRoute(res);
+  }
   if (req.url.startsWith("/api/hello")) {
     res.setHeader("content-type", "application/json");
     return res.end(JSON.stringify({
@@ -134,6 +174,7 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 server.listen(port, "127.0.0.1", () => console.log("SIDECAR_LISTENING " + port));
+}
 `,
     "server/node_modules/puredep/package.json":
       '{"name":"puredep","type":"module","exports":"./index.js"}',
@@ -265,6 +306,16 @@ Deno.test({
         status: 200,
         body: { greet: "hi from puredep", ext: "external data", tokenMatches: true, port },
       });
+      // A child of the app ran the bundled module headless: argv, stdin echoed on a stdout free of
+      // the runtime's start-up lines, the external package from the unpacked folder, exit code 7.
+      assertEquals(report.child, {
+        status: 200,
+        body: {
+          code: 7,
+          out: 'child:{"argv":["mcp-bridge","--stdio"],"input":"ping","ext":"external data"}\n',
+          err: report.child?.body?.err,
+        },
+      }, `the child${tail}`);
       assert(output.includes(`[sidecar:server] SIDECAR_LISTENING ${port}`), `log${tail}`);
       // The worker ended with the app: nothing listens on its port any more.
       assertEquals(await listening(port), false, `port ${port} still open after the app quit`);
