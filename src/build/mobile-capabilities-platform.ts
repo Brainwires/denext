@@ -6,7 +6,6 @@
 // checked against its published package: a `@capacitor/core` peer range admitting 8 and (for
 // iOS) an SPM range covering capacitor-swift-pm 8.
 
-import { join } from "@std/path";
 import type { CapabilityConfig, MobileCapability, NativeEdit } from "./mobile-capabilities.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import { withPlistStringArray } from "./mobile-native-config.ts";
@@ -21,6 +20,7 @@ import { ACCESSIBILITY_INSTALL } from "./mobile-accessibility-install.ts";
 import { CONTEXT_MENU_INSTALL, SYSTEM_ICONS_INSTALL } from "./mobile-context-menu-install.ts";
 import { STORAGE_INSTALL } from "./mobile-storage-install.ts";
 import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Capacitor major these pins target. */
 const CAPACITOR_MAJOR = 8;
@@ -197,7 +197,7 @@ async function wireRunnerGradle(dir: string, report: NativeInstallReport): Promi
   const rel = "android/app/build.gradle";
   let gradle: string;
   try {
-    gradle = await Deno.readTextFile(join(dir, rel));
+    gradle = await Deno.readTextFile(nativeJoin(dir, rel));
   } catch {
     return void report.skipped.push(`Android: no ${rel} (run \`npx cap add android\` first)`);
   }
@@ -209,7 +209,7 @@ async function wireRunnerGradle(dir: string, report: NativeInstallReport): Promi
   } else if (next === gradle) {
     report.unchanged.push(rel);
   } else {
-    await Deno.writeTextFile(join(dir, rel), next);
+    await Deno.writeTextFile(nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
 }

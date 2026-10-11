@@ -23,6 +23,7 @@ import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel } from "./config-edit.ts";
 import { type ExpoIcons, readExpoAppConfig, readJsonFile } from "./expo-app-config.ts";
 import { decodeImage, parseHexColor } from "./png-raster.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Which rule picked the icon. */
 export type IconSourceKind =
@@ -833,11 +834,25 @@ const CAPACITOR_DEFAULTS: Record<string, readonly string[]> = {
   ],
 };
 
+/** The splash set `denext mobile add app-config` fills with the launch colour alone. */
+const LAUNCH_COLOR_SPLASH_SET = "ios/App/App/Assets.xcassets/Splash.imageset/Contents.json";
+
+/**
+ * Whether the iOS splash is the launch colour alone, which `denext mobile add app-config` puts
+ * in place of Capacitor's placeholder: still a placeholder for the logo splash.
+ */
+async function isLaunchColorSplash(root: string): Promise<boolean> {
+  const contents = await readJsonFile(nativeJoin(root, LAUNCH_COLOR_SPLASH_SET));
+  const images = Array.isArray(contents?.images) ? contents.images : [];
+  return images.length > 0 &&
+    images.every((i) => /^denext-launch(-dark)?\.png$/.test(String(i?.filename)));
+}
+
 /** Whether `root/rel` is the file Capacitor's template ships there. */
 async function isTemplateFile(root: string, rel: string): Promise<boolean> {
   let bytes: Uint8Array;
   try {
-    bytes = await Deno.readFile(join(root, rel));
+    bytes = await Deno.readFile(nativeJoin(root, rel));
   } catch {
     return false;
   }
@@ -861,11 +876,15 @@ export async function capacitorPlaceholders(
   platform: "ios" | "android",
   what: "icon" | "splash",
 ): Promise<string[]> {
+  await loadNativeDirs(root);
   const out: string[] = [];
   for (const rel of Object.keys(CAPACITOR_DEFAULTS)) {
     if (!rel.startsWith(`${platform}/`)) continue;
     if ((what === "splash") !== /splash/.test(rel)) continue;
     if (await isTemplateFile(root, rel)) out.push(rel);
+  }
+  if (platform === "ios" && what === "splash" && await isLaunchColorSplash(root)) {
+    out.push(LAUNCH_COLOR_SPLASH_SET);
   }
   return out;
 }

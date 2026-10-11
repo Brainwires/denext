@@ -30,6 +30,7 @@ import {
   renderPlist,
   stringOf,
 } from "./plist-value.ts";
+import { loadNativeDirs, nativeJoin, nativeRel } from "./capacitor-native-dirs.ts";
 
 /** A required-reason API category (the `NSPrivacyAccessedAPIType` value). */
 export type PrivacyApiCategory =
@@ -556,7 +557,7 @@ async function addToXcode(
   report: PrivacyWriteReport,
   opts: PrivacyWriteOptions,
 ): Promise<void> {
-  const path = join(root, PBXPROJ);
+  const path = nativeJoin(root, PBXPROJ);
   const text = await readText(path);
   if (text === undefined) return;
   const target = bundle === "app" ? {} : { target: bundle, group: bundle };
@@ -568,10 +569,13 @@ async function addToXcode(
     });
     if (result.added.length === 0) return;
     if (!opts.dryRun) await Deno.writeTextFile(path, result.text);
-    if (!report.written.includes(PBXPROJ)) report.written.push(PBXPROJ);
+    const shown = nativeRel(root, PBXPROJ);
+    if (!report.written.includes(shown)) report.written.push(shown);
   } catch (err) {
     report.manual.push(
-      `add ${privacyManifestPath(bundle)} to the ${bundle === "app" ? "App" : bundle} target in ` +
+      `add ${nativeRel(root, privacyManifestPath(bundle))} to the ${
+        bundle === "app" ? "App" : bundle
+      } target in ` +
         `Xcode (Target Membership; it must be in Copy Bundle Resources): ${
           err instanceof Error ? err.message : String(err)
         }`,
@@ -587,8 +591,8 @@ async function writeBundleManifest(
   report: PrivacyWriteReport,
   opts: PrivacyWriteOptions,
 ): Promise<void> {
-  const rel = privacyManifestPath(bundle);
-  const folder = bundle === "app" ? "ios/App/App" : `ios/App/${bundle}`;
+  const rel = nativeRel(root, privacyManifestPath(bundle));
+  const folder = nativeRel(root, bundle === "app" ? "ios/App/App" : `ios/App/${bundle}`);
   if (!(await isDir(join(root, folder)))) {
     if (bundle === "app") report.skipped.push(`iOS: no ${folder} (run \`npx cap add ios\` first).`);
     return;
@@ -630,6 +634,7 @@ export async function writePrivacyManifests(
   entries: readonly PrivacyEntry[],
   opts: PrivacyWriteOptions = {},
 ): Promise<PrivacyWriteReport> {
+  await loadNativeDirs(root);
   const report: PrivacyWriteReport = {
     written: [],
     unchanged: [],
@@ -637,7 +642,7 @@ export async function writePrivacyManifests(
     manual: [],
     added: {},
   };
-  if (!(await isDir(join(root, "ios")))) return report;
+  if (!(await isDir(nativeJoin(root, "ios")))) return report;
   for (const [bundle, list] of byBundle(entries)) {
     if (list.length === 0 && !(bundle === "app" && opts.ensureApp)) continue;
     await writeBundleManifest(root, bundle, list, report, opts);
@@ -695,6 +700,7 @@ export async function detectInstalledCapabilities(
   root: string,
   table: CapabilityPackages,
 ): Promise<string[]> {
+  await loadNativeDirs(root);
   const deps = await dependencyNames(root);
   const names = Object.entries(table)
     .filter(([, cap]) => cap.npm !== undefined && deps.has(cap.npm))
@@ -703,7 +709,7 @@ export async function detectInstalledCapabilities(
     if (deps.has(npm)) names.push(name);
   }
   for (const [name, marker] of TEMPLATE_MARKERS) {
-    if (await exists(join(root, marker))) names.push(name);
+    if (await exists(nativeJoin(root, marker))) names.push(name);
   }
   return names;
 }
@@ -922,7 +928,7 @@ async function bundleFindings(
   entries: readonly PrivacyEntry[],
   pbxproj: string | undefined,
 ): Promise<{ text: string | undefined; findings: PrivacyFinding[] }> {
-  const file = privacyManifestPath(bundle);
+  const file = nativeRel(root, privacyManifestPath(bundle));
   const text = await readText(join(root, file));
   if (text === undefined) {
     const needed = entries.some((e) => (e.apis?.length ?? 0) > 0);
@@ -964,15 +970,18 @@ export async function checkPrivacyManifest(
   root: string,
   table: CapabilityPackages,
 ): Promise<PrivacyCheck> {
+  await loadNativeDirs(root);
   const installed = await detectInstalledCapabilities(root, table);
-  const file = privacyManifestPath("app");
-  if (!(await isDir(join(root, "ios")))) return { file, text: undefined, installed, findings: [] };
-  const pbxproj = await readText(join(root, PBXPROJ));
+  const file = nativeRel(root, privacyManifestPath("app"));
+  if (!(await isDir(nativeJoin(root, "ios")))) {
+    return { file, text: undefined, installed, findings: [] };
+  }
+  const pbxproj = await readText(nativeJoin(root, PBXPROJ));
   const findings: PrivacyFinding[] = [];
   let appText: string | undefined;
   for (const [bundle, entries] of byBundle(requiredPrivacyEntries(installed))) {
     if (bundle !== "app" && entries.length === 0) continue;
-    if (bundle !== "app" && !(await isDir(join(root, "ios/App", bundle)))) continue;
+    if (bundle !== "app" && !(await isDir(nativeJoin(root, "ios/App", bundle)))) continue;
     const result = await bundleFindings(root, bundle, entries, pbxproj);
     if (bundle === "app") appText = result.text;
     findings.push(...result.findings);

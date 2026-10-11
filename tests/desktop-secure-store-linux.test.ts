@@ -4,7 +4,7 @@
 // a runtime without the store (the stock runtime) has no Linux backend at all: there is no
 // `secret-tool` fallback, so no subprocess ever runs on Linux.
 
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   missingBackendError,
   runSecureCli,
@@ -125,14 +125,22 @@ Deno.test("secureStore (Linux, runtime store): a round-trip through the runtime;
   assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true });
   assertEquals(await call(cap, "get", { key: "tok" }), null);
   assertEquals(tool.calls, [], "no CLI");
+  // The session's probe first (once): a lookup of an account never written, bounded at 1.5 s.
+  assertEquals(runtime.calls[0], {
+    op: "get",
+    service: "com.example.app",
+    account: "denext.secure-store.probe",
+    options: { timeout: 1500 },
+  });
+  assertEquals(runtime.calls.filter((c) => c.account === "denext.secure-store.probe").length, 1);
   // The app's service, the page's key, the label, and the answer timeout.
-  assertEquals(runtime.calls[1], {
+  assertEquals(runtime.calls[2], {
     op: "set",
     service: "com.example.app",
     account: "tok",
     options: { label: "com.example.app", timeout: 7000 },
   });
-  assertEquals(runtime.calls[0].options, { timeout: 7000 });
+  assertEquals(runtime.calls[1].options, { timeout: 7000 });
   // The runtime store needs an unscoped --allow-sys, and nothing to run.
   assertEquals(cap.methods.get.permissions, { sys: ["*"] });
 });
@@ -198,4 +206,105 @@ Deno.test("secureStore (Linux): a runtime without its own store is backend_unava
   assertEquals(await call(win, "get", { key: "tok" }), null);
   assertEquals(ran, ["powershell.exe"]);
   assertEquals(runtime.calls, []);
+});
+
+// --- no Secret Service: fail fast, once per session ----------------------------------------------
+
+/**
+ * A runtime store whose every call waits forever, as libsecret does on a session where D-Bus
+ * cannot start a keyring daemon (headless, minimal), plus the runtime's probe of the session.
+ */
+function hangingRuntime(secretService?: string) {
+  const calls: string[] = [];
+  const store = {
+    supported: true,
+    get: (_service: string, account: string) => {
+      calls.push(`get ${account}`);
+      return new Promise<string | null>(() => {});
+    },
+    set: (_service: string, account: string) => {
+      calls.push(`set ${account}`);
+      return new Promise<void>(() => {});
+    },
+    delete: (_service: string, account: string) => {
+      calls.push(`delete ${account}`);
+      return new Promise<void>(() => {});
+    },
+  };
+  const api = {
+    secureStore: store,
+    ...(secretService === undefined
+      ? {}
+      : { platformFeatures: () => Promise.resolve({ secretService }) }),
+  };
+  return { api: api as Parameters<typeof secureStoreCapability>[0]["api"], calls };
+}
+
+Deno.test("secureStore (Linux): a Secret Service that never answers fails within the probe bound, then at once", async () => {
+  const runtime = hangingRuntime();
+  const cap = secureStoreCapability({
+    service: "com.example.app",
+    os: "linux",
+    api: runtime.api,
+    probeTimeoutMs: 50,
+  });
+  const started = performance.now();
+  await unavailable(call(cap, "get", { key: "tok" }), "did not answer within 0.05 s");
+  assert(performance.now() - started < 1_000, "bounded by the probe, not D-Bus's 25 s");
+  // Cached for the session: no call reaches the store again, and none waits.
+  for (const [method, args] of METHODS) {
+    const t = performance.now();
+    await unavailable(call(cap, method, args), "did not answer");
+    assert(performance.now() - t < 50, `${method} fails at once`);
+  }
+  assertEquals(runtime.calls, ["get denext.secure-store.probe"]);
+});
+
+Deno.test("secureStore (Linux): the default probe bound is 1.5 s", async () => {
+  const cap = secureStoreCapability({ service: "s", os: "linux", api: hangingRuntime().api });
+  const started = performance.now();
+  await unavailable(call(cap, "get", { key: "tok" }), "within 1.5 s");
+  const elapsed = performance.now() - started;
+  assert(elapsed >= 1_400 && elapsed < 3_000, `took ${elapsed} ms`);
+});
+
+Deno.test("secureStore (Linux): no session bus or no provider is backend_unavailable at once", async () => {
+  for (
+    const [state, reason] of [
+      ["no-session-bus", "no D-Bus session bus"],
+      ["absent", "install gnome-keyring"],
+    ]
+  ) {
+    const runtime = hangingRuntime(state);
+    // A probe bound far longer than the test: the runtime's probe of the session answers first.
+    const cap = secureStoreCapability({
+      service: "s",
+      os: "linux",
+      api: runtime.api,
+      probeTimeoutMs: 60_000,
+    });
+    const started = performance.now();
+    await unavailable(call(cap, "get", { key: "tok" }), reason);
+    await unavailable(call(cap, "set", { key: "tok", value: "v" }), reason);
+    assert(performance.now() - started < 1_000, state);
+    assertEquals(runtime.calls, ["get denext.secure-store.probe"], state);
+  }
+});
+
+Deno.test("secureStore (Linux): a working store is probed once; a refusal is not cached", async () => {
+  let mode: StoreMode = "unavailable";
+  const runtime = fakeRuntimeStore(() => mode);
+  const api = {
+    ...runtime.api,
+    platformFeatures: () => Promise.resolve({ secretService: "available" }),
+  } as Parameters<typeof secureStoreCapability>[0]["api"];
+  const cap = secureStoreCapability({ service: "s", os: "linux", api });
+  // A locked keyring no one here can unlock: this call's error only.
+  await unavailable(call(cap, "get", { key: "k" }), "locked");
+  mode = "ok"; // unlocked meanwhile
+  assertEquals(await call(cap, "set", { key: "k", value: "v" }), { ok: true });
+  assertEquals(await call(cap, "get", { key: "k" }), "v");
+  assertEquals(await call(cap, "delete", { key: "k" }), { ok: true });
+  const probes = runtime.calls.filter((c) => c.account === "denext.secure-store.probe");
+  assertEquals(probes.length, 2, "asked again after the refusal, then never");
 });

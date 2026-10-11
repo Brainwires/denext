@@ -7,7 +7,6 @@
 // whose dependency it adds to `android/app/build.gradle`), which the plugin finds by class name,
 // after installing native-views. Running either twice changes nothing.
 
-import { join } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   isPristineNativeViewsTemplate,
@@ -31,6 +30,7 @@ import {
 } from "./mobile-native-install.ts";
 import { installRegisteredPlugin } from "./mobile-plugin-install.ts";
 import type { MobileCapability, NativeInstallStep } from "./mobile-capabilities.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Where the Java files go, relative to the project root. */
 const ANDROID_DIR = "android/app/src/main/java/dev/denext/nativeviews";
@@ -89,13 +89,13 @@ type Installer = NativeInstaller<NativeInstallOptions, NativeInstallReport>;
 /** The map factory's Swift file, in the app target (no registration: found by class name). */
 async function installMapIos(inst: Installer): Promise<void> {
   if (!(await hasIosApp(inst))) return;
-  const appDir = join(inst.opts.dir, IOS_APP);
+  const appDir = nativeJoin(inst.opts.dir, IOS_APP);
   await writeTemplates(inst, appDir, NATIVE_MAP_IOS_FILES, NATIVE_VIEWS_TEMPLATES);
   // No bridge registration: the plugin finds the factory class by name.
   const add = (pbxproj: string) =>
     addSourceFiles(pbxproj, Object.keys(NATIVE_MAP_IOS_FILES), { randomId: inst.opts.randomId })
       .text;
-  await inst.edit(join(inst.opts.dir, PBXPROJ), add);
+  await inst.edit(nativeJoin(inst.opts.dir, PBXPROJ), add);
 }
 
 /** The osmdroid map factory and its dependency. */
@@ -103,11 +103,11 @@ async function installMapAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   await writeTemplates(
     inst,
-    join(inst.opts.dir, ANDROID_DIR),
+    nativeJoin(inst.opts.dir, ANDROID_DIR),
     NATIVE_MAP_ANDROID_FILES,
     NATIVE_VIEWS_TEMPLATES,
   );
-  const gradle = join(inst.opts.dir, APP_GRADLE);
+  const gradle = nativeJoin(inst.opts.dir, APP_GRADLE);
   let missing = false;
   await inst.edit(gradle, (text) => {
     const next = withGradleDependency(text, OSMDROID_DEPENDENCY);

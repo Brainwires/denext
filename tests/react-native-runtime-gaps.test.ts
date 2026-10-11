@@ -33,6 +33,8 @@ import {
 import { diffSurfaces } from "../scripts/parity/diff.ts";
 import { NATIVE_WAIVERS } from "../scripts/parity/native/waivers.ts";
 import type { Any } from "./helpers/mobile-fakes.ts";
+import * as SplashScreen from "../src/expo/splash-screen.ts";
+import { resetSplashAutoHide } from "../src/mobile/splash.ts";
 
 // ---- AppRegistry -----------------------------------------------------------------------------
 
@@ -173,6 +175,77 @@ Deno.test("AppRegistry.setRootViewStyleProvider: the root view takes the style; 
   assertEquals(styles, [[{ flex: 1, pointerEvents: "box-none" }, { backgroundColor: "red" }]]);
   assertStringIncludes(screen.html(), "<section><main><p>body</p></main></section>");
   await screen.unmount();
+});
+
+/** Run `fn` in an iOS shell whose SplashScreen records `hide`, frames stepped by hand. */
+async function inSplashShell(
+  fn: (shell: { hides: () => number; frame: () => Promise<void> }) => Promise<void>,
+): Promise<void> {
+  const g = globalThis as Any;
+  let hides = 0;
+  const frames: (() => void)[] = [];
+  const saved = ["Capacitor", "requestAnimationFrame"].map((k) =>
+    [k, Object.getOwnPropertyDescriptor(g, k)] as const
+  );
+  const define = (k: string, value: unknown) =>
+    Object.defineProperty(g, k, { configurable: true, writable: true, value });
+  define("Capacitor", {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: { SplashScreen: { hide: () => Promise.resolve(void hides++) } },
+  });
+  define("requestAnimationFrame", (cb: () => void) => frames.push(cb));
+  resetSplashAutoHide();
+  try {
+    await fn({
+      hides: () => hides,
+      // Run the frame callbacks, then the task after the painted frame.
+      frame: async () => {
+        for (const cb of frames.splice(0)) cb();
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+      },
+    });
+  } finally {
+    for (const [k, desc] of saved) desc ? Object.defineProperty(g, k, desc) : delete g[k];
+    resetSplashAutoHide();
+  }
+}
+
+Deno.test("AppRegistry: the native splash hides once the app's first commit is painted", async () => {
+  await inSplashShell(async ({ hides, frame }) => {
+    const { AppRegistry } = fakeWebAppRegistry();
+    const reg = withAppRegistry(AppRegistry) as Any;
+    reg.registerComponent("app", () => () => h("p", null, "first"));
+    const screen = await reg.runApplication("app", { initialProps: {} });
+    assertEquals(screen.container.textContent, "first");
+    assertEquals(hides(), 0, "committed, not yet painted");
+    await frame();
+    assertEquals(hides(), 1);
+    // Another app run (or a re-run) never hides it again.
+    const again = await reg.runApplication("app", { initialProps: {} });
+    await frame();
+    assertEquals(hides(), 1);
+    assertEquals(await SplashScreen.preventAutoHideAsync(), false, "already hidden");
+    await again.unmount();
+    await screen.unmount();
+  });
+});
+
+Deno.test("AppRegistry: expo-splash-screen's preventAutoHideAsync holds the splash until hideAsync", async () => {
+  await inSplashShell(async ({ hides, frame }) => {
+    assertEquals(await SplashScreen.preventAutoHideAsync(), true);
+    assertEquals(await SplashScreen.preventAutoHideAsync(), false, "held once");
+    const { AppRegistry } = fakeWebAppRegistry();
+    const reg = withAppRegistry(AppRegistry) as Any;
+    reg.registerComponent("app", () => () => h("p", null, "loading data"));
+    const screen = await reg.runApplication("app", { initialProps: {} });
+    await frame();
+    assertEquals(hides(), 0, "held past the first frame");
+    await SplashScreen.hideAsync();
+    assertEquals(hides(), 1);
+    await screen.unmount();
+  });
 });
 
 Deno.test("AppRegistry headless tasks: React Native's registry, start and cancel", async () => {

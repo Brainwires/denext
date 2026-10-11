@@ -30,6 +30,7 @@ import {
   workflowTemplate,
 } from "./fastlane-templates.ts";
 import { VERSION } from "../../mod.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 const FAMILY = "fastlane";
 const TEMPLATE_VERSION = 1;
@@ -201,7 +202,7 @@ export async function addFastlaneToProject(opts: AddFastlaneOptions): Promise<Na
         "keeps the gems in the project) and commit Gemfile.lock",
     );
   }
-  if (await exists(join(opts.dir, "ios"))) {
+  if (await exists(nativeJoin(opts.dir, "ios"))) {
     report.manual.push(
       "iOS signing with match: create the certificate once with `MATCH_GIT_URL=… bundle exec " +
         "fastlane match appstore`; the lanes then run match read-only (MATCH_PASSWORD)",

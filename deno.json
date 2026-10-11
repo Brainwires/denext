@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "3.4.5",
+  "version": "3.4.6",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -316,7 +316,8 @@
       "bench/fixtures/",
       "bench/results/",
       "bench/REPORT.md",
-      "src/mcp/docs-corpus.json"
+      "src/mcp/docs-corpus.json",
+      "tests/fixtures/capacitor8/template/"
     ]
   },
   "lint": {

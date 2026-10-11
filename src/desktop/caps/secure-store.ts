@@ -47,6 +47,7 @@
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
+import { platformFacts } from "./platform.ts";
 
 /** The running OS spelling the capability branches on. */
 type Os = "darwin" | "windows" | "linux";
@@ -234,6 +235,11 @@ export interface SecureStoreDeps {
    */
   readonly answerTimeoutMs?: number;
   /**
+   * Linux: how long the first call's probe of the Secret Service may take (default 1.5 s) before
+   * the store counts as unavailable for the rest of the session. See `probeLinuxStore`.
+   */
+  readonly probeTimeoutMs?: number;
+  /**
    * The runtime's app API (default `Deno.desktop`): its `secureStore`, when `supported`, is the
    * Linux and macOS backend; tests pass a fake, or `null` for a runtime without one.
    */
@@ -271,6 +277,81 @@ function runtimeSecureStoreError(err: unknown): DesktopCapError {
 
 /** The default {@linkcode SecureStoreDeps.answerTimeoutMs}. */
 const LINUX_ANSWER_TIMEOUT_MS = 20_000;
+
+/** The default {@linkcode SecureStoreDeps.probeTimeoutMs}. */
+const LINUX_PROBE_TIMEOUT_MS = 1_500;
+
+/** The account the probe looks up: never written, so the lookup matches nothing (no prompt). */
+const PROBE_ACCOUNT = "denext.secure-store.probe";
+
+/** The probe's verdict: the error every call fails with (or `null`: use the store), and whether it holds for the session. */
+interface ProbeVerdict {
+  readonly error: DesktopCapError | null;
+  readonly final: boolean;
+}
+
+/** The Secret Service states in which there is nothing to ask, with what the user can do. */
+const NO_SECRET_SERVICE: Readonly<Record<string, string>> = {
+  "no-session-bus": "this session has no D-Bus session bus",
+  absent: "no Secret Service provider runs on this session (install gnome-keyring, or enable " +
+    "KWallet's Secret Service)",
+};
+
+/** `backend_unavailable` for a Secret Service that is not there (cached for the session). */
+function noSecretServiceError(reason: string): DesktopCapError {
+  return new DesktopCapError("backend_unavailable", `the secure store is unavailable: ${reason}`, {
+    status: 503,
+  });
+}
+
+/**
+ * Linux: whether the Secret Service answers at all, asked once per session before the first call.
+ * Without a provider, libsecret can wait on D-Bus (an activatable keyring daemon that never
+ * starts on a headless or minimal session, a bus autolaunch) until D-Bus gives up, ~25 s, and the
+ * runtime's own answer timeout only bounds the unlock prompt. So a lookup of an account that is
+ * never written (it matches nothing, so no unlock prompt) races `timeoutMs`, alongside the
+ * runtime's probe of the session (`platformFeatures().secretService`). The lookup answering means
+ * the store works; a session with no bus or no provider, or no answer in time, is
+ * `backend_unavailable` for the rest of the session, so no later call waits again. A rejection
+ * (a locked keyring no one here can unlock) is that call's error only: the next call asks again.
+ *
+ * @param store The runtime's store.
+ * @param service The app-specific service name.
+ * @param api The runtime's app API, for its probe of the session.
+ * @param timeoutMs How long the probe may take.
+ * @returns The verdict.
+ */
+function probeLinuxStore(
+  store: RuntimeSecureStore,
+  service: string,
+  api: DesktopAppApi | undefined,
+  timeoutMs: number,
+): Promise<ProbeVerdict> {
+  return new Promise<ProbeVerdict>((resolve) => {
+    const settle = (verdict: ProbeVerdict) => {
+      clearTimeout(timer);
+      resolve(verdict);
+    };
+    const timer = setTimeout(() =>
+      settle({
+        error: noSecretServiceError(
+          `the Secret Service did not answer within ${timeoutMs / 1000} s (is a keyring daemon ` +
+            "running on this session?)",
+        ),
+        final: true,
+      }), timeoutMs);
+    platformFacts(api).then((facts) => {
+      const reason = NO_SECRET_SERVICE[facts.secretService];
+      if (reason !== undefined) settle({ error: noSecretServiceError(reason), final: true });
+    }, () => {});
+    Promise.resolve()
+      .then(() => store.get(service, PROBE_ACCOUNT, { timeout: timeoutMs }))
+      .then(
+        () => settle({ error: null, final: true }),
+        (err) => settle({ error: runtimeSecureStoreError(err), final: false }),
+      );
+  });
+}
 
 /** Require a string arg. */
 function str(value: unknown, name: string): string {
@@ -660,15 +741,32 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     ? { sys: ["*"] }
     : { run: ["powershell.exe"] };
   const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
+  const probeMs = deps.probeTimeoutMs ?? LINUX_PROBE_TIMEOUT_MS;
+  /** The runtime's app API, or `undefined` (none, or reading it threw). */
+  const appApi = (): DesktopAppApi | undefined => {
+    try {
+      return deps.api === null ? undefined : (deps.api ?? desktopAppApi()) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  };
   /** The runtime's own secure store when it has one (`supported`), else `undefined`. */
   const runtimeStore = (): RuntimeSecureStore | undefined => {
     if (os === "windows") return undefined;
     try {
-      const candidate = deps.api === null ? undefined : (deps.api ?? desktopAppApi())?.secureStore;
+      const candidate = appApi()?.secureStore;
       return candidate?.supported === true ? candidate : undefined;
     } catch {
       return undefined;
     }
+  };
+  /** Linux: the session's probe (see `probeLinuxStore`), kept once it is final. */
+  let probe: Promise<ProbeVerdict> | undefined;
+  const linuxReady = async (store: RuntimeSecureStore): Promise<void> => {
+    const pending = probe ??= probeLinuxStore(store, service, appApi(), probeMs);
+    const verdict = await pending;
+    if (!verdict.final && probe === pending) probe = undefined;
+    if (verdict.error) throw verdict.error;
   };
   let migrating: { store: RuntimeSecureStore; backend: SecureBackend } | undefined;
   /**
@@ -676,10 +774,11 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
    * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
    * Windows, PowerShell + PasswordVault.
    */
-  const backend = (): SecureBackend => {
+  const backend = async (): Promise<SecureBackend> => {
     const store = runtimeStore();
     if (os === "linux") {
       if (!store) throw noLinuxStoreError();
+      await linuxReady(store);
       return runtimeBackend(store, service, answerMs);
     }
     const cli = cliBackend(os, service, run);
@@ -706,7 +805,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          return decodeStored(await backend().get(key, ctx.signal));
+          return decodeStored(await (await backend()).get(key, ctx.signal));
         },
       },
       set: {
@@ -714,7 +813,11 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         handler: async (args, ctx) => {
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
-          await backend().set(key, bytesToBase64(new TextEncoder().encode(value)), ctx.signal);
+          await (await backend()).set(
+            key,
+            bytesToBase64(new TextEncoder().encode(value)),
+            ctx.signal,
+          );
           return { ok: true };
         },
       },
@@ -722,7 +825,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          await backend().delete(key, ctx.signal);
+          await (await backend()).delete(key, ctx.signal);
           return { ok: true };
         },
       },

@@ -5,7 +5,6 @@
 // recommend (Capacitor 9 will do it itself). Both compose with every other denext feature in
 // the shared MainActivity (see mobile-native-install.ts). Running either twice changes nothing.
 
-import { join } from "@std/path";
 import { BACK_ANDROID_FILES } from "./back-native-templates.ts";
 import {
   BACK_TEMPLATES,
@@ -16,6 +15,7 @@ import {
   registerInMainActivity,
   writeTemplates,
 } from "./mobile-native-install.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Where the plugin goes (its own package, apart from the app's). */
 const ANDROID_BACK_DIR = "android/app/src/main/java/dev/denext/back";
@@ -46,7 +46,12 @@ function installer(opts: NativeInstallOptions): Installer {
 export async function addBackToProject(opts: NativeInstallOptions): Promise<NativeInstallReport> {
   const inst = installer(opts);
   if (!(await hasAndroidApp(inst))) return inst.report;
-  await writeTemplates(inst, join(opts.dir, ANDROID_BACK_DIR), BACK_ANDROID_FILES, BACK_TEMPLATES);
+  await writeTemplates(
+    inst,
+    nativeJoin(opts.dir, ANDROID_BACK_DIR),
+    BACK_ANDROID_FILES,
+    BACK_TEMPLATES,
+  );
   await registerInMainActivity(inst, "back");
   return inst.report;
 }

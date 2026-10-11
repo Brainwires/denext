@@ -8,6 +8,62 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.6] - 2026-10-11
+
+### Fixed
+
+- **A migrated Expo app no longer flashes white before its first frame in the Capacitor shell.**
+  The native Expo app keeps its splash until the first frame and paints its root view in the app
+  config's colours; the shell showed Capacitor's white placeholder splash, then a WebView page
+  with no background of its own, so a dark app (T3 Code on an iPhone in dark mode) flashed white.
+  `denext migrate --from expo` now reads `userInterfaceStyle`, `backgroundColor`, `splash` and the
+  `expo-splash-screen` plugin's light and `dark` colours (with their `ios.` / `android.`
+  overrides), writes the page's own background into `spa.head` (a `prefers-color-scheme: dark`
+  rule when the colours differ, so the first painted frame is the app's colour) and sets
+  Capacitor's `backgroundColor` and `SplashScreen.launchAutoHide: false` in
+  `capacitor.config.ts`. In React Native mode the native splash hides once the frame of the app's
+  first commit is drawn, as Expo's does, and `expo-splash-screen`'s `preventAutoHideAsync` holds it
+  until `hideAsync` (it used to do nothing). `denext mobile add app-config` writes the native side:
+  `UIUserInterfaceStyle` for a fixed appearance, the launch storyboard painted with a light / dark
+  asset-catalog colour, Capacitor's white placeholder splash image replaced by that colour (still
+  a placeholder to `denext mobile build`, which puts the logo splash in its place), the window and
+  WebView painted from `SceneDelegate.swift` with a dynamic `UIColor`, and on Android the colours as
+  resources (`values-night/` for dark) behind `windowSplashScreenBackground` and
+  `android:windowBackground`.
+- **Deno Desktop on Linux: `secureStore` fails at once on a session with no Secret Service.** On a
+  headless or minimal session, libsecret waited on D-Bus for a keyring daemon that never started,
+  and the runtime's answer timeout bounds only the unlock prompt, so the first `secureStore.get`
+  hung about 30 s (T3 Code's desktop preload reads its tokens at boot, so its window stayed blank
+  that long). The first call of a session now probes the store: a lookup of an account that is
+  never written (no unlock prompt) races 1.5 s, alongside the runtime's probe of the session. No
+  session bus, no provider, or no answer in time is `backend_unavailable` with that reason, and
+  every later call of the session fails the same way at once. A working store is probed once; a
+  locked keyring's refusal applies to that call only.
+- **`denext mobile` commands use Capacitor's `ios.path` and `android.path`.** `mobile add`, `sync`,
+  `build`, `doctor`, `assets`, `privacy`, `fingerprint` and `dev` looked for the native projects in
+  `ios/App` and `android/app` whatever the Capacitor config said, so a project that keeps them
+  elsewhere (`ios: { path: "native/ios" }`) was reported as having no iOS project, or had files
+  written to a new `ios/` folder Xcode never builds. They now read both paths from
+  `capacitor.config.*` (defaults `ios` and `android`; a path outside the project is ignored) and
+  name the real files in their reports. A native fingerprint keeps Capacitor's default names for
+  its inputs, so moving the folders alone does not change it.
+- **"Maximum update depth exceeded" names the component, as React's error does.** A component
+  that calls its own setter unconditionally while it renders threw the error without saying which
+  component it was; it now names it (`<Looper> repeatedly schedules an update during render`), and
+  in development it also lists the components above it (`in Looper`, `in Panel`, …). The commit
+  loop's variant (an effect that schedules the next render on every commit) names the component
+  that scheduled the last update in the same words. The message is built only when the loop is
+  detected; the shared runtime is 48 B smaller.
+- **A context change re-renders only the consumers inside the provider that changed.** The walk
+  that marks a changed provider's consumers followed `return` pointers back up to the provider,
+  but a child shared from the other render buffer (one a bailed parent passed on unchanged) still
+  pointed at that buffer's parent, so the walk climbed past the provider and marked consumers
+  elsewhere: a `memo` consumer beside the provider, under another provider of the same context or
+  in a portal outside it re-rendered on every change. The walk now re-points each fiber it visits
+  at the one it came from, as React's does. With a router-style context over 200 memo rows, half
+  of them outside the provider, a navigation renders 100 rows instead of 200; the shared runtime
+  is 55 B smaller.
+
 ## [3.4.5] - 2026-10-10
 
 ### Added
@@ -12723,7 +12779,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.6...development
+[3.4.6]: https://jsr.io/@denext/denext@3.4.6
 [3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4
 [3.4.3]: https://jsr.io/@denext/denext@3.4.3

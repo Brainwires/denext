@@ -31,6 +31,7 @@ import {
   withManifestMetaData,
   withPlistString,
 } from "./mobile-native-config.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The Info.plist string key the iOS OTA plugin reads the binary's fingerprint from. */
 export const NATIVE_FINGERPRINT_INFO_KEY = "DenextNativeFingerprint";
@@ -153,7 +154,7 @@ async function nativeFiles(root: string, prefix: string): Promise<string[]> {
   const out: string[] = [];
   let entries: Deno.DirEntry[];
   try {
-    entries = await Array.fromAsync(Deno.readDir(join(root, prefix)));
+    entries = await Array.fromAsync(Deno.readDir(nativeJoin(root, prefix)));
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return out;
     throw err;
@@ -312,11 +313,12 @@ async function fingerprintOf(inputs: readonly FingerprintInput[]): Promise<strin
  * @throws When `root` has no `capacitor.config.*`, or a native path holds a control character.
  */
 export async function computeNativeFingerprint(root: string): Promise<NativeFingerprint> {
+  await loadNativeDirs(root);
   const config = await capacitorConfigFile(root);
   if (!config) throw new Error(`no Capacitor project (capacitor.config.*) in ${root}`);
   const inputs: FingerprintInput[] = [];
   for (const path of [...await nativeFiles(root, "ios"), ...await nativeFiles(root, "android")]) {
-    const bytes = await Deno.readFile(join(root, ...path.split("/")));
+    const bytes = await Deno.readFile(nativeJoin(root, path));
     inputs.push({ kind: "file", path, hash: await sha256Hex(normalisedContent(path, bytes)) });
   }
   const configName = basename(config);
@@ -478,7 +480,7 @@ async function embedIn(
   inject: (text: string) => string | null,
   report: WriteFingerprintReport,
 ): Promise<void> {
-  const path = join(root, ...rel.split("/"));
+  const path = nativeJoin(root, rel);
   const text = await readOptional(path);
   if (text === undefined) return void report.skipped.push(`${rel} (not found)`);
   if (current(text) === fingerprint) return void report.unchanged.push(rel);

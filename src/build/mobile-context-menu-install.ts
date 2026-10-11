@@ -7,7 +7,6 @@
 // `<SystemIcon>` uses (iOS only). Both compose with every other denext native feature in either
 // order (see mobile-native-install.ts). Running either twice changes nothing.
 
-import { join } from "@std/path";
 import {
   CONTEXT_MENU_ANDROID_FILES,
   CONTEXT_MENU_IOS_FILES,
@@ -30,6 +29,7 @@ import {
 import { addSourceFiles } from "./pbxproj.ts";
 import { installRegisteredPlugin } from "./mobile-plugin-install.ts";
 import type { NativeInstallStep } from "./mobile-capabilities.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /**
  * Install the native `DenextContextMenu` plugin into the Capacitor project at `opts.dir`:
@@ -91,14 +91,14 @@ export async function addSystemIconsToProject(
     });
     await writeTemplates(
       inst,
-      join(opts.dir, IOS_APP),
+      nativeJoin(opts.dir, IOS_APP),
       SYSTEM_ICON_IOS_FILES,
       SYSTEM_ICON_TEMPLATES,
     );
     const sources = [BRIDGE_VC_FILE, ...Object.keys(SYSTEM_ICON_IOS_FILES)];
     const randomId = opts.randomId;
     await inst.edit(
-      join(opts.dir, PBXPROJ),
+      nativeJoin(opts.dir, PBXPROJ),
       (text) => addSourceFiles(text, sources, { randomId }).text,
     );
     await wireBridgeViewController(inst);

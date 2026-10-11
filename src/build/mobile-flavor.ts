@@ -17,6 +17,7 @@ import {
   readCapacitorConfig,
   withCapacitorConfigValue,
 } from "./capacitor-config.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** A platform `denext mobile build` targets. */
 export type MobilePlatform = "ios" | "android";
@@ -312,7 +313,7 @@ export async function applyFlavor(
     await setCapacitorValue(snapshot, identity.file, ["server", "url"], flavor.serverUrl);
     changes.push(`server.url → ${flavor.serverUrl}`);
   }
-  const at = (rel: string) => join(root, rel);
+  const at = (rel: string) => nativeJoin(root, rel);
   const native = platform === "ios"
     ? [
       {
@@ -364,7 +365,7 @@ export async function applyAndroidVersions(
   snapshot: NativeSnapshot | null,
 ): Promise<string[]> {
   if (build === undefined && version === undefined) return [];
-  const path = join(root, NATIVE_FILES.gradle);
+  const path = nativeJoin(root, NATIVE_FILES.gradle);
   const text = await Deno.readTextFile(path);
   const next = withAndroidVersions(text, build, version);
   if (next === text) {
@@ -389,7 +390,7 @@ export async function bumpBuildNumber(
   platform: MobilePlatform,
 ): Promise<{ from: number; to: number; file: string }> {
   const file = platform === "ios" ? NATIVE_FILES.pbxproj : NATIVE_FILES.gradle;
-  const path = join(root, file);
+  const path = nativeJoin(root, file);
   const text = await Deno.readTextFile(path);
   const from = (platform === "ios" ? iosVersions(text) : androidVersions(text)).build;
   if (from === undefined) throw new Error(`${file}: no build number to bump`);

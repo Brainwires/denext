@@ -4,7 +4,6 @@
 // package, registered from `MainActivity`. Both compose with every other denext native feature
 // in either order (see mobile-native-install.ts). Running it twice changes nothing.
 
-import { join } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   type AndroidFeature,
@@ -23,6 +22,7 @@ import {
   wireBridgeViewController,
   writeTemplates,
 } from "./mobile-native-install.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** One registered plugin: its templates and how it is registered on each platform. */
 export interface RegisteredPluginSpec {
@@ -45,13 +45,13 @@ type Installer = NativeInstaller<NativeInstallOptions, NativeInstallReport>;
 /** The iOS half: the Swift plugin in the app target, registered by the bridge view controller. */
 async function installIos(inst: Installer, spec: RegisteredPluginSpec): Promise<void> {
   if (!(await hasIosApp(inst))) return;
-  const appDir = join(inst.opts.dir, IOS_APP);
+  const appDir = nativeJoin(inst.opts.dir, IOS_APP);
   await installBridgeViewController(inst, spec.feature, spec.registration);
   await writeTemplates(inst, appDir, spec.iosFiles, spec.kind);
   const sources = [BRIDGE_VC_FILE, ...Object.keys(spec.iosFiles)];
   const randomId = inst.opts.randomId;
   await inst.edit(
-    join(inst.opts.dir, PBXPROJ),
+    nativeJoin(inst.opts.dir, PBXPROJ),
     (text) => addSourceFiles(text, sources, { randomId }).text,
   );
   await wireBridgeViewController(inst);
@@ -82,7 +82,7 @@ export async function installRegisteredPlugin(
   const inst: Installer = new NativeInstaller(opts, report);
   await installIos(inst, spec);
   if (await hasAndroidApp(inst)) {
-    await writeTemplates(inst, join(opts.dir, spec.androidDir), spec.androidFiles, spec.kind);
+    await writeTemplates(inst, nativeJoin(opts.dir, spec.androidDir), spec.androidFiles, spec.kind);
     await registerInMainActivity(inst, spec.feature);
   }
   return report;

@@ -26,6 +26,7 @@ import {
   workInProgress,
 } from "./scheduler.ts";
 import { beginWork } from "./begin-work.ts";
+import { updateDepthError } from "./fiber-utils.ts";
 import { completeWork } from "./complete-work.ts";
 import { handleThrow, SUSPENDED_TRANSITION } from "./unwind.ts";
 import { commitRoot, flushPassiveEffects } from "./commit.ts";
@@ -221,11 +222,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
       // A component is scheduling updates during render in a loop. Clear the lane
       // so we don't hang, then surface it (React throws the same way).
       handle.pendingLanes &= ~lanes;
-      throw new Error(
-        "denext: Maximum update depth exceeded. A component repeatedly schedules " +
-          "an update during render (e.g. calling setState unconditionally while rendering). " +
-          `Last update scheduled by <${lastUpdateSourceName()}>.`,
-      );
+      throw updateDepthError(lastUpdateSourceName());
     }
     // A commit of only Transition work (or a Suspense reveal) may run in a view transition; a
     // direct render (`root.render`, hydration) has no pending lane and is urgent.

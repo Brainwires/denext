@@ -65,6 +65,7 @@ import { FlipType, manipulateAsync, SaveFormat } from "../src/expo/image-manipul
 import { resetFileSystemForTesting, settled } from "../src/expo/internal/fs.ts";
 import { resetPushForTesting } from "../src/mobile/push.ts";
 import { resetQuickActionsForTesting } from "../src/mobile/quick-actions.ts";
+import { resetSplashAutoHide } from "../src/mobile/splash.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -227,6 +228,7 @@ Deno.test("expo-secure-store: on the web it is not available, and a requireAuthe
 // ---- sharing / splash / keep-awake -----------------------------------------
 
 Deno.test("expo-sharing, expo-splash-screen, expo-keep-awake over their plugins", async () => {
+  resetSplashAutoHide();
   const share = recorder(["share"]);
   const splash = recorder(["hide"]);
   const awake = recorder(["keepAwake", "allowSleep"]);
@@ -237,6 +239,11 @@ Deno.test("expo-sharing, expo-splash-screen, expo-keep-awake over their plugins"
       await Sharing.shareAsync("https://x.dev/", { dialogTitle: "Look" });
       assertEquals(await SplashScreen.preventAutoHideAsync(), true);
       await SplashScreen.hideAsync();
+      assertEquals(
+        await SplashScreen.preventAutoHideAsync(),
+        false,
+        "hidden: too late, as in Expo",
+      );
       await KeepAwake.activateKeepAwakeAsync("rec");
       await KeepAwake.activateKeepAwakeAsync("rec"); // same tag: one hold
       await KeepAwake.deactivateKeepAwake("rec");

@@ -21,6 +21,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren, VNodeType } from "../jsx/types.ts";
 import { useEffect, useState } from "../runtime/hooks.ts";
+import { hideSplashAfterFirstFrame } from "../mobile/splash.ts";
 
 /** What React Native's `registerComponent` takes: a function returning the root component. */
 type ComponentProvider = () => VNodeType;
@@ -140,6 +141,9 @@ export function withAppRegistry<T>(AppRegistry: T, View?: VNodeType): T {
         s.listeners.add(listener);
         return () => void s.listeners.delete(listener);
       }, [s]);
+      // The app's first commit: the native splash goes once that frame is drawn (Expo's
+      // auto-hide), unless the app holds it with expo-splash-screen's preventAutoHideAsync.
+      useEffect(hideSplashAfterFirstFrame, []);
       return h(Root, s.props ?? props);
     };
     return Object.assign(SurfaceRoot, {

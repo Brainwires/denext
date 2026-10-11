@@ -252,6 +252,8 @@ export interface ExpoAppConfig {
   runtimeConfig: Record<string, unknown>;
   /** The app icon, adaptive-icon layers and splash the config names. */
   icons: ExpoIcons;
+  /** The launch and root-view colours and the appearance, per platform. */
+  appearance: ExpoAppearance;
   /** Fields that depend on code (`ios.bundleIdentifier`, …) and could not be read. */
   unresolved: string[];
   /** Notes for the report. */
@@ -282,6 +284,33 @@ export interface ExpoIcons {
   backgroundColor?: string;
   /** Icon fields the config computes in code (`icon`, `android.adaptiveIcon.foregroundImage`, …). */
   unresolved: string[];
+}
+
+/** An Expo `userInterfaceStyle`. */
+export type ExpoUserInterfaceStyle = "light" | "dark" | "automatic";
+
+/**
+ * What one platform's native launch shows and its root view is painted with, from the app
+ * config (colours as `#rrggbb`; a colour that is not hex is left out).
+ */
+export interface ExpoPlatformAppearance {
+  /** `<platform>.userInterfaceStyle`, else the top-level `userInterfaceStyle`. */
+  style?: ExpoUserInterfaceStyle;
+  /** The root view background (expo-system-ui): `<platform>.backgroundColor`, else `backgroundColor`. */
+  background?: string;
+  /**
+   * The splash background: the `expo-splash-screen` plugin's (its `<platform>` options first),
+   * else `<platform>.splash`, else `splash`.
+   */
+  splash?: string;
+  /** The dark splash background, from the same places' `dark.backgroundColor`. */
+  splashDark?: string;
+}
+
+/** {@linkcode ExpoPlatformAppearance} for each native platform. */
+export interface ExpoAppearance {
+  ios: ExpoPlatformAppearance;
+  android: ExpoPlatformAppearance;
 }
 
 /** The config files Expo reads, in its order of precedence. */
@@ -621,6 +650,10 @@ export async function readExpoAppConfig(dir: string): Promise<ExpoAppConfig> {
     },
     runtimeConfig: runtimeSubset(json, d),
     icons: iconsOf(d, json),
+    appearance: {
+      ios: appearanceOf(d, json, "ios", unresolved),
+      android: appearanceOf(d, json, "android", unresolved),
+    },
     unresolved: [...new Set(unresolved)],
     notes,
   };
@@ -696,4 +729,52 @@ function iconsOf(
   };
   icons.unresolved = [...new Set(unresolved)];
   return icons;
+}
+
+/** A colour as `#rrggbb` (from `#rgb` / `#rrggbb`), else undefined. */
+function hexColor(value: unknown): string | undefined {
+  const m = typeof value === "string" ? /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim()) : null;
+  if (!m) return undefined;
+  const full = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
+  return `#${full.toLowerCase()}`;
+}
+
+/** A `userInterfaceStyle` value, else undefined. */
+function interfaceStyle(value: unknown): ExpoUserInterfaceStyle | undefined {
+  return value === "light" || value === "dark" || value === "automatic" ? value : undefined;
+}
+
+/** The launch / root-view appearance of `platform`: the dynamic config's, else app.json's. */
+function appearanceOf(
+  dynamic: Record<string, unknown> | null,
+  json: Record<string, unknown> | null,
+  platform: "ios" | "android",
+  unresolved: string[],
+): ExpoPlatformAppearance {
+  const get = (...path: string[]) => pick(dynamic, json, path, unresolved);
+  const plugin = splashPluginOptions(at(dynamic, ["plugins"])) ??
+    splashPluginOptions(at(json, ["plugins"]));
+  const own = plugin?.[platform] as Record<string, unknown> | undefined;
+  const first = (...values: unknown[]) => values.map(hexColor).find((v) => v !== undefined);
+  const out: ExpoPlatformAppearance = {
+    style: interfaceStyle(get(platform, "userInterfaceStyle")) ??
+      interfaceStyle(get("userInterfaceStyle")),
+    background: first(get(platform, "backgroundColor"), get("backgroundColor")),
+    splash: first(
+      own?.backgroundColor,
+      plugin?.backgroundColor,
+      get(platform, "splash", "backgroundColor"),
+      get("splash", "backgroundColor"),
+    ),
+    splashDark: first(
+      at(own, ["dark", "backgroundColor"]),
+      at(plugin, ["dark", "backgroundColor"]),
+      get(platform, "splash", "dark", "backgroundColor"),
+      get("splash", "dark", "backgroundColor"),
+    ),
+  };
+  for (const key of Object.keys(out) as (keyof ExpoPlatformAppearance)[]) {
+    if (out[key] === undefined) delete out[key];
+  }
+  return out;
 }

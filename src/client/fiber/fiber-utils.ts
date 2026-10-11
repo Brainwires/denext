@@ -87,16 +87,6 @@ export function reprovidesContext(fiber: Fiber, contextId: symbol): boolean {
   return info !== undefined && info.id === contextId;
 }
 
-/**
- * A provider's value changed: force every descendant that READS `contextId` to render,
- * so a consumer isn't left stale when the memo bailout skips a non-consumer ancestor
- * between it and the provider. Walks the provider's committed subtree (its child links
- * before this render's reconcile), marks each consumer's lane, and threads `childLanes`
- * up to the provider so bailing ancestors still descend to reach it. Stops at a nested
- * provider that re-provides the same context (it shadows the value below). Mirrors
- * React's `propagateContextChange`; runs only on an actual value change of a mounted
- * provider, so a stable-value provider costs nothing.
- */
 /** Whether `node` is a component that read `contextId` during its last render. */
 export function readsContext(node: Fiber, contextId: symbol): boolean {
   return node.tag === "component" && node.readContexts !== undefined &&
@@ -146,6 +136,24 @@ export function findErrorBoundary(fiber: Fiber): Fiber | null {
     if (n.tag === "errorboundary" || isClassBoundary(n)) return n;
   }
   return null;
+}
+
+/**
+ * React's "Maximum update depth exceeded", naming the component `name`. In dev it also lists
+ * the components above `fiber` (React's component stack); production builds skip the walk.
+ * Built only when a loop is detected, so the hot paths carry just the call.
+ */
+export function updateDepthError(name: string, fiber?: Fiber | null): Error {
+  let stack = "";
+  if (devHydrationActive()) {
+    for (let n = fiber ?? null; n !== null; n = n.return) {
+      if (n.tag === "component") stack += `\n    in ${componentDisplayName(n.vnode.type)}`;
+    }
+  }
+  return new Error(
+    `denext: Maximum update depth exceeded. <${name}> repeatedly schedules an update during ` +
+      `render (e.g. calling setState unconditionally while rendering).${stack}`,
+  );
 }
 
 export function componentErrorInfo(fiber: Fiber): { componentStack: string } {

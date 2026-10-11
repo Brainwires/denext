@@ -69,6 +69,7 @@ import {
   renderSystemIconTemplate,
   SYSTEM_ICON_TEMPLATE_VERSION,
 } from "./system-icon-native-templates.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** A denext native feature that registers a plugin with the bridge. */
 export type NativeFeature =
@@ -472,7 +473,7 @@ async function iosFeatures(
 ): Promise<Set<NativeFeature>> {
   const features = new Set<NativeFeature>(including === null ? [] : [including]);
   for (const [feature, file] of Object.entries(IOS_FEATURE_FILES)) {
-    if (await isFile(join(root, IOS_APP, file))) features.add(feature as NativeFeature);
+    if (await isFile(nativeJoin(root, IOS_APP, file))) features.add(feature as NativeFeature);
   }
   return features;
 }
@@ -489,7 +490,7 @@ export async function installBridgeViewController(
   registration: { needle: string; step: string },
 ): Promise<void> {
   const root = inst.opts.dir;
-  const path = join(root, IOS_APP, BRIDGE_VC_FILE);
+  const path = nativeJoin(root, IOS_APP, BRIDGE_VC_FILE);
   const features = await iosFeatures(root, including);
   const existing = await inst.read(path);
   // A bridge a newer denext wrote is never downgraded (as if edited; --force still replaces it).
@@ -533,7 +534,7 @@ async function wireStoryboard(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
   root: string,
 ): Promise<void> {
-  const path = join(root, IOS_APP, "Base.lproj", "Main.storyboard");
+  const path = nativeJoin(root, IOS_APP, "Base.lproj", "Main.storyboard");
   const text = await readText(path);
   if (text === undefined || text.includes(`customClass="${BRIDGE_VC}"`)) return;
   if (STORYBOARD_STOCK.test(text)) {
@@ -557,7 +558,7 @@ async function wireStoryboard(
 
 /** Whether a Swift file in the app folder declares `class <name>: DenextBridgeViewController`. */
 async function subclassesBridge(root: string, name: string): Promise<boolean> {
-  const dir = join(root, IOS_APP);
+  const dir = nativeJoin(root, IOS_APP);
   const declaration = new RegExp(`\\bclass\\s+${name}\\s*:\\s*${BRIDGE_VC}\\b`);
   for await (const entry of Deno.readDir(dir)) {
     if (!entry.isFile || !entry.name.endsWith(".swift")) continue;
@@ -571,7 +572,7 @@ async function wireSceneDelegate(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
   root: string,
 ): Promise<void> {
-  const path = join(root, IOS_APP, "SceneDelegate.swift");
+  const path = nativeJoin(root, IOS_APP, "SceneDelegate.swift");
   await inst.edit(
     path,
     (t) => t.replace(/\bCAPBridgeViewController\(\)/g, `${BRIDGE_VC}()`),
@@ -583,7 +584,7 @@ async function reportBridgeSubclasses(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
   root: string,
 ): Promise<void> {
-  const dir = join(root, IOS_APP);
+  const dir = nativeJoin(root, IOS_APP);
   for await (const entry of Deno.readDir(dir)) {
     if (!entry.isFile || !entry.name.endsWith(".swift") || entry.name === BRIDGE_VC_FILE) continue;
     const text = await Deno.readTextFile(join(dir, entry.name));
@@ -1166,7 +1167,7 @@ export async function registerInMainActivity(
   feature: AndroidFeature | null,
 ): Promise<void> {
   const root = inst.opts.dir;
-  const activities = await findMainActivities(join(root, ANDROID_JAVA_ROOT));
+  const activities = await findMainActivities(nativeJoin(root, ANDROID_JAVA_ROOT));
   const { call, step } = feature === null ? EXPORT_ROUTES_STEP : ANDROID_REGISTRATIONS[feature];
   if (activities.length !== 1) {
     inst.report.manual.push(`Android: ${step}`);
@@ -1203,7 +1204,7 @@ export async function hasAndroidApp(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
 ): Promise<boolean> {
   try {
-    await Deno.stat(join(inst.opts.dir, "android", "app", "src", "main"));
+    await Deno.stat(nativeJoin(inst.opts.dir, "android", "app", "src", "main"));
     return true;
   } catch {
     inst.report.skipped.push("Android: no android/app/src/main (run `cap add android` first).");
@@ -1215,7 +1216,7 @@ export async function hasAndroidApp(
 export async function hasIosApp(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
 ): Promise<boolean> {
-  if (await isFile(join(inst.opts.dir, PBXPROJ))) return true;
+  if (await isFile(nativeJoin(inst.opts.dir, PBXPROJ))) return true;
   inst.report.skipped.push(`iOS: no ${PBXPROJ} (run \`cap add ios\` first).`);
   return false;
 }
@@ -1230,7 +1231,7 @@ export async function compileIntoAppAndWireBridge(
   files: readonly string[],
 ): Promise<void> {
   await inst.edit(
-    join(inst.opts.dir, PBXPROJ),
+    nativeJoin(inst.opts.dir, PBXPROJ),
     (t) => addSourceFiles(t, files, { randomId: inst.opts.randomId }).text,
   );
   await wireBridgeViewController(inst);

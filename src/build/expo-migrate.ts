@@ -18,12 +18,8 @@ import { dirname, join } from "@std/path";
 import { EXPO_SHIMS } from "../expo/manifest.ts";
 import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 import { unwrap } from "./config-edit.ts";
-import {
-  type ExpoAppConfig,
-  type ExpoBuildProperties,
-  PLUGIN_USAGE_STRINGS,
-  readJsonFile,
-} from "./expo-app-config.ts";
+import { type ExpoAppConfig, PLUGIN_USAGE_STRINGS, readJsonFile } from "./expo-app-config.ts";
+import { hasAppearance, resolveAppearance } from "./expo-appearance.ts";
 import { MOBILE_CAPABILITIES } from "./mobile-capabilities.ts";
 import { type Node, swcParse } from "./swc-ast.ts";
 
@@ -314,8 +310,9 @@ const NATIVE_FREE_PLUGINS: Readonly<Record<string, string>> = {
   "expo-asset": "assets are files of the export",
   "expo-dev-client": "development builds are `denext mobile dev`",
   "expo-web-browser": "the in-app browser is the browser capability",
-  "expo-splash-screen": "icons and splash come from `denext mobile assets`",
-  "expo-system-ui": "the root background is the page's",
+  "expo-splash-screen": "the splash image comes from `denext mobile assets`, its colours from " +
+    "`denext mobile add app-config`",
+  "expo-system-ui": "the root background is the page's and `denext mobile add app-config`'s",
   "expo-localization": "locales come from the WebView",
   "expo-updates": "over-the-air updates are denext OTA (`denext mobile add-ota`)",
   "expo-build-properties": "its settings are carried by `denext mobile add app-config`",
@@ -339,8 +336,9 @@ function pluginCarried(plugin: string): boolean {
 function appConfigToCarry(
   manualPlist: Record<string, string | null>,
   manualPermissions: readonly string[],
-  build: ExpoBuildProperties | undefined,
+  config: ExpoAppConfig,
 ): string | null {
+  const build = config.buildProperties;
   const parts: string[] = [];
   if (Object.values(manualPlist).some((v) => v !== null)) parts.push("iOS usage strings");
   if (manualPermissions.length > 0) parts.push("Android permissions");
@@ -349,6 +347,10 @@ function appConfigToCarry(
       build.androidTargetSdk || build.usesCleartextTraffic !== undefined)
   ) {
     parts.push("expo-build-properties");
+  }
+  const { ios, android } = config.appearance;
+  if ([ios, android].some((p) => hasAppearance(resolveAppearance(p)))) {
+    parts.push("launch and background colours");
   }
   return parts.length > 0 ? `app config: ${parts.join(", ")}` : null;
 }
@@ -389,7 +391,7 @@ export function expoMobilePlan(
   }
   const manualPlist = plistCapabilities(config.infoPlist, add);
   const manualPermissions = permissionCapabilities(config.androidPermissions, add);
-  const carry = appConfigToCarry(manualPlist, manualPermissions, config.buildProperties);
+  const carry = appConfigToCarry(manualPlist, manualPermissions, config);
   if (carry) add("app-config", carry);
   const { schemes: validSchemes, domains: validDomains, manualLinks } = safeLinks(config);
   if (config.schemes.length > 0) {
@@ -902,6 +904,16 @@ export function capacitorIdentity(
   };
 }
 
+/** `value` as a TypeScript literal at `indent` (identifier keys unquoted). */
+function tsLiteral(value: unknown, indent: string): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return JSON.stringify(value);
+  const inner = indent + "  ";
+  const lines = Object.entries(value).map(([k, v]) =>
+    `${inner}${/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)}: ${tsLiteral(v, inner)},`
+  );
+  return `{\n${lines.join("\n")}\n${indent}}`;
+}
+
 /**
  * The generated `capacitor.config.ts`: the app's id and name, the static export as the web
  * directory. Shared by the Expo path and `denext migrate --enable-capacitor`.
@@ -909,13 +921,19 @@ export function capacitorIdentity(
  * @param marker The migrate marker comment line.
  * @param identity The app id and name.
  * @param placeholderNote Why a placeholder id is one (the TODO comment above it).
+ * @param extra More top-level keys (an Expo app's colours and SplashScreen settings,
+ *   ./expo-appearance.ts), written after `webDir` under a comment saying where they came from.
  */
 export function capacitorConfigSource(
   marker: string,
   identity: { appId: string; appName: string; placeholderId: boolean },
   placeholderNote = "the app config's bundle identifier could not be read",
+  extra: Record<string, unknown> = {},
 ): string {
   const todo = identity.placeholderId ? `  // TODO: a placeholder — ${placeholderNote}.\n` : "";
+  const extraLines = Object.keys(extra).length === 0 ? "" : "  // The app config's launch and " +
+    "background colours (the native splash is held until the app's first frame).\n" +
+    Object.entries(extra).map(([k, v]) => `  ${k}: ${tsLiteral(v, "  ")},\n`).join("");
   return `${marker}
 import type { CapacitorConfig } from "@capacitor/cli";
 
@@ -924,7 +942,7 @@ ${todo}  appId: ${JSON.stringify(identity.appId)},
   appName: ${JSON.stringify(identity.appName)},
   // denext's static export (\`deno task export\`) writes here; Capacitor bundles it.
   webDir: "out",
-};
+${extraLines}};
 
 export default config;
 `;

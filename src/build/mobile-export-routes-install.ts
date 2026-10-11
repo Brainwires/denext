@@ -9,7 +9,6 @@
 // unedited denext file from an earlier release is upgraded to the current one (adding the
 // router), an edited one is kept and reported. Running it twice changes nothing.
 
-import { join } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   BRIDGE_VC_FILE,
@@ -24,6 +23,7 @@ import {
   wireBridgeViewController,
 } from "./mobile-native-install.ts";
 import type { NativeInstallStep } from "./mobile-capabilities.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** What the bridge view controller must contain, and the manual step when it cannot. */
 const IOS_ROUTER = {
@@ -57,7 +57,7 @@ export async function addExportRoutesToProject(
   if (await hasIosApp(inst)) {
     await installBridgeViewController(inst, null, IOS_ROUTER);
     await inst.edit(
-      join(opts.dir, PBXPROJ),
+      nativeJoin(opts.dir, PBXPROJ),
       (text) => addSourceFiles(text, [BRIDGE_VC_FILE], { randomId: opts.randomId }).text,
     );
     await wireBridgeViewController(inst);

@@ -9,17 +9,14 @@
 // `denext mobile add`, `mobile sync` and `mobile build` run it after `cap sync`.
 
 import { dirname, join, relative, resolve, SEPARATOR } from "@std/path";
-import { capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
+import { loadNativeDirs } from "./capacitor-native-dirs.ts";
 
 /** One `.package(name: …, path: "…")` entry of a Package.swift. */
 const LOCAL_PACKAGE = /(\.package\(\s*name:\s*"[^"]*",\s*path:\s*")([^"]+)("\s*\))/g;
 
 /** The iOS project folder of the Capacitor project at `root` (`ios.path`, default `ios`). */
 export async function capacitorIosDir(root: string): Promise<string> {
-  const file = await capacitorConfigFile(root);
-  const config = file ? await readCapacitorConfig(file, await Deno.readTextFile(file)) : null;
-  const ios = config?.ios as { path?: unknown } | undefined;
-  return join(root, typeof ios?.path === "string" ? ios.path : "ios");
+  return join(root, (await loadNativeDirs(root)).ios);
 }
 
 /** The name in the package.json of the folder `dir`, or null. */

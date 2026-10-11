@@ -40,6 +40,7 @@ import {
   NativeSnapshot,
   type ResolvedFlavor,
 } from "./mobile-flavor.ts";
+import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** A command a build step runs; `env` carries secrets and is never printed. */
 export interface BuildCommand extends PlannedCommand {
@@ -183,10 +184,10 @@ async function exists(path: string): Promise<boolean> {
 
 /** The Xcode container: a CocoaPods workspace when there is one, else the project. */
 async function xcodeContainer(root: string): Promise<string[]> {
-  const workspace = join(root, "ios/App/App.xcworkspace");
-  return await exists(join(root, "ios/App/Podfile")) && await exists(workspace)
+  const workspace = nativeJoin(root, "ios/App/App.xcworkspace");
+  return await exists(nativeJoin(root, "ios/App/Podfile")) && await exists(workspace)
     ? ["-workspace", workspace]
-    : ["-project", join(root, "ios/App/App.xcodeproj")];
+    : ["-project", nativeJoin(root, "ios/App/App.xcodeproj")];
 }
 
 /** The iOS signing the plan uses. */
@@ -383,7 +384,7 @@ function androidTask(
   opts: MobileBuildOptions,
   signed: boolean,
 ): { task: string; produced: string } {
-  const out = join(opts.root, "android/app/build/outputs");
+  const out = nativeJoin(opts.root, "android/app/build/outputs");
   if (!opts.release) {
     return { task: "assembleDebug", produced: join(out, "apk/debug/app-debug.apk") };
   }
@@ -458,7 +459,7 @@ function androidNative(opts: MobileBuildOptions): NativePlan {
     commands: [{
       cmd: gradlewCommand(),
       args: [task, ...(opts.jobs ? [`--max-workers=${opts.jobs}`] : [])],
-      cwd: join(opts.root, "android"),
+      cwd: nativeJoin(opts.root, "android"),
       ...env,
     }],
     produced,
@@ -478,7 +479,7 @@ async function projectVersions(
   root: string,
   platform: MobilePlatform,
 ): Promise<{ build?: number; version?: string }> {
-  const file = join(root, platform === "ios" ? NATIVE_FILES.pbxproj : NATIVE_FILES.gradle);
+  const file = nativeJoin(root, platform === "ios" ? NATIVE_FILES.pbxproj : NATIVE_FILES.gradle);
   const text = await Deno.readTextFile(file).catch(() => "");
   return platform === "ios" ? iosVersions(text) : androidVersions(text);
 }
@@ -511,7 +512,8 @@ function artifactPath(
  */
 export async function planMobileBuild(opts: MobileBuildOptions): Promise<MobileBuildPlan> {
   const { platform, root } = opts;
-  if (!(await exists(join(root, platform)))) {
+  await loadNativeDirs(root);
+  if (!(await exists(nativeJoin(root, platform)))) {
     throw new Error(`no ${platform}/ in ${root} (run \`npx cap add ${platform}\` first)`);
   }
   const identity = await capacitorIdentity(root);
@@ -717,6 +719,7 @@ export async function runMobileBuild(
   opts: { versionName?: string; buildNumber?: number },
   deps: MobileBuildDeps,
 ): Promise<BuildArtifact> {
+  await loadNativeDirs(plan.root);
   await assertReleaseServer(plan);
   const snapshot = new NativeSnapshot(plan.root);
   const exportFirst = plan.commands[0]?.args.includes("export") ? 1 : 0;

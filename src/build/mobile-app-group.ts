@@ -32,6 +32,7 @@ import {
   PBXPROJ,
   readText,
 } from "./mobile-native-install.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** The entitlement that lists an app's App Groups. */
 const APP_GROUP_ENTITLEMENT = "com.apple.security.application-groups";
@@ -151,7 +152,7 @@ function xmlText(value: string): string {
  * target names none, `App/App.entitlements`, which is then set on every configuration.
  */
 async function appEntitlements(inst: Installer): Promise<string[]> {
-  const pbxPath = join(inst.opts.dir, PBXPROJ);
+  const pbxPath = nativeJoin(inst.opts.dir, PBXPROJ);
   const pbxproj = (await readText(pbxPath))!;
   const target = applicationTargetName(pbxproj);
   const values = [
@@ -199,9 +200,9 @@ function portalNote(group: string, appId: string): string {
  */
 export async function installAppGroup(inst: Installer, group: string): Promise<void> {
   for (const file of await appEntitlements(inst)) {
-    await addGroupEntitlement(inst, join(inst.opts.dir, "ios", "App", file), group);
+    await addGroupEntitlement(inst, nativeJoin(inst.opts.dir, "ios", "App", file), group);
   }
-  await setPlistStrings(inst, join(inst.opts.dir, IOS_APP, "Info.plist"), {
+  await setPlistStrings(inst, nativeJoin(inst.opts.dir, IOS_APP, "Info.plist"), {
     [APP_GROUP_PLIST_KEY]: group,
   });
 }
@@ -289,7 +290,7 @@ function extensionSettings(
 
 /** The name the app shows (Info.plist CFBundleDisplayName, else CFBundleName), if literal. */
 async function appDisplayName(root: string): Promise<string | undefined> {
-  const plist = await readText(join(root, IOS_APP, "Info.plist"));
+  const plist = await readText(nativeJoin(root, IOS_APP, "Info.plist"));
   const top = plist === undefined ? null : plistTopDict(plist);
   if (!plist || !top) return undefined;
   for (const key of ["CFBundleDisplayName", "CFBundleName"]) {
@@ -317,7 +318,7 @@ export async function installExtensionTarget(
   sources: readonly string[],
 ): Promise<void> {
   const root = inst.opts.dir;
-  const folder = join(root, "ios", "App", ext.name);
+  const folder = nativeJoin(root, "ios", "App", ext.name);
   await Deno.mkdir(folder, { recursive: true });
   const displayName = await appDisplayName(root) ?? ext.name;
   await ensureFile(
@@ -331,7 +332,7 @@ export async function installExtensionTarget(
   });
   await addGroupEntitlement(inst, join(folder, `${ext.name}.entitlements`), group);
   const randomId = inst.opts.randomId;
-  await inst.edit(join(root, PBXPROJ), (text) => {
+  await inst.edit(nativeJoin(root, PBXPROJ), (text) => {
     const app = applicationTargetName(text);
     let t = addNativeTarget(text, {
       name: ext.name,
@@ -355,7 +356,7 @@ export async function installExtensionTarget(
  * @param group The App Group.
  */
 export async function reportAppGroup(inst: Installer, group: string): Promise<void> {
-  const pbxproj = await readText(join(inst.opts.dir, PBXPROJ)) ?? "";
+  const pbxproj = await readText(nativeJoin(inst.opts.dir, PBXPROJ)) ?? "";
   const note = portalNote(group, appBundleId(pbxproj) ?? "<app bundle id>");
   if (!inst.report.manual.includes(note)) inst.report.manual.push(note);
 }

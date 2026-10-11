@@ -46,6 +46,7 @@ import {
   swiftRegistration,
   typescriptClient,
 } from "./native-module-native-templates.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Options for {@linkcode addNativeModulesToProject}. */
 export interface NativeModuleOptions extends NativeInstallOptions {
@@ -151,7 +152,7 @@ async function installIos(inst: Installer): Promise<void> {
     step: "make capacitorDidLoad() call `DenextNativeModules.register(bridge)` after " +
       "super.capacitorDidLoad().",
   });
-  const app = join(root, IOS_APP);
+  const app = nativeJoin(root, IOS_APP);
   for (const name of names) {
     await writeMarked(inst, join(app, `${name}Plugin.swift`), swiftPlugin(name));
   }
@@ -194,7 +195,7 @@ async function editGradle(
   edit: (text: string) => string | null,
   step: string,
 ): Promise<void> {
-  const path = join(inst.opts.dir, rel);
+  const path = nativeJoin(inst.opts.dir, rel);
   const text = await inst.read(path);
   const next = text === undefined ? null : edit(text);
   if (next === null) return void inst.report.manual.push(`${rel}: ${step}`);
@@ -204,7 +205,7 @@ async function editGradle(
 async function installAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   const names = inst.opts.names;
-  const dir = join(inst.opts.dir, ANDROID_DIR);
+  const dir = nativeJoin(inst.opts.dir, ANDROID_DIR);
   for (const name of names) {
     await writeMarked(inst, join(dir, `${name}Plugin.kt`), kotlinPlugin(name));
   }

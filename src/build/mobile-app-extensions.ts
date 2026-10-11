@@ -83,6 +83,7 @@ import {
   reportAppGroup,
   resolveAppGroup,
 } from "./mobile-app-group.ts";
+import { nativeJoin } from "./capacitor-native-dirs.ts";
 
 /** Options for the app extension installers. */
 export interface AppExtensionOptions extends NativeInstallOptions {
@@ -160,7 +161,7 @@ async function compile(
   where: { target?: string; group?: string },
 ): Promise<void> {
   const randomId = inst.opts.randomId;
-  await inst.edit(join(inst.opts.dir, PBXPROJ), (t) =>
+  await inst.edit(nativeJoin(inst.opts.dir, PBXPROJ), (t) =>
     addSourceFiles(t, files, {
       target: where.target ?? applicationTargetName(t),
       group: where.group,
@@ -170,7 +171,7 @@ async function compile(
 
 /** The App Group for this run (from `--app-group` or the app's bundle id). */
 async function appGroupOf(inst: Installer): Promise<string> {
-  return resolveAppGroup((await readText(join(inst.opts.dir, PBXPROJ)))!, inst.opts.appGroup);
+  return resolveAppGroup((await readText(nativeJoin(inst.opts.dir, PBXPROJ)))!, inst.opts.appGroup);
 }
 
 /**
@@ -189,7 +190,7 @@ async function installAppPlugin(
       `make capacitorDidLoad() call \`bridge?.registerPluginInstance(${pluginClass}())\` after ` +
       "super.capacitorDidLoad().",
   });
-  await writeTemplates(inst, join(inst.opts.dir, IOS_APP), files, APP_EXTENSION_TEMPLATES);
+  await writeTemplates(inst, nativeJoin(inst.opts.dir, IOS_APP), files, APP_EXTENSION_TEMPLATES);
   await compile(inst, [BRIDGE_VC_FILE, ...Object.keys(files)], {});
 }
 
@@ -206,7 +207,7 @@ async function editManifest(
   edit: (text: string) => string | null,
   step: string,
 ): Promise<void> {
-  const path = join(inst.opts.dir, ANDROID_MANIFEST);
+  const path = nativeJoin(inst.opts.dir, ANDROID_MANIFEST);
   const text = await readText(path);
   const next = text === undefined ? null : edit(text);
   if (next === null) return void inst.report.manual.push(`${ANDROID_MANIFEST}: ${step}`);
@@ -218,7 +219,7 @@ async function editManifest(
 
 /** The app's first registered custom URL scheme (Info.plist CFBundleURLSchemes). */
 async function appScheme(root: string): Promise<string | undefined> {
-  const plist = await readText(join(root, IOS_APP, "Info.plist"));
+  const plist = await readText(nativeJoin(root, IOS_APP, "Info.plist"));
   const top = plist === undefined ? null : plistTopDict(plist);
   if (!plist || !top || !plistEntry(plist, top, "CFBundleURLTypes")) return undefined;
   const types = plist.slice(plist.indexOf("<key>CFBundleURLTypes</key>"), top.close);
@@ -248,7 +249,7 @@ async function installShareIos(inst: Installer): Promise<void> {
   );
   await writeTemplates(
     inst,
-    join(root, "ios", "App", SHARE_EXTENSION_TARGET),
+    nativeJoin(root, "ios", "App", SHARE_EXTENSION_TARGET),
     SHARE_EXTENSION_IOS_FILES,
     APP_EXTENSION_TEMPLATES,
   );
@@ -272,7 +273,7 @@ async function installShareAndroid(inst: Installer): Promise<void> {
   if (!(await hasAndroidApp(inst))) return;
   await writeTemplates(
     inst,
-    join(inst.opts.dir, ANDROID_JAVA, "dev", "denext", "sharereceive"),
+    nativeJoin(inst.opts.dir, ANDROID_JAVA, "dev", "denext", "sharereceive"),
     SHARE_RECEIVE_ANDROID_FILES,
     APP_EXTENSION_TEMPLATES,
   );
@@ -316,10 +317,10 @@ export async function addShareExtensionToProject(
 async function namesIn(root: string, suffix: string, decl: (name: string) => string) {
   const names: string[] = [];
   try {
-    for await (const entry of Deno.readDir(join(root, WIDGETS_DIR))) {
+    for await (const entry of Deno.readDir(nativeJoin(root, WIDGETS_DIR))) {
       const m = new RegExp(`^(\\w+)${suffix}\\.swift$`).exec(entry.name);
       if (!entry.isFile || !m || !EXTENSION_NAME.test(m[1])) continue;
-      const text = await Deno.readTextFile(join(root, WIDGETS_DIR, entry.name));
+      const text = await Deno.readTextFile(nativeJoin(root, WIDGETS_DIR, entry.name));
       if (text.includes(decl(m[1]))) names.push(m[1]);
     }
   } catch (err) {
@@ -346,7 +347,12 @@ function installedLiveActivities(root: string): Promise<string[]> {
 /** Create (or keep) the widget extension target with its fixed files. */
 async function installWidgetExtension(inst: Installer, group: string): Promise<void> {
   const root = inst.opts.dir;
-  await writeTemplates(inst, join(root, WIDGETS_DIR), WIDGETS_IOS_FILES, APP_EXTENSION_TEMPLATES);
+  await writeTemplates(
+    inst,
+    nativeJoin(root, WIDGETS_DIR),
+    WIDGETS_IOS_FILES,
+    APP_EXTENSION_TEMPLATES,
+  );
   await installExtensionTarget(
     inst,
     {
@@ -366,7 +372,7 @@ async function composeBundle(inst: Installer): Promise<void> {
   const widgets = await installedWidgets(root);
   const configurable = await installedConfigurable(root);
   const live = (await installedLiveActivities(root)).length > 0;
-  const path = join(root, WIDGETS_DIR, "DenextWidgetsBundle.swift");
+  const path = nativeJoin(root, WIDGETS_DIR, "DenextWidgetsBundle.swift");
   const content = await renderAppExtensionTemplate(
     widgetsBundleSource(widgets, live, configurable),
   );
@@ -389,7 +395,7 @@ async function composeBundle(inst: Installer): Promise<void> {
 /** The app's Android resource package: `namespace` in app/build.gradle(.kts). */
 async function androidNamespace(root: string): Promise<string | undefined> {
   for (const file of ["build.gradle", "build.gradle.kts"]) {
-    const text = await readText(join(root, "android", "app", file));
+    const text = await readText(nativeJoin(root, "android", "app", file));
     const ns = text && /\bnamespace\s*=?\s*["']([\w.]+)["']/.exec(text)?.[1];
     if (ns) return ns;
   }
@@ -403,7 +409,7 @@ async function installWidgetsIos(inst: Installer, names: readonly string[]): Pro
   await installAppPlugin(inst, "widgets", WIDGETS_PLUGIN_IOS_FILES, "DenextWidgetsPlugin");
   await installWidgetExtension(inst, group);
   for (const name of names) {
-    const path = join(root, WIDGETS_DIR, `${name}Widget.swift`);
+    const path = nativeJoin(root, WIDGETS_DIR, `${name}Widget.swift`);
     const existing = await readText(path);
     const params = inst.opts.configurable ??
       (existing === undefined ? undefined : widgetParamsIn(existing));
@@ -428,7 +434,7 @@ async function installWidgetsAndroid(inst: Installer, names: readonly string[]):
     );
     return;
   }
-  const javaDir = join(root, ANDROID_JAVA, "dev", "denext", "widgets");
+  const javaDir = nativeJoin(root, ANDROID_JAVA, "dev", "denext", "widgets");
   await writeTemplates(inst, javaDir, WIDGETS_ANDROID_FILES, APP_EXTENSION_TEMPLATES);
   for (const name of names) {
     const res = snakeName(name);
@@ -439,12 +445,12 @@ async function installWidgetsAndroid(inst: Installer, names: readonly string[]):
     );
     await writeMarked(
       inst,
-      join(root, ANDROID_MAIN, "res", "layout", `denext_widget_${res}.xml`),
+      nativeJoin(root, ANDROID_MAIN, "res", "layout", `denext_widget_${res}.xml`),
       await renderAppExtensionTemplate(androidWidgetLayout(), "xml"),
     );
     await writeMarked(
       inst,
-      join(root, ANDROID_MAIN, "res", "xml", `denext_widget_${res}_info.xml`),
+      nativeJoin(root, ANDROID_MAIN, "res", "xml", `denext_widget_${res}_info.xml`),
       await renderAppExtensionTemplate(androidWidgetInfo(name), "xml"),
     );
     await editManifest(
@@ -502,19 +508,19 @@ async function installLiveActivitiesIos(inst: Installer, names: readonly string[
   await installWidgetExtension(inst, group);
   await writeTemplates(
     inst,
-    join(root, WIDGETS_DIR),
+    nativeJoin(root, WIDGETS_DIR),
     LIVE_ACTIVITY_SHARED_FILES,
     APP_EXTENSION_TEMPLATES,
   );
   for (const name of names) {
     await writeMarked(
       inst,
-      join(root, WIDGETS_DIR, `${name}LiveActivity.swift`),
+      nativeJoin(root, WIDGETS_DIR, `${name}LiveActivity.swift`),
       await renderAppExtensionTemplate(liveActivitySource(name)),
     );
   }
   const all = await installedLiveActivities(root);
-  const dispatcher = join(root, WIDGETS_DIR, "DenextLiveActivities.swift");
+  const dispatcher = nativeJoin(root, WIDGETS_DIR, "DenextLiveActivities.swift");
   if (
     !(await writeMarked(
       inst,
@@ -539,7 +545,7 @@ async function installLiveActivitiesIos(inst: Installer, names: readonly string[
   // The app starts the activities, so it compiles the attributes too.
   await compile(inst, shared, { group: WIDGETS_TARGET });
   await composeBundle(inst);
-  const plist = join(root, IOS_APP, "Info.plist");
+  const plist = nativeJoin(root, IOS_APP, "Info.plist");
   const text = await readText(plist);
   const next = text === undefined ? null : withPlistTrue(text, "NSSupportsLiveActivities");
   if (next === null) {

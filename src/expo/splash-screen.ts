@@ -3,8 +3,10 @@
  * (`@capacitor/splash-screen` in the Capacitor shell; nothing to hide on the web, where the
  * SPA's boot shell plays the splash).
  *
- * For `preventAutoHideAsync` to hold the native splash, configure the Capacitor plugin with
- * `launchAutoHide: false` (`denext mobile add splash`); the call itself only records intent.
+ * As in Expo, the native splash hides by itself once the app's first frame is drawn (React
+ * Native mode hides it after the root's first commit), and `preventAutoHideAsync` keeps it up
+ * until `hideAsync`. The Capacitor plugin (`denext mobile add splash`) must be configured with
+ * `launchAutoHide: false` for either to decide, which `denext migrate --from expo` writes.
  *
  * @example
  * ```ts
@@ -18,7 +20,7 @@
  * @module
  */
 
-import { hideSplash } from "../mobile/splash.ts";
+import { hideSplash, preventAutoHideSplash } from "../mobile/splash.ts";
 
 /** Options for {@linkcode setOptions}. */
 export interface SplashScreenOptions {
@@ -29,13 +31,13 @@ export interface SplashScreenOptions {
 }
 
 /**
- * Keep the splash screen up until {@linkcode hideAsync}. The native hold comes from the
- * plugin's `launchAutoHide: false`; this call has nothing to change.
+ * Keep the splash screen up after the app's first frame, until {@linkcode hideAsync}. Call it
+ * at module scope, before the first render.
  *
- * @returns `true`.
+ * @returns Whether it held the splash (`false` once the splash is hidden, as in Expo).
  */
 export function preventAutoHideAsync(): Promise<boolean> {
-  return Promise.resolve(true);
+  return Promise.resolve(preventAutoHideSplash());
 }
 
 /**
