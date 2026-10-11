@@ -24,7 +24,10 @@ function octal(n: number, width: number): string {
 
 function tarHeader(e: TarEntry, size: number): Uint8Array {
   const h = new Uint8Array(512);
-  put(h, 0, 100, e.name);
+  // A name over 100 bytes goes in the ustar prefix field, split at a '/'.
+  const cut = e.name.length > 100 ? e.name.lastIndexOf("/", e.name.length - 2) : -1;
+  put(h, 0, 100, cut >= 0 ? e.name.slice(cut + 1) : e.name);
+  if (cut >= 0) put(h, 345, 155, e.name.slice(0, cut));
   put(h, 100, 8, octal(e.mode ?? 0o644, 8));
   put(h, 108, 8, octal(0, 8));
   put(h, 116, 8, octal(0, 8));

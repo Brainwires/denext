@@ -27,6 +27,13 @@ and this project adheres to
   when no `DENEXT_ENTITLEMENTS` / `desktop.macos.entitlements` replaces them). Checked on a
   Developer ID–signed CEF build: `codesign --verify --deep --strict` passes and the renderer
   helpers start. Regenerate an existing script with `denext desktop package --regenerate-scripts`.
+- **The pinned Intel-Mac (`x86_64-apple-darwin`) CEF runtime installs again.** Every Mach-O in that
+  archive ships with no signature (Apple's linker signs arm64 code ad hoc, not x86_64), and the
+  install's ad-hoc re-sign of `laufey.app/Contents/MacOS/laufey` failed with "code object is not
+  signed at all / In subcomponent: …laufey Helper (Renderer).app", so CEF packaging on an Intel Mac
+  stopped before it started. The install now ad-hoc signs unsigned nested code inside-out (the CEF
+  framework's libraries, the framework, each helper app) before that re-sign; code that already
+  carries a signature, as in the arm64 archive, is left alone.
 
 ## [3.4.10] - 2026-10-11
 
