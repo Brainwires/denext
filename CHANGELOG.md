@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.7] - 2026-10-11
+
 ### Added
 
 - **`secureStore` can fall back to `sessionStorage`, opt in per call.** `secureStore.set(key, value,
@@ -49,14 +51,12 @@ and this project adheres to
   `["--node-modules-dir=none", "--exclude-unused-npm"]` into the generated `denext.config.ts`;
   `denext desktop run | dev | package` add both flags themselves for any npm project. The agent
   guide (AGENTS.md, llms.txt) and the desktop guide no longer say a pnpm workspace needs them.
-
 - **The desktop docs and `denext desktop` no longer tell a pnpm workspace to set `desktop.denoFlags`.**
   `denext desktop run | dev | package` printed a hint, and the desktop guide and the config
   reference said, that a pnpm workspace member (`nodeModulesDir: "manual"`) needs
   `denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"]` or `deno desktop` rewrites the
   root `package.json`. `deno desktop` already gets both flags for any project with a
   `package.json` or `node_modules`; the hint is gone and the docs say so.
-
 - **A desktop package script run directly works in a pnpm workspace.** `deno run -A
   scripts/package-<os>.ts` resolved `denext/desktop`'s own npm build dependencies (the sidecar
   bundler's esbuild) in the app's `nodeModulesDir: "manual"` mode, where they are not, so the run
@@ -65,7 +65,6 @@ and this project adheres to
   `denext/desktop` dynamically after re-running themselves once under `--node-modules-dir=none`,
   whatever the project's mode; `denext desktop package` tells them it already did. Existing
   projects pick this up with `denext desktop package --regenerate-scripts`.
-
 - **denext no longer makes Deno rewrite a pnpm workspace's root `package.json`.** Deno 2.9 reads
   `pnpm-workspace.yaml` only to migrate it: when a process in a pnpm workspace member's manual
   `node_modules` cannot find an `npm:` package there, it writes a `workspaces` field into the root
@@ -76,7 +75,6 @@ and this project adheres to
   `--node-modules-dir=none`, as the tasks `denext migrate` writes already did; elsewhere their
   command line is unchanged. The migrating guide says the flag is needed only on the command you
   type.
-
 - **`denext mobile build` replaces Capacitor's placeholder splash on its own.** It replaced the
   splash only together with a placeholder icon, so an app whose icon was already its own kept the
   Capacitor logo on its launch screen. Each of the two is now replaced while it is still the
@@ -87,7 +85,6 @@ and this project adheres to
   (and `--check`), `denext mobile assets` / `build` and `denext mobile doctor --store` now say that
   the app config computes the icon, what stands in for it, and to set `mobile.icon` in
   denext.config.ts to the icon exported as a 1024×1024 PNG.
-
 - **Every `denext mobile` message names the native files where `ios.path` / `android.path` put
   them.** The manual steps and warnings of `mobile add` (each native installer's, e.g. "set
   NSSupportsLiveActivities", and the capability plan's), `add-ota`, `mobile doctor`, `mobile dev` and
@@ -98,7 +95,6 @@ and this project adheres to
   lines `denext migrate --enable-capacitor` / `--from expo` add for the native build outputs follow
   an existing capacitor.config's paths too, and `denext mobile --help` says that its paths are
   Capacitor's default layout.
-
 - **React Native mode: `TextInput` and the stack header look like React Native.** A focused
   `TextInput` drew the browser's focus ring, and a long placeholder in a one-line `multiline`
   input (a chat composer) wrapped onto a clipped second line. react-native-web's `TextInput` now
@@ -12926,7 +12922,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.6...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.7...development
+[3.4.7]: https://jsr.io/@denext/denext@3.4.7
 [3.4.6]: https://jsr.io/@denext/denext@3.4.6
 [3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4
