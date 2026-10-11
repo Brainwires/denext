@@ -29,7 +29,7 @@ import {
   type SidecarDefinition,
   type SidecarExposedValue,
   sidecarListError,
-  sidecarModulePath,
+  sidecarModuleUrl,
   type SidecarStatus,
 } from "./sidecar.ts";
 import {
@@ -46,6 +46,7 @@ import {
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
 import { registerSidecarStopper } from "./sidecar-registry.ts";
+import { parentChildBase, type SidecarChildBase } from "./sidecar-child.ts";
 import {
   captureLoginShellEnv,
   LOGIN_SHELL_TIMEOUT_MS,
@@ -145,10 +146,10 @@ async function defaultLauncher(
 ): Promise<SidecarLauncher> {
   const base = options.importMetaUrl ?? `${toFileUrl(Deno.cwd()).href}/`;
   if ("module" in def.run) {
-    const path = sidecarModulePath(def);
-    const entry = /^[a-z][a-z0-9+.-]*:/i.test(path) ? path : new URL(path, base).href;
-    if (def.run.nodeModules === undefined) return workerSidecarLauncher({ entry });
-    return bundledLauncher(def.name, entry, options.cacheDir);
+    const entry = sidecarModuleUrl(def, base);
+    const child = parentChildBase(def.name, options.importMetaUrl);
+    if (def.run.nodeModules === undefined) return workerSidecarLauncher({ entry, child });
+    return bundledLauncher(def.name, entry, options.cacheDir, child);
   }
   const program = await resolveSidecarProgram(
     def.run.exec,
@@ -173,6 +174,7 @@ function bundledLauncher(
   name: string,
   entry: string,
   cacheDir: string | undefined,
+  child: SidecarChildBase,
 ): SidecarLauncher {
   let modules: Promise<string | undefined> | undefined;
   return async (ctx) => {
@@ -190,7 +192,9 @@ function bundledLauncher(
       throw err;
     }
     const requireBase = root === undefined ? undefined : join(root, "sidecar.cjs");
-    return await workerSidecarLauncher({ entry, ...(requireBase ? { requireBase } : {}) })(ctx);
+    return await workerSidecarLauncher({ entry, child, ...(requireBase ? { requireBase } : {}) })(
+      ctx,
+    );
   };
 }
 

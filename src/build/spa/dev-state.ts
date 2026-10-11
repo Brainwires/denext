@@ -1,7 +1,12 @@
 // SPA mode dev server: the shared state — the per-generation bundle, the live-reload
 // subscribers, and the optional unbundled (per-module HMR) loop.
 
-import { type Platform, platformResolution } from "../platform-extensions.ts";
+import {
+  type Platform,
+  platformResolution,
+  projectPlatformRedirects,
+  sharedBuildTarget,
+} from "../platform-extensions.ts";
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
 import {
@@ -22,7 +27,7 @@ import { DevEventLog } from "../dev-events.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { spaTailwind } from "../react-native-uniwind.ts";
 import { bundleSpaInto, spaCssGraph, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
-import { renderSpaShell, spaShellInstall } from "./shell.ts";
+import { renderSpaShell, spaShellFor, spaShellInstall } from "./shell.ts";
 import type { SpaShellParts } from "./shell-capture.ts";
 import {
   CLIENT_PREFIX,
@@ -54,6 +59,20 @@ export interface SpaDevServerOptions {
 /** The unbundled SPA's separately-extracted stylesheet URL. */
 export const UNBUNDLED_STYLE_PATH = CLIENT_PREFIX + "unbundled.css";
 
+/** One target's bundled-loop build. */
+export interface SpaTargetBuild {
+  /**
+   * The current generation's build dir, or null when invalidated. The client assets live
+   * in a per-generation dir served via serveStatic — so the compat (esbuild, multi-file)
+   * and plain (deno bundle) paths are served identically.
+   */
+  dir: string | null;
+  /** Whether the build emitted a stylesheet. */
+  hasStyles: boolean;
+  /** The build in flight, if any. */
+  building: Promise<string> | null;
+}
+
 /** Everything the SPA dev server's stages share. */
 export interface SpaDevState {
   readonly options: SpaDevServerOptions;
@@ -63,13 +82,10 @@ export interface SpaDevState {
   /** Bumped on every source change; the bundle + extracted CSS are per generation. */
   generation: number;
   /**
-   * The current generation's build dir, or null when invalidated. The client assets live
-   * in a per-generation dir served via serveStatic — so the compat (esbuild, multi-file)
-   * and plain (deno bundle) paths are served identically.
+   * The bundled loop's build per target (`web`, and each shell target whose platform files
+   * resolve unlike web's; see {@linkcode spaBuildTarget}). Cleared by {@linkcode invalidateBuilds}.
    */
-  devDir: string | null;
-  hasStyles: boolean;
-  building: Promise<string> | null;
+  readonly builds: Map<Platform, SpaTargetBuild>;
   /** Live-reload (SSE) subscribers. */
   readonly reloadClients: SseClients;
   /**
@@ -115,9 +131,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     spa,
     entryPath,
     generation: 0,
-    devDir: null,
-    hasStyles: false,
-    building: null,
+    builds: new Map(),
     reloadClients: new Set(),
     devEvents: new DevEventLog(),
     unbundledOptIn: unbundledOptIn(options),
@@ -130,47 +144,100 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
   };
 }
 
+/** A target's build dir name for a generation: `<gen>` for web, `<gen>-<target>` for another. */
+function genDirName(gen: number, platform: Platform): string {
+  return platform === "web" ? String(gen) : `${gen}-${platform}`;
+}
+
 /**
- * Prune prior generations — a long dev session (many edits) would otherwise accumulate a
- * full bundle copy per change. Builds are serialized and only the current generation is
- * served, so removing the others is safe.
+ * Prune `platform`'s prior generations — a long dev session (many edits) would otherwise
+ * accumulate a full bundle copy per change. Builds are serialized per target and only the
+ * current generation is served, so removing that target's others is safe; another target's
+ * builds are its own, and stay.
  */
-async function pruneGenerations(root: string, keep: string): Promise<void> {
+async function pruneGenerations(root: string, keep: string, platform: Platform): Promise<void> {
+  const own = platform === "web" ? /^\d+$/ : new RegExp(`^\\d+-${platform}$`);
   try {
     for await (const e of Deno.readDir(root)) {
-      if (e.isDirectory && e.name !== keep) {
+      if (e.isDirectory && e.name !== keep && own.test(e.name)) {
         await Deno.remove(join(root, e.name), { recursive: true }).catch(() => {});
       }
     }
   } catch { /* root vanished — nothing to prune */ }
 }
 
-async function buildGeneration(st: SpaDevState, gen: number): Promise<string> {
+async function buildGeneration(
+  st: SpaDevState,
+  build: SpaTargetBuild,
+  gen: number,
+  platform: Platform,
+): Promise<string> {
   const root = join(st.paths.outDir, "spa-dev");
-  const dir = join(root, String(gen));
+  const name = genDirName(gen, platform);
+  const dir = join(root, name);
   await Deno.remove(dir, { recursive: true }).catch(() => {});
   await ensureDir(dir);
-  const res = await bundleSpaInto(st.paths, st.entryPath, dir, false, true);
-  st.hasStyles = res.hasStyles;
-  st.devDir = dir;
-  await pruneGenerations(root, String(gen));
+  const res = await bundleSpaInto(st.paths, st.entryPath, dir, false, true, platform);
+  build.hasStyles = res.hasStyles;
+  build.dir = dir;
+  await pruneGenerations(root, name, platform);
   return dir;
 }
 
 /**
- * The current generation's build dir (building it on first use). Callers MUST capture the
- * return value and pass it to `serveStatic` rather than reading `devDir` again after the
- * await — a concurrent watch event can null `devDir` (and bump the generation) between
- * the await resolving and the read, which would otherwise deref null.
+ * The target whose bundled-loop build `platform` shares: `web` when its platform files resolve
+ * as web's do and it renders the same `spa.shell`, else `platform` itself — as the App Router dev
+ * server decides (`devBuildTarget` in ../dev-server/platform.ts).
  */
-export function ensureBuilt(st: SpaDevState): Promise<string> {
-  if (st.devDir) return Promise.resolve(st.devDir);
-  if (st.building) return st.building;
-  const gen = st.generation;
-  st.building = st.pluginsReady.then(() => buildGeneration(st, gen)).finally(() => {
-    st.building = null;
-  });
-  return st.building;
+function spaBuildTarget(st: SpaDevState, platform: Platform): Promise<Platform> {
+  const { paths, spa } = st;
+  if (spaShellFor(spa, platform) !== spaShellFor(spa, "web")) return Promise.resolve(platform);
+  return sharedBuildTarget(
+    platform,
+    (p) => projectPlatformRedirects(paths.projectDir, paths.config, p),
+  );
+}
+
+/** `platform`'s build record (created empty on first use). */
+function buildOf(st: SpaDevState, platform: Platform): SpaTargetBuild {
+  let build = st.builds.get(platform);
+  if (!build) {
+    build = { dir: null, hasStyles: false, building: null };
+    st.builds.set(platform, build);
+  }
+  return build;
+}
+
+/**
+ * The current generation's build for the session's `platform` (building it on first use): its
+ * dir and whether it has a stylesheet. Callers MUST capture the returned dir and pass it to
+ * `serveStatic` rather than reading the build record again after the await — a concurrent watch
+ * event can invalidate it (and bump the generation) between the await resolving and the read.
+ *
+ * @param st The dev state.
+ * @param platform The session's target (shares web's build when its files resolve alike).
+ */
+export async function ensureBuilt(
+  st: SpaDevState,
+  platform: Platform = "web",
+): Promise<{ dir: string; hasStyles: boolean }> {
+  const target = await spaBuildTarget(st, platform);
+  const build = buildOf(st, target);
+  if (build.dir) return { dir: build.dir, hasStyles: build.hasStyles };
+  if (!build.building) {
+    const gen = st.generation;
+    build.building = st.pluginsReady.then(() => buildGeneration(st, build, gen, target))
+      .finally(() => {
+        build.building = null;
+      });
+  }
+  const dir = await build.building;
+  return { dir, hasStyles: build.hasStyles };
+}
+
+/** Drop every target's build: the next request for each rebuilds it (a source edit). */
+export function invalidateBuilds(st: SpaDevState): void {
+  for (const build of st.builds.values()) build.dir = null;
 }
 
 /** Push one SSE data frame to every live-reload subscriber (dropping dead ones). */

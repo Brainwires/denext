@@ -9,6 +9,7 @@ import {
   broadcastUpdate,
   ensureUnbundled,
   getUnbundledCss,
+  invalidateBuilds,
   type SpaDevState,
 } from "./dev-state.ts";
 import { classifySpaChange } from "./shared.ts";
@@ -29,7 +30,7 @@ function watchPlatformFiles(st: SpaDevState): void {
   watchProjectStructure(st.paths.projectDir, (changed) => {
     if (!scanner.invalidate(changed)) return;
     st.generation++;
-    st.devDir = null;
+    invalidateBuilds(st);
     st.unbundled?.invalidateTransforms();
     broadcastFrame(st, "reload");
   }, st.options.signal);
@@ -128,7 +129,7 @@ async function flushBatch(
   framework: string | null,
 ): Promise<void> {
   st.generation++;
-  st.devDir = null;
+  invalidateBuilds(st);
   // A framework source (denext run from a checkout): its pre-bundle is rebuilt on the reload.
   if (batch.some((p) => isFrameworkPath(p, framework))) {
     st.unbundled?.invalidateFramework();

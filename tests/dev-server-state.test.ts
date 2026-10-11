@@ -6,6 +6,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { resolveProject } from "../src/build/paths.ts";
+import { compatBuildOf } from "../src/build/dev-server/compat.ts";
 import { createDevHandler } from "../src/build/dev-server/handler.ts";
 import { getManifest } from "../src/build/dev-server/manifest.ts";
 import { createDevState } from "../src/build/dev-server/state.ts";
@@ -90,9 +91,10 @@ Deno.test({
     await Deno.writeTextFile(join(gen2, "assets", "logo.svg"), "<svg/>");
     // A rebuild in flight: the client dir is assigned only when it completes.
     const build = Promise.withResolvers<void>();
-    st.compatBuilding = build.promise.then(() => {
-      st.compatClientDir = gen2;
-      st.compatBuilding = null;
+    const web = compatBuildOf(st, "web");
+    web.building = build.promise.then(() => {
+      web.clientDir = gen2;
+      web.building = null;
     });
     const handle = createDevHandler(st, () => Promise.resolve(new Response("app")));
     const pending = handle(new Request("http://localhost/_denext/client/assets/logo.svg"));
@@ -106,7 +108,7 @@ Deno.test({
     assertEquals(res.status, 200);
     assertEquals(await res.text(), "<svg/>");
     // No compat build at all → falls through to the app handler (no 404 from the asset path).
-    st.compatClientDir = null;
+    web.clientDir = null;
     const none = await handle(new Request("http://localhost/_denext/client/assets/logo.svg"));
     assertEquals(await none.text(), "app");
   } finally {

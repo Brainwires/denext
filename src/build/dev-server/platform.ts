@@ -12,7 +12,12 @@ import {
   stylesheetImportMap,
 } from "../platform-imports.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
-import { devPlatformOf, keepPlatformScanner, type Platform } from "../platform-extensions.ts";
+import {
+  devPlatformOf,
+  keepPlatformScanner,
+  type Platform,
+  sharedBuildTarget,
+} from "../platform-extensions.ts";
 import { watchProjectStructure } from "../platform-watch.ts";
 import { currentContext } from "../../server/request-context.ts";
 import type { DevState } from "./state.ts";
@@ -31,6 +36,19 @@ export async function devPlatformRedirects(
   // `isCompat` (./compat.ts) reads the same memo; importing it would close a module cycle.
   if (await (st.compatP ??= detectNextCompat(st.paths))) return {};
   return await st.platformScanner.redirects(st.paths.config, platform);
+}
+
+/**
+ * The target whose builds `platform` shares this generation: `web` when its platform files
+ * resolve as web's do (an app with none, or none that `platform` picks differently), else
+ * `platform` itself. Read from the session's scan on both App Router paths (a next-compat
+ * app's esbuild bundles probe the same files the redirects name).
+ *
+ * @param st The dev state.
+ * @param platform The requested target.
+ */
+export function devBuildTarget(st: DevState, platform: Platform): Promise<Platform> {
+  return sharedBuildTarget(platform, (p) => st.platformScanner.redirects(st.paths.config, p));
 }
 
 /**
@@ -115,7 +133,8 @@ export function devPlatformImports(
  * The import map `platform`'s route stylesheets are crawled through: {@linkcode devPlatformImports}
  * on the native path; for a next-compat app (whose esbuild bundles probe the platform files, so
  * it has no redirects there) the target's redirects all the same, so a stylesheet only
- * `Badge.ios.tsx` imports is the iOS session's.
+ * `Badge.ios.tsx` imports is the iOS session's. A next-compat app's own-target Flight boundary
+ * is crawled through it too (./manifest.ts).
  *
  * @param st The dev state.
  * @param platform The target.

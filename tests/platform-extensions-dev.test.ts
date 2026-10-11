@@ -455,3 +455,84 @@ Deno.test("denext dev: an edit to a component outside app/ updates the page", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** A next-compat app: a Flight island importing `./label`, which has iOS and desktop files. */
+const COMPAT_FILES = {
+  "denext.config.ts": `export default { compatibilityMode: true };\n`,
+  "app/page.tsx": `import { Island } from "./island";\n` +
+    `export default function Page(){ return <main><Island/></main>; }\n`,
+  "app/island.tsx": `"use client"\nimport { useState } from "denext";\n` +
+    `import { label } from "./label";\n` +
+    `export function Island(){ const [n] = useState(0); return <b>{label}{n}</b>; }\n`,
+  "app/label.ts": `export const label = "PLAIN_LABEL";\n`,
+  "app/label.ios.ts": `export const label = "IOS_LABEL";\n`,
+  "app/label.desktop.ts": `export const label = "DESKTOP_LABEL";\n`,
+};
+const COMPAT_LABELS = ["PLAIN_LABEL", "IOS_LABEL", "DESKTOP_LABEL"];
+
+/**
+ * The Flight islands a session loads: the entry, then (a few levels deep) the bundled chunks it
+ * imports or the unbundled loop's `@fs` modules.
+ */
+async function sessionFlight(
+  dev: Awaited<ReturnType<typeof devServer>>,
+  headers: Record<string, string>,
+): Promise<string> {
+  let js = await dev.text("/_denext/flight.js", headers);
+  const fetched = new Set<string>();
+  for (let depth = 0; depth < 5; depth++) {
+    const urls = [
+      ...[...js.matchAll(/["'](\/_denext\/@fs[^"']+)["']/g)].map((m) => m[1]),
+      ...[...js.matchAll(/["']\.\/([^"'/]+\.js)["']/g)].map((m) => `/_denext/${m[1]}`),
+    ].filter((u) => !fetched.has(u));
+    if (urls.length === 0) break;
+    for (const url of new Set(urls)) {
+      fetched.add(url);
+      js += await dev.text(url, headers);
+    }
+  }
+  return js;
+}
+
+for (const unbundled of [true, false]) {
+  const loop = unbundled ? "unbundled" : "bundled";
+  Deno.test(`denext dev (${loop}): a next-compat app serves each shell its own platform files`, async () => {
+    const dir = await project(COMPAT_FILES);
+    const dev = await devServer(dir, { unbundled });
+    try {
+      const session = async (platform: string, want: string, file: string | null) => {
+        const headers: Record<string, string> = platform === "web"
+          ? {}
+          : { cookie: `__denext_platform=${platform}` };
+        const html = await dev.text("/", headers);
+        assertStringIncludes(html, want, `${platform}: the server render took its own file`);
+        const flight = await sessionFlight(dev, headers);
+        assert(
+          flight.includes(want) || (file !== null && flight.includes(file)),
+          `${platform}: the islands carry its own file`,
+        );
+        for (const other of COMPAT_LABELS.filter((l) => l !== want)) {
+          assert(!html.includes(other), `${platform}: ${other} rendered`);
+          assert(!flight.includes(other), `${platform}: ${other} in the islands`);
+        }
+      };
+      await session("ios", "IOS_LABEL", "label.ios.ts");
+      await session("macos", "DESKTOP_LABEL", "label.desktop.ts");
+      await session("web", "PLAIN_LABEL", null);
+      // Android has no file of its own: it shares web's build.
+      await session("android", "PLAIN_LABEL", null);
+      // The shells' builds are kept apart: the iOS session is still served its own, and each
+      // target's build of this generation sits beside web's (none for Android).
+      await session("ios", "IOS_LABEL", "label.ios.ts");
+      const builds = await Array.fromAsync(Deno.readDir(join(dir, ".denext", "dev-compat")));
+      const names = builds.map((e) => e.name);
+      assert(names.some((n) => n.endsWith("-ios")), `an iOS build: ${names}`);
+      assert(names.some((n) => n.endsWith("-macos")), `a macOS build: ${names}`);
+      assert(names.some((n) => /^\d+$/.test(n)), `web's build: ${names}`);
+      assert(!names.some((n) => n.endsWith("-android")), `Android shares web's: ${names}`);
+    } finally {
+      await dev.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}

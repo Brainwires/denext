@@ -103,12 +103,24 @@ function watchStyle(el: unknown, cb: () => void): () => void {
   return () => mo.disconnect();
 }
 
+/**
+ * How long the watch outlives will-hide waiting for the shell to grow the app back, in ms: the
+ * plugin does after the keyboard's 250 ms animation plus 200 ms.
+ */
+const GROW_BACK_MS = 1000;
+
 /** One report of the iOS shell's keyboard (see {@linkcode watchShellKeyboard}). */
 export interface ShellKeyboardReport {
   /** px of the page the keyboard covers: its height less how far the shell has resized. */
   readonly px: number;
   /** The keyboard's height (`0` while it is hidden), covering the page or not. */
   readonly height: number;
+  /**
+   * px the shell has the app resized by: how much shorter the WebView / `<body>` / `ion-app` is
+   * than before the keyboard (`0` with `resize: "none"`). After will-hide it falls to 0 as the
+   * shell grows the app back.
+   */
+  readonly resized: number;
   /**
    * Whether a will-show / will-hide caused the report, so the change moves with the keyboard's
    * animation. `false` when the shell's resize did (it lands at once) and for the first report.
@@ -125,7 +137,8 @@ export interface ShellKeyboardReport {
  * while it slides in over the page, `0` once the app has shrunk around it, and the whole
  * keyboard throughout with `resize: "none"`. A bottom-anchored view that adds it as room (a
  * chat: `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole
- * way, with no jump when the resize lands.
+ * way, with no jump when the resize lands. The shell grows the app back only after will-hide's
+ * animation too, so the watch outlives the keyboard until it has (or {@linkcode GROW_BACK_MS}).
  */
 function watchShellReports(
   plugin: ShellKeyboard,
@@ -135,15 +148,21 @@ function watchShellReports(
   let height = 0;
   let base = 0;
   let unwatch = () => {};
+  let linger: ReturnType<typeof setTimeout> | undefined;
   const size = (): number => {
     const el = resizedElement(mode);
     return el ? el.getBoundingClientRect().height : num(globalThis.innerHeight);
   };
+  const shrunk = (): number => (mode === "none" ? 0 : Math.max(0, base - size()));
   const report = (animated: boolean) => {
-    const resized = mode === "none" ? 0 : Math.max(0, base - size());
-    onReport({ px: Math.max(0, Math.round(height - resized)), height, animated });
+    const by = shrunk();
+    const px = Math.max(0, Math.round(height - by));
+    onReport({ px, height, resized: Math.round(by), animated });
   };
-  const resized = () => report(false);
+  const resized = () => {
+    report(false);
+    if (height === 0 && shrunk() < 0.5) unwatch(); // the shell grew the app back
+  };
   const watch = () => {
     unwatch();
     const g = globalThis as { addEventListener?: unknown; removeEventListener?: unknown };
@@ -153,6 +172,8 @@ function watchShellReports(
     unwatch = () => {
       stopStyle();
       if (listens) globalThis.removeEventListener("resize", resized);
+      if (linger !== undefined) clearTimeout(linger);
+      linger = undefined;
       unwatch = () => {};
     };
   };
@@ -166,8 +187,10 @@ function watchShellReports(
   }));
   const offHide = listenerDisposer(plugin.addListener("keyboardWillHide", () => {
     height = 0;
-    unwatch();
     report(true);
+    // Until the shell grows the app back (bounded): what it gives back is reported too.
+    if (shrunk() < 0.5) unwatch();
+    else if (linger === undefined) linger = setTimeout(() => unwatch(), GROW_BACK_MS);
   }));
   let active = true;
   plugin.getResizeMode?.().then((result) => {
@@ -177,7 +200,7 @@ function watchShellReports(
     base = size(); // the shell resizes only after the animation: still the full size
     watch();
   }, () => {});
-  onReport({ px: 0, height: 0, animated: false });
+  onReport({ px: 0, height: 0, resized: 0, animated: false });
   return () => {
     active = false;
     offShow();

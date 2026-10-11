@@ -8,6 +8,75 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.10] - 2026-10-11
+
+### Added
+
+- **A module sidecar can start a child of itself.** A backend that re-runs its own entry with a
+  subcommand (an MCP stdio bridge, an agent; Electron's `spawn(process.execPath, [script,
+  "mcp-bridge"])` with `ELECTRON_RUN_AS_NODE`) could not inside a `desktop.sidecars`
+  `run: { module }` worker, whose `process.execPath` is the app. `globalThis.denextSidecar` now has
+  `spawnSelf(args, options)` (a `node:child_process` child) and `childCommand(args)` (its
+  `{ command, args, env, stdio }` for your own spawn): the app's executable runs again as a
+  headless worker of the Deno Desktop runtime (no window, no web engine, no single-instance check),
+  the entry's `runDesktop` runs that sidecar's module with `process.argv.slice(2)` = `args` and
+  `denextSidecar.child === true` instead of a window, and the process ends with the module's exit
+  code. The child has the app's baked permissions and nothing more, opens no listener, gets no
+  secrets or bootstrap, and its stdout starts clean (the runtime's two start-up lines are
+  removed). It needs the sidecar's `permissions.run` to cover the app's executable (`["*"]`, as
+  its installed path is the user's). `runDesktop` resolves with `sidecarChild` set in a child.
+  Docs: [Desktop › A child of the sidecar](/docs/desktop#desktop-sidecars-children).
+
+### Fixed
+
+- **An island imported only through an import-map alias hydrates when the build runs from another
+  folder.** The client-boundary and hydration crawls ran `deno info` in the caller's working
+  directory, so Deno took the import map found there, not the app's: `denext build ./app`,
+  `denext export ./app` or `denext dev ./app` run from a parent folder (and an in-process
+  `build(dir)`) could not resolve `@/components/Counter.tsx` (`"@/": "./"`), missed the
+  `"use client"` island behind it, and shipped the route as static HTML ("1 static route(s) ship no
+  client JS") that never hydrated. The crawls now run in the folder of the app's `deno.json`, as
+  Deno does for a command run in the project, on `build`, `export` and both dev loops. A build run
+  inside the app folder (`deno task build`) was not affected.
+- **A SPA's bundled dev loop serves each shell its own platform files.** Under
+  `DENEXT_DEV_UNBUNDLED=0`, `denext mobile dev` / `denext desktop dev` against a SPA got the `web`
+  build (entry bundle, stylesheet and `spa.shell`) whatever the session's target, while the
+  unbundled loop and the App Router dev paths took each target's. The bundled loop now builds per
+  target: a session whose platform files resolve unlike `web`'s (or that renders another
+  `spa.shell`) gets a build of its own on its first request after an edit, kept beside `web`'s
+  (`.denext/spa-dev/<gen>-<target>`), and a target with no files of its own shares `web`'s build.
+- **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the
+  Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
+  before `keyboardWillShow`, so nothing covers the page and React Native mode's
+  `KeyboardChatScrollView` / `KeyboardAwareLegendList` never lifted: the scroll view shrank with
+  its scroll offset unchanged and its last rows went under the keyboard. Their keyboard lift now
+  puts a list that was at its end (within 20 px) as the layout viewport shrank back at its end;
+  a list scrolled away, an inverted one, `keyboardLiftBehavior: "never"` and a frozen lift are
+  left alone.
+- **An inverted chat scrolled away from its end keeps its rows put as the iOS keyboard hides.**
+  With `resize: "native"` / `"body"` / `"ionic"` the Capacitor shell grows the app back only
+  after will-hide's animation, and the keyboard watch stopped at will-hide, so an inverted
+  `KeyboardChatScrollView` that had not lifted (`keyboardLiftBehavior: "whenAtEnd"` away from
+  its end) stayed scrolled past the resize's room and its rows jumped down by the keyboard's
+  height when the shell grew back. The watch now outlives will-hide until the shell has grown
+  the app back (at most a second), and such a list scrolls back as it does.
+- **`denext dev` serves a next-compat app's shells their own platform files.** A compat drop-in
+  App Router app's dev build (the esbuild server render, the client entries and the Flight
+  islands) was built for `web` only, so `denext mobile dev` and `denext desktop dev` rendered
+  and hydrated the `web` files while the native App Router path and SPA mode took each target's.
+  Each target whose platform files resolve unlike `web`'s now gets a build of its own (its
+  Flight boundary crawled through its files, its islands served for it, unbundled or bundled),
+  built on the target's first request after an edit and kept beside `web`'s, so two shells on
+  one dev server never rebuild each other's. A target with no files of its own shares `web`'s
+  build, so an app without platform files builds once as before.
+- **`reactCompiler` memoizes a component imported through an import-map alias.** Deno maps an
+  alias (`@/components/Pane.tsx`) once, to the plain file, so the auto-memo compiler's output for
+  a module imported that way was never bundled: an island importing `@/components/Pane.tsx` got
+  the uncompiled `Pane`, whether or not the island was itself a copy made for a platform file
+  (`denext build`, `export` and the bundled `denext dev` loop alike). The client bundles now
+  rewrite such an importer's alias imports to the transformed module, through the copies they
+  already make for platform files.
+
 ## [3.4.9] - 2026-10-11
 
 ### Fixed
@@ -13009,7 +13078,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.9...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.10...development
+[3.4.10]: https://jsr.io/@denext/denext@3.4.10
 [3.4.9]: https://jsr.io/@denext/denext@3.4.9
 [3.4.8]: https://jsr.io/@denext/denext@3.4.8
 [3.4.7]: https://jsr.io/@denext/denext@3.4.7

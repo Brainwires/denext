@@ -695,6 +695,14 @@ export const SIDECAR_DEFAULTS = {
   portEnv: "PORT",
 } as const;
 
+/**
+ * The variable that makes a launch of the app a child of one of its module sidecars (its name):
+ * set by `denextSidecar.childCommand()` / `spawnSelf()`, read (and removed) by `runDesktop`.
+ */
+export const SIDECAR_CHILD_ENV = "DENEXT_SIDECAR_CHILD";
+/** How many of the launch's last arguments are the child's own (`process.argv.slice(2)`). */
+export const SIDECAR_CHILD_ARGC_ENV = "DENEXT_SIDECAR_CHILD_ARGC";
+
 /** Where a bundled module sidecar lives in the project (and the app), relative to the project. */
 export const SIDECAR_BUNDLE_DIR = ".deno-desktop/sidecars";
 /** The bundled main module's file name inside {@linkcode SIDECAR_BUNDLE_DIR}`/<name>/`. */
@@ -716,4 +724,17 @@ export function sidecarModulePath(definition: SidecarDefinition): string {
       /^[a-z][a-z0-9+.-]*:/i.test(run.module)
     ? run.module
     : `./${run.module}`;
+}
+
+/**
+ * The URL the app loads a module sidecar from: {@linkcode sidecarModulePath} resolved against the
+ * entry's `import.meta.url` (a URL with a scheme as written).
+ *
+ * @param definition A module sidecar.
+ * @param base The entry's `import.meta.url`.
+ * @returns The module's URL.
+ */
+export function sidecarModuleUrl(definition: SidecarDefinition, base: string): string {
+  const path = sidecarModulePath(definition);
+  return /^[a-z][a-z0-9+.-]*:/i.test(path) ? path : new URL(path, base).href;
 }

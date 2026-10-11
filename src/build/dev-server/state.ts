@@ -30,6 +30,38 @@ export interface DevBoundary extends FlightBoundaryState {
   readonly manifest: BoundaryManifest;
 }
 
+/**
+ * One target's next-compat dev build: its react→denext server bundles (the render's loader) and
+ * client outputs, for the generation it was built in.
+ */
+export interface CompatBuild {
+  /** The generation the outputs below are for (-1 before the first build). */
+  gen: number;
+  /** The build in flight, if any (a burst of requests in one generation builds once). */
+  building: Promise<void> | null;
+  /** The server loader over its server bundles (null before the first build). */
+  load: ModuleLoader | null;
+  /**
+   * Its client output dir (emitted `assets/` are served from it), assigned only once a build is
+   * complete: an asset request racing a rebuild keeps the previous generation's.
+   */
+  clientDir: string | null;
+}
+
+/**
+ * The bundle cache key of a target's bundle: the route path for web, else the target and the
+ * route path (another target's platform files).
+ *
+ * @param key The route path (or {@linkcode FLIGHT_KEY}).
+ * @param platform The target.
+ */
+export function bundleKey(key: string, platform: Platform): string {
+  return platform === "web" ? key : `${platform}\0${key}`;
+}
+
+/** The bundle cache key of a non-web target's Flight entry (web's is `st.flightBundle`). */
+export const FLIGHT_KEY = "\0flight";
+
 /** Live-reload / Fast Refresh SSE stream. */
 export const RELOAD_PATH = "/_denext/reload";
 /** On-demand client route bundle (`?p=<routePath>`). */
@@ -177,19 +209,14 @@ export interface DevState {
    * bundles (incl. islands/actions) + client entries.
    */
   compatP: Promise<boolean> | undefined;
-  compatLoad: ModuleLoader | null;
-  compatBuiltGen: number;
-  compatBuilding: Promise<void> | null;
   /**
-   * Source module path → react→denext compat server bundle path (this generation), used
-   * to redirect boundary refs so the SSR renderer tags the shared-chunk island/action
-   * instances the page bundle references.
+   * Each target's compat build (`ensureCompatBuilt`), kept apart so two shells on one dev server
+   * never rebuild each other's: `web`'s on every generation, another target's on its first
+   * request in that generation, and only when its platform files resolve unlike web's.
    */
-  compatModuleMap: Map<string, string>;
-  /** The boundary islands to bundle as compat entries this generation (set by refreshBoundary). */
+  readonly compatBuilds: Map<Platform, CompatBuild>;
+  /** The web boundary's manifest this generation (set by refreshBoundary), compat or not. */
   compatBoundary: BoundaryManifest | null;
-  /** The current generation's compat client output dir (emitted `assets/` are served from it). */
-  compatClientDir: string | null;
 
   /** CSS assets, rebuilt per generation (client import map + per-route extracted stylesheet). */
   cssAssets: AppCss | null;
@@ -319,12 +346,8 @@ export function createDevState(options: DevServerOptions): DevState {
     flightBundle: null,
     platformBoundaries: new Map(),
     compatP: undefined,
-    compatLoad: null,
-    compatBuiltGen: -1,
-    compatBuilding: null,
-    compatModuleMap: new Map(),
+    compatBuilds: new Map(),
     compatBoundary: null,
-    compatClientDir: null,
     cssAssets: null,
     cssGen: -1,
     cssHadEntries: false,

@@ -11,6 +11,7 @@ import {
   type LiftMetrics,
   liftStep,
   NO_LIFT,
+  pinsOnShrink,
   useKeyboardLift,
 } from "../src/mobile/keyboard-lift.ts";
 import { KeyboardChatScrollView } from "../src/react-native-compat/keyboard-controller.ts";
@@ -231,6 +232,11 @@ function scroller(el: Any, content: number, view: () => number) {
      * part): 0 when the last row sits right above the keyboard.
      */
     belowEnd: () => content - (el.scrollTop + view() - room()),
+    /**
+     * Inverted (flipped: scroll offset 0 at the bottom, the room before the content): px from
+     * the view's top to content offset `at`, which stays put while the visible rows do.
+     */
+    invertedTop: (at: number) => view() - (at + room() - el.scrollTop),
   };
 }
 
@@ -321,4 +327,159 @@ Deno.test("KeyboardChatScrollView (iOS shell): a chat scrolled up keeps its rows
     assertEquals(el.scrollTop, 900, "no longer pinned");
     root.unmount();
   }, shell.globals);
+});
+
+/** A faked Android WebView (Capacitor shell, or Chrome resizing content): it shrinks itself. */
+function androidWebView() {
+  const vv = fakeViewport(800);
+  const { frames, globals } = viewportEnv(vv);
+  return {
+    globals,
+    view: () => g.innerHeight,
+    /** The WebView takes `height` px: the layout and the visual viewport both shrink. */
+    resize(height: number, events: "window+viewport" | "viewport" = "window+viewport") {
+      g.innerHeight = height;
+      vv.height = height;
+      if (events === "window+viewport") g.dispatchEvent(new Event("resize"));
+      vv.fire("resize");
+      frames.flush();
+    },
+  };
+}
+
+// Android resizes the WebView itself, before @capacitor/keyboard's keyboardWillShow: nothing
+// covers the page (the overlap reads 0), so the lift never lifts, and a chat at its end must be
+// re-pinned as its scroll view shrinks or its last rows end up under the keyboard.
+Deno.test("KeyboardChatScrollView (Android shell): the WebView shrinks before will-show; a chat at its end stays at its end", async () => {
+  const kb = fakePlugin(["hide"]);
+  const web = androidWebView();
+  await inShell("android", { Keyboard: kb.plugin }, async () => {
+    const { root, container } = mount(() => h(KeyboardChatScrollView, null, "messages"));
+    await settle();
+    const el = container.childNodes[0];
+    const chat = scroller(el, 2000, web.view);
+    el.scrollTop = 1190; // within the "at the end" threshold
+    flushSync(() => web.resize(500));
+    assertEquals(chat.belowEnd(), 0, "the last row is in view after the WebView shrank");
+    flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+    assertEquals(chat.belowEnd(), 0, "will-show after the resize moves nothing");
+    flushSync(() => web.resize(460)); // the suggestion bar
+    assertEquals(chat.belowEnd(), 0, "a further shrink keeps it at the end");
+    flushSync(() => kb.fire("keyboardWillHide"));
+    flushSync(() => web.resize(800));
+    assertEquals(chat.belowEnd(), 0, "and the grow-back leaves it at the end");
+    // Scrolled up: the shrink leaves the rows where they are.
+    el.scrollTop = 400;
+    flushSync(() => web.resize(500));
+    assertEquals(el.scrollTop, 400, "a chat scrolled away is untouched");
+    flushSync(() => web.resize(800));
+    root.unmount();
+  }, web.globals);
+});
+
+// Android Chrome with `interactive-widget=resizes-content`: the layout viewport shrinks with
+// the visual one, so the overlap is 0 again; only the visual viewport's resize may arrive first.
+Deno.test("KeyboardChatScrollView (Android Chrome): a content resize keeps a chat at its end; never and inverted lists are untouched", async () => {
+  const web = androidWebView();
+  await withGlobals(web.globals, async () => {
+    const cases = [
+      { props: {}, start: 1200, after: 1500 },
+      { props: { keyboardLiftBehavior: "whenAtEnd" }, start: 1195, after: 1500 },
+      { props: { keyboardLiftBehavior: "never" }, start: 1200, after: 1200 },
+      { props: { inverted: true }, start: 0, after: 0 },
+      { props: { freeze: true }, start: 1200, after: 1200 },
+    ];
+    for (const { props, start, after } of cases) {
+      const { root, container } = mount(() => h(KeyboardChatScrollView, props, "messages"));
+      await settle();
+      const el = container.childNodes[0];
+      scroller(el, 2000, web.view);
+      el.scrollTop = start;
+      flushSync(() => web.resize(500, "viewport"));
+      assertEquals(el.scrollTop, after, JSON.stringify(props));
+      flushSync(() => web.resize(800, "viewport"));
+      root.unmount();
+    }
+  });
+});
+
+// An inverted chat scrolled away from its end ("whenAtEnd": not lifted) keeps its rows in place
+// as the keyboard covers it (the room before the content is scrolled past) and once the shell
+// has resized around it (the room gave way). The shell grows the app back only after will-hide's
+// animation: the rows must stay put through that too.
+Deno.test("KeyboardChatScrollView (iOS shell): an inverted chat scrolled away keeps its rows through the hide and the shell's grow-back", async () => {
+  for (const mode of ["native", "body"] as const) {
+    const kb = fakePlugin(["hide", "getResizeMode"], { getResizeMode: { mode } });
+    const shell = iosShell(mode);
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const { root, container } = mount(() =>
+        h(KeyboardChatScrollView, { inverted: true, keyboardLiftBehavior: "whenAtEnd" }, "chat")
+      );
+      await settle();
+      const el = container.childNodes[0];
+      const chat = scroller(el, 2000, shell.view);
+      el.scrollTop = 300;
+      const top = chat.invertedTop(1000);
+      flushSync(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: not lifted as the keyboard covers it`);
+      flushSync(() => shell.resize(500));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: the resize took the room`);
+      flushSync(() => kb.fire("keyboardWillHide"));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: will-hide moves nothing yet`);
+      flushSync(() => shell.resize(800));
+      assertEquals(chat.invertedTop(1000), top, `${mode}: the rows stay put as the shell grows`);
+      assertEquals(el.scrollTop, 300, `${mode}: back where it started`);
+      root.unmount();
+    }, shell.globals);
+  }
+});
+
+Deno.test("pinsOnShrink: a list at its end as the view shrinks, unless never, inverted or frozen", () => {
+  // The view shrank by 300 and still shows the rows it did: the end is 300 px below it.
+  const shrunk = { scrollTop: 1200, clientHeight: 500, scrollHeight: 2000 };
+  assertEquals(pinsOnShrink({}, shrunk, 300), true);
+  assertEquals(pinsOnShrink({ behavior: "whenAtEnd" }, shrunk, 300), true);
+  assertEquals(pinsOnShrink({}, { ...shrunk, scrollTop: 1100 }, 300), false, "scrolled away");
+  assertEquals(pinsOnShrink({ behavior: "never" }, shrunk, 300), false);
+  assertEquals(pinsOnShrink({ inverted: true }, shrunk, 300), false);
+  assertEquals(pinsOnShrink({ freeze: { value: true } }, shrunk, 300), false);
+  assertEquals(pinsOnShrink({}, null, 300), false, "no scroll container");
+  assertEquals(pinsOnShrink({}, shrunk, 0), false, "nothing shrank");
+});
+
+Deno.test("liftStep: an inverted list not lifted scrolls back only as the shell grows the app back", () => {
+  const open = liftStep(NO_LIFT, 300, "whenAtEnd", at(300), true);
+  assertEquals(open, { state: { padding: 300, shift: -1 }, scrollBy: 300 });
+  const resized = liftStep(open.state, 0, "whenAtEnd", at(600), true, {
+    up: true,
+    absorbed: 300,
+    resized: 300,
+  });
+  assertEquals(resized, { state: { padding: 0, shift: -1 }, scrollBy: 0 });
+  const hidden = { up: false, resized: 300, wasUp: true };
+  const hide = liftStep(resized.state, 0, "whenAtEnd", at(600), true, hidden);
+  assertEquals(hide, { state: { padding: 0, shift: -1, regrow: 300 }, scrollBy: 0 });
+  const half = liftStep(hide.state, 0, "whenAtEnd", at(600), true, { up: false, resized: 120 });
+  assertEquals(half, { state: { padding: 0, shift: -1, regrow: 120 }, scrollBy: -180 });
+  assertEquals(liftStep(half.state, 0, "whenAtEnd", at(420), true, { up: false, resized: 0 }), {
+    state: NO_LIFT,
+    scrollBy: -120,
+  });
+  // Hidden with a suggestion bar's room left: the room goes now, the resize as the shell grows.
+  const bar = { padding: 40, shift: -1 };
+  assertEquals(liftStep(bar, 0, "whenAtEnd", at(640), true, hidden), {
+    state: { padding: 0, shift: -1, regrow: 300 },
+    scrollBy: -40,
+  });
+  // A lifted inverted list, or a non-inverted one, owes nothing: they drop with the shell.
+  const lifted = { padding: 0, shift: 300 };
+  assertEquals(liftStep(lifted, 0, "always", at(0), true, hidden), { state: NO_LIFT, scrollBy: 0 });
+  assertEquals(liftStep(resized.state, 0, "whenAtEnd", MIDDLE, false, hidden), {
+    state: NO_LIFT,
+    scrollBy: 0,
+  });
+  assertEquals(liftStep(NO_LIFT, 0, "always", at(0), true, { up: false, resized: 300 }), {
+    state: NO_LIFT,
+    scrollBy: 0,
+  }, "not up before: nothing owed");
 });

@@ -662,6 +662,24 @@ export async function projectPlatformRedirects(
   return await redirectsFor(projectDir, await scanPlatformGroups(projectDir), config, platform);
 }
 
+/**
+ * The target whose dev builds `platform` shares: `web` when its platform files resolve as web's
+ * do (an app with none, or none that `platform` picks differently), else `platform` itself.
+ *
+ * @param platform The session's target.
+ * @param redirectsOf A target's platform redirects (the session's scan).
+ */
+export async function sharedBuildTarget(
+  platform: Platform,
+  redirectsOf: (platform: Platform) => Promise<Record<string, string>>,
+): Promise<Platform> {
+  if (platform === "web") return "web";
+  const [own, web] = await Promise.all([redirectsOf(platform), redirectsOf("web")]);
+  const keys = Object.keys(own);
+  const same = keys.length === Object.keys(web).length && keys.every((k) => own[k] === web[k]);
+  return same ? "web" : platform;
+}
+
 /** The scanners a dev session keeps (by project root), so every caller shares one scan. */
 const keptScanners = new Map<string, PlatformScanner>();
 

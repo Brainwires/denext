@@ -4,7 +4,7 @@
 // resolved graph on every path — SPA (native `deno bundle` and compat esbuild), the native and
 // next-compat App Router, `denext build`, and dev (bundled and unbundled) — as the JS does.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
@@ -278,11 +278,107 @@ Deno.test("SPA dev (unbundled): each session's stylesheet follows its own platfo
   }
 });
 
-Deno.test("SPA dev (bundled): the stylesheet is the .web file's", async () => {
-  const dir = await project(spa(true));
+/** The SPA fixture plus a `./mark` module with iOS and desktop variants (unique JS markers). */
+function markedSpa(compat: boolean): Record<string, string> {
+  const files = spa(compat);
+  files["src/main.ts"] = `import { look } from "./look";\nimport { mark } from "./mark";\n` +
+    `console.log(look, mark);\n`;
+  for (
+    const [file, label] of [["mark", "PLAIN"], ["mark.ios", "IOS"], ["mark.desktop", "DESKTOP"]]
+  ) {
+    files[`src/${file}.ts`] = `export const mark = "MARK_${label}_MARK";\n`;
+  }
+  return files;
+}
+
+/** The entry bundle a dev page loads (its non-dev `<script src>`) and every chunk it reaches. */
+async function entryJs(
+  server: Awaited<ReturnType<typeof devServer>>,
+  platform: Platform,
+): Promise<string> {
+  const html = await server.text("/", platform);
+  const queue = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1])
+    .filter((src) => !src.includes("dev-reload"));
+  const seen = new Set<string>();
+  let js = "";
+  while (queue.length > 0) {
+    const src = queue.shift()!;
+    if (seen.has(src)) continue;
+    seen.add(src);
+    const code = await server.text(src, platform);
+    js += code;
+    const base = src.slice(0, src.lastIndexOf("/") + 1);
+    // Relative (`deno bundle`) and absolute (esbuild) chunk specifiers alike.
+    for (const m of code.matchAll(/["'](\.\/[^"']+\.js|\/_denext\/client\/[^"']+\.js)["']/g)) {
+      queue.push(m[1].startsWith("./") ? base + m[1].slice(2) : m[1]);
+    }
+  }
+  return js;
+}
+
+const MARKS: Readonly<Record<Platform, string>> = {
+  web: "MARK_PLAIN_MARK",
+  ios: "MARK_IOS_MARK",
+  android: "MARK_PLAIN_MARK",
+  macos: "MARK_DESKTOP_MARK",
+  windows: "MARK_DESKTOP_MARK",
+  linux: "MARK_DESKTOP_MARK",
+};
+
+/** The targets the SPA dev server holds a bundled-loop build for (`<gen>` / `<gen>-<target>`). */
+async function spaDevTargets(dir: string): Promise<string[]> {
+  const names: string[] = [];
+  for await (const e of Deno.readDir(join(dir, ".denext", "spa-dev"))) {
+    if (e.isDirectory) names.push(e.name.replace(/^\d+-?/, "") || "web");
+  }
+  return names.sort();
+}
+
+// The bundled loop builds each session's target (`denext mobile dev` / `desktop dev` against a
+// SPA under DENEXT_DEV_UNBUNDLED=0): its platform files, in the entry JS and the stylesheet, and
+// a target with no files of its own shares web's build.
+for (const compat of [false, true]) {
+  const path = compat ? "compat (esbuild)" : "native (deno bundle)";
+  Deno.test(`SPA ${path} dev (bundled): each session's bundle and stylesheet follow its own platform files`, async () => {
+    const dir = await project(markedSpa(compat));
+    const server = await devServer(dir, { spa: true, unbundled: false });
+    try {
+      for (const [platform, want] of CASES) {
+        assertSheet(await linkedCss(server, platform), want, `${platform} session`);
+        const js = await entryJs(server, platform);
+        assertStringIncludes(js, MARKS[platform], `${platform} session: its mark`);
+        for (const other of new Set(Object.values(MARKS))) {
+          if (other !== MARKS[platform]) assert(!js.includes(other), `${platform}: ${other}`);
+        }
+      }
+      // web's build again, after the shells': the targets never rebuild each other's.
+      assertStringIncludes(await entryJs(server, "web"), MARKS.web);
+      assertEquals(await spaDevTargets(dir), ["android", "ios", "macos", "web"]);
+    } finally {
+      await server.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
+Deno.test("SPA dev (bundled): a target with no platform files of its own shares web's build", async () => {
+  const files = markedSpa(false);
+  for (const name of Object.keys(files)) {
+    if (name.includes("look") || name.endsWith(".css")) delete files[name];
+  }
+  files["src/main.ts"] = `import { mark } from "./mark";\nconsole.log(mark);\n`;
+  delete files["src/mark.desktop.ts"];
+  const dir = await project(files);
   const server = await devServer(dir, { spa: true, unbundled: false });
   try {
-    assertSheet(await linkedCss(server, "web"), "web", "web session");
+    assertStringIncludes(await entryJs(server, "web"), MARKS.web);
+    assertStringIncludes(
+      await entryJs(server, "macos"),
+      MARKS.web,
+      "macos has no files of its own",
+    );
+    assertStringIncludes(await entryJs(server, "ios"), MARKS.ios);
+    assertEquals(await spaDevTargets(dir), ["ios", "web"]);
   } finally {
     await server.stop();
     await Deno.remove(dir, { recursive: true });

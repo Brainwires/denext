@@ -21,9 +21,16 @@ import {
 import { bundleResolution } from "./assets.ts";
 import { isCompat } from "./compat.ts";
 import { devBoundaryFor, flightRoutesFor, getManifest, getUnbundled } from "./manifest.ts";
-import { renderPlatform } from "./platform.ts";
+import { devBuildTarget, renderPlatform } from "./platform.ts";
 import { routeDevMeta } from "./route-meta.ts";
-import { type DevState, FLIGHT_BUNDLE_PATH, ROUTE_BUNDLE_PATH, ROUTE_CSS_PATH } from "./state.ts";
+import {
+  bundleKey,
+  type DevState,
+  FLIGHT_BUNDLE_PATH,
+  FLIGHT_KEY,
+  ROUTE_BUNDLE_PATH,
+  ROUTE_CSS_PATH,
+} from "./state.ts";
 
 /** Stash a bundle's split chunks (everything but the entry) for serving. */
 function cacheChunks(st: DevState, bundle: BundleOutput): void {
@@ -31,17 +38,6 @@ function cacheChunks(st: DevState, bundle: BundleOutput): void {
     if (name !== bundle.entry) st.chunkCache.set(name, code);
   }
 }
-
-/**
- * The bundle cache key of a target's bundle: the route path for web (what the compat build
- * fills), else the target and the route path (another target's platform files).
- */
-function bundleKey(key: string, platform: Platform): string {
-  return platform === "web" ? key : `${platform}\0${key}`;
-}
-
-/** The bundle cache key of a non-web target's Flight entry (web's is `st.flightBundle`). */
-const FLIGHT_KEY = "\0flight";
 
 /**
  * Bundle one route's client entry (native path) and cache it + its chunks. The entry carries
@@ -86,12 +82,13 @@ export async function getRouteBundle(
   platform: Platform = "web",
 ): Promise<string> {
   if (await isCompat(st)) {
-    // Compat client entries are built (into bundleCache) per generation, for web (a
-    // next-compat app serves every shell the web target in dev).
-    const cached = st.bundleCache.get(route.routePath);
+    // Compat client entries are built (into bundleCache) per generation and target: web's with
+    // the manifest, a shell's own with its boundary.
+    const key = bundleKey(route.routePath, await devBuildTarget(st, platform));
+    const cached = st.bundleCache.get(key);
     if (cached) return cached;
-    await getManifest(st);
-    return st.bundleCache.get(route.routePath) ?? "";
+    await devBoundaryFor(st, platform);
+    return st.bundleCache.get(key) ?? "";
   }
   // Each target's bundle resolves its own platform files, and so is cached apart.
   const key = bundleKey(route.routePath, platform);
@@ -119,12 +116,15 @@ export async function getRouteBundle(
 export async function getFlightBundle(st: DevState, platform: Platform = "web"): Promise<string> {
   const m = await getManifest(st);
   if (await isCompat(st)) {
-    // A next-compat app serves every shell the web target in dev: its server render is the
-    // per-generation esbuild bundle, built for web.
-    if (st.unbundledActive && st.compatBoundary) {
-      return await getUnbundled(st).serveFlightEntry(st.compatBoundary, "web");
-    }
-    return st.flightBundle ?? "";
+    // The target's own islands, as its compat server render tagged them (web's unless its
+    // platform files resolve unlike web's).
+    const target = await devBuildTarget(st, platform);
+    const boundary = (await devBoundaryFor(st, target)).manifest;
+    if (st.unbundledActive) return await getUnbundled(st).serveFlightEntry(boundary, target);
+    return (target === "web"
+      ? st.flightBundle
+      : st.bundleCache.get(bundleKey(FLIGHT_KEY, target))) ??
+      "";
   }
   const web = platform === "web";
   const cached = web ? st.flightBundle : st.bundleCache.get(bundleKey(FLIGHT_KEY, platform));

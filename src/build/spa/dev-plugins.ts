@@ -16,7 +16,7 @@ import {
 import { withBuildDirLock } from "../project-locks.ts";
 import { isSelfWrite } from "../self-writes.ts";
 import { hasPathSegment, inNodeModules } from "../path-segments.ts";
-import { broadcastFrame, type SpaDevState } from "./dev-state.ts";
+import { broadcastFrame, invalidateBuilds, type SpaDevState } from "./dev-state.ts";
 import { watchBatches } from "./dev-watch.ts";
 
 /** The context a prepare step gets in SPA dev (the build-time one). */
@@ -84,7 +84,7 @@ async function regenerate(st: SpaDevState, batch: string[]): Promise<void> {
   ).catch(() => false);
   if (!ran) return;
   st.generation++;
-  st.devDir = null;
+  invalidateBuilds(st);
   st.unbundled?.invalidateTransforms();
   broadcastFrame(st, "reload");
 }

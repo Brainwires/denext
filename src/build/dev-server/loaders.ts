@@ -3,7 +3,6 @@
 
 import { join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../../server/types.ts";
-import type { RouteManifest } from "../../router/manifest.ts";
 import { createUseCacheLoaders } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
 import { devPlatformRedirects, renderPlatform } from "./platform.ts";
@@ -28,8 +27,9 @@ export function baseLoaderFor(st: DevState, bust = true): ModuleLoader {
 
 /**
  * The loader every server-side import goes through. In compat mode it defers to the
- * react→denext server bundles that `getManifest → refreshBoundary` builds (once per
- * generation, before the boundary refs are redirected). Otherwise it is the base loader,
+ * react→denext server bundles of the rendered request's target (`compatLoader`: web's are built
+ * by `getManifest → refreshBoundary` once per generation, before the boundary refs are
+ * redirected; a shell's own on its first request). Otherwise it is the base loader,
  * wrapped by the copy compiler once a module is edited, a platform file redirects an import or
  * Cache Components are on. The `?g=` query busts only the module asked for: Deno resolves its
  * relative imports without it, so an edited module it imports would stay cached for the life of
@@ -38,20 +38,18 @@ export function baseLoaderFor(st: DevState, bust = true): ModuleLoader {
  */
 export function createDevLoader(
   st: DevState,
-  getManifest: () => Promise<RouteManifest>,
+  compatLoader: (platform: Platform) => Promise<ModuleLoader>,
   isCompat: () => Promise<boolean>,
   opts: { bust?: boolean; platform?: Platform } = {},
 ): ModuleLoader {
   const bust = opts.bust ?? true;
   const base = baseLoaderFor(st, bust);
   return async (filePath) => {
-    if (await isCompat()) {
-      await getManifest();
-      return st.compatLoad!(filePath);
-    }
     // The rendered request's target (or the one asked for): its platform files ride the same
-    // per-generation copy loader, one per target (each writes its own copies).
+    // per-generation copy loader (or, for a next-compat app, its own compat build), one per
+    // target (each writes its own copies).
     const platform = opts.platform ?? renderPlatform();
+    if (await isCompat()) return (await compatLoader(platform))(filePath);
     const redirects = await devPlatformRedirects(st, platform);
     if (
       !st.useCacheEnabled && Object.keys(redirects).length === 0 && !st.devCopies.anyEdited

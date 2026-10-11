@@ -4,7 +4,7 @@
 
 import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
 import { withModuleGraphRedirects } from "../module-graph.ts";
-import { devStylesheetImports } from "./platform.ts";
+import { devBuildTarget, devStylesheetImports } from "./platform.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
@@ -171,12 +171,14 @@ async function compatAssetResponse(
 ): Promise<Response | null> {
   const prefix = "/_denext/client/assets/";
   if (!url.pathname.startsWith(prefix)) return null;
-  // A rebuild in flight: wait for it, then serve from the generation it completed (the field
-  // is (re)assigned only once a build is complete, so re-read it after the await).
-  if (st.compatBuilding) await st.compatBuilding.catch(() => {});
-  if (!st.compatClientDir) return null;
+  // The session's own target build (web's unless its platform files resolve unlike web's). A
+  // rebuild in flight: wait for it, then serve from the generation it completed (the field is
+  // (re)assigned only once a build is complete, so re-read it after the await).
+  const build = st.compatBuilds.get(await devBuildTarget(st, devPlatformOf(request)));
+  if (build?.building) await build.building.catch(() => {});
+  if (!build?.clientDir) return null;
   return await serveImmutableAsset(
-    st.compatClientDir,
+    build.clientDir,
     "/assets/" + url.pathname.slice(prefix.length),
     request,
     false,

@@ -64,9 +64,6 @@
   the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
   export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
   runtime branch; the constant needs a fold pass on every build path.
-- **A next-compat app's platform files in `denext dev`.** Its dev server render is one esbuild
-  bundle per edit, built for `web`, so every shell gets the `web` files in dev (its platform
-  exports take each target's); a shell's own target needs those server bundles built per target.
 - **Platform files through tsconfig `paths`:** an import through a tsconfig `paths` alias does
   not take a variant (only `deno.json` and import-map aliases do); `denext migrate` converts
   `paths` to the import map.

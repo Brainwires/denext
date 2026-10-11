@@ -2,7 +2,7 @@
 // lazily-created unbundled dev loop.
 
 import { type Platform, platformResolution } from "../platform-extensions.ts";
-import { devPlatformImports, devPlatformRedirects } from "./platform.ts";
+import { devBuildTarget, devPlatformImports, devStylesheetImports } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
 import { domListsEnabled, featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { domListAliases } from "../dom-lists.ts";
@@ -23,7 +23,7 @@ import {
 import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
-import { ensureCompatBuilt, isCompat } from "./compat.ts";
+import { compatBuildOf, ensureCompatBuilt, isCompat } from "./compat.ts";
 import { createDevLoader } from "./loaders.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
@@ -45,11 +45,9 @@ export function getUnbundled(st: DevState): UnbundledDev {
     instrumentationClient: st.paths.instrumentationClientPath,
     // `lists: "denext"`: `@legendapp/list/react` → denext's VirtualList-backed module.
     specAliases: domListsEnabled(st.paths.config) ? domListAliases() : undefined,
-    // Each target's platform files for the app's own modules (`web` unless the page names one).
-    // A next-compat app serves every shell the web target: its server render in dev is the
-    // per-generation esbuild bundle, built for web, and its islands must match it.
-    resolvePlatform: (platform) =>
-      platformResolution(st.paths.config, st.unbundledCompat ? "web" : platform),
+    // Each target's platform files for the app's own modules (`web` unless the page names one),
+    // a next-compat app's too: its islands match the target's own compat server render.
+    resolvePlatform: (platform) => platformResolution(st.paths.config, platform),
     // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
     onDepsRebuilt: () => broadcast(st, "reload"),
     // The browser gets each `"use server"` module as its action stub, by the boundary's id.
@@ -143,7 +141,24 @@ async function compatNpmFinder(st: DevState): Promise<NpmBoundaryFinder | undefi
  * imports them, so an action registers as the instance the page renders and runs what it imports.
  */
 function tagLoaderFor(st: DevState, platform: Platform): ModuleLoader {
-  return createDevLoader(st, () => getManifest(st), () => isCompat(st), { bust: false, platform });
+  return createDevLoader(st, (p) => compatLoaderFor(st, p), () => isCompat(st), {
+    bust: false,
+    platform,
+  });
+}
+
+/**
+ * A next-compat app's server loader for `platform`: its target's compat build (web's, built with
+ * the boundary, or a shell's own, built on its first request this generation).
+ *
+ * @param st The dev state.
+ * @param platform The rendered request's target.
+ */
+export async function compatLoaderFor(st: DevState, platform: Platform): Promise<ModuleLoader> {
+  await devBoundaryFor(st, platform);
+  const load = compatBuildOf(st, await devBuildTarget(st, platform)).load;
+  if (!load) throw new Error(`denext: the next-compat dev build for ${platform} did not complete`);
+  return load;
 }
 
 /** Recompute the Flight boundary for this generation (routes, client refs, server refs). */
@@ -171,15 +186,9 @@ async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   }
   await tagServerModules(
     boundary.server,
-    boundaryRefLoader(st.compatLoad ?? tagLoaderFor(st, "web")),
+    boundaryRefLoader(compatBuildOf(st, "web").load ?? tagLoaderFor(st, "web")),
   );
   st.boundaryGen = st.generation;
-}
-
-/** Whether two redirect maps resolve the same way. */
-function sameRedirects(a: Record<string, string>, b: Record<string, string>): boolean {
-  const ka = Object.keys(a);
-  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
 }
 
 /** The web target's boundary, as {@linkcode refreshBoundary} left it. */
@@ -217,25 +226,51 @@ async function scanPlatformBoundary(
 }
 
 /**
+ * A next-compat app's Flight boundary for `platform`, and its compat build: the crawl follows the
+ * target's platform files (its esbuild bundles probe them; the crawl gets them as redirects), the
+ * target's server bundles are built from it, and its actions are tagged through them.
+ */
+async function compatPlatformBoundary(
+  st: DevState,
+  m: RouteManifest,
+  platform: Platform,
+): Promise<DevBoundary> {
+  const npm = await compatNpmFinder(st);
+  const imports = await devStylesheetImports(st, platform);
+  const crawl = await withModuleGraphRedirects(st.paths.configPath, imports, async () => {
+    const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages, { npm });
+    const manifest = await buildBoundaryManifest(st.paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], { exportsOf: importFunctionExports, npm });
+    return { routes, manifest };
+  });
+  await ensureCompatBuilt(st, m, platform, crawl);
+  const load = compatBuildOf(st, platform).load!;
+  await tagServerModules(crawl.manifest.server, boundaryRefLoader(load), platform);
+  const { routes, manifest } = crawl;
+  return { routes, clients: manifest.client, servers: manifest.server, manifest };
+}
+
+/**
  * The Flight boundary `platform` renders and hydrates with this generation. A target whose
  * platform files resolve like web's shares web's ({@linkcode refreshBoundary}); another gets its
  * own crawl, since a variant may be a `"use client"` module where the plain file is not, or
- * reach other islands. A next-compat app serves every shell the web target in dev, so its
- * boundary is web's.
+ * reach other islands. A next-compat app's own crawl also builds the target's compat bundles.
  *
  * @param st The dev state.
  * @param platform The rendered request's target.
  */
 export async function devBoundaryFor(st: DevState, platform: Platform): Promise<DevBoundary> {
   const m = await getManifest(st);
-  if (platform === "web" || await isCompat(st)) return webBoundary(st);
-  const redirects = await devPlatformRedirects(st, platform);
-  if (sameRedirects(redirects, await devPlatformRedirects(st, "web"))) return webBoundary(st);
+  if (await devBuildTarget(st, platform) === "web") return webBoundary(st);
+  const compat = await isCompat(st);
   const cached = st.platformBoundaries.get(platform);
   if (cached?.gen === st.generation) return await cached.boundary;
   const entry: { gen: number; boundary: Promise<DevBoundary>; value?: DevBoundary } = {
     gen: st.generation,
-    boundary: scanPlatformBoundary(st, m, platform, await devPlatformImports(st, platform)),
+    boundary: compat
+      ? compatPlatformBoundary(st, m, platform)
+      : scanPlatformBoundary(st, m, platform, await devPlatformImports(st, platform)),
   };
   st.platformBoundaries.set(platform, entry);
   entry.boundary.then((value) => entry.value = value, () => st.platformBoundaries.delete(platform));
@@ -276,7 +311,9 @@ export async function devActionScope(
   request?: Request,
 ): Promise<string> {
   const boundary = await devBoundaryFor(st, platform);
-  const load = st.compatLoad ?? tagLoaderFor(st, platform);
+  const load = await isCompat(st)
+    ? await compatLoaderFor(st, platform)
+    : tagLoaderFor(st, platform);
   try {
     await tagServerModules(boundary.servers, boundaryRefLoader(load), platform);
   } catch (err) {
