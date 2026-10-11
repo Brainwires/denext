@@ -675,7 +675,7 @@ Deno.test("desktop doctor is dispatched with the dir positional and --json", asy
   assertEquals(code, errors.length > 0 ? 1 : 0, JSON.stringify(report.findings));
 });
 
-Deno.test("desktop package: a pnpm workspace gets the denoFlags hint; refused denoFlags stop it", async () => {
+Deno.test("desktop package: a pnpm workspace needs no denoFlags hint; refused denoFlags stop it", async () => {
   const dir = await tempDir("denext_desktop_pkg_flags_");
   const warns: string[] = [];
   const warn = console.warn;
@@ -692,8 +692,8 @@ Deno.test("desktop package: a pnpm workspace gets the denoFlags hint; refused de
     await Deno.writeTextFile(join(dir, "pnpm-workspace.yaml"), "packages: []\n");
     const hinted = await runVerb(["package"], dir, { "target-os": "linux" });
     assertEquals(hinted.code, 0, hinted.err);
-    assertStringIncludes(warns.join("\n"), "this is a pnpm workspace");
-    assertStringIncludes(warns.join("\n"), '"--node-modules-dir=none"');
+    // deno desktop gets --node-modules-dir=none by itself: nothing to tell a pnpm workspace.
+    assertEquals(warns.filter((w) => w.includes("pnpm")), []);
     assertEquals(await Deno.readTextFile(seen), "ran");
     await Deno.remove(seen);
     // A permission flag in desktop.denoFlags is refused before the script runs.

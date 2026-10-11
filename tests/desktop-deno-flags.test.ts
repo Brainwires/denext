@@ -1,11 +1,13 @@
-// `desktop.denoFlags`: extra `deno desktop` flags (a pnpm workspace's `--node-modules-dir=none`)
+// `desktop.denoFlags`: extra `deno desktop` flags
 // from an allow-list, never a permission flag. Covers the allow-list, config validation, the
-// package scripts' bundle command and the scaffolded macOS script, and the pnpm-workspace hint.
+// package scripts' bundle command and the scaffolded macOS script, and a pnpm workspace member's
+// npm args (no denoFlags needed).
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import { desktopDenoFlagError, desktopDenoFlags } from "../src/desktop/deno-flags.ts";
-import { desktopDenoFlagArgs, desktopPnpmWorkspaceHint } from "../src/build/desktop-deno-flags.ts";
+import { desktopDenoFlagArgs } from "../src/build/desktop-deno-flags.ts";
+import { desktopNpmArgsFor } from "../src/build/desktop-capabilities.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
@@ -162,23 +164,16 @@ Deno.test("scaffold: the macOS script passes desktop.denoFlags (regenerate-scrip
   assertStringIncludes(mac.content, "...await desktopDenoFlagArgs(import.meta.url),");
 });
 
-Deno.test("desktopPnpmWorkspaceHint: a pnpm workspace with nodeModulesDir manual and no flag", async () => {
+Deno.test("a pnpm workspace member needs no desktop.denoFlags: deno desktop gets --node-modules-dir=none", async () => {
   const root = await Deno.makeTempDir();
   try {
     const app = join(root, "apps", "desktop");
     await Deno.mkdir(app, { recursive: true });
-    await Deno.writeTextFile(join(root, "deno.json"), '{ "nodeModulesDir": "manual" }\n');
-    // Not a pnpm workspace yet: no hint.
-    assertEquals(await desktopPnpmWorkspaceHint(app, []), undefined);
     await Deno.writeTextFile(join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
-    const hint = await desktopPnpmWorkspaceHint(app, []);
-    assertStringIncludes(hint ?? "", "--node-modules-dir=none");
-    // The project chose a mode: no hint.
-    assertEquals(await desktopPnpmWorkspaceHint(app, ["--node-modules-dir=none"]), undefined);
-    assertEquals(await desktopPnpmWorkspaceHint(app, ["--node-modules-dir"]), undefined);
-    // The nearest deno.json that sets nodeModulesDir decides.
-    await Deno.writeTextFile(join(app, "deno.jsonc"), '// app\n{ "nodeModulesDir": "auto" }\n');
-    assertEquals(await desktopPnpmWorkspaceHint(app, []), undefined);
+    await Deno.writeTextFile(join(app, "deno.json"), '{ "nodeModulesDir": "manual" }\n');
+    await Deno.writeTextFile(join(app, "package.json"), '{ "name": "desktop" }\n');
+    assertEquals(await desktopNpmArgsFor(app), ["--node-modules-dir=none", "--exclude-unused-npm"]);
+    assertEquals(await desktopDenoFlagArgs(toFileUrl(join(app, "scripts", "x.ts")).href), []);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

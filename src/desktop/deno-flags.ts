@@ -1,8 +1,8 @@
 /**
- * `desktop.denoFlags`: extra `deno desktop` flags a project needs to build or run at all (a pnpm
- * workspace needs `--node-modules-dir=none`, or `deno desktop` type-checks against its
- * `node_modules` and rewrites the root `package.json`). `denext desktop run` / `dev` and the
- * package scripts pass them before the entry.
+ * `desktop.denoFlags`: extra `deno desktop` flags a project needs to build or run at all.
+ * `denext desktop run` / `dev` and the package scripts pass them before the entry. npm resolution
+ * needs none of them: a project with a package.json or node_modules (a pnpm workspace member
+ * included) is built with `--node-modules-dir=none --exclude-unused-npm` already.
  *
  * Only an allow-list of resolution and type-check flags is accepted, each as one `--flag` or
  * `--flag=value` entry. Permission flags are refused (the packaged app's permissions come from

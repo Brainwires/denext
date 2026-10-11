@@ -45,6 +45,13 @@ and this project adheres to
 
 ### Fixed
 
+- **The desktop docs and `denext desktop` no longer tell a pnpm workspace to set `desktop.denoFlags`.**
+  `denext desktop run | dev | package` printed a hint, and the desktop guide and the config
+  reference said, that a pnpm workspace member (`nodeModulesDir: "manual"`) needs
+  `denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"]` or `deno desktop` rewrites the
+  root `package.json`. `deno desktop` already gets both flags for any project with a
+  `package.json` or `node_modules`; the hint is gone and the docs say so.
+
 - **A desktop package script run directly works in a pnpm workspace.** `deno run -A
   scripts/package-<os>.ts` resolved `denext/desktop`'s own npm build dependencies (the sidecar
   bundler's esbuild) in the app's `nodeModulesDir: "manual"` mode, where they are not, so the run

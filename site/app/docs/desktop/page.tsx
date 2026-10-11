@@ -215,16 +215,21 @@ export default {
         <code>denext desktop dev</code>{" "}
         and the package scripts pass them before the entry (the macOS script itself; the Linux and
         Windows builds read them through{" "}
-        <code>denext/desktop</code>). The usual case is a pnpm workspace (deno.json{" "}
-        <code>nodeModulesDir: "manual"</code>), where <code>deno desktop</code>{" "}
-        would otherwise type-check against the workspace&apos;s <code>node_modules</code>{" "}
-        and rewrite the root <code>package.json</code>:
+        <code>denext/desktop</code>). npm resolution needs none of them: a project with a{" "}
+        <code>package.json</code> or <code>node_modules</code>, a pnpm workspace member (deno.json
+        {" "}
+        <code>nodeModulesDir: "manual"</code>) included, is built with{" "}
+        <code>--node-modules-dir=none --exclude-unused-npm</code> already, so{" "}
+        <code>deno desktop</code>{" "}
+        resolves npm packages from Deno&apos;s cache and never touches the workspace&apos;s{" "}
+        <code>node_modules</code> or root{" "}
+        <code>package.json</code>. A flag the build does need goes here:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
 export default {
   desktop: {
-    denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"],
+    denoFlags: ["--unstable-sloppy-imports"],
   },
 };`}
       </Code>
