@@ -929,6 +929,45 @@ export function createDesktopHandler(
   });
   const serveBackendOrExport = backendOrExportServer(options.proxy, proxy, outDir, serveShell);
 
+  const serveLocal = localDesktopStage({ options, token, onBooted, bridge, onQuit, trust });
+  const serveDev = devProxy
+    ? devProxyServer(devProxy, token, devInjectToken, memoryPreload, preloadKey, page)
+    : undefined;
+
+  return async (request, url, info) => {
+    const local = await serveLocal(request, url, info);
+    if (local) return local;
+    // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
+    // document when absent) served over the memory transport (the pinned runtime) or to a LOOPBACK
+    // Host (the stock runtime) — so a subframe AND a DNS-rebinding Host each get the desktop global
+    // without the token, and cannot reach the bridge.
+    const injectToken = shouldInjectDesktopToken(request, url, trust, info);
+    // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
+    // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
+    if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
+      await bridge.pageLoaded();
+    }
+    // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`.
+    if (serveDev) return await serveDev(request, url, injectToken);
+    return await serveBackendOrExport(request, url, injectToken);
+  };
+}
+
+/**
+ * The requests a desktop window's server always answers locally, ahead of any proxy: a refused
+ * cross-origin endpoint or foreign WebSocket, the `onRequest` escape hatch, the token-gated
+ * local endpoints and the capability bridge. `null` hands the request on.
+ */
+function localDesktopStage(ctx: {
+  options: RunDesktopOptions;
+  token: string;
+  onBooted: (() => void | Promise<void>) | undefined;
+  bridge: DesktopBridge | undefined;
+  onQuit: (() => void) | undefined;
+  trust: DesktopTrust;
+}): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response | null> {
+  // Unpacked once: the per-request path reads closure locals, as it did inline.
+  const { options, token, onBooted, bridge, onQuit, trust } = ctx;
   return async (request, url, info) => {
     // A desktop endpoint request marked cross-origin is refused, and in the memory world a
     // WebSocket upgrade must carry the exact app origin (the relay checked it too) — before even
@@ -958,34 +997,35 @@ export function createDesktopHandler(
       const bridged = await bridge.handle(request, url, token, info);
       if (bridged) return bridged;
     }
-    // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
-    // document when absent) served over the memory transport (the pinned runtime) or to a LOOPBACK
-    // Host (the stock runtime) — so a subframe AND a DNS-rebinding Host each get the desktop global
-    // without the token, and cannot reach the bridge.
-    const injectToken = shouldInjectDesktopToken(request, url, trust, info);
-    // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
-    // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
-    if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
-      await bridge.pageLoaded();
-    }
-    // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
-    // with the per-launch desktop token stripped so it never reaches the dev server. The token is
-    // injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
-    // that is also a top-level loopback-Host document, never in --lan mode.
-    if (devProxy) {
-      return await devProxyResponse(
-        request,
-        url,
-        devProxy,
-        token,
-        devInjectToken && injectToken,
-        memoryPreload,
-        preloadKey,
-        page,
-      );
-    }
-    return await serveBackendOrExport(request, url, injectToken);
+    return null;
   };
+}
+
+/**
+ * Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
+ * with the per-launch desktop token stripped so it never reaches the dev server. The token is
+ * injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
+ * that is also a top-level loopback-Host document, never in --lan mode.
+ */
+function devProxyServer(
+  devProxy: DesktopProxyFn,
+  token: string,
+  devInjectToken: boolean,
+  memoryPreload: string | undefined,
+  preloadKey: string | undefined,
+  page: DesktopPageGlobals,
+): (request: Request, url: URL, injectToken: boolean) => Promise<Response> {
+  return (request, url, injectToken) =>
+    devProxyResponse(
+      request,
+      url,
+      devProxy,
+      token,
+      devInjectToken && injectToken,
+      memoryPreload,
+      preloadKey,
+      page,
+    );
 }
 
 /** Serves an exported page (`pageHtml`, else the export's `index.html` shell) to a desktop window. */

@@ -3061,35 +3061,18 @@ async function migrateExpoProject(
   const R = await denextResolver(await denextVersion(), options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const manual = pm !== null;
   const pkg = await readJson(join(dir, "package.json")) ?? {};
   const entry = await requireExpoWebEntry(dir, pkg, deps);
   const imports = await spaImportMap(dir, deps, R, false);
-  const classified = classifyDeps(deps, imports, { pin: !manual });
+  const classified = classifyDeps(deps, imports, { pin: pm === null });
   const config = await readExpoAppConfig(dir);
-  const title = config.name ?? config.slug ?? (typeof pkg.name === "string" ? pkg.name : "App");
-  const identity = capacitorIdentity(config, title);
-  const appearance = {
-    ios: resolveAppearance(config.appearance.ios),
-    android: resolveAppearance(config.appearance.android),
-  };
-  const desktopPackages = RN_DESKTOP_PACKAGES.filter((p) => p in deps);
-  const nodeModulesDir = manual ? "manual" : "auto";
+  const { title, identity, appearance, desktopPackages } = expoAppFacts(config, pkg, deps);
+  const nodeModulesDir = pm !== null ? "manual" : "auto";
   const written: string[] = [];
-  if (entry.generated) {
-    await writeIfWritable(
-      join(dir, entry.generated.path),
-      () => GEN_MARKER + "\n" + entry.generated!.source,
-      written,
-    );
-  }
+  await writeGeneratedEntry(dir, entry, written);
   const icon = await migrateAppIcon(dir, true);
   const facts = expoSpaFacts(entry.entry, title, config, appearance, desktopPackages, icon);
-  const configWritten = await writeIfWritable(
-    join(dir, "denext.config.ts"),
-    () => spaConfigSource(facts),
-    written,
-  );
+  const configWritten = await writeSpaConfig(dir, facts, written);
   const shell = await writeExpoShell(
     dir,
     {
@@ -3103,18 +3086,11 @@ async function migrateExpoProject(
     },
     written,
   );
-  const tasks = {
-    ...spaTasks(false, R.cli, false, nodeModulesDir),
-    ...capacitorTasks(R.cli, { run: MIGRATED_RUN, installed: pm !== null }),
-  };
-  const denoJsonExists = await finishSpaProjectFiles(
-    dir,
-    spaDenoJson(imports, nodeModulesDir, tasks),
-    null,
-    false,
+  const denoJsonExists = await writeExpoDenoJson(dir, imports, R.cli, {
+    nodeModulesDir,
+    installed: pm !== null,
     written,
-    await capacitorIgnoresFor(dir),
-  );
+  });
   const { tailwindInput, missingPackages } = await expoWebNeeds(dir, deps);
   return {
     capacitor: shell.capacitor,
@@ -3126,16 +3102,7 @@ async function migrateExpoProject(
     pagesConfigWritten: false,
     pagesConfigExists: false,
     denoJsonExists,
-    spa: {
-      entry: entry.entry,
-      title,
-      envKeys: [],
-      tailwind: false,
-      configWritten,
-      desktopWritten: false,
-      appIcon: appIconInfo(icon, configWritten),
-      nodeModulesDir,
-    },
+    spa: expoSpaResult(entry.entry, title, icon, configWritten, nodeModulesDir),
     expo: await expoMigrationReport(dir, deps, pkg, {
       config,
       entry,
@@ -3145,6 +3112,95 @@ async function migrateExpoProject(
       desktopPackages,
     }),
   };
+}
+
+/** What the app config says about the app: its title, Capacitor identity, colours and desktop. */
+function expoAppFacts(
+  config: Awaited<ReturnType<typeof readExpoAppConfig>>,
+  pkg: Record<string, unknown>,
+  deps: Record<string, string>,
+) {
+  const title = config.name ?? config.slug ?? (typeof pkg.name === "string" ? pkg.name : "App");
+  return {
+    title,
+    identity: capacitorIdentity(config, title),
+    appearance: {
+      ios: resolveAppearance(config.appearance.ios),
+      android: resolveAppearance(config.appearance.android),
+    },
+    desktopPackages: RN_DESKTOP_PACKAGES.filter((p) => p in deps),
+  };
+}
+
+/** Write the web entry migrate generated for the app, when its own entry is not web-ready. */
+async function writeGeneratedEntry(
+  dir: string,
+  entry: NonNullable<Awaited<ReturnType<typeof expoWebEntry>>>,
+  written: string[],
+): Promise<void> {
+  if (!entry.generated) return;
+  await writeIfWritable(
+    join(dir, entry.generated.path),
+    () => GEN_MARKER + "\n" + entry.generated!.source,
+    written,
+  );
+}
+
+/**
+ * The Expo app's `deno.json` (the SPA tasks plus Capacitor's `mobile:*` ones) and `.gitignore`.
+ * Returns whether a `deno.json` already existed.
+ */
+async function writeExpoDenoJson(
+  dir: string,
+  imports: Awaited<ReturnType<typeof spaImportMap>>,
+  cli: string,
+  o: { nodeModulesDir: "manual" | "auto"; installed: boolean; written: string[] },
+): Promise<boolean> {
+  const tasks = {
+    ...spaTasks(false, cli, false, o.nodeModulesDir),
+    ...capacitorTasks(cli, { run: MIGRATED_RUN, installed: o.installed }),
+  };
+  return await finishSpaProjectFiles(
+    dir,
+    spaDenoJson(imports, o.nodeModulesDir, tasks),
+    null,
+    false,
+    o.written,
+    await capacitorIgnoresFor(dir),
+  );
+}
+
+/** The `spa` part of an Expo migration's result. */
+function expoSpaResult(
+  entry: string,
+  title: string,
+  icon: Awaited<ReturnType<typeof migrateAppIcon>>,
+  configWritten: boolean,
+  nodeModulesDir: "manual" | "auto",
+) {
+  return {
+    entry,
+    title,
+    envKeys: [],
+    tailwind: false,
+    configWritten,
+    desktopWritten: false,
+    appIcon: appIconInfo(icon, configWritten),
+    nodeModulesDir,
+  };
+}
+
+/** Write the generated `denext.config.ts` (unless the app authored one); true when written. */
+async function writeSpaConfig(
+  dir: string,
+  facts: SpaConfigFacts,
+  written: string[],
+): Promise<boolean> {
+  return await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => spaConfigSource(facts),
+    written,
+  );
 }
 
 /** The app's web entry, or an error naming why there is none. */
