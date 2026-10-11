@@ -51,12 +51,17 @@ export async function loadNativeDirs(root: string): Promise<NativeDirs> {
       config = await readCapacitorConfig(file, await Deno.readTextFile(file));
     } catch { /* unreadable: the defaults */ }
   }
-  const dirs: NativeDirs = {
+  const dirs = nativeDirsOf(config);
+  loaded.set(resolve(root), dirs);
+  return dirs;
+}
+
+/** The native dirs a parsed Capacitor config names (`null`: none, so the defaults). */
+export function nativeDirsOf(config: Record<string, unknown> | null | undefined): NativeDirs {
+  return {
     ios: platformPath(config?.ios, DEFAULT_NATIVE_DIRS.ios),
     android: platformPath(config?.android, DEFAULT_NATIVE_DIRS.android),
   };
-  loaded.set(resolve(root), dirs);
-  return dirs;
 }
 
 /** The native dirs of `root` as last loaded, else Capacitor's defaults. */
@@ -78,4 +83,29 @@ export function nativeRel(root: string, rel: string): string {
 /** `join(root, nativeRel(root, rel), ...more)`. */
 export function nativeJoin(root: string, rel: string, ...more: string[]): string {
   return join(root, nativeRel(root, rel), ...more);
+}
+
+/**
+ * A default-layout path at the start of a word: `ios/…` or `android/…`, not inside a longer
+ * path (`native/ios/…`), a package name (`@capacitor/ios`) or another word (`my-ios/…`).
+ */
+const DEFAULT_LAYOUT_PATH = /(?<![\w.@/\\-])(ios|android)(?=\/)/g;
+
+/**
+ * `text`, a message naming files in Capacitor's default layout (`ios/App/App/Info.plist: set
+ * …`, `no ios/ or android/ project`), with each such path moved into the layout of the project
+ * at `root`. Paths already in the project's layout are left alone.
+ */
+export function nativeText(root: string, text: string): string {
+  const dirs = nativeDirs(root);
+  if (dirs.ios === DEFAULT_NATIVE_DIRS.ios && dirs.android === DEFAULT_NATIVE_DIRS.android) {
+    return text;
+  }
+  return text.replace(DEFAULT_LAYOUT_PATH, (m) => dirs[m as keyof NativeDirs]);
+}
+
+/** Map every message of `list` through {@link nativeText}, in place; returns `list`. */
+export function nativeTexts<T extends string[]>(root: string, list: T): T {
+  for (let i = 0; i < list.length; i++) list[i] = nativeText(root, list[i]);
+  return list;
 }

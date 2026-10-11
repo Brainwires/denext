@@ -40,7 +40,7 @@ import {
   NativeSnapshot,
   type ResolvedFlavor,
 } from "./mobile-flavor.ts";
-import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
+import { loadNativeDirs, nativeJoin, nativeText } from "./capacitor-native-dirs.ts";
 
 /** A command a build step runs; `env` carries secrets and is never printed. */
 export interface BuildCommand extends PlannedCommand {
@@ -360,10 +360,11 @@ function androidSigning(
   // GRADLE_OPTS splits on whitespace and treats quotes specially: refuse what it would mangle.
   const bad = Object.entries(values).find(([, v]) => /[\s"'\\$`]/.test(v));
   if (bad) {
-    throw new Error(
+    throw new Error(nativeText(
+      opts.root,
       `the Android signing ${bad[0]} contains whitespace, a quote, \\, $ or \`, which Gradle's ` +
         "GRADLE_OPTS cannot carry (pass it in android/key.properties + a signingConfig instead)",
-    );
+    ));
   }
   // Project properties as org.gradle.project.* system properties in GRADLE_OPTS: an environment
   // variable, so never in denext's argv or the printed plan — but `gradlew` splices GRADLE_OPTS

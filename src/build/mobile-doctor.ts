@@ -36,7 +36,7 @@ import {
   AUTH_SESSION_TEMPLATE_VERSION,
 } from "./auth-session-native-templates.ts";
 import { SETTINGS_TEMPLATE_VERSION } from "./settings-native-templates.ts";
-import { loadNativeDirs, nativeJoin, nativeRel } from "./capacitor-native-dirs.ts";
+import { loadNativeDirs, nativeJoin, nativeRel, nativeText } from "./capacitor-native-dirs.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -756,13 +756,15 @@ const splash: Check = {
   },
 };
 
-/** Folders the source scan never enters: dependencies, builds, native projects, the export. */
+/**
+ * Folders the source scan never enters by name: dependencies, builds, the export. The native
+ * projects are skipped by path, where capacitor.config.* puts them (see
+ * {@linkcode nativeSourceSkips}), so an app folder that happens to be named `ios` is scanned.
+ */
 const SKIPPED_SOURCE_DIRS = new Set([
   "node_modules",
   ".denext",
   ".git",
-  "ios",
-  "android",
   "out",
   "dist",
   "build",
@@ -770,21 +772,43 @@ const SKIPPED_SOURCE_DIRS = new Set([
 const SOURCE_FILE = /\.(?:tsx?|jsx?|mjs)$/;
 
 /**
+ * The Capacitor project's native folders (`ios.path` / `android.path`) as paths relative to the
+ * scanned app folder (`/`-separated), for those inside it.
+ */
+function nativeSourceSkips(p: MobileProject): Set<string> {
+  const skips = new Set<string>();
+  for (const platform of ["ios", "android"]) {
+    const rel = posixRelative(p.appDir, nativeJoin(p.root, platform));
+    if (rel !== "" && rel !== ".." && !rel.startsWith("../")) skips.add(rel);
+  }
+  return skips;
+}
+
+/**
  * The project-relative (`/`-separated) source files under `dir`. The skip list is matched per
  * folder name inside the project only, so a project that itself lives under a `dist` / `build` /
- * `out` folder is still scanned. Symlinks are not followed.
+ * `out` folder is still scanned; `skips` are folders skipped by their path. Symlinks are not
+ * followed.
  */
-async function* sourceFiles(dir: string, rel = ""): AsyncGenerator<string> {
+async function* sourceFiles(
+  dir: string,
+  skips: ReadonlySet<string>,
+  rel = "",
+): AsyncGenerator<string> {
   for await (const entry of Deno.readDir(rel ? join(dir, rel) : dir)) {
     const path = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory && !SKIPPED_SOURCE_DIRS.has(entry.name)) yield* sourceFiles(dir, path);
-    else if (entry.isFile && SOURCE_FILE.test(entry.name)) yield path;
+    if (entry.isDirectory) {
+      if (!SKIPPED_SOURCE_DIRS.has(entry.name) && !skips.has(path)) {
+        yield* sourceFiles(dir, skips, path);
+      }
+    } else if (entry.isFile && SOURCE_FILE.test(entry.name)) yield path;
   }
 }
 
 /** The app's own source files (not dependencies, builds, native projects or the export). */
-async function* appSources(dir: string): AsyncGenerator<{ rel: string; text: string }> {
-  for await (const rel of sourceFiles(dir)) {
+async function* appSources(p: MobileProject): AsyncGenerator<{ rel: string; text: string }> {
+  const dir = p.appDir;
+  for await (const rel of sourceFiles(dir, nativeSourceSkips(p))) {
     const path = join(dir, rel);
     if ((await Deno.stat(path)).size > 1024 * 1024) continue;
     yield { rel, text: await Deno.readTextFile(path) };
@@ -793,10 +817,10 @@ async function* appSources(dir: string): AsyncGenerator<{ rel: string; text: str
 
 /** What the app's sources say about sign-in and account deletion. */
 async function authFacts(
-  dir: string,
+  p: MobileProject,
 ): Promise<{ auth: boolean; deletion: boolean; google: boolean; apple: boolean }> {
   const facts = { auth: false, deletion: false, google: false, apple: false };
-  for await (const { text } of appSources(dir)) {
+  for await (const { text } of appSources(p)) {
     facts.auth ||=
       /\b(?:denextAuth|nativeSession|signInWithApple|signInWithGoogle|signInNative)\s*\(/.test(
         text,
@@ -812,7 +836,7 @@ const accountDeletion: Check = {
   id: "account-deletion",
   profiles: ["store"],
   run: async (p) => {
-    const facts = await authFacts(p.appDir);
+    const facts = await authFacts(p);
     const out: MobileDoctorFinding[] = [];
     if (facts.auth && !facts.deletion) {
       out.push({
@@ -887,7 +911,7 @@ const webStorage: Check = {
   run: async (p) => {
     const files: string[] = [];
     let kvStore = false;
-    for await (const { rel, text } of appSources(p.appDir)) {
+    for await (const { rel, text } of appSources(p)) {
       if (WEB_STORAGE.test(text)) files.push(rel);
       kvStore ||= /\bopenKeyValueStore\s*\(/.test(text);
     }
@@ -1371,7 +1395,16 @@ export async function runMobileDoctor(opts: MobileDoctorOptions): Promise<Mobile
     if (!check.applies || await check.applies(project)) checks.push(check);
   }
   const findings: MobileDoctorFinding[] = [];
-  for (const check of checks) findings.push(...await check.run(project, opts.profile));
+  for (const check of checks) {
+    for (const finding of await check.run(project, opts.profile)) {
+      // A path in Capacitor's default layout, named in the project's own (ios.path / android.path).
+      findings.push({
+        ...finding,
+        message: nativeText(opts.root, finding.message),
+        fix: nativeText(opts.root, finding.fix),
+      });
+    }
+  }
   return { root: opts.root, profile: opts.profile, checks: checks.map((c) => c.id), findings };
 }
 

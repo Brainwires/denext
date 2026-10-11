@@ -62,9 +62,9 @@ import {
   resolveAppearance,
 } from "./expo-appearance.ts";
 import { findReactNativeWeb } from "./react-native.ts";
-import { CAPACITOR_BUILD_IGNORES } from "./capacitor-pins.ts";
 import {
   appRouterServerFiles,
+  capacitorIgnoresFor,
   type CapacitorMigrateInfo,
   type CapacitorOptions,
   type CapacitorPlan,
@@ -3113,7 +3113,7 @@ async function migrateExpoProject(
     null,
     false,
     written,
-    CAPACITOR_BUILD_IGNORES,
+    await capacitorIgnoresFor(dir),
   );
   const { tailwindInput, missingPackages } = await expoWebNeeds(dir, deps);
   return {

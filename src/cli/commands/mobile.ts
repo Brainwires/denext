@@ -67,6 +67,7 @@ import {
   formatCapabilityTable,
 } from "../../build/mobile-capabilities.ts";
 import { logStabilized } from "../../build/mobile-build.ts";
+import { nativeText } from "../../build/capacitor-native-dirs.ts";
 import { stabilizeSpmPluginPaths } from "../../build/spm-plugin-paths.ts";
 import {
   type MobileDevServer,
@@ -511,7 +512,7 @@ async function addOta(ctx: CommandContext): Promise<void> {
     printReport(report, dryRun);
   }
   if (report.skipped.length === 2) {
-    fail("\n  denext mobile add-ota: no ios/ or android/ project found.");
+    fail(nativeText(dir, "\n  denext mobile add-ota: no ios/ or android/ project found."));
   }
   const failure = publicKey === undefined ? undefined : publicKeyFailure(report);
   if (failure !== undefined) fail(`\n  ${failure}`);
@@ -803,6 +804,10 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "                                content, allowNavigation *, CSP, secrets in the export)\n" +
     "  denext mobile inspect         Attach Safari Web Inspector / chrome://inspect to the app\n" +
     MOBILE_BUILD_USAGE +
+    "\n" +
+    "  Native paths below are Capacitor's default layout (ios/App/App/…, android/app/…). When\n" +
+    "  capacitor.config.* sets ios.path / android.path, every mobile command reads and writes the\n" +
+    "  native projects there, and its reports and manual steps name those paths.\n" +
     "\n" +
     "  fingerprint: SHA-256 over the ios/ and android/ sources (minus build output, Pods,\n" +
     "  .gradle, xcuserdata, local.properties and what `cap sync` copies in; text with CRLF\n" +

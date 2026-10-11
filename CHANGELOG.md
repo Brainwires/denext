@@ -45,6 +45,17 @@ and this project adheres to
 
 ### Fixed
 
+- **Every `denext mobile` message names the native files where `ios.path` / `android.path` put
+  them.** The manual steps and warnings of `mobile add` (each native installer's, e.g. "set
+  NSSupportsLiveActivities", and the capability plan's), `add-ota`, `mobile doctor`, `mobile dev` and
+  `mobile build` still printed the default `ios/App/…` / `android/app/…` paths for a project that keeps
+  its shells elsewhere. `mobile doctor`'s scan of the app's own sources skipped folders named `ios`
+  and `android` wherever they were, and walked the native projects (and the export copied into them)
+  when they lived elsewhere: it now skips the configured native folders by path. The `.gitignore`
+  lines `denext migrate --enable-capacitor` / `--from expo` add for the native build outputs follow
+  an existing capacitor.config's paths too, and `denext mobile --help` says that its paths are
+  Capacitor's default layout.
+
 - **React Native mode: `TextInput` and the stack header look like React Native.** A focused
   `TextInput` drew the browser's focus ring, and a long placeholder in a one-line `multiline`
   input (a chat composer) wrapped onto a clipped second line. react-native-web's `TextInput` now
