@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Fixed
 
+- **A plain chat scroller keeps its last rows in view when the iOS shell resizes.** React Native
+  mode's `KeyboardChatScrollView` and `KeyboardAwareLegendList` (their keyboard lift) treated
+  the Capacitor shell's delayed resize as the keyboard closing: they scrolled the content back
+  down as the WebView / `<body>` shrank, so a chat at its end hid its last rows behind the
+  keyboard until the user scrolled. The room after the content now gives way to the shrunk
+  scroll view without moving the content, and a chat whose end was in view (within 20 px) as
+  the keyboard opened stays pinned to its end through the lift, the resize, a suggestion bar
+  and the hide, until the user scrolls away from it.
+
 - **`KeyboardAvoidingView`, `KeyboardStickyView` and React Native mode's keyboard views lift
   while the iOS keyboard slides in.** In the Capacitor shell with `resize: "native"` (the
   default), `"body"` or `"ionic"` they read the visual viewport, which `@capacitor/keyboard`
