@@ -433,6 +433,7 @@ Deno.test({
         mode: "desktop", // the sidecar's environment
         marker: null, // removed, so a grandchild does not inherit it
         secrets: [], // never handed to a child
+        grandchild: "function",
       });
     } finally {
       await inst.stop(0);

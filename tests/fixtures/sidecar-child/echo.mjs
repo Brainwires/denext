@@ -5,6 +5,9 @@ import process from "node:process";
 
 const sc = globalThis.denextSidecar;
 if (sc.child) {
+  // Nothing supervises a child: ready() and onShutdown() do nothing there.
+  sc.ready();
+  sc.onShutdown(() => {});
   let input = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (d) => input += d);
@@ -16,6 +19,7 @@ if (sc.child) {
       mode: process.env.MODE ?? null,
       marker: process.env.DENEXT_SIDECAR_CHILD ?? null,
       secrets: Object.keys(sc.secrets),
+      grandchild: typeof sc.spawnSelf, // a child can start one of its own
     };
     process.stdout.write(JSON.stringify(seen) + "\n");
     process.exitCode = Number(process.argv[3] ?? 0);
