@@ -22,6 +22,11 @@ and this project adheres to
   `[data-dnx-sheet-grabber]:focus:not(:focus-visible)` rule: keyboard focus (`:focus-visible`)
   still shows the ring, pointer focus does not.
 
+- **A native-stack header shows a string `headerTitle` over `title`.** When a screen set both,
+  React Native mode's `createNativeStackNavigator` drew `title`; React Navigation draws
+  `headerTitle` (its `getHeaderTitle`), and so does denext now, in the bar, the iOS large title
+  and the next screen's back label. `title` stays the screen's title for route announcements.
+
 - **A native-stack screen with no `title` shows its route name in the header.** React Native
   mode's `createNativeStackNavigator` (and expo-router's `Stack`) drew an empty header when a
   screen set neither `title` nor `headerTitle`, and dropped a string `headerTitle`; the title now

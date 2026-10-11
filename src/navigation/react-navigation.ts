@@ -160,6 +160,8 @@ function slot(value: unknown, args: Record<string, unknown>): VNodeChildren | un
  * presentations and detents are translated and the header slots rendered (the bar button
  * items, `unstable_headerLeftItems` / `unstable_headerRightItems`, as buttons). With no
  * `title` (and no string `headerTitle`) the title is the route's name, as in React Navigation.
+ * The header shows a string `headerTitle` over `title` (React Navigation's `getHeaderTitle`);
+ * `title` stays the screen's title for the document title and route announcements.
  */
 export function mapStackOptions(
   options: Record<string, unknown>,
@@ -195,7 +197,7 @@ export function mapStackOptions(
       ? options.sheetInitialDetentIndex
       : undefined,
     sheetGrabberVisible: bool("sheetGrabberVisible"),
-    headerTitle: typeof headerTitle === "string" ? undefined : headerTitle,
+    headerTitle,
     // The bar button items (`unstable_header…Items`) override `headerLeft` / `headerRight`.
     headerLeft: headerItems(options.unstable_headerLeftItems, context) ??
       slot(options.headerLeft, { canGoBack: context.canGoBack }),
