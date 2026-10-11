@@ -2,14 +2,15 @@
 // qrl handler extraction, AsyncContext instrumentation, feature folds), merged into the bundler
 // import map. `denext export` runs the same transforms (../export-pipeline/assets.ts).
 
-import { join } from "@std/path";
+import { extname, join, SEPARATOR } from "@std/path";
 import { asyncContextEnabled, featureFlags, reactCompilerEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
 import { compileFeatureModules } from "../feature-transform.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
-import { routeEntryFiles } from "../module-graph.ts";
+import { routeNeedsHydration } from "../hydration.ts";
+import { clientGraphModules, routeEntryFiles } from "../module-graph.ts";
 import { stylesheetImportMap } from "../platform-imports.ts";
 import { compileQrlModules } from "../qrl-transform.ts";
 import { tailwindPaths } from "../tailwind.ts";
@@ -51,6 +52,42 @@ function componentSourcesOnce(projectDir: string): () => Promise<string[]> {
   return () => scan ??= collectComponentSources(projectDir);
 }
 
+/** The plain-script extensions the AsyncContext pass instruments beyond `.tsx` / `.jsx`. */
+const SCRIPT_EXTS = new Set([".ts", ".mts", ".js", ".mjs"]);
+
+/**
+ * The modules the AsyncContext pass instruments: every component source, plus each plain
+ * `.ts` / `.js` / `.mts` / `.mjs` module of the project a client bundle can contain
+ * ({@linkcode clientGraphModules}) — a hook or store that awaits inside `startTransition` kept
+ * the time-window fallback when only `.tsx` / `.jsx` were scanned. A module only the server tree
+ * reaches (a Flight page's data module, a `"use server"` module and what it imports) is left
+ * alone. When the graph cannot be crawled, the component sources alone.
+ */
+async function asyncContextSources(
+  ctx: Pick<BuildContext, "projectDir" | "paths" | "manifest" | "flightRoutes">,
+  components: string[],
+): Promise<string[]> {
+  const { manifest, paths } = ctx;
+  const extra = [manifest.rootGlobalError, paths.instrumentationClientPath]
+    .filter((f): f is string => !!f);
+  const entries = [...new Set([...manifest.pages.flatMap(routeEntryFiles), ...extra])];
+  const wholeTree = [...extra];
+  for (const route of manifest.pages) {
+    if (ctx.flightRoutes.has(route.routePath)) continue;
+    if (await routeNeedsHydration(route)) wholeTree.push(...routeEntryFiles(route));
+  }
+  const reached = await clientGraphModules(entries, [...new Set(wholeTree)]).catch(() => []);
+  const root = await Deno.realPath(ctx.projectDir).catch(() => ctx.projectDir);
+  const inProject = (p: string) =>
+    p.startsWith(root + SEPARATOR) &&
+    !/[/\\](node_modules|\.denext|\.git)[/\\]/.test(p.slice(root.length));
+  // The crawl names modules by their real path; the bundler's redirects are keyed by the
+  // project's own spelling (a temp dir under macOS's `/var` is `/private/var`).
+  const scripts = reached.filter((p) => SCRIPT_EXTS.has(extname(p)) && inProject(p))
+    .map((p) => join(ctx.projectDir, p.slice(root.length)));
+  return [...new Set([...components, ...scripts])].sort();
+}
+
 /**
  * Guard the one clobber that silently drops a needed rewrite: async-context instruments
  * the ORIGINAL source, so if a module is ALSO auto-memo'd or qrl-split, only the
@@ -86,7 +123,7 @@ function warnClobbered(asyncContextMap: RewriteMap, compilerMap: RewriteMap, qrl
  * @returns Each transformed module's file URL → its transformed file's URL.
  */
 export async function clientTransforms(
-  ctx: Pick<BuildContext, "projectDir" | "paths">,
+  ctx: Pick<BuildContext, "projectDir" | "paths" | "manifest" | "flightRoutes">,
   outDir: string = ctx.paths.outDir,
 ): Promise<Record<string, string>> {
   const { projectDir, paths } = ctx;
@@ -102,7 +139,8 @@ export async function clientTransforms(
   let asyncContextMap: RewriteMap;
   if (asyncContextEnabled(paths.config)) {
     log("async-context: instrumenting awaits for transition scoping");
-    asyncContextMap = await compileAsyncContextModules(await sources(), { outDir });
+    const files = await asyncContextSources(ctx, await sources());
+    asyncContextMap = await compileAsyncContextModules(files, { outDir });
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);
   const merged = { ...compilerMap, ...qrlMap, ...asyncContextMap };

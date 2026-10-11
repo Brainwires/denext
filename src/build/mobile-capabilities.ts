@@ -53,7 +53,13 @@ import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
 import { YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
-import { loadNativeDirs, nativeJoin, nativeRel } from "./capacitor-native-dirs.ts";
+import {
+  loadNativeDirs,
+  nativeJoin,
+  nativeRel,
+  nativeText,
+  nativeTexts,
+} from "./capacitor-native-dirs.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -1457,7 +1463,7 @@ async function appTargetWired(root: string): Promise<boolean> {
  * made (see {@linkcode appTargetWired}).
  */
 async function withResolvedEntitlementsNote(plan: CapabilityPlan): Promise<CapabilityPlan> {
-  const line = wiringStep();
+  const line = nativeText(plan.root, wiringStep());
   if (plan.native.entitlements.length === 0 || !plan.manual.includes(line)) return plan;
   if (!(await appTargetWired(plan.root))) return plan;
   return { ...plan, manual: plan.manual.filter((m) => m !== line) };
@@ -1562,6 +1568,8 @@ export async function planMobileCapabilities(
   );
   const target = await entitlementsTarget(root);
   const after = specs.length > 0 ? await syncStep(root) : undefined;
+  // Every path a note names, in the project's own native layout (ios.path / android.path).
+  const local = (list: string[]) => nativeTexts(root, list);
   return {
     root,
     capabilities: names,
@@ -1575,17 +1583,17 @@ export async function planMobileCapabilities(
     webAssetsMissing: after?.missing,
     plist: uniquePlistKeys(caps),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],
-    notes: names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : []),
+    notes: local(names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : [])),
     native: configured.native,
     entitlementsFiles: target.files,
-    warnings: [
+    warnings: local([
       ...(await missingFiles(root, configured.requiredFiles)),
       ...(after?.warning ? [after.warning] : []),
-    ],
-    manual: [
+    ]),
+    manual: local([
       ...(await entitlementSteps(root, target, configured.native.entitlements)),
       ...configured.manual,
-    ],
+    ]),
     privacy: privacyLabels(privacyEntriesFor(names)),
   };
 }
@@ -1615,11 +1623,13 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     `  capacitor      @capacitor/core ${plan.capacitorMajor} (${plan.capacitorSource})`,
     `  package mgr    ${plan.packageManager} (${packageManagerSource(plan)})`,
     `  install        ${plan.install ? commandLine(plan.install) : "(no npm package)"}`,
-    ...plan.native.installs.map((i) => `  native         ${i.label}`),
+    ...plan.native.installs.map((i) => `  native         ${nativeText(plan.root, i.label)}`),
     ...plan.plist.map((p) => `  Info.plist     ${p.key} (when absent)`),
     ...plan.native.infoPlist.map((e) => `  Info.plist     ${e.label}`),
     ...plan.native.entitlements.map((e) =>
-      `  entitlements   ${e.label} (${plan.entitlementsFiles.join(", ")})`
+      `  entitlements   ${e.label} (${
+        plan.entitlementsFiles.map((f) => nativeRel(plan.root, f)).join(", ")
+      })`
     ),
     ...plan.native.appDelegate.map((e) => `  AppDelegate    ${e.label}`),
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
@@ -1704,8 +1714,8 @@ function pushNew(list: string[], items: readonly string[]): void {
 function mergeInstall(report: AddCapabilitiesReport, done: NativeInstallReport): void {
   pushNew(report.written, done.written);
   pushNew(report.unchanged, done.unchanged);
-  report.skipped.push(...done.skipped);
-  pushNew(report.manual, done.manual);
+  report.skipped.push(...nativeTexts(report.plan.root, [...done.skipped]));
+  pushNew(report.manual, nativeTexts(report.plan.root, [...done.manual]));
 }
 
 /** Merge the capabilities' required-reason declarations into the privacy manifests. */
@@ -1715,8 +1725,9 @@ async function mergePrivacy(report: AddCapabilitiesReport): Promise<void> {
   const done = await writePrivacyManifests(report.plan.root, entries);
   pushNew(report.written, done.written);
   pushNew(report.unchanged, done.unchanged.filter((p) => !report.written.includes(p)));
-  report.skipped.push(...done.skipped.filter((s) => !report.skipped.includes(s)));
-  pushNew(report.manual, done.manual);
+  const skipped = nativeTexts(report.plan.root, [...done.skipped]);
+  report.skipped.push(...skipped.filter((s) => !report.skipped.includes(s)));
+  pushNew(report.manual, nativeTexts(report.plan.root, [...done.manual]));
 }
 
 /** Run `command`, throwing when it exits non-zero. */

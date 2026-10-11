@@ -564,13 +564,14 @@ client does this itself; for your own sockets use `desktopWebSocketUrl(path)` fr
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
 `openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
 registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
-passes allow-listed `deno desktop` flags (a pnpm workspace: `["--node-modules-dir=none",
-"--exclude-unused-npm"]`; never permission flags). The bundle's name, identifier and icon come from
+passes allow-listed `deno desktop` flags (never permission flags); npm resolution needs none:
+a project with a package.json or node_modules, a pnpm workspace included, is built with
+`--node-modules-dir=none --exclude-unused-npm` already. The bundle's name, identifier and icon come from
 `desktop.app.name` / `identifier` / `icons.{macos,windows,linux}`, falling back to deno.json.
 A denext backend (`denext start` / `denext dev`) accepts the app's own `desktop.app.origin` as
 same-origin (Server Actions, the API batch, Live, `denextAuth` POSTs, the dev origin gate) by exact
 match; a separate backend lists the origin in `allowedDevOrigins` (custom-scheme entries are allowed)
-or `createApp({ allowedOrigins })`. `denext migrate --desktop` writes `desktop.denoFlags`.
+or `createApp({ allowedOrigins })`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
@@ -1177,7 +1178,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 3.4.6` — The denext framework version.
+- `VERSION: 3.4.7` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2566,8 +2567,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `scheduleNotification(notification: LocalNotificationInput): Promise<number>` — Schedule a local notification (or show it now, without a trigger). Scheduling an id that is already pending replaces it.
 - `secureStore: SecureStore` — A string key-value store for secrets.
 - `interface SecureStore` — The store secureStore implements.
+- `type SecureStoreFallback = session` — The opt-in fallbacks of SecureStoreSetOptions.fallback.
 - `interface SecureStoreGetOptions` — Options for SecureStore.get.
 - `interface SecureStoreSetOptions` — Options for SecureStore.set.
+- `interface SecureStoreSetResult` — Where SecureStore.set put the value.
 - `interface SentryCapacitorSdk` — The slice of @sentry/capacitor this uses: init(options, siblingInit).
 - `interface SentrySiblingSdk` — The slice of the sibling SDK (@sentry/browser, @sentry/react, …): its init.
 - `setKeyboardResizeMode(mode: KeyboardResizeMode): Promise<void>` — Change how the iOS shell resizes the app when the keyboard shows (KeyboardResizeMode), through Keyboard.setResizeMode. @capacitor/keyboard supports it on iOS only, so on Android, on the web and without the plugin this does nothing (Android resizes the WebView itself). The startup mode is plugins.Keyboard.resize in capacitor.config.

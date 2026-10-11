@@ -150,13 +150,12 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
         <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
-        <code>denext migrate --desktop</code>{" "}
-        writes that task for you, and writes the two resolution flags to{" "}
-        <code>desktop.denoFlags</code> in the generated <code>denext.config.ts</code> so{" "}
+        <code>denext migrate --desktop</code> writes that task for you;{" "}
         <code>denext desktop run</code>, <code>dev</code> and <code>package</code>{" "}
-        pass them too. The bundle is named and identified from <code>desktop.app</code> in{" "}
-        <code>denext.config.ts</code> (migrate sets <code>name</code> to the page title; add an{" "}
-        <code>identifier</code>): <code>export</code> copies it into{" "}
+        add the two resolution flags themselves. The bundle is named and identified from{" "}
+        <code>desktop.app</code> in <code>denext.config.ts</code> (migrate sets <code>name</code>
+        {" "}
+        to the page title; add an <code>identifier</code>): <code>export</code> copies it into{" "}
         <code>deno.json</code>, which is where the task&apos;s <code>deno desktop</code> reads it.
       </Callout>
       <h3 id="desktop-app-identity">The app's name, identifier and icon</h3>
@@ -215,16 +214,21 @@ export default {
         <code>denext desktop dev</code>{" "}
         and the package scripts pass them before the entry (the macOS script itself; the Linux and
         Windows builds read them through{" "}
-        <code>denext/desktop</code>). The usual case is a pnpm workspace (deno.json{" "}
-        <code>nodeModulesDir: "manual"</code>), where <code>deno desktop</code>{" "}
-        would otherwise type-check against the workspace&apos;s <code>node_modules</code>{" "}
-        and rewrite the root <code>package.json</code>:
+        <code>denext/desktop</code>). npm resolution needs none of them: a project with a{" "}
+        <code>package.json</code> or <code>node_modules</code>, a pnpm workspace member (deno.json
+        {" "}
+        <code>nodeModulesDir: "manual"</code>) included, is built with{" "}
+        <code>--node-modules-dir=none --exclude-unused-npm</code> already, so{" "}
+        <code>deno desktop</code>{" "}
+        resolves npm packages from Deno&apos;s cache and never touches the workspace&apos;s{" "}
+        <code>node_modules</code> or root{" "}
+        <code>package.json</code>. A flag the build does need goes here:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
 export default {
   desktop: {
-    denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"],
+    denoFlags: ["--unstable-sloppy-imports"],
   },
 };`}
       </Code>
@@ -249,14 +253,9 @@ export default {
           them.
         </li>
         <li>
-          denext does not add <code>--node-modules-dir=none</code>{" "}
-          on its own: it moves npm resolution from the workspace&apos;s <code>node_modules</code>
-          {" "}
-          to Deno&apos;s cache, so pnpm patches, overrides and linked packages stop applying. In a
-          pnpm workspace with <code>nodeModulesDir: "manual"</code> and no{" "}
-          <code>--node-modules-dir</code> in <code>desktop.denoFlags</code>,{" "}
-          <code>denext desktop run</code>, <code>dev</code> and <code>package</code>{" "}
-          print the line to add instead.
+          The npm-resolution flags denext adds move resolution from the workspace&apos;s{" "}
+          <code>node_modules</code>{" "}
+          to Deno&apos;s cache, so pnpm patches and overrides do not apply inside the bundle.
         </li>
       </ul>
       <h3 id="desktop-absolute-imports">Local modules mapped by absolute path</h3>
@@ -1858,7 +1857,15 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         only for a key that is really not there, and there is never a plaintext fallback. Items
         carry the <code>service</code> / <code>account</code> attributes <code>secret-tool</code>
         {" "}
-        wrote, so values an older denext stored stay readable.
+        wrote, so values an older denext stored stay readable. An app that would rather keep working
+        than refuse opts in per call:{" "}
+        <code>{'secureStore.set(key, value, { fallback: "session" })'}</code> and{" "}
+        <code>{'secureStore.get(key, { fallback: "session" })'}</code> use the page&apos;s{" "}
+        <code>sessionStorage</code> when the keychain refuses (one warning, and <code>set</code>
+        {" "}
+        resolves{" "}
+        <code>{'{ stored: "session" }'}</code>). That copy is not secret and lasts until the window
+        closes; a later keychain write of the key clears it.
       </Callout>
       <Callout kind="note">
         <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}

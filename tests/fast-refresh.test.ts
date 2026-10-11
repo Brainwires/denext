@@ -28,7 +28,12 @@ import type { PageRoute } from "../src/router/manifest.ts";
 import type { BoundaryManifest } from "../src/build/module-graph.ts";
 import { makeDom } from "./helpers/dom.ts";
 import { devFamily, installDevFamilies } from "../src/client/dev-family.ts";
+import { installRefreshSwap } from "../src/client/fiber/refresh-swap.ts";
 import type { VNode } from "../src/jsx/types.ts";
+
+// The dev refresh runtime installs this (`enableFastRefresh`); these tests drive the
+// reconciler's family hooks directly.
+installRefreshSwap();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

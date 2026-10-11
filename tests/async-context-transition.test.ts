@@ -65,8 +65,11 @@ Deno.test("scoping mode: an urgent update in the pending window stays URGENT (th
 
     // An unrelated urgent update fires WHILE the async transition is pending. Under
     // identity scoping it is NOT inside the transition's context, so it stays on the
-    // sync lane and flushSync applies it immediately. (In window mode it would have
-    // been demoted to TransitionLane and flushSync would leave it at 0 — the bug.)
+    // sync lane. flushSync flushes SyncLane | TransitionLane alike, so this assertion
+    // shows the urgent update applies (and the gated +10 has not run yet), not which
+    // lane it took: a window-mode demotion to TransitionLane would also read 1 here.
+    // The lane itself is pinned by the browser e2e (tests/e2e/async-context.e2e.test.ts),
+    // which reads the count back after one microtask instead of flushing.
     urgent();
     flushSync();
     assertEquals(

@@ -18,6 +18,10 @@ import { useFormStatus } from "../src/runtime/actions.ts";
 import { render } from "../src/testing/mod.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { installErrorTexts } from "../src/client/fiber/error-texts.ts";
+
+// The full error texts a dev build installs (a production bundle throws the short form).
+installErrorTexts();
 
 type Any = never;
 

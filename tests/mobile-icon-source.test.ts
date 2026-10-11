@@ -11,6 +11,7 @@ import { decodeImage, encodePng, type Raster, solid } from "../src/build/png-ras
 import { generateMobileAssets } from "../src/build/mobile-assets.ts";
 import {
   capacitorPlaceholders,
+  COMPUTED_ICON_FIX,
   formatIconSearch,
   mobileIconConfig,
   resolveIconSource,
@@ -510,7 +511,8 @@ Deno.test("denext migrate (t3code layout): the icon is recorded as mobile.icon a
 });
 
 Deno.test("denext migrate --check: a Capacitor app with no icon gets a review item", async () => {
-  const dir = await monorepo(COMPUTED_CONFIG);
+  // An Expo sibling that names no icon (a computed one has its own item, tested below).
+  const dir = await monorepo(`export default { expo: { name: "M" } };\n`);
   const web = join(dir, "apps/web");
   try {
     for (
@@ -636,6 +638,169 @@ Deno.test("denext mobile assets --icon: an explicit pre-masked icon is warned ab
       icon: join(dir, "art/square.png"),
     });
     assertEquals(square.includes("pre-masked"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const PLACEHOLDER_SPLASH = new URL(
+  "./fixtures/capacitor8/placeholder/splash-2732x2732.png",
+  import.meta.url,
+);
+const SPLASH = "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732.png";
+
+/** The `ctx` replacePlaceholderIcons reads (`--icon` / `--background-color` unset). */
+function buildCtx(dir: string) {
+  return {
+    positionals: ["build", "ios"],
+    flags: { dir },
+    global: { json: false, verbose: false, quiet: false },
+    rest: [],
+  };
+}
+
+Deno.test("denext mobile build: a placeholder splash is replaced on its own, the app's icon kept", async () => {
+  const own = await png(1024);
+  const dir = await placeholderProject({
+    [APPICON]: own,
+    "ios/App/App/Assets.xcassets/Splash.imageset/Contents.json": JSON.stringify({
+      images: [{ filename: "splash-2732x2732.png", idiom: "universal" }],
+    }),
+    [SPLASH]: await Deno.readFile(PLACEHOLDER_SPLASH),
+    "assets/icon.png": await png(1024),
+  });
+  try {
+    assertEquals(await capacitorPlaceholders(dir, "ios", "icon"), []);
+    assertEquals(await capacitorPlaceholders(dir, "ios", "splash"), [SPLASH]);
+    const { replacePlaceholderIcons } = await import("../src/cli/commands/mobile-build.ts");
+    const lines: string[] = [];
+    await replacePlaceholderIcons(buildCtx(dir), dir, "ios", true, (l) => lines.push(l));
+    assertStringIncludes(lines.join("\n"), "ios has Capacitor's placeholder splash: would replace");
+    assertEquals(await capacitorPlaceholders(dir, "ios", "splash"), [SPLASH], "dry run");
+
+    await replacePlaceholderIcons(buildCtx(dir), dir, "ios", false, (l) => lines.push(l));
+    assertStringIncludes(lines.join("\n"), "ios has Capacitor's placeholder splash: replaced");
+    assertEquals(await capacitorPlaceholders(dir, "ios", "splash"), []);
+    // The splash is the resolved icon on its background; the app's own icon is left alone.
+    assertEquals(ihdr(await Deno.readFile(join(dir, SPLASH))), {
+      width: 2732,
+      height: 2732,
+      colorType: 2,
+    });
+    assertEquals(await Deno.readFile(join(dir, APPICON)), own);
+
+    // Nothing left to replace: no line at all.
+    const again: string[] = [];
+    await replacePlaceholderIcons(buildCtx(dir), dir, "ios", false, (l) => again.push(l));
+    assertEquals(again, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** An Expo app (no web icons) whose app.config.ts computes the icon from an import. */
+async function computedExpoApp(extra: Files = {}): Promise<string> {
+  return await tree({
+    "package.json": JSON.stringify({
+      name: "exp",
+      main: "index.ts",
+      dependencies: { expo: "^54.0.0", react: "^19.0.0", "react-native": "^0.81.0" },
+    }),
+    "index.ts": "export {};\n",
+    "brand.ts": `export const ICON = "./art/icon.png";\n`,
+    "app.config.ts": `import { ICON } from "./brand.ts";\n` +
+      `export default { expo: { name: "Exp", icon: ICON } };\n`,
+    "art/icon.png": await png(1024),
+    ...extra,
+  });
+}
+
+Deno.test("icon source: an Expo icon computed in code says so, and that mobile.icon is the fix", async () => {
+  const dir = await computedExpoApp();
+  try {
+    const search = await resolveIconSource(dir);
+    assertEquals(search.source, null);
+    assertStringIncludes(
+      search.computedIcon ?? "",
+      "app.config.ts computes the app icon (`icon`) in code, so denext cannot resolve it",
+    );
+    assertStringIncludes(search.computedIcon!, "no icon was found");
+    const warning = formatIconSearch(search).find((l) => l.startsWith("warning: "));
+    assertEquals(warning, `warning: ${search.computedIcon}: ${COMPUTED_ICON_FIX}`);
+
+    // `mobile build`'s placeholder replacement names the same fix instead of the generic one.
+    await write(dir, {
+      "capacitor.config.json": JSON.stringify({ appId: "dev.example", webDir: "out" }),
+      [APPICON]: await Deno.readFile(PLACEHOLDER_IOS),
+    });
+    const { replacePlaceholderIcons } = await import("../src/cli/commands/mobile-build.ts");
+    const lines: string[] = [];
+    await replacePlaceholderIcons(buildCtx(dir), dir, "ios", true, (l) => lines.push(l));
+    assertStringIncludes(lines.join("\n"), `no icon: ${search.computedIcon}: ${COMPUTED_ICON_FIX}`);
+
+    // Once mobile.icon is set, nothing is computed any more.
+    await write(dir, {
+      "denext.config.ts": `export default { mobile: { icon: "./art/icon.png" } };\n`,
+    });
+    const pinned = await resolveIconSource(dir);
+    assertEquals(pinned.source?.kind, "config");
+    assertEquals(pinned.computedIcon, null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext migrate --from expo: a computed icon is reported with the mobile.icon fix", async () => {
+  const dir = await computedExpoApp();
+  try {
+    const check = await checkMigration(dir, { from: "expo" });
+    const item = check.review.find((f) => f.item === "mobile.icon");
+    assert(item, JSON.stringify(check.review));
+    assertStringIncludes(item.reason, "computes the app icon (`icon`) in code");
+    assertStringIncludes(item.reason, COMPUTED_ICON_FIX);
+    // The generic "none found" item is not repeated.
+    assertEquals(check.review.find((f) => f.item === "app icon"), undefined);
+
+    const result = await migrateProject(dir, { from: "expo" });
+    assertEquals(result.spa?.appIcon?.icon, null);
+    assertStringIncludes(result.spa?.appIcon?.computedIcon ?? "", "no icon was found");
+    assertStringIncludes(result.spa!.appIcon!.lines.join("\n"), COMPUTED_ICON_FIX);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile doctor --store / migrate --check: a computed icon with a web stand-in is flagged", async () => {
+  const dir = await monorepo(COMPUTED_CONFIG);
+  const web = join(dir, "apps/web");
+  try {
+    const report = await runMobileDoctor({ root: web, profile: "store" });
+    const finding = report.findings.find((f) => f.message.includes("computes the app icon"));
+    assert(finding, JSON.stringify(report.findings));
+    assertEquals([finding.check, finding.level], ["app-icons", "warning"]);
+    assertStringIncludes(
+      finding.message,
+      "../mobile/app.config.ts computes the app icon (`icon`) in code",
+    );
+    assertStringIncludes(
+      finding.message,
+      "public/apple-touch-icon.png (the web manifest) stands in for it",
+    );
+    assertEquals(finding.fix, COMPUTED_ICON_FIX);
+
+    const check = await checkMigration(web);
+    const item = check.review.find((f) => f.item === "mobile.icon");
+    assert(item, JSON.stringify(check.review));
+    assertStringIncludes(item.reason, "(recorded as mobile.icon for now)");
+    // The upscale review item still stands beside it.
+    assert(check.review.some((f) => f.item === "app icon ./public/apple-touch-icon.png"));
+
+    // A mobile.icon in the config: the doctor has nothing to say about the computed icon.
+    await write(web, {
+      "denext.config.ts": `export default { mobile: { icon: "../../assets/prod/icon.png" } };\n`,
+    });
+    const after = await runMobileDoctor({ root: web, profile: "store" });
+    assertEquals(after.findings.filter((f) => f.message.includes("computes the app icon")), []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

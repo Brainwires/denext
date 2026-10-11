@@ -20,16 +20,25 @@ export const CAPACITOR_VERSION = "^8.5.2";
 
 /**
  * The Capacitor build outputs and copied web assets a project ignores. Capacitor 8 builds iOS
- * with Swift Package Manager, and the `ios/` + `android/` projects are meant to be committed —
- * so only their build outputs and the web assets `cap sync` copies in are ignored (the
- * platforms' own generated `.gitignore` files cover the rest).
+ * with Swift Package Manager, and the native projects are meant to be committed — so only
+ * their build outputs and the web assets `cap sync` copies in are ignored (the platforms' own
+ * generated `.gitignore` files cover the rest). `dirs` are the native folders (`ios.path` /
+ * `android.path` of capacitor.config.*, POSIX and relative to the project), default `ios` and
+ * `android`.
  */
-export const CAPACITOR_BUILD_IGNORES: readonly string[] = [
-  "ios/App/App/public/",
-  "ios/App/build/",
-  "ios/DerivedData/",
-  "android/app/src/main/assets/public/",
-  "android/app/build/",
-  "android/build/",
-  "android/.gradle/",
-];
+export function capacitorBuildIgnores(
+  dirs: { readonly ios: string; readonly android: string } = { ios: "ios", android: "android" },
+): string[] {
+  return [
+    `${dirs.ios}/App/App/public/`,
+    `${dirs.ios}/App/build/`,
+    `${dirs.ios}/DerivedData/`,
+    `${dirs.android}/app/src/main/assets/public/`,
+    `${dirs.android}/app/build/`,
+    `${dirs.android}/build/`,
+    `${dirs.android}/.gradle/`,
+  ];
+}
+
+/** {@linkcode capacitorBuildIgnores} for Capacitor's default `ios/` + `android/` layout. */
+export const CAPACITOR_BUILD_IGNORES: readonly string[] = capacitorBuildIgnores();

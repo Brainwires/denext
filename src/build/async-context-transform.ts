@@ -33,6 +33,7 @@
 import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import {
+  absolutizeSpecifiers,
   applyEdits,
   type Ctx,
   type Edit,
@@ -288,13 +289,22 @@ function visit(st: AcState, node: Node, scope: string | null): void {
  * Transform one module's source, bracketing every instrumentable `await`/`for await`
  * so denext's AsyncContext survives it. Returns the rewritten code and a changed flag.
  *
+ * With `moduleUrl`, an instrumented module's relative specifiers — each static `import` /
+ * `export … from` and each `import()` written as a literal — are made absolute against it
+ * ({@linkcode absolutizeSpecifiers}): the build writes the result into `.denext/asyncctx/`, so a
+ * relative specifier would otherwise resolve beside the copy (a lazily imported island, a
+ * stylesheet, a JSON file, a platform-file module all went missing). `import.meta` and a
+ * non-literal `import(expr)` are left as written: the client bundler follows neither, and the
+ * browser resolves both against the chunk, exactly as for the module the copy stands in for.
+ *
  * @param source The module source.
  * @param opts.runtime Override the helper import specifier (tests point it at the
  *   real runtime module; the build defaults to its absolute framework URL).
+ * @param opts.moduleUrl The original module's `file:` URL, when the result is written elsewhere.
  */
 export async function transformAsyncContext(
   source: string,
-  opts: { runtime?: string } = {},
+  opts: { runtime?: string; moduleUrl?: string } = {},
 ): Promise<AsyncContextResult> {
   const identity: AsyncContextResult = { code: source, changed: false };
   // Cheap pre-filter: no `await` anywhere → nothing to do.
@@ -305,6 +315,8 @@ export async function transformAsyncContext(
   const st: AcState = { ctx, edits: [], used: new Set(), counter: 0 };
   for (const item of body) visit(st, item, null);
   if (st.edits.length === 0) return identity;
+  // Only a module that changed is relocated, so only then are its specifiers re-rooted.
+  if (opts.moduleUrl) absolutizeSpecifiers(ctx, body, opts.moduleUrl, st.edits);
   // Inject the helper import after any leading directive prologue.
   const names = [...st.used].sort().join(", ");
   const spec = opts.runtime ?? runtimeUrl();
@@ -324,7 +336,7 @@ export async function transformAsyncContext(
  * redirects. Server rendering keeps the originals (the transform is behavior-neutral
  * there), so SSR/hydration stay aligned. Unchanged modules are omitted.
  *
- * Also emits the mode module (`async-context-mode.ts` → `true`) as a redirect so the
+ * Also emits the mode module (`async-context-mode.ts` → a `Variable`) as a redirect so the
  * reconciler flips into identity scoping for this build.
  *
  * @param files Absolute paths of candidate source modules.
@@ -335,9 +347,16 @@ export async function compileAsyncContextModules(
   opts: { outDir: string },
 ): Promise<Record<string, string>> {
   const dir = join(opts.outDir, "asyncctx");
-  const map = await writeTransformedModules(files, dir, (source) => transformAsyncContext(source));
-  // Flip the reconciler into scoping mode by redirecting the mode module to `true`.
-  const modeSrc = "export const asyncContextScopingEnabled = true;\n";
+  const map = await writeTransformedModules(
+    files,
+    dir,
+    (source, moduleUrl) => transformAsyncContext(source, { moduleUrl }),
+  );
+  // Flip the reconciler into scoping mode by redirecting the mode module to one that exports
+  // the transition-identity variable (the original exports `null`).
+  const modeSrc = `import { Variable } from ${
+    JSON.stringify(frameworkFileUrl("src/runtime/async-context.ts"))
+  };\nexport const transitionScope = new Variable();\n`;
   const modeOut = join(dir, "mode.ts");
   await Deno.writeTextFile(modeOut, modeSrc);
   const modeUrl = frameworkFileUrl("src/runtime/async-context-mode.ts");

@@ -17,10 +17,17 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { useEffect, useRef } from "../runtime/hooks.ts";
+import { detectPlatform } from "./animation.ts";
 import { headerItems } from "./header-items.ts";
 import { StackView } from "./stack-view.ts";
 import { type TabDefinition, TabsView } from "./tabs.ts";
-import type { ScreenOptions, SheetDetent, StackPresentation, StackViewEntry } from "./types.ts";
+import type {
+  NavigationPlatform,
+  ScreenOptions,
+  SheetDetent,
+  StackPresentation,
+  StackViewEntry,
+} from "./types.ts";
 
 /** A React Navigation route, as the navigators read it. */
 export interface ReactNavigationRoute {
@@ -85,6 +92,8 @@ export interface ReactNavigationCore {
   readonly StackActions: { pop(count?: number): object; popToTop(): object };
   /** The tab actions (for {@linkcode createBottomTabNavigatorFactory}). */
   readonly TabActions?: { jumpTo(name: string): object };
+  /** The navigation theme (its `colors.primary` / `colors.text` tint the stack's header). */
+  useTheme?(): { colors?: { primary?: string; text?: string } } | undefined;
 }
 
 /** The navigator props the builder takes (everything else is for the view). */
@@ -153,7 +162,7 @@ function slot(value: unknown, args: Record<string, unknown>): VNodeChildren | un
  */
 export function mapStackOptions(
   options: Record<string, unknown>,
-  context: { canGoBack: boolean },
+  context: { canGoBack: boolean; headerTint?: string },
 ): ScreenOptions {
   const str = (k: string) => typeof options[k] === "string" ? options[k] as string : undefined;
   const bool = (k: string) => typeof options[k] === "boolean" ? options[k] as boolean : undefined;
@@ -174,6 +183,7 @@ export function mapStackOptions(
     headerLargeTitle: bool("headerLargeTitle"),
     headerBackTitle: str("headerBackTitle"),
     headerBackVisible: bool("headerBackVisible"),
+    headerTintColor: str("headerTintColor") ?? context.headerTint,
     headerBackButtonDisplayMode: options.headerBackButtonDisplayMode === "default" ||
         options.headerBackButtonDisplayMode === "generic" ||
         options.headerBackButtonDisplayMode === "minimal"
@@ -193,6 +203,21 @@ export function mapStackOptions(
   };
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out as ScreenOptions;
+}
+
+/**
+ * native-stack's default header tint: the theme's `colors.primary` on iOS, `colors.text` on
+ * Android (React Navigation's `headerTintColor` default), or none without a theme.
+ *
+ * @param theme The navigation theme (`useTheme()`).
+ * @param platform The platform the stack draws.
+ */
+export function nativeStackTint(
+  theme: { colors?: { primary?: string; text?: string } } | undefined,
+  platform: NavigationPlatform,
+): string | undefined {
+  const colors = theme?.colors;
+  return platform === "ios" ? colors?.primary : colors?.text;
 }
 
 /**
@@ -225,12 +250,13 @@ export function createNativeStackNavigatorFactory(
           navigation.dispatch({ ...core.StackActions.popToTop(), target: s.key });
         }
       }), [navigation]);
+    const headerTint = nativeStackTint(core.useTheme?.(), detectPlatform());
     const entries: StackViewEntry[] = state.routes.map((route, i) => {
       const d = descriptors[route.key];
       return {
         id: route.key,
         element: d.render(),
-        options: mapStackOptions(d.options, { canGoBack: i > 0 }),
+        options: mapStackOptions(d.options, { canGoBack: i > 0, headerTint }),
       };
     });
     return h(

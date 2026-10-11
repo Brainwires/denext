@@ -157,7 +157,12 @@ confirmation prompt), or run the standalone `denext codemod` later.
 > `deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
 > it, Deno runs in manual-`node_modules` mode and can't resolve the CLI's own
 > build dependencies. (Your app's `node_modules` is untouched either way — the
-> compat layer still loads your npm React libraries from it.)
+> compat layer still loads your npm React libraries from it.) In a pnpm
+> workspace, that flag is also what keeps Deno from rewriting the root
+> `package.json` from `pnpm-workspace.yaml`. It is only needed on the command you
+> type: the generated tasks carry it, and every `deno` process denext starts for
+> the app itself (`mobile build`'s export, the dev server behind `mobile dev` /
+> `desktop dev`, `deno desktop`) passes it on its own in a pnpm workspace.
 
 `migrate` also writes a `.gitignore` for the artifacts it generates —
 `.denext/` (build cache), `out/` (the static export), with `--desktop`

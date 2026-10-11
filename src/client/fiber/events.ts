@@ -8,11 +8,16 @@
 // once a handler calls `stopPropagation()`; the event a handler gets is the native event with
 // `currentTarget` set to the handler's element for the duration of the call.
 //
+// `touchstart` / `touchmove` / `wheel` (and their capture listeners) are registered PASSIVE on the
+// container, as React DOM's root listener is (runtime/passive-events.ts), so a handler never
+// holds a scroll on the main thread; `touchend` / `touchcancel` stay non-passive, as in React.
+// The handler's `preventDefault()` is then a no-op for the browser, but the event reports
+// `defaultPrevented` / `isDefaultPrevented()` true for the rest of that dispatch, as React's
+// synthetic event does.
+//
 // What stays on the element (dom-props' own listener, as in React): events that do not bubble
-// (scroll, load, error, media events, toggle, …), `wheel` / `touch*` (dom-props registers
-// `touchstart` / `touchmove` / `wheel` PASSIVE, as React DOM does — see
-// runtime/passive-events.ts — so a handler never holds a scroll on the main thread), and
-// event types this module does not know (a custom element's events may not bubble).
+// (scroll, load, error, media events, toggle, …) and event types this module does not know (a
+// custom element's events may not bubble).
 // `onFocus` / `onBlur` listen to `focusin` / `focusout` (handlers see `type` "focus" /
 // "blur"), and `onMouseEnter` / `onMouseLeave` / `onPointerEnter` / `onPointerLeave` are
 // derived from the over/out pair, so they fire for the elements actually entered and left,
@@ -22,6 +27,7 @@ import { fiberForNode } from "../dom-fiber-map.ts";
 import { beginEventDispatch, endEventDispatch } from "../event-priority.ts";
 import { type Fiber, hasBit, UnmountedBit } from "./fiber.ts";
 import { handleEventError } from "./boundaries.ts";
+import { isPassiveEvent } from "../../runtime/passive-events.ts";
 
 /** The bubbling event types dispatched from the containers. */
 const DELEGATED = /* @__PURE__ */ new Set(
@@ -30,7 +36,8 @@ const DELEGATED = /* @__PURE__ */ new Set(
     "mousemove mouseout mouseover mouseup pointercancel pointerdown pointermove pointerout " +
     "pointerover pointerup gotpointercapture lostpointercapture submit reset focusin focusout " +
     "compositionstart compositionend compositionupdate animationstart animationend " +
-    "animationiteration transitionstart transitionend transitionrun transitioncancel").split(" "),
+    "animationiteration transitionstart transitionend transitionrun transitioncancel " +
+    "touchstart touchmove touchend touchcancel wheel").split(" "),
 );
 
 /** The handler props seen per DOM type (`type` bubble, `type!` capture), in first-seen order. */
@@ -64,8 +71,9 @@ export function listenOn(container: EventTarget): void {
   if (listening.has(container)) return;
   listening.add(container);
   for (const type of DELEGATED) {
-    container.addEventListener(type, onCapture, true);
-    container.addEventListener(type, onBubble, false);
+    const passive = isPassiveEvent(type);
+    container.addEventListener(type, onCapture, { capture: true, passive });
+    container.addEventListener(type, onBubble, { passive });
   }
 }
 
@@ -170,18 +178,25 @@ function collect(path: unknown[], names: string[], reverse: boolean): unknown[] 
 }
 
 /**
+ * The event members a dispatch shadows and restores after. `defaultPrevented` is shadowed by a
+ * `preventDefault()` the browser ignores (a passive listener): it reads true for this dispatch
+ * only, as React's synthetic event (a fresh one per capture / bubble dispatch) does, while a
+ * native listener sees the native flag.
+ */
+const SHADOWED = ["currentTarget", "defaultPrevented", "type"];
+
+/**
  * Run `calls` (fiber, element, handler triples) against `event`: `currentTarget` (and, for a
  * focus event, `type`) shadowed per handler and restored after, propagation checked between
  * elements, a thrown or rejected handler routed to its element's error boundary.
  */
 function run(event: Event, calls: unknown[], type?: string): void {
-  if (calls.length === 0) return;
+  if (!calls.length) return;
   const e = event as unknown as Record<string, unknown>;
-  const ownTarget = Object.getOwnPropertyDescriptor(e, "currentTarget");
-  const ownType = Object.getOwnPropertyDescriptor(e, "type");
+  const own = SHADOWED.map((k) => Object.getOwnPropertyDescriptor(e, k));
   beginEventDispatch();
   addSyntheticEventMembers(event);
-  if (type !== undefined) shadow(e, "type", type);
+  if (type) shadow(e, "type", type);
   let el: unknown = null;
   try {
     for (let i = 0; i < calls.length; i += 3) {
@@ -201,8 +216,8 @@ function run(event: Event, calls: unknown[], type?: string): void {
       }
     }
   } finally {
-    restore(e, "currentTarget", ownTarget);
-    if (type !== undefined) restore(e, "type", ownType);
+    // `type` only when shadowed: a derived enter/leave event keeps its own.
+    SHADOWED.forEach((k, i) => (i < 2 || type) && restore(e, k, own[i]));
     endEventDispatch();
   }
 }
@@ -311,20 +326,32 @@ const SYNTHETIC_MEMBERS: Record<string, unknown> = {
 };
 
 /**
+ * React's `preventDefault()`: the native call (a no-op for the browser in a passive listener),
+ * then `defaultPrevented` reads true, as on React's synthetic event, until the dispatch ends.
+ */
+function preventDefault(this: Event): void {
+  Event.prototype.preventDefault.call(this);
+  shadow(this as unknown as Record<string, unknown>, "defaultPrevented", true);
+}
+
+/**
  * React-compat: give the native event the SyntheticEvent surface libraries call.
  * `nativeEvent` — libraries (Base UI / floating-ui-react, etc.) reach the DOM event via
  * `event.nativeEvent` (and gate on `"nativeEvent" in event`); React's
  * `SyntheticEvent.nativeEvent` IS the DOM event and denext's event already is that DOM
  * event, so the self-reference is faithful. `persist()` / `isPersistent()` — React 17+
  * keeps them as no-op / `true` (react-native-web's ScrollView calls `e.persist()` on every
- * scroll). `isDefaultPrevented()` / `isPropagationStopped()` read the native flags. Runs
- * once per event: a bubbling event keeps the members for the next handler.
+ * scroll). `isDefaultPrevented()` / `isPropagationStopped()` read the event's flags, and a
+ * native event's `preventDefault()` also marks it prevented where the browser ignores the call
+ * (a passive listener). Runs once per event: a bubbling event keeps the members for the next
+ * handler.
  */
 export function addSyntheticEventMembers(event: unknown): void {
   if (!event || typeof event !== "object" || "nativeEvent" in event) return;
   try {
     const e = event as Record<string, unknown>;
     for (const k in SYNTHETIC_MEMBERS) if (!(k in e)) e[k] = SYNTHETIC_MEMBERS[k];
+    if (!Object.hasOwn(e, "preventDefault")) e.preventDefault = preventDefault;
     e.nativeEvent = event;
   } catch { /* non-extensible event (rare) — leave as-is */ }
 }

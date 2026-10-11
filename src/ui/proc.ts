@@ -8,6 +8,7 @@
 
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 import { isStandaloneBinary, pinnedDenextCli } from "../cli/self-exec.ts";
+import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
 import { VERSION } from "../../mod.ts";
 
 /**
@@ -80,13 +81,17 @@ export interface CliInvocationOptions {
  * one.
  *
  * @param options See {@linkcode CliInvocationOptions}.
- * @returns `["run", "-A", "<cli module>"]` (with `--deny-net --cached-only` after `-A` when
- *   offline, then `--deny-run` when `denyRun` too), to be spread before the verb and its flags.
+ * @returns `["run", "-A", "<cli module>"]` (with `--node-modules-dir=none` after `-A` when `dir`
+ *   is in a pnpm workspace, then `--deny-net --cached-only` when offline, then `--deny-run` when
+ *   `denyRun` too), to be spread before the verb and its flags.
  */
 export function cliInvocation(options: CliInvocationOptions = {}): string[] {
   const offline = options.offline === true ? OFFLINE_FLAGS : [];
   const denyRun = options.offline === true && options.denyRun === true ? DENY_RUN : [];
-  return ["run", "-A", ...offline, ...denyRun, cliModule(options.dir)];
+  // In a pnpm workspace, keep the CLI's own npm imports off the pnpm tree: Deno would otherwise
+  // rewrite the workspace's root package.json (see ../build/pnpm-workspace.ts).
+  const npm = cliNpmModeArgs(options.dir);
+  return ["run", "-A", ...npm, ...offline, ...denyRun, cliModule(options.dir)];
 }
 
 /**

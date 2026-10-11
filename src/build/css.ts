@@ -568,6 +568,29 @@ async function appConfigRedirectsFor(
   }
 }
 
+/** The Tailwind integration's paths for {@linkcode buildAppCss}. */
+export interface AppTailwind {
+  /** The Tailwind input stylesheet (absolute). */
+  input: string;
+  /** Where the compiled CSS is written (absolute). */
+  output: string;
+  /** Rewrites the compiled output before the walk (React Native mode's uniwind pass). */
+  postprocess?: (css: string) => string | Promise<string>;
+}
+
+/** Compile `tailwind`'s input to its output, then run its `postprocess` over the output. */
+async function compileAppTailwind(
+  tailwind: AppTailwind,
+  minify: boolean | undefined,
+  cwd: string,
+): Promise<void> {
+  await compileTailwind({ input: tailwind.input, output: tailwind.output, minify, cwd });
+  if (!tailwind.postprocess) return;
+  const css = await Deno.readTextFile(tailwind.output);
+  const next = await tailwind.postprocess(css);
+  if (next !== css) await Deno.writeTextFile(tailwind.output, next);
+}
+
 /**
  * Build the whole project's CSS assets: scan for `.css` files, transform each,
  * write a JS shim per file, and emit a merged deno config (framework + project
@@ -599,7 +622,7 @@ export async function buildAppCss(opts: {
    * *input* from the walk (its raw `@import "tailwindcss"` is not valid lightningcss
    * input; the compiled *output* flows through the pipeline normally).
    */
-  tailwind?: { input: string; output: string };
+  tailwind?: AppTailwind;
   /**
    * SPA mode: Deno never imports the app's modules (esbuild bundles them for the browser), so
    * the app's own `deno.json` is never patched ({@link AppCss.appConfigRedirects} stays
@@ -610,14 +633,7 @@ export async function buildAppCss(opts: {
   graph?: AppCss["graph"];
 }): Promise<AppCss | null> {
   // Compile Tailwind first so its output exists for the walk below.
-  if (opts.tailwind) {
-    await compileTailwind({
-      input: opts.tailwind.input,
-      output: opts.tailwind.output,
-      minify: opts.minify,
-      cwd: opts.projectDir,
-    });
-  }
+  if (opts.tailwind) await compileAppTailwind(opts.tailwind, opts.minify, opts.projectDir);
   const excluded = opts.tailwind ? new Set([resolve(opts.tailwind.input)]) : null;
   const cssFiles = await collectCssFiles(opts, excluded);
   if (cssFiles.length === 0) return null;

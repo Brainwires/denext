@@ -9,6 +9,7 @@ import { ERROR_BOUNDARY } from "../../runtime/error-boundary.ts";
 import { TEXT_TYPE } from "../vnode-utils.ts";
 import { componentDisplayName, isComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
+import { ERR_UPDATE_DEPTH, reconcilerError } from "./errors.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -139,21 +140,13 @@ export function findErrorBoundary(fiber: Fiber): Fiber | null {
 }
 
 /**
- * React's "Maximum update depth exceeded", naming the component `name`. In dev it also lists
- * the components above `fiber` (React's component stack); production builds skip the walk.
+ * React's "Maximum update depth exceeded", naming the component `name` (error code
+ * {@link ERR_UPDATE_DEPTH}). Its full text, which in dev also lists the components above
+ * `fiber` (React's component stack), is installed with the dev warnings (error-texts.ts).
  * Built only when a loop is detected, so the hot paths carry just the call.
  */
 export function updateDepthError(name: string, fiber?: Fiber | null): Error {
-  let stack = "";
-  if (devHydrationActive()) {
-    for (let n = fiber ?? null; n !== null; n = n.return) {
-      if (n.tag === "component") stack += `\n    in ${componentDisplayName(n.vnode.type)}`;
-    }
-  }
-  return new Error(
-    `denext: Maximum update depth exceeded. <${name}> repeatedly schedules an update during ` +
-      `render (e.g. calling setState unconditionally while rendering).${stack}`,
-  );
+  return reconcilerError(ERR_UPDATE_DEPTH, name, fiber);
 }
 
 export function componentErrorInfo(fiber: Fiber): { componentStack: string } {

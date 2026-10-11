@@ -38,7 +38,7 @@ import {
 
 export { capacitorConfigFile } from "./capacitor-config.ts";
 import { withPlistDefault, withPlistDictTrue } from "./mobile-native-config.ts";
-import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
+import { loadNativeDirs, nativeJoin, nativeRel, nativeText } from "./capacitor-native-dirs.ts";
 
 /** A dev server `mobile dev` started or attached to. */
 export interface MobileDevServer {
@@ -634,13 +634,16 @@ async function androidCleartextWarning(root: string, url: string): Promise<strin
   }
   if (!/\bandroid:networkSecurityConfig\s*=/.test(manifest)) return null;
   const host = new URL(url).hostname;
-  return [
-    "  warning: android/app/src/main/AndroidManifest.xml declares android:networkSecurityConfig.",
-    "  On Android 7+ (API 24+) that config overrides usesCleartextTraffic, so the device may",
-    `  refuse ${url}. Allow cleartext for ${host} in your network security config`,
-    `  (<domain-config cleartextTrafficPermitted="true"><domain>${host}</domain></domain-config>),`,
-    "  or serve the dev server over https.",
-  ].join("\n");
+  return nativeText(
+    root,
+    [
+      "  warning: android/app/src/main/AndroidManifest.xml declares android:networkSecurityConfig.",
+      "  On Android 7+ (API 24+) that config overrides usesCleartextTraffic, so the device may",
+      `  refuse ${url}. Allow cleartext for ${host} in your network security config`,
+      `  (<domain-config cleartextTrafficPermitted="true"><domain>${host}</domain></domain-config>),`,
+      "  or serve the dev server over https.",
+    ].join("\n"),
+  );
 }
 
 /** The Xcode project to open: the `.xcworkspace` (CocoaPods) if there is one, else the
@@ -648,9 +651,9 @@ async function androidCleartextWarning(root: string, url: string): Promise<strin
 async function xcodeProject(root: string): Promise<string> {
   try {
     await Deno.stat(nativeJoin(root, "ios/App/App.xcworkspace"));
-    return "ios/App/App.xcworkspace";
+    return nativeRel(root, "ios/App/App.xcworkspace");
   } catch {
-    return "ios/App/App.xcodeproj";
+    return nativeRel(root, "ios/App/App.xcodeproj");
   }
 }
 

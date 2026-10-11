@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import {
   buildBoundaryManifest,
   cachedGraphHas,
+  clientGraphModules,
   clientIdFor,
   computeBoundaryRoutes,
   crawlLocalModules,
@@ -403,5 +404,57 @@ Deno.test("cachedGraphHas: what a cached crawl of the project reached; null with
   } finally {
     resetModuleGraphCache();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("clientGraphModules: what a client bundle can contain — islands' graphs and whole-tree routes, never past a use server module", async () => {
+  const app = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_client_graph_" }));
+  const files: Record<string, string> = {
+    // A Flight page: its data module is the server tree's only.
+    "page.tsx": `import { Island } from "./Island.tsx";\nimport { load } from "./data.ts";\n` +
+      `export default async function Page() { return [await load(), Island]; }\n`,
+    "data.ts": `export async function load() { await 0; return "d"; }\n`,
+    // The island's graph ships: a store, a lazily imported module and an action stub.
+    "Island.tsx": `"use client"\nimport { useCounter } from "./store.ts";\n` +
+      `import { save } from "./actions.ts";\n` +
+      `export function Island() { void import("./lazy.ts"); return [useCounter, save]; }\n`,
+    "store.ts": `import { helper } from "./helper.mts";\nexport const useCounter = helper;\n`,
+    "helper.mts": `export const helper = 1;\n`,
+    "lazy.ts": `export const lazy = 1;\n`,
+    // A "use server" module and what only it imports stay out.
+    "actions.ts": `"use server"\nimport { db } from "./db.ts";\n` +
+      `export async function save() { await db(); }\n`,
+    "db.ts": `export async function db() { await 0; }\n`,
+    // A route hydrated whole: its tree ships, server-looking or not.
+    "other.tsx":
+      `import { util } from "./util.js";\nexport default function O() { return util; }\n`,
+    "util.js": `export const util = 1;\n`,
+  };
+  try {
+    for (const [name, src] of Object.entries(files)) {
+      await Deno.writeTextFile(join(app, name), src);
+    }
+    const page = join(app, "page.tsx");
+    const other = join(app, "other.tsx");
+    const rel = (paths: string[]) => paths.map((p) => p.slice(app.length + 1));
+    assertEquals(rel(await clientGraphModules([page, other], [other])), [
+      "Island.tsx",
+      "helper.mts",
+      "lazy.ts",
+      "other.tsx",
+      "store.ts",
+      "util.js",
+    ]);
+    // Without the whole-tree route, only the island's graph.
+    assertEquals(rel(await clientGraphModules([page, other])), [
+      "Island.tsx",
+      "helper.mts",
+      "lazy.ts",
+      "store.ts",
+    ]);
+    assertEquals(await clientGraphModules([]), []);
+  } finally {
+    resetModuleGraphCache();
+    await Deno.remove(app, { recursive: true });
   }
 });

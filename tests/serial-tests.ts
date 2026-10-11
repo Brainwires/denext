@@ -47,6 +47,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/next-compat-build.test.ts",
   "tests/ota-manifest.test.ts",
   "tests/public-env.test.ts",
+  "tests/react-native-uniwind-css.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",
   "tests/spa-export.test.ts",

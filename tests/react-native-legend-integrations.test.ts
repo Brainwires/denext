@@ -18,6 +18,7 @@ import {
 } from "../src/react-native/legend-list.ts";
 import type { SharedValueLike } from "../src/react-native/lists/legend-integrations.ts";
 import { all } from "./helpers/virtual-list.ts";
+import { fakeViewport, frameQueue, withGlobals } from "./helpers/mobile-fakes.ts";
 
 /** A react-native-web `View` stand-in. */
 function View(props: { style?: unknown; children?: VNodeChild }): VNode {
@@ -101,6 +102,42 @@ Deno.test("KeyboardAwareLegendList: the composer inset (a shared value) plus the
   await act(() => void (inset.value = 70));
   assertEquals(room(screen), 80, "follows the shared value");
   await screen.unmount();
+});
+
+Deno.test("KeyboardAwareLegendList: the keyboard's covered height (minus keyboardOffset) is more room", async () => {
+  const vv = fakeViewport(800);
+  const frames = frameQueue();
+  const globals = {
+    innerHeight: 800,
+    visualViewport: vv,
+    requestAnimationFrame: frames.request,
+    cancelAnimationFrame: frames.cancel,
+  };
+  await withGlobals(globals, async () => {
+    const { KeyboardAwareLegendList } = legendKeyboardExports(reanimated, LegendList, {
+      dismiss() {},
+    });
+    let ref = null as LegendListRef | null;
+    const screen = await render(h(KeyboardAwareLegendList, {
+      ...common,
+      ref: (r: LegendListRef) => (ref = r),
+      contentInsetEndAdjustment: sharedValue(40),
+      contentInsetEndStaticAdjustment: 10,
+      keyboardLiftBehavior: "always",
+      keyboardOffset: 34,
+    }));
+    assert(ref, "the list's ref still reaches the app");
+    assertEquals(room(screen), 50);
+    vv.height = 500;
+    vv.fire("resize");
+    await act(() => frames.flush());
+    assertEquals(room(screen), 50 + 300 - 34);
+    vv.height = 800;
+    vv.fire("resize");
+    await act(() => frames.flush());
+    assertEquals(room(screen), 50);
+    await screen.unmount();
+  });
 });
 
 Deno.test("useKeyboardChatComposerInset / useKeyboardScrollToEnd", async () => {

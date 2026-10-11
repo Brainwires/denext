@@ -8,6 +8,149 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.7] - 2026-10-11
+
+### Added
+
+- **`secureStore` can fall back to `sessionStorage`, opt in per call.** `secureStore.set(key, value,
+  { fallback: "session" })` and `secureStore.get(key, { fallback: "session" })` keep and read the
+  value in the page's `sessionStorage` (under a namespaced key) when the OS store refuses, such as
+  `backend_unavailable` from a locked or absent Linux keyring, and warn once with the reason. `set`
+  now resolves `{ stored: "keychain" | "indexeddb" | "session" }` (it resolved `undefined`; callers
+  that ignore it are unaffected). A later keychain `set` of the key clears the session copy and
+  `delete` clears both. `sessionStorage` is NOT secret and ends with the tab; `requireBiometric`
+  never falls back. Without the option nothing changes: a refusal still rejects.
+
+### Changed
+
+- **Touch and wheel handlers are dispatched from the root, as in React.** `onTouchStart`,
+  `onTouchMove`, `onTouchEnd`, `onTouchCancel`, `onWheel` and their `Capture` variants now ride
+  root event delegation like every other bubbling event: each root and portal container listens
+  once (`touchstart`, `touchmove` and `wheel` passive, `touchend` / `touchcancel` not, as React DOM
+  registers them), and an element with such a handler registers no listener of its own. So a
+  `stopPropagation()` in one no longer stops the native event before the DOM listeners of the
+  elements between it and the root, as with React's root listener. After `preventDefault()` in a
+  passive handler (a no-op for the browser, in React too) the event now reports
+  `defaultPrevented` and `isDefaultPrevented()` `true` for the rest of that dispatch, as React's
+  synthetic event does; a native listener still reads the browser's own flag. Both differences
+  are gone from KNOWN-DIFFERENCES.md.
+- **Every app's shared client runtime is 1.8 KB smaller (raw), with no change in behaviour.**
+  Dev Fast Refresh's per-render step (which implementation a component renders, the refresh-swap
+  check and its hook-signature guard) and the per-module root refresh are installed by
+  `enableFastRefresh`, so a production bundle carries neither. The client reconciler's long
+  error texts ("Rendered more hooks…", "Maximum update depth exceeded…", an async component or a
+  `memo()`'d class on the client) are installed with the dev warnings and by `denext/testing`; a
+  production bundle throws `denext: error <code> in <Component>`, and the codes are listed on the
+  Troubleshooting page. The AsyncContext `Variable` ships only in an `asyncContext` build, and the
+  fiber extension spells each field name once. `examples/hello`'s shared chunks went from
+  67,385 B to 65,590 B, and the build-smoke budget moves from 67,400 B to 67,100 B.
+
+### Fixed
+
+- **`denext migrate --desktop` no longer writes a redundant `desktop.denoFlags`.** It wrote
+  `["--node-modules-dir=none", "--exclude-unused-npm"]` into the generated `denext.config.ts`;
+  `denext desktop run | dev | package` add both flags themselves for any npm project. The agent
+  guide (AGENTS.md, llms.txt) and the desktop guide no longer say a pnpm workspace needs them.
+- **The desktop docs and `denext desktop` no longer tell a pnpm workspace to set `desktop.denoFlags`.**
+  `denext desktop run | dev | package` printed a hint, and the desktop guide and the config
+  reference said, that a pnpm workspace member (`nodeModulesDir: "manual"`) needs
+  `denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"]` or `deno desktop` rewrites the
+  root `package.json`. `deno desktop` already gets both flags for any project with a
+  `package.json` or `node_modules`; the hint is gone and the docs say so.
+- **A desktop package script run directly works in a pnpm workspace.** `deno run -A
+  scripts/package-<os>.ts` resolved `denext/desktop`'s own npm build dependencies (the sidecar
+  bundler's esbuild) in the app's `nodeModulesDir: "manual"` mode, where they are not, so the run
+  failed and Deno rewrote the root `package.json` from `pnpm-workspace.yaml` (`denext desktop
+  package` already ran the script with `--node-modules-dir=none`). The scaffolded scripts now load
+  `denext/desktop` dynamically after re-running themselves once under `--node-modules-dir=none`,
+  whatever the project's mode; `denext desktop package` tells them it already did. Existing
+  projects pick this up with `denext desktop package --regenerate-scripts`.
+- **denext no longer makes Deno rewrite a pnpm workspace's root `package.json`.** Deno 2.9 reads
+  `pnpm-workspace.yaml` only to migrate it: when a process in a pnpm workspace member's manual
+  `node_modules` cannot find an `npm:` package there, it writes a `workspaces` field into the root
+  `package.json` and fails. The `deno run` of the CLI that denext starts itself (the export
+  `denext mobile build` runs, the dev server behind `mobile dev` and `desktop dev`, `denext ui`'s
+  children and a compiled binary's hand-off to the pinned CLI) loaded the CLI's own npm build
+  dependencies (esbuild) that way. In a pnpm workspace those children now run with
+  `--node-modules-dir=none`, as the tasks `denext migrate` writes already did; elsewhere their
+  command line is unchanged. The migrating guide says the flag is needed only on the command you
+  type.
+- **`denext mobile build` replaces Capacitor's placeholder splash on its own.** It replaced the
+  splash only together with a placeholder icon, so an app whose icon was already its own kept the
+  Capacitor logo on its launch screen. Each of the two is now replaced while it is still the
+  placeholder, the splash generated from the resolved icon on its background colour.
+- **An Expo app icon computed in code is reported, with the fix.** denext never runs the app config,
+  so an `icon` computed there (an imported constant) cannot be resolved, and the native app got a
+  web icon or Capacitor's placeholder with only a note to say why. `denext migrate --from expo`
+  (and `--check`), `denext mobile assets` / `build` and `denext mobile doctor --store` now say that
+  the app config computes the icon, what stands in for it, and to set `mobile.icon` in
+  denext.config.ts to the icon exported as a 1024×1024 PNG.
+- **Every `denext mobile` message names the native files where `ios.path` / `android.path` put
+  them.** The manual steps and warnings of `mobile add` (each native installer's, e.g. "set
+  NSSupportsLiveActivities", and the capability plan's), `add-ota`, `mobile doctor`, `mobile dev` and
+  `mobile build` still printed the default `ios/App/…` / `android/app/…` paths for a project that keeps
+  its shells elsewhere. `mobile doctor`'s scan of the app's own sources skipped folders named `ios`
+  and `android` wherever they were, and walked the native projects (and the export copied into them)
+  when they lived elsewhere: it now skips the configured native folders by path. The `.gitignore`
+  lines `denext migrate --enable-capacitor` / `--from expo` add for the native build outputs follow
+  an existing capacitor.config's paths too, and `denext mobile --help` says that its paths are
+  Capacitor's default layout.
+- **React Native mode: `TextInput` and the stack header look like React Native.** A focused
+  `TextInput` drew the browser's focus ring, and a long placeholder in a one-line `multiline`
+  input (a chat composer) wrapped onto a clipped second line. react-native-web's `TextInput` now
+  has React Native's outline as its base style (0 wide, `solid`: an app's `outlineWidth`,
+  `outlineColor` or Tailwind `outline-*` class still draws one) and a one-line placeholder cut
+  with an ellipsis. The native-stack header's back button and bar button items were the browser's
+  link colour: they now honour `headerTintColor` and otherwise default as React Navigation's
+  native-stack does, to the navigation theme's `colors.primary` on iOS and `colors.text` on
+  Android. `denext/navigation`'s `ScreenOptions` gains `headerTintColor`.
+- **React Native mode: chat lists lift with the keyboard.** `KeyboardAwareLegendList`
+  (`@legendapp/list/keyboard`) and `react-native-keyboard-controller`'s `KeyboardChatScrollView`
+  ignored their keyboard props, so the keyboard covered the newest messages in the iOS shell and
+  in Safari. While the keyboard covers the page they now get that much room after their content
+  (less `keyboardOffset` / `offset`) and move their content up with it as on a phone, per
+  `keyboardLiftBehavior`: `"always"` lifts and drops back, `"whenAtEnd"` lifts only when the end
+  was in view, `"persistent"` stays lifted when the keyboard hides, `"never"` only adds the room;
+  `freeze` pauses it. The room renders before the scroll moves, so the lift is never clamped.
+  It follows `denext/mobile`'s keyboard overlap, so a WebView that resizes around the keyboard
+  is not lifted twice.
+- **React Native mode: uniwind's `pixelRatio()`, `fontScale()`, `hairlineWidth()` and theme
+  scoping work.** uniwind's Vite plugin runs a lightningcss visitor over the compiled Tailwind CSS;
+  denext's Tailwind output never got it, so those functions reached the browser unresolved and a
+  `ScopedTheme` subtree kept the root's theme. With `uniwind` installed, the compiled
+  `tailwind.output` now gets that pass on every `denext dev` and `build` compile: `pixelRatio(n)`
+  is `n` device pixels' worth of px (`--denext-pixel-ratio`, from resolution media queries),
+  `fontScale(n)` is `n` px scaled with the root font size (`n * 1rem / 16`), `hairlineWidth()` is
+  `1px / devicePixelRatio`, theme variables declared with `@variant <theme>` move to the theme's
+  class, and theme-variant utilities apply inside `@scope (.theme) to (<the other themes>)`, so
+  the nearest `ScopedTheme` wins (T3 Code's appearance previews draw each theme in its own
+  colours). Both Tailwind's nested output and its `--minify` output are handled.
+  `denext/build/css`'s `buildAppCss` takes the pass as `tailwind.postprocess` (the new
+  `AppTailwind` type).
+- **An `asyncContext` build no longer fails on a module that imports by a relative path.** The
+  transform writes each client module it instruments into `.denext/asyncctx/`, and the copy kept
+  the original's relative specifiers, so they resolved beside the copy: `denext build` and
+  `denext export` of `examples/hello` with `asyncContext: true` failed with
+  `Module not found ".denext/asyncctx/island.tsx"` (its `dynamic(() => import("./island.tsx"))`),
+  and so did any instrumented module's relative static import, `export … from`, stylesheet, JSON
+  or platform-file module. The copy's static imports and its `import()` calls written as a
+  literal (a string, or a template literal with no substitutions) now name the module beside the
+  original. `import.meta` and a non-literal `import(expr)` are left as written, as for the
+  original module: the bundler follows neither, and the browser resolves both against the chunk.
+- **`asyncContext` also instruments the plain `.ts` / `.js` / `.mts` / `.mjs` modules a client
+  bundle contains.** Only `.tsx` / `.jsx` files were instrumented, so an `await` inside a
+  transition started from a hook or store in a `.ts` module lost the transition scope: the update
+  after it committed as an urgent one. Each such module a `"use client"` island or a route
+  hydrated whole reaches is now instrumented too; a module only the server tree reaches (a Flight
+  page's data module, a `"use server"` module and what it imports) is left alone.
+- **A platform-file client copy no longer ships the build machine's paths.** A module copied
+  because its import-map alias import reaches a platform variant (`@/lib/v.ts` resolving to
+  `v.ios.ts`) had `import.meta.url`, `.filename`, `.dirname` and `import.meta.resolve()` pinned to
+  the original's `file://` URL, which the client bundle then carried into the browser. The copy now
+  keeps `import.meta` as written, so `new URL("./asset.png", import.meta.url)` resolves against the
+  chunk exactly as it does in a module bundled as written, in `denext build`, `denext export` (every
+  `--platform`) and `denext dev`.
+
 ## [3.4.6] - 2026-10-11
 
 ### Fixed
@@ -12779,7 +12922,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.6...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.7...development
+[3.4.7]: https://jsr.io/@denext/denext@3.4.7
 [3.4.6]: https://jsr.io/@denext/denext@3.4.6
 [3.4.5]: https://jsr.io/@denext/denext@3.4.5
 [3.4.4]: https://jsr.io/@denext/denext@3.4.4

@@ -57,7 +57,6 @@ import {
   desktopWindowsBootstrapBundle,
 } from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
-import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 import { desktopNpmArgsFor } from "../../build/desktop-capabilities.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
@@ -223,20 +222,6 @@ interface DesktopWindowLaunch {
 }
 
 /**
- * `desktop.denoFlags` of the project (refused flags throw), after printing the pnpm-workspace hint
- * when it applies.
- */
-async function projectDenoFlags(dir: string, config: unknown): Promise<string[]> {
-  const flags = desktopDenoFlags(config);
-  const hint = await desktopPnpmWorkspaceHint(dir, flags);
-  if (hint) {
-    console.warn(`  ⚠ ${hint}
-`);
-  }
-  return flags;
-}
-
-/**
  * Prepare an UNPACKAGED window (`desktop run` / `dev`): sync `.deno-desktop/app.json` (the
  * configured origin + identifier, embedded through deno.json `compile.include`), resolve denext's
  * pinned Deno Desktop runtime for the build (downloaded and verified on first use; nothing under
@@ -248,7 +233,7 @@ async function projectDenoFlags(dir: string, config: unknown): Promise<string[]>
 async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWindowLaunch> {
   const paths = await resolveProject(dir);
   const { config } = paths;
-  const denoFlags = await projectDenoFlags(dir, config);
+  const denoFlags = desktopDenoFlags(config);
   await syncDesktopAppConfigAt(dir, config);
   // An unpackaged window falls back to the stock runtime (with a warning) for a `deno` that is not
   // the runtime's exact version; packaging stays strict.
@@ -503,9 +488,9 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
-  // The script reads `desktop.denoFlags` itself; check them (and hint at a pnpm workspace) first.
+  // The script reads `desktop.denoFlags` itself; check them first.
   try {
-    await projectDenoFlags(dir, (await resolveProject(dir)).config);
+    desktopDenoFlags((await resolveProject(dir)).config);
   } catch (err) {
     fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -528,7 +513,11 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // workspace) the bundler's npm imports are not in node_modules, and Deno would rewrite the
   // workspace's root package.json from pnpm-workspace.yaml.
   const npmMode = (await desktopNpmArgsFor(dir)).filter((a) => a.startsWith("--node-modules-dir"));
-  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir);
+  // A script already under --node-modules-dir=none need not re-run itself to get it (its guard).
+  const env = npmMode.includes("--node-modules-dir=none")
+    ? { DENEXT_DESKTOP_NPM: "none" }
+    : undefined;
+  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir, env);
 }
 
 /** What a packaging script predating denext 3.1 lacks. */

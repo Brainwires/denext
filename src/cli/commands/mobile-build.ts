@@ -28,6 +28,7 @@ import {
 } from "../../build/mobile-assets.ts";
 import {
   capacitorPlaceholders,
+  COMPUTED_ICON_FIX,
   formatIconSearch,
   type IconSearch,
   type IconSource,
@@ -116,6 +117,9 @@ interface ResolvedAssets {
 /** Why no icon could be found, with what was passed over. */
 function noIconError(search: IconSearch): Error {
   const notes = search.notes.map((n) => `\n  note: ${n}`).join("");
+  if (search.computedIcon) {
+    return new Error(`no icon: ${search.computedIcon}: ${COMPUTED_ICON_FIX}${notes}`);
+  }
   return new Error(
     "no icon: pass --icon <png>, set `mobile.icon` in denext.config.ts, or put assets/icon.png " +
       "(1024×1024 or larger) in the Capacitor project. Nothing usable was found in an Expo app " +
@@ -261,9 +265,10 @@ export async function mobileAssets(ctx: CommandContext): Promise<void> {
 }
 
 /**
- * Replace Capacitor's placeholder icon (and splash, when it is still the placeholder too) in
- * `platform`'s native project with the project's own icon, for good: `npx cap add` copies the
- * Capacitor logo, which App Review rejects and nobody wants on a home screen.
+ * Replace Capacitor's placeholder icon and splash in `platform`'s native project, each one that
+ * is still the placeholder, with the project's own icon (the splash: that icon centred on its
+ * background colour), for good: `npx cap add` copies the Capacitor logo, which App Review
+ * rejects and nobody wants on a home screen or a launch screen.
  *
  * @param ctx The command context (`--icon` / `--background-color` still apply).
  * @param root The Capacitor project.
@@ -278,26 +283,29 @@ export async function replacePlaceholderIcons(
   dryRun: boolean,
   log: (line: string) => void,
 ): Promise<void> {
-  const icons = await capacitorPlaceholders(root, platform, "icon");
-  if (icons.length === 0) return;
+  const placeholders = {
+    icon: await capacitorPlaceholders(root, platform, "icon"),
+    splash: await capacitorPlaceholders(root, platform, "splash"),
+  };
+  const kinds = (["icon", "splash"] as const).filter((k) => placeholders[k].length > 0);
+  if (kinds.length === 0) return;
   let resolved: ResolvedAssets;
   try {
     resolved = await assetSources(ctx, root);
   } catch (err) {
+    const first = placeholders[kinds[0]][0];
     log(
-      `  warning: ${platform} still has Capacitor's placeholder icon (${icons[0]}), which App ` +
-        `Review rejects: ${err instanceof Error ? err.message : String(err)}`,
+      `  warning: ${platform} still has Capacitor's placeholder ${kinds.join(" and ")} ` +
+        `(${first}), which App Review rejects: ${err instanceof Error ? err.message : String(err)}`,
     );
     return;
   }
-  const kinds: ("icon" | "splash")[] = ["icon"];
-  if ((await capacitorPlaceholders(root, platform, "splash")).length) kinds.push("splash");
   const lines = resolved.search
     ? formatIconSearch(resolved.search, { warnSize: false })
     : [`icon: ${resolved.spec.icon}`, ...(resolved.warnings ?? []).map((w) => `warning: ${w}`)];
   const report = await generateMobileAssets(root, resolved.spec, {
     platforms: [platform],
-    kinds,
+    kinds: [...kinds],
     dryRun,
   });
   log(
@@ -825,8 +833,9 @@ export const MOBILE_BUILD_HELP = "\n" +
   "  build only; --bump increments the build number in the sources. Flavors\n" +
   "  (denext.config mobile.flavors) change the app id, name, server.url and icons for the build\n" +
   "  and are restored afterwards; a killed build is restored by the next one or by\n" +
-  "  `mobile build --restore`. Capacitor's placeholder icon (and splash), left by `cap add`, is\n" +
-  "  replaced for good with the project's icon (as `assets` finds it). The artifact and a\n" +
+  "  `mobile build --restore`. Capacitor's placeholder icon and splash, left by `cap add`, are\n" +
+  "  replaced for good, each while it is still the placeholder, from the project's icon (as\n" +
+  "  `assets` finds it; the splash is that icon on its background colour). The artifact and a\n" +
   "  <artifact>.json sidecar land in dist/mobile/<platform>[-<flavor>]/.\n" +
   "\n" +
   "  submit: checks the artifact (signed, well formed) and the credentials, then uploads: iOS\n" +

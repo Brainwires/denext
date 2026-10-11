@@ -1790,8 +1790,10 @@
     "ScannedBarcode:interface",
     "ScheduledLocalNotification:interface",
     "SecureStore:interface",
+    "SecureStoreFallback:typeAlias",
     "SecureStoreGetOptions:interface",
     "SecureStoreSetOptions:interface",
+    "SecureStoreSetResult:interface",
     "SentryCapacitorSdk:interface",
     "SentrySiblingSdk:interface",
     "SetWidgetDataOptions:interface",
@@ -4849,6 +4851,7 @@
   ],
   "denext/build/css": [
     "AppCss:interface",
+    "AppTailwind:interface",
     "CssAssets:interface",
     "buildAppCss:function",
     "extractRouteCss:function"

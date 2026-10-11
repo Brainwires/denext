@@ -11,11 +11,8 @@ import { join } from "@std/path";
 import { mfs } from "./migrate-io.ts";
 import { exists, firstExisting } from "./migrate-fs.ts";
 import { CAPACITOR_CONFIGS, readCapacitorConfig } from "./capacitor-config.ts";
-import {
-  CAPACITOR_BUILD_IGNORES,
-  CAPACITOR_VERSION,
-  YARN_NO_SCRIPTS_ENV,
-} from "./capacitor-pins.ts";
+import { nativeDirsOf } from "./capacitor-native-dirs.ts";
+import { CAPACITOR_VERSION, capacitorBuildIgnores, YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
 import type { CommandRunner, PlannedCommand } from "./mobile-capabilities.ts";
 
 /** A native platform Capacitor adds. */
@@ -186,6 +183,14 @@ async function desktopIdentifier(dir: string): Promise<string | undefined> {
 }
 
 /** The kept Capacitor config, its literal values, and whether migrate may rewrite it. */
+/**
+ * The `.gitignore` lines for the Capacitor build outputs of the project at `dir`, under the
+ * native folders its capacitor.config.* names (`ios.path` / `android.path`), else the defaults.
+ */
+export async function capacitorIgnoresFor(dir: string): Promise<string[]> {
+  return capacitorBuildIgnores(nativeDirsOf((await existingConfig(dir))?.values));
+}
+
 async function existingConfig(
   dir: string,
 ): Promise<{ file: string; values: Record<string, unknown> | null; generated: boolean } | null> {
@@ -470,7 +475,7 @@ export async function planCapacitor(input: CapacitorPlanInput): Promise<Capacito
       review: reviewFindings(input, id, kept),
     },
     tasks: capacitorTasks(input.cli, { run: input.run, installed: input.pm !== null }),
-    ignores: [...CAPACITOR_BUILD_IGNORES],
+    ignores: capacitorBuildIgnores(nativeDirsOf(kept?.values)),
     writeConfig: !kept || kept.generated,
   };
 }

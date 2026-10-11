@@ -66,6 +66,7 @@ export { createVirtualizedList } from "./lists/virtualized.ts";
 export { createNativeSafeAreaProvider, createSafeAreaView } from "./safe-area.ts";
 export { withScrollSnap } from "./scroll-snap.ts";
 export { StatusBar } from "./status-bar.ts";
+export { withTextInputDefaults } from "./text-input.ts";
 export { processStyleAttributes, withStyleSheetStatics } from "./style-attributes.ts";
 export { ToastAndroid } from "./toast-android.ts";
 export { createTouchableNativeFeedback } from "./touchable-native-feedback.ts";

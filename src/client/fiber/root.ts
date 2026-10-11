@@ -22,23 +22,13 @@ import {
 import { beginConcurrentRender, renderRoot, resumeConcurrent } from "./work-loop.ts";
 import { PORTAL, type VNode, type VNodeChild } from "../../jsx/types.ts";
 import { rootScope } from "../../jsx/tree-id.ts";
-import {
-  familyMatchActive,
-  familyResolveActive,
-  resolveFamilyCurrent,
-  setRootRefresh,
-} from "../vnode-utils.ts";
+import { familyMatchActive, familyResolveActive, resolveFamilyCurrent } from "../vnode-utils.ts";
 import { createFiber, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
 import { listenOn } from "./events.ts";
 import { bootMomentumSafeScroll } from "../momentum-boot.ts";
 
 // Wire the work loop into the scheduler (see `FlushHandlers` for why it is injected).
 setFlushHandlers(renderRoot, beginConcurrentRender, resumeConcurrent);
-
-// Dev per-module HMR: let the Fast Refresh runtime re-render every mounted root
-// after an edited module re-imports (family-current substitution takes effect on
-// the live tree). A plain function-pointer handoff; only invoked in dev.
-setRootRefresh(refreshAllRoots);
 
 /**
  * Render `children` into a different DOM `container` while keeping their place in
@@ -116,9 +106,10 @@ const retainedRootByContainer = new WeakMap<Element, Root>();
  * component family's `current` impl; this marks exactly the live fibers whose family
  * changed dirty so they re-render, and `renderComponent`'s family substitution then
  * runs the fresh code on those existing fibers with hook state intact. Installed via
- * `setRootRefresh` and invoked by the Fast Refresh runtime; never called in production.
+ * `setRootRefresh` by the dev refresh runtime (refresh-swap.ts) and invoked by it after an
+ * edited module re-imports; never reached in production.
  */
-function refreshAllRoots(): void {
+export function refreshAllRoots(): void {
   if (!familyResolveActive()) return;
   // Mark exactly the fibers whose component family changed (its `current` impl now
   // differs from the ref the fiber committed with) dirty, then let the scheduler flush.

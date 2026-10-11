@@ -78,8 +78,13 @@ interface DenoInfoModule {
  * ship no code, so a static-analysis pass (does this route need hydration? which modules
  * are client boundaries?) must not see them: a types-only module that happens to import a
  * hooks module for its `Context<T>` type would otherwise flag every page as interactive.
+ * A module `enter` refuses is left out, and the walk does not descend through it.
  */
-function runtimeReachable(info: DenoInfo, roots: string[]): DenoInfoModule[] {
+function runtimeReachable(
+  info: DenoInfo,
+  roots: string[],
+  enter: (m: DenoInfoModule) => boolean = () => true,
+): DenoInfoModule[] {
   const byId = new Map(info.modules.map((m) => [m.specifier, m]));
   const seen = new Set<string>();
   const out: DenoInfoModule[] = [];
@@ -89,7 +94,7 @@ function runtimeReachable(info: DenoInfo, roots: string[]): DenoInfoModule[] {
     if (seen.has(id)) continue;
     seen.add(id);
     const m = byId.get(id);
-    if (!m) continue;
+    if (!m || !enter(m)) continue;
     out.push(m);
     for (const dep of m.dependencies ?? []) {
       const next = dep.code?.specifier;
@@ -192,6 +197,48 @@ export async function crawlLocalModules(
     out.push(filePath);
   }
   return out;
+}
+
+/**
+ * The local modules a client bundle can contain: every module reachable through runtime imports
+ * from each `"use client"` module `entryFiles` reach (a Flight route's islands) and from
+ * `wholeTree` (the entries of a route hydrated whole), never through a `"use server"` module (a
+ * client bundle imports its action stub instead) and never the framework's own source. A module
+ * only the server tree reaches (a Flight page's data module) is not among them.
+ *
+ * @param entryFiles Every route's entry modules (the crawl roots; their islands are found here).
+ * @param wholeTree The entry modules of the routes whose whole tree ships to the client.
+ * @returns Absolute file paths, sorted.
+ */
+export async function clientGraphModules(
+  entryFiles: string[],
+  wholeTree: string[] = [],
+): Promise<string[]> {
+  const all = [...new Set([...entryFiles, ...wholeTree])];
+  if (all.length === 0) return [];
+  const { info, roots } = await denoInfoGraph(all);
+  const rootOf = new Map(all.map((f, i) => [f, roots[i]]));
+  const local = runtimeReachable(info, roots).filter((m) =>
+    !m.error && m.specifier.startsWith("file:")
+  );
+  const directives = new Map<string, Directive>(
+    await Promise.all(
+      local.map(async (m) =>
+        [m.specifier, await readDirective(fromFileUrl(m.specifier))] as [string, Directive]
+      ),
+    ),
+  );
+  const clientRoots = [
+    ...local.filter((m) => directives.get(m.specifier) === "client").map((m) => m.specifier),
+    ...wholeTree.map((f) => rootOf.get(f)!),
+  ];
+  const reached = runtimeReachable(
+    info,
+    clientRoots,
+    (m) => m.specifier.startsWith("file:") && !m.error && directives.get(m.specifier) !== "server",
+  );
+  return reached.map((m) => fromFileUrl(m.specifier)).filter((p) => !isFrameworkSource(p))
+    .sort();
 }
 
 /** A `deno info` graph plus the resolved specifiers of the entries it was requested for. */

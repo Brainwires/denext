@@ -147,7 +147,9 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "part of the keyboard that covers the page; translate-with-padding pads; automaticOffset " +
       "is ignored. KeyboardAwareScrollView scrolls the focused input bottomOffset px above the " +
       "keyboard and pads its content by the covered height plus extraKeyboardSpace; " +
-      "KeyboardChatScrollView is the same view. KeyboardToolbar is a bar riding on the keyboard " +
+      "KeyboardChatScrollView adds the covered height (minus offset) after its content and lifts " +
+      "the content with the keyboard per keyboardLiftBehavior (always / whenAtEnd / persistent " +
+      "/ never), honouring freeze; blankSpace and extraContentPadding are ignored. KeyboardToolbar is a bar riding on the keyboard " +
       "with previous / next (the page's inputs in document order) and Done; its button / icon / " +
       "blur props are ignored. KeyboardController.dismiss / setFocusTo / isVisible / state " +
       "work; setInputMode / setDefaultMode / preload / setTranslucent do nothing. " +

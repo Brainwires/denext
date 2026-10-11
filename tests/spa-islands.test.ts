@@ -245,11 +245,11 @@ Deno.test("SpaIsland client:interaction: the placeholder until the first interac
 });
 
 Deno.test("SpaIsland client:interaction: the trigger listeners are passive (touchstart never holds a scroll)", async () => {
-  const calls: Array<[string, unknown]> = [];
+  const calls: Array<[unknown, string, unknown]> = [];
   const proto = DomEl.prototype as unknown as { addEventListener: (...a: unknown[]) => void };
   const original = proto.addEventListener;
   proto.addEventListener = function (this: unknown, type: unknown, fn: unknown, options: unknown) {
-    calls.push([type as string, options]);
+    calls.push([this, type as string, options]);
     return original.call(this, type, fn, options);
   };
   try {
@@ -260,8 +260,14 @@ Deno.test("SpaIsland client:interaction: the trigger listeners are passive (touc
         label: "diff",
       }));
       await settle();
-      const touch = calls.find(([type]) => type === "touchstart");
-      assertEquals(touch?.[1], { passive: true });
+      // The placeholder's trigger (the root container's delegation listeners register
+      // pointerdown non-passive, so a passive pointerdown names the placeholder).
+      const placeholder = calls.find(([, type, o]) =>
+        type === "pointerdown" && (o as { passive?: boolean })?.passive === true
+      )?.[0];
+      assert(placeholder !== undefined, "the placeholder listens for the interaction");
+      const touch = calls.find(([target, type]) => target === placeholder && type === "touchstart");
+      assertEquals(touch?.[2], { passive: true });
       await screen.unmount();
     });
   } finally {

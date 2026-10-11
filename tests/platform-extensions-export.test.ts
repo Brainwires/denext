@@ -536,3 +536,69 @@ Deno.test("denext build: a copied island's dynamic imports reach the variant", a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * A client copy (a module copied because its alias import reaches a variant, here an island and
+ * the variant itself) keeps `import.meta` as written, like the module it stands in for: the
+ * browser resolves `import.meta.url`, `import.meta.resolve()` and `new URL(rel, import.meta.url)`
+ * against the chunk. Pinning them to the original's `file://` URL shipped build-machine paths.
+ */
+const META_APP = {
+  "app/page.tsx": `import { Island } from "@/components/Island.tsx";\n` +
+    `export default function Page(){ return <main><Island/></main>; }\n`,
+  "components/Island.tsx": `"use client"\nimport { useState } from "denext";\n` +
+    `import { v } from "@/lib/v.ts";\n` +
+    `const here = () => [import.meta.url, import.meta.resolve("./peer.js"),\n` +
+    `  new URL("./asset.png", import.meta.url).href, String(import.meta.filename)];\n` +
+    `export function Island(){ const [t, setT] = useState(v);\n` +
+    `  return <b onClick={() => setT(here().join("|"))}>{t}</b>; }\n`,
+  "lib/v.ts": `export const v = "PLAIN_V";\n`,
+  "lib/v.web.ts": `import { u } from "@/lib/u.ts";\n` +
+    `export const v = "WEB_V" + u + new URL("./web.png", import.meta.url).pathname;\n`,
+  "lib/v.ios.ts": `import { u } from "@/lib/u.ts";\n` +
+    `export const v = "IOS_V" + u + new URL("./ios.png", import.meta.url).pathname;\n`,
+  "lib/u.ts": `export const u = "PLAIN_U";\n`,
+  "lib/u.web.ts": `export const u = "WEB_U";\n`,
+  "lib/u.ios.ts": `export const u = "IOS_U";\n`,
+};
+
+/** The client JS ships no build-machine path and keeps the copies' `import.meta` as written. */
+function assertMetaKept(js: string, platform: "web" | "ios") {
+  const tag = platform === "web" ? "WEB" : "IOS";
+  for (const want of [`${tag}_V`, `${tag}_U`]) assertStringIncludes(js, want);
+  assert(!js.includes("file://"), "a client copy shipped a file:// URL");
+  assert(!js.includes("PLAIN_V") && !js.includes("PLAIN_U"), "a plain file was bundled");
+  for (const want of [`"./asset.png",import.meta.url`, `"./${platform}.png",import.meta.url`]) {
+    assertStringIncludes(js.replaceAll(" ", ""), want);
+  }
+  assertStringIncludes(js, `import.meta.resolve("./peer.js")`);
+}
+
+Deno.test("denext build: a client copy keeps import.meta as written", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_platform_meta_" });
+  try {
+    await scaffoldApp(dir, META_APP, { "@/": "./" });
+    await build(dir);
+    const clientDir = join(dir, ".denext", "client");
+    let js = "";
+    for await (const e of Deno.readDir(clientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        js += await Deno.readTextFile(join(clientDir, e.name));
+      }
+    }
+    assertMetaKept(js, "web");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+for (const platform of ["web", "ios"] as const) {
+  Deno.test(`staticExport --platform ${platform}: a client copy keeps import.meta as written`, async () => {
+    const got = await exportFor(platform, META_APP, { "@/": "./" });
+    try {
+      assertMetaKept(got.js, platform);
+    } finally {
+      await Deno.remove(got.dir, { recursive: true });
+    }
+  });
+}

@@ -46,3 +46,5 @@ export { buildAppCss, extractRouteCss } from "./css.ts";
  * are internal representation — don't build assumptions on their shape or keys.
  */
 export type { AppCss, CssAssets } from "./css.ts";
+/** `buildAppCss`'s Tailwind paths, with an optional rewrite of the compiled output. */
+export type { AppTailwind } from "./css.ts";

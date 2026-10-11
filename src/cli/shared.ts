@@ -91,16 +91,19 @@ export async function runBuildStep<T>(
 
 /**
  * Spawn `deno <args>` in `cwd` (default: the real cwd) inheriting stdio, then exit
- * with the child's status code. The shared engine behind the verbs that delegate to
- * Deno (`test`/`lint`/`fmt`/`check`, `add`/`remove`/`update`). Never returns.
+ * with the child's status code (`env` is added to the inherited environment). The shared engine
+ * behind the verbs that delegate to Deno (`test`/`lint`/`fmt`/`check`, `add`/`remove`/`update`).
+ * Never returns.
  */
 export async function spawnDenoAndExit(
   args: string[],
   cwd?: string,
+  env?: Record<string, string>,
 ): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args,
     cwd: cwd ?? Deno.cwd(),
+    ...(env ? { env } : {}),
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

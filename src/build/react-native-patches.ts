@@ -9,6 +9,9 @@
 //     `Dimensions`' `fontScale` reads `reactNativeFontScale()`: the OS text size (Dynamic Type,
 //     Android's font scale) reaches allowFontScaling / maxFontSizeMultiplier,
 //     PixelRatio.getFontScale() and useWindowDimensions().fontScale (react-native-web reports 1).
+//   - `TextInput` is wrapped by `withTextInputDefaults`: no browser focus ring (React Native's
+//     outline is 0 wide unless the app styles one) and a one-line placeholder (no wrapping in a
+//     line-tall multiline input).
 //   - `Image` is passed through `withImageStatics`: the `resolveAssetSource`,
 //     `getSizeWithHeaders`, `prefetchWithMetadata` and `abortPrefetch` statics react-native-web
 //     lacks. `PixelRatio` gains React Native's no-op `startDetecting`.
@@ -43,6 +46,7 @@ const WRAPPED: Readonly<Record<string, string>> = {
   ScrollView: "withScrollSnap",
   StyleSheet: "withStyleSheetStatics",
   Text: "withFontScaling",
+  TextInput: "withTextInputDefaults",
   PixelRatio: "withFontScaleRatio",
 };
 

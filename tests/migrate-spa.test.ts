@@ -109,18 +109,17 @@ function assertDesktopTask(task: string): void {
 }
 
 /**
- * A `--desktop` migration writes the `deno desktop` resolution flags its `desktop` task bakes to
- * the config's `desktop.denoFlags` (what `denext desktop run | dev | package` read), and they pass
- * the config validator's allow-list.
+ * A `--desktop` migration writes no `desktop.denoFlags` (`denext desktop run | dev | package` add
+ * the npm-resolution flags themselves), and its `desktop` block passes the config validator.
  */
 async function assertDesktopDenoFlags(dir: string): Promise<void> {
   const config = (await import(toFileUrl(join(dir, "denext.config.ts")).href)).default;
   const { denoFlags, app } = config.desktop;
-  assertEquals(denoFlags, ["--node-modules-dir=none", "--exclude-unused-npm"]);
+  assertEquals(denoFlags, undefined);
   // The bundle's name lives in the config (the title, as the old `-o` had it), so editing
   // `desktop.app.name` / adding `identifier` renames the app on the next `deno task desktop`.
   assertEquals(app, { name: "My App" });
-  validateDenextConfig({ desktop: { denoFlags, app } });
+  validateDenextConfig({ desktop: { app } });
 }
 
 Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {

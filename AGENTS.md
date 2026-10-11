@@ -560,13 +560,14 @@ client does this itself; for your own sockets use `desktopWebSocketUrl(path)` fr
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
 `openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
 registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
-passes allow-listed `deno desktop` flags (a pnpm workspace: `["--node-modules-dir=none",
-"--exclude-unused-npm"]`; never permission flags). The bundle's name, identifier and icon come from
+passes allow-listed `deno desktop` flags (never permission flags); npm resolution needs none:
+a project with a package.json or node_modules, a pnpm workspace included, is built with
+`--node-modules-dir=none --exclude-unused-npm` already. The bundle's name, identifier and icon come from
 `desktop.app.name` / `identifier` / `icons.{macos,windows,linux}`, falling back to deno.json.
 A denext backend (`denext start` / `denext dev`) accepts the app's own `desktop.app.origin` as
 same-origin (Server Actions, the API batch, Live, `denextAuth` POSTs, the dev origin gate) by exact
 match; a separate backend lists the origin in `allowedDevOrigins` (custom-scheme entries are allowed)
-or `createApp({ allowedOrigins })`. `denext migrate --desktop` writes `desktop.denoFlags`.
+or `createApp({ allowedOrigins })`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps

@@ -311,7 +311,7 @@ async function checkPreprocessPatch(cjs: boolean): Promise<void> {
 
 Deno.test({
   name:
-    "patches: react-native-web's real ScrollView / Text / PixelRatio / Image / AppRegistry / StyleSheet / Dimensions, ES and CJS",
+    "patches: react-native-web's real ScrollView / Text / TextInput / PixelRatio / Image / AppRegistry / StyleSheet / Dimensions, ES and CJS",
   // Needs the installed react-native-web@0.21.2 (node_modules); skipped where it is absent.
   ignore: !RNW_INSTALLED,
 }, async () => {
@@ -320,6 +320,7 @@ Deno.test({
     const cases: [string, string, string][] = [
       ["ScrollView", "withScrollSnap", "ForwardedScrollView"],
       ["Text", "withFontScaling", "Text"],
+      ["TextInput", "withTextInputDefaults", "TextInput"],
       ["PixelRatio", "withFontScaleRatio", "PixelRatio"],
       ["Image", "withImageStatics", "ImageWithStatics"],
       ["AppRegistry", "withAppRegistry", "AppRegistry"],

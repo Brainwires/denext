@@ -10,8 +10,16 @@ import {
   loadNativeDirs,
   nativeJoin,
   nativeRel,
+  nativeText,
 } from "../src/build/capacitor-native-dirs.ts";
-import { addMobileCapabilities, type CommandRunner } from "../src/build/mobile-capabilities.ts";
+import { CAPACITOR_BUILD_IGNORES } from "../src/build/capacitor-pins.ts";
+import { capacitorIgnoresFor } from "../src/build/migrate-capacitor.ts";
+import {
+  addMobileCapabilities,
+  type CommandRunner,
+  formatCapabilityPlan,
+  planMobileCapabilities,
+} from "../src/build/mobile-capabilities.ts";
 import { generateMobileAssets } from "../src/build/mobile-assets.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 import { privacyEntriesFor, writePrivacyManifests } from "../src/build/mobile-privacy.ts";
@@ -265,6 +273,104 @@ Deno.test("native dirs: mobile build plans Gradle in android.path", async () => 
     const gradle = plan.commands.at(-1)!;
     assertEquals(gradle.cwd, join(dir, "native/android"));
     await assertNoDefaultDirs(dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native dirs: nativeText moves default-layout paths in a message, nothing else", async () => {
+  const dir = await project();
+  try {
+    await loadNativeDirs(dir);
+    assertEquals(
+      nativeText(dir, "ios/App/App/Info.plist: set NSSupportsLiveActivities to YES."),
+      "native/ios/App/App/Info.plist: set NSSupportsLiveActivities to YES.",
+    );
+    assertEquals(
+      nativeText(dir, "no ios/ or android/ project found; see `android/app/build.gradle`"),
+      "no native/ios/ or native/android/ project found; see `native/android/app/build.gradle`",
+    );
+    // Already in the project's layout, a package name, another word, or no path: unchanged.
+    for (
+      const text of [
+        "native/ios/App/App/Info.plist",
+        "@capacitor/ios and @capacitor/android",
+        "my-ios/x, ios.path, android:name, ./ios/x",
+        "run `npx cap add ios` first",
+      ]
+    ) assertEquals(nativeText(dir, text), text);
+
+    await Deno.remove(join(dir, "capacitor.config.ts"));
+    await loadNativeDirs(dir);
+    assertEquals(nativeText(dir, "ios/App/App/Info.plist"), "ios/App/App/Info.plist");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native dirs: mobile add names the project's paths in its warnings and steps", async () => {
+  const dir = await project();
+  try {
+    const plan = await planMobileCapabilities({ capabilities: ["push"], cwd: dir });
+    const lines = [...plan.warnings, ...plan.manual, ...plan.notes];
+    assert(
+      plan.warnings.some((w) => w.includes("no native/android/app/google-services.json")),
+      plan.warnings.join("\n"),
+    );
+    assert(
+      plan.manual.some((m) => m.includes("point the App target at native/ios/App/")),
+      plan.manual.join("\n"),
+    );
+    const printed = formatCapabilityPlan(plan);
+    assertStringIncludes(printed, "(native/ios/App/App/App.entitlements)");
+    for (const line of [...lines, ...printed.split("\n")]) {
+      assertFalse(/(?<![\w./@-])(?:ios|android)\//.test(line), `default path in: ${line}`);
+    }
+
+    const report = await addMobileCapabilities({ capabilities: ["push"], cwd: dir, run: noRun });
+    for (const line of [...report.manual, ...report.skipped, ...report.plan.manual]) {
+      assertFalse(/(?<![\w./@-])(?:ios|android)\//.test(line), `default path in: ${line}`);
+    }
+    // The entitlements file was written where Capacitor looks, not under a default ios/.
+    assert(await exists(join(dir, "native/ios/App/App/App.entitlements")));
+    await assertNoDefaultDirs(dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native dirs: the doctor's source scan skips the shells under ios.path / android.path", async () => {
+  const dir = await project({
+    "native/ios/App/App/public/assets/app.js": "localStorage.setItem('a', '1');\n",
+    "native/android/app/src/main/assets/public/app.js": "localStorage.getItem('a');\n",
+    "src/ios/storage.ts": "export const kept = () => localStorage.getItem('b');\n",
+  });
+  try {
+    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    const storage = report.findings.find((f) => f.check === "web-storage");
+    assert(storage, report.findings.map((f) => f.check).join(", "));
+    // Only the app's own source is listed; the native folders (and their copied export) are not.
+    assert(storage.message.startsWith("src/ios/storage.ts keep data in"), storage.message);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native dirs: migrate's .gitignore lines follow ios.path / android.path", async () => {
+  const dir = await project();
+  try {
+    assertEquals(await capacitorIgnoresFor(dir), [
+      "native/ios/App/App/public/",
+      "native/ios/App/build/",
+      "native/ios/DerivedData/",
+      "native/android/app/src/main/assets/public/",
+      "native/android/app/build/",
+      "native/android/build/",
+      "native/android/.gradle/",
+    ]);
+    await Deno.remove(join(dir, "capacitor.config.ts"));
+    assertEquals(await capacitorIgnoresFor(dir), [...CAPACITOR_BUILD_IGNORES]);
+    assert(CAPACITOR_BUILD_IGNORES.includes("ios/App/App/public/"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

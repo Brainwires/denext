@@ -8,6 +8,7 @@
 
 import { act, createRoot, type Root } from "../client/mod.ts";
 import { setDocument } from "../client/reconciler.ts";
+import { installErrorTexts } from "../client/fiber/error-texts.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
   DomDocument,
@@ -17,6 +18,10 @@ import {
   type TestElement,
   walkElements,
 } from "./dom.ts";
+
+// Component tests read the reconciler's full error texts, as a dev build does (a production
+// bundle carries only the error codes).
+installErrorTexts();
 
 export type { TestElement } from "./dom.ts";
 // `render` accepts a denext element (`h(...)` → VNode); re-export the VNode type

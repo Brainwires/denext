@@ -248,8 +248,10 @@ export { hideSplash } from "./splash.ts";
 export {
   type SecureStore,
   secureStore,
+  type SecureStoreFallback,
   type SecureStoreGetOptions,
   type SecureStoreSetOptions,
+  type SecureStoreSetResult,
 } from "./secure-store.ts";
 export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
 export { onOpenFile, type OpenedFile, useOpenFile } from "./open-file.ts";

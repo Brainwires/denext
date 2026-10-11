@@ -35,7 +35,7 @@ import {
   wireBridgeViewController,
   writeTemplates,
 } from "./mobile-native-install.ts";
-import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
+import { loadNativeDirs, nativeJoin, nativeTexts } from "./capacitor-native-dirs.ts";
 
 /** Options for {@linkcode addOtaToProject}. */
 export interface AddOtaOptions extends NativeInstallOptions {
@@ -340,5 +340,7 @@ export async function addOtaToProject(opts: AddOtaOptions): Promise<AddOtaReport
     if (!inst.report.written.includes(path)) inst.report.unchanged.push(path);
   }
   inst.report.manual.push(...privacy.manual);
+  nativeTexts(opts.dir, inst.report.manual);
+  nativeTexts(opts.dir, inst.report.skipped);
   return inst.report;
 }

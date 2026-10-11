@@ -512,8 +512,10 @@ Deno.test("platformImportMap: the modules that reach a variant through an alias 
     const mid = await Deno.readTextFile(new URL(importMap[url("mid.ts")]));
     assertStringIncludes(mid, JSON.stringify(url("v.ios.ts")));
     assertStringIncludes(mid, JSON.stringify(url("w.ts")), "a relative import is made absolute");
-    // The copy's import.meta keeps naming the module it stands in for.
-    assertStringIncludes(mid, `new URL("./w.ts", ${JSON.stringify(url("mid.ts"))})`);
+    // A client copy keeps import.meta as written (the browser resolves it against the chunk, as
+    // for the original): pinning it to the original's file: URL shipped build-machine paths.
+    assertStringIncludes(mid, `new URL("./w.ts", import.meta.url)`);
+    assert(!mid.includes(`"${url("mid.ts")}"`), "the copy pinned import.meta to the original");
     // A rebuild with nothing edited parses nothing again, and sees an edit.
     const again = await platformImportMap(dir, redirects, copyDir);
     assertEquals(again.importMap, importMap);

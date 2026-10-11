@@ -20,7 +20,7 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { DevEventLog } from "../dev-events.ts";
 import { type SseClients, sseSend } from "../sse.ts";
-import { tailwindPaths } from "../tailwind.ts";
+import { spaTailwind } from "../react-native-uniwind.ts";
 import { bundleSpaInto, spaCssGraph, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
 import { renderSpaShell, spaShellInstall } from "./shell.ts";
 import type { SpaShellParts } from "./shell-capture.ts";
@@ -280,7 +280,7 @@ export async function getUnbundledCss(
       outDir: paths.outDir,
       minify: false,
       entryFiles: roots,
-      tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
+      tailwind: spaTailwind(paths),
       graph: await spaCssGraph(paths, platform, "dev"),
     });
     text = appCss ? await extractRouteCss(roots, appCss) : "";
