@@ -33,7 +33,10 @@ import {
   writeFile,
 } from "../src/mobile/mod.ts";
 import { holdAwake } from "../src/mobile/keep-awake.ts";
-import { secureStoreIsSecret } from "../src/mobile/secure-store.ts";
+import {
+  resetSecureStoreSessionWarningForTesting,
+  secureStoreIsSecret,
+} from "../src/mobile/secure-store.ts";
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
@@ -89,6 +92,116 @@ Deno.test("secureStore: a biometric-gated value still refuses on desktop (no bio
   }, async () => {
     await secureStore.set("k", "v", { requireBiometric: true });
     await assertRejects(() => secureStore.get("k"));
+  });
+});
+
+/** A secureStore capability whose OS store refuses every call, as a locked/absent Linux keyring. */
+const refusing = (): Record<string, FakeMethod> => {
+  const refuse = () => {
+    throw { code: "backend_unavailable", message: "the keyring is locked" };
+  };
+  return { get: refuse, set: refuse, delete: refuse };
+};
+
+/** Run `fn` with `sessionStorage` emptied and `console.warn` captured. */
+async function withSession(fn: (warnings: string[]) => Promise<void>): Promise<void> {
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (msg: string) => void warnings.push(String(msg));
+  sessionStorage.clear();
+  resetSecureStoreSessionWarningForTesting();
+  try {
+    await fn(warnings);
+  } finally {
+    console.warn = warn;
+    sessionStorage.clear();
+  }
+}
+
+Deno.test("secureStore: a refusing keychain rejects by default (no fallback)", async () => {
+  await withSession(async () => {
+    await inDesktop({ secureStore: refusing() }, async () => {
+      const err = await assertRejects(() => secureStore.set("k", "v"));
+      assertEquals((err as { code?: string }).code, "backend_unavailable");
+      await assertRejects(() => secureStore.get("k"));
+      assertEquals(sessionStorage.length, 0);
+    });
+  });
+});
+
+Deno.test('secureStore: fallback "session" keeps a refused value in sessionStorage and warns once', async () => {
+  await withSession(async (warnings) => {
+    await inDesktop({ secureStore: refusing() }, async () => {
+      assertEquals(await secureStore.set("tok", "t1", { fallback: "session" }), {
+        stored: "session",
+      });
+      await secureStore.set("tok2", "t2", { fallback: "session" });
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t1");
+      assertEquals(await secureStore.get("nope", { fallback: "session" }), null);
+      // Not under the bare key: namespaced.
+      assertEquals(sessionStorage.getItem("tok"), null);
+      assert(sessionStorage.getItem("denext:secure-store:session:tok") === "t1");
+    });
+    assertEquals(warnings.length, 1, "one warning per page");
+    assert(warnings[0].includes("the keyring is locked"));
+    assert(warnings[0].includes("NOT"));
+  });
+});
+
+Deno.test("secureStore: the session copy survives a reload (bridge reset) and delete clears it", async () => {
+  await withSession(async () => {
+    await inDesktop({ secureStore: refusing() }, async () => {
+      await secureStore.set("tok", "t1", { fallback: "session" });
+    });
+    // "Reload": a fresh bridge, the same tab's sessionStorage.
+    await inDesktop({ secureStore: refusing() }, async () => {
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "t1");
+      await assertRejects(() => secureStore.delete("tok"), Error); // keychain refuses...
+      assertEquals(sessionStorage.length, 0); // ...but the session copy is gone
+    });
+  });
+});
+
+Deno.test("secureStore: a later keychain write clears the session copy; delete clears both", async () => {
+  await withSession(async () => {
+    const kv = new Map<string, string>();
+    let refuse = true;
+    await inDesktop({
+      secureStore: {
+        get: (a) => {
+          if (refuse) throw { code: "backend_unavailable", message: "locked" };
+          return kv.get((a as { key: string }).key) ?? null;
+        },
+        set: (a) => {
+          if (refuse) throw { code: "backend_unavailable", message: "locked" };
+          kv.set((a as { key: string }).key, (a as { value: string }).value);
+        },
+        delete: (a) => void kv.delete((a as { key: string }).key),
+      },
+    }, async () => {
+      await secureStore.set("tok", "old", { fallback: "session" });
+      refuse = false;
+      assertEquals(await secureStore.set("tok", "new", { fallback: "session" }), {
+        stored: "keychain",
+      });
+      assertEquals(sessionStorage.length, 0);
+      assertEquals(await secureStore.get("tok", { fallback: "session" }), "new");
+      sessionStorage.setItem("denext:secure-store:session:tok", "stale");
+      await secureStore.delete("tok");
+      assertEquals(sessionStorage.length, 0);
+      assertEquals(kv.size, 0);
+    });
+  });
+});
+
+Deno.test("secureStore: fallback never covers requireBiometric", async () => {
+  await withSession(async () => {
+    await inDesktop({ secureStore: refusing() }, async () => {
+      await assertRejects(() =>
+        secureStore.set("k", "v", { requireBiometric: true, fallback: "session" })
+      );
+      assertEquals(sessionStorage.length, 0);
+    });
   });
 });
 

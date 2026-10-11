@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`secureStore` can fall back to `sessionStorage`, opt in per call.** `secureStore.set(key, value,
+  { fallback: "session" })` and `secureStore.get(key, { fallback: "session" })` keep and read the
+  value in the page's `sessionStorage` (under a namespaced key) when the OS store refuses, such as
+  `backend_unavailable` from a locked or absent Linux keyring, and warn once with the reason. `set`
+  now resolves `{ stored: "keychain" | "indexeddb" | "session" }` (it resolved `undefined`; callers
+  that ignore it are unaffected). A later keychain `set` of the key clears the session copy and
+  `delete` clears both. `sessionStorage` is NOT secret and ends with the tab; `requireBiometric`
+  never falls back. Without the option nothing changes: a refusal still rejects.
+
 ### Changed
 
 - **Touch and wheel handlers are dispatched from the root, as in React.** `onTouchStart`,

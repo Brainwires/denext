@@ -22,7 +22,32 @@ export interface SecureStoreSetOptions {
    * app could still read it. Default `false`.
    */
   readonly requireBiometric?: boolean;
+  /**
+   * What to do when the OS secret store REFUSES the write (the desktop keychain answering
+   * `backend_unavailable`: no Secret Service provider, a locked keyring nobody unlocked, or the
+   * native plugin rejecting). Unset (the default) the call rejects, so the OS-protected contract
+   * stays explicit. `"session"` keeps the value in the page's `sessionStorage` instead, warns
+   * once with the reason, and reports `{ stored: "session" }`. **`sessionStorage` is NOT
+   * secret**: any script on the origin can read it, and it ends with the tab or window (it
+   * survives a reload). Ignored (the call still rejects) together with `requireBiometric`, which
+   * promises a protection it cannot give.
+   */
+  readonly fallback?: SecureStoreFallback;
 }
+
+/** Where {@linkcode SecureStore.set} put the value. */
+export interface SecureStoreSetResult {
+  /**
+   * `"keychain"`: the OS secret store (iOS Keychain, Android Keystore, the desktop keychain).
+   * `"indexeddb"`: the web's not-secret IndexedDB database (no secret store here).
+   * `"session"`: `sessionStorage`, because the OS store refused and `fallback: "session"` was
+   * given; NOT secret.
+   */
+  readonly stored: "keychain" | "indexeddb" | "session";
+}
+
+/** The opt-in fallbacks of {@linkcode SecureStoreSetOptions.fallback}. */
+export type SecureStoreFallback = "session";
 
 /** Options for {@linkcode SecureStore.get}. */
 export interface SecureStoreGetOptions {
@@ -30,6 +55,12 @@ export interface SecureStoreGetOptions {
   readonly reason?: string;
   /** Accept the device passcode too for a biometric-gated value (default `false`). */
   readonly allowDeviceCredential?: boolean;
+  /**
+   * `"session"`: when the OS secret store refuses the read, answer from the `sessionStorage` copy
+   * a `set(…, { fallback: "session" })` left (`null` when there is none), and warn once with the
+   * reason. Unset, a refusal rejects. See {@linkcode SecureStoreSetOptions.fallback}.
+   */
+  readonly fallback?: SecureStoreFallback;
 }
 
 /** The store {@linkcode secureStore} implements. */
@@ -40,9 +71,13 @@ export interface SecureStore {
    * user is not verified (always on the web, which has no biometrics).
    */
   get(key: string, options?: SecureStoreGetOptions): Promise<string | null>;
-  /** Store `value` under `key`, replacing any earlier value. */
-  set(key: string, value: string, options?: SecureStoreSetOptions): Promise<void>;
-  /** Remove `key` (a missing key is not an error). */
+  /**
+   * Store `value` under `key`, replacing any earlier value. Resolves with where it went (see
+   * {@linkcode SecureStoreSetResult}); a caller that ignores the result is unaffected. A
+   * successful OS-store write clears a `sessionStorage` copy of the same key.
+   */
+  set(key: string, value: string, options?: SecureStoreSetOptions): Promise<SecureStoreSetResult>;
+  /** Remove `key` from the secret store and from any `sessionStorage` copy (a missing key is not an error). */
   delete(key: string): Promise<void>;
 }
 
@@ -104,6 +139,58 @@ function warnNativeFallback(): void {
     "denext: secureStore is running in the native shell WITHOUT the secure-storage plugin " +
       "(`denext mobile add secure-store`); values fall back to WebView IndexedDB, which is NOT secret.",
   );
+}
+
+/** The `sessionStorage` key prefix of the opt-in `fallback: "session"` copies. */
+const SESSION_PREFIX = "denext:secure-store:session:";
+
+/** Whether the session fallback has been reported this page (once is enough). */
+let warnedSessionFallback = false;
+
+/** Re-arm the once-per-page session-fallback warning. Test seam; not re-exported. */
+export function resetSecureStoreSessionWarningForTesting(): void {
+  warnedSessionFallback = false;
+}
+
+/** `sessionStorage`, or `undefined` where it is missing or throws (SSR, blocked storage). */
+function session(): Storage | undefined {
+  try {
+    return (globalThis as { sessionStorage?: Storage }).sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `err` is the OS store refusing (not a usage error such as a bad key or value). */
+function isRefusal(err: unknown): boolean {
+  return !(err instanceof TypeError);
+}
+
+/** The `sessionStorage` to fall back to for refusal `err`, when the caller opted in and it can. */
+function fallbackStore(
+  opted: SecureStoreFallback | undefined,
+  err: unknown,
+  gated = false,
+): Storage | undefined {
+  return opted === "session" && !gated && isRefusal(err) ? session() : undefined;
+}
+
+/** Warn once that `fn` fell back to the not-secret `sessionStorage`, naming why. */
+function warnSessionFallback(fn: string, err: unknown): void {
+  if (warnedSessionFallback) return;
+  warnedSessionFallback = true;
+  const reason = err instanceof Error ? err.message : String(err);
+  console.warn(
+    `denext: secureStore.${fn} fell back to sessionStorage (fallback: "session"), which is NOT ` +
+      `secret and ends with the tab; the OS secret store refused: ${reason}`,
+  );
+}
+
+/** Drop the `sessionStorage` copy of `key`, if any. */
+function clearSession(key: string): void {
+  try {
+    session()?.removeItem(SESSION_PREFIX + key);
+  } catch { /* storage blocked: nothing to clear */ }
 }
 
 /** The key {@linkcode secureStoreIsSecret} reads to learn whether the desktop keychain answers. */
@@ -199,6 +286,56 @@ async function withStore<T>(
   }
 }
 
+/** The web path of `set`: no OS store here, so IndexedDB (never for a biometric-gated value). */
+async function setWeb(
+  key: string,
+  data: string,
+  options: SecureStoreSetOptions | undefined,
+): Promise<SecureStoreSetResult> {
+  // A gated value promises protection the plaintext fallback cannot give: refuse it.
+  if (options?.requireBiometric === true) {
+    throw new TypeError(
+      "secureStore.set: requireBiometric needs a secret store (the shell's secure-storage " +
+        "plugin or the desktop keychain); the web fallback is plain IndexedDB, so the value " +
+        "was not stored",
+    );
+  }
+  warnNativeFallback();
+  await withStore("readwrite", (s) => s.put(data, key));
+  clearSession(key);
+  return { stored: "indexeddb" };
+}
+
+/** The OS store's value for `key` (desktop keychain, then the shell plugin); `undefined` when neither exists. */
+async function osGet(key: string): Promise<string | null | undefined> {
+  const desktop = onDesktop() && await viaDesktop("secureStore", (d) => d.secureGet(key), true);
+  if (desktop) return desktop.value;
+  const plugin = securePlugin();
+  if (!plugin) return undefined;
+  const { data } = await plugin.internalGetItem({ prefixedKey: NATIVE_PREFIX + key, sync: false });
+  return typeof data === "string" ? data : null;
+}
+
+/** Write `data` to the OS store; `false` when there is none here (the caller takes the web path). */
+async function osSet(
+  key: string,
+  data: string,
+  options: SecureStoreSetOptions | undefined,
+): Promise<boolean> {
+  if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureSet(key, data), true)) {
+    return true;
+  }
+  const plugin = securePlugin();
+  if (!plugin) return false;
+  await plugin.internalSetItem({
+    prefixedKey: NATIVE_PREFIX + key,
+    data,
+    sync: false,
+    access: options?.requireBiometric === true ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY : WHEN_UNLOCKED,
+  });
+  return true;
+}
+
 /**
  * A string key-value store for secrets.
  *
@@ -219,6 +356,10 @@ async function withStore<T>(
  *
  * Values are strings: `JSON.stringify` anything else.
  *
+ * `set(key, value, { fallback: "session" })` / `get(key, { fallback: "session" })` opt in to
+ * `sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns
+ * once and `set` resolves `{ stored: "session" }`. That copy is NOT secret and ends with the tab.
+ *
  * `set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /
  * Touch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a
  * `BiometricError` when the user is not verified, including always on the web. The gate is in
@@ -236,51 +377,47 @@ async function withStore<T>(
 export const secureStore: SecureStore = {
   async get(key: string, options?: SecureStoreGetOptions): Promise<string | null> {
     checkKey("get", key);
-    const desktop = onDesktop() && await viaDesktop("secureStore", (d) => d.secureGet(key), true);
-    if (desktop) return await ungated(desktop.value, options);
-    const plugin = securePlugin();
-    if (plugin) {
-      const { data } = await plugin.internalGetItem({
-        prefixedKey: NATIVE_PREFIX + key,
-        sync: false,
-      });
-      return await ungated(typeof data === "string" ? data : null, options);
+    let raw: string | null | undefined;
+    try {
+      raw = await osGet(key);
+    } catch (err) {
+      const store = fallbackStore(options?.fallback, err);
+      if (!store) throw err;
+      warnSessionFallback("get", err);
+      return store.getItem(SESSION_PREFIX + key);
     }
+    if (raw !== undefined) return await ungated(raw, options);
     warnNativeFallback();
     const value = await withStore("readonly", (s) => s.get(key));
     return await ungated(typeof value === "string" ? value : null, options);
   },
-  async set(key: string, value: string, options?: SecureStoreSetOptions): Promise<void> {
+  async set(
+    key: string,
+    value: string,
+    options?: SecureStoreSetOptions,
+  ): Promise<SecureStoreSetResult> {
     checkKey("set", key);
     if (typeof value !== "string") {
       throw new TypeError("secureStore.set: the value must be a string (JSON.stringify it)");
     }
     const data = stored(value, options);
-    if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureSet(key, data), true)) return;
-    const plugin = securePlugin();
-    if (plugin) {
-      return await plugin.internalSetItem({
-        prefixedKey: NATIVE_PREFIX + key,
-        data,
-        sync: false,
-        access: options?.requireBiometric === true
-          ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY
-          : WHEN_UNLOCKED,
-      });
+    try {
+      if (await osSet(key, data, options)) {
+        clearSession(key);
+        return { stored: "keychain" };
+      }
+    } catch (err) {
+      const store = fallbackStore(options?.fallback, err, options?.requireBiometric === true);
+      if (!store) throw err;
+      warnSessionFallback("set", err);
+      store.setItem(SESSION_PREFIX + key, data);
+      return { stored: "session" };
     }
-    // A gated value promises protection the plaintext fallback cannot give: refuse it.
-    if (options?.requireBiometric === true) {
-      throw new TypeError(
-        "secureStore.set: requireBiometric needs a secret store (the shell's secure-storage " +
-          "plugin or the desktop keychain); the web fallback is plain IndexedDB, so the value " +
-          "was not stored",
-      );
-    }
-    warnNativeFallback();
-    await withStore("readwrite", (s) => s.put(data, key));
+    return await setWeb(key, data, options);
   },
   async delete(key: string): Promise<void> {
     checkKey("delete", key);
+    clearSession(key);
     if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureDelete(key), true)) return;
     const plugin = securePlugin();
     if (plugin) {

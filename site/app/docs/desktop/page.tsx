@@ -1858,7 +1858,15 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         only for a key that is really not there, and there is never a plaintext fallback. Items
         carry the <code>service</code> / <code>account</code> attributes <code>secret-tool</code>
         {" "}
-        wrote, so values an older denext stored stay readable.
+        wrote, so values an older denext stored stay readable. An app that would rather keep working
+        than refuse opts in per call:{" "}
+        <code>{'secureStore.set(key, value, { fallback: "session" })'}</code> and{" "}
+        <code>{'secureStore.get(key, { fallback: "session" })'}</code> use the page&apos;s{" "}
+        <code>sessionStorage</code> when the keychain refuses (one warning, and <code>set</code>
+        {" "}
+        resolves{" "}
+        <code>{'{ stored: "session" }'}</code>). That copy is not secret and lasts until the window
+        closes; a later keychain write of the key clears it.
       </Callout>
       <Callout kind="note">
         <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}

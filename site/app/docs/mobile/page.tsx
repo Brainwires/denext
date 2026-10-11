@@ -547,7 +547,20 @@ denext mobile add haptics share network secure-store`}
         <li>
           <code>secureStore.get / set / delete</code>{" "}
           (<code>secure-store</code>): the iOS Keychain / Android Keystore. On the web it is a plain
-          IndexedDB database, which is <strong>not</strong> secret.
+          IndexedDB database, which is <strong>not</strong> secret. <code>set</code> resolves{" "}
+          <code>{"{ stored }"}</code>: <code>&quot;keychain&quot;</code>,{" "}
+          <code>&quot;indexeddb&quot;</code> (the web), or{" "}
+          <code>&quot;session&quot;</code>. Opt in with <code>{'{ fallback: "session" }'}</code> on
+          {" "}
+          <code>set</code> and <code>get</code> and a refusal by the OS store (on desktop,{" "}
+          <code>backend_unavailable</code>: a locked or absent Linux keyring) keeps the value in the
+          page&apos;s <code>sessionStorage</code>{" "}
+          instead, with one console warning naming the reason. That copy is{" "}
+          <strong>not secret</strong>{" "}
+          (any script on the origin reads it) and ends with the tab, surviving a reload. A later
+          keychain <code>set</code> of the key clears it, <code>delete</code> clears both, and{" "}
+          <code>requireBiometric</code>{" "}
+          never falls back. Without the option a refusal still rejects.
         </li>
         <li>
           <code>openSqlite(name)</code> (<code>sqlite</code>): a SQLite database with{" "}
