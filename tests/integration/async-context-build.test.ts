@@ -4,7 +4,8 @@
 // copy instead (`Module not found .denext/asyncctx/island.tsx`) and failed the whole build. The
 // app here (tests/e2e/fixtures/async-context, copied into a temp dir) reaches its modules through
 // a literal and a template-literal `import()`, a stylesheet, JSON, a platform-file variant and a
-// client island; it must build, export and serve. The browser half — the transition scope held
+// client island; it must build, export and serve. A plain `.ts` hook the client reaches is
+// instrumented as a `.tsx` module is; a `.ts` module only the server page reaches is not. The browser half — the transition scope held
 // inside the lazily imported module — is tests/e2e/async-context.e2e.test.ts.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
@@ -84,6 +85,14 @@ function assertCopiesReRooted(copies: string[], appUrl: string): void {
   const lazy = copies.find((c) => c.includes("__acStart"));
   assert(lazy, "the lazily imported lazy.tsx (it awaits) was instrumented");
   assertStringIncludes(lazy, "__asyncAwait(", "its `await gate` is bracketed");
+  // A plain `.ts` client module (a hook) is instrumented too; one only the server reaches is not.
+  const counter = copies.find((c) => c.includes("useGatedCounter"));
+  assert(counter, "the client hook counter.ts (it awaits) was instrumented");
+  assertStringIncludes(counter, "__asyncAwait(", "its `await gate` is bracketed");
+  assert(
+    !copies.some((c) => c.includes("server-data-ok")),
+    "the server-only server-data.ts was instrumented",
+  );
 }
 
 Deno.test("asyncContext build: a dynamically imported island, CSS, JSON and a platform variant all resolve", async () => {
@@ -106,6 +115,7 @@ Deno.test("asyncContext build: a dynamically imported island, CSS, JSON and a pl
       const html = await res.text();
       assertEquals(res.status, 200);
       assertStringIncludes(html, "json-ok");
+      assertStringIncludes(html, "server-data-ok", "the server-only module renders");
       assertStringIncludes(html, ">web</p>", "the server renders the .web variant too");
       assertStringIncludes(html, 'id="lazy-loading"', "the ssr:false island renders its loading");
       const css = [...html.matchAll(/href="([^"]+\.css)"/g)].map((m) => m[1]);
@@ -128,6 +138,7 @@ Deno.test("asyncContext export: the same module graph exports", async () => {
     assertStringIncludes(html, "json-ok");
     const js = await allJs(join(dir, "out"));
     assertStringIncludes(js, "__acStart", "the lazy island's code is exported");
+    assert(!js.includes("server-data-ok"), "the server-only module stays out of the client");
     assertStringIncludes(js, "extra-ok", "the template-literal import() target is exported");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});

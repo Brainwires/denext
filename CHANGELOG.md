@@ -87,6 +87,19 @@ and this project adheres to
   literal (a string, or a template literal with no substitutions) now name the module beside the
   original. `import.meta` and a non-literal `import(expr)` are left as written, as for the
   original module: the bundler follows neither, and the browser resolves both against the chunk.
+- **`asyncContext` also instruments the plain `.ts` / `.js` / `.mts` / `.mjs` modules a client
+  bundle contains.** Only `.tsx` / `.jsx` files were instrumented, so an `await` inside a
+  transition started from a hook or store in a `.ts` module lost the transition scope: the update
+  after it committed as an urgent one. Each such module a `"use client"` island or a route
+  hydrated whole reaches is now instrumented too; a module only the server tree reaches (a Flight
+  page's data module, a `"use server"` module and what it imports) is left alone.
+- **A platform-file client copy no longer ships the build machine's paths.** A module copied
+  because its import-map alias import reaches a platform variant (`@/lib/v.ts` resolving to
+  `v.ios.ts`) had `import.meta.url`, `.filename`, `.dirname` and `import.meta.resolve()` pinned to
+  the original's `file://` URL, which the client bundle then carried into the browser. The copy now
+  keeps `import.meta` as written, so `new URL("./asset.png", import.meta.url)` resolves against the
+  chunk exactly as it does in a module bundled as written, in `denext build`, `denext export` (every
+  `--platform`) and `denext dev`.
 
 ## [3.4.6] - 2026-10-11
 

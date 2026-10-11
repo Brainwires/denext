@@ -30,7 +30,6 @@ import {
   type Edit,
   literalSpecifiers,
   parseModule,
-  pinImportMeta,
 } from "./swc-ast.ts";
 
 /** A target's import map for `deno bundle` and `deno info`. */
@@ -234,6 +233,12 @@ export async function stylesheetImportMap(
  * Write `m`'s copy (of `source`: the module, or its transformed file) to `copy` with its relative
  * imports made absolute and the alias imports `rewrite` names replaced. Returns the original for
  * each spelling of the copy `deno info` may report (it names modules by their real path).
+ *
+ * `import.meta` is left as written: every copy is a client one (a bundle's or a crawl's; the
+ * server loader follows aliases itself), and the bundler follows none of `import.meta.url`,
+ * `.resolve()` or `new URL(rel, import.meta.url)`, so the browser resolves them against the
+ * chunk, exactly as for the module the copy stands in for. Pinning them to the original's
+ * `file:` URL shipped build-machine paths in the client JS.
  */
 async function writeCopy(
   m: AliasImports,
@@ -246,8 +251,7 @@ async function writeCopy(
   const edits: Edit[] = [];
   absolutizeSpecifiers(parsed.ctx, parsed.body, m.url, edits, (u) => u, rewrite);
   const path = fromFileUrl(copy);
-  // The copy lives in the copy dir; its `import.meta` keeps naming the module it stands in for.
-  await Deno.writeTextFile(path, await pinImportMeta(applyEdits(parsed.ctx.bytes, edits), m.url));
+  await Deno.writeTextFile(path, applyEdits(parsed.ctx.bytes, edits));
   const original = toFileUrl(await Deno.realPath(m.path)).href;
   return { [copy]: original, [toFileUrl(await Deno.realPath(path)).href]: original };
 }

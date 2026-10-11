@@ -9,7 +9,11 @@ import {
   compileAsyncContextModules,
   transformAsyncContext,
 } from "../src/build/async-context-transform.ts";
+import { clientTransforms } from "../src/build/build-pipeline/transforms.ts";
+import { computeBoundaryRoutes, resetModuleGraphCache } from "../src/build/module-graph.ts";
+import { resolveProject } from "../src/build/paths.ts";
 import { swcParse } from "../src/build/swc-ast.ts";
+import { scanRoutes } from "../src/router/manifest.ts";
 import { Variable } from "../src/runtime/async-context.ts";
 
 const RUNTIME = new URL("../src/runtime/async-context.ts", import.meta.url).href;
@@ -304,4 +308,60 @@ Deno.test("transform: output re-parses cleanly (valid syntax) for a mixed module
   await parse(code); // throws on a syntax error
   // The directive prologue is preserved as the first statement.
   assert(code.trimStart().startsWith(`"use client"`), "directive prologue preserved");
+});
+
+// The build's AsyncContext pass instruments a plain `.ts` / `.js` / `.mts` module a client bundle
+// can contain (a hook or store awaiting inside a transition), not just `.tsx` / `.jsx`; a module
+// only the server tree reaches, or a route that ships no JS, is left alone.
+Deno.test("clientTransforms (asyncContext): client .ts modules are instrumented, server-only ones are not", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_ac_sources_" }));
+  const awaits = (name: string) =>
+    `export async function ${name}() { await Promise.resolve(); return "${name}"; }\n`;
+  const files: Record<string, string> = {
+    // A Flight route: the island's hook ships, the page's data module does not.
+    "app/page.tsx":
+      `import { Island } from "./island.tsx";\nimport { serverOnly } from "./data.ts";\n` +
+      `export default async function Page() { return [await serverOnly(), Island]; }\n`,
+    "app/data.ts": awaits("serverOnly"),
+    "app/island.tsx": `"use client";\nimport { clientHook } from "./hook.ts";\n` +
+      `export function Island() { return clientHook; }\n`,
+    "app/hook.ts": awaits("clientHook"),
+    // A route hydrated whole (it uses a hook): its tree ships.
+    "app/whole/page.tsx": `import { wholeTree } from "./util.mts";\n` +
+      `export default function Whole() { const [s] = useState(0); return [s, wholeTree]; }\n` +
+      `function useState(x: number) { return [x]; }\n`,
+    "app/whole/util.mts": awaits("wholeTree"),
+    // A static route (no interactivity): nothing of it ships.
+    "app/static/page.tsx": `import { staticOnly } from "./util.js";\n` +
+      `export default function Static() { return staticOnly; }\n`,
+    "app/static/util.js": awaits("staticOnly"),
+  };
+  try {
+    for (const [name, src] of Object.entries(files)) {
+      await Deno.mkdir(join(dir, name, ".."), { recursive: true });
+      await Deno.writeTextFile(join(dir, name), src);
+    }
+    const paths = await resolveProject(dir);
+    const manifest = await scanRoutes(paths.appDir);
+    const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+    assertEquals([...flightRoutes], ["/"]);
+    const map = await clientTransforms({
+      projectDir: dir,
+      paths: { ...paths, config: { asyncContext: true } },
+      manifest,
+      flightRoutes,
+    });
+    const url = (p: string) => toFileUrl(join(dir, p)).href;
+    for (const p of ["app/hook.ts", "app/whole/util.mts"]) {
+      assert(map[url(p)], `${p} was not instrumented`);
+      const code = await Deno.readTextFile(new URL(map[url(p)]));
+      assert(code.includes("__asyncAwait("), `${p}'s await is not bracketed`);
+    }
+    for (const p of ["app/data.ts", "app/static/util.js"]) {
+      assertEquals(map[url(p)], undefined, `${p} (server-only) was instrumented`);
+    }
+  } finally {
+    resetModuleGraphCache();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

@@ -27,6 +27,16 @@ const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 /** textContent of `#id` in the page. */
 const textOf = (id: string) => `(document.getElementById(${JSON.stringify(id)})||{}).textContent`;
 
+/**
+ * Call `globalThis[release]()` (open a transition's gate) and read `#id` ten microtasks later,
+ * before any task runs: the post-await update has not committed yet when it is a transition (its
+ * scope survived the `await`); an update that lost the scope is urgent and has.
+ */
+const releaseAndRead = (release: string, id: string) =>
+  `(async () => { globalThis.${release}();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    return ${textOf(id)}; })()`;
+
 Deno.test({
   name: "asyncContext e2e: a lazily imported module's async transition keeps its scope",
   sanitizeResources: false,
@@ -60,10 +70,21 @@ Deno.test({
       // transition, so it commits on the next microtask (the time window would demote it to the
       // transition lane, and it would still read 0 there).
       assertEquals(await page.evaluate("globalThis.__acUrgent()"), "1");
-      // The gated update then lands as the transition, on top.
-      await page.evaluate("globalThis.__acRelease()");
+      // The gated update then lands as the transition (it waits for its task, unlike an urgent
+      // update), on top.
+      assertEquals(await page.evaluate(releaseAndRead("__acRelease", "ac-count")), "1");
       await pollFor(page, `${textOf("ac-count")} === "11"`);
       await pollFor(page, `document.getElementById("ac-count").dataset.pending === "false"`);
+
+      // The same transition awaited inside a plain `.ts` hook (counter.ts), instrumented as a
+      // `.tsx` module is: left uninstrumented, its post-await update lost the transition scope
+      // and committed as an urgent one, before the transition's task.
+      await page.evaluate("globalThis.__acTsStart()");
+      await pollFor(page, `document.getElementById("ac-ts-count").dataset.pending === "true"`);
+      assertEquals(await page.evaluate("globalThis.__acTsUrgent()"), "1");
+      assertEquals(await page.evaluate(releaseAndRead("__acTsRelease", "ac-ts-count")), "1");
+      await pollFor(page, `${textOf("ac-ts-count")} === "11"`);
+      await pollFor(page, `document.getElementById("ac-ts-count").dataset.pending === "false"`);
       assertNoConsoleErrors(errors);
     } finally {
       await browser.close();

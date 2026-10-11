@@ -415,8 +415,12 @@ const PINNED_META = new Set(["url", "filename", "dirname", "resolve"]);
  * With `dynamicImports` (a copy Deno loads from disk: the server render's), an `import(expr)`
  * whose specifier is not a literal resolves a relative value against the original too (a literal
  * one is the absolutizing pass's, {@linkcode absolutizeSpecifiers}); any other value is imported
- * as is. A client bundle's copy leaves such a call alone: the bundler does not follow it, and the
- * browser resolves it against the chunk, exactly as for the module it stands in for.
+ * as is.
+ *
+ * Only a copy Deno executes is pinned. A client copy (the platform-file alias copies, the client
+ * transforms' output) keeps `import.meta` and `import(expr)` as written: the bundler follows
+ * neither, and the browser resolves both against the chunk, exactly as for the module it stands
+ * in for — a pinned `file:` URL would ship a build-machine path in the client JS.
  *
  * @param source The copy's code.
  * @param originalUrl The `file:` URL of the module the copy stands in for.
