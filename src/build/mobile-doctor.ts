@@ -29,7 +29,11 @@ import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
 import { manifestMetaDataValue } from "./mobile-native-config.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
-import { capacitorPlaceholders } from "./mobile-icon-source.ts";
+import {
+  capacitorPlaceholders,
+  COMPUTED_ICON_FIX,
+  resolveIconSource,
+} from "./mobile-icon-source.ts";
 import {
   AUTH_SESSION_ANDROID_FILES,
   AUTH_SESSION_IOS_FILES,
@@ -717,10 +721,29 @@ async function androidIconFindings(p: MobileProject): Promise<MobileDoctorFindin
   }];
 }
 
+/**
+ * An Expo app config that computes the app icon in code: denext cannot resolve it (it never runs
+ * the config), so `mobile assets` / `mobile build` would use a web icon, or none, instead.
+ */
+async function computedIconFindings(p: MobileProject): Promise<MobileDoctorFinding[]> {
+  let computedIcon: string | null;
+  try {
+    ({ computedIcon } = await resolveIconSource(p.appDir));
+  } catch {
+    return []; // a `mobile.icon` that names no image: `mobile assets` says so itself
+  }
+  if (!computedIcon) return [];
+  return [{ check: "app-icons", level: "warning", message: computedIcon, fix: COMPUTED_ICON_FIX }];
+}
+
 const appIcons: Check = {
   id: "app-icons",
   profiles: ["store"],
-  run: async (p) => [...await iosIconFindings(p), ...await androidIconFindings(p)],
+  run: async (p) => [
+    ...await iosIconFindings(p),
+    ...await androidIconFindings(p),
+    ...await computedIconFindings(p),
+  ],
 };
 
 const splash: Check = {

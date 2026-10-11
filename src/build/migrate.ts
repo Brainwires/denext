@@ -385,6 +385,11 @@ export interface AppIconReport {
   recorded: boolean;
   /** The report lines: the source, a size warning, what was passed over. */
   lines: string[];
+  /**
+   * The Expo app config computes the app icon in code, so it could not be resolved: what stands
+   * in for it (see `IconSearch.computedIcon`). `mobile.icon` must be set by hand.
+   */
+  computedIcon?: string;
 }
 
 /** Result of a migration run (for the CLI to print). */
@@ -2274,7 +2279,11 @@ async function migrateAppIcon(
   }
   const s = search.source;
   const lines = formatIconSearch(search);
-  if (!s) return noIcon(mobile, lines);
+  const computed = search.computedIcon ? { computedIcon: search.computedIcon } : {};
+  if (!s) {
+    const none = noIcon(mobile, lines);
+    return { ...none, report: { ...none.report, ...computed } };
+  }
   const config = mobileIconConfig(dir, s);
   return {
     report: {
@@ -2284,6 +2293,7 @@ async function migrateAppIcon(
       mobile,
       recorded: false,
       lines,
+      ...computed,
     },
     // A `mobile.icon` already in the project's config is not written again.
     facts: s.kind === "config" ? {} : { mobileIcon: { config, from: s.from } },

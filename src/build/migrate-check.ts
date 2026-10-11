@@ -12,6 +12,7 @@ import { VERSION } from "../../mod.ts";
 import { type MigrateOptions, migrateProject, type MigrateResult } from "./migrate.ts";
 import { dryRunMigration, type PlannedChange } from "./migrate-io.ts";
 import { NEXT_CONFIG_NEEDS_RUN } from "./next-config-eval.ts";
+import { COMPUTED_ICON_FIX } from "./mobile-icon-source.ts";
 
 /** The source framework a check detected. */
 export type MigrateSource =
@@ -282,14 +283,30 @@ function viteEmitterFindings(r: MigrateResult): MigrateFinding[] {
   return r.spa?.viteEmitterReview ?? [];
 }
 
-/** A Capacitor / Expo app with no icon to generate the native icons from, or a small one. */
+/**
+ * A Capacitor / Expo app with no icon to generate the native icons from, a small one, or an Expo
+ * app whose icon is computed in code (so `mobile.icon` must be set by hand).
+ */
 function appIconFindings(r: MigrateResult): MigrateFinding[] {
   const icon = r.spa?.appIcon;
   if (!icon?.mobile) return [];
+  const computed: MigrateFinding[] = icon.computedIcon
+    ? [{
+      item: "mobile.icon",
+      reason: `${icon.computedIcon}${icon.recorded ? " (recorded as mobile.icon for now)" : ""}: ` +
+        COMPUTED_ICON_FIX,
+    }]
+    : [];
   if (icon.icon) {
-    const warning = icon.lines.find((l) => l.startsWith("warning: "));
-    return warning ? [{ item: `app icon ${icon.icon}`, reason: warning.slice(9) }] : [];
+    const warning = icon.lines.find((l) =>
+      l.startsWith("warning: ") && !l.includes(COMPUTED_ICON_FIX)
+    );
+    return [
+      ...computed,
+      ...(warning ? [{ item: `app icon ${icon.icon}`, reason: warning.slice(9) }] : []),
+    ];
   }
+  if (computed.length > 0) return computed;
   return [{
     item: "app icon",
     reason: "none found (no mobile.icon, Expo icon, web manifest icon, apple-touch-icon or PNG " +

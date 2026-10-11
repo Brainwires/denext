@@ -75,6 +75,12 @@ export interface IconSearch {
   readonly warnings: readonly string[];
   /** What to add for a sharper icon, when the chosen one is under 1024². */
   readonly hint: string;
+  /**
+   * Set when an Expo app config computes the app icon in code (denext never runs it), so the
+   * app's own icon could not be resolved and the icon came from the web icons or was not found:
+   * what happened, for a message whose fix is {@linkcode COMPUTED_ICON_FIX}. Null otherwise.
+   */
+  readonly computedIcon: string | null;
 }
 
 /** The App Store icon side; a smaller source is upscaled (with a warning). */
@@ -129,6 +135,8 @@ function hex(value: unknown): string | undefined {
 class Search {
   readonly notes: string[] = [];
   hint = "";
+  /** The Expo config and keys that compute the app icon in code (`app.config.ts`: `icon`). */
+  computed: { label: string; keys: string[] } | null = null;
   constructor(readonly root: string) {}
   rel(path: string): string {
     return posixRelative(this.root, path);
@@ -316,6 +324,32 @@ function noteUnresolved(s: Search, label: string, unresolved: readonly string[])
   );
   s.hint = `export the icon ${label} computes as a 1024×1024 PNG and set \`mobile.icon\` to ` +
     "it in denext.config.ts";
+  const icon = unresolved.filter((k) => APP_ICON_KEYS.includes(k));
+  if (icon.length > 0 && !s.computed) s.computed = { label, keys: icon };
+}
+
+/** The Expo keys that name the app icon itself (not its adaptive layers or the splash). */
+const APP_ICON_KEYS = ["icon", "ios.icon", "android.icon"];
+
+/** The rules that read the app's own icon; the others are web stand-ins for it. */
+const OWN_ICON_KINDS: readonly IconSourceKind[] = ["config", "assets", "expo"];
+
+/** The fix for an app icon an Expo config computes in code (see `IconSearch.computedIcon`). */
+export const COMPUTED_ICON_FIX =
+  "set `mobile.icon` in denext.config.ts to the app icon exported as a 1024×1024 PNG";
+
+/**
+ * What happened to an app icon an Expo config computes in code: denext cannot resolve it, and
+ * what stands in for it. Null when the app's own icon was resolved.
+ */
+function computedIconStep(s: Search, source: IconSource | null): string | null {
+  if (!s.computed || (source && OWN_ICON_KINDS.includes(source.kind))) return null;
+  const keys = s.computed.keys.map((k) => `\`${k}\``).join(", ");
+  const instead = source
+    ? `${s.rel(source.icon)} (${KIND_LABEL[source.kind]}) stands in for it`
+    : "no icon was found (the native app keeps Capacitor's placeholder)";
+  return `${s.computed.label} computes the app icon (${keys}) in code, so denext cannot resolve ` +
+    `it (it never runs the app config) and ${instead}`;
 }
 
 /** The Expo icon background and where it came from (the adaptive colour, else `backgroundColor`). */
@@ -626,7 +660,8 @@ export async function resolveIconSource(root: string): Promise<IconSearch> {
     "add a 1024×1024 PNG and set `mobile.icon` to it in denext.config.ts (or save it as " +
       "assets/icon.png)";
   const warnings = source ? await preMaskedWarnings(root, source.icon) : [];
-  return { root, source, notes: s.notes, warnings, hint };
+  const computedIcon = computedIconStep(s, source);
+  return { root, source, notes: s.notes, warnings, hint, computedIcon };
 }
 
 /**
@@ -762,6 +797,7 @@ export function formatIconSearch(
         `App Store icon and will look soft; ${search.hint}`,
     );
   }
+  if (search.computedIcon) lines.push(`warning: ${search.computedIcon}: ${COMPUTED_ICON_FIX}`);
   for (const w of search.warnings) lines.push(`warning: ${w}`);
   for (const n of search.notes) lines.push(`note: ${n}`);
   return lines;

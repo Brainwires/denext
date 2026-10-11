@@ -45,6 +45,17 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext mobile build` replaces Capacitor's placeholder splash on its own.** It replaced the
+  splash only together with a placeholder icon, so an app whose icon was already its own kept the
+  Capacitor logo on its launch screen. Each of the two is now replaced while it is still the
+  placeholder, the splash generated from the resolved icon on its background colour.
+- **An Expo app icon computed in code is reported, with the fix.** denext never runs the app config,
+  so an `icon` computed there (an imported constant) cannot be resolved, and the native app got a
+  web icon or Capacitor's placeholder with only a note to say why. `denext migrate --from expo`
+  (and `--check`), `denext mobile assets` / `build` and `denext mobile doctor --store` now say that
+  the app config computes the icon, what stands in for it, and to set `mobile.icon` in
+  denext.config.ts to the icon exported as a 1024×1024 PNG.
+
 - **Every `denext mobile` message names the native files where `ios.path` / `android.path` put
   them.** The manual steps and warnings of `mobile add` (each native installer's, e.g. "set
   NSSupportsLiveActivities", and the capability plan's), `add-ota`, `mobile doctor`, `mobile dev` and
