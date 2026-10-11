@@ -216,7 +216,9 @@ async function mainExecutable(app: string): Promise<string> {
 }
 
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
- * (required for notarization). Without one: an ad-hoc signature (dev/local only). */
+ * (required for notarization). Without one: an ad-hoc signature (dev/local only). It keeps what
+ * deno desktop's own ad-hoc pass set up: each Mach-O beside the main executable signs as the
+ * bundle's CFBundleIdentifier, and nested code (the CEF helper apps) keeps its entitlements. */
 async function sign(
   app: string,
   identity: string | undefined,
@@ -227,11 +229,11 @@ async function sign(
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
   const mainExe = await mainExecutable(app);
+  const bundleId = await infoPlistString(app, "CFBundleIdentifier");
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
   if (identity && provisioningProfile) {
     // The profile was checked against this identifier: a bundle built with another one would
     // carry a profile (and App ID entitlement) for a different app, which AMFI refuses at launch.
-    const bundleId = await infoPlistString(app, "CFBundleIdentifier");
     if (bundleId !== profileIdentifier) {
       throw new Error(
         `${app} has the bundle identifier ${bundleId}, but the provisioning profile was ` +
@@ -242,20 +244,31 @@ async function sign(
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
+  const macosDir = `${app}/Contents/MacOS/`;
   for (const file of await machOFiles(app)) {
     if (file === mainExe) continue;
+    // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
+    // as its identifier, as it does the main executable; codesign would otherwise name it after
+    // the file. A helper app's executable signs its bundle, whose entitlements must survive.
+    const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
+    const ident = besideMain ? ["--identifier", bundleId] : [];
     await run([
       "codesign",
       "--force",
       ts,
       "--options",
       "runtime",
+      "--preserve-metadata=entitlements",
+      ...ident,
       "-s",
       id,
       file,
     ]);
   }
-  const ent = identity && entitlements ? ["--entitlements", entitlements] : [];
+  // Explicit entitlements replace the ad-hoc pass's; without them, keep what it applied.
+  const ent = identity && entitlements
+    ? ["--entitlements", entitlements]
+    : ["--preserve-metadata=entitlements"];
   await run([
     "codesign",
     "--force",

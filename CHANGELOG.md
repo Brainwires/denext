@@ -18,6 +18,15 @@ and this project adheres to
   universal merge, break its seal anyway), so `scripts/package-macos.ts` now says before the build
   that it is an ad-hoc pre-sign it re-signs with the identity, and names the identity on each
   re-sign. Regenerate an existing script with `denext desktop package --regenerate-scripts`.
+- **The macOS package script's Developer ID re-sign keeps what `deno desktop`'s own signing pass set
+  up.** The runtime signs every Mach-O in `Contents/MacOS` with the bundle's `CFBundleIdentifier`;
+  the re-sign renamed the runtime library (`laufey.dylib`, `libruntime.dylib`) after its file, and
+  it re-signed each nested helper and framework without `--preserve-metadata=entitlements`, so a
+  CEF helper's entitlements would have been dropped. It now passes `--identifier` for the
+  binaries beside the main executable and preserves nested code's entitlements (and the bundle's,
+  when no `DENEXT_ENTITLEMENTS` / `desktop.macos.entitlements` replaces them). Checked on a
+  Developer ID–signed CEF build: `codesign --verify --deep --strict` passes and the renderer
+  helpers start. Regenerate an existing script with `denext desktop package --regenerate-scripts`.
 
 ## [3.4.10] - 2026-10-11
 

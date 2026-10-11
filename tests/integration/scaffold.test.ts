@@ -274,6 +274,105 @@ Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a 
   assert(resign > 0 && resign < src.indexOf("await sign(app, s.identity"), "logged before sign()");
 });
 
+/** The generated script's sign(), run against a CEF-shaped bundle with codesign mocked. */
+async function runScaffoldedSign(
+  identity: string | undefined,
+  entitlements?: string,
+): Promise<string[][]> {
+  const src = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-macos.ts")!.content;
+  const m = src.match(/\nasync function sign\(\n[\s\S]*?\): Promise<void> \{\n([\s\S]*?)\n\}\n/);
+  assert(m, "sign() present");
+  const app = "dist/My App.app";
+  const files = [
+    `${app}/Contents/MacOS/laufey`,
+    `${app}/Contents/MacOS/laufey.dylib`,
+    `${app}/Contents/Frameworks/laufey Helper (Renderer).app/Contents/MacOS/laufey Helper (Renderer)`,
+    `${app}/Contents/Frameworks/Chromium Embedded Framework.framework/Versions/A/Libraries/libEGL.dylib`,
+  ];
+  const calls: string[][] = [];
+  const AsyncFunction = (async () => {}).constructor as new (
+    ...args: string[]
+  ) => (...a: unknown[]) => Promise<void>;
+  const sign = new AsyncFunction(
+    "app",
+    "identity",
+    "entitlements",
+    "provisioningProfile",
+    "profileIdentifier",
+    "run",
+    "machOFiles",
+    "mainExecutable",
+    "infoPlistString",
+    m[1],
+  );
+  await sign(
+    app,
+    identity,
+    entitlements,
+    undefined,
+    undefined,
+    (cmd: string[]) => calls.push(cmd),
+    () => Promise.resolve(files),
+    () => Promise.resolve(files[0]),
+    (_app: string, key: string) =>
+      Promise.resolve(key === "CFBundleIdentifier" ? "com.example.app" : ""),
+  );
+  return calls;
+}
+
+Deno.test("scaffoldFiles: the macOS re-sign keeps what deno desktop's ad-hoc pass set up", async () => {
+  // `deno desktop` (codesign_macos_bundle) signs every Mach-O in Contents/MacOS with
+  // `--identifier <CFBundleIdentifier>` and each CEF helper .app with its own entitlements. The
+  // script's Developer ID re-sign must not reset the runtime dylib's identifier to its file name
+  // nor strip a helper's entitlements; explicit entitlements go on the bundle alone.
+  const id = "Developer ID Application: Example (TEAMID1234)";
+  const calls = await runScaffoldedSign(id, "ent.plist");
+  const target = (c: string[]) => c[c.length - 1];
+  const app = "dist/My App.app";
+  const dylib = calls.find((c) => target(c) === `${app}/Contents/MacOS/laufey.dylib`)!;
+  const at = dylib.indexOf("--identifier");
+  assertEquals(dylib.slice(at, at + 2), ["--identifier", "com.example.app"]);
+  const framed = calls.filter((c) => target(c).includes("/Frameworks/"));
+  assertEquals(framed.length, 2);
+  for (const nested of [dylib, ...framed]) {
+    assert(nested.includes("--preserve-metadata=entitlements"), nested.join(" "));
+    assert(!nested.includes("--entitlements"), nested.join(" "));
+    assert(nested.includes("--timestamp") && nested.includes("runtime"), nested.join(" "));
+    assertEquals(nested.slice(-3), ["-s", id, target(nested)]);
+  }
+  // Code inside a helper or the framework keeps its own (Info.plist / file) identifier.
+  for (const c of framed) assert(!c.includes("--identifier"), c.join(" "));
+  // The main executable is signed through the bundle, which comes last but for the verify.
+  assert(!calls.some((c) => target(c) === `${app}/Contents/MacOS/laufey`));
+  assertEquals(calls[calls.length - 2], [
+    "codesign",
+    "--force",
+    "--timestamp",
+    "--options",
+    "runtime",
+    "--entitlements",
+    "ent.plist",
+    "-s",
+    id,
+    app,
+  ]);
+  assertEquals(calls[calls.length - 1], ["codesign", "--verify", "--deep", "--strict", app]);
+  // Without explicit entitlements the bundle keeps the ad-hoc pass's.
+  const plain = await runScaffoldedSign(id);
+  assertEquals(plain[plain.length - 2].slice(5, 6), ["--preserve-metadata=entitlements"]);
+  // Ad-hoc (no identity): the same identifier and entitlements, no timestamp.
+  const adhoc = await runScaffoldedSign(undefined, "ent.plist");
+  const adhocDylib = adhoc.find((c) => target(c) === `${app}/Contents/MacOS/laufey.dylib`)!;
+  assert(adhocDylib.includes("--timestamp=none") && adhocDylib.includes("com.example.app"));
+  assertEquals(adhoc[adhoc.length - 2].slice(5), [
+    "--preserve-metadata=entitlements",
+    "-s",
+    "-",
+    app,
+  ]);
+});
+
 Deno.test("scaffoldFiles: scaffolded Windows package script matches the examples/native copy", async () => {
   const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
     .find((f) => f.path === "scripts/package-windows.ts")!.content;
