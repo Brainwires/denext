@@ -2094,8 +2094,8 @@ const BUILD_ENV_HELPER =
   `  }\n` +
   `};\n\n`;
 
-/** Source text for the generated `denext.config.ts`. */
-function spaConfigSource(o: {
+/** What `spaConfigSource` writes the generated `denext.config.ts` from. */
+type SpaConfigFacts = {
   entry: string;
   title: string;
   envKeys: string[];
@@ -2127,27 +2127,18 @@ function spaConfigSource(o: {
   viteEmitters?: MappedViteEmitter[];
   /** `spa.assetsDir` (a Vite app's `build.assetsDir`). */
   assetsDir?: string;
-}): string {
+};
+
+/** Source text for the generated `denext.config.ts`. */
+function spaConfigSource(o: SpaConfigFacts): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   // Each key reads the build environment (the shell, or a `.env` file the CLI loaded), the
   // way Vite inlines any `VITE_*` set at build time; a literal "" would ignore both.
   const needsBuildEnv = o.envKeys.some((k) => k !== "APP_VERSION");
-  const envLines = o.envKeys
-    .map((k) =>
-      k === "APP_VERSION"
-        ? `      APP_VERSION: pkg.version,`
-        : `      ${k}: buildEnv(${JSON.stringify(k)}),`
-    )
-    .join("\n");
   const tailwindBlock = o.tailwind
     ? `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${
       JSON.stringify(tailwindOutputFor(o.tailwind))
     } },\n`
-    : "";
-  const proxyBlock = o.proxy
-    ? `    proxy: {\n      prefixes: [${
-      o.proxy.prefixes.map((p) => JSON.stringify(p)).join(", ")
-    }],\n      target: ${JSON.stringify(o.proxy.target)},\n    },\n`
     : "";
   return GEN_MARKER + "\n" +
     `import type { DenextConfig } from "denext/server";\n` +
@@ -2166,7 +2157,19 @@ function spaConfigSource(o: {
     tailwindBlock +
     mobileIconLines(o.mobileIcon) +
     (o.desktop ? desktopConfigLines(desktopAppName(o.title)) : "") +
-    `  spa: {\n` +
+    spaBlockLines(o) +
+    `} satisfies DenextConfig;\n`;
+}
+
+/** The generated config's `spa: { … }` block. */
+function spaBlockLines(o: SpaConfigFacts): string {
+  const envLines = spaEnvLines(o.envKeys);
+  const proxyBlock = o.proxy
+    ? `    proxy: {\n      prefixes: [${
+      o.proxy.prefixes.map((p) => JSON.stringify(p)).join(", ")
+    }],\n      target: ${JSON.stringify(o.proxy.target)},\n    },\n`
+    : "";
+  return `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
     (o.rootId ? `    rootId: ${JSON.stringify(o.rootId)},\n` : "") +
@@ -2190,8 +2193,18 @@ function spaConfigSource(o: {
     (o.desktop
       ? `    // desktop: { icon: "./public/apple-touch-icon.png" }, // override the app icon (any PNG path)\n`
       : "") +
-    `  },\n` +
-    `} satisfies DenextConfig;\n`;
+    `  },\n`;
+}
+
+/** The generated config's `spa.env` entries: `APP_VERSION` from package.json, the rest from the build env. */
+function spaEnvLines(envKeys: readonly string[]): string {
+  return envKeys
+    .map((k) =>
+      k === "APP_VERSION"
+        ? `      APP_VERSION: pkg.version,`
+        : `      ${k}: buildEnv(${JSON.stringify(k)}),`
+    )
+    .join("\n");
 }
 
 /** The generated config's imports for the vite.config's file-emitting plugins. */
@@ -2563,44 +2576,47 @@ function spaTasks(
     // full set every denext example's `start` uses). A tighter scope crashes on the re-exec.
     start: `${run} ${cli} start .`,
   };
-  if (desktop) {
-    // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
-    // `ws`, for the proxy's WebSocket bridge) from Deno's global cache rather than the
-    // app's `nodeModulesDir:"manual"` tree, which does not carry them.
-    //
-    // `--exclude-unused-npm` embeds ONLY the npm packages `desktop.ts` actually reaches
-    // (denext's runtime + `ws`) instead of the app's entire lockfile snapshot. Without
-    // it, a large app's every dependency — React, build tooling, native binaries — is
-    // baked into the bundle even though the desktop entry only serves the static `out/`
-    // (e.g. a monorepo SPA ballooned to 2.4GB → ~104MB with the flag).
-    //
-    // `--include out` embeds the static export itself. `desktop.ts` reads `out/` at
-    // runtime via dynamic paths (`serveStatic`), so it is NOT in the module graph and
-    // would otherwise be left out of the bundle — the packaged app would then serve
-    // nothing on another machine.
-    //
-    // `--icon desktop-icon.png` (when present) is the app icon `export` composes from
-    // `spa.desktop.icon` (or an auto-detected web icon) into Apple's macOS template.
-    //
-    // The permissions are baked into the compiled, distributable app (it runs with none
-    // otherwise). `--allow-net` is SCOPED to loopback — `runDesktop` binds `127.0.0.1`
-    // and the reverse proxy targets a loopback backend (the `spa.proxy` default; a
-    // non-loopback target needs `allowNonLoopback`, and then widening this flag by hand)
-    // — so the distributed binary can't reach the wider network. `--allow-read` (serving
-    // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
-    // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
-    const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
-    // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`,
-    // which `export` fills from `desktop.app` in denext.config.ts (the generated config sets
-    // `name` to the title). An `-o` would pin the name and leave a configured one unused.
-    //
-    // `denext desktop run | dev | package` add the same two resolution flags themselves; this raw
-    // `deno desktop` call goes through no denext code, so it keeps them inline.
-    tasks.desktop = `deno task export && deno desktop ` +
-      `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
-      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} desktop.ts`;
-  }
+  if (desktop) tasks.desktop = desktopTask(hasIcon);
   return tasks;
+}
+
+/** A migrated SPA's `desktop` task: export, then compile `desktop.ts` with `deno desktop`. */
+function desktopTask(hasIcon: boolean): string {
+  // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
+  // `ws`, for the proxy's WebSocket bridge) from Deno's global cache rather than the
+  // app's `nodeModulesDir:"manual"` tree, which does not carry them.
+  //
+  // `--exclude-unused-npm` embeds ONLY the npm packages `desktop.ts` actually reaches
+  // (denext's runtime + `ws`) instead of the app's entire lockfile snapshot. Without
+  // it, a large app's every dependency — React, build tooling, native binaries — is
+  // baked into the bundle even though the desktop entry only serves the static `out/`
+  // (e.g. a monorepo SPA ballooned to 2.4GB → ~104MB with the flag).
+  //
+  // `--include out` embeds the static export itself. `desktop.ts` reads `out/` at
+  // runtime via dynamic paths (`serveStatic`), so it is NOT in the module graph and
+  // would otherwise be left out of the bundle — the packaged app would then serve
+  // nothing on another machine.
+  //
+  // `--icon desktop-icon.png` (when present) is the app icon `export` composes from
+  // `spa.desktop.icon` (or an auto-detected web icon) into Apple's macOS template.
+  //
+  // The permissions are baked into the compiled, distributable app (it runs with none
+  // otherwise). `--allow-net` is SCOPED to loopback — `runDesktop` binds `127.0.0.1`
+  // and the reverse proxy targets a loopback backend (the `spa.proxy` default; a
+  // non-loopback target needs `allowNonLoopback`, and then widening this flag by hand)
+  // — so the distributed binary can't reach the wider network. `--allow-read` (serving
+  // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
+  // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
+  const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
+  // No `-o`: `deno desktop` names and identifies the bundle from deno.json `desktop.app`,
+  // which `export` fills from `desktop.app` in denext.config.ts (the generated config sets
+  // `name` to the title). An `-o` would pin the name and leave a configured one unused.
+  //
+  // `denext desktop run | dev | package` add the same two resolution flags themselves; this raw
+  // `deno desktop` call goes through no denext code, so it keeps them inline.
+  return `deno task export && deno desktop ` +
+    `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
+    `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} desktop.ts`;
 }
 
 /**
@@ -3047,13 +3063,7 @@ async function migrateExpoProject(
   if (pnp) throw pnpUnsupported(dir);
   const manual = pm !== null;
   const pkg = await readJson(join(dir, "package.json")) ?? {};
-  const entry = await expoWebEntry(dir, pkg, deps);
-  if (!entry) {
-    throw new Error(
-      `no web entry found in ${dir}: package.json "main" names no file of the app, and there ` +
-        "is no App.tsx / App.js for Expo's default entry.",
-    );
-  }
+  const entry = await requireExpoWebEntry(dir, pkg, deps);
   const imports = await spaImportMap(dir, deps, R, false);
   const classified = classifyDeps(deps, imports, { pin: !manual });
   const config = await readExpoAppConfig(dir);
@@ -3074,20 +3084,7 @@ async function migrateExpoProject(
     );
   }
   const icon = await migrateAppIcon(dir, true);
-  const facts = {
-    entry: entry.entry,
-    title,
-    envKeys: [],
-    tailwind: null,
-    // The page's own background before the app's first frame (the app config's colours).
-    head: expoConfigScript(config.runtimeConfig) +
-      pageBackgroundStyle(appearance.ios.app ?? appearance.android.app),
-    reactNative: true,
-    desktopPackages,
-    reactNativeFonts: config.embeddedFonts,
-    noPrecompress: true,
-    ...icon.facts,
-  };
+  const facts = expoSpaFacts(entry.entry, title, config, appearance, desktopPackages, icon);
   const configWritten = await writeIfWritable(
     join(dir, "denext.config.ts"),
     () => spaConfigSource(facts),
@@ -3139,24 +3136,93 @@ async function migrateExpoProject(
       appIcon: appIconInfo(icon, configWritten),
       nodeModulesDir,
     },
-    expo: {
-      config: { source: config.source, unresolved: config.unresolved, notes: config.notes },
-      generatedEntry: entry.generated &&
-        { path: entry.generated.path, kind: entry.generated.kind },
-      expoRouter: entry.expoRouter,
-      capacitor: shell.expo,
-      mobile: expoMobilePlan(deps, config, await expoApiUsage(dir)),
-      // Runtime dependencies only: the dev toolchain never reaches the bundle.
-      deps: await expoDependencyReport(
-        dir,
-        (pkg.dependencies ?? {}) as Record<string, string>,
-      ),
-      prebuildFolders: await prebuildFolders(dir),
+    expo: await expoMigrationReport(dir, deps, pkg, {
+      config,
+      entry,
+      shellExpo: shell.expo,
       tailwindInput,
       missingPackages,
-      metro: await readMetroResolution(dir, deps),
       desktopPackages,
-    },
+    }),
+  };
+}
+
+/** The app's web entry, or an error naming why there is none. */
+async function requireExpoWebEntry(
+  dir: string,
+  pkg: Record<string, unknown>,
+  deps: Record<string, string>,
+): Promise<NonNullable<Awaited<ReturnType<typeof expoWebEntry>>>> {
+  const entry = await expoWebEntry(dir, pkg, deps);
+  if (!entry) {
+    throw new Error(
+      `no web entry found in ${dir}: package.json "main" names no file of the app, and there ` +
+        "is no App.tsx / App.js for Expo's default entry.",
+    );
+  }
+  return entry;
+}
+
+/** The SPA facts `spaConfigSource` writes an Expo app's `denext.config.ts` from. */
+function expoSpaFacts(
+  entry: string,
+  title: string,
+  config: Awaited<ReturnType<typeof readExpoAppConfig>>,
+  appearance: {
+    ios: ReturnType<typeof resolveAppearance>;
+    android: ReturnType<typeof resolveAppearance>;
+  },
+  desktopPackages: string[],
+  icon: Awaited<ReturnType<typeof migrateAppIcon>>,
+) {
+  return {
+    entry,
+    title,
+    envKeys: [],
+    tailwind: null,
+    // The page's own background before the app's first frame (the app config's colours).
+    head: expoConfigScript(config.runtimeConfig) +
+      pageBackgroundStyle(appearance.ios.app ?? appearance.android.app),
+    reactNative: true,
+    desktopPackages,
+    reactNativeFonts: config.embeddedFonts,
+    noPrecompress: true,
+    ...icon.facts,
+  };
+}
+
+/** The `expo` part of an Expo migration's result: what was carried over and what is left. */
+async function expoMigrationReport(
+  dir: string,
+  deps: Record<string, string>,
+  pkg: Record<string, unknown>,
+  parts: {
+    config: Awaited<ReturnType<typeof readExpoAppConfig>>;
+    entry: NonNullable<Awaited<ReturnType<typeof expoWebEntry>>>;
+    shellExpo: Awaited<ReturnType<typeof writeExpoShell>>["expo"];
+    tailwindInput: string | undefined;
+    missingPackages: string[];
+    desktopPackages: string[];
+  },
+) {
+  const { config, entry } = parts;
+  return {
+    config: { source: config.source, unresolved: config.unresolved, notes: config.notes },
+    generatedEntry: entry.generated &&
+      { path: entry.generated.path, kind: entry.generated.kind },
+    expoRouter: entry.expoRouter,
+    capacitor: parts.shellExpo,
+    mobile: expoMobilePlan(deps, config, await expoApiUsage(dir)),
+    // Runtime dependencies only: the dev toolchain never reaches the bundle.
+    deps: await expoDependencyReport(
+      dir,
+      (pkg.dependencies ?? {}) as Record<string, string>,
+    ),
+    prebuildFolders: await prebuildFolders(dir),
+    tailwindInput: parts.tailwindInput,
+    missingPackages: parts.missingPackages,
+    metro: await readMetroResolution(dir, deps),
+    desktopPackages: parts.desktopPackages,
   };
 }
 

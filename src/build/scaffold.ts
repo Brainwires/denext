@@ -555,18 +555,9 @@ ${lines.join("\n")}
  */
 export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const appBase = opts.srcDir ? "src/app" : "app";
-  // Generated / build outputs to keep out of version control.
-  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
-  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
-  if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
-  if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
-  if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
-  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
-  const gitignore = ignore.join("\n") + "\n";
-
   const files: ScaffoldFile[] = [
     { path: "deno.json", content: denoJson(opts) },
-    { path: ".gitignore", content: gitignore },
+    { path: ".gitignore", content: scaffoldGitignore(opts, appBase) },
     { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
     {
@@ -587,28 +578,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
-  if (opts.desktop) {
-    files.push({ path: "desktop.ts", content: desktopEntry() });
-    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
-    // entry type-checks before the first export.
-    files.push({
-      path: DESKTOP_RUNTIME_CONFIG_FILE,
-      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
-    });
-    files.push({ path: "icons/README.md", content: desktopIcons() });
-    files.push({
-      path: "scripts/package-macos.ts",
-      content: MACOS_PACKAGE_SCRIPT,
-    });
-    files.push({
-      path: "scripts/package-linux.ts",
-      content: LINUX_PACKAGE_SCRIPT,
-    });
-    files.push({
-      path: "scripts/package-windows.ts",
-      content: WINDOWS_PACKAGE_SCRIPT,
-    });
-  }
+  if (opts.desktop) files.push(...desktopScaffoldFiles());
   if (opts.capacitor) {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
     files.push({ path: "package.json", content: packageJson() });
@@ -621,6 +591,34 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     );
   }
   return files;
+}
+
+/** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
+function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
+  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
+  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
+  if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
+  if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
+  if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
+  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
+  return ignore.join("\n") + "\n";
+}
+
+/** A desktop scaffold's entry, its first runtime config, the icons note and packaging scripts. */
+function desktopScaffoldFiles(): ScaffoldFile[] {
+  return [
+    { path: "desktop.ts", content: desktopEntry() },
+    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
+    // entry type-checks before the first export.
+    {
+      path: DESKTOP_RUNTIME_CONFIG_FILE,
+      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
+    },
+    { path: "icons/README.md", content: desktopIcons() },
+    { path: "scripts/package-macos.ts", content: MACOS_PACKAGE_SCRIPT },
+    { path: "scripts/package-linux.ts", content: LINUX_PACKAGE_SCRIPT },
+    { path: "scripts/package-windows.ts", content: WINDOWS_PACKAGE_SCRIPT },
+  ];
 }
 
 /**
