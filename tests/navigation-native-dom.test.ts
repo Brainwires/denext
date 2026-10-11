@@ -911,6 +911,28 @@ Deno.test("native-stack header tint: headerTintColor, else the theme's primary (
   }
 });
 
+Deno.test("native-stack header title falls back to the route name", async () => {
+  const ctx = { canGoBack: false, routeName: "settings" };
+  assertEquals(mapStackOptions({}, ctx).title, "settings", "no title: the route name");
+  assertEquals(mapStackOptions({ title: "T" }, ctx).title, "T", "a title wins");
+  assertEquals(mapStackOptions({ headerTitle: "H" }, ctx).title, "H", "a string headerTitle wins");
+  let seen: unknown;
+  mapStackOptions({ headerTitle: ({ children }: { children: string }) => (seen = children) }, ctx);
+  assertEquals(seen, "settings", "a headerTitle function gets the route name as children");
+  assertEquals(mapStackOptions({}, { canGoBack: false }).title, undefined);
+
+  const state = { key: "stack-1", index: 0, routes: [{ key: "r0", name: "inbox" }] };
+  const { core } = fakeCore(state, {});
+  const { container } = docWithData({});
+  const root = createRoot(container as Any);
+  const { Navigator } = (createNativeStackNavigatorFactory(core) as Any)();
+  root.render(h(Navigator, {}));
+  await settle();
+  const titles = findAll(container, "data-dnx-header-title");
+  assertEquals(titles[titles.length - 1].textContent, "inbox");
+  root.unmount();
+});
+
 Deno.test("mapStackOptions passes headerBackButtonDisplayMode, dropping unknown values", () => {
   const map = (v: unknown) =>
     mapStackOptions({ headerBackButtonDisplayMode: v, headerBackTitle: "T" }, { canGoBack: true });

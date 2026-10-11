@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A native-stack screen with no `title` shows its route name in the header.** React Native
+  mode's `createNativeStackNavigator` (and expo-router's `Stack`) drew an empty header when a
+  screen set neither `title` nor `headerTitle`, and dropped a string `headerTitle`; the title now
+  falls back to the string `headerTitle`, then the route name, as React Navigation does, and a
+  `headerTitle` function gets that title as `children`.
+
 ## [3.4.7] - 2026-10-11
 
 ### Added

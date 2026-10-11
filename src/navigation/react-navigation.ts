@@ -158,15 +158,16 @@ function slot(value: unknown, args: Record<string, unknown>): VNodeChildren | un
  * Native-stack screen options as {@linkcode ScreenOptions}: the names mostly match
  * (`title`, `animation`, `gestureEnabled`, `headerShown`, `headerLargeTitle`, …); the
  * presentations and detents are translated and the header slots rendered (the bar button
- * items, `unstable_headerLeftItems` / `unstable_headerRightItems`, as buttons).
+ * items, `unstable_headerLeftItems` / `unstable_headerRightItems`, as buttons). With no
+ * `title` (and no string `headerTitle`) the title is the route's name, as in React Navigation.
  */
 export function mapStackOptions(
   options: Record<string, unknown>,
-  context: { canGoBack: boolean; headerTint?: string },
+  context: { canGoBack: boolean; headerTint?: string; routeName?: string },
 ): ScreenOptions {
   const str = (k: string) => typeof options[k] === "string" ? options[k] as string : undefined;
   const bool = (k: string) => typeof options[k] === "boolean" ? options[k] as boolean : undefined;
-  const title = str("title");
+  const title = str("title") ?? str("headerTitle") ?? context.routeName;
   const headerTitle = typeof options.headerTitle === "string"
     ? options.headerTitle
     : slot(options.headerTitle, { children: title });
@@ -256,7 +257,11 @@ export function createNativeStackNavigatorFactory(
       return {
         id: route.key,
         element: d.render(),
-        options: mapStackOptions(d.options, { canGoBack: i > 0, headerTint }),
+        options: mapStackOptions(d.options, {
+          canGoBack: i > 0,
+          headerTint,
+          routeName: route.name,
+        }),
       };
     });
     return h(
