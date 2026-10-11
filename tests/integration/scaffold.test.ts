@@ -247,6 +247,33 @@ Deno.test("scaffoldFiles: the macOS script sizes the .dmg image explicitly (hdiu
   assertStringIncludes(src, "dmgSizeMb(await treeBytes(app))");
 });
 
+Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a pre-sign it replaces", () => {
+  // `deno desktop` seals every bundle it compiles, ad-hoc when deno.json names no identity, and
+  // logs 'Codesigning bundle with identity "-"' even when DENEXT_CODESIGN_IDENTITY is set. The
+  // script cannot skip that pass, so it says what happens before the runtime's line appears.
+  const src = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-macos.ts")!.content;
+  const m = src.match(
+    /function signingPlanNote\(identity: string \| undefined\): string \| undefined \{\n([\s\S]*?)\n\}\n/,
+  );
+  assert(m, "signingPlanNote helper present");
+  const note = new Function("identity", m[1]) as (identity?: string) => string | undefined;
+  assertEquals(note(undefined), undefined); // ad-hoc build: the unset-identity warning says it
+  const id = "Developer ID Application: Example (TEAMID1234)";
+  const said = note(id)!;
+  assertStringIncludes(said, `'Codesigning bundle with identity "-"'`);
+  assertStringIncludes(said, "ad-hoc pre-sign; re-signing with " + id);
+  // Printed after the identity is known and before deno desktop runs; each re-sign names its identity.
+  const printed = src.indexOf("if (signingPlan) console.log(signingPlan);");
+  const built = src.indexOf("const artifacts = await buildArtifacts(opts, name);");
+  assert(printed > 0 && printed < built, "the plan is printed before the build");
+  assert(src.indexOf("const signing = await signingFromEnv();") < printed);
+  const resign = src.indexOf(
+    'console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);',
+  );
+  assert(resign > 0 && resign < src.indexOf("await sign(app, s.identity"), "logged before sign()");
+});
+
 Deno.test("scaffoldFiles: scaffolded Windows package script matches the examples/native copy", async () => {
   const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
     .find((f) => f.path === "scripts/package-windows.ts")!.content;

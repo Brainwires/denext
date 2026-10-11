@@ -441,6 +441,20 @@ async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
 }
 
 /**
+ * The signing plan, printed before the build: `deno desktop` always seals the bundle it compiles,
+ * ad-hoc on a Mac when deno.json names no identity, so its own log says
+ * 'Codesigning bundle with identity "-"' even when DENEXT_CODESIGN_IDENTITY is set. That pass has no
+ * switch (the runtime needs a sealed bundle; the launch config written after it, and a lipo merge,
+ * break the seal anyway), so with an identity it is an ad-hoc pre-sign that sign() replaces.
+ */
+function signingPlanNote(identity: string | undefined): string | undefined {
+  if (!identity) return undefined;
+  return "Signing: deno desktop seals each bundle ad-hoc as it builds it (its " +
+    "'Codesigning bundle with identity \"-\"' line), an ad-hoc pre-sign; re-signing with " +
+    identity + " afterwards.";
+}
+
+/**
  * Sign, notarize and wrap each bundle in its installers; returns the installer paths. A
  * lipo-merged (universal) bundle always needs re-signing; for others we re-sign only when a real
  * identity is provided (deno desktop already applied ad-hoc).
@@ -454,6 +468,7 @@ async function finishArtifacts(
   const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
+      console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);
       await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
@@ -502,6 +517,8 @@ async function main(): Promise<void> {
   // and the export's CLI restores it when it starts, which would undo a sync done before it.
   await syncDesktopAppConfig(import.meta.url);
   await Deno.mkdir("dist", { recursive: true });
+  const signingPlan = signingPlanNote(signing.identity);
+  if (signingPlan) console.log(signingPlan);
   const artifacts = await buildArtifacts(opts, name);
   const installers = await finishArtifacts(
     artifacts,

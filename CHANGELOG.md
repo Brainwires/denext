@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext desktop package` on macOS no longer reads as signing with `-` when
+  `DENEXT_CODESIGN_IDENTITY` is set.** `deno desktop` seals every bundle it compiles, ad-hoc when
+  deno.json names no identity, and logs `Codesigning bundle with identity "-"`; the package script
+  then re-signs with the Developer ID, so the finished `.app` was right but the log looked wrong.
+  The runtime has no switch to skip that pass (and the launch config written after it, or a
+  universal merge, break its seal anyway), so `scripts/package-macos.ts` now says before the build
+  that it is an ad-hoc pre-sign it re-signs with the identity, and names the identity on each
+  re-sign. Regenerate an existing script with `denext desktop package --regenerate-scripts`.
+
 ## [3.4.10] - 2026-10-11
 
 ### Added
