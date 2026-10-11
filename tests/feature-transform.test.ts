@@ -11,6 +11,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { bundleSourceFiles } from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
+import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import type * as esbuild from "esbuild";
 
 const IMPORT = `import { feature } from "denext/feature";\n`;
@@ -207,6 +208,57 @@ Deno.test("clientTransforms (features): client .ts/.mts/.js/.mjs modules are fol
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// `denext dev` serves each first-party module through the unbundled loop's per-module
+// transform, which folds `feature()` whatever the module's extension: a plain `.ts` / `.mts` /
+// `.js` / `.mjs` hook or store reads the configured value in dev, as it does in a build. Both the
+// App Router loop and the SPA loop (`spaIslands`) are covered.
+for (const spaIslands of [false, true]) {
+  Deno.test(`unbundled dev (${spaIslands ? "SPA" : "App Router"}): .ts/.mts/.js/.mjs modules are folded`, async () => {
+    const root = new URL("../", import.meta.url);
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_feature_dev_" }));
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": new URL("mod.ts", root).href,
+          "denext/feature": new URL("src/feature.ts", root).href,
+          "denext/jsx-runtime": new URL("src/jsx/jsx-runtime.ts", root).href,
+          "denext/jsx-dev-runtime": new URL("src/jsx/jsx-runtime.ts", root).href,
+          "denext/client": new URL("src/client/mod.ts", root).href,
+        },
+      }),
+    );
+    const modules = ["a.ts", "b.mts", "c.js", "d.mjs"];
+    for (const name of modules) {
+      await Deno.writeTextFile(
+        join(dir, "src", name),
+        `${IMPORT}export const on = feature("FLAG") ? "on" : "off";\n`,
+      );
+    }
+    const dev = createUnbundledDev({
+      projectDir: dir,
+      appDir: join(dir, "src"),
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+      compat: false,
+      features: { FLAG: true },
+      spaIslands,
+    });
+    try {
+      for (const name of modules) {
+        const { code } = await dev._internal.transform(join(dir, "src", name), "web");
+        assertEquals(code.includes('feature("FLAG")'), false, `${name} kept the call:\n${code}`);
+        assert(/\btrue\b/.test(code), `${name} has the folded literal:\n${code}`);
+      }
+    } finally {
+      await dev.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
 
 Deno.test("e2e: an OFF flag DCEs the gated branch + its import from deno bundle", async () => {
   const all = await bundleWithFold(false);
