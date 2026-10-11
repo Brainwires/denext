@@ -32,7 +32,7 @@ import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
-import { createPullQueue } from "./queue.ts";
+import { createPullQueue, type PullQueue } from "./queue.ts";
 
 /** The most tray icons the page may hold. */
 const MAX_TRAYS = 8;
@@ -167,6 +167,261 @@ interface LiveTray {
   ids: Set<string>;
 }
 
+/** The adopted window, as far as this module uses it. */
+type AppWindow = EventTarget & {
+  setApplicationMenu?(menu: DesktopMenuItem[]): void;
+  isVisible?(): boolean;
+  show?(): void;
+};
+
+/** The controller's state, shared by the capability's methods and its listeners. */
+interface AppState {
+  readonly options: AppControllerOptions;
+  readonly Tray: (new () => TrayLike) | undefined;
+  readonly dock: DockLike | undefined;
+  readonly os: string;
+  readonly win: AppWindow | undefined;
+  readonly queue: PullQueue<AppAction>;
+  readonly trays: Map<string, LiveTray>;
+  appMenuIds: Set<string>;
+  dockMenuIds: Set<string>;
+  nextTray: number;
+  installed: boolean;
+}
+
+/** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
+function dockMenuWorks(s: AppState): boolean {
+  return s.os === "darwin" && typeof s.dock?.setMenu === "function";
+}
+
+/** The live tray `args.id` names, or a `validation` error. */
+function trayOf(s: AppState, args: unknown): LiveTray {
+  const id = argsOf(args).id;
+  const live = typeof id === "string" ? s.trays.get(id) : undefined;
+  if (!live) throw invalid("no such tray");
+  return live;
+}
+
+/** Apply the optional `icon` / `iconDark` / `tooltip` / `menu` of `a` to a tray. */
+function applyTray(live: LiveTray, a: Record<string, unknown>): void {
+  if (a.icon !== undefined) live.tray.setIcon(png(a.icon, "icon"));
+  if (a.iconDark !== undefined) {
+    live.tray.setIconDark?.(a.iconDark === null ? null : png(a.iconDark, "iconDark"));
+  }
+  if (a.tooltip !== undefined) live.tray.setTooltip(shortText(a.tooltip, "tooltip"));
+  if (a.menu !== undefined) {
+    const menu = a.menu === null ? null : nativeMenu(a.menu);
+    live.ids = menu?.ids ?? new Set();
+    live.tray.setMenu(menu?.items ?? null);
+  }
+}
+
+/**
+ * Why no tray icon can be shown here (`undefined` when one can): no `Deno.Tray`, or the probe
+ * found no tray host.
+ */
+async function trayMissing(s: AppState): Promise<string | undefined> {
+  if (!s.Tray) return NO_API;
+  const facts = await platformFacts(s.options.api);
+  return facts.trayHost === false ? facts.trayReason ?? "no tray host in this session" : undefined;
+}
+
+/**
+ * `unsupported` for a tray icon, after showing a hidden window: a tray-only app would otherwise
+ * be left with no way in. `data.windowShown` says whether it did.
+ */
+function noTray(s: AppState, reason: string): DesktopCapError {
+  const win = s.win;
+  let windowShown = false;
+  try {
+    if (win?.isVisible?.() === false && typeof win.show === "function") {
+      win.show();
+      windowShown = true;
+    }
+  } catch { /* the window is gone; nothing to show */ }
+  return unsupported("a tray icon", reason, { windowShown });
+}
+
+/** A new `Deno.Tray`, or `unsupported` with the runtime's reason when it has no tray host. */
+function newTray(s: AppState, T: new () => TrayLike): TrayLike {
+  try {
+    return new T();
+  } catch (err) {
+    const reason = trayNotSupported(err);
+    if (reason !== undefined) throw noTray(s, reason);
+    throw err;
+  }
+}
+
+/** `createTray`: a new tray icon whose clicks and menu clicks the page takes. */
+async function createTray(s: AppState, args: unknown): Promise<{ id: string }> {
+  const missing = await trayMissing(s);
+  if (missing !== undefined) throw noTray(s, missing);
+  if (s.trays.size >= MAX_TRAYS) throw invalid(`at most ${MAX_TRAYS} tray icons`);
+  const a = argsOf(args);
+  const icon = png(a.icon, "icon");
+  const live: LiveTray = { tray: newTray(s, s.Tray!), ids: new Set() };
+  const id = String(s.nextTray++);
+  const queue = s.queue;
+  live.tray.setIcon(icon);
+  applyTray(live, { ...a, icon: undefined });
+  live.tray.addEventListener(
+    "click",
+    () => queue.push({ source: "tray", tray: id, event: "click" }),
+  );
+  live.tray.addEventListener(
+    "dblclick",
+    () => queue.push({ source: "tray", tray: id, event: "doubleClick" }),
+  );
+  live.tray.addEventListener("menuclick", (e) => {
+    const item = clickedId(e);
+    if (item !== undefined && live.ids.has(item)) {
+      queue.push({ source: "trayMenu", tray: id, id: item });
+    }
+  });
+  s.trays.set(id, live);
+  return { id };
+}
+
+/** Destroy every tray the page created. */
+function destroyTrays(s: AppState): void {
+  for (const live of s.trays.values()) {
+    try {
+      live.tray.destroy();
+    } catch { /* already gone */ }
+  }
+  s.trays.clear();
+}
+
+/** `capabilities`: what the menus, tray, dock and session support here. */
+async function appCapabilities(s: AppState) {
+  const caps = s.options.api?.menuCapabilities?.() ?? {};
+  const facts = await platformFacts(s.options.api);
+  const trayReason = (await trayMissing(s)) ?? null;
+  const dock = s.dock;
+  return {
+    appMenu: caps.appMenu ?? typeof s.win?.setApplicationMenu === "function",
+    accelerators: caps.accelerators === true,
+    icons: caps.icons === true,
+    tooltips: caps.tooltips === true,
+    tray: trayReason === null,
+    trayReason,
+    trayHost: facts.trayHost,
+    secretService: facts.secretService,
+    sessionType: facts.sessionType,
+    cookieEncryption: facts.cookieEncryption,
+    badge: typeof dock?.setBadge === "function",
+    badgeShows: facts.badge,
+    badgeReason: facts.badgeReason,
+    sandbox: facts.sandbox,
+    sandboxReason: facts.sandboxReason,
+    fileChooser: facts.fileChooser,
+    fileChooserReason: facts.fileChooserReason,
+    bounce: typeof dock?.bounce === "function",
+    dockMenu: dockMenuWorks(s),
+  };
+}
+
+/** The app menu, dock menu, badge and attention-request methods. */
+function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
+  return {
+    capabilities: { handler: () => appCapabilities(s) },
+    setAppMenu: {
+      handler: (args) => {
+        const win = s.win;
+        if (typeof win?.setApplicationMenu !== "function") {
+          throw unsupported(
+            "an app menu",
+            win
+              ? "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu"
+              : "no app window",
+          );
+        }
+        const { items, ids } = nativeMenu(argsOf(args).menu);
+        win.setApplicationMenu(items);
+        s.appMenuIds = ids;
+        return null;
+      },
+    },
+    setDockMenu: {
+      handler: (args) => {
+        if (!dockMenuWorks(s)) return { applied: false };
+        const raw = argsOf(args).menu;
+        const menu = raw === null || (Array.isArray(raw) && raw.length === 0)
+          ? null
+          : nativeMenu(raw);
+        s.dock!.setMenu!(menu?.items ?? null);
+        s.dockMenuIds = menu?.ids ?? new Set();
+        return { applied: true };
+      },
+    },
+    setBadge: {
+      handler: (args) => {
+        const dock = s.dock;
+        if (typeof dock?.setBadge !== "function") throw unsupported("a badge", NO_DOCK);
+        // The runtime takes a string: `null` would show as the text "null"; "" clears the badge.
+        dock.setBadge(shortText(argsOf(args).text, "text") ?? "");
+        return null;
+      },
+    },
+    bounce: {
+      handler: (args) => {
+        const dock = s.dock;
+        if (typeof dock?.bounce !== "function") {
+          throw unsupported("an attention request", NO_DOCK);
+        }
+        dock.bounce(argsOf(args).critical === true);
+        return null;
+      },
+    },
+  };
+}
+
+/** The tray methods, and `take` (the clicks queued for the page). */
+function trayMethods(s: AppState): DesktopCapability["methods"] {
+  return {
+    createTray: { handler: (args) => createTray(s, args) },
+    updateTray: {
+      handler: (args) => {
+        applyTray(trayOf(s, args), argsOf(args));
+        return null;
+      },
+    },
+    destroyTray: {
+      handler: (args) => {
+        const live = trayOf(s, args);
+        s.trays.delete(String(argsOf(args).id));
+        live.tray.destroy();
+        return null;
+      },
+    },
+    trayBounds: {
+      handler: (args) => trayOf(s, args).tray.getBounds?.() ?? null,
+    },
+    take: { handler: () => s.queue.take() },
+  };
+}
+
+/** Listen for the window's and the dock's menu clicks, and the session probe's changes (once). */
+function installAppEvents(s: AppState): void {
+  if (s.installed) return;
+  s.installed = true;
+  s.win?.addEventListener("menuclick", (e) => {
+    const id = clickedId(e);
+    if (id !== undefined && s.appMenuIds.has(id)) s.queue.push({ source: "menu", id });
+  });
+  s.dock?.addEventListener("menuclick", (e) => {
+    const id = clickedId(e);
+    if (id !== undefined && s.dockMenuIds.has(id)) s.queue.push({ source: "dock", id });
+  });
+  // The session probe's answer may have changed (a tray host came or went): the page re-reads
+  // the capabilities (`onAppCapabilitiesChanged`).
+  s.options.api?.addEventListener?.(
+    "platformfeatureschanged",
+    () => s.options.emit("app", "capabilities", null),
+  );
+}
+
 /**
  * Create the `app` capability over the adopted window, `Deno.Tray` and `Deno.dock`.
  *
@@ -175,241 +430,27 @@ interface LiveTray {
  */
 export function createAppController(options: AppControllerOptions): AppController {
   const chrome = runtimeChrome();
-  const Tray = options.Tray ?? chrome.Tray;
-  const dock = options.dock ?? chrome.dock;
-  const os = options.os ?? Deno.build.os;
-  const win = options.window as
-    | (EventTarget & {
-      setApplicationMenu?(menu: DesktopMenuItem[]): void;
-      isVisible?(): boolean;
-      show?(): void;
-    })
-    | undefined;
-  const queue = createPullQueue<AppAction>(() => options.emit("app", "action", null));
-  const trays = new Map<string, LiveTray>();
-  let appMenuIds = new Set<string>();
-  let dockMenuIds = new Set<string>();
-  let nextTray = 1;
-  let installed = false;
-
-  const menuMissing = () =>
-    win ? "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu" : "no app window";
-  const menuCaps = () => options.api?.menuCapabilities?.() ?? {};
-  const dockMenuWorks = () => os === "darwin" && typeof dock?.setMenu === "function";
-
-  const trayOf = (args: unknown): LiveTray => {
-    const id = argsOf(args).id;
-    const live = typeof id === "string" ? trays.get(id) : undefined;
-    if (!live) throw invalid("no such tray");
-    return live;
+  const s: AppState = {
+    options,
+    Tray: options.Tray ?? chrome.Tray,
+    dock: options.dock ?? chrome.dock,
+    os: options.os ?? Deno.build.os,
+    win: options.window as AppWindow | undefined,
+    queue: createPullQueue<AppAction>(() => options.emit("app", "action", null)),
+    trays: new Map(),
+    appMenuIds: new Set(),
+    dockMenuIds: new Set(),
+    nextTray: 1,
+    installed: false,
   };
-
-  /** Apply the optional `icon` / `iconDark` / `tooltip` / `menu` of `a` to a tray. */
-  const applyTray = (live: LiveTray, a: Record<string, unknown>) => {
-    if (a.icon !== undefined) live.tray.setIcon(png(a.icon, "icon"));
-    if (a.iconDark !== undefined) {
-      live.tray.setIconDark?.(a.iconDark === null ? null : png(a.iconDark, "iconDark"));
-    }
-    if (a.tooltip !== undefined) live.tray.setTooltip(shortText(a.tooltip, "tooltip"));
-    if (a.menu !== undefined) {
-      const menu = a.menu === null ? null : nativeMenu(a.menu);
-      live.ids = menu?.ids ?? new Set();
-      live.tray.setMenu(menu?.items ?? null);
-    }
-  };
-
-  /**
-   * Why no tray icon can be shown here (`undefined` when one can): no `Deno.Tray`, or the probe
-   * found no tray host.
-   */
-  const trayMissing = async (): Promise<string | undefined> => {
-    if (!Tray) return NO_API;
-    const facts = await platformFacts(options.api);
-    return facts.trayHost === false
-      ? facts.trayReason ?? "no tray host in this session"
-      : undefined;
-  };
-
-  /**
-   * `unsupported` for a tray icon, after showing a hidden window: a tray-only app would otherwise
-   * be left with no way in. `data.windowShown` says whether it did.
-   */
-  const noTray = (reason: string): DesktopCapError => {
-    let windowShown = false;
-    try {
-      if (win?.isVisible?.() === false && typeof win.show === "function") {
-        win.show();
-        windowShown = true;
-      }
-    } catch { /* the window is gone; nothing to show */ }
-    return unsupported("a tray icon", reason, { windowShown });
-  };
-
-  /** A new `Deno.Tray`, or `unsupported` with the runtime's reason when it has no tray host. */
-  const newTray = (T: new () => TrayLike): TrayLike => {
-    try {
-      return new T();
-    } catch (err) {
-      const reason = trayNotSupported(err);
-      if (reason !== undefined) throw noTray(reason);
-      throw err;
-    }
-  };
-
-  const createTray = async (args: unknown) => {
-    const missing = await trayMissing();
-    if (missing !== undefined) throw noTray(missing);
-    if (trays.size >= MAX_TRAYS) throw invalid(`at most ${MAX_TRAYS} tray icons`);
-    const a = argsOf(args);
-    const icon = png(a.icon, "icon");
-    const live: LiveTray = { tray: newTray(Tray!), ids: new Set() };
-    const id = String(nextTray++);
-    live.tray.setIcon(icon);
-    applyTray(live, { ...a, icon: undefined });
-    live.tray.addEventListener(
-      "click",
-      () => queue.push({ source: "tray", tray: id, event: "click" }),
-    );
-    live.tray.addEventListener(
-      "dblclick",
-      () => queue.push({ source: "tray", tray: id, event: "doubleClick" }),
-    );
-    live.tray.addEventListener("menuclick", (e) => {
-      const item = clickedId(e);
-      if (item !== undefined && live.ids.has(item)) {
-        queue.push({ source: "trayMenu", tray: id, id: item });
-      }
-    });
-    trays.set(id, live);
-    return { id };
-  };
-
-  const destroyTrays = () => {
-    for (const live of trays.values()) {
-      try {
-        live.tray.destroy();
-      } catch { /* already gone */ }
-    }
-    trays.clear();
-  };
-
   const capability: DesktopCapability = {
     name: "app",
-    methods: {
-      capabilities: {
-        handler: async () => {
-          const caps = menuCaps();
-          const facts = await platformFacts(options.api);
-          const trayReason = (await trayMissing()) ?? null;
-          return {
-            appMenu: caps.appMenu ?? typeof win?.setApplicationMenu === "function",
-            accelerators: caps.accelerators === true,
-            icons: caps.icons === true,
-            tooltips: caps.tooltips === true,
-            tray: trayReason === null,
-            trayReason,
-            trayHost: facts.trayHost,
-            secretService: facts.secretService,
-            sessionType: facts.sessionType,
-            cookieEncryption: facts.cookieEncryption,
-            badge: typeof dock?.setBadge === "function",
-            badgeShows: facts.badge,
-            badgeReason: facts.badgeReason,
-            sandbox: facts.sandbox,
-            sandboxReason: facts.sandboxReason,
-            fileChooser: facts.fileChooser,
-            fileChooserReason: facts.fileChooserReason,
-            bounce: typeof dock?.bounce === "function",
-            dockMenu: dockMenuWorks(),
-          };
-        },
-      },
-      setAppMenu: {
-        handler: (args) => {
-          if (typeof win?.setApplicationMenu !== "function") {
-            throw unsupported("an app menu", menuMissing());
-          }
-          const { items, ids } = nativeMenu(argsOf(args).menu);
-          win.setApplicationMenu(items);
-          appMenuIds = ids;
-          return null;
-        },
-      },
-      setDockMenu: {
-        handler: (args) => {
-          if (!dockMenuWorks()) return { applied: false };
-          const raw = argsOf(args).menu;
-          const menu = raw === null || (Array.isArray(raw) && raw.length === 0)
-            ? null
-            : nativeMenu(raw);
-          dock!.setMenu!(menu?.items ?? null);
-          dockMenuIds = menu?.ids ?? new Set();
-          return { applied: true };
-        },
-      },
-      setBadge: {
-        handler: (args) => {
-          if (typeof dock?.setBadge !== "function") throw unsupported("a badge", NO_DOCK);
-          // The runtime takes a string: `null` would show as the text "null"; "" clears the badge.
-          dock.setBadge(shortText(argsOf(args).text, "text") ?? "");
-          return null;
-        },
-      },
-      bounce: {
-        handler: (args) => {
-          if (typeof dock?.bounce !== "function") {
-            throw unsupported("an attention request", NO_DOCK);
-          }
-          dock.bounce(argsOf(args).critical === true);
-          return null;
-        },
-      },
-      createTray: { handler: createTray },
-      updateTray: {
-        handler: (args) => {
-          applyTray(trayOf(args), argsOf(args));
-          return null;
-        },
-      },
-      destroyTray: {
-        handler: (args) => {
-          const live = trayOf(args);
-          trays.delete(String(argsOf(args).id));
-          live.tray.destroy();
-          return null;
-        },
-      },
-      trayBounds: {
-        handler: (args) => trayOf(args).tray.getBounds?.() ?? null,
-      },
-      take: { handler: () => queue.take() },
-    },
+    methods: { ...menuAndDockMethods(s), ...trayMethods(s) },
     events: ["action"],
     onPageLoad: () => {
-      destroyTrays();
-      queue.clear();
+      destroyTrays(s);
+      s.queue.clear();
     },
   };
-
-  return {
-    capability,
-    install: () => {
-      if (installed) return;
-      installed = true;
-      win?.addEventListener("menuclick", (e) => {
-        const id = clickedId(e);
-        if (id !== undefined && appMenuIds.has(id)) queue.push({ source: "menu", id });
-      });
-      dock?.addEventListener("menuclick", (e) => {
-        const id = clickedId(e);
-        if (id !== undefined && dockMenuIds.has(id)) queue.push({ source: "dock", id });
-      });
-      // The session probe's answer may have changed (a tray host came or went): the page re-reads
-      // the capabilities (`onAppCapabilitiesChanged`).
-      options.api?.addEventListener?.(
-        "platformfeatureschanged",
-        () => options.emit("app", "capabilities", null),
-      );
-    },
-  };
+  return { capability, install: () => installAppEvents(s) };
 }

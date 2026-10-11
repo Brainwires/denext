@@ -721,25 +721,29 @@ function migratingBackend(
 }
 
 /**
- * Build the `secureStore` capability.
- *
- * @param deps The service name, and (for tests) the OS and runner.
- * @returns The `secureStore` {@link DesktopCapability}.
+ * The permission descriptor shared by all methods. The runtime's store (Linux; macOS under a
+ * runtime that has it) needs an unscoped --allow-sys (the user's keyring is shared by every app);
+ * macOS keeps `security` for runtimes without it and for moving older items over.
  */
-export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability {
-  const os = deps.os ?? (Deno.build.os as Os);
-  const run = deps.run ?? runSecureCli;
-  const service = deps.service;
-
-  // One permission descriptor + one read-key preamble, shared by all methods. The runtime's store
-  // (Linux; macOS under a runtime that has it) needs an unscoped --allow-sys (the user's keyring
-  // is shared by every app); macOS keeps `security` for runtimes without it and for moving older
-  // items over.
-  const permissions: DesktopPermissions = os === "darwin"
+function secureStorePermissions(os: Os): DesktopPermissions {
+  return os === "darwin"
     ? { run: ["security"], sys: ["*"] }
     : os === "linux"
     ? { sys: ["*"] }
     : { run: ["powershell.exe"] };
+}
+
+/**
+ * The backend for each call: Linux, the runtime's store (`backend_unavailable` when the runtime
+ * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
+ * Windows, PowerShell + PasswordVault. Keeps the Linux probe and the macOS mover between calls.
+ */
+function secureBackendResolver(
+  deps: SecureStoreDeps,
+  os: Os,
+  run: SecureRunner,
+): () => Promise<SecureBackend> {
+  const service = deps.service;
   const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
   const probeMs = deps.probeTimeoutMs ?? LINUX_PROBE_TIMEOUT_MS;
   /** The runtime's app API, or `undefined` (none, or reading it threw). */
@@ -769,12 +773,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     if (verdict.error) throw verdict.error;
   };
   let migrating: { store: RuntimeSecureStore; backend: SecureBackend } | undefined;
-  /**
-   * The backend for this call: Linux, the runtime's store (`backend_unavailable` when the runtime
-   * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
-   * Windows, PowerShell + PasswordVault.
-   */
-  const backend = async (): Promise<SecureBackend> => {
+  return async (): Promise<SecureBackend> => {
     const store = runtimeStore();
     if (os === "linux") {
       if (!store) throw noLinuxStoreError();
@@ -796,6 +795,18 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     }
     return migrating.backend;
   };
+}
+
+/**
+ * Build the `secureStore` capability.
+ *
+ * @param deps The service name, and (for tests) the OS and runner.
+ * @returns The `secureStore` {@link DesktopCapability}.
+ */
+export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability {
+  const os = deps.os ?? (Deno.build.os as Os);
+  const permissions = secureStorePermissions(os);
+  const backend = secureBackendResolver(deps, os, deps.run ?? runSecureCli);
   const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
 
   return {

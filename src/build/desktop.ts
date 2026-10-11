@@ -914,79 +914,20 @@ export function createDesktopHandler(
   preloadKey?: string,
   wsUrl?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
-  const proxyCfg = options.proxy;
-  const indexHtmlPath = join(outDir, "index.html");
   // `desktop.preload` runs only in the memory world (the pinned runtime at its stable origin), and
   // only where the token goes (a top-level document over the memory transport): never into an
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
-  // What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
-  // the memory world, the one place the page runs at a custom origin), and the web `Notification`
-  // shim when the `notifications` capability is on (the pinned runtime's OS notifications).
-  const memory = trust.kind === "memory";
-  const page: DesktopPageGlobals = {
-    ...(memory && wsUrl ? { wsUrl } : {}),
-    ...(memory && options.capabilities?.some((c) => c.name === "notifications")
-      ? { notifications: true }
-      : {}),
-  };
-
-  /** Serve an exported page (`html`, else the export's `index.html` shell) with the desktop
-   * global (and, with the updater on, the boot-confirm beacon) injected. `injectToken` gates the
-   * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
-   * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
-  const serveShell = async (
-    isHead: boolean,
-    injectToken: boolean,
-    pageHtml?: string,
-  ): Promise<Response | null> => {
-    const html = pageHtml ?? await Deno.readTextFile(indexHtmlPath).catch(() => null);
-    if (html === null) return null;
-    const injected = await injectDesktopGlobal(
-      html,
-      injectToken ? token : null,
-      onBooted !== undefined,
-      injectToken ? memoryPreload : undefined,
-      preloadKey,
-      page,
-    );
-    return noStore(
-      new Response(isHead ? null : injected, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      }),
-    );
-  };
-
-  /** The backend proxy (when configured + matched), then the static export, its `index.html` shell
-   * for navigations, else 404. Split out so the top-level handler stays simple. */
-  const serveBackendOrExport = async (
-    request: Request,
-    url: URL,
-    injectToken: boolean,
-  ): Promise<Response> => {
-    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
-      return await proxy.proxyToBackend(request, url, proxyCfg);
-    }
-    // An exported page (`/route` → `route/index.html` or `route.html`, `/x.html`, `/`): served
-    // with the desktop global injected (read uncompressed, so the injection is not fighting
-    // content-encoding on the static response). Without this every path got the ROOT shell, so
-    // a multi-page export's `<a href="/protected">` reloaded the home page.
-    if (request.method === "GET" || request.method === "HEAD") {
-      const pageHtml = await readExportPage(outDir, url.pathname);
-      if (pageHtml !== null) {
-        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
-        if (page) return page;
-      }
-    }
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
-    if (asset) return noStore(asset);
-    if (wantsShell(request, url.pathname)) {
-      const shell = await serveShell(request.method === "HEAD", injectToken);
-      if (shell) return shell;
-    }
-    return new Response("not found", { status: 404 });
-  };
+  const page = desktopPageGlobals(options, trust, wsUrl);
+  const serveShell = desktopShellServer({
+    indexHtmlPath: join(outDir, "index.html"),
+    token,
+    beacon: onBooted !== undefined,
+    memoryPreload,
+    preloadKey,
+    page,
+  });
+  const serveBackendOrExport = backendOrExportServer(options.proxy, proxy, outDir, serveShell);
 
   return async (request, url, info) => {
     // A desktop endpoint request marked cross-origin is refused, and in the memory world a
@@ -1044,6 +985,98 @@ export function createDesktopHandler(
       );
     }
     return await serveBackendOrExport(request, url, injectToken);
+  };
+}
+
+/** Serves an exported page (`pageHtml`, else the export's `index.html` shell) to a desktop window. */
+type DesktopShellServer = (
+  isHead: boolean,
+  injectToken: boolean,
+  pageHtml?: string,
+) => Promise<Response | null>;
+
+/**
+ * What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
+ * the memory world, the one place the page runs at a custom origin), and the web `Notification`
+ * shim when the `notifications` capability is on (the pinned runtime's OS notifications).
+ */
+function desktopPageGlobals(
+  options: RunDesktopOptions,
+  trust: DesktopTrust,
+  wsUrl: string | undefined,
+): DesktopPageGlobals {
+  const memory = trust.kind === "memory";
+  return {
+    ...(memory && wsUrl ? { wsUrl } : {}),
+    ...(memory && options.capabilities?.some((c) => c.name === "notifications")
+      ? { notifications: true }
+      : {}),
+  };
+}
+
+/** Serve an exported page (`html`, else the export's `index.html` shell) with the desktop
+ * global (and, with the updater on, the boot-confirm beacon) injected. `injectToken` gates the
+ * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
+ * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
+function desktopShellServer(ctx: {
+  indexHtmlPath: string;
+  token: string;
+  /** Inject the boot-confirm beacon (the updater is on). */
+  beacon: boolean;
+  memoryPreload: string | undefined;
+  preloadKey: string | undefined;
+  page: DesktopPageGlobals;
+}): DesktopShellServer {
+  return async (isHead, injectToken, pageHtml) => {
+    const html = pageHtml ?? await Deno.readTextFile(ctx.indexHtmlPath).catch(() => null);
+    if (html === null) return null;
+    const injected = await injectDesktopGlobal(
+      html,
+      injectToken ? ctx.token : null,
+      ctx.beacon,
+      injectToken ? ctx.memoryPreload : undefined,
+      ctx.preloadKey,
+      ctx.page,
+    );
+    return noStore(
+      new Response(isHead ? null : injected, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+  };
+}
+
+/** The backend proxy (when configured + matched), then the static export, its `index.html` shell
+ * for navigations, else 404. Split out so the top-level handler stays simple. */
+function backendOrExportServer(
+  proxyCfg: RunDesktopOptions["proxy"],
+  proxy: ProxyModule | undefined,
+  outDir: string,
+  serveShell: DesktopShellServer,
+): (request: Request, url: URL, injectToken: boolean) => Promise<Response> {
+  return async (request, url, injectToken) => {
+    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
+      return await proxy.proxyToBackend(request, url, proxyCfg);
+    }
+    // An exported page (`/route` → `route/index.html` or `route.html`, `/x.html`, `/`): served
+    // with the desktop global injected (read uncompressed, so the injection is not fighting
+    // content-encoding on the static response). Without this every path got the ROOT shell, so
+    // a multi-page export's `<a href="/protected">` reloaded the home page.
+    if (request.method === "GET" || request.method === "HEAD") {
+      const pageHtml = await readExportPage(outDir, url.pathname);
+      if (pageHtml !== null) {
+        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
+        if (page) return page;
+      }
+    }
+    const accEnc = request.headers.get("accept-encoding") ?? undefined;
+    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
+    if (asset) return noStore(asset);
+    if (wantsShell(request, url.pathname)) {
+      const shell = await serveShell(request.method === "HEAD", injectToken);
+      if (shell) return shell;
+    }
+    return new Response("not found", { status: 404 });
   };
 }
 
