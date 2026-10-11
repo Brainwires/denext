@@ -180,9 +180,13 @@ export {
 // `desktop.macos` for scripts/package-macos.ts: the provisioning profile it embeds and the
 // entitlements it signs with, checked against the app before the build.
 export {
+  cefHelperEntitlements,
   type DesktopMacosSigning,
   desktopMacosSigning,
   type DesktopMacosSigningOptions,
+  macosSigningEntitlements,
+  type MacosSigningEntitlementsOptions,
+  V8_ENTITLEMENTS,
 } from "./desktop-macos-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {

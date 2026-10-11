@@ -13,12 +13,15 @@ import {
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
+  cefHelperEntitlements,
   desktopMacosSigning,
   identityTeamId,
   isRestrictedEntitlement,
+  macosSigningEntitlements,
   mergeEntitlements,
   parseProvisioningProfile,
   provisioningProfileProblems,
+  V8_ENTITLEMENTS,
 } from "../src/build/desktop-macos-signing.ts";
 import { dictGet, parsePlist, type PlistDict, renderPlist } from "../src/build/plist-value.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
@@ -425,4 +428,105 @@ Deno.test("scaffold: the macOS script embeds the profile only in a bundle with t
   const embed = mac.indexOf("`${app}/Contents/embedded.provisionprofile`");
   assert(check > 0 && check < embed, "the bundle id is checked before the profile is embedded");
   assertStringIncludes(mac, "if (bundleId !== profileIdentifier) {");
+});
+
+/** The plist at `path` as JSON-ish booleans, then removed. */
+async function takeEntitlements(path: string): Promise<Record<string, unknown>> {
+  try {
+    const dict = parsePlist(await Deno.readTextFile(path)) as PlistDict;
+    return Object.fromEntries(
+      dict.entries.map(([k, v]) => [k, v.kind === "bool" ? v.value : v.kind]),
+    );
+  } finally {
+    await Deno.remove(path);
+  }
+}
+
+Deno.test("cefHelperEntitlements: Chromium's set per helper; none for other code", () => {
+  const jit = { "com.apple.security.cs.allow-jit": true };
+  const fw = "dist/A.app/Contents/Frameworks";
+  assertEquals(cefHelperEntitlements(`${fw}/laufey Helper (Renderer).app`), jit);
+  assertEquals(
+    cefHelperEntitlements(`${fw}/laufey Helper (GPU).app/Contents/MacOS/laufey Helper (GPU)`),
+    jit,
+  );
+  assertEquals(cefHelperEntitlements(`${fw}/laufey Helper (Plugin).app`), {
+    "com.apple.security.cs.allow-unsigned-executable-memory": true,
+    "com.apple.security.cs.disable-library-validation": true,
+  });
+  for (const other of ["laufey Helper.app", "laufey Helper (Alerts).app", "x (Renderer).appx"]) {
+    assertEquals(cefHelperEntitlements(`${fw}/${other}`), undefined);
+  }
+  assertEquals(cefHelperEntitlements("dist/A.app/Contents/MacOS/laufey.dylib"), undefined);
+});
+
+Deno.test("macosSigningEntitlements: defaults over the explicit plist, else the signed code's", async () => {
+  // Nothing to start from (codesign finds no such code, or is not installed): the defaults alone.
+  assertEquals(
+    await takeEntitlements(
+      await macosSigningEntitlements(V8_ENTITLEMENTS, {
+        current: "/nonexistent/denext-test.app",
+      }),
+    ),
+    { ...V8_ENTITLEMENTS },
+  );
+  assertEquals(await takeEntitlements(await macosSigningEntitlements({ a: true })), { a: true });
+  // The code's current entitlements are kept; a key it sets (false too) beats the default.
+  const signed = renderPlist(
+    mergeEntitlements(undefined, {
+      "com.apple.security.cs.allow-jit": false,
+      "com.apple.security.device.camera": true,
+    }),
+  );
+  const current = await takeEntitlements(
+    await macosSigningEntitlements(V8_ENTITLEMENTS, {
+      current: "dist/A.app",
+      readSigned: (p) => Promise.resolve(p === "dist/A.app" ? signed : ""),
+    }),
+  );
+  assertEquals(current, {
+    "com.apple.security.cs.allow-jit": false,
+    "com.apple.security.device.camera": true,
+    "com.apple.security.cs.allow-unsigned-executable-memory": true,
+    "com.apple.security.cs.disable-library-validation": true,
+  });
+  // An explicit plist replaces the current entitlements; the defaults it lacks join it.
+  const dir = await Deno.makeTempDir();
+  try {
+    const explicit = join(dir, "ent.plist");
+    await Deno.writeTextFile(
+      explicit,
+      renderPlist(mergeEntitlements(undefined, {
+        "com.apple.security.cs.disable-library-validation": false,
+      })),
+    );
+    const merged = await takeEntitlements(
+      await macosSigningEntitlements(V8_ENTITLEMENTS, {
+        explicit,
+        current: "dist/A.app",
+        readSigned: () => Promise.resolve(signed),
+      }),
+    );
+    assertEquals(merged, {
+      "com.apple.security.cs.disable-library-validation": false,
+      "com.apple.security.cs.allow-jit": true,
+      "com.apple.security.cs.allow-unsigned-executable-memory": true,
+    });
+    // A non-dict explicit plist is refused; a non-dict signed one counts as none.
+    await Deno.writeTextFile(explicit, renderPlist({ kind: "array", items: [] }));
+    await assertRejects(
+      () => macosSigningEntitlements(V8_ENTITLEMENTS, { explicit }),
+      Error,
+      "must be a dict",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  const notDict = await takeEntitlements(
+    await macosSigningEntitlements({ a: true }, {
+      current: "x",
+      readSigned: () => Promise.resolve(renderPlist({ kind: "array", items: [] })),
+    }),
+  );
+  assertEquals(notDict, { a: true });
 });

@@ -801,7 +801,11 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_CODESIGN_IDENTITY  "Developer ID Application: Name (TEAMID)". REQUIRED to
  *                             distribute. Omit → an ad-hoc signature (dev/local only;
  *                             Gatekeeper will block it on other Macs).
- *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional).
+ *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional). With an identity
+ *                             the main executable, which hosts V8, also gets allow-jit,
+ *                             allow-unsigned-executable-memory and disable-library-validation
+ *                             unless the plist sets them (to false, too), and the CEF Renderer /
+ *                             GPU / Plugin helpers get Chromium's own entitlements.
  *   DENEXT_PROVISIONING_PROFILE  a .provisionprofile to embed (overrides
  *                             \`desktop.macos.provisioningProfile\` in denext.config.ts).
  *   DENEXT_NOTARY_PROFILE     a \`xcrun notarytool store-credentials\` keychain profile.
@@ -858,6 +862,7 @@ if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
 }
 
 const {
+  cefHelperEntitlements,
   desktopAppName: appName,
   desktopDenoFlagArgs,
   desktopExportEnv,
@@ -870,8 +875,10 @@ const {
   desktopRun: run,
   desktopRuntimeEnv,
   desktopWithAppVersion,
+  macosSigningEntitlements,
   parseDesktopPackageArgs,
   syncDesktopAppConfig,
+  V8_ENTITLEMENTS,
   writeLaufeyLaunchConfig,
 } = await import("denext/desktop");
 
@@ -996,7 +1003,10 @@ async function mainExecutable(app: string): Promise<string> {
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
  * (required for notarization). Without one: an ad-hoc signature (dev/local only). It keeps what
  * deno desktop's own ad-hoc pass set up: each Mach-O beside the main executable signs as the
- * bundle's CFBundleIdentifier, and nested code (the CEF helper apps) keeps its entitlements. */
+ * bundle's CFBundleIdentifier, and nested code (the CEF helper apps) keeps its entitlements.
+ * With an identity, the Hardened Runtime needs entitlements for JIT code: the main executable
+ * (V8) gets V8_ENTITLEMENTS merged into the explicit entitlements (or, without them, into the
+ * ad-hoc pass's), and each CEF Renderer / GPU / Plugin helper Chromium's set for it. */
 async function sign(
   app: string,
   identity: string | undefined,
@@ -1023,41 +1033,55 @@ async function sign(
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
   const macosDir = \`\${app}/Contents/MacOS/\`;
-  for (const file of await machOFiles(app)) {
-    if (file === mainExe) continue;
-    // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
-    // as its identifier, as it does the main executable; codesign would otherwise name it after
-    // the file. A helper app's executable signs its bundle, whose entitlements must survive.
-    const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
-    const ident = besideMain ? ["--identifier", bundleId] : [];
+  const written: string[] = [];
+  // With an identity: \`defaults\` merged over the code's current (or the explicit) entitlements.
+  const entitlementArgs = async (
+    defaults: Record<string, boolean> | undefined,
+    current: string,
+    explicit?: string,
+  ): Promise<string[]> => {
+    if (!identity || !defaults) return ["--preserve-metadata=entitlements"];
+    const file = await macosSigningEntitlements(defaults, { explicit, current });
+    written.push(file);
+    return ["--entitlements", file];
+  };
+  try {
+    for (const file of await machOFiles(app)) {
+      if (file === mainExe) continue;
+      // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
+      // as its identifier, as it does the main executable; codesign would otherwise name it after
+      // the file. A helper app's executable signs its bundle, whose entitlements must survive.
+      const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
+      const ident = besideMain ? ["--identifier", bundleId] : [];
+      await run([
+        "codesign",
+        "--force",
+        ts,
+        "--options",
+        "runtime",
+        ...await entitlementArgs(cefHelperEntitlements(file), file),
+        ...ident,
+        "-s",
+        id,
+        file,
+      ]);
+    }
+    // Explicit entitlements replace the ad-hoc pass's; either way, with an identity, the main
+    // executable (V8) gets the JIT keys they do not set.
     await run([
       "codesign",
       "--force",
       ts,
       "--options",
       "runtime",
-      "--preserve-metadata=entitlements",
-      ...ident,
+      ...await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
       "-s",
       id,
-      file,
+      app,
     ]);
+  } finally {
+    for (const file of written) await Deno.remove(file).catch(() => {});
   }
-  // Explicit entitlements replace the ad-hoc pass's; without them, keep what it applied.
-  const ent = identity && entitlements
-    ? ["--entitlements", entitlements]
-    : ["--preserve-metadata=entitlements"];
-  await run([
-    "codesign",
-    "--force",
-    ts,
-    "--options",
-    "runtime",
-    ...ent,
-    "-s",
-    id,
-    app,
-  ]);
   await run(["codesign", "--verify", "--deep", "--strict", app]);
 }
 

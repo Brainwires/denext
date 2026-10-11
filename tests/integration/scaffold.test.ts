@@ -3,8 +3,15 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
+import * as esbuild from "esbuild";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 import { FALLOW_VERSION } from "../../src/build/fallow-template.ts";
+import {
+  cefHelperEntitlements,
+  macosSigningEntitlements,
+  type MacosSigningEntitlementsOptions,
+  V8_ENTITLEMENTS,
+} from "../../src/build/desktop-macos-signing.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
@@ -274,70 +281,113 @@ Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a 
   assert(resign > 0 && resign < src.indexOf("await sign(app, s.identity"), "logged before sign()");
 });
 
-/** The generated script's sign(), run against a CEF-shaped bundle with codesign mocked. */
+/** What the generated script's sign() ran, and each `--entitlements` plist's text by target. */
+interface SignRun {
+  calls: string[][];
+  plists: Map<string, string>;
+}
+
+const SIGN_APP = "dist/My App.app";
+const HELPER = (s: string) =>
+  `${SIGN_APP}/Contents/Frameworks/laufey Helper${s}.app/Contents/MacOS/laufey Helper${s}`;
+
+/**
+ * The generated script's sign(), run against a CEF-shaped bundle with codesign mocked. `signed`
+ * maps code to the entitlements plist it is signed with now (what deno desktop's pass applied).
+ */
 async function runScaffoldedSign(
   identity: string | undefined,
   entitlements?: string,
-): Promise<string[][]> {
+  signed: Record<string, string> = {},
+): Promise<SignRun> {
   const src = scaffoldFiles({ dir: "/x", desktop: true })
     .find((f) => f.path === "scripts/package-macos.ts")!.content;
-  const m = src.match(/\nasync function sign\(\n[\s\S]*?\): Promise<void> \{\n([\s\S]*?)\n\}\n/);
+  const m = src.match(/\nasync function sign\(\n[\s\S]*?\n\}\n/);
   assert(m, "sign() present");
-  const app = "dist/My App.app";
+  // sign() is TypeScript: strip its types, then build it with its free names as parameters.
+  const { code } = await esbuild.transform(m[0], { loader: "ts" });
+  await esbuild.stop();
+  const app = SIGN_APP;
   const files = [
     `${app}/Contents/MacOS/laufey`,
     `${app}/Contents/MacOS/laufey.dylib`,
-    `${app}/Contents/Frameworks/laufey Helper (Renderer).app/Contents/MacOS/laufey Helper (Renderer)`,
+    HELPER(" (Renderer)"),
+    HELPER(" (GPU)"),
+    HELPER(" (Plugin)"),
+    HELPER(" (Alerts)"),
+    HELPER(""),
     `${app}/Contents/Frameworks/Chromium Embedded Framework.framework/Versions/A/Libraries/libEGL.dylib`,
   ];
   const calls: string[][] = [];
-  const AsyncFunction = (async () => {}).constructor as new (
-    ...args: string[]
-  ) => (...a: unknown[]) => Promise<void>;
-  const sign = new AsyncFunction(
-    "app",
-    "identity",
-    "entitlements",
-    "provisioningProfile",
-    "profileIdentifier",
+  const plists = new Map<string, string>();
+  const sign = new Function(
     "run",
     "machOFiles",
     "mainExecutable",
     "infoPlistString",
-    m[1],
+    "cefHelperEntitlements",
+    "macosSigningEntitlements",
+    "V8_ENTITLEMENTS",
+    `${code}\nreturn sign;`,
   );
   await sign(
-    app,
-    identity,
-    entitlements,
-    undefined,
-    undefined,
-    (cmd: string[]) => calls.push(cmd),
+    (cmd: string[]) => {
+      calls.push(cmd);
+      // Read the plist while it exists: sign() removes the ones it wrote once it is done.
+      const at = cmd.indexOf("--entitlements");
+      if (at > 0) plists.set(cmd[cmd.length - 1], Deno.readTextFileSync(cmd[at + 1]));
+    },
     () => Promise.resolve(files),
     () => Promise.resolve(files[0]),
     (_app: string, key: string) =>
       Promise.resolve(key === "CFBundleIdentifier" ? "com.example.app" : ""),
-  );
-  return calls;
+    cefHelperEntitlements,
+    (defaults: Record<string, boolean>, o: MacosSigningEntitlementsOptions) =>
+      macosSigningEntitlements(defaults, {
+        ...o,
+        readSigned: (path) => Promise.resolve(signed[path] ?? ""),
+      }),
+    V8_ENTITLEMENTS,
+  )(app, identity, entitlements, undefined, undefined);
+  return { calls, plists };
 }
+
+/** A plist's `<key>` → `<true/>`/`<false/>` pairs (the entitlements here are all booleans). */
+function plistBools(xml: string): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [, k, v] of xml.matchAll(/<key>([^<]+)<\/key>\s*<(true|false)\/>/g)) {
+    out[k] = v === "true";
+  }
+  return out;
+}
+
+const JIT = "com.apple.security.cs.allow-jit";
+const UNSIGNED_MEM = "com.apple.security.cs.allow-unsigned-executable-memory";
+const NO_LIB_VALIDATION = "com.apple.security.cs.disable-library-validation";
 
 Deno.test("scaffoldFiles: the macOS re-sign keeps what deno desktop's ad-hoc pass set up", async () => {
   // `deno desktop` (codesign_macos_bundle) signs every Mach-O in Contents/MacOS with
   // `--identifier <CFBundleIdentifier>` and each CEF helper .app with its own entitlements. The
   // script's Developer ID re-sign must not reset the runtime dylib's identifier to its file name
-  // nor strip a helper's entitlements; explicit entitlements go on the bundle alone.
+  // nor strip nested code's entitlements; explicit entitlements go on the bundle alone.
   const id = "Developer ID Application: Example (TEAMID1234)";
-  const calls = await runScaffoldedSign(id, "ent.plist");
+  const { calls } = await runScaffoldedSign(id);
   const target = (c: string[]) => c[c.length - 1];
-  const app = "dist/My App.app";
+  const app = SIGN_APP;
   const dylib = calls.find((c) => target(c) === `${app}/Contents/MacOS/laufey.dylib`)!;
   const at = dylib.indexOf("--identifier");
   assertEquals(dylib.slice(at, at + 2), ["--identifier", "com.example.app"]);
   const framed = calls.filter((c) => target(c).includes("/Frameworks/"));
-  assertEquals(framed.length, 2);
-  for (const nested of [dylib, ...framed]) {
+  assertEquals(framed.length, 6);
+  // Code with no Chromium default (the runtime dylib, the framework's libraries, the plain and
+  // Alerts helpers) keeps its entitlements as they are.
+  const plain = [dylib, ...framed.filter((c) => !/\((Renderer|GPU|Plugin)\)/.test(target(c)))];
+  assertEquals(plain.length, 4);
+  for (const nested of plain) {
     assert(nested.includes("--preserve-metadata=entitlements"), nested.join(" "));
     assert(!nested.includes("--entitlements"), nested.join(" "));
+  }
+  for (const nested of [dylib, ...framed]) {
     assert(nested.includes("--timestamp") && nested.includes("runtime"), nested.join(" "));
     assertEquals(nested.slice(-3), ["-s", id, target(nested)]);
   }
@@ -345,32 +395,98 @@ Deno.test("scaffoldFiles: the macOS re-sign keeps what deno desktop's ad-hoc pas
   for (const c of framed) assert(!c.includes("--identifier"), c.join(" "));
   // The main executable is signed through the bundle, which comes last but for the verify.
   assert(!calls.some((c) => target(c) === `${app}/Contents/MacOS/laufey`));
-  assertEquals(calls[calls.length - 2], [
+  assertEquals(calls[calls.length - 2].slice(0, 6), [
     "codesign",
     "--force",
     "--timestamp",
     "--options",
     "runtime",
     "--entitlements",
-    "ent.plist",
-    "-s",
-    id,
-    app,
   ]);
+  assertEquals(calls[calls.length - 2].slice(7), ["-s", id, app]);
   assertEquals(calls[calls.length - 1], ["codesign", "--verify", "--deep", "--strict", app]);
-  // Without explicit entitlements the bundle keeps the ad-hoc pass's.
-  const plain = await runScaffoldedSign(id);
-  assertEquals(plain[plain.length - 2].slice(5, 6), ["--preserve-metadata=entitlements"]);
-  // Ad-hoc (no identity): the same identifier and entitlements, no timestamp.
-  const adhoc = await runScaffoldedSign(undefined, "ent.plist");
+  // Ad-hoc (no identity): the same identifier, every entitlement preserved, no timestamp.
+  const adhoc = (await runScaffoldedSign(undefined, "ent.plist")).calls;
   const adhocDylib = adhoc.find((c) => target(c) === `${app}/Contents/MacOS/laufey.dylib`)!;
   assert(adhocDylib.includes("--timestamp=none") && adhocDylib.includes("com.example.app"));
+  for (const c of adhoc.slice(0, -1)) {
+    assert(c.includes("--preserve-metadata=entitlements"), c.join(" "));
+    assert(!c.includes("--entitlements"), c.join(" "));
+  }
   assertEquals(adhoc[adhoc.length - 2].slice(5), [
     "--preserve-metadata=entitlements",
     "-s",
     "-",
     app,
   ]);
+});
+
+Deno.test("scaffoldFiles: a Developer ID re-sign grants V8 and the CEF helpers their JIT entitlements", async () => {
+  // Under the Hardened Runtime V8 cannot map JIT code without allow-jit. The main executable
+  // hosts V8 (Deno): it gets Deno's release-signing set (cli/entitlements.plist) minus the two
+  // injection-widening keys; Chromium's Renderer / GPU helpers get allow-jit and its Plugin
+  // helper allow-unsigned-executable-memory + disable-library-validation.
+  const id = "Developer ID Application: Example (TEAMID1234)";
+  const v8 = { [JIT]: true, [UNSIGNED_MEM]: true, [NO_LIB_VALIDATION]: true };
+  const { calls, plists } = await runScaffoldedSign(id);
+  const exact = (target: string) => calls.find((c) => c[c.length - 1] === target)!;
+  for (
+    const [helper, want] of [
+      [HELPER(" (Renderer)"), { [JIT]: true }],
+      [HELPER(" (GPU)"), { [JIT]: true }],
+      [HELPER(" (Plugin)"), { [UNSIGNED_MEM]: true, [NO_LIB_VALIDATION]: true }],
+    ] as const
+  ) {
+    const c = exact(helper);
+    const at = c.indexOf("--entitlements");
+    assertEquals(c.slice(0, at), ["codesign", "--force", "--timestamp", "--options", "runtime"]);
+    assertEquals(c.slice(at + 2), ["-s", id, helper]);
+    assertEquals(plistBools(plists.get(helper)!), want);
+  }
+  assertEquals(plistBools(plists.get(SIGN_APP)!), v8);
+  assertStringIncludes(plists.get(SIGN_APP)!, "<!DOCTYPE plist");
+  // sign() removes the plists it wrote.
+  for (const c of calls) {
+    const at = c.indexOf("--entitlements");
+    if (at > 0) assertEquals(await Deno.stat(c[at + 1]).catch(() => null), null);
+  }
+
+  // Explicit entitlements: the JIT keys are merged in, but a key the plist sets (false too) wins.
+  const dir = await Deno.makeTempDir();
+  try {
+    const explicit = join(dir, "ent.plist");
+    await Deno.writeTextFile(
+      explicit,
+      `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>` +
+        `<key>com.apple.security.device.camera</key><true/>` +
+        `<key>${NO_LIB_VALIDATION}</key><false/></dict></plist>\n`,
+    );
+    const merged = await runScaffoldedSign(id, explicit);
+    assertEquals(plistBools(merged.plists.get(SIGN_APP)!), {
+      "com.apple.security.device.camera": true,
+      [NO_LIB_VALIDATION]: false,
+      [JIT]: true,
+      [UNSIGNED_MEM]: true,
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+
+  // Without explicit ones, what deno desktop's pass applied is kept and the defaults join it.
+  const prior = `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>` +
+    `<key>com.apple.security.device.audio-input</key><true/></dict></plist>\n`;
+  const kept = await runScaffoldedSign(id, undefined, {
+    [SIGN_APP]: prior,
+    [HELPER(" (Renderer)")]: prior,
+  });
+  assertEquals(plistBools(kept.plists.get(SIGN_APP)!), {
+    "com.apple.security.device.audio-input": true,
+    ...v8,
+  });
+  assertEquals(plistBools(kept.plists.get(HELPER(" (Renderer)"))!), {
+    "com.apple.security.device.audio-input": true,
+    [JIT]: true,
+  });
 });
 
 Deno.test("scaffoldFiles: scaffolded Windows package script matches the examples/native copy", async () => {

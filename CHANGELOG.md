@@ -34,6 +34,21 @@ and this project adheres to
   stopped before it started. The install now ad-hoc signs unsigned nested code inside-out (the CEF
   framework's libraries, the framework, each helper app) before that re-sign; code that already
   carries a signature, as in the arm64 archive, is left alone.
+- **A Developer ID–signed macOS app gets the entitlements V8 needs under the Hardened Runtime.** The
+  package script signed the main executable (which hosts V8) and the CEF helpers with
+  `--options runtime` but no entitlements unless `DENEXT_ENTITLEMENTS` /
+  `desktop.macos.entitlements` supplied some, and the Hardened Runtime denies JIT code its
+  executable memory without `com.apple.security.cs.allow-jit` (fatal for V8 on Apple Silicon). With
+  an identity, the main executable is now signed with `allow-jit`,
+  `allow-unsigned-executable-memory` and `disable-library-validation` (Deno's own release-signing
+  set, `cli/entitlements.plist`, minus `allow-dyld-environment-variables` and
+  `disable-executable-page-protection`), the CEF Renderer and GPU helpers with Chromium's
+  `allow-jit`, and the Plugin helper with Chromium's `allow-unsigned-executable-memory` +
+  `disable-library-validation`. Explicit entitlements get the main executable's keys merged in;
+  a key they set, to `false` too, is kept. Without explicit ones the defaults join what
+  `deno desktop`'s signing pass applied. New in `denext/desktop`: `V8_ENTITLEMENTS`,
+  `cefHelperEntitlements` and `macosSigningEntitlements`. Regenerate an existing script with
+  `denext desktop package --regenerate-scripts`.
 
 ## [3.4.10] - 2026-10-11
 
