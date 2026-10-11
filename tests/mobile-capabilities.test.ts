@@ -591,6 +591,40 @@ Deno.test('secureStore: native fallback "session" when the plugin refuses the wr
   }
 });
 
+Deno.test('secureStore: fallback "session" does not cover a plugin usage error or a TypeError', async () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  sessionStorage.clear();
+  let failure: unknown = Object.assign(new Error("bad data"), { code: "invalidData" });
+  const plugin = {
+    internalGetItem: () => Promise.reject(failure),
+    internalSetItem: () => Promise.reject(failure),
+    internalRemoveItem: () => Promise.resolve({ success: true }),
+  };
+  try {
+    await inShell({ SecureStorage: plugin }, async () => {
+      for (const next of [failure, new TypeError("not a function")]) {
+        failure = next;
+        const set = await assertRejects(() =>
+          secureStore.set("tok", "t1", { fallback: "session" })
+        );
+        assertEquals(set, next);
+        const get = await assertRejects(() => secureStore.get("tok", { fallback: "session" }));
+        assertEquals(get, next);
+        assertEquals(sessionStorage.length, 0);
+      }
+      // An OS error the plugin reports (no usage code) still falls back.
+      failure = Object.assign(new Error("keychain locked"), { code: "osError" });
+      assertEquals(await secureStore.set("tok", "t1", { fallback: "session" }), {
+        stored: "session",
+      });
+    });
+  } finally {
+    console.warn = warn;
+    sessionStorage.clear();
+  }
+});
+
 /** A minimal IndexedDB: one database, one store, requests settling asynchronously. */
 function fakeIndexedDB() {
   const data = new Map<string, unknown>();

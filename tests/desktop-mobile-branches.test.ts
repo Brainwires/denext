@@ -236,6 +236,39 @@ Deno.test('secureStore: fallback "session" reads the copy when the keychain refu
   });
 });
 
+Deno.test('secureStore: fallback "session" covers store_failed but not a non-refusal error', async () => {
+  await withSession(async () => {
+    let code = "store_failed";
+    await inDesktop({
+      secureStore: {
+        get: () => {
+          throw { code, message: `secure store ${code}` };
+        },
+        set: () => {
+          throw { code, message: `secure store ${code}` };
+        },
+      },
+    }, async () => {
+      // A write the OS store rejected is a refusal: the session copy takes it.
+      assertEquals(await secureStore.set("tok", "t1", { fallback: "session" }), {
+        stored: "session",
+      });
+      sessionStorage.clear();
+      // Validation, the bridge gate, a timeout, an internal error: not refusals, so they reject
+      // with their own code even with the fallback opted in, and nothing lands in sessionStorage.
+      for (code of ["validation", "forbidden", "timeout", "internal"]) {
+        const set = await assertRejects(() =>
+          secureStore.set("tok", "t2", { fallback: "session" })
+        );
+        assertEquals((set as { code?: string }).code, code);
+        const get = await assertRejects(() => secureStore.get("tok", { fallback: "session" }));
+        assertEquals((get as { code?: string }).code, code);
+        assertEquals(sessionStorage.length, 0);
+      }
+    });
+  });
+});
+
 Deno.test("secureStore: fallback never covers requireBiometric", async () => {
   await withSession(async () => {
     await inDesktop({ secureStore: refusing() }, async () => {

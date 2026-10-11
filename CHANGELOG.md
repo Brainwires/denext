@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`secureStore`'s `fallback: "session"` takes only a genuine OS-store refusal.** Every rejection
+  that was not a `TypeError` fell back to `sessionStorage`, so a desktop `validation` or `forbidden`
+  error over the bridge, a bridge `timeout` or a programming error was swallowed into the not-secret
+  copy. The fallback now covers the desktop capability's `backend_unavailable` / `store_failed` /
+  `unavailable` and a rejection of the secure-storage plugin's own call other than its
+  `missingKey` / `invalidData` usage errors; anything else rejects with its own error.
+
 ## [3.4.8] - 2026-10-11
 
 ### Fixed
