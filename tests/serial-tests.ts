@@ -29,6 +29,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/desktop-doctor.test.ts",
   "tests/desktop-run.test.ts",
   "tests/desktop-security.test.ts",
+  "tests/desktop-sidecar-child.test.ts",
   "tests/desktop-updater.test.ts",
   "tests/desktop-windows-cef-trust.test.ts",
   "tests/devtools-meta.test.ts",
@@ -94,4 +95,7 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",
+  "src/desktop/sidecar-child.ts":
+    "readSidecarChildLaunch removes DENEXT_SIDECAR_CHILD / _ARGC only when they are set, which " +
+    "only a sidecar's child process (and the serial test of it) does",
 };
