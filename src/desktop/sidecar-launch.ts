@@ -70,6 +70,10 @@ try { process.stdout.write = writer(out); process.stderr.write = writer(err); } 
 for (const [key, value] of [["connected", false], ["channel", undefined], ["send", undefined], ["disconnect", undefined]]) {
   try { Object.defineProperty(process, key, { value, configurable: true, writable: true }); } catch { /* keep */ }
 }
+// Nor does it have a location (Node's main thread has none): a blob: worker's WorkerLocation reads
+// origin "null", and a library that resolves URLs against location.origin + location.pathname
+// (Effect's Url.make) would turn every request into "nullnull/<uuid>/…".
+try { Object.defineProperty(globalThis, "location", { value: undefined, configurable: true, writable: true }); } catch { /* keep */ }
 const exit = process.exit.bind(process);
 process.exit = (code) => {
   const c = code ?? process.exitCode ?? 0;

@@ -678,6 +678,27 @@ Deno.test("worker launcher: a module that fails to load reports the error", asyn
   }
 });
 
+Deno.test("worker launcher: the module sees no globalThis.location (as Node's main thread)", async () => {
+  // A blob: worker's WorkerLocation reads origin "null"; a library that resolves URLs against
+  // `location.origin + location.pathname` (Effect's Url.make) then fails every request.
+  const { dir, entry } = await sidecarModule(
+    'console.log("location " + typeof globalThis.location + " " + ("location" in globalThis ? String(globalThis.location) : "-"));\n' +
+      "globalThis.denextSidecar.ready();\n",
+  );
+  const ctx = realCtx(def());
+  const inst = await workerSidecarLauncher({ entry })(ctx);
+  try {
+    await until(() => ctx.readySignals === 1);
+    assert(
+      ctx.lines.includes("stdout:location undefined undefined"),
+      `the module saw a location: ${JSON.stringify(ctx.lines)}`,
+    );
+  } finally {
+    await inst.stop(0);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** A program sidecar: echoes its first stdin line, then exits when stdin closes (or on SIGTERM). */
 const PROGRAM = `
 const reader = Deno.stdin.readable.pipeThrough(new TextDecoderStream()).getReader();

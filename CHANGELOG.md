@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A module sidecar no longer sees the worker's `location`.** A `desktop.sidecars` `run: { module }`
+  backend runs in a `blob:` worker, whose `WorkerLocation` reads origin `"null"`, so a library that
+  resolves URLs against `location.origin + location.pathname` (Effect's `Url.make`, behind every
+  `HttpClient` request) built `nullnull/<uuid>/…` and every request failed with `Invalid URL`. The
+  worker now hides `globalThis.location` before the module loads, as Node's main thread has none.
+
 - **`secureStore`'s `fallback: "session"` takes only a genuine OS-store refusal.** Every rejection
   that was not a `TypeError` fell back to `sessionStorage`, so a desktop `validation` or `forbidden`
   error over the bridge, a bridge `timeout` or a programming error was swallowed into the not-secret
