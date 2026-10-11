@@ -20033,8 +20033,8 @@
           "slug": "installKeyboardInset",
           "kind": "function",
           "signature": "installKeyboardInset(opts?: KeyboardInsetOptions): () => void",
-          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
-          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the on-screen keyboard's height in px, so layout can\nlift a composer or a bottom bar above it: `padding-bottom: var(--denext-keyboard-inset)`.\n\nThe value is derived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame.\nIt is set to `0px` immediately, and stays `0px` where `visualViewport` is unavailable.\n\nThis is for shells whose Capacitor Keyboard plugin is configured with `resize: \"none\"`,\nwhere the webview keeps its size and the keyboard covers the page. With `resize: \"native\"`\nthe webview itself shrinks, so the inset is always 0 and this is unnecessary.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
+          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
+          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so\nlayout can lift a composer or a bottom bar above it: `padding-bottom:\nvar(--denext-keyboard-inset)`.\n\nIn a browser and on Android it is\nderived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame; it\nstays `0px` where `visualViewport` is unavailable. In the iOS shell with `@capacitor/keyboard`\nit follows the plugin's will-show / will-hide: the keyboard's height while it slides in over\nthe page, then `0` once the shell has resized the WebView (`resize: \"native\"`, the default),\n`<body>` (`\"body\"`) or `ion-app` (`\"ionic\"`) around it, which the plugin does only after the\nkeyboard's animation; with `resize: \"none\"` it stays the keyboard's height. It is set to `0px`\nimmediately.\n\nPass it as `VirtualList`'s `keyboardInset` and a chat (`anchor=\"end\"`) keeps its last message\nabove the keyboard from the moment the keyboard starts to open, in every resize mode, with no\njump when the shell's resize lands.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
           "params": [
             {
               "name": "opts",
@@ -23961,15 +23961,15 @@
           "slug": "useKeyboardInset",
           "kind": "function",
           "signature": "useKeyboardInset(opts?: KeyboardInsetOptions): number",
-          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).",
-          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the current keyboard height in px (`0` during SSR and\nbefore mount).",
+          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the px of the page the keyboard currently covers (0 during SSR and before mount).",
+          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the px of the page the keyboard currently covers (`0`\nduring SSR and before mount).",
           "params": [
             {
               "name": "opts",
               "doc": "{ property }, the custom property to maintain."
             }
           ],
-          "returns": "The on-screen keyboard's height in CSS px.",
+          "returns": "The px of the page the on-screen keyboard covers.",
           "examples": [
             "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
           ],

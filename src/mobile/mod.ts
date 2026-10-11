@@ -24,8 +24,8 @@
  *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions
  *   reach it as `{ directory: { picked: handle } }` (a browser with the File System Access API
  *   issues page-lifetime handles too); its `path` is display-only.
- * - {@linkcode installKeyboardInset} / {@linkcode useKeyboardInset}: the keyboard height as
- *   `--denext-keyboard-inset`, for shells with Keyboard `resize: "none"`.
+ * - {@linkcode installKeyboardInset} / {@linkcode useKeyboardInset}: the part of the page the
+ *   keyboard covers, as `--denext-keyboard-inset` (a chat `VirtualList`'s `keyboardInset`).
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
  * - {@linkcode installMomentumSafeScroll} / {@linkcode useMomentumSafeScroll}: keep iOS
  *   momentum scrolling alive while virtualized lists correct the scroll offset mid-fling.

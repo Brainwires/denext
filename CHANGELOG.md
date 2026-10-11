@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Fixed
 
+- **A chat keeps its last message above the iOS keyboard while the Capacitor shell resizes.**
+  `@capacitor/keyboard` takes the keyboard's notifications away from WebKit, so the visual
+  viewport never moves, and with `resize: "native"` (the default), `"body"` or `"ionic"` it
+  resizes the WebView / `<body>` / `ion-app` only after the keyboard's animation plus 200 ms.
+  `useKeyboardInset()` read 0 the whole time, so a `VirtualList` chat given it as
+  `keyboardInset` was covered while the keyboard slid in and jumped when the resize landed; the
+  documented `useKeyboard().height` instead added the room on top of the resize (the last
+  message ended a keyboard's height too high). In the iOS shell the inset now follows the
+  plugin's will-show / will-hide: the keyboard's height while it covers the page, less however
+  far the shell has resized the app since, so it drops to 0 as the viewport shrinks and the
+  last message does not move (with `resize: "none"` it stays the keyboard's height). The lists
+  and mobile guides now pass `useKeyboardInset()` to `keyboardInset`.
+
 - **A SPA build folds `feature("KEY")` in plain `.ts` / `.mts` / `.js` / `.mjs` modules too.**
   The SPA's esbuild (compat) production build ran the fold only over `.tsx` / `.jsx` components,
   so a hook or store calling `feature()` kept the runtime call (still reading the configured

@@ -1,11 +1,13 @@
 /**
- * On-screen keyboard inset for `denext/mobile`: the keyboard's height, in CSS px, as a custom
- * property on `<html>` and as a hook value.
+ * On-screen keyboard inset for `denext/mobile`: the part of the page the keyboard covers, in CSS
+ * px, as a custom property on `<html>` and as a hook value.
  *
  * @module
  */
 
 import { useEffect, useState } from "../runtime/hooks.ts";
+import { nativePlatform } from "./bridge.ts";
+import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
 /** The custom property {@linkcode installKeyboardInset} maintains by default. */
 const DEFAULT_PROPERTY = "--denext-keyboard-inset";
@@ -68,6 +70,118 @@ export function watchInset(onInset: (px: number) => void): () => void {
   };
 }
 
+/** The slice of `@capacitor/keyboard`'s JS side the iOS shell's inset listens to. */
+interface ShellKeyboard {
+  addListener(
+    eventName: "keyboardWillShow" | "keyboardWillHide",
+    listener: (info?: { keyboardHeight?: number }) => void,
+  ): ListenerHandle | Promise<ListenerHandle>;
+  getResizeMode?(): Promise<{ mode?: string }>;
+}
+
+/** The element `@capacitor/keyboard` resizes in `mode` (`null`: the WebView itself, or none). */
+function resizedElement(mode: string): { getBoundingClientRect(): { height: number } } | null {
+  const doc = (globalThis as {
+    document?: { body?: unknown; querySelector?: (s: string) => unknown };
+  }).document;
+  const el = mode === "body"
+    ? doc?.body
+    : mode === "ionic"
+    ? doc?.querySelector?.("ion-app")
+    : null;
+  const rect = (el as { getBoundingClientRect?: unknown } | null | undefined)
+    ?.getBoundingClientRect;
+  return typeof rect === "function" ? el as { getBoundingClientRect(): { height: number } } : null;
+}
+
+/** Watch `el`'s `style` attribute (the shell sets its height inline); returns a stop function. */
+function watchStyle(el: unknown, cb: () => void): () => void {
+  const MO = (globalThis as { MutationObserver?: typeof MutationObserver }).MutationObserver;
+  if (!el || typeof MO !== "function") return () => {};
+  const mo = new MO(cb);
+  mo.observe(el as Node, { attributes: true, attributeFilter: ["style"] });
+  return () => mo.disconnect();
+}
+
+/**
+ * The inset in the iOS shell with `@capacitor/keyboard`. The plugin takes the keyboard's
+ * notifications away from WebKit, so the visual viewport does not move; it reports the keyboard
+ * on will-show / will-hide and, in its `native` / `body` / `ionic` modes, resizes the WebView /
+ * `<body>` / `ion-app` only once the keyboard's animation has run (plus 200 ms). The inset is the
+ * will-show height less how far the shell has resized the app since: the whole keyboard while it
+ * slides in over the page, `0` once the app has shrunk around it, and the whole keyboard
+ * throughout with `resize: "none"`. A bottom-anchored view that adds the inset as room (a chat:
+ * `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole way, with
+ * no jump when the resize lands.
+ */
+function watchShellInset(plugin: ShellKeyboard, onInset: (px: number) => void): () => void {
+  let mode = "native"; // the plugin's default until it says otherwise
+  let height = 0;
+  let base = 0;
+  let unwatch = () => {};
+  const size = (): number => {
+    const el = resizedElement(mode);
+    return el ? el.getBoundingClientRect().height : num(globalThis.innerHeight);
+  };
+  const report = () => {
+    const resized = mode === "none" ? 0 : Math.max(0, base - size());
+    onInset(Math.max(0, Math.round(height - resized)));
+  };
+  const watch = () => {
+    unwatch();
+    const g = globalThis as { addEventListener?: unknown; removeEventListener?: unknown };
+    const stopStyle = watchStyle(resizedElement(mode), report);
+    const listens = typeof g.addEventListener === "function";
+    if (listens) globalThis.addEventListener("resize", report);
+    unwatch = () => {
+      stopStyle();
+      if (listens) globalThis.removeEventListener("resize", report);
+      unwatch = () => {};
+    };
+  };
+  const offShow = listenerDisposer(plugin.addListener("keyboardWillShow", (info) => {
+    if (height === 0) {
+      base = size();
+      watch();
+    }
+    height = Math.max(0, Math.round(num(info?.keyboardHeight)));
+    report();
+  }));
+  const offHide = listenerDisposer(plugin.addListener("keyboardWillHide", () => {
+    height = 0;
+    unwatch();
+    report();
+  }));
+  let active = true;
+  plugin.getResizeMode?.().then((result) => {
+    if (!active || typeof result?.mode !== "string") return;
+    mode = result.mode;
+    if (height === 0) return;
+    base = size(); // the shell resizes only after the animation: still the full size
+    watch();
+  }, () => {});
+  onInset(0);
+  return () => {
+    active = false;
+    offShow();
+    offHide();
+    unwatch();
+  };
+}
+
+/** A finite number, else 0. */
+function num(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Where the inset comes from: the iOS shell's keyboard plugin, else the visual viewport. */
+function watchKeyboardInset(onInset: (px: number) => void): () => void {
+  const plugin = nativePlatform() === "ios"
+    ? nativePlugin<ShellKeyboard>("Keyboard", ["addListener"])
+    : undefined;
+  return plugin ? watchShellInset(plugin, onInset) : watchInset(onInset);
+}
+
 /** How many live installs own each custom property (created on first install). */
 let owners: Map<string, number> | undefined;
 
@@ -91,7 +205,7 @@ function install(property: string, onInset?: (px: number) => void): () => void {
   if (typeof document === "undefined") return () => {};
   const style = document.documentElement.style;
   const release = claim(property);
-  const stop = watchInset((px) => {
+  const stop = watchKeyboardInset((px) => {
     style.setProperty(property, `${px}px`);
     onInset?.(px);
   });
@@ -103,16 +217,23 @@ function install(property: string, onInset?: (px: number) => void): () => void {
 
 /**
  * Keep a CSS custom property on `document.documentElement` (default
- * `--denext-keyboard-inset`) equal to the on-screen keyboard's height in px, so layout can
- * lift a composer or a bottom bar above it: `padding-bottom: var(--denext-keyboard-inset)`.
+ * `--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so
+ * layout can lift a composer or a bottom bar above it: `padding-bottom:
+ * var(--denext-keyboard-inset)`.
  *
- * The value is derived from `window.visualViewport` (`innerHeight - visualViewport.height -
- * visualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame.
- * It is set to `0px` immediately, and stays `0px` where `visualViewport` is unavailable.
+ * In a browser and on Android it is
+ * derived from `window.visualViewport` (`innerHeight - visualViewport.height -
+ * visualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame; it
+ * stays `0px` where `visualViewport` is unavailable. In the iOS shell with `@capacitor/keyboard`
+ * it follows the plugin's will-show / will-hide: the keyboard's height while it slides in over
+ * the page, then `0` once the shell has resized the WebView (`resize: "native"`, the default),
+ * `<body>` (`"body"`) or `ion-app` (`"ionic"`) around it, which the plugin does only after the
+ * keyboard's animation; with `resize: "none"` it stays the keyboard's height. It is set to `0px`
+ * immediately.
  *
- * This is for shells whose Capacitor Keyboard plugin is configured with `resize: "none"`,
- * where the webview keeps its size and the keyboard covers the page. With `resize: "native"`
- * the webview itself shrinks, so the inset is always 0 and this is unnecessary.
+ * Pass it as `VirtualList`'s `keyboardInset` and a chat (`anchor="end"`) keeps its last message
+ * above the keyboard from the moment the keyboard starts to open, in every resize mode, with no
+ * jump when the shell's resize lands.
  *
  * Several installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}
  * components); the property is removed when the last one is disposed. SSR-safe: without a
@@ -134,11 +255,11 @@ export function installKeyboardInset(opts: KeyboardInsetOptions = {}): () => voi
 
 /**
  * Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,
- * disposes it on unmount, and returns the current keyboard height in px (`0` during SSR and
- * before mount).
+ * disposes it on unmount, and returns the px of the page the keyboard currently covers (`0`
+ * during SSR and before mount).
  *
  * @param opts `{ property }`, the custom property to maintain.
- * @returns The on-screen keyboard's height in CSS px.
+ * @returns The px of the page the on-screen keyboard covers.
  * @example
  * ```tsx
  * "use client";

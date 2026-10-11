@@ -392,10 +392,11 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
   /** Style of the footer's wrapper. */
   readonly ListFooterComponentStyle?: Readonly<Record<string, string | number>>;
   /**
-   * Px of the list's viewport covered by the on-screen keyboard (e.g. `useKeyboard().height`
-   * from `denext/mobile` when the keyboard overlays the page). The list adds that much room
-   * after the last row, and a list at its end (`anchor="end"`, a chat) stays at its end —
-   * the last message above the keyboard, with one adjustment.
+   * Px of the list's viewport covered by the on-screen keyboard: `useKeyboardInset()` from
+   * `denext/mobile`, which is the covered part in every Capacitor resize mode (not
+   * `useKeyboard().height`, the whole keyboard even once the shell has resized the app). The
+   * list adds that much room after the last row, and a list at its end (`anchor="end"`, a chat)
+   * stays at its end — the last message above the keyboard, with one adjustment.
    */
   readonly keyboardInset?: number;
   /**
