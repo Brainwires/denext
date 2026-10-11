@@ -442,7 +442,10 @@ deno task desktop:package --arch universal`}
       </ul>
       <p>
         An ad-hoc signature (no identity) keeps every entitlement <code>deno desktop</code>{" "}
-        applied. Check what an app was signed with with{" "}
+        applied and, like{" "}
+        <code>deno desktop</code>&apos;s own ad-hoc pass, leaves the Hardened Runtime off: only
+        notarization needs it, and that needs an identity. Check what an app was signed with with
+        {" "}
         <code>codesign -d --entitlements - MyApp.app/Contents/MacOS/&lt;executable&gt;</code>.
       </p>
       <h3 id="desktop-macos-profile">A provisioning profile and restricted entitlements</h3>

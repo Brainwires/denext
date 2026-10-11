@@ -413,12 +413,45 @@ Deno.test("scaffoldFiles: the macOS re-sign keeps what deno desktop's ad-hoc pas
     assert(c.includes("--preserve-metadata=entitlements"), c.join(" "));
     assert(!c.includes("--entitlements"), c.join(" "));
   }
-  assertEquals(adhoc[adhoc.length - 2].slice(5), [
+  assertEquals(adhoc[adhoc.length - 2].slice(3), [
     "--preserve-metadata=entitlements",
     "-s",
     "-",
     app,
   ]);
+});
+
+Deno.test("scaffoldFiles: an ad-hoc re-sign leaves the Hardened Runtime off, as deno desktop's pass does", async () => {
+  // Without an identity (a reseal after the launch config, a universal lipo merge) the Hardened
+  // Runtime is not wanted: only notarization needs it, and that needs a real identity. With it on,
+  // the ad-hoc signature would deny V8 (main executable) and the CEF Renderer / GPU helpers the
+  // executable memory their JIT needs, since this path applies no JIT entitlements.
+  // codesign_one in the runtime's cli/tools/desktop.rs skips `--options runtime` for identity "-";
+  // the re-sign matches it.
+  const app = SIGN_APP;
+  const { calls, plists } = await runScaffoldedSign(undefined);
+  assertEquals(plists.size, 0);
+  const adhoc = (target: string, ident: string[] = []) => [
+    "codesign",
+    "--force",
+    "--timestamp=none",
+    "--preserve-metadata=entitlements",
+    ...ident,
+    "-s",
+    "-",
+    target,
+  ];
+  assertEquals(calls, [
+    adhoc(`${app}/Contents/MacOS/laufey.dylib`, ["--identifier", "com.example.app"]),
+    ...[" (Renderer)", " (GPU)", " (Plugin)", " (Alerts)", ""].map((s) => adhoc(HELPER(s))),
+    adhoc(
+      `${app}/Contents/Frameworks/Chromium Embedded Framework.framework/Versions/A/Libraries/libEGL.dylib`,
+    ),
+    adhoc(app),
+    ["codesign", "--verify", "--deep", "--strict", app],
+  ]);
+  // Explicit entitlements do not change an ad-hoc pass either: no runtime, no plist.
+  assertEquals((await runScaffoldedSign(undefined, "ent.plist")).calls, calls);
 });
 
 Deno.test("scaffoldFiles: a Developer ID re-sign grants V8 and the CEF helpers their JIT entitlements", async () => {

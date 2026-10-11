@@ -1001,7 +1001,9 @@ async function mainExecutable(app: string): Promise<string> {
 }
 
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
- * (required for notarization). Without one: an ad-hoc signature (dev/local only). It keeps what
+ * (required for notarization). Without one: an ad-hoc signature (dev/local only) with neither,
+ * as deno desktop's own ad-hoc pass signs: the Hardened Runtime would deny V8 and the CEF
+ * helpers JIT memory, and only notarization (which needs an identity) requires it. It keeps what
  * deno desktop's own ad-hoc pass set up: each Mach-O beside the main executable signs as the
  * bundle's CFBundleIdentifier, and nested code (the CEF helper apps) keeps its entitlements.
  * With an identity, the Hardened Runtime needs entitlements for JIT code: the main executable
@@ -1016,6 +1018,7 @@ async function sign(
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
+  const hardened = identity ? ["--options", "runtime"] : [];
   const mainExe = await mainExecutable(app);
   const bundleId = await infoPlistString(app, "CFBundleIdentifier");
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
@@ -1057,8 +1060,7 @@ async function sign(
         "codesign",
         "--force",
         ts,
-        "--options",
-        "runtime",
+        ...hardened,
         ...await entitlementArgs(cefHelperEntitlements(file), file),
         ...ident,
         "-s",
@@ -1072,8 +1074,7 @@ async function sign(
       "codesign",
       "--force",
       ts,
-      "--options",
-      "runtime",
+      ...hardened,
       ...await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
       "-s",
       id,

@@ -49,6 +49,14 @@ and this project adheres to
   `deno desktop`'s signing pass applied. New in `denext/desktop`: `V8_ENTITLEMENTS`,
   `cefHelperEntitlements` and `macosSigningEntitlements`. Regenerate an existing script with
   `denext desktop package --regenerate-scripts`.
+- **An ad-hoc macOS re-sign no longer turns on the Hardened Runtime.** Without
+  `DENEXT_CODESIGN_IDENTITY`, the package script's re-sign (after it writes the launch config, or
+  after a universal lipo merge) still passed `--options runtime` but applied no JIT entitlements,
+  so V8 in the main executable and the CEF Renderer / GPU helpers could be denied the executable
+  memory their JIT needs on Apple Silicon. The ad-hoc re-sign now omits `--options runtime`, as
+  `deno desktop`'s own ad-hoc signing pass does; only notarization needs the Hardened Runtime, and
+  it needs a real identity. Regenerate an existing script with
+  `denext desktop package --regenerate-scripts`.
 
 ## [3.4.10] - 2026-10-11
 
