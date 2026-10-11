@@ -57,8 +57,9 @@ export async function spaIslandsTransform(source: string): Promise<string | null
 /**
  * An esbuild plugin applying denext's enabled SPA source transforms (the `client:*` island
  * rewrite, the auto-memo compiler and/or the feature-flag fold) to the app's own first-party
- * component modules as they load. Returns `undefined` when none is enabled, so nothing extra
- * runs.
+ * component modules as they load; with `features` configured, the fold also covers the app's
+ * plain `.ts`/`.mts`/`.js`/`.mjs` modules that import `denext/feature`. Returns `undefined`
+ * when none is enabled, so nothing extra runs.
  *
  * @param projectDir Absolute project root — only first-party source under it is transformed.
  * @param config The resolved denext config (gates each transform).
@@ -71,8 +72,32 @@ export function spaSourceTransformPlugin(
 ): esbuild.Plugin | undefined {
   const transform = spaSourceTransform(config, islands);
   if (!transform) return undefined;
-  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, transform);
+  const components = firstPartyTsxPlugin("denext-spa-transforms", projectDir, transform);
+  const features = featureFlags(config);
+  if (Object.keys(features).length === 0) return components;
+  // A hook or store in a plain `.ts`/`.mts`/`.js`/`.mjs` module calling `feature()` is folded
+  // too (the App Router's client-module fold does the same). Only a module that imports
+  // `denext/feature` is claimed — every other one loads through the deno-loader untouched.
+  const modules = firstPartyTsxPlugin(
+    "denext-spa-feature-fold",
+    projectDir,
+    featureFoldTransform(features),
+    { filter: PLAIN_MODULE_FILTER, deferUnless: FEATURE_SPECIFIER },
+  );
+  return {
+    name: "denext-spa-transforms",
+    setup(build) {
+      components.setup(build);
+      modules.setup(build);
+    },
+  };
 }
+
+/** The plain (non-component) module sources the feature fold also claims. */
+const PLAIN_MODULE_FILTER = /\.(?:m?ts|m?js)$/;
+
+/** Every foldable `feature()` call is bound by an import of this specifier. */
+const FEATURE_SPECIFIER = "denext/feature";
 
 /**
  * The enabled SPA source transforms (auto-memo compiler, then the feature-flag fold) chained into

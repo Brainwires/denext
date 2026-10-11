@@ -383,7 +383,7 @@ Deno.test("SPA dev: a `.ts` custom-hook module is instrumented (ts loader) with 
   }
 });
 
-Deno.test("production SPA source-transform plugin keeps its .tsx/.jsx-only filter", async () => {
+Deno.test("production SPA source-transform plugin: components .tsx/.jsx; a plain module only for the fold", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-spa-prod-filter-" });
   try {
     const plugin = spaSourceTransformPlugin(
@@ -391,12 +391,26 @@ Deno.test("production SPA source-transform plugin keeps its .tsx/.jsx-only filte
       { features: { SOMETHING: true } } as ProjectPaths["config"],
     );
     assert(plugin, "the feature fold is enabled for this fixture config");
-    const { filter, load } = onLoadOf(plugin);
-    assertEquals(filter.source, String.raw`\.(tsx|jsx)$`);
-    assert(!filter.test("useCart.ts"), "a .ts module is never claimed by the production plugin");
+    const loads: { filter: RegExp; load: ReturnType<typeof onLoadOf>["load"] }[] = [];
+    plugin.setup(
+      {
+        initialOptions: {},
+        onLoad: (opts: { filter: RegExp }, load: (typeof loads)[number]["load"]) =>
+          loads.push({ filter: opts.filter, load }),
+        onResolve: () => {},
+      } as unknown as esbuild.PluginBuild,
+    );
+    const [components, plain] = loads;
+    assertEquals(components.filter.source, String.raw`\.(tsx|jsx)$`);
+    assert(!components.filter.test("useCart.ts"), "components only");
     const file = join(dir, "App.tsx");
     await Deno.writeTextFile(file, `export function App() { return <p />; }\n`);
-    assertEquals((await load({ path: file }))?.loader, "tsx");
+    assertEquals((await components.load({ path: file }))?.loader, "tsx");
+    // A plain `.ts` hook is claimed only when it calls the fold's `feature()`.
+    assert(plain.filter.test("useCart.ts"));
+    const hook = join(dir, "useCart.ts");
+    await Deno.writeTextFile(hook, `export const useCart = () => [] as string[];\n`);
+    assertEquals(await plain.load({ path: hook }), null, "left to the deno-loader");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

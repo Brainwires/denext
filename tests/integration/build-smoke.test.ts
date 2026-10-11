@@ -187,6 +187,8 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * fiber extension's fields are listed once, for its shape and for the twin carry (−338 B);
  * and the AsyncContext `Variable` ships only in an `asyncContext` build, whose mode module now
  * exports it (−306 B). Each gate is asserted in {@link assertGatedRuntimeAbsent}.
+ * StrictMode's dev double-invoke and the `useDebugValue` recorder then moved behind
+ * `installDevtools` too (dev-render.ts, −237 B: 65,590 → 65,353 B), with no budget change.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -247,6 +249,8 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["oldKinds", "dev Fast Refresh swap resolution"],
     // The AsyncContext `Variable` ships only in an `asyncContext` build (async-context-mode.ts).
     ['"defaultValue"in', "AsyncContext Variable"],
+    // StrictMode's dev double-invoke (its boundary marker check) rides `installDevtools`.
+    ["__dnxStrict", "StrictMode dev double-invoke"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

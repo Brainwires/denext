@@ -25,7 +25,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "../runtime/hooks.t
 import { createPortal } from "../client/reconciler.ts";
 import { clamp, resolveDetents, rubberband, snapSheet, VelocityTracker } from "./gesture.ts";
 import { listenAll, type ListenerTarget } from "./listen.ts";
-import { prefersReducedMotion } from "./animation.ts";
+import { ensureStyles, prefersReducedMotion } from "./animation.ts";
 import { useBackHandler } from "../mobile/back-handler.ts";
 import { nativePlatform } from "../mobile/bridge.ts";
 import type { SheetDetent } from "./types.ts";
@@ -469,6 +469,14 @@ function panelStyle(g: Geometry, extra: SheetProps["style"]): Record<string, unk
   };
 }
 
+/**
+ * The sheet's stylesheet: the grabber keeps the focus ring for keyboard focus
+ * (`:focus-visible`) but not for a tap or a click. Exported for testing.
+ */
+export function sheetCss(): string {
+  return "[data-dnx-sheet-grabber]:focus:not(:focus-visible){outline:none}";
+}
+
 /** The grabber: a pill that also cycles the detents (a button, so keyboards reach it). */
 function grabberButton(onClick: () => void): VNode {
   return h("button", {
@@ -636,7 +644,10 @@ function useSheetState(props: SheetProps) {
   const [present, setPresent] = useState(props.open);
   const [detent, setDetent] = useState(() => Math.max(0, props.initialDetent ?? 0));
   const [content, setContent] = useState<number | undefined>(undefined);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    ensureStyles("sheet", sheetCss);
+    setMounted(true);
+  }, []);
   useEffect(() => void (props.open && setPresent(true)), [props.open]);
   return { mounted, present, setPresent, detent, setDetent, content, setContent };
 }

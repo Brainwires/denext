@@ -746,9 +746,14 @@ function screenHeader(rt: StackRt, item: ScreenItem): VNode | null {
     platform: rt.platform,
     canGoBack: item.index > 0,
     backHref: below?.href,
-    backTitle: below ? optionsOf(rt, below).title : undefined,
+    backTitle: below ? headerText(optionsOf(rt, below)) : undefined,
     onBack: () => rt.props.onPop(item.index - 1, { animated: true }),
   });
+}
+
+/** A screen's header text, as React Navigation's `getHeaderTitle`: a string `headerTitle`, else `title`. */
+function headerText(o: ScreenOptions): string | undefined {
+  return typeof o.headerTitle === "string" ? o.headerTitle : o.title;
 }
 
 /** Keep `el` in `map` under `id` while it is mounted. */

@@ -304,11 +304,11 @@ keys, a text selection's ends). Each has its own `offset`, so they need no speci
 
 ```tsx
 "use client";
-import { useKeyboard } from "denext/mobile";
+import { useKeyboardInset } from "denext/mobile";
 import { VirtualList } from "denext";
 
 export function Thread({ messages, loadOlder }: Props) {
-  const keyboard = useKeyboard(); // { visible, height } of the on-screen keyboard
+  const keyboardInset = useKeyboardInset(); // px of the page the keyboard covers
   return (
     <VirtualList
       style={{ height: "100%" }}
@@ -316,7 +316,7 @@ export function Thread({ messages, loadOlder }: Props) {
       keyExtractor={(m) => m.id}
       anchor="end"
       onStartReached={loadOlder}
-      keyboardInset={keyboard.height}
+      keyboardInset={keyboardInset}
       renderItem={(m) => <Message message={m} />}
     />
   );
@@ -326,13 +326,19 @@ export function Thread({ messages, loadOlder }: Props) {
 There is no `inverted` transform. The data stays in natural order, so the wheel, the
 scrollbar, keyboard scrolling and copy-paste all go the right way.
 
-**The keyboard.** When the keyboard covers the page (`resize: "none"` in the Capacitor Keyboard
-plugin, or `navigator.virtualKeyboard.overlaysContent`), pass its height as `keyboardInset`.
-The list makes that much room after the last row, and a list at its end stays at its end,
-so the last message sits right above the keyboard after one adjustment. When the WebView
-resizes for the keyboard instead (the default), the viewport shrinks and a pinned list stays
-pinned without the prop. The list never imports `denext/mobile` itself, so an app that does
-not use it pays nothing.
+**The keyboard.** `keyboardInset` is the part of the list the keyboard covers. The list makes
+that much room after the last row, and a list at its end stays at its end, so the last message
+sits right above the keyboard after one adjustment. When the viewport itself shrinks (the
+WebView resizing around the keyboard), a pinned list stays pinned too. Pass
+`useKeyboardInset()` from `denext/mobile`: it is the covered part in every setup. In the iOS
+Capacitor shell the Keyboard plugin's `resize: "native"` (the default), `"body"` and `"ionic"`
+modes resize the app only after the keyboard has finished sliding in (its 250 ms animation
+plus 200 ms). Until then the keyboard covers the page, so the inset is the keyboard's height
+and the last message rises with it; when the resize lands the inset drops to 0 as the viewport
+shrinks by the same amount, and the message does not move. With `resize: "none"` the inset
+stays the keyboard's height. Don't pass `useKeyboard().height`: that is the keyboard's whole
+height even after the shell has resized the app, so the room would be added twice. The list
+never imports `denext/mobile` itself, so an app that does not use it pays nothing.
 
 ### Huge lists
 

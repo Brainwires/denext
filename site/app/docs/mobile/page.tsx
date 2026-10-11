@@ -379,9 +379,18 @@ export function Shell({ children }: { children: VNodeChildren }) {
         </li>
         <li>
           <code>installKeyboardInset()</code> / <code>useKeyboardInset()</code>{" "}
-          — the on-screen keyboard's height, as the <code>--denext-keyboard-inset</code>{" "}
-          custom property (or a number of px), for shells that set the Keyboard plugin's{" "}
-          <code>resize: "none"</code>.
+          — the part of the page the on-screen keyboard covers, as the{" "}
+          <code>--denext-keyboard-inset</code>{" "}
+          custom property (or a number of px). In the iOS shell it follows the Keyboard
+          plugin&apos;s will-show: the keyboard&apos;s height while it slides in, then 0 once the
+          shell has resized the WebView (<code>resize: "native"</code>, the default),{" "}
+          <code>&lt;body&gt;</code> (<code>"body"</code>) or <code>ion-app</code>{" "}
+          (<code>"ionic"</code>), which the plugin does only after the keyboard&apos;s animation
+          plus 200 ms; with <code>resize: "none"</code>{" "}
+          it stays the keyboard&apos;s height. Elsewhere it is what the visual viewport lost. Pass
+          it as <code>VirtualList</code>&apos;s <code>keyboardInset</code>{" "}
+          and a chat keeps its last message above the keyboard the whole way, with no jump when the
+          resize lands.
         </li>
         <li>
           <code>installMomentumSafeScroll()</code> / <code>useMomentumSafeScroll()</code>{" "}
@@ -557,9 +566,11 @@ denext mobile add haptics share network secure-store`}
           page&apos;s <code>sessionStorage</code>{" "}
           instead, with one console warning naming the reason. That copy is{" "}
           <strong>not secret</strong>{" "}
-          (any script on the origin reads it) and ends with the tab, surviving a reload. A later
-          keychain <code>set</code> of the key clears it, <code>delete</code> clears both, and{" "}
-          <code>requireBiometric</code>{" "}
+          (any script on the origin reads it) and ends with the tab, surviving a reload.{" "}
+          <code>get</code>{" "}
+          with the option also reads it when the OS store answers with no value for the key (a value
+          the OS store holds wins). A later keychain <code>set</code> of the key clears it,{" "}
+          <code>delete</code> clears both, and <code>requireBiometric</code>{" "}
           never falls back. Without the option a refusal still rejects.
         </li>
         <li>
@@ -744,7 +755,7 @@ export function Chat({ messages }: { messages: { id: string; text: string }[] })
         The list stays pinned to its end with <code>column-reverse</code>{" "}
         here; for long histories use <code>VirtualList</code> with <code>anchor="end"</code> and
         {" "}
-        <code>keyboardInset</code>{" "}
+        <code>keyboardInset={"{useKeyboardInset()}"}</code>{" "}
         (<a href="/docs/lists#chat">Lists &amp; scrolling</a>). The iMessage-style swipe-down that
         drags the keyboard away is not available to a WebView&apos;s inner scrollers.
       </p>

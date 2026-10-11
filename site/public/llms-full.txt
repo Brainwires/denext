@@ -702,9 +702,9 @@ export default async function Blog() {
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
-branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
-read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
-not listed reads `false`. Flag names/states are embedded in the client bundle (don't encode secrets).
+branch is dead-code eliminated where it folds (native App Router client modules, `.ts` / `.js`
+included, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a
+string literal; a key not listed reads `false`. Flag names/states are embedded in the client bundle (don't encode secrets).
 
 ```tsx
 import { feature } from "denext/feature";
@@ -1178,7 +1178,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 3.4.7` — The denext framework version.
+- `VERSION: 3.4.8` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2365,7 +2365,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface IdTokenSession<User>` — The session half signInNative drives: nativeSession(...) from denext.
 - `type ImageSource = camera | photos | prompt` — Where pickImage gets the picture: "camera" (take one), "photos" (the photo library) or "prompt" (ask the user which; the default).
 - `initCrashReporting(opts: CrashReportingOptions): Promise<CrashReportingStarted>` — Start crash reporting once: load the SDKs, work out the release (the OTA UI version), and call Sentry.init(options, sibling.init). Later calls return the first call's result. Call it as early as possible, before the app renders.
-- `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
+- `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
 - `installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void` — Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.
 - `installOfflineScreen(opts?: OfflineScreenOptions): () => void` — Show a full-screen offline notice whenever the device loses its connection. Idempotent per page: a second call replaces the first. A no-op without a DOM (SSR, workers).
 - `isBackgroundLocationAvailable(): boolean` — Whether background location is available here: the shell has the BackgroundGeolocation plugin (denext mobile add background-location). When false, watchPositionInBackground watches in the foreground only.
@@ -2628,7 +2628,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useFontScale(): number` — Hook form of getFontScale: the factor, read on mount and kept current. It starts at the last value read (1 before any), so the first render uses the default size.
 - `useKeepAwake(active?: boolean): void` — Keep the screen from dimming and locking while the component is mounted and active is true (a video call, a recipe, a boarding pass).
 - `useKeyboard(): KeyboardState` — Hook form of onKeyboardChange: the keyboard's current state, updated on every change until unmount. It reads { visible: false, height: 0 } during SSR and before mount.
-- `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).
+- `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the px of the page the keyboard currently covers (0 during SSR and before mount).
 - `useLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): void` — Hook form of onLocalNotificationTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
 - `useLocation(options?: UseLocationOptions): LocationState` — Hook form of watchPosition: the latest fix and error, watched while mounted and enabled. Changing accuracy or minimumIntervalMs restarts the watch.
 - `interface UseLocationOptions` — Options for useLocation.

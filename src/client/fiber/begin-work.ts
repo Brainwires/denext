@@ -162,23 +162,41 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
 }
 
 interface FragmentMarkers {
-  strict: boolean;
   profiler: ProfilerMarker | undefined;
   provInfo: { id: symbol; value: unknown } | undefined;
   listPolicy: SuspenseListMarker | undefined;
 }
 
 // A Fragment is denext's overloaded carrier for four symbol-keyed marker props:
-// StrictMode, <Profiler>, a context Provider, and SuspenseList. Read them all off the
-// vnode's props in one place. Split out of {@linkcode beginFragment}.
+// StrictMode, <Profiler>, a context Provider, and SuspenseList. Read the last three off the
+// vnode's props in one place (StrictMode's is read by the dev path's {@linkcode markStrict}).
+// Split out of {@linkcode beginFragment}.
 function readFragmentMarkers(wip: Fiber): FragmentMarkers {
   const props = wip.vnode.props as Record<string, unknown> | null;
   return {
-    strict: props?.[STRICT_MODE_PROP] === true,
     profiler: props?.[PROFILER_PROP] as FragmentMarkers["profiler"],
     provInfo: props?.[PROVIDER as unknown as string] as FragmentMarkers["provInfo"],
     listPolicy: props?.[SUSPENSE_LIST_PROP] as FragmentMarkers["listPolicy"],
   };
+}
+
+/** StrictMode's boundary check; null until the dev path installs it. */
+let strictMarker: typeof markStrict | null = null;
+
+/** Make a StrictMode boundary's subtree strict (dev only): render/effect double-invoke. */
+function markStrict(wip: Fiber): void {
+  const props = wip.vnode.props as Record<string, unknown> | null;
+  if (!hasBit(wip, StrictBit) && devHydrationActive() && props?.[STRICT_MODE_PROP] === true) {
+    wip.bits |= StrictBit;
+  }
+}
+
+/**
+ * Install (`true`) or remove (`false`) the StrictMode boundary check. Called from the dev path
+ * only (`installDevtools`, via `installStrictMode`), so a production bundle never contains it.
+ */
+export function installStrictBoundaries(on = true): void {
+  strictMarker = on ? markStrict : null;
 }
 
 // A "fragment" fiber: the overloaded carrier for context Providers, StrictMode,
@@ -186,10 +204,10 @@ function readFragmentMarkers(wip: Fiber): FragmentMarkers {
 // marker, reconciles children under the derived context, then wires SuspenseList
 // membership. Split out of {@linkcode beginWork}.
 function beginFragment(wip: Fiber): Fiber | null {
-  const { strict, profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
+  const { profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
   // A StrictMode boundary makes its whole subtree strict in development — enabling
-  // render/effect double-invoke.
-  if (!hasBit(wip, StrictBit) && devHydrationActive() && strict) wip.bits |= StrictBit;
+  // render/effect double-invoke. Only the dev path installs the check.
+  if (strictMarker !== null) strictMarker(wip);
   // A <Profiler> boundary times its subtree's component renders.
   if (profiler) {
     fiberExt(wip).profiler = profiler;

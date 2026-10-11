@@ -52,18 +52,19 @@ function componentSourcesOnce(projectDir: string): () => Promise<string[]> {
   return () => scan ??= collectComponentSources(projectDir);
 }
 
-/** The plain-script extensions the AsyncContext pass instruments beyond `.tsx` / `.jsx`. */
+/** The plain-script extensions the client passes cover beyond `.tsx` / `.jsx`. */
 const SCRIPT_EXTS = new Set([".ts", ".mts", ".js", ".mjs"]);
 
 /**
- * The modules the AsyncContext pass instruments: every component source, plus each plain
- * `.ts` / `.js` / `.mts` / `.mjs` module of the project a client bundle can contain
- * ({@linkcode clientGraphModules}) — a hook or store that awaits inside `startTransition` kept
- * the time-window fallback when only `.tsx` / `.jsx` were scanned. A module only the server tree
- * reaches (a Flight page's data module, a `"use server"` module and what it imports) is left
- * alone. When the graph cannot be crawled, the component sources alone.
+ * The modules the AsyncContext pass instruments and the `feature()` fold rewrites: every
+ * component source, plus each plain `.ts` / `.js` / `.mts` / `.mjs` module of the project a
+ * client bundle can contain ({@linkcode clientGraphModules}) — a hook or store that awaits
+ * inside `startTransition`, or calls `feature("KEY")`, was missed when only `.tsx` / `.jsx`
+ * were scanned. A module only the server tree reaches (a Flight page's data module, a
+ * `"use server"` module and what it imports) is left alone. When the graph cannot be crawled,
+ * the component sources alone.
  */
-async function asyncContextSources(
+async function clientModuleSources(
   ctx: Pick<BuildContext, "projectDir" | "paths" | "manifest" | "flightRoutes">,
   components: string[],
 ): Promise<string[]> {
@@ -128,6 +129,10 @@ export async function clientTransforms(
 ): Promise<Record<string, string>> {
   const { projectDir, paths } = ctx;
   const sources = componentSourcesOnce(projectDir);
+  // The client-graph crawl is shared by the AsyncContext pass and the feature fold.
+  let clientSources: Promise<string[]> | null = null;
+  const clientModules = () =>
+    clientSources ??= sources().then((components) => clientModuleSources(ctx, components));
   let compilerMap: RewriteMap;
   if (reactCompilerEnabled(paths.config)) {
     log("auto-memo compiler: transforming components");
@@ -139,8 +144,7 @@ export async function clientTransforms(
   let asyncContextMap: RewriteMap;
   if (asyncContextEnabled(paths.config)) {
     log("async-context: instrumenting awaits for transition scoping");
-    const files = await asyncContextSources(ctx, await sources());
-    asyncContextMap = await compileAsyncContextModules(files, { outDir });
+    asyncContextMap = await compileAsyncContextModules(await clientModules(), { outDir });
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);
   const merged = { ...compilerMap, ...qrlMap, ...asyncContextMap };
@@ -149,7 +153,10 @@ export async function clientTransforms(
   // literal so `deno bundle` dead-code-eliminates the untaken branch.
   const features = featureFlags(paths.config);
   if (Object.keys(features).length > 0) {
-    const featureMap = await compileFeatureModules(await sources(), merged, { outDir, features });
+    const featureMap = await compileFeatureModules(await clientModules(), merged, {
+      outDir,
+      features,
+    });
     const folded = Object.keys(featureMap).length;
     if (folded > 0) log(`features: folded feature() flags in ${folded} module(s)`);
     Object.assign(merged, featureMap);

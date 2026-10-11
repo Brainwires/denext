@@ -8,6 +8,61 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.8] - 2026-10-11
+
+### Fixed
+
+- **A chat keeps its last message above the iOS keyboard while the Capacitor shell resizes.**
+  `@capacitor/keyboard` takes the keyboard's notifications away from WebKit, so the visual
+  viewport never moves, and with `resize: "native"` (the default), `"body"` or `"ionic"` it
+  resizes the WebView / `<body>` / `ion-app` only after the keyboard's animation plus 200 ms.
+  `useKeyboardInset()` read 0 the whole time, so a `VirtualList` chat given it as
+  `keyboardInset` was covered while the keyboard slid in and jumped when the resize landed; the
+  documented `useKeyboard().height` instead added the room on top of the resize (the last
+  message ended a keyboard's height too high). In the iOS shell the inset now follows the
+  plugin's will-show / will-hide: the keyboard's height while it covers the page, less however
+  far the shell has resized the app since, so it drops to 0 as the viewport shrinks and the
+  last message does not move (with `resize: "none"` it stays the keyboard's height). The lists
+  and mobile guides now pass `useKeyboardInset()` to `keyboardInset`.
+- **A SPA build folds `feature("KEY")` in plain `.ts` / `.mts` / `.js` / `.mjs` modules too.**
+  The SPA's esbuild (compat) production build ran the fold only over `.tsx` / `.jsx` components,
+  so a hook or store calling `feature()` kept the runtime call (still reading the configured
+  value) and its untaken branch shipped. The fold now also covers the app's own plain modules
+  that import `denext/feature`; any other module, and everything in `node_modules`, loads as
+  before, untouched.
+- **`secureStore.get(key, { fallback: "session" })` finds the session copy when the OS store reads
+  `null`.** The copy a refused `set(…, { fallback: "session" })` left in `sessionStorage` was read
+  only when the OS read REJECTED; a store that refuses writes but answers reads with "no such item"
+  (the Capacitor plugin, a desktop keychain) resolved `null` and the value was lost. `get` with the
+  fallback now answers from the copy when the OS store holds nothing for the key; a value the OS
+  store holds still wins, a successful OS `set` clears the copy and `delete` clears both.
+- **`feature("KEY")` in a plain `.ts` / `.mts` / `.js` / `.mjs` client module is folded at build.**
+  The native App Router build folded only `.tsx` / `.jsx` sources, so a hook or store calling
+  `feature()` kept the runtime call and its untaken branch shipped. The fold now covers every
+  project module a client bundle can contain (the same client-graph set the `asyncContext` pass
+  instruments, crawled once for both); a module only the server tree reaches reads the flag at
+  runtime, as before.
+- **`Sheet`'s grabber no longer shows the focus ring after a tap or a click.** The grabber is a
+  button, so pointer focus drew the browser's outline around the pill. The sheet now installs a
+  `[data-dnx-sheet-grabber]:focus:not(:focus-visible)` rule: keyboard focus (`:focus-visible`)
+  still shows the ring, pointer focus does not.
+- **Production client bundles no longer carry StrictMode's dev double-invoke or the
+  `useDebugValue` recorder.** Both only act in development, yet the reconciler shipped the
+  StrictMode boundary check, its second render pass and the debug-value recording in every
+  build. They are now installed by the dev entries (`installDevtools`) and `denext/testing`, as
+  the other dev-only diagnostics are, so a production bundle drops them: examples/hello's shared
+  runtime is 237 B smaller (65,590 → 65,353 B raw). Development behaviour is unchanged; in
+  production StrictMode stays a plain Fragment and `useDebugValue` a no-op.
+- **A native-stack header shows a string `headerTitle` over `title`.** When a screen set both,
+  React Native mode's `createNativeStackNavigator` drew `title`; React Navigation draws
+  `headerTitle` (its `getHeaderTitle`), and so does denext now, in the bar, the iOS large title
+  and the next screen's back label. `title` stays the screen's title for route announcements.
+- **A native-stack screen with no `title` shows its route name in the header.** React Native
+  mode's `createNativeStackNavigator` (and expo-router's `Stack`) drew an empty header when a
+  screen set neither `title` nor `headerTitle`, and dropped a string `headerTitle`; the title now
+  falls back to the string `headerTitle`, then the route name, as React Navigation does, and a
+  `headerTitle` function gets that title as `children`.
+
 ## [3.4.7] - 2026-10-11
 
 ### Added
@@ -12922,7 +12977,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.7...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.8...development
+[3.4.8]: https://jsr.io/@denext/denext@3.4.8
 [3.4.7]: https://jsr.io/@denext/denext@3.4.7
 [3.4.6]: https://jsr.io/@denext/denext@3.4.6
 [3.4.5]: https://jsr.io/@denext/denext@3.4.5

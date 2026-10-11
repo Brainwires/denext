@@ -56,9 +56,10 @@ export interface SecureStoreGetOptions {
   /** Accept the device passcode too for a biometric-gated value (default `false`). */
   readonly allowDeviceCredential?: boolean;
   /**
-   * `"session"`: when the OS secret store refuses the read, answer from the `sessionStorage` copy
-   * a `set(…, { fallback: "session" })` left (`null` when there is none), and warn once with the
-   * reason. Unset, a refusal rejects. See {@linkcode SecureStoreSetOptions.fallback}.
+   * `"session"`: when the OS secret store refuses the read, or answers that it holds no value for
+   * the key, answer from the `sessionStorage` copy a `set(…, { fallback: "session" })` left
+   * (`null` when there is none), and warn once with the reason. A value the OS store holds still
+   * wins over the copy. Unset, a refusal rejects. See {@linkcode SecureStoreSetOptions.fallback}.
    */
   readonly fallback?: SecureStoreFallback;
 }
@@ -175,15 +176,28 @@ function fallbackStore(
   return opted === "session" && !gated && isRefusal(err) ? session() : undefined;
 }
 
-/** Warn once that `fn` fell back to the not-secret `sessionStorage`, naming why. */
-function warnSessionFallback(fn: string, err: unknown): void {
+/** Warn once that `fn` fell back to the not-secret `sessionStorage`, naming why (`why`). */
+function warnSessionFallback(fn: string, why: string): void {
   if (warnedSessionFallback) return;
   warnedSessionFallback = true;
-  const reason = err instanceof Error ? err.message : String(err);
   console.warn(
     `denext: secureStore.${fn} fell back to sessionStorage (fallback: "session"), which is NOT ` +
-      `secret and ends with the tab; the OS secret store refused: ${reason}`,
+      `secret and ends with the tab; ${why}`,
   );
+}
+
+/** The fallback warning's reason for an OS-store refusal `err`. */
+function refusedBecause(err: unknown): string {
+  return `the OS secret store refused: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/** The `sessionStorage` copy of `key`, or `null` (none, or storage blocked). */
+function readSession(key: string): string | null {
+  try {
+    return session()?.getItem(SESSION_PREFIX + key) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Drop the `sessionStorage` copy of `key`, if any. */
@@ -358,7 +372,9 @@ async function osSet(
  *
  * `set(key, value, { fallback: "session" })` / `get(key, { fallback: "session" })` opt in to
  * `sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns
- * once and `set` resolves `{ stored: "session" }`. That copy is NOT secret and ends with the tab.
+ * once and `set` resolves `{ stored: "session" }`. `get` also answers from that copy when the OS
+ * store resolves with no value for the key (its own value, when present, wins). A successful OS
+ * `set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.
  *
  * `set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /
  * Touch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a
@@ -383,8 +399,16 @@ export const secureStore: SecureStore = {
     } catch (err) {
       const store = fallbackStore(options?.fallback, err);
       if (!store) throw err;
-      warnSessionFallback("get", err);
+      warnSessionFallback("get", refusedBecause(err));
       return store.getItem(SESSION_PREFIX + key);
+    }
+    if (raw === null && options?.fallback === "session") {
+      // The OS store answers but has nothing: a refused `set` may have left a session copy.
+      const copy = readSession(key);
+      if (copy !== null) {
+        warnSessionFallback("get", "the OS secret store holds no value for the key");
+        return copy;
+      }
     }
     if (raw !== undefined) return await ungated(raw, options);
     warnNativeFallback();
@@ -409,7 +433,7 @@ export const secureStore: SecureStore = {
     } catch (err) {
       const store = fallbackStore(options?.fallback, err, options?.requireBiometric === true);
       if (!store) throw err;
-      warnSessionFallback("set", err);
+      warnSessionFallback("set", refusedBecause(err));
       store.setItem(SESSION_PREFIX + key, data);
       return { stored: "session" };
     }

@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.7",
+          "signature": "VERSION: 3.4.8",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -20033,8 +20033,8 @@
           "slug": "installKeyboardInset",
           "kind": "function",
           "signature": "installKeyboardInset(opts?: KeyboardInsetOptions): () => void",
-          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
-          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the on-screen keyboard's height in px, so layout can\nlift a composer or a bottom bar above it: `padding-bottom: var(--denext-keyboard-inset)`.\n\nThe value is derived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame.\nIt is set to `0px` immediately, and stays `0px` where `visualViewport` is unavailable.\n\nThis is for shells whose Capacitor Keyboard plugin is configured with `resize: \"none\"`,\nwhere the webview keeps its size and the keyboard covers the page. With `resize: \"native\"`\nthe webview itself shrinks, so the inset is always 0 and this is unnecessary.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
+          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
+          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so\nlayout can lift a composer or a bottom bar above it: `padding-bottom:\nvar(--denext-keyboard-inset)`.\n\nIn a browser and on Android it is\nderived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame; it\nstays `0px` where `visualViewport` is unavailable. In the iOS shell with `@capacitor/keyboard`\nit follows the plugin's will-show / will-hide: the keyboard's height while it slides in over\nthe page, then `0` once the shell has resized the WebView (`resize: \"native\"`, the default),\n`<body>` (`\"body\"`) or `ion-app` (`\"ionic\"`) around it, which the plugin does only after the\nkeyboard's animation; with `resize: \"none\"` it stays the keyboard's height. It is set to `0px`\nimmediately.\n\nPass it as `VirtualList`'s `keyboardInset` and a chat (`anchor=\"end\"`) keeps its last message\nabove the keyboard from the moment the keyboard starts to open, in every resize mode, with no\njump when the shell's resize lands.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
           "params": [
             {
               "name": "opts",
@@ -22990,7 +22990,7 @@
           "kind": "variable",
           "signature": "secureStore: SecureStore",
           "doc": "A string key-value store for secrets.",
-          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. The gate is in\ndenext's code, not in the Keychain item (see {@linkcode SecureStoreSetOptions}).",
+          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. `get` also answers from that copy when the OS\nstore resolves with no value for the key (its own value, when present, wins). A successful OS\n`set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. The gate is in\ndenext's code, not in the Keychain item (see {@linkcode SecureStoreSetOptions}).",
           "params": [],
           "returns": "",
           "examples": [
@@ -23961,15 +23961,15 @@
           "slug": "useKeyboardInset",
           "kind": "function",
           "signature": "useKeyboardInset(opts?: KeyboardInsetOptions): number",
-          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).",
-          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the current keyboard height in px (`0` during SSR and\nbefore mount).",
+          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the px of the page the keyboard currently covers (0 during SSR and before mount).",
+          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the px of the page the keyboard currently covers (`0`\nduring SSR and before mount).",
           "params": [
             {
               "name": "opts",
               "doc": "{ property }, the custom property to maintain."
             }
           ],
-          "returns": "The on-screen keyboard's height in CSS px.",
+          "returns": "The px of the page the on-screen keyboard covers.",
           "examples": [
             "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
           ],

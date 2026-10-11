@@ -76,9 +76,9 @@ export default {
         <code>feature()</code> <strong>always returns the configured value</strong>{" "}
         — on the server and in the browser — so dev, SSR, and the client agree. Where the build can
         prove the value (a string-literal key), it folds the call to a literal so the untaken branch
-        is{" "}
-        <strong>dead-code eliminated</strong>: the native App Router (component modules), the SPA
-        bundle, and dev. On the <strong>compat (drop-in) App Router</strong>{" "}
+        is <strong>dead-code eliminated</strong>: the native App Router (its client modules,{" "}
+        <code>.ts</code> / <code>.js</code> ones included), the SPA bundle, and dev. On the{" "}
+        <strong>compat (drop-in) App Router</strong>{" "}
         path the flag is read at runtime instead, so the branch is <em>not</em>{" "}
         eliminated there. A key not listed reads <code>false</code>; a non-literal argument (<code>
           feature(name)

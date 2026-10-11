@@ -9,6 +9,7 @@
 import { act, createRoot, type Root } from "../client/mod.ts";
 import { setDocument } from "../client/reconciler.ts";
 import { installErrorTexts } from "../client/fiber/error-texts.ts";
+import { installDevRender } from "../client/fiber/dev-render.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
   DomDocument,
@@ -20,8 +21,10 @@ import {
 } from "./dom.ts";
 
 // Component tests read the reconciler's full error texts, as a dev build does (a production
-// bundle carries only the error codes).
+// bundle carries only the error codes), and get StrictMode's dev double-invoke and
+// `useDebugValue` recording (both still only while `__denextDev` is set).
 installErrorTexts();
+installDevRender();
 
 export type { TestElement } from "./dom.ts";
 // `render` accepts a denext element (`h(...)` → VNode); re-export the VNode type

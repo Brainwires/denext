@@ -18,6 +18,8 @@ import type {
   VirtualListProps,
 } from "../src/client/virtual/types.ts";
 import { type DomEl, fireEventOn, walkElements } from "../src/testing/dom.ts";
+import { useKeyboardInset } from "../src/mobile/keyboard.ts";
+import { fakePlugin, inShell, settle } from "./helpers/mobile-fakes.ts";
 
 // ---- harness ---------------------------------------------------------------------------------
 
@@ -1419,3 +1421,140 @@ Deno.test("iOS: with the REAL installMomentumSafeScroll shim (forced), deferral 
     }
   }
 });
+
+// ---- keyboard resize (Capacitor shell) ------------------------------------------------------
+
+/** Resize the list's own scroller to `height` (as the WebView / `<body>` does) and report it. */
+async function resizeScroller(screen: { container: TestElement }, height: number): Promise<void> {
+  const sc = scrollerOf(screen);
+  Object.defineProperty(sc, "clientHeight", { configurable: true, get: () => height });
+  const ro = FakeResizeObserver.instances[FakeResizeObserver.instances.length - 1];
+  await act(() => ro.cb([{ target: sc, borderBoxSize: [{ blockSize: height, inlineSize: 320 }] }]));
+}
+
+Deno.test("keyboard (WebView resize, no keyboardInset): a pinned chat re-pins its last row to the new bottom", async () => {
+  await withRO(async () => {
+    let data = rows(100);
+    const truth = (i: number) => (i % 3 === 0 ? 70 : 40);
+    const props = (d: Row[]) => ({
+      data: d,
+      anchor: "end" as const,
+      estimatedItemSize: 40,
+      viewportSize: 600,
+      renderItem: (r: Row) => h("span", null, r.text),
+    });
+    const screen = await render(list(props(data)));
+    await resizeScroller(screen, 600);
+    await measureAll(truth);
+    const bottomOf = (i: number) => visualTops(screen, truth).get(i)! + truth(i);
+    assertEquals(bottomOf(99), 600, "last message at the bottom");
+    await resizeScroller(screen, 260); // the WebView shrank around the keyboard
+    assertEquals(bottomOf(99), 260, "last message at the new bottom");
+    await resizeScroller(screen, 600); // and grew back
+    data = [...data, ...rows(1, 100)];
+    await screen.rerender(list(props(data)));
+    await measureAll(truth);
+    assertEquals(bottomOf(100), 600, "still pinned after the keyboard round trip");
+    await screen.unmount();
+  });
+});
+
+/** A MutationObserver stand-in: `fire()` runs every observer of an element's style. */
+class FakeMutationObserver {
+  static live = new Set<FakeMutationObserver>();
+  constructor(readonly cb: () => void) {}
+  observe(): void {
+    FakeMutationObserver.live.add(this);
+  }
+  disconnect(): void {
+    FakeMutationObserver.live.delete(this);
+  }
+  static fire(): void {
+    for (const mo of [...FakeMutationObserver.live]) mo.cb();
+  }
+}
+
+// The iOS shell with @capacitor/keyboard: the plugin reports the keyboard on will-show and resizes
+// the WebView (`native`) or `<body>` (`body`) only after the keyboard's animation plus 200 ms. A
+// chat fed `useKeyboardInset()` as `keyboardInset` keeps its last message right above the keyboard
+// from will-show on, and does not move when the resize lands (no double lift, no jump).
+for (const mode of ["native", "body"] as const) {
+  Deno.test(`keyboard (iOS shell, resize: "${mode}"): useKeyboardInset keeps a pinned chat's last row above the keyboard`, async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    let bodyHeight = 800;
+    const props = new Map<string, string>();
+    const globals = {
+      innerHeight: 800,
+      MutationObserver: FakeMutationObserver,
+      document: {
+        documentElement: {
+          style: {
+            setProperty: (k: string, v: string) => void props.set(k, v),
+            removeProperty: (k: string) => void props.delete(k),
+          },
+        },
+        body: { getBoundingClientRect: () => ({ height: bodyHeight }) },
+        querySelector: () => null,
+      },
+    };
+    const kb = fakePlugin(["hide", "setResizeMode", "getResizeMode"], {
+      getResizeMode: { mode },
+    });
+    await withRO(() =>
+      inShell("ios", { Keyboard: kb.plugin }, async () => {
+        let data = rows(100);
+        const truth = (i: number) => (i % 3 === 0 ? 70 : 40);
+        const Chat = (p: { data: Row[] }) =>
+          list({
+            data: p.data,
+            anchor: "end",
+            estimatedItemSize: 40,
+            viewportSize: 800,
+            keyboardInset: useKeyboardInset(),
+            renderItem: (r: Row) => h("span", null, r.text),
+          });
+        const screen = await render(h(Chat, { data }));
+        await settle();
+        await resizeScroller(screen, 800);
+        await measureAll(truth);
+        const bottomOf = (i: number) => visualTops(screen, truth).get(i)! + truth(i);
+        assertEquals(bottomOf(99), 800, "last message at the bottom");
+        // will-show: the keyboard starts to slide in over the page.
+        await act(() => kb.fire("keyboardWillShow", { keyboardHeight: 300 }));
+        await measureAll(truth);
+        assertEquals(props.get("--denext-keyboard-inset"), "300px");
+        assertEquals(bottomOf(99), 500, "last message above the keyboard at once");
+        // The shell's resize lands (animation + 200 ms later).
+        if (mode === "native") {
+          g.innerHeight = 500;
+          await act(() => globalThis.dispatchEvent(new Event("resize")));
+        } else {
+          bodyHeight = 500;
+          await act(() => FakeMutationObserver.fire());
+        }
+        await resizeScroller(screen, 500);
+        await measureAll(truth);
+        assertEquals(props.get("--denext-keyboard-inset"), "0px", "nothing covers the page now");
+        assertEquals(bottomOf(99), 500, "unmoved when the resize lands (no double lift)");
+        // A message arrives while typing: pinned above the keyboard.
+        data = [...data, ...rows(1, 100)];
+        await screen.rerender(h(Chat, { data }));
+        await measureAll(truth);
+        assertEquals(bottomOf(100), 500, "pinned while the keyboard is up");
+        // will-hide, then the shell restores the size.
+        await act(() => kb.fire("keyboardWillHide"));
+        if (mode === "native") {
+          g.innerHeight = 800;
+          await act(() => globalThis.dispatchEvent(new Event("resize")));
+        } else bodyHeight = 800;
+        await resizeScroller(screen, 800);
+        await measureAll(truth);
+        assertEquals(bottomOf(100), 800, "back at the bottom once the keyboard is gone");
+        await screen.unmount();
+        await settle();
+        assertEquals(kb.listening(), 0, "the plugin listeners are removed");
+        assertEquals(FakeMutationObserver.live.size, 0, "no style observer left");
+      }, globals)
+    );
+  });
+}

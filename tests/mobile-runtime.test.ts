@@ -6,6 +6,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { makeDom } from "./helpers/dom.ts";
+import { fakePlugin, inShell, settle } from "./helpers/mobile-fakes.ts";
 import {
   type BackSwipeOptions,
   installKeyboardInset,
@@ -589,6 +590,85 @@ Deno.test("useKeyboardInset: returns the inset, installs the property, disposes 
     assertEquals(vv.count(), 0);
     assertEquals(props.has("--denext-keyboard-inset"), false);
   });
+});
+
+// The iOS shell with @capacitor/keyboard: the plugin's will-show height, less how far the shell
+// has resized the app since (the WebView, `<body>` or `ion-app`), whatever the visual viewport says.
+Deno.test("installKeyboardInset (iOS shell): will-show height less the shell's resize, per mode", async () => {
+  for (const mode of ["none", "native", "ionic"] as const) {
+    const vv = fakeViewport(800);
+    const { props, globals } = keyboardEnv(vv);
+    let ionHeight = 800;
+    const mutations: Array<() => void> = [];
+    const doc = {
+      ...globals.document,
+      body: { getBoundingClientRect: () => ({ height: 800 }) },
+      querySelector: (sel: string) =>
+        sel === "ion-app" ? { getBoundingClientRect: () => ({ height: ionHeight }) } : null,
+    };
+    const MutationObserver = class {
+      constructor(readonly cb: () => void) {}
+      observe() {
+        mutations.push(this.cb);
+      }
+      disconnect() {
+        mutations.splice(mutations.indexOf(this.cb), 1);
+      }
+    };
+    const kb = fakePlugin(["getResizeMode"], { getResizeMode: { mode } });
+    await inShell("ios", { Keyboard: kb.plugin }, async () => {
+      const dispose = installKeyboardInset();
+      await settle();
+      const inset = () => props.get("--denext-keyboard-inset");
+      assertEquals(inset(), "0px");
+      kb.fire("keyboardWillShow", { keyboardHeight: 301.6 });
+      assertEquals(inset(), "302px", `${mode}: the keyboard slides in over the page`);
+      vv.height = 300; // the visual viewport is not what decides in the shell
+      vv.fire("resize");
+      assertEquals(inset(), "302px");
+      if (mode === "native") {
+        g.innerHeight = 498;
+        g.dispatchEvent(new Event("resize"));
+      } else if (mode === "ionic") {
+        ionHeight = 498;
+        for (const cb of [...mutations]) cb();
+      }
+      assertEquals(inset(), mode === "none" ? "302px" : "0px", `${mode}: after the resize`);
+      kb.fire("keyboardWillHide");
+      assertEquals(inset(), "0px");
+      assertEquals(mutations.length, 0, "the style observer stops with the keyboard");
+      dispose();
+      await settle();
+      assertEquals(kb.listening(), 0);
+    }, { ...globals, innerHeight: 800, document: doc, MutationObserver });
+  }
+});
+
+Deno.test("installKeyboardInset (iOS shell): no getResizeMode reads as native; Android keeps the visual viewport", async () => {
+  const vv = fakeViewport(800);
+  const { props, frames, globals } = keyboardEnv(vv);
+  const kb = fakePlugin([]);
+  await inShell("ios", { Keyboard: kb.plugin }, () => {
+    const dispose = installKeyboardInset();
+    kb.fire("keyboardWillShow", { keyboardHeight: 250 });
+    assertEquals(props.get("--denext-keyboard-inset"), "250px");
+    kb.fire("keyboardWillShow", { keyboardHeight: 290 }); // the suggestion bar appeared
+    assertEquals(props.get("--denext-keyboard-inset"), "290px");
+    g.innerHeight = 550; // the WebView shrank by the first height
+    g.dispatchEvent(new Event("resize"));
+    assertEquals(props.get("--denext-keyboard-inset"), "40px", "the bar still covers the page");
+    dispose();
+  }, { ...globals, innerHeight: 800 });
+  await inShell("android", { Keyboard: kb.plugin }, () => {
+    const dispose = installKeyboardInset();
+    kb.fire("keyboardWillShow", { keyboardHeight: 250 });
+    assertEquals(props.get("--denext-keyboard-inset"), "0px", "Android resizes the WebView itself");
+    vv.height = 500;
+    vv.fire("resize");
+    frames.flush();
+    assertEquals(props.get("--denext-keyboard-inset"), "300px");
+    dispose();
+  }, { ...globals, innerHeight: 800 });
 });
 
 // ---- isBackSwipe / useBackSwipe --------------------------------------------

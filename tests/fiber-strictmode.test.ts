@@ -1,18 +1,25 @@
 // StrictMode dev double-invoke: under a <StrictMode> subtree in development the
 // reconciler renders components twice and mounts effects setup→cleanup→setup, to
 // surface impure renders and missing cleanup. In production (no __denextDev) it is
-// a transparent Fragment.
+// a transparent Fragment. The double-invoke is installed by the dev path (`installDevtools` /
+// `denext/testing`, through `installDevRender`), so a production bundle carries none of it.
 
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useEffect, useState } from "../mod.ts";
 import { StrictMode } from "../src/runtime/strict-mode.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
+import { installDevRender } from "../src/client/fiber/dev-render.ts";
+import { useDebugValue } from "../src/runtime/hooks.ts";
+import { clientDispatcher } from "../src/client/fiber/hooks-dispatcher.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+// The dev entries install this through `installDevtools`; these tests drive the reconciler.
+installDevRender();
 
 Deno.test("StrictMode double-invokes render and mount effects in dev", () => {
   (globalThis as Any).__denextDev = true;
@@ -95,4 +102,39 @@ Deno.test("StrictMode is a transparent Fragment without the dev flag", () => {
   assertEquals(renders, 1, "single render in production");
   assertEquals(setups, 1, "single effect mount in production");
   assertEquals(container.innerHTML, "<span>x</span>");
+});
+
+Deno.test("without the dev install, StrictMode is a Fragment and useDebugValue records nothing, even with __denextDev", () => {
+  installDevRender(false);
+  (globalThis as Any).__denextDev = true;
+  try {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+
+    let renders = 0;
+    let setups = 0;
+    const Widget = (): VNode => {
+      renders++;
+      useDebugValue("label");
+      useEffect(() => {
+        setups++;
+      }, []);
+      return h("span", null, "x");
+    };
+    const root = createRoot(container as Any);
+    root.render(h(StrictMode, null, h(Widget, null)));
+    flushSync();
+
+    assertEquals(renders, 1, "no second render pass without the dev install");
+    assertEquals(setups, 1, "no effect remount without the dev install");
+    assertEquals(
+      "useDebugValue" in clientDispatcher,
+      false,
+      "no recorder: the public useDebugValue is a no-op",
+    );
+    root.unmount();
+  } finally {
+    delete (globalThis as Any).__denextDev;
+    installDevRender();
+  }
 });

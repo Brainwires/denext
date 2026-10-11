@@ -245,12 +245,9 @@ function prepareRenderProps(inst: Fiber): unknown {
 }
 
 /**
- * Run the render phase, twice under StrictMode (dev) to surface impure render logic.
- * The first pass initialized hook cells and queued effects; the second reads the same
- * cells (no new effects, ids cached) and its result is the one used. The scope's local
- * id index is restored so an impure second pass that calls an extra useId can't shift
- * this component's ids. (Class components are not double-rendered — they are gated and
- * comparatively rare.)
+ * Run the render phase, twice under StrictMode (dev) to surface impure render logic: the second
+ * pass is {@linkcode strictSecondPass}, which only the dev path installs
+ * ({@linkcode installStrictRender}), so a production bundle carries none of it.
  *
  * The render-start cell count is kept so a render-phase update (a component that sets its
  * own state while rendering) can re-invoke and converge locally, resetting the cells the
@@ -265,21 +262,53 @@ function renderWithStrictMode(
 ): VNode | null {
   const baselineLength = inst.hooks!.length;
   const result = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
-  if (hasBit(inst, StrictBit) && devHydrationActive()) {
-    const localAfterFirst = inst.idScope!.local;
-    // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
-    // and queue duplicates: suppress queueing for it (the first pass's entries commit).
-    setSuppressEffectQueue(true);
-    let second: VNode | null;
-    try {
-      second = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
-    } finally {
-      setSuppressEffectQueue(false);
-    }
-    inst.idScope!.local = localAfterFirst;
-    return second ?? null;
+  return strictPass !== null && hasBit(inst, StrictBit)
+    ? strictPass(result, inst, baselineLength, type, props, ref, forwardsRef)
+    : result ?? null;
+}
+
+/** The StrictMode second render pass; null until the dev path installs it. */
+let strictPass: typeof strictSecondPass | null = null;
+
+/**
+ * StrictMode's second render pass (dev; `first` is used as is without `__denextDev`). The first
+ * pass initialized hook cells and queued
+ * effects; the second reads the same cells (no new effects, ids cached) and its result is the
+ * one used. The scope's local id index is restored so an impure second pass that calls an
+ * extra useId can't shift this component's ids. (Class components are not double-rendered —
+ * they are gated and comparatively rare.)
+ */
+function strictSecondPass(
+  first: VNode | null | undefined,
+  inst: Fiber,
+  baselineLength: number,
+  type: RenderFn,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode | null {
+  if (!devHydrationActive()) return first ?? null;
+  const localAfterFirst = inst.idScope!.local;
+  // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
+  // and queue duplicates: suppress queueing for it (the first pass's entries commit).
+  setSuppressEffectQueue(true);
+  let second: VNode | null;
+  try {
+    second = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
+  } finally {
+    setSuppressEffectQueue(false);
   }
-  return result ?? null;
+  inst.idScope!.local = localAfterFirst;
+  return second ?? null;
+}
+
+/**
+ * Install (`true`) or remove (`false`) StrictMode's dev double render. Called from the dev path
+ * only (`installDevtools`, via {@linkcode installStrictMode}), so a production bundle never
+ * contains it.
+ */
+export function installStrictRender(on = true): void {
+  strictPass = on ? strictSecondPass : null;
 }
 
 /**
