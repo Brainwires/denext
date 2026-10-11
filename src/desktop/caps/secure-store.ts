@@ -573,151 +573,214 @@ function migratingBackend(
   present: (key: string, signal: AbortSignal) => Promise<boolean>,
   warn: (message: string) => void,
 ): SecureBackend {
-  // Keys with no legacy item left, as far as this process knows: no `security` call for them.
-  const settled = new Set<string>();
-  const serial = keyQueue();
+  const st: LegacyMove = {
+    runtime,
+    legacy,
+    present,
+    warn,
+    settled: new Set<string>(),
+    serial: keyQueue(),
+    moving: undefined,
+    moved: false,
+  };
+  return {
+    get: (key, signal) => st.serial(key, () => migratingGet(st, key, signal)),
+    set: (key, b64, signal) => st.serial(key, () => migratingSet(st, key, b64, signal)),
+    delete: (key, signal) => st.serial(key, () => migratingDelete(st, key, signal)),
+  };
+}
+
+/** The state {@linkcode migratingBackend} keeps for one runtime store, shared by its helpers. */
+interface LegacyMove {
+  /** The runtime's store. */
+  runtime: SecureBackend;
+  /** The `security` CLI. */
+  legacy: SecureBackend;
+  /** Whether a legacy item is there (see {@linkcode legacyItemPresent}). */
+  present: (key: string, signal: AbortSignal) => Promise<boolean>;
+  /** Where a lost put-back is reported. */
+  warn: (message: string) => void;
+  /** Keys with no legacy item left, as far as this process knows: no `security` call for them. */
+  settled: Set<string>;
+  /** Runs each key's operations one at a time. */
+  serial: ReturnType<typeof keyQueue>;
   /**
    * Whether this launch may still adopt legacy items: the marker was absent when first asked
    * (this launch then writes it, and stays the moving launch). Asked once per process; a failed
    * read is asked again on the next call.
    */
-  let moving: Promise<boolean> | undefined;
+  moving: Promise<boolean> | undefined;
   /** Whether the marker was found (cached; no read): a later launch. */
-  let moved = false;
-  const movingLaunch = (signal: AbortSignal): Promise<boolean> => {
-    if (moving) return moving;
-    const asked = (async () => {
-      if ((await runtime.get(LEGACY_MOVED_MARKER, signal)) !== null) {
-        moved = true;
-        return false;
-      }
-      // A marker that can't be written is written by the next launch instead.
-      await runtime.set(LEGACY_MOVED_MARKER, LEGACY_MOVED_VALUE, signal).catch(() => {});
-      return true;
-    })();
-    moving = asked;
-    asked.catch(() => {
-      if (moving === asked) moving = undefined;
-    });
-    return asked;
-  };
-  /**
-   * Store `b64` in the runtime's store over a legacy item known to be there, holding `kept`
-   * (`null`: it could not be read). When the store fails after the legacy item was deleted to make
-   * room, the item is put back with `kept` and the store's error is thrown.
-   */
-  const replaceLegacy = async (
-    key: string,
-    b64: string,
-    kept: string | null,
-    signal: AbortSignal,
-  ) => {
-    try {
-      // The data-protection keychain: no clash; the legacy copy goes after.
-      await runtime.set(key, b64, signal);
-      await legacy.delete(key, signal);
-    } catch {
-      // The login keychain: the legacy item is in the way.
-      await legacy.delete(key, signal);
-      await storeOrRestore(key, b64, kept, signal);
+  moved: boolean;
+}
+
+/** Whether this is the moving launch (see {@linkcode LegacyMove.moving}). */
+function movingLaunch(st: LegacyMove, signal: AbortSignal): Promise<boolean> {
+  if (st.moving) return st.moving;
+  const asked = (async () => {
+    if ((await st.runtime.get(LEGACY_MOVED_MARKER, signal)) !== null) {
+      st.moved = true;
+      return false;
     }
-    settled.add(key);
-  };
-  /**
-   * Store `b64` where the legacy item was; on a failure put `kept` back, then throw the store's
-   * error. The put-back runs under its own deadline ({@linkcode RESTORE_TIMEOUT_MS}), not the
-   * caller's `signal`: when the store failed because that signal aborted (the bridge's per-method
-   * timeout), it is already aborted, and `security` would be killed before it put the value back.
-   */
-  const storeOrRestore = async (
-    key: string,
-    b64: string,
-    kept: string | null,
-    signal: AbortSignal,
-  ) => {
-    try {
-      await runtime.set(key, b64, signal);
-    } catch (err) {
-      if (kept !== null) {
-        await legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {
-          warn(
-            "an item an older denext wrote could not be put back after a failed move into the " +
-              "runtime's store; its value is lost",
-          );
-        });
-      }
-      throw err;
+    // A marker that can't be written is written by the next launch instead.
+    await st.runtime.set(LEGACY_MOVED_MARKER, LEGACY_MOVED_VALUE, signal).catch(() => {});
+    return true;
+  })();
+  st.moving = asked;
+  asked.catch(() => {
+    if (st.moving === asked) st.moving = undefined;
+  });
+  return asked;
+}
+
+/**
+ * Store `b64` in the runtime's store over a legacy item known to be there, holding `kept`
+ * (`null`: it could not be read). When the store fails after the legacy item was deleted to make
+ * room, the item is put back with `kept` and the store's error is thrown.
+ */
+async function replaceLegacy(
+  st: LegacyMove,
+  key: string,
+  b64: string,
+  kept: string | null,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    // The data-protection keychain: no clash; the legacy copy goes after.
+    await st.runtime.set(key, b64, signal);
+    await st.legacy.delete(key, signal);
+  } catch {
+    // The login keychain: the legacy item is in the way.
+    await st.legacy.delete(key, signal);
+    await storeOrRestore(st, key, b64, kept, signal);
+  }
+  st.settled.add(key);
+}
+
+/**
+ * Store `b64` where the legacy item was; on a failure put `kept` back, then throw the store's
+ * error. The put-back runs under its own deadline ({@linkcode RESTORE_TIMEOUT_MS}), not the
+ * caller's `signal`: when the store failed because that signal aborted (the bridge's per-method
+ * timeout), it is already aborted, and `security` would be killed before it put the value back.
+ */
+async function storeOrRestore(
+  st: LegacyMove,
+  key: string,
+  b64: string,
+  kept: string | null,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    await st.runtime.set(key, b64, signal);
+  } catch (err) {
+    if (kept !== null) {
+      await st.legacy.set(key, kept, AbortSignal.timeout(RESTORE_TIMEOUT_MS)).catch(() => {
+        st.warn(
+          "an item an older denext wrote could not be put back after a failed move into the " +
+            "runtime's store; its value is lost",
+        );
+      });
     }
-  };
-  /** A read miss: move a legacy item this cap wrote over, returning its value. */
-  const migrateOnRead = async (key: string, signal: AbortSignal) => {
-    const old = (await present(key, signal)) ? await legacy.get(key, signal) : null;
-    // Not there, or not a value this cap wrote (not our base64): leave it alone.
-    if (old === null || decodeStored(old) === null) {
-      settled.add(key);
-      return null;
-    }
-    // On a failure the user's value stays where it was (the next read retries the move).
-    await replaceLegacy(key, old, old, signal).catch(() => {});
-    return old;
-  };
-  /** A write while a legacy item may be there. */
-  const migrateOnWrite = async (key: string, b64: string, signal: AbortSignal) => {
-    if (!(await present(key, signal))) {
-      await runtime.set(key, b64, signal);
-      settled.add(key);
-      return;
-    }
-    // Can the runtime's store answer at all? (A read: macOS may prompt to unlock the keychain; a
-    // cancel fails the write here.) If not, nothing is touched.
-    await runtime.get(key, signal);
-    const kept = await legacy.get(key, signal);
-    // With nothing to put back, deleting the item to make room could lose it: leave it.
-    if (kept === null) {
-      throw new DesktopCapError(
-        "backend_unavailable",
-        "the secure store could not read the item an older denext wrote for this key, so it was " +
-          "left in place and the write was not made",
-        { status: 503 },
-      );
-    }
-    await replaceLegacy(key, b64, kept, signal);
-  };
-  /** A write in a later launch: the runtime's store first; a legacy item in its way is replaced. */
-  const writeAfterMove = async (key: string, b64: string, signal: AbortSignal) => {
-    try {
-      await runtime.set(key, b64, signal);
-      settled.add(key);
-    } catch {
-      await migrateOnWrite(key, b64, signal);
-    }
-  };
-  return {
-    get: (key, signal) =>
-      serial(key, async () => {
-        const stored = await runtime.get(key, signal);
-        if (stored !== null || settled.has(key)) return stored;
-        // A later launch never adopts a legacy item (it may have been planted).
-        if (!(await movingLaunch(signal))) {
-          settled.add(key);
-          return null;
-        }
-        return migrateOnRead(key, signal);
-      }),
-    set: (key, b64, signal) =>
-      serial(key, () => {
-        if (settled.has(key)) return runtime.set(key, b64, signal);
-        return moved ? writeAfterMove(key, b64, signal) : migrateOnWrite(key, b64, signal);
-      }),
-    delete: (key, signal) =>
-      serial(key, async () => {
-        await runtime.delete(key, signal);
-        // The runtime's item is gone, so `security` can only match a legacy one. A later launch
-        // leaves legacy items alone (a read never adopts them).
-        if (!settled.has(key) && (await movingLaunch(signal))) await legacy.delete(key, signal);
-        settled.add(key);
-      }),
-  };
+    throw err;
+  }
+}
+
+/** A read miss: move a legacy item this cap wrote over, returning its value. */
+async function migrateOnRead(
+  st: LegacyMove,
+  key: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const old = (await st.present(key, signal)) ? await st.legacy.get(key, signal) : null;
+  // Not there, or not a value this cap wrote (not our base64): leave it alone.
+  if (old === null || decodeStored(old) === null) {
+    st.settled.add(key);
+    return null;
+  }
+  // On a failure the user's value stays where it was (the next read retries the move).
+  await replaceLegacy(st, key, old, old, signal).catch(() => {});
+  return old;
+}
+
+/** A write while a legacy item may be there. */
+async function migrateOnWrite(
+  st: LegacyMove,
+  key: string,
+  b64: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!(await st.present(key, signal))) {
+    await st.runtime.set(key, b64, signal);
+    st.settled.add(key);
+    return;
+  }
+  // Can the runtime's store answer at all? (A read: macOS may prompt to unlock the keychain; a
+  // cancel fails the write here.) If not, nothing is touched.
+  await st.runtime.get(key, signal);
+  const kept = await st.legacy.get(key, signal);
+  // With nothing to put back, deleting the item to make room could lose it: leave it.
+  if (kept === null) {
+    throw new DesktopCapError(
+      "backend_unavailable",
+      "the secure store could not read the item an older denext wrote for this key, so it was " +
+        "left in place and the write was not made",
+      { status: 503 },
+    );
+  }
+  await replaceLegacy(st, key, b64, kept, signal);
+}
+
+/** A write in a later launch: the runtime's store first; a legacy item in its way is replaced. */
+async function writeAfterMove(
+  st: LegacyMove,
+  key: string,
+  b64: string,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    await st.runtime.set(key, b64, signal);
+    st.settled.add(key);
+  } catch {
+    await migrateOnWrite(st, key, b64, signal);
+  }
+}
+
+/** {@linkcode migratingBackend}'s `get`. */
+async function migratingGet(
+  st: LegacyMove,
+  key: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const stored = await st.runtime.get(key, signal);
+  if (stored !== null || st.settled.has(key)) return stored;
+  // A later launch never adopts a legacy item (it may have been planted).
+  if (!(await movingLaunch(st, signal))) {
+    st.settled.add(key);
+    return null;
+  }
+  return migrateOnRead(st, key, signal);
+}
+
+/** {@linkcode migratingBackend}'s `set`. */
+function migratingSet(
+  st: LegacyMove,
+  key: string,
+  b64: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (st.settled.has(key)) return st.runtime.set(key, b64, signal);
+  return st.moved ? writeAfterMove(st, key, b64, signal) : migrateOnWrite(st, key, b64, signal);
+}
+
+/** {@linkcode migratingBackend}'s `delete`. */
+async function migratingDelete(st: LegacyMove, key: string, signal: AbortSignal): Promise<void> {
+  await st.runtime.delete(key, signal);
+  // The runtime's item is gone, so `security` can only match a legacy one. A later launch
+  // leaves legacy items alone (a read never adopts them).
+  if (!st.settled.has(key) && (await movingLaunch(st, signal))) {
+    await st.legacy.delete(key, signal);
+  }
+  st.settled.add(key);
 }
 
 /**
