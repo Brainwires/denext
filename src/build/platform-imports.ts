@@ -7,7 +7,9 @@
 // app module that imports a redirected module through an alias, directly or through another
 // such module, gets a copy with those imports rewritten to the module the target loads
 // (by {@linkcode resolvePlatformImport}, the rule the server render's loader applies), and the
-// copy stands in for it by file URL. A crawl over the copies reports the originals
+// copy stands in for it by file URL. A client transform's output (the auto-memo compiler's, Fast
+// Refresh's, …) is keyed by file URL the same way, so an alias import of a transformed module
+// is rewritten by the same rule (to the module's URL, which the import map then maps). A crawl over the copies reports the originals
 // ({@linkcode PlatformImportMap.originals}), so the boundary and hydration scans name the
 // app's own files.
 
@@ -128,14 +130,14 @@ function spellings(url: string): string[] {
 
 /**
  * The app modules that must be copied, and every URL an alias import must be rewritten to reach:
- * the redirected modules, then each module that reaches one through an alias (and so is copied
- * itself), until no more do.
+ * the redirected and transformed modules, then each module that reaches one through an alias
+ * (and so is copied itself), until no more do.
  */
 function copiedImporters(
   importers: readonly AliasImports[],
-  redirects: Readonly<Record<string, string>>,
+  seeds: Iterable<string>,
 ): { copied: AliasImports[]; reached: Set<string> } {
-  const reached = new Set(Object.keys(redirects).filter((k) => k.startsWith("file:")));
+  const reached = new Set(seeds);
   const copied: AliasImports[] = [];
   let pending = [...importers];
   for (let grew = true; grew;) {
@@ -148,6 +150,15 @@ function copiedImporters(
     pending = pending.filter((m) => !next.includes(m));
   }
   return { copied, reached };
+}
+
+/** Each spelling of a transformed module's file URL → that URL (the import map's key). */
+function transformedSpellings(rewritten: Readonly<Record<string, string>>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const url of Object.keys(rewritten).filter((u) => u.startsWith("file:"))) {
+    for (const spelling of spellings(url)) out.set(spelling, url);
+  }
+  return out;
 }
 
 /**
@@ -164,7 +175,8 @@ function copiedImporters(
  *   bundle, the action stubs).
  * @param copyDir Where the copies are written (emptied first).
  * @param rewritten The client transforms (module file URL → its transformed file's URL): a
- *   module that has one is copied from the transformed source, so the copy keeps the transform.
+ *   module that has one is copied from the transformed source, so the copy keeps the transform,
+ *   and a module importing one through an alias is copied with that import rewritten to it.
  */
 export async function platformImportMap(
   projectDir: string,
@@ -173,10 +185,15 @@ export async function platformImportMap(
   rewritten: Readonly<Record<string, string>> = {},
 ): Promise<PlatformImportMap> {
   const none = { importMap: { ...redirects }, originals: {} };
-  if (!Object.keys(redirects).some((k) => k.startsWith("file:"))) return none;
+  const transformed = transformedSpellings(rewritten);
+  const redirected = Object.keys(redirects).filter((k) => k.startsWith("file:"));
+  if (redirected.length === 0 && transformed.size === 0) return none;
   const aliases = await readImportAliases(projectDir);
   if (aliases.length === 0) return none;
-  const { copied, reached } = copiedImporters(await aliasImporters(projectDir, aliases), redirects);
+  const { copied, reached } = copiedImporters(
+    await aliasImporters(projectDir, aliases),
+    [...redirected, ...transformed.keys()],
+  );
   if (copied.length === 0) return none;
 
   await Deno.remove(copyDir, { recursive: true }).catch(() => {});
@@ -187,9 +204,9 @@ export async function platformImportMap(
     for (const url of spellings(m.url)) copyOf.set(url, copy);
   }
   // Where an import of `url` must go: the target's variant (or the variant's copy), else the
-  // module's own copy.
+  // module's own copy, else the transformed module's URL (which the import map maps).
   const loadOf = (url: string): string => {
-    const target = redirects[url] ?? url;
+    const target = redirects[url] ?? transformed.get(url) ?? url;
     return copyOf.get(target) ?? target;
   };
   const rewrite = (m: AliasImports) => (spec: string) => {

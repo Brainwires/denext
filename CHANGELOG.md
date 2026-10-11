@@ -51,6 +51,13 @@ and this project adheres to
   built on the target's first request after an edit and kept beside `web`'s, so two shells on
   one dev server never rebuild each other's. A target with no files of its own shares `web`'s
   build, so an app without platform files builds once as before.
+- **`reactCompiler` memoizes a component imported through an import-map alias.** Deno maps an
+  alias (`@/components/Pane.tsx`) once, to the plain file, so the auto-memo compiler's output for
+  a module imported that way was never bundled: an island importing `@/components/Pane.tsx` got
+  the uncompiled `Pane`, whether or not the island was itself a copy made for a platform file
+  (`denext build`, `export` and the bundled `denext dev` loop alike). The client bundles now
+  rewrite such an importer's alias imports to the transformed module, through the copies they
+  already make for platform files.
 
 ## [3.4.9] - 2026-10-11
 

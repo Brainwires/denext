@@ -446,6 +446,72 @@ Deno.test("denext build: a module reaching a variant through an alias keeps the 
   }
 });
 
+/** Every `.js` file of a build's client dir, concatenated. */
+async function builtClientJs(dir: string): Promise<string> {
+  const clientDir = join(dir, ".denext", "client");
+  let js = "";
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && e.name.endsWith(".js")) js += await Deno.readTextFile(join(clientDir, e.name));
+  }
+  return js;
+}
+
+/** `Name` renders `<s>MARK</s>` around a memoizable `<Child>` element. */
+const memoComponent = (name: string, mark: string) =>
+  `function Child({ t }: { t: string }) { return <i>{t}</i>; }\n` +
+  `export function ${name}({ t }: { t: string }){ const u = t + "!";\n` +
+  `  return <s>${mark}<Child t={u} /></s>; }\n`;
+
+/** Assert the component rendering `mark` is the auto-memo compiler's output. */
+function assertCompiled(js: string, mark: string) {
+  const at = js.indexOf(mark);
+  assert(at >= 0, `${mark} was not bundled`);
+  const fn = js.slice(js.lastIndexOf("function", at), at);
+  assert(/\{let [\w$]+=[\w$]+\(\d+\),/.test(fn), `${mark}'s component is not the compiled module`);
+}
+
+/**
+ * Deno maps an import-map alias once, to the plain file, so a module imported through `@/` was
+ * bundled as written while the compiler's output for it sat unused: in a module copied because
+ * its alias import reaches a variant, and in any other importer alike. The client import map now
+ * rewrites those importers' alias imports to the compiled module, as it does for a variant.
+ */
+Deno.test("denext build: reactCompiler compiles a module imported through an alias", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_platform_alias_memo_" });
+  try {
+    await scaffoldApp(dir, {
+      "denext.config.ts": `export default { reactCompiler: true };\n`,
+      "app/page.tsx": `import { Island } from "@/components/Island.tsx";\n` +
+        `import { Plain } from "../components/Plain.tsx";\n` +
+        `export default function Page(){ return <main><Island/><Plain/></main>; }\n`,
+      // Copied (its alias import reaches lib/v.web.ts): Card by a relative import, Pane by `@/`.
+      "components/Island.tsx": `"use client"\nimport { useState } from "denext";\n` +
+        `import { v } from "@/lib/v.ts";\nimport { Card } from "./Card.tsx";\n` +
+        `import { Pane } from "@/components/Pane.tsx";\n` +
+        `export function Island(){ const [n, setN] = useState(0);\n` +
+        `  return <b onClick={() => setN(n + 1)}><Card t={v + n} /><Pane t={v} /></b>; }\n`,
+      // Not copied (no variant behind its imports): Note by `@/`.
+      "components/Plain.tsx": `"use client"\nimport { useState } from "denext";\n` +
+        `import { Note } from "@/components/Note.tsx";\n` +
+        `export function Plain(){ const [n, setN] = useState(0);\n` +
+        `  return <b onClick={() => setN(n + 1)}><Note t={"n" + n} /></b>; }\n`,
+      "components/Card.tsx": memoComponent("Card", "CARD_MARK"),
+      "components/Pane.tsx": memoComponent("Pane", "PANE_MARK"),
+      "components/Note.tsx": memoComponent("Note", "NOTE_MARK"),
+      "lib/v.ts": `export const v = "PLAIN_V";\n`,
+      "lib/v.web.ts": `export const v = "WEB_V";\n`,
+    }, { "@/": "./" });
+    await build(dir);
+    const js = await builtClientJs(dir);
+    assertStringIncludes(js, "WEB_V");
+    assertCompiled(js, "CARD_MARK");
+    assertCompiled(js, "PANE_MARK");
+    assertCompiled(js, "NOTE_MARK");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /**
  * The export runs the client transforms `denext build` does (one shared path), through the CLI
  * (the server render needs the app's import map for `denext/feature`): the React
