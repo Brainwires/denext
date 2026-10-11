@@ -43,6 +43,19 @@ and this project adheres to
   fiber extension spells each field name once. `examples/hello`'s shared chunks went from
   67,385 B to 65,590 B, and the build-smoke budget moves from 67,400 B to 67,100 B.
 
+### Fixed
+
+- **An `asyncContext` build no longer fails on a module that imports by a relative path.** The
+  transform writes each client module it instruments into `.denext/asyncctx/`, and the copy kept
+  the original's relative specifiers, so they resolved beside the copy: `denext build` and
+  `denext export` of `examples/hello` with `asyncContext: true` failed with
+  `Module not found ".denext/asyncctx/island.tsx"` (its `dynamic(() => import("./island.tsx"))`),
+  and so did any instrumented module's relative static import, `export … from`, stylesheet, JSON
+  or platform-file module. The copy's static imports and its `import()` calls written as a
+  literal (a string, or a template literal with no substitutions) now name the module beside the
+  original. `import.meta` and a non-literal `import(expr)` are left as written, as for the
+  original module: the bundler follows neither, and the browser resolves both against the chunk.
+
 ## [3.4.6] - 2026-10-11
 
 ### Fixed

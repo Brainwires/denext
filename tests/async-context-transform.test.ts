@@ -213,6 +213,84 @@ Deno.test("compileAsyncContextModules: redirects changed modules + flips the mod
   await Deno.remove(outDir, { recursive: true }).catch(() => {});
 });
 
+Deno.test("transform: with moduleUrl, an instrumented module's relative specifiers are made absolute", async () => {
+  const src = `
+    import "./look.css";
+    import data from "./data.json" with { type: "json" };
+    import { Tag } from "../ui/tag.tsx";
+    import { useState } from "denext";
+    export { helper } from "./helper.ts";
+    const Island = () => import("./island.tsx");
+    export async function load(name) {
+      const a = await import(\`./extra.ts\`);
+      const b = await import(name);
+      return [a, b, import.meta.resolve("./asset.txt"), new URL("./x.png", import.meta.url)];
+    }
+  `;
+  const moduleUrl = "file:///app/routes/page.tsx";
+  const { code, changed } = await transformAsyncContext(src, { runtime: RUNTIME, moduleUrl });
+  assert(changed);
+  for (
+    const url of [
+      "file:///app/routes/look.css",
+      "file:///app/routes/data.json",
+      "file:///app/ui/tag.tsx",
+      "file:///app/routes/helper.ts",
+      "file:///app/routes/island.tsx",
+      "file:///app/routes/extra.ts",
+    ]
+  ) {
+    assert(code.includes(JSON.stringify(url)), `${url} in:\n${code}`);
+  }
+  assert(code.includes(`with { type: "json" }`), "the import attribute is kept");
+  assert(code.includes(`from "denext"`), "a bare specifier is left to the import map");
+  // The client bundler follows neither, and the browser resolves both against the chunk, as it
+  // does for the original module: they are left as written.
+  assert(code.includes(`import(name)`), "a non-literal import() is left as written");
+  assert(code.includes(`import.meta.resolve("./asset.txt")`), "import.meta is left as written");
+  assert(code.includes(`new URL("./x.png", import.meta.url)`));
+  const parse = await swcParse();
+  await parse(code);
+});
+
+Deno.test("transform: without moduleUrl (or with nothing to instrument) specifiers are untouched", async () => {
+  const src = `import "./a.css";\nexport async function f() { await import("./b.ts"); }\n`;
+  const { code } = await transformAsyncContext(src, { runtime: RUNTIME });
+  assert(code.includes(`"./a.css"`) && code.includes(`import("./b.ts")`));
+  const plain = `import "./a.css";\nexport const x = () => import("./b.ts");\n`;
+  const result = await transformAsyncContext(plain, { moduleUrl: "file:///app/x.tsx" });
+  assertEquals(result, { code: plain, changed: false });
+});
+
+Deno.test("compileAsyncContextModules: a copy's static and dynamic imports reach the original's siblings", async () => {
+  const srcDir = await Deno.makeTempDir();
+  const outDir = await Deno.makeTempDir();
+  try {
+    const page = join(srcDir, "page.tsx");
+    await Deno.writeTextFile(join(srcDir, "dep.ts"), `export const dep = "dep-ok";\n`);
+    await Deno.writeTextFile(join(srcDir, "lazy.ts"), `export const lazy = "lazy-ok";\n`);
+    await Deno.writeTextFile(join(srcDir, "data.json"), `{ "label": "json-ok" }\n`);
+    await Deno.writeTextFile(
+      page,
+      `import { dep } from "./dep.ts";
+import data from "./data.json" with { type: "json" };
+export async function run() {
+  const { lazy } = await import("./lazy.ts");
+  return [dep, lazy, data.label];
+}
+`,
+    );
+    const map = await compileAsyncContextModules([page], { outDir });
+    const copy = map[toFileUrl(page).href];
+    assert(copy?.includes("/asyncctx/"), "the page is instrumented into asyncctx/");
+    const mod = await import(copy);
+    assertEquals(await mod.run(), ["dep-ok", "lazy-ok", "json-ok"]);
+  } finally {
+    await Deno.remove(srcDir, { recursive: true }).catch(() => {});
+    await Deno.remove(outDir, { recursive: true }).catch(() => {});
+  }
+});
+
 Deno.test("transform: output re-parses cleanly (valid syntax) for a mixed module", async () => {
   const src = `
     "use client";
