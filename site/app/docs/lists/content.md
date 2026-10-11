@@ -813,8 +813,13 @@ changes:
   scroll view: `AnimatedLegendList` is the list with `sharedValues` kept current
   (`itemLayoutAnimation` and `animatedProps` have no effect), and `KeyboardAwareLegendList` the
   list with room after the last item for the composer (`contentInsetEndAdjustment`, a shared
-  value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`); the web
-  view's layout follows the keyboard, so its keyboard props have no effect.
+  value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`). While the
+  keyboard covers the page the list gets that much more room (minus `keyboardOffset`) and its
+  content moves up with the keyboard as on a phone: `keyboardLiftBehavior` `"always"` (the
+  default) lifts it and drops it back, `"whenAtEnd"` only when the last item was in view,
+  `"persistent"` stays lifted when the keyboard hides, and `"never"` only adds the room; `freeze`
+  pauses it. Where the WebView resizes around the keyboard nothing covers the page, so nothing
+  lifts.
   `useKeyboardScrollToEnd` scrolls to the end (closing the keyboard when asked). The ref's
   `reportContentInset({ bottom })` adds room after the last item too.
 

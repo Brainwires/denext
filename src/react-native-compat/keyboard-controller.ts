@@ -7,7 +7,9 @@
  * - Views: `KeyboardProvider` (provides the keyboard context), `KeyboardAvoidingView` and
  *   `KeyboardStickyView` (`denext/mobile`'s, which move only by the part of the keyboard that
  *   covers the page), `KeyboardAwareScrollView` (scrolls the focused input above the keyboard,
- *   `bottomOffset` px clear, and pads its content by the covered height), `KeyboardToolbar`
+ *   `bottomOffset` px clear, and pads its content by the covered height),
+ *   `KeyboardChatScrollView` (the content lifts with the keyboard per `keyboardLiftBehavior`),
+ *   `KeyboardToolbar`
  *   (previous / next / done over the page's inputs, riding on the keyboard, with its compound
  *   parts), `OverKeyboardView`, `KeyboardExtender` and the package's pass-through native views.
  * - `KeyboardController`: `dismiss()` (resolves once the keyboard is down), `setFocusTo("next"
@@ -58,6 +60,7 @@ import {
   KeyboardAvoidingView as MobileAvoidingView,
   KeyboardStickyView as MobileStickyView,
 } from "../mobile/keyboard-views.ts";
+import { type KeyboardLiftBehavior, useKeyboardLift } from "../mobile/keyboard-lift.ts";
 import {
   createEmitter,
   type Emitter,
@@ -1206,15 +1209,87 @@ export function KeyboardAwareScrollView(props: KeyboardAwareScrollViewProps): VN
   );
 }
 
+/** `KeyboardChatScrollView` props (plus any `ScrollView` prop). */
+export interface KeyboardChatScrollViewProps {
+  /**
+   * How the content moves when the keyboard opens: `"always"` (default) lifts it with the
+   * keyboard, `"whenAtEnd"` only when the end is in view, `"persistent"` lifts and stays lifted
+   * when the keyboard hides, `"never"` only adds the room.
+   */
+  keyboardLiftBehavior?: KeyboardLiftBehavior;
+  /** px between the scroll view's bottom and the screen's, not lifted (default 0). */
+  offset?: number;
+  /** While true (or a shared value holding true), keyboard changes are ignored. */
+  freeze?: boolean | { readonly value: boolean };
+  /** The list is inverted: the room goes before the content, which then lifts by itself. */
+  inverted?: boolean;
+  /** `false` turns the lift off (default `true`). */
+  enabled?: boolean;
+  /** The scroll view component (default React Native's `ScrollView`). */
+  ScrollViewComponent?: VNodeType;
+  /** A ref to the scroll view. */
+  ref?: unknown;
+  /** The style. */
+  style?: unknown;
+  /** The content. */
+  children?: VNodeChildren;
+  /** Other `ScrollView` props. */
+  [prop: string]: unknown;
+}
+
 /**
- * A chat scroll view: a {@linkcode KeyboardAwareScrollView} (the keyboard pushes the content
- * up by the covered height; inverted-list anchoring is left to the list).
+ * A chat scroll view: while the keyboard covers the page it gets that much room after its
+ * content, and the content moves up with the keyboard as `keyboardLiftBehavior` says
+ * (`denext/mobile`'s keyboard lift). The native-only props (`blankSpace`,
+ * `extraContentPadding`, `applyWorkaroundForContentInsetHitTestBug`, the inset compensations)
+ * are accepted and ignored.
  *
- * @param props The `ScrollView` props.
+ * @param props The lift's props and the `ScrollView` props.
  * @returns The scroll view.
  */
-export function KeyboardChatScrollView(props: KeyboardAwareScrollViewProps): VNode {
-  return h(KeyboardAwareScrollView, props);
+export function KeyboardChatScrollView(props: KeyboardChatScrollViewProps): VNode {
+  const {
+    keyboardLiftBehavior,
+    offset = 0,
+    freeze,
+    inverted = false,
+    enabled = true,
+    ScrollViewComponent,
+    ref,
+    style,
+    children,
+    blankSpace: _blank,
+    extraContentPadding: _extra,
+    applyWorkaroundForContentInsetHitTestBug: _hitTest,
+    adjustedInsetCompensation: _end,
+    adjustedStartInsetCompensation: _start,
+    onContentInsetChange: _inset,
+    onEndVisibilityChange: _endVisible,
+    ...rest
+  } = props;
+  const node = useRef<ScrollNode | null>(null);
+  const room = useKeyboardLift(() => node.current?.getScrollableNode?.() ?? node.current, {
+    enabled,
+    behavior: keyboardLiftBehavior,
+    offset,
+    freeze,
+    inverted,
+  });
+  const setRef = (instance: unknown) => {
+    node.current = instance as ScrollNode | null;
+    assignRef(ref, instance);
+  };
+  const spacer = room > 0
+    ? h(hostView(), { style: viewStyle({ height: room }), "aria-hidden": "true" })
+    : null;
+  const content = inverted ? [spacer, children] : [children, spacer];
+  const Scroll = ScrollViewComponent ?? RN.ScrollView;
+  if (Scroll) return h(Scroll, { ...rest, ref: setRef, style }, ...content as never[]);
+  return h(
+    "div",
+    { ...rest, ref: setRef, style: { ...domViewStyle(style), overflowY: "auto" } },
+    ...content as never[],
+  );
 }
 
 /** A toolbar theme's colours. */

@@ -126,7 +126,8 @@ export const LIST_PACKAGES: Readonly<Record<string, ListPackage>> = {
     },
     omitted: [],
     notes: "`KeyboardAwareLegendList` adds the composer's height (`contentInsetEndAdjustment`, " +
-      "a shared value) and `contentInsetEndStaticAdjustment` after the last item; the web " +
-      "view's layout follows the keyboard, so the keyboard props have no effect.",
+      "a shared value) and `contentInsetEndStaticAdjustment` after the last item, plus the " +
+      "keyboard's covered height minus `keyboardOffset`, lifting the content with the keyboard " +
+      "as `keyboardLiftBehavior` says (`freeze` pauses it).",
   },
 };

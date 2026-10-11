@@ -45,6 +45,16 @@ and this project adheres to
 
 ### Fixed
 
+- **React Native mode: chat lists lift with the keyboard.** `KeyboardAwareLegendList`
+  (`@legendapp/list/keyboard`) and `react-native-keyboard-controller`'s `KeyboardChatScrollView`
+  ignored their keyboard props, so the keyboard covered the newest messages in the iOS shell and
+  in Safari. While the keyboard covers the page they now get that much room after their content
+  (less `keyboardOffset` / `offset`) and move their content up with it as on a phone, per
+  `keyboardLiftBehavior`: `"always"` lifts and drops back, `"whenAtEnd"` lifts only when the end
+  was in view, `"persistent"` stays lifted when the keyboard hides, `"never"` only adds the room;
+  `freeze` pauses it. The room renders before the scroll moves, so the lift is never clamped.
+  It follows `denext/mobile`'s keyboard overlap, so a WebView that resizes around the keyboard
+  is not lifted twice.
 - **React Native mode: uniwind's `pixelRatio()`, `fontScale()`, `hairlineWidth()` and theme
   scoping work.** uniwind's Vite plugin runs a lightningcss visitor over the compiled Tailwind CSS;
   denext's Tailwind output never got it, so those functions reached the browser unresolved and a

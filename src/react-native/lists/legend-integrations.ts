@@ -10,9 +10,11 @@
  *   measurements).
  * - `KeyboardAwareLegendList`: the list with the room after the last item that
  *   `contentInsetEndAdjustment` (a shared value: the composer's height) plus
- *   `contentInsetEndStaticAdjustment` describe. The page's own layout follows the keyboard in a
- *   web view, so the keyboard props (`keyboardLiftBehavior`, `keyboardOffset`, `freeze`, …) have
- *   no effect.
+ *   `contentInsetEndStaticAdjustment` describe, and the keyboard's lift: while the keyboard
+ *   covers the page the list gets that much more room and its content moves up with the
+ *   keyboard, as `keyboardLiftBehavior` (`"always"`, `"whenAtEnd"`, `"persistent"`, `"never"`),
+ *   `keyboardOffset` and `freeze` say (`denext/mobile`'s keyboard, see
+ *   `src/mobile/keyboard-lift.ts`).
  * - `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd`: as in the package, with shared
  *   values from the app's own `react-native-reanimated`.
  *
@@ -34,6 +36,7 @@ import {
 } from "../../runtime/hooks.ts";
 import { memo } from "../../runtime/memo.ts";
 import { forwardRef } from "../../runtime/react-core.ts";
+import { type KeyboardLiftBehavior, useKeyboardLift } from "../../mobile/keyboard-lift.ts";
 
 /** The slice of a Reanimated shared value these modules use. */
 export interface SharedValueLike<T> {
@@ -264,16 +267,27 @@ export function legendKeyboardExports(
       contentInsetEndAdjustment,
       contentInsetEndStaticAdjustment,
       contentInsetStartAdjustment: _start,
-      freeze: _freeze,
-      keyboardLiftBehavior: _lift,
-      keyboardOffset: _offset,
+      freeze,
+      keyboardLiftBehavior,
+      keyboardOffset,
+      ref,
       ...rest
-    } = props;
+    } = props as Record<string, unknown> & { ref?: Ref<unknown> };
+    const list = useRef<{ getScrollableNode?: () => unknown } | null>(null);
+    const setRef = useCombinedRef<unknown>(
+      (instance) => list.current = instance as typeof list.current,
+      ref as Ref<unknown>,
+    );
+    const lift = useKeyboardLift(() => list.current?.getScrollableNode?.() ?? null, {
+      behavior: keyboardLiftBehavior as KeyboardLiftBehavior | undefined,
+      offset: typeof keyboardOffset === "number" ? keyboardOffset : 0,
+      freeze: freeze as boolean | SharedValueLike<boolean> | undefined,
+    });
     // On iOS UIKit adds the static adjustment (the safe area) to the shared value's inset; a web
-    // view adds nothing, so the list's room is both.
+    // view adds nothing, so the list's room is both, plus the keyboard's lift.
     const room = useSharedNumber(contentInsetEndAdjustment) +
-      useSharedNumber(contentInsetEndStaticAdjustment);
-    return h(LegendList, { ...rest, contentInsetEndAdjustment: room });
+      useSharedNumber(contentInsetEndStaticAdjustment) + lift;
+    return h(LegendList, { ...rest, ref: setRef, contentInsetEndAdjustment: room });
   }
 
   return { KeyboardAwareLegendList, useKeyboardChatComposerInset, useKeyboardScrollToEnd };
