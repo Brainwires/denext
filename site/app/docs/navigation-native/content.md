@@ -103,6 +103,7 @@ the page's data; `StackLayout`'s `screenOptions` prop sets the defaults for ever
 | `headerLargeTitle`                                                      | iOS: a large title that collapses into the header as the screen scrolls.                                                                                                                     |
 | `headerBackTitle`, `headerBackVisible`                                  | The back button's label and visibility.                                                                                                                                                      |
 | `headerBackButtonDisplayMode`                                           | iOS: `"default"` (the previous screen's title), `"generic"` ("Back") or `"minimal"` (the chevron alone; the title stays as its `aria-label`).                                                |
+| `headerTintColor`                                                       | The colour of the back button and the bar button items (default: the theme's header tint).                                                                                                   |
 | `sheetAllowedDetents`, `sheetInitialDetentIndex`, `sheetGrabberVisible` | A `"formSheet"`'s detents, the one it opens at, and its grabber.                                                                                                                             |
 
 From inside a screen, `useStackNavigation()` gives `push`, `pop(count?)`, `popToTop`,
@@ -441,7 +442,10 @@ export const createBottomTabNavigator = createBottomTabNavigatorFactory(core);
 ```
 
 Native-stack options mostly carry the same names (`title`, `animation`, `gestureEnabled`,
-`presentation`, `headerShown`, `headerLargeTitle`, `headerRight`, `sheetAllowedDetents`); a
+`presentation`, `headerShown`, `headerLargeTitle`, `headerRight`, `headerTintColor`,
+`sheetAllowedDetents`). The header's tint defaults as native-stack's does: the navigation theme's
+`colors.primary` on iOS and `colors.text` on Android (`NavigationContainer`'s `theme`), not the
+browser's link colour; a
 press on the active tab emits `tabPress`, which pops a nested stack to its root. The bar button
 items (`unstable_headerLeftItems` / `unstable_headerRightItems`) are header buttons: a `button`
 item draws its SF Symbol with `SystemIcon` (else its label), a `menu` item opens its menu with

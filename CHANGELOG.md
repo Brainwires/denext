@@ -45,6 +45,15 @@ and this project adheres to
 
 ### Fixed
 
+- **React Native mode: `TextInput` and the stack header look like React Native.** A focused
+  `TextInput` drew the browser's focus ring, and a long placeholder in a one-line `multiline`
+  input (a chat composer) wrapped onto a clipped second line. react-native-web's `TextInput` now
+  has React Native's outline as its base style (0 wide, `solid`: an app's `outlineWidth`,
+  `outlineColor` or Tailwind `outline-*` class still draws one) and a one-line placeholder cut
+  with an ellipsis. The native-stack header's back button and bar button items were the browser's
+  link colour: they now honour `headerTintColor` and otherwise default as React Navigation's
+  native-stack does, to the navigation theme's `colors.primary` on iOS and `colors.text` on
+  Android. `denext/navigation`'s `ScreenOptions` gains `headerTintColor`.
 - **React Native mode: chat lists lift with the keyboard.** `KeyboardAwareLegendList`
   (`@legendapp/list/keyboard`) and `react-native-keyboard-controller`'s `KeyboardChatScrollView`
   ignored their keyboard props, so the keyboard covered the newest messages in the iOS shell and

@@ -91,6 +91,11 @@ export interface ScreenOptions {
   readonly headerBackButtonDisplayMode?: "default" | "generic" | "minimal";
   /** Whether to draw the back button when the stack can go back (default `true`). */
   readonly headerBackVisible?: boolean;
+  /**
+   * The colour of the header's back button and bar button items (default: the theme's header
+   * tint, `--dnx-header-tint`).
+   */
+  readonly headerTintColor?: string;
   /** A `"formSheet"`'s detents (default `["large"]`). */
   readonly sheetAllowedDetents?: readonly SheetDetent[];
   /** The detent a `"formSheet"` opens at (index into `sheetAllowedDetents`, default `0`). */

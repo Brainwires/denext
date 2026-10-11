@@ -35,6 +35,7 @@ import {
   createBottomTabNavigatorFactory,
   createNativeStackNavigatorFactory,
   mapStackOptions,
+  nativeStackTint,
   type ReactNavigationCore,
 } from "../src/navigation/react-navigation.ts";
 import {
@@ -861,6 +862,53 @@ Deno.test("mapStackOptions translates native-stack options", () => {
     mapStackOptions({ sheetAllowedDetents: [0.3, 1] }, { canGoBack: false }).sheetAllowedDetents,
     [0.3, 1],
   );
+});
+
+Deno.test("native-stack header tint: headerTintColor, else the theme's primary (iOS) / text (Android)", async () => {
+  assertEquals(
+    mapStackOptions({ headerTintColor: "red" }, { canGoBack: true }).headerTintColor,
+    "red",
+  );
+  assertEquals(
+    mapStackOptions({ headerTintColor: "red" }, { canGoBack: true, headerTint: "blue" })
+      .headerTintColor,
+    "red",
+  );
+  assertEquals(
+    mapStackOptions({}, { canGoBack: true, headerTint: "blue" }).headerTintColor,
+    "blue",
+  );
+  assertEquals(mapStackOptions({}, { canGoBack: true }).headerTintColor, undefined);
+  const colors = { primary: "rgb(0, 122, 255)", text: "rgb(28, 28, 30)" };
+  assertEquals(nativeStackTint({ colors }, "ios"), colors.primary);
+  assertEquals(nativeStackTint({ colors }, "android"), colors.text);
+  assertEquals(nativeStackTint(undefined, "ios"), undefined);
+
+  const state = {
+    key: "stack-1",
+    index: 1,
+    routes: [{ key: "r0", name: "index" }, { key: "r1", name: "detail" }],
+  };
+  for (
+    const [r1, tint] of [[{ title: "Detail" }, colors.primary], [
+      { title: "Detail", headerTintColor: "#ff2d55" },
+      "#ff2d55",
+    ]] as const
+  ) {
+    const { core } = fakeCore(state, { r0: { title: "Home" }, r1 });
+    core.useTheme = () => ({ colors });
+    const { container } = docWithData({});
+    const root = createRoot(container as Any);
+    const { Navigator } = (createNativeStackNavigatorFactory(core) as Any)();
+    root.render(h(Navigator, {}));
+    await settle();
+    const headers = findAll(container, "data-dnx-header");
+    const header = headers[headers.length - 1];
+    assertEquals(header.style.getPropertyValue("--dnx-header-tint"), tint);
+    const back = findAll(container, "data-dnx-back")[0];
+    assertEquals(back.style.getPropertyValue("color"), "var(--dnx-header-tint, LinkText)");
+    root.unmount();
+  }
 });
 
 Deno.test("mapStackOptions passes headerBackButtonDisplayMode, dropping unknown values", () => {

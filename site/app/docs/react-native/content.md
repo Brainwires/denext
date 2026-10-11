@@ -368,6 +368,17 @@ What stays out of reach of a WebView:
   (`@capacitor/dialog`, in a shell without `action-sheet`). The sheets' tint colors are not
   applied.
 
+### Text inputs
+
+react-native-web's `TextInput` is an `<input>` or a `<textarea>`, which keeps two browser
+defaults a React Native text input does not have. React Native mode drops both:
+
+- **No focus ring.** The input's base style is React Native's outline, 0 wide and `solid`, so the
+  browser draws no ring on focus, and an app's own `outlineWidth` / `outlineColor` (or a Tailwind
+  `outline-*` class) still draws one.
+- **A one-line placeholder.** A long placeholder is cut with an ellipsis instead of wrapping, so a
+  `multiline` input one line tall (a chat composer) does not show a clipped second line.
+
 ### Scroll snapping
 
 react-native-web implements `pagingEnabled` only. React Native mode adds the rest of React

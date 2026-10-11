@@ -94,8 +94,9 @@ function backControl(
 }
 
 /** The header bar's own style (safe-area aware, above the screen's scroller). */
-function barStyle(platform: NavigationPlatform): Record<string, unknown> {
+function barStyle(platform: NavigationPlatform, tint?: string): Record<string, unknown> {
   return {
+    ...(tint ? { "--dnx-header-tint": tint } : {}),
     flex: "none",
     position: "var(--dnx-header-position, relative)",
     zIndex: 1,
@@ -135,7 +136,7 @@ function androidHeader(props: StackHeaderProps, showBack: boolean, title: VNodeC
       width: 48,
       height: 48,
       justifyContent: "center",
-      color: "inherit",
+      color: options.headerTintColor ?? "inherit",
       borderRadius: 24,
     })
     : null;
@@ -148,7 +149,7 @@ function androidHeader(props: StackHeaderProps, showBack: boolean, title: VNodeC
     : null;
   return h(
     "header",
-    { "data-dnx-header": "android", style: barStyle("android") },
+    { "data-dnx-header": "android", style: barStyle("android", options.headerTintColor) },
     back,
     options.headerLeft ?? null,
     titleEl(title, {
@@ -186,7 +187,11 @@ function iosHeader(props: StackHeaderProps, showBack: boolean, title: VNodeChild
     "header",
     {
       "data-dnx-header": "ios",
-      style: { ...barStyle("ios"), display: "grid", gridTemplateColumns: "1fr auto 1fr" },
+      style: {
+        ...barStyle("ios", options.headerTintColor),
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
+      },
     },
     h(
       "div",
