@@ -8,7 +8,10 @@
 //     sheet that keeps react-native-web's styles under Tailwind's);
 //   - uniwind's config module registers the app's themes (`light`, `dark` and
 //     `reactNative.uniwind.extraThemes`, the `extraThemes` given to `withUniwindConfig`), so
-//     `ScopedTheme` / `Uniwind.setTheme` accept them.
+//     `ScopedTheme` / `Uniwind.setTheme` accept them;
+//   - the compiled Tailwind output gets uniwind's stylesheet pass (its lightningcss visitor:
+//     `pixelRatio()`, `fontScale()`, `hairlineWidth()` and theme scoping), see
+//     ./react-native-uniwind-css.ts.
 //
 // The stylesheet itself is the app's Tailwind input compiled by `tailwind: { input, output }`
 // (it `@import`s `"uniwind"`: the package's `uniwind.css`, which `uniwind generate-artifacts`
@@ -18,6 +21,8 @@ import { dirname, join } from "@std/path";
 import type * as esbuild from "esbuild";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import { findInstalledPackage } from "./installed-package.ts";
+import { uniwindCss } from "./react-native-uniwind-css.ts";
+import { tailwindPaths } from "./tailwind.ts";
 
 /** uniwind's web components, relative to the package. */
 const COMPONENTS = "dist/module/components/web/index.js";
@@ -51,6 +56,43 @@ export function uniwindThemes(config: DenextConfig | null | undefined): string[]
  */
 export function uniwindReinitSource(themes: readonly string[]): string {
   return `\n;Uniwind.__reinit(() => ({}), ${JSON.stringify(themes)});\n`;
+}
+
+/**
+ * The Tailwind integration's paths with uniwind's stylesheet pass added as their `postprocess`,
+ * when React Native mode's uniwind support is on (the pass runs only once `uniwind` is found
+ * installed from `projectDir`). Other apps get `tailwind` unchanged.
+ *
+ * @param tailwind The resolved `tailwind: { input, output }` paths, if any.
+ * @param config The app config.
+ * @param projectDir Where `uniwind` is looked up from.
+ */
+export function withUniwindCss<T extends { input: string; output: string }>(
+  tailwind: T | undefined,
+  config: DenextConfig | null | undefined,
+  projectDir: string,
+): (T & { postprocess?: (css: string) => Promise<string> }) | undefined {
+  const themes = uniwindThemes(config);
+  if (!tailwind || !themes) return tailwind;
+  const postprocess = async (css: string) =>
+    await findInstalledPackage(projectDir, "uniwind") ? uniwindCss(css, themes) : css;
+  return { ...tailwind, postprocess };
+}
+
+/**
+ * An SPA's Tailwind paths for `buildAppCss`: `tailwind: { input, output }` resolved against the
+ * project, with uniwind's pass added ({@linkcode withUniwindCss}).
+ *
+ * @param paths The project's directory and config.
+ */
+export function spaTailwind(
+  paths: { projectDir: string; config?: DenextConfig | null },
+): { input: string; output: string; postprocess?: (css: string) => Promise<string> } | undefined {
+  return withUniwindCss(
+    tailwindPaths(paths.projectDir, paths.config?.tailwind),
+    paths.config,
+    paths.projectDir,
+  );
 }
 
 /** Whether `path` is a file of the package at `pkgDir`. */

@@ -47,7 +47,7 @@ import {
   optimizePackageImportsList,
 } from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
-import { tailwindPaths } from "../tailwind.ts";
+import { spaTailwind } from "../react-native-uniwind.ts";
 import {
   CLIENT_PREFIX,
   ENTRY_FILE,
@@ -210,7 +210,7 @@ function spaCss(
     // app pulls in (e.g. excalidraw's `../packages/*`), which the `projectDir` walk
     // alone can't reach.
     entryFiles: roots,
-    tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
+    tailwind: spaTailwind(paths),
     graph,
   });
 }

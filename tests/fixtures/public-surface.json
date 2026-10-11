@@ -4851,6 +4851,7 @@
   ],
   "denext/build/css": [
     "AppCss:interface",
+    "AppTailwind:interface",
     "CssAssets:interface",
     "buildAppCss:function",
     "extractRouteCss:function"

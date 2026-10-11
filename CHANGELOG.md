@@ -45,6 +45,19 @@ and this project adheres to
 
 ### Fixed
 
+- **React Native mode: uniwind's `pixelRatio()`, `fontScale()`, `hairlineWidth()` and theme
+  scoping work.** uniwind's Vite plugin runs a lightningcss visitor over the compiled Tailwind CSS;
+  denext's Tailwind output never got it, so those functions reached the browser unresolved and a
+  `ScopedTheme` subtree kept the root's theme. With `uniwind` installed, the compiled
+  `tailwind.output` now gets that pass on every `denext dev` and `build` compile: `pixelRatio(n)`
+  is `n` device pixels' worth of px (`--denext-pixel-ratio`, from resolution media queries),
+  `fontScale(n)` is `n` px scaled with the root font size (`n * 1rem / 16`), `hairlineWidth()` is
+  `1px / devicePixelRatio`, theme variables declared with `@variant <theme>` move to the theme's
+  class, and theme-variant utilities apply inside `@scope (.theme) to (<the other themes>)`, so
+  the nearest `ScopedTheme` wins (T3 Code's appearance previews draw each theme in its own
+  colours). Both Tailwind's nested output and its `--minify` output are handled.
+  `denext/build/css`'s `buildAppCss` takes the pass as `tailwind.postprocess` (the new
+  `AppTailwind` type).
 - **An `asyncContext` build no longer fails on a module that imports by a relative path.** The
   transform writes each client module it instruments into `.denext/asyncctx/`, and the copy kept
   the original's relative specifiers, so they resolved beside the copy: `denext build` and

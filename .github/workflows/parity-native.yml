@@ -37,6 +37,7 @@ on:
       - "src/build/native-module-scan.ts"
       - "src/build/next-compat.ts"
       - "src/build/reanimated*.ts"
+      - "src/build/tailwind.ts"
       - "src/server/config.ts"
       - "src/client/virtual/**"
       - "src/mobile/**"

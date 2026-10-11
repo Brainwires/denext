@@ -915,10 +915,23 @@ registers the app's themes. What the app adds:
    before a build, as Metro does on start: it writes the `uniwind.css` that `@import "uniwind"`
    reads.
 
-`reactNative: { uniwind: false }` turns the aliases off. uniwind's Vite plugin also runs its
-lightningcss visitor over the compiled CSS (the `pixelRatio()`, `fontScale()` and
-`hairlineWidth()` functions, and theme-scoped classes); denext's Tailwind output does not get that
-pass.
+The compiled Tailwind output then gets the pass uniwind's Vite plugin runs through its
+lightningcss visitor, on every `denext dev` and `build` compile:
+
+- `pixelRatio(n)` is `n` times the screen's device pixel ratio in px (`PixelRatio.get() * n`;
+  `pixelRatio()` is one), read from resolution media queries into `--denext-pixel-ratio`.
+- `fontScale(n)` is `n` px scaled with the root font size (`n * 1rem / 16`), so the browser's
+  text size setting scales it as React Native's font scale does.
+- `hairlineWidth()` is one device pixel, `1px / devicePixelRatio` (`StyleSheet.hairlineWidth`).
+- Theme variables declared with `@variant <theme>` in `@layer theme` move from
+  `:root:where(.theme, .theme *)` to the theme's class, so a `ScopedTheme` subtree gets them, not
+  only a themed root.
+- A theme-variant utility (`dark:bg-…`, `ocean-dark:bg-…`) applies inside `@scope (.theme) to
+  (<the other themes>)`: the nearest `ScopedTheme` wins, so a light subtree inside a dark one is
+  light. The `prefers-color-scheme` fallback of `light:` and `dark:` (no theme class at all) is
+  unchanged.
+
+`reactNative: { uniwind: false }` turns the aliases and the pass off.
 
 ## Recipe: NativeWind v4
 
