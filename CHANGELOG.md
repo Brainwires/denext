@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.12] - 2026-10-12
+
 ### Added
 
 - **`@denext/backend` 0.1.0: storage.** A new first-party plugin, `backend({ storage })`: buckets
@@ -13168,7 +13170,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.11...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.12...development
+[3.4.12]: https://jsr.io/@denext/denext@3.4.12
 [3.4.11]: https://jsr.io/@denext/denext@3.4.11
 [3.4.10]: https://jsr.io/@denext/denext@3.4.10
 [3.4.9]: https://jsr.io/@denext/denext@3.4.9
