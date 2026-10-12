@@ -64,7 +64,11 @@ async function cookieFor(id: string): Promise<string> {
     .split(";")[0];
 }
 
-/** The schema: notes with owner / public policies, a private table, and a slow view. */
+/**
+ * The schema: notes with owner / public policies, a private table, a slow `security_invoker` view,
+ * and relations without row-level security (a table with RLS off, an owner's-rights view, a
+ * materialized view) that the default `tables: "*"` must not serve.
+ */
 const SCHEMA = `
   create table notes (
     id serial primary key,
@@ -90,8 +94,14 @@ const SCHEMA = `
   grant usage on sequence notes_id_seq to authenticated;
   create table secrets (id int primary key, value text);
   insert into secrets values (1, 'hidden');
-  create view slow as select pg_sleep(2)::text as nap;
+  create view slow with (security_invoker = on) as select pg_sleep(2)::text as nap;
   grant select on slow to anon;
+  create table open_table (id int primary key);
+  grant select on open_table to anon;
+  create view definer_view as select id, body from notes;
+  grant select on definer_view to anon;
+  create materialized view mat as select 1 as one;
+  grant select on mat to anon;
 `;
 
 Deno.test({
@@ -257,8 +267,26 @@ Deno.test({
       const slow = await call("/rest/v1/slow");
       assertEquals([slow.status, (await slow.json()).code], [504, "57014"]);
 
+      // Granted relations without row-level security get no route under "*": the RLS-off
+      // table, the owner's-rights view (it would read notes past their policies) and the
+      // materialized view. Named explicitly, they are served as named.
+      for (const name of ["open_table", "definer_view", "mat"]) {
+        const res = await call(`/rest/v1/${name}`);
+        assertEquals([res.status, (await res.json()).code], [404, "PGRST205"], name);
+      }
+      const skipped: string[] = [];
+      const catalog = await readRestCatalog(db.service(), "public", "*", (list) => {
+        skipped.push(...list.map((s) => `${s.name}:${s.kind}`));
+      });
+      assertEquals(skipped.sort(), [
+        "definer_view:view",
+        "mat:materialized view",
+        "open_table:table",
+      ]);
+      const named = await readRestCatalog(db.service(), "public", ["open_table", "definer_view"]);
+      assertEquals([...named.keys()].sort(), ["definer_view", "open_table"]);
+
       // The row types, from the live catalog.
-      const catalog = await readRestCatalog(db.service(), "public", "*");
       assertEquals([...catalog.keys()].sort(), ["notes", "slow"]);
       const types = generateRestTypes(catalog, "public");
       assertStringIncludes(types, `"tags": string[] | null;`);

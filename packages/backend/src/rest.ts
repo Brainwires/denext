@@ -6,11 +6,19 @@
 //
 // A write carrying cookies follows denext's Server Actions rule (`csrf()`): a cross-site one is
 // refused. A native app's bearer token (`Authorization: Bearer nat_…`), which `auth()` reads
-// instead of the cookie, needs no such check.
+// instead of the cookie, needs no such check — recognized by `auth()`'s own parser, so the
+// exemption never covers a request whose session comes from the cookie.
+//
+// The routes share the app's Postgres pool, so at most `maxConcurrent` REST statements run at
+// once (a request past that waits briefly, then gets a 503 with `Retry-After`), each under a
+// short `statement_timeout`; `Prefer: count=exact` (a full count) is for signed-in users only
+// unless `exactCount` says otherwise.
 
 import {
+  auth,
   csrf,
   isApiError,
+  nativeBearerToken,
   type PluginContext,
   readCappedBody,
   type SqlRow,
@@ -19,7 +27,12 @@ import {
 } from "@denext/denext/server";
 import { db, rlsReady } from "./postgres.ts";
 import { start } from "./rls.ts";
-import { readRestCatalog, type RestCatalog, type RestTable } from "./rest-catalog.ts";
+import {
+  readRestCatalog,
+  type RestCatalog,
+  type RestTable,
+  type SkippedRelation,
+} from "./rest-catalog.ts";
 import {
   buildDelete,
   buildInsert,
@@ -38,9 +51,13 @@ export interface RestOptions {
   /** The schema whose tables are served (default `"public"`). */
   schema?: string;
   /**
-   * The tables to serve, by name, or `"*"` (the default) for every table and view of the
-   * schema that the `anon` or `authenticated` role holds a privilege on. A listed table those
-   * roles cannot reach gets no route either.
+   * The tables to serve, by name, or `"*"` (the default) for every relation of the schema that
+   * the `anon` or `authenticated` role holds a privilege on AND that enforces row-level
+   * security: a table with RLS enabled, or a view created `with (security_invoker = true)`.
+   * Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables
+   * are skipped — one startup warning lists them — unless named here: a list exposes exactly
+   * the named relations, whatever their RLS. A listed table those roles cannot reach gets no
+   * route either.
    */
   tables?: string[] | "*";
   /** Where the routes live, app-relative (default `"/rest/v1"`). */
@@ -49,8 +66,21 @@ export interface RestOptions {
   maxRows?: number;
   /** The largest request body accepted, in bytes (default 1 MiB). */
   maxBodyBytes?: number;
-  /** Each request's `statement_timeout`, in milliseconds (default 8000). */
+  /** Each request's `statement_timeout`, in milliseconds (default 5000). */
   statementTimeout?: number;
+  /**
+   * The most REST statements running at once, so the routes cannot take every connection of
+   * the pool the rest of the app shares (default: half the pool's `max` when the client
+   * reports it — `Deno.SQL` and postgres.js do — else 5). A request past it waits up to a
+   * second, then is answered 503 `PGRST003` with `Retry-After`.
+   */
+  maxConcurrent?: number;
+  /**
+   * Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every
+   * matching row: `"authenticated"` (the default; an anonymous request is refused with 400),
+   * `"all"`, or `"never"`.
+   */
+  exactCount?: "all" | "authenticated" | "never";
 }
 
 /** Validated auto-REST options. */
@@ -67,6 +97,10 @@ export interface ResolvedRest {
   maxBodyBytes: number;
   /** The statement timeout (ms). */
   statementTimeout: number;
+  /** The concurrency cap, or `undefined` to derive it from the pool. */
+  maxConcurrent: number | undefined;
+  /** Who may count exactly. */
+  exactCount: "all" | "authenticated" | "never";
 }
 
 /**
@@ -87,6 +121,10 @@ export function resolveRest(o: RestOptions): ResolvedRest {
   if (tables !== "*" && (!Array.isArray(tables) || tables.some((t) => typeof t !== "string"))) {
     throw new TypeError(`backend(): rest.tables must be "*" or a list of table names`);
   }
+  const exactCount = o.exactCount ?? "authenticated";
+  if (!["all", "authenticated", "never"].includes(exactCount)) {
+    throw new TypeError(`backend(): rest.exactCount must be "all", "authenticated" or "never"`);
+  }
   const basePath = (o.basePath ?? "/rest/v1").replace(/\/+$/, "");
   if (!/^\/[A-Za-z0-9._~\-/]*$/.test(basePath) || basePath === "") {
     throw new TypeError(`backend(): rest.basePath must be an absolute path such as "/rest/v1"`);
@@ -97,7 +135,11 @@ export function resolveRest(o: RestOptions): ResolvedRest {
     basePath,
     maxRows: positiveOption(o.maxRows, 1000, "backend(): rest.maxRows"),
     maxBodyBytes: positiveOption(o.maxBodyBytes, 1024 * 1024, "backend(): rest.maxBodyBytes"),
-    statementTimeout: positiveOption(o.statementTimeout, 8000, "backend(): rest.statementTimeout"),
+    statementTimeout: positiveOption(o.statementTimeout, 5000, "backend(): rest.statementTimeout"),
+    maxConcurrent: o.maxConcurrent === undefined
+      ? undefined
+      : positiveOption(o.maxConcurrent, 1, "backend(): rest.maxConcurrent"),
+    exactCount,
   };
 }
 
@@ -147,15 +189,117 @@ export class RestCatalogCache {
   }
 }
 
+/** The startup warning for the relations `tables: "*"` skipped, or `null` when none were. */
+export function skippedWarning(rest: ResolvedRest, skipped: SkippedRelation[]): string | null {
+  if (!skipped.length) return null;
+  const lines = skipped.map((s) => `  - ${rest.schema}.${s.name} (${s.kind}): ${s.reason}`);
+  return [
+    `[@denext/backend] rest: ${skipped.length} relation(s) the anon / authenticated roles can ` +
+    `reach get no route, because they do not enforce row-level security:`,
+    ...lines,
+    `  Enable RLS (alter table … enable row level security) or recreate a view with ` +
+    `(security_invoker = true) to serve one; or name it in rest.tables to serve it as is.`,
+  ].join("\n");
+}
+
 /**
  * The catalog loader the plugin uses: the RLS roles first (the privilege checks name them),
- * then the connecting role's view of `pg_catalog`.
+ * then the connecting role's view of `pg_catalog`. The relations `"*"` skipped are warned about
+ * once per distinct list (a dev re-read that finds the same ones stays quiet).
  *
  * @param rest The resolved options.
  * @returns The loader.
  */
 function catalogLoader(rest: ResolvedRest): () => Promise<RestCatalog> {
-  return () => rlsReady().then(() => readRestCatalog(db.service(), rest.schema, rest.tables));
+  let warned = "";
+  const warn = (skipped: SkippedRelation[]) => {
+    const message = skippedWarning(rest, skipped);
+    if (message && message !== warned) console.warn(message);
+    warned = message ?? "";
+  };
+  return () => rlsReady().then(() => readRestCatalog(db.service(), rest.schema, rest.tables, warn));
+}
+
+/** How long a REST request waits for a free statement slot before it is turned away. */
+const QUEUE_WAIT_MS = 1000;
+
+/**
+ * At most `max` REST statements at once; the next ones queue, each for up to
+ * {@linkcode QUEUE_WAIT_MS}, then fail with 503 `PGRST003` — the pool the app shares keeps
+ * connections for everything else.
+ */
+export class StatementGate {
+  #active = 0;
+  readonly #queue: Array<() => void> = [];
+  readonly #max: number;
+  readonly #waitMs: number;
+
+  /**
+   * A gate.
+   *
+   * @param max How many statements may run at once.
+   * @param waitMs How long one may wait for a slot.
+   */
+  constructor(max: number, waitMs = QUEUE_WAIT_MS) {
+    this.#max = max;
+    this.#waitMs = waitMs;
+  }
+
+  /** Run `fn` in a slot. */
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.#active < this.#max) this.#active++;
+    else await this.#wait();
+    try {
+      return await fn();
+    } finally {
+      // A waiter inherits the slot; otherwise it frees up.
+      const next = this.#queue.shift();
+      if (next) next();
+      else this.#active--;
+    }
+  }
+
+  #wait(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const at = this.#queue.indexOf(grant);
+        if (at >= 0) this.#queue.splice(at, 1);
+        reject(
+          new RestError(
+            503,
+            "PGRST003",
+            "too many requests are reading the database; try again shortly",
+            null,
+            "Retry after the number of seconds in the Retry-After header.",
+          ),
+        );
+      }, this.#waitMs);
+      this.#queue.push(grant);
+    });
+  }
+}
+
+/** The pool's `max`, when the client reports it (`Deno.SQL` and postgres.js: `options.max`). */
+function poolMax(): number | undefined {
+  try {
+    const max = (db.service() as unknown as { options?: { max?: unknown } }).options?.max;
+    return typeof max === "number" && Number.isInteger(max) && max > 0 ? max : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The concurrency cap: `rest.maxConcurrent`, else half the pool (at least 1), else 5 — read on
+ * first use, once the client is installed.
+ */
+export function concurrencyOf(rest: ResolvedRest, max = poolMax()): number {
+  if (rest.maxConcurrent !== undefined) return rest.maxConcurrent;
+  return max === undefined ? 5 : Math.max(1, Math.floor(max / 2));
 }
 
 /** The `set_config` that bounds every statement after it in the transaction. */
@@ -213,7 +357,12 @@ function errorResponse(error: unknown): Response {
       headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
     });
   if (error instanceof RestError) {
-    return json(error.status, errorBody(error.code, error.message, error.details, error.hint));
+    const response = json(
+      error.status,
+      errorBody(error.code, error.message, error.details, error.hint),
+    );
+    if (error.status === 503) response.headers.set("retry-after", "1");
+    return response;
   }
   if (isApiError(error)) {
     return json(error.status, errorBody(error.code, error.message, null, null));
@@ -301,16 +450,16 @@ async function bodyOf(request: Request, max: number): Promise<unknown> {
   }
 }
 
-/** A native app's bearer session (`auth()` reads it, never the cookie). */
-function nativeBearer(request: Request): boolean {
-  return /^bearer\s+nat_/i.test(request.headers.get("authorization") ?? "");
-}
-
 const checkCsrf = csrf();
 
-/** Refuse a cross-site write that rides the page's cookies (the Server Actions rule). */
+/**
+ * Refuse a cross-site write that rides the page's cookies (the Server Actions rule). A native
+ * app's bearer session is exempt — exactly when `auth()` reads the token instead of the cookie
+ * (`nativeBearerToken` is its parser), so no header spelling earns the exemption while the
+ * cookie still authenticates.
+ */
 async function guardWrite(request: Request): Promise<void> {
-  if (nativeBearer(request)) return;
+  if (nativeBearerToken(request) !== undefined) return;
   await checkCsrf({
     request,
     params: {},
@@ -385,18 +534,38 @@ function rangeOutcome(
   };
 }
 
+/** Refuse `count=exact` for a requester `exactCount` does not allow. */
+async function checkExactCount(rest: ResolvedRest): Promise<void> {
+  if (rest.exactCount === "all") return;
+  if (rest.exactCount === "authenticated" && await auth()) return;
+  throw new RestError(
+    400,
+    "PGRST100",
+    rest.exactCount === "never"
+      ? "Prefer: count=exact is not available on this API"
+      : "Prefer: count=exact is only available to signed-in users",
+    null,
+    "Drop Prefer: count=exact and page with limit / offset (or Range) instead; " +
+      'the server can allow it with backend({ rest: { exactCount: "all" } }).',
+  );
+}
+
 async function read(
   rest: ResolvedRest,
+  gate: () => StatementGate,
   table: RestTable,
   request: Request,
   query: URLSearchParams,
 ): Promise<Response> {
   const prefs = preferencesOf(request);
+  if (prefs.count) await checkExactCount(rest);
   prefs.applied = prefs.applied.filter((p) => p.startsWith("count="));
   const { offset, limit } = pageOf(rest, request, query);
   const object = wantsObject(request);
   const statement = buildSelect(table, query, { offset, limit, count: prefs.count });
-  const row = await runScoped(statement, rest.statementTimeout, object ? requireOne : undefined);
+  const row = await gate().run(() =>
+    runScoped(statement, rest.statementTimeout, object ? requireOne : undefined)
+  );
   const total = prefs.count ? Number(row?.total ?? 0) : undefined;
   const { contentRange, status } = rangeOutcome(offset, Number(row?.n ?? 0), total);
   const headers = baseHeaders(prefs);
@@ -422,6 +591,7 @@ async function writeStatement(
 
 async function write(
   rest: ResolvedRest,
+  gate: () => StatementGate,
   table: RestTable,
   request: Request,
   query: URLSearchParams,
@@ -432,7 +602,9 @@ async function write(
   if (!prefs.representation) prefs.applied = prefs.applied.filter((p) => p !== "count=exact");
   const object = prefs.representation && wantsObject(request);
   const statement = await writeStatement(rest, table, request, query, prefs.representation);
-  const row = await runScoped(statement, rest.statementTimeout, object ? requireOne : undefined);
+  const row = await gate().run(() =>
+    runScoped(statement, rest.statementTimeout, object ? requireOne : undefined)
+  );
   const headers = baseHeaders(prefs);
   const created = request.method === "POST";
   if (!prefs.representation) return new Response(null, { status: created ? 201 : 204, headers });
@@ -479,13 +651,19 @@ function restHandler(
   catalog: RestCatalogCache,
 ): (request: Request) => Promise<Response | null> {
   const prefix = `${rest.basePath}/`;
+  let made: StatementGate | undefined;
+  const gate = () => made ??= new StatementGate(concurrencyOf(rest));
   return async (request) => {
     const url = new URL(request.url);
     if (!url.pathname.startsWith(prefix)) return null;
     try {
       const table = await tableOf(rest, catalog, url.pathname.slice(prefix.length));
-      if (READS.has(request.method)) return await read(rest, table, request, url.searchParams);
-      if (WRITES.has(request.method)) return await write(rest, table, request, url.searchParams);
+      if (READS.has(request.method)) {
+        return await read(rest, gate, table, request, url.searchParams);
+      }
+      if (WRITES.has(request.method)) {
+        return await write(rest, gate, table, request, url.searchParams);
+      }
       return new Response(null, { status: 405, headers: { allow: ALLOW } });
     } catch (error) {
       return errorResponse(error);

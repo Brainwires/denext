@@ -316,3 +316,42 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    `RLS on a real Postgres: legacy claim settings never override; db() follows the request${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    const role = new URL(env.url).username;
+    // A default on the login role reaches every new connection of the pool: Supabase's auth.*
+    // functions read these legacy settings BEFORE request.jwt.claims.
+    await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.sub = '${B}'`);
+    await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.email = 'b@evil.test'`);
+    await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.role = 'service_role'`);
+    const sql = new (Deno as unknown as { SQL: new (url: string) => SqlClient }).SQL(env.url);
+    try {
+      await install(sql, [denextAuth(authConfig)]);
+      const who = (client: SqlClient) =>
+        client`select auth.uid()::text as uid, auth.email() as email, auth.role() as role`;
+      assertEquals(await who(db({ as: { id: A, email: "a@x.test" } })), [{
+        uid: A,
+        email: "a@x.test",
+        role: "authenticated",
+      }]);
+      assertEquals(await who(db()), [{ uid: null, email: null, role: "anon" }]);
+      // A module-level client follows the request running each query.
+      const kept = db();
+      const [cookieA, cookieB] = [await cookieFor(A, "a@x.test"), await cookieFor(B, "b@x.test")];
+      assertEquals((await inRequest(cookieA, () => who(kept)))[0].uid, A);
+      assertEquals((await inRequest(cookieB, () => who(kept)))[0].uid, B);
+      assertEquals((await who(kept))[0].uid, null, "outside a request: anon");
+    } finally {
+      resetPlugins();
+      installPostgres(undefined);
+      await sql.close();
+      await env.drop();
+    }
+  },
+});

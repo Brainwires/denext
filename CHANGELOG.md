@@ -36,6 +36,20 @@ and this project adheres to
   back with the same key) and `"unsubscribe"` when it unsubscribed, was revoked or was denied on
   re-authorization. Re-subscribing to the same key under the same subscription id no longer takes
   the key through `onIdle` / `onActive`.
+- **`@denext/backend`: `db()` reads the identity at each query.** Without `as`, who a `db()` client
+  acts as is resolved when a query runs, from the request current at that moment (once per
+  request), not when the client was made — so a module-level `const sql = db()` serves every
+  visitor as themself and is `anon` outside a request. `db({ as })` stays fixed.
+- **`@denext/backend`: storage outside a request needs a service handle.** With no request there is
+  no session to pass `authorize`, so a plain `storage.bucket(name)` call from a task or script is
+  refused (`forbidden`, naming `{ service: true }`); a public bucket's downloads stay open. Use
+  `storage.bucket(name, { service: true })` there.
+- **`@denext/backend` auto-REST defaults.** `statementTimeout` is 5000 ms (was 8000); new
+  `maxConcurrent` (default half the pool's `max`, else 5; excess requests wait up to 1 s, then get
+  `503` `PGRST003` with `Retry-After`) and `exactCount` (`"authenticated"` by default: an anonymous
+  `Prefer: count=exact` is refused with `400`; `"all"` / `"never"`).
+- **`nativeBearerToken(request)`** is exported from `denext/server`: the `Authorization: Bearer
+  nat_…` parser `auth()` uses, for handlers that exempt native-app requests from a cookie check.
 
 ### Security
 
@@ -58,6 +72,32 @@ and this project adheres to
   re-read is a `resync`); and flushes are single-flight, so bursts that arrive during one are
   delivered together by the next. Distinct filters (re-read groups) per identity are bounded by
   `maxSubscriptionsPerIdentity`.
+- **`@denext/backend` auto-REST no longer exposes relations without row-level security by
+  default.** With `tables: "*"` only tables (and partitioned tables) with RLS enabled and views
+  created `with (security_invoker = true)` get a route; a granted table with RLS off, an ordinary
+  (owner's-rights) view, a materialized view or a foreign table is skipped and listed, with the
+  reason, in one startup warning. Naming a relation in `rest.tables` still serves it as named.
+- **`@denext/backend` auto-REST can no longer exhaust the shared Postgres pool** (`maxConcurrent`,
+  a shorter `statement_timeout`, and no anonymous exact counts by default — see Changed).
+- **`@denext/backend` auto-REST CSRF exemption matches `auth()`.** Only a request whose
+  `Authorization` header `auth()` itself reads as a native bearer session skips the cross-site
+  check; a look-alike spelling (`Bearer<TAB>nat_…`) that left the session on the cookie no longer
+  does.
+- **`@denext/backend`: a `db()` client kept at module scope no longer keeps its first visitor's
+  identity** (see Changed).
+- **`@denext/backend` row-level security: legacy claim settings can't override the identity.** The
+  setup statement also blanks `request.jwt.claim.sub`, `.role`, `.email` and `request.jwt.claim`
+  transaction-locally (still one pipelined statement), so a value left on a pooled connection or
+  set as a role default never wins over `request.jwt.claims` in Supabase's `auth.*` functions.
+- **`@denext/backend`: custom claims can't set `email`.** `sub`, `role` and `email` are stripped
+  from `rls.claims` and `db({ as: { claims } })`; `email` comes from the user alone.
+- **`@denext/backend` storage fails closed outside a request** (see Changed).
+- **`@denext/backend` S3 presigned downloads carry a content disposition.** Every presigned `GET`
+  the plugin signs sets `response-content-type` to the stored type and
+  `response-content-disposition` to `inline` only for raster images, audio, video, PDF and plain
+  text (the object route's rule) and `attachment` otherwise, so an object a client uploaded but
+  never completed (never sniffed) cannot render as HTML or SVG from the store's origin. The guide
+  documents bucket lifecycle rules for uploads that were never completed.
 
 ## [3.4.14] - 2026-10-12
 

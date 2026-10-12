@@ -26,7 +26,14 @@ import type { AuthConfig } from "../src/server/auth/types.ts";
 import { backend, type RestOptions } from "../packages/backend/mod.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { readRestCatalog } from "../packages/backend/src/rest-catalog.ts";
-import { resolveRest, RestCatalogCache } from "../packages/backend/src/rest.ts";
+import {
+  concurrencyOf,
+  resolveRest,
+  RestCatalogCache,
+  skippedWarning,
+  StatementGate,
+} from "../packages/backend/src/rest.ts";
+import { RestError } from "../packages/backend/src/rest-query.ts";
 import { writeRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { restClient, RestClientError, type Selected } from "../packages/backend/client.ts";
 import { type FakeSqlClient, fakeSqlClient } from "./helpers/fake-sql-client.ts";
@@ -52,6 +59,7 @@ const COLUMN_ROWS: SqlRow[] = [
 ].map(([name, cast, type, category, nullable, hasDefault, readOnly]) => ({
   table: "notes",
   kind: "r",
+  rls: "true",
   name,
   cast_type: cast,
   type_name: type,
@@ -194,7 +202,7 @@ Deno.test("GET reads as anon under a statement timeout, answering Postgres's JSO
     assertEquals(res.headers.get("content-range"), "0-0/*");
     assertEquals(res.headers.get("cache-control"), "private, no-store");
     const [run] = app.seen;
-    assertEquals([run.role, run.claims.role, run.timeout], ["anon", "anon", "8000"]);
+    assertEquals([run.role, run.claims.role, run.timeout], ["anon", "anon", "5000"]);
     assertStringIncludes(
       run.text,
       `SELECT "id", "body" FROM "public"."notes" WHERE "id" > $1::integer`,
@@ -227,7 +235,7 @@ Deno.test("a signed-in request runs as authenticated with the user's claims", as
 Deno.test("Range, count=exact, maxRows and HEAD", async () => {
   const app = await restApp(
     () => [{ body: '[{"id":3},{"id":4}]', n: "2", total: "5" }],
-    { maxRows: 3, statementTimeout: 250 },
+    { maxRows: 3, statementTimeout: 250, exactCount: "all" },
   );
   try {
     const res = await app.call("/rest/v1/notes?limit=50", {
@@ -249,7 +257,7 @@ Deno.test("Range, count=exact, maxRows and HEAD", async () => {
 });
 
 Deno.test("an offset past every row is 416; a reversed Range is 416", async () => {
-  const app = await restApp(() => [{ body: "[]", n: "0", total: "4" }]);
+  const app = await restApp(() => [{ body: "[]", n: "0", total: "4" }], { exactCount: "all" });
   try {
     const past = await app.call("/rest/v1/notes?offset=10", { headers: { prefer: "count=exact" } });
     assertEquals(past.status, 416);
@@ -493,7 +501,9 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     basePath: "/rest/v1",
     maxRows: 1000,
     maxBodyBytes: 1024 * 1024,
-    statementTimeout: 8000,
+    statementTimeout: 5000,
+    maxConcurrent: undefined,
+    exactCount: "authenticated",
   });
   const bad: RestOptions[] = [
     { schema: 'x"; drop' },
@@ -504,6 +514,8 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     { maxRows: 0 },
     { maxBodyBytes: 1.5 },
     { statementTimeout: -1 },
+    { maxConcurrent: 0 },
+    { exactCount: "anon" as unknown as "all" },
   ];
   for (const options of bad) {
     let threw = false;
@@ -621,12 +633,14 @@ const _cols: Equal<Selected<NoteRow, "id, body">, { id: number; body: string | n
 void [_star, _cols];
 
 Deno.test("restClient drives the handler: filters, order, paging, count, single, writes, errors", async () => {
-  const app = await restApp((seen) =>
-    seen.text.includes("count(*) FROM")
-      ? [{ body: '[{"id":1},{"id":2}]', n: "2", total: "9" }]
-      : seen.text.startsWith("WITH _m")
-      ? [{ body: '[{"id":3}]', n: "1" }]
-      : [{ body: '[{"id":1}]', n: "1" }]
+  const app = await restApp(
+    (seen) =>
+      seen.text.includes("count(*) FROM")
+        ? [{ body: '[{"id":1},{"id":2}]', n: "2", total: "9" }]
+        : seen.text.startsWith("WITH _m")
+        ? [{ body: '[{"id":3}]', n: "1" }]
+        : [{ body: '[{"id":1}]', n: "1" }],
+    { exactCount: "all" },
   );
   try {
     const sent: Request[] = [];
@@ -701,6 +715,192 @@ Deno.test("restClient drives the handler: filters, order, paging, count, single,
       fetch: () => Promise.resolve(new Response("bad gateway", { status: 502 })),
     }).from("notes").select();
     assertEquals([proxy.error?.code, proxy.error?.message], ["http_error", "bad gateway"]);
+  } finally {
+    tearDown();
+  }
+});
+
+// ── Security defaults ────────────────────────────────────────────────────────
+
+/** `notes`' column rows renamed to another relation of `kind`, with or without RLS. */
+function relation(table: string, kind: string, rls: boolean): SqlRow[] {
+  return COLUMN_ROWS.map((row) => ({ ...row, table, kind, rls: String(rls) }));
+}
+
+Deno.test('tables: "*" serves only RLS tables and security_invoker views; the rest are warned about', async () => {
+  const rows = [
+    ...COLUMN_ROWS,
+    ...relation("open_table", "r", false),
+    ...relation("parts", "p", true),
+    ...relation("invoker_view", "v", true),
+    ...relation("definer_view", "v", false),
+    ...relation("matview", "m", false),
+    ...relation("remote", "f", false),
+  ];
+  let sent = "";
+  const sql = {
+    unsafe: (text: string) => {
+      if (!text.includes("indisprimary")) sent = text;
+      return Promise.resolve(text.includes("indisprimary") ? KEY_ROWS : rows);
+    },
+  } as never;
+  // The catalog query reads RLS and security_invoker from pg_class.
+  const skipped: unknown[] = [];
+  const all = await readRestCatalog(sql, "public", "*", (s) => skipped.push(...s));
+  assertStringIncludes(sent, "c.relrowsecurity");
+  assertStringIncludes(sent, "security_invoker=");
+  assertEquals([...all.keys()], ["notes", "parts", "invoker_view"]);
+  assertEquals(skipped, [
+    { name: "open_table", kind: "table", reason: "row-level security is not enabled" },
+    {
+      name: "definer_view",
+      kind: "view",
+      reason: "a view without security_invoker runs with its owner's rights",
+    },
+    {
+      name: "matview",
+      kind: "materialized view",
+      reason: "a materialized view has no row-level security",
+    },
+    { name: "remote", kind: "foreign table", reason: "a foreign table has no row-level security" },
+  ]);
+  // Naming them is the operator's choice: a list exposes them as named.
+  const named = await readRestCatalog(sql, "public", ["open_table", "definer_view"], (s) => {
+    assertEquals(s, []);
+  });
+  assertEquals([...named.keys()], ["open_table", "definer_view"]);
+  const warning = skippedWarning(resolveRest({}), skipped as never)!;
+  assertStringIncludes(warning, "public.open_table (table): row-level security is not enabled");
+  assertStringIncludes(warning, "public.remote (foreign table)");
+  assertEquals(skippedWarning(resolveRest({}), []), null);
+});
+
+Deno.test("a table without RLS gets no route under the default, and one warning says why", async () => {
+  const { value: app, logged } = await quiet(async () => {
+    const app = await restApp(
+      undefined,
+      {},
+      () => [...COLUMN_ROWS, ...relation("audit", "r", false)],
+    );
+    const open = await app.call("/rest/v1/audit");
+    assertEquals([open.status, (await open.json()).code], [404, "PGRST205"]);
+    const notes = await app.call("/rest/v1/notes");
+    assertEquals(notes.status, 200);
+    await notes.body?.cancel();
+    return app;
+  });
+  try {
+    const warnings = logged.map((args) => String(args[0])).filter((m) => m.includes("rest:"));
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0], "public.audit (table): row-level security is not enabled");
+    assertEquals(app.seen.length, 1, "only the RLS table was queried");
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("count=exact is for signed-in users by default; exactCount: never refuses everyone", async () => {
+  const counted = () => [{ body: '[{"id":1}]', n: "1", total: "1" }];
+  let app = await restApp(counted);
+  try {
+    const anon = await app.call("/rest/v1/notes", { headers: { prefer: "count=exact" } });
+    const body = await anon.json();
+    assertEquals([anon.status, body.code], [400, "PGRST100"]);
+    assertStringIncludes(body.message, "signed-in users");
+    assertStringIncludes(body.hint, "limit / offset");
+    assertEquals(app.seen.length, 0, "a refused count never reaches the database");
+    const signedIn = await app.call("/rest/v1/notes", {
+      headers: { prefer: "count=exact" },
+      cookie: await cookieFor("user-a"),
+    });
+    assertEquals([signedIn.status, signedIn.headers.get("content-range")], [200, "0-0/1"]);
+    await signedIn.body?.cancel();
+    const plain = await app.call("/rest/v1/notes");
+    assertEquals(plain.status, 200, "without count=exact anon reads as before");
+    await plain.body?.cancel();
+  } finally {
+    tearDown();
+  }
+  app = await restApp(counted, { exactCount: "never" });
+  try {
+    const refused = await app.call("/rest/v1/notes", {
+      headers: { prefer: "count=exact" },
+      cookie: await cookieFor("user-a"),
+    });
+    assertEquals([refused.status, (await refused.json()).code], [400, "PGRST100"]);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("StatementGate: at most max at once, waiters inherit a slot, a long wait is a 503", async () => {
+  const gate = new StatementGate(1, 30);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => release = resolve);
+  const first = gate.run(() => held.then(() => "first"));
+  const timedOut = gate.run(() => Promise.resolve("never"));
+  const error = await timedOut.then(() => null, (e) => e);
+  assert(error instanceof RestError);
+  assertEquals([error.status, error.code], [503, "PGRST003"]);
+  const patient = new StatementGate(1, 10_000);
+  let releaseP!: () => void;
+  const heldP = new Promise<void>((resolve) => releaseP = resolve);
+  const order: string[] = [];
+  const a = patient.run(() => heldP.then(() => void order.push("a")));
+  const b = patient.run(() => Promise.resolve().then(() => void order.push("b")));
+  releaseP();
+  await Promise.all([a, b]);
+  assertEquals(order, ["a", "b"]);
+  release();
+  assertEquals(await first, "first");
+  // The slot is free again.
+  assertEquals(await gate.run(() => Promise.resolve(1)), 1);
+  // Half the pool by default, at least one; 5 when the pool does not say; the option wins.
+  assertEquals(concurrencyOf(resolveRest({}), 10), 5);
+  assertEquals(concurrencyOf(resolveRest({}), 1), 1);
+  assertEquals(concurrencyOf(resolveRest({}), undefined), 5);
+  assertEquals(concurrencyOf(resolveRest({ maxConcurrent: 3 }), 40), 3);
+});
+
+Deno.test("REST statements beyond maxConcurrent wait, then 503 with Retry-After", async () => {
+  const app = await restApp(undefined, { maxConcurrent: 1 });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => release = resolve);
+  const begin = app.sql.begin.bind(app.sql);
+  let calls = 0;
+  (app.sql as unknown as { begin: unknown }).begin = (fn: never) =>
+    calls++ === 0 ? held.then(() => begin(fn)) : begin(fn);
+  try {
+    const slow = app.call("/rest/v1/notes");
+    const turnedAway = await app.call("/rest/v1/notes");
+    assertEquals(turnedAway.status, 503);
+    assertEquals(turnedAway.headers.get("retry-after"), "1");
+    assertEquals((await turnedAway.json()).code, "PGRST003");
+    release();
+    assertEquals((await slow).status, 200);
+    const after = await app.call("/rest/v1/notes");
+    assertEquals(after.status, 200, "the slot is free once the slow one finished");
+    await after.body?.cancel();
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("the CSRF exemption is auth()'s own bearer parser: a cookie-authenticated look-alike is refused", async () => {
+  const app = await restApp();
+  try {
+    const cookie = await cookieFor("user-a");
+    // `auth()` does not read this as a native token, so the session comes from the cookie —
+    // the write must face the cross-site check.
+    const lookAlike = await app.call("/rest/v1/notes", {
+      method: "POST",
+      body: JSON.stringify({ body: "x" }),
+      cookie,
+      crossSite: true,
+      headers: { authorization: "Bearer\tnat_unknown.token" },
+    });
+    assertEquals([lookAlike.status, (await lookAlike.json()).code], [403, "csrf_failed"]);
+    assertEquals(app.seen.length, 0);
   } finally {
     tearDown();
   }

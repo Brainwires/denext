@@ -97,12 +97,17 @@ const { data: notes, error } = await from("notes")
 ```
 
 All three run as the signed-in user, and your policies decide which rows come back. With
-[auto-REST](/docs/backend#auto-rest) on, the browser can build queries against any table the
-`anon` / `authenticated` roles were granted, as with Supabase; without it, a query exists only
-where your server code wrote it, and the browser gets what a route handler, Server Action or
-Server Component chose to return. Every interpolated value is a bound
-parameter. Outside a request (a task, a script) `db()` runs as `anon`; act for a user with
-`db({ as: { id: userId } })`, or as the server with `db.service()`.
+[auto-REST](/docs/backend#auto-rest) on, the browser can build queries against the tables the
+`anon` / `authenticated` roles were granted, as with Supabase — with one difference: by default
+only tables with RLS enabled and views created `with (security_invoker = true)` get a route.
+PostgREST serves a granted table with RLS off, or a plain view that reads as its owner, to every
+caller; denext skips those and lists them in a startup warning, and you name one in
+`rest.tables` to serve it as is. A full count (`count: "exact"`) is for signed-in users by default
+(`rest.exactCount`). Without auto-REST, a query exists only where your server code wrote it, and
+the browser gets what a route handler, Server Action or Server Component chose to return. Every
+interpolated value is a bound parameter. `db()` reads who is asking at each query, so a
+module-level client is fine; outside a request (a task, a script) it runs as `anon`; act for a
+user with `db({ as: { id: userId } })`, or as the server with `db.service()`.
 
 ### Signing in
 
@@ -160,7 +165,9 @@ const url = await storage.bucket("invoices").createSignedUrl(path, { expiresIn: 
 ```
 
 A bucket's rules are a function in `denext.config.ts` rather than SQL policies on
-`storage.objects`. The Supabase pattern of one folder per user becomes:
+`storage.objects`. Outside a request (a task, a script) there is no session to pass it, so code
+there uses `storage.bucket("invoices", { service: true })` — the counterpart of Supabase's
+service-role key. The Supabase pattern of one folder per user becomes:
 
 ```ts
 buckets: {

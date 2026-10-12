@@ -9,6 +9,18 @@
   then 8 a second). Re-reads and seeds compare the key and filter in the column's own type (read
   from the catalog), so the key and filter indexes serve them; each runs under a transaction-local
   `statement_timeout` (`queryTimeoutMs`, default 5 000); flushes are single-flight.
+- **Security hardening.** Auto-REST with `tables: "*"` serves only RLS-enabled tables and
+  `security_invoker` views (the rest are listed in a startup warning; name one in `rest.tables` to
+  serve it); REST statements are capped by `maxConcurrent` (default half the pool, else 5; then
+  `503` `PGRST003` with `Retry-After`), `statementTimeout` defaults to 5000 ms, and
+  `exactCount` (default `"authenticated"`) refuses an anonymous `Prefer: count=exact`; the CSRF
+  exemption uses `auth()`'s own bearer parser (`nativeBearerToken`). `db()` without `as` resolves
+  the identity at each query from the current request (a module-level client is fine; `anon`
+  outside a request). The RLS setup statement blanks the legacy `request.jwt.claim.*` settings;
+  `sub`, `role` and `email` are stripped from custom claims. Storage outside a request needs
+  `{ service: true }` (a public bucket's downloads excepted). S3 presigned GETs carry
+  `response-content-type` and `response-content-disposition` (`attachment` unless the type is
+  safe inline).
 - **Auto-REST.** `backend({ postgres, rest: {} })` serves the granted tables of a schema
   PostgREST-style under `/rest/v1/<table>`: `select=` (columns), `eq` / `neq` / `gt` / `gte` / `lt`
   / `lte` / `like` / `ilike` / `is` / `in` filters (and `not.`), `order=`, `limit` / `offset` /

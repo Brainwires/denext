@@ -76,7 +76,7 @@
                         "description": "A presigned PUT. `size` pins `content-length`; `contentType` pins `content-type`."
                       },
                       "presignGet": {
-                        "description": "A presigned GET."
+                        "description": "A presigned GET. `disposition` and `contentType`, when given, are signed in as the store's `response-content-disposition` / `response-content-type` overrides, so the store serves the object with them (a store without such overrides must refuse rather than drop them)."
                       },
                       "createMultipart": {
                         "description": "Start a multipart upload; returns its upload id."
@@ -277,7 +277,7 @@
                 "type": "string"
               },
               "tables": {
-                "description": "The tables to serve, by name, or `\"*\"` (the default) for every table and view of the schema that the `anon` or `authenticated` role holds a privilege on. A listed table those roles cannot reach gets no route either.",
+                "description": "The tables to serve, by name, or `\"*\"` (the default) for every relation of the schema that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either.",
                 "anyOf": [
                   {
                     "type": "array",
@@ -305,8 +305,20 @@
                 "type": "number"
               },
               "statementTimeout": {
-                "description": "Each request's `statement_timeout`, in milliseconds (default 8000).",
+                "description": "Each request's `statement_timeout`, in milliseconds (default 5000).",
                 "type": "number"
+              },
+              "maxConcurrent": {
+                "description": "The most REST statements running at once, so the routes cannot take every connection of the pool the rest of the app shares (default: half the pool's `max` when the client reports it — `Deno.SQL` and postgres.js do — else 5). A request past it waits up to a second, then is answered 503 `PGRST003` with `Retry-After`.",
+                "type": "number"
+              },
+              "exactCount": {
+                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`.",
+                "enum": [
+                  "all",
+                  "authenticated",
+                  "never"
+                ]
               }
             }
           }

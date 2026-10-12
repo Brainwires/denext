@@ -980,6 +980,7 @@
     "mfaStatus:function",
     "microsoftEntra:function",
     "migratePostgres:function",
+    "nativeBearerToken:function",
     "next:function",
     "noStore:function",
     "notFound:function",

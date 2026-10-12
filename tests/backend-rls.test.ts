@@ -190,14 +190,10 @@ Deno.test("db() inside a request acts as its signed-in user; signed out is anon"
       c.startsWith("__Host-denext_auth=")
     )!.split(";")[0];
     const signedIn = createRequestContext(new Request(`${ORIGIN}/`, { headers: { cookie } }));
-    // The identity is bound when db() is called: a client made in the request keeps acting as
-    // its user even when a query runs after the request's context is gone.
-    const client = runWithContext(signedIn, () => db());
     const me = await runWithContext(signedIn, () => whoAmI());
     assertEquals(me.role, "authenticated");
     assertEquals(me.claims.sub, "user-a");
     assertEquals(me.claims.email, "a@x.test");
-    assertEquals((await whoAmI(client)).claims.sub, "user-a");
     const anonymous = createRequestContext(new Request(`${ORIGIN}/`));
     assertEquals((await runWithContext(anonymous, () => whoAmI())).role, "anon");
   } finally {
@@ -431,4 +427,80 @@ Deno.test("rlsMigrations / rlsSetupSql: Supabase's helpers, idempotent roles, a 
   assert(script.includes(`GRANT anon, authenticated TO "app_user";`));
   assert(!script.includes("format('GRANT"), "the DBA script grants to the named role");
   assertThrows(() => rlsSetupSql('x"; drop table users; --'), TypeError, "plain role name");
+});
+
+/** A signed-in request context for `id`. */
+async function signedInContext(id: string, email: string) {
+  const issuing = createRequestContext(new Request(`${ORIGIN}/`));
+  await runWithContext(issuing, () => issueAuthSession(authConfig, { id, email }, "credentials"));
+  const cookie =
+    issuing.outgoingHeaders.getSetCookie().find((c) => c.startsWith("__Host-denext_auth="))!.split(
+      ";",
+    )[0];
+  return createRequestContext(new Request(`${ORIGIN}/`, { headers: { cookie } }));
+}
+
+Deno.test("a db() client kept across requests acts as the request running each query, anon outside", async () => {
+  await setUp({ migrate: false }, [denextAuth(authConfig)]);
+  try {
+    const a = await signedInContext("user-a", "a@x.test");
+    const b = await signedInContext("user-b", "b@x.test");
+    // Made inside request A (or at module scope), then used by request B and by a task.
+    const kept = runWithContext(a, () => db());
+    assertEquals((await runWithContext(a, () => whoAmI(kept))).claims.sub, "user-a");
+    const inB = await runWithContext(b, () => whoAmI(kept));
+    assertEquals([inB.role, inB.claims.sub], ["authenticated", "user-b"]);
+    assertEquals(await whoAmI(kept), { role: "anon", claims: { role: "anon" } }, "fails closed");
+    const moduleScope = db();
+    assertEquals((await runWithContext(b, () => whoAmI(moduleScope))).claims.sub, "user-b");
+    // An explicit identity stays fixed wherever it runs.
+    const pinned = db({ as: { id: "pinned" } });
+    assertEquals((await runWithContext(b, () => whoAmI(pinned))).claims.sub, "pinned");
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("legacy per-claim settings are blanked in every scoped transaction", async () => {
+  const sql = await setUp();
+  try {
+    // A session-level value on a pooled connection (or a role / database default) …
+    await db.service()`select set_config('request.jwt.claim.sub', 'attacker', false)`;
+    await db.service()`select set_config('request.jwt.claim.email', 'x@evil.test', false)`;
+    await db.service()`select set_config('request.jwt.claim.role', 'service_role', false)`;
+    await db.service()`select set_config('request.jwt.claim', '{"sub":"attacker"}', false)`;
+    // … is empty inside the scope, so auth.uid() / auth.email() / auth.role() / auth.jwt()
+    // fall through to request.jwt.claims.
+    const [row] = await db({ as: { id: "u-1" } }).unsafe<Record<string, string>>(
+      `select current_setting('request.jwt.claim.sub') as sub,
+        current_setting('request.jwt.claim.email') as email,
+        current_setting('request.jwt.claim.role') as role,
+        current_setting('request.jwt.claim') as claim`,
+    );
+    assertEquals(row, { sub: "", email: "", role: "", claim: "" });
+    assertEquals(sql.settings.get("request.jwt.claim.sub"), "attacker", "transaction-local only");
+    // Still one statement, pipelined with the query.
+    assertEquals((RLS_SETUP.match(/set_config/g) ?? []).length, 6);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("custom claims never add an email the user does not have", async () => {
+  await setUp({ migrate: false, claims: () => ({ email: "admin@x.test", tenant: "t" }) });
+  try {
+    const noEmail = await whoAmI(db({
+      as: { id: "u-2", claims: { email: "admin@x.test", sub: "x", role: "service_role" } },
+    }));
+    assertEquals([noEmail.claims.email, noEmail.claims.sub, noEmail.claims.role], [
+      undefined,
+      "u-2",
+      "authenticated",
+    ]);
+    const session = await whoAmI(db({ as: { ...SESSION, user: { id: "u-3" } } }));
+    assertEquals([session.claims.email, session.claims.tenant], [undefined, "t"]);
+    assert(!("email" in sessionClaims({ ...SESSION, user: { id: "u-4" } }, { email: "a@b" })));
+  } finally {
+    tearDown();
+  }
 });

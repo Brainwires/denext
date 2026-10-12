@@ -65,10 +65,11 @@ no auth.
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
-request's session. A call outside any request (a [task](/docs/tasks), a script) is trusted and skips
-it. To act as the server inside a request (a webhook, an admin action), take a service handle:
-`storage.bucket("invoices", { service: true })` skips `authorize`; the size cap, allow-list and
-sniffing still apply.
+request's session. Outside any request (a [task](/docs/tasks), a script, module load) there is no
+session to authorize, so a plain handle is refused (`forbidden`; a public bucket's downloads stay
+open): code that acts as the server takes a service handle, there or inside a request (a webhook,
+an admin action). `storage.bucket("invoices", { service: true })` skips `authorize`; the size cap,
+allow-list and sniffing still apply.
 
 **The signing secret.** The plugin signs its own URLs and upload tokens with HMAC-SHA256. Set
 `DENEXT_STORAGE_SECRET` (at least 32 characters) or `storage.secret`; pass a list, current first,
@@ -166,6 +167,16 @@ plugin, which enforces the size cap and the declared length while streaming and 
 bytes before anything is stored. On S3 the bytes go to the store directly, so completion checks
 what arrived: the size against the cap and the declared length, the stored content type, and the
 first bytes against the declared type. An object that fails is deleted.
+
+**An S3 upload that is never completed** has been checked by nobody: a client can `PUT` to its
+presigned URL and skip the completion call. Such bytes can still only be served with the type the
+URL pinned, and every presigned `GET` the plugin signs carries `response-content-type` (the stored
+type) and `response-content-disposition`: `inline` only for raster images, audio, video, PDF and
+plain text, `attachment` for everything else — the same rule the plugin's own object route
+applies — so an HTML or SVG file downloads instead of rendering. Record the keys
+`uploadFile` / completion returned (in your own table) and sign download URLs only for those, and
+give the S3 bucket a lifecycle rule that removes what was never recorded, plus one that aborts
+incomplete multipart uploads after a day (`AbortIncompleteMultipartUpload`).
 
 ### Image transforms
 
@@ -297,8 +308,10 @@ export async function POST(request: Request): Promise<Response> {
 
 Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
 act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
-`db()` reads the session when it is called and keeps it, so call it where the request is handled
-rather than storing the client in a module-level variable.
+`db()` reads who is asking at each query, from the request that runs it (once per request), not
+when the client was made — so a module-level `const sql = db()` is fine: it serves each visitor
+as themself, and is `anon` when a query runs outside any request. `db({ as })` is fixed to that
+identity wherever it runs.
 
 **`db.service()` is dangerous on purpose.** It is the app's database user with every policy
 bypassed (it owns the tables): use it for migrations, maintenance tasks and admin code that has
@@ -307,8 +320,11 @@ already checked who is asking, never for a query built from a request on a user'
 ### How it works
 
 Each `db()` query is one transaction: `BEGIN`, then
-`select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)` (that is
-`SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. Both settings
+`select set_config('role', $1, true), set_config('request.jwt.claims', $2, true), …` (that is
+`SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. The same
+statement blanks the legacy per-claim settings (`request.jwt.claim.sub`, `.role`, `.email` and
+`request.jwt.claim`), which Supabase's `auth.*` functions read first, so a value left on the
+connection or set as a role default can never override the identity. Both settings
 are transaction-local, so nothing survives on a pooled connection, and it is safe behind pgbouncer
 in transaction mode; denext never issues a session-level `SET`. The setup statement and your query
 are pipelined — sent together, in that order, on the transaction's one connection. On denext's
@@ -556,7 +572,7 @@ export default {
   plugins: [
     backend({
       postgres: {},
-      rest: {}, // every table of "public" the anon / authenticated roles hold a privilege on
+      rest: {}, // the RLS-enabled tables of "public" the anon / authenticated roles can reach
     }),
   ],
 };
@@ -594,19 +610,19 @@ native app's `Authorization: Bearer …` session); `from` uses the page's own or
 
 `GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`:
 
-| Request                                          | What it does                                                                                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `select=id,body`                                 | The columns to return (default `*`). Columns of this table only: embedded resources, aliases, casts and JSON paths are refused (400).   |
-| `col=eq.value`                                   | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%` matches any run), `is.null\|true\|false`, `in.(a,"b,c")`. |
-| `col=not.eq.value`                               | The filter negated. Every filter is ANDed; `or=` and `and=` are not supported.                                                          |
-| `order=col.desc.nullslast,other`                 | The order: `asc` / `desc`, `nullsfirst` / `nullslast`.                                                                                  |
-| `limit=20&offset=40`, or a `Range: 40-59` header | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                             |
-| `Prefer: count=exact`                            | Count every matching row too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them.                                  |
-| `Accept: application/vnd.pgrst.object+json`      | One object instead of an array; zero or several rows are a `406` (and a write is rolled back).                                          |
-| `POST` with an object or an array of objects     | Insert (every object with the same keys). `201`; columns left out take their default.                                                   |
-| `PATCH` with an object, plus filters             | Update the matching rows. A request without a filter is refused (`400`, `21000`).                                                       |
-| `DELETE` plus filters                            | Delete the matching rows. A request without a filter is refused.                                                                        |
-| `Prefer: return=representation` on a write       | Answer with the written rows (`select=` shapes them); the default, `return=minimal`, answers `201` / `204` with no body.                |
+| Request                                          | What it does                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `select=id,body`                                 | The columns to return (default `*`). Columns of this table only: embedded resources, aliases, casts and JSON paths are refused (400).            |
+| `col=eq.value`                                   | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%` matches any run), `is.null\|true\|false`, `in.(a,"b,c")`.          |
+| `col=not.eq.value`                               | The filter negated. Every filter is ANDed; `or=` and `and=` are not supported.                                                                   |
+| `order=col.desc.nullslast,other`                 | The order: `asc` / `desc`, `nullsfirst` / `nullslast`.                                                                                           |
+| `limit=20&offset=40`, or a `Range: 40-59` header | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                                      |
+| `Prefer: count=exact`                            | Count every matching row too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them. Signed-in only by default (`exactCount`). |
+| `Accept: application/vnd.pgrst.object+json`      | One object instead of an array; zero or several rows are a `406` (and a write is rolled back).                                                   |
+| `POST` with an object or an array of objects     | Insert (every object with the same keys). `201`; columns left out take their default.                                                            |
+| `PATCH` with an object, plus filters             | Update the matching rows. A request without a filter is refused (`400`, `21000`).                                                                |
+| `DELETE` plus filters                            | Delete the matching rows. A request without a filter is refused.                                                                                 |
+| `Prefer: return=representation` on a write       | Answer with the written rows (`select=` shapes them); the default, `return=minimal`, answers `201` / `204` with no body.                         |
 
 **What is safe.** A table, column or type name is never taken from the request as text: each is
 looked up in the catalog the plugin read and only a name found there is quoted into the SQL, so an
@@ -614,11 +630,44 @@ unknown column or operator is a `400`, never a statement. Every filter value is 
 cast to its column's type, and a request body is one JSON parameter expanded by
 `json_populate_record(set)` against the table's own row type — Postgres parses every value. The
 rows come back as one JSON text built by Postgres (`json_agg`), so a `bigint` keeps its digits.
-Each request runs in a transaction that sets the role and claims, then a `statement_timeout`.
+Each request runs in a transaction that sets the role and claims, then a `statement_timeout`
+(5 seconds by default).
+
+**The shared pool.** The routes use the app's one Postgres pool, so at most `maxConcurrent` REST
+statements run at once — half the pool's `max` by default (`Deno.SQL` and postgres.js report it;
+5 when the client does not). A request past that waits up to a second for a slot, then is answered
+`503` (`PGRST003`) with `Retry-After: 1`, leaving connections for the rest of the app. A full count
+(`Prefer: count=exact`) reads every matching row, so by default only a signed-in request may ask
+for one; an anonymous one is refused with `400` (`PGRST100`) and a hint (`exactCount: "all"`
+allows everyone, `"never"` no one).
+
+The plugin does not rate-limit the routes itself. [`middleware.ts`](/docs/middleware) runs before
+them, so `rateLimit` from `denext/server` can guard them there:
+
+```ts
+// middleware.ts
+import { apiErrorResponse, isApiError, next, rateLimit } from "denext/server";
+
+const limitRest = rateLimit({ max: 300, windowMs: 60_000 }); // per client IP, method and path
+
+export async function middleware(request: Request) {
+  if (new URL(request.url).pathname.startsWith("/rest/v1/")) {
+    try {
+      await limitRest({ request, params: {}, ctx: {}, method: request.method as "GET" });
+    } catch (error) {
+      if (isApiError(error)) return apiErrorResponse(error); // 429 with Retry-After
+      throw error;
+    }
+  }
+  return next();
+}
+```
 
 **CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
 cross-site one is refused (`403`, `csrf_failed`). A native app's bearer token
-(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie) needs no such check.
+(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie) needs no such check;
+the exemption uses `auth()`'s own parser (`nativeBearerToken` from `denext/server`), so it applies
+exactly when the session comes from the token, never from the cookie.
 
 **Errors** are PostgREST-shaped JSON — `{ code, message, details, hint }` — with Postgres's
 SQLSTATE as the code where Postgres refused (`23505` → `409`, `42501` → `403`, `23502` / `22P02` →
@@ -629,11 +678,25 @@ table) or `42703` (no such column) otherwise. A 5xx hides the database's message
 ### Which tables
 
 The plugin reads the catalog when the server starts (and again, under `denext dev`, when a request
-names a table it does not know): every table, view, materialized view and foreign table of
-`schema` that the `anon` or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or
-`UPDATE` on any column, or `DELETE`. A table with no grant to either role gets no route, so a
-table stays private until you `grant`. Which rows a caller then reads or writes is up to its
-policies; enable RLS on every exposed table.
+names a table it does not know): the relations of `schema` that the `anon` or `authenticated` role
+holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or `DELETE`. A table with no
+grant to either role gets no route, so a table stays private until you `grant`.
+
+With the default `tables: "*"`, a reachable relation is served only when row-level security
+applies to the caller:
+
+| Relation                                                 | Served by `"*"`                                     |
+| -------------------------------------------------------- | --------------------------------------------------- |
+| a table (or partitioned table) with RLS enabled          | yes — its policies decide the rows                  |
+| a view created `with (security_invoker = true)` (PG 15+) | yes — the base tables' policies apply to the caller |
+| a table with RLS off                                     | no                                                  |
+| an ordinary view (it runs with its owner's rights)       | no                                                  |
+| a materialized view, a foreign table                     | no — neither has row-level security                 |
+
+Everything skipped is listed in one warning at startup, with the reason, so a grant that would
+have exposed a whole table is visible instead of silent. To serve one anyway, name it:
+`tables: ["notes", "public_stats"]` exposes exactly the listed relations, whatever their RLS —
+naming a table is your decision that its grants are the policy.
 
 ### Generated types
 
@@ -647,14 +710,16 @@ says so, keeps an earlier generated file, or writes a stub under which rows are
 
 ### Options
 
-| Option             | Default      | What it does                                                                       |
-| ------------------ | ------------ | ---------------------------------------------------------------------------------- |
-| `schema`           | `"public"`   | The schema whose tables are served.                                                |
-| `tables`           | `"*"`        | The tables to serve, by name; a listed table the roles cannot reach gets no route. |
-| `basePath`         | `"/rest/v1"` | Where the routes live (app-relative; `basePath` is prepended).                     |
-| `maxRows`          | 1000         | The most rows one read returns, whatever `limit` asks for.                         |
-| `maxBodyBytes`     | 1 MiB        | The largest request body.                                                          |
-| `statementTimeout` | 8000         | Each request's `statement_timeout`, in milliseconds.                               |
+| Option             | Default                       | What it does                                                                                                                                             |
+| ------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`           | `"public"`                    | The schema whose tables are served.                                                                                                                      |
+| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names, served as named (a listed table the roles cannot reach gets no route). |
+| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                           |
+| `maxRows`          | 1000                          | The most rows one read returns, whatever `limit` asks for.                                                                                               |
+| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                |
+| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                     |
+| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                    |
+| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                        |
 
 Not offered: embedded resources (joins through foreign keys — read the related table with a
 second request, or write a route handler), `or` / `and` groups, upserts (`on_conflict`), RPC

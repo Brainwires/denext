@@ -1,5 +1,6 @@
 // The auto-REST catalog: which tables and views of one schema the `anon` / `authenticated` roles
-// may reach, with their columns and primary keys, read from `pg_catalog`. It is the whitelist
+// may reach (by default only those that enforce row-level security), with their columns and
+// primary keys, read from `pg_catalog`. It is the whitelist
 // every identifier in a REST request is checked against — a table, column or type name is never
 // taken from a request as text, only looked up here and quoted (`quoteIdent`). The same entries
 // drive the generated row types (`rest-codegen.ts`).
@@ -65,8 +66,20 @@ function reachable(role: "anon" | "authenticated"): string {
     ELSE false END`;
 }
 
+/**
+ * Whether the relation `c` enforces row-level security for the caller: a table (or partitioned
+ * table) with RLS enabled, or a view declared `security_invoker` (Postgres 15+), whose base
+ * tables' policies then apply to the querying role instead of the view owner's rights.
+ */
+const RLS_ENFORCED = `CASE
+    WHEN c.relkind IN ('r', 'p') THEN c.relrowsecurity
+    WHEN c.relkind = 'v' THEN EXISTS (SELECT 1 FROM unnest(c.reloptions) AS o(opt)
+      WHERE lower(o.opt) ~ '^security_invoker=(t|tr|tru|true|y|ye|yes|on|1)$')
+    ELSE false END`;
+
 /** One row per column of every reachable relation in schema `$1`. */
-const COLUMNS_SQL = `SELECT c.relname AS "table", c.relkind::text AS kind, a.attname AS name,
+const COLUMNS_SQL = `SELECT c.relname AS "table", c.relkind::text AS kind,
+  (${RLS_ENFORCED})::text AS rls, a.attname AS name,
   format_type(a.atttypid, NULL) AS cast_type,
   bt.typname AS type_name, bt.typcategory::text AS category,
   et.typname AS element_name, et.typcategory::text AS element_category,
@@ -127,35 +140,56 @@ function columnOf(row: SqlRow): RestColumn {
   };
 }
 
+/** A relation `tables: "*"` left out, and why. */
+export interface SkippedRelation {
+  /** Its name. */
+  readonly name: string;
+  /** `table`, `view`, `materialized view`, `foreign table`. */
+  readonly kind: string;
+  /** Why it got no route. */
+  readonly reason: string;
+}
+
+/** Why a relation that does not enforce row-level security is left out of `"*"`. */
+function skipReason(kind: string): string {
+  switch (kind) {
+    case "r":
+    case "p":
+      return "row-level security is not enabled";
+    case "v":
+      return "a view without security_invoker runs with its owner's rights";
+    case "m":
+      return "a materialized view has no row-level security";
+    default:
+      return "a foreign table has no row-level security";
+  }
+}
+
 /**
- * Read the catalog: every table, view, materialized view and foreign table of `schema` that the
- * `anon` or `authenticated` role holds a privilege on (`SELECT`, `INSERT`, `UPDATE` on any column,
- * or `DELETE`), limited to `tables` when it is a list.
+ * Read the catalog: the tables, views, materialized views and foreign tables of `schema` that
+ * the `anon` or `authenticated` role holds a privilege on (`SELECT`, `INSERT`, `UPDATE` on any
+ * column, or `DELETE`).
+ *
+ * With `tables: "*"` only relations that enforce row-level security for the caller are kept —
+ * tables with RLS enabled and `security_invoker` views; every other reachable relation is
+ * reported to `onSkipped` instead. A list exposes exactly the named relations (that the roles can
+ * reach), whatever their RLS: naming one is the operator's decision.
  *
  * @param sql The connecting role's client (catalog reads carry no user data).
  * @param schema The schema.
- * @param tables The table names to expose, or `"*"` for every reachable one.
+ * @param tables The table names to expose, or `"*"` for every reachable, RLS-enforcing one.
+ * @param onSkipped Receives the relations `"*"` left out (called once, possibly empty).
  * @returns The catalog.
  */
 export async function readRestCatalog(
   sql: SqlClient,
   schema: string,
   tables: readonly string[] | "*",
+  onSkipped?: (skipped: SkippedRelation[]) => void,
 ): Promise<RestCatalog> {
   const columnRows = await sql.unsafe(COLUMNS_SQL, [schema]);
   const keyRows = await sql.unsafe(KEYS_SQL, [schema]);
-  const wanted = tables === "*" ? null : new Set(tables);
-  const columns = new Map<string, { kind: string; columns: RestColumn[] }>();
-  for (const row of columnRows) {
-    const table = String(row.table);
-    if (wanted && !wanted.has(table)) continue;
-    let entry = columns.get(table);
-    if (!entry) {
-      entry = { kind: KINDS[String(row.kind)] ?? String(row.kind), columns: [] };
-      columns.set(table, entry);
-    }
-    entry.columns.push(columnOf(row));
-  }
+  const { columns, skipped } = groupColumns(columnRows, tables);
   const keys = new Map<string, string[]>();
   for (const row of keyRows) {
     const table = String(row.table);
@@ -171,5 +205,45 @@ export async function readRestCatalog(
       primaryKey: keys.get(name) ?? [],
     });
   }
+  onSkipped?.(skipped);
   return catalog;
+}
+
+/** The kind name of a `relkind`. */
+function kindOf(row: SqlRow): string {
+  const kind = String(row.kind);
+  return KINDS[kind] ?? kind;
+}
+
+/**
+ * Group the column rows by relation: those `tables` exposes (a list: exactly its names; `"*"`:
+ * the RLS-enforcing ones), and — for `"*"` — the reachable relations it left out.
+ */
+function groupColumns(
+  rows: Iterable<SqlRow>,
+  tables: readonly string[] | "*",
+): {
+  columns: Map<string, { kind: string; columns: RestColumn[] }>;
+  skipped: SkippedRelation[];
+} {
+  const wanted = tables === "*" ? null : new Set(tables);
+  const columns = new Map<string, { kind: string; columns: RestColumn[] }>();
+  const skipped = new Map<string, SkippedRelation>();
+  for (const row of rows) {
+    const table = String(row.table);
+    if (wanted ? !wanted.has(table) : !bool(row, "rls")) {
+      if (!wanted) {
+        skipped.set(table, {
+          name: table,
+          kind: kindOf(row),
+          reason: skipReason(String(row.kind)),
+        });
+      }
+      continue;
+    }
+    const entry = columns.get(table) ?? { kind: kindOf(row), columns: [] };
+    columns.set(table, entry);
+    entry.columns.push(columnOf(row));
+  }
+  return { columns, skipped: [...skipped.values()] };
 }

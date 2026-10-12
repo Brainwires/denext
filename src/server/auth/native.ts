@@ -776,6 +776,10 @@ export async function verifyNativeAccessToken(
  * `Bearer nat_…` header, `undefined` when the header is absent or carries something else (an
  * API token, Basic auth) — so cookie sessions keep working beside bearer API tokens.
  *
+ * It is the parser `auth()` itself uses, so a handler that exempts native-app requests from a
+ * cookie check (CSRF) exempts exactly the requests `auth()` authenticates by the token, never
+ * one whose session comes from the cookie.
+ *
  * @param request The request, if any.
  * @returns The `nat_…` token, or `undefined`.
  */

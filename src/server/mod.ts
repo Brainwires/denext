@@ -536,6 +536,7 @@ export {
   updateAuthSession,
 } from "./auth/mod.ts";
 export type { RequireAuthOptions } from "./auth/mod.ts";
+export { nativeBearerToken } from "./auth/native.ts";
 export {
   apple,
   auth0,

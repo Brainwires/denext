@@ -98,6 +98,7 @@ transaction that sets the role (`authenticated`, or `anon` when signed out or ou
 and `request.jwt.claims` transaction-locally, so policies written with Supabase's `auth.uid()`,
 `auth.role()`, `auth.email()` and `auth.jwt()` apply unchanged. The roles and functions are created
 by a migration on first use (or by a DBA with `rlsSetupSql(role)` and `rls: { migrate: false }`).
+`db()` reads the identity at each query, so a module-level client is fine.
 `db({ as: user })` acts for a user outside a request; `db.service()` bypasses RLS entirely — the
 app's own database user, for maintenance code only. Guide:
 [Backend › Row-level security](https://denext.dev/docs/backend#row-level-security).
@@ -110,7 +111,8 @@ row-level security, so a change reaches only the subscribers whose policies retu
 [Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
 
 **Auto-REST.** `backend({ postgres: {}, rest: {} })` serves the schema's tables (those the `anon` /
-`authenticated` roles were granted) PostgREST-style under `/rest/v1/<table>`: `select=`, filters
+`authenticated` roles were granted and that enforce row-level security — RLS-enabled tables and
+`security_invoker` views; others only when named in `rest.tables`) PostgREST-style under `/rest/v1/<table>`: `select=`, filters
 (`col=eq.x`, `in.(…)`, `like`, `is`, `not.`), `order=`, `limit` / `offset` / `Range`,
 `Prefer: count=exact`, inserts, and updates and deletes that require a filter — every statement
 run through `db()`, so row-level security applies. `from("notes").select("id,body").eq("id", 1)`
@@ -121,7 +123,8 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 
 - **`authorize`** decides every operation (`upload`, `download`, `delete`, `list`) made inside a
   request, with `auth()`'s session; without one, everything but a public bucket's downloads is
-  denied. Calls outside a request (tasks, scripts) are trusted.
+  denied. Outside a request (tasks, scripts) there is no session, so only a service handle
+  (`storage.bucket(name, { service: true })`) or a public bucket's download works.
 - **Size, type and content**: `maxBytes` and the `mime` allow-list are checked when an upload is
   signed and again on the bytes; a declared image must start with that format's magic bytes.
 - **Keys** cannot leave their bucket: no `..`, empty segments, control characters or backslashes.

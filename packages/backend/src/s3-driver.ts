@@ -379,7 +379,13 @@ class S3Client {
             ...(size !== undefined ? { "content-length": String(size) } : {}),
           },
         }),
-      presignGet: (bucket, key, { expiresIn }) => this.presign("GET", k(bucket, key), expiresIn),
+      presignGet: (bucket, key, { expiresIn, disposition, contentType }) =>
+        this.presign("GET", k(bucket, key), expiresIn, {
+          query: {
+            ...(disposition ? { "response-content-disposition": disposition } : {}),
+            ...(contentType ? { "response-content-type": contentType } : {}),
+          },
+        }),
       createMultipart: (bucket, key, contentType) =>
         this.createMultipart(k(bucket, key), contentType),
       presignPart: (bucket, key, uploadId, partNumber, expiresIn) =>

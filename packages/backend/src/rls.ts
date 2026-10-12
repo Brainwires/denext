@@ -75,10 +75,20 @@ const BACKEND_MIGRATIONS_TABLE = "backend_migrations";
 /**
  * The one statement that scopes a transaction: `set_config('role', …, true)` is
  * `SET LOCAL ROLE` (the form PostgREST uses, since `SET` cannot take a parameter), and
- * `request.jwt.claims` is what Supabase's `auth.*` functions read. Both are transaction-local.
+ * `request.jwt.claims` is what Supabase's `auth.*` functions read. All are transaction-local.
+ *
+ * Supabase's `auth.uid()` / `auth.role()` / `auth.email()` / `auth.jwt()` read the legacy
+ * per-claim settings (`request.jwt.claim.sub`, …, `request.jwt.claim`) FIRST and fall back to
+ * `request.jwt.claims` only when they are empty, so the statement blanks them too: a value left
+ * on the connection's session (or set by the database's or role's defaults) never overrides the
+ * identity this transaction runs as.
  */
-export const RLS_SETUP =
-  "select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)";
+export const RLS_SETUP = "select set_config('role', $1, true), " +
+  "set_config('request.jwt.claims', $2, true), " +
+  "set_config('request.jwt.claim.sub', '', true), " +
+  "set_config('request.jwt.claim.role', '', true), " +
+  "set_config('request.jwt.claim.email', '', true), " +
+  "set_config('request.jwt.claim', '', true)";
 
 /** The anonymous scope: Supabase's anon key carries `role: "anon"` and no subject. */
 export const ANON_SCOPE: RlsScope = { role: "anon", claims: JSON.stringify({ role: "anon" }) };
@@ -286,14 +296,23 @@ export function sessionClaims(
     },
     user_metadata: metadata,
     is_anonymous: false,
-    ...custom,
+    ...withoutIdentity(custom),
     ...identityClaims(user.id, user.email),
   };
 }
 
-/** The claims nothing may override. */
+/** The claims nothing may override: `email` comes from the user alone, or is absent. */
 function identityClaims(id: string, email: string | undefined): Record<string, unknown> {
   return { sub: id, role: "authenticated", ...(email === undefined ? {} : { email }) };
+}
+
+/**
+ * Custom claims without the identity keys (`sub`, `role`, `email`) — stripped, not just
+ * overwritten, so a user without an email cannot be given one by the app's own claims.
+ */
+function withoutIdentity(custom: Record<string, unknown> | undefined): Record<string, unknown> {
+  const { sub: _sub, role: _role, email: _email, ...rest } = custom ?? {};
+  return rest;
 }
 
 /**
@@ -307,7 +326,7 @@ export function userClaims(user: DbUser): Record<string, unknown> {
     aud: "authenticated",
     app_metadata: { roles: user.roles ?? [] },
     is_anonymous: false,
-    ...user.claims,
+    ...withoutIdentity(user.claims),
     ...identityClaims(user.id, user.email),
   };
 }

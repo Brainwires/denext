@@ -80,9 +80,12 @@ Deno.test("fs storage: sign → PUT → complete → signed GET (full, Range, HE
       "text/plain",
     ]);
 
-    const url = await storage.bucket("docs").createSignedUrl("notes/hello world.txt", {
-      expiresIn: 60,
-    });
+    const url = await storage.bucket("docs", { service: true }).createSignedUrl(
+      "notes/hello world.txt",
+      {
+        expiresIn: 60,
+      },
+    );
     const full = await app.call(url);
     assertEquals(full.status, 200);
     assertEquals(await full.text(), "hello world");
@@ -118,8 +121,13 @@ Deno.test("fs storage: sign → PUT → complete → signed GET (full, Range, HE
 Deno.test("fs storage: a tampered, expired or unsigned download URL is refused", async () => {
   const app = await backendApp({ buckets: { docs } });
   try {
-    await storage.bucket("docs").upload("a.txt", "secret", { contentType: "text/plain" });
-    const url = new URL(await storage.bucket("docs").createSignedUrl("a.txt"), ORIGIN);
+    await storage.bucket("docs", { service: true }).upload("a.txt", "secret", {
+      contentType: "text/plain",
+    });
+    const url = new URL(
+      await storage.bucket("docs", { service: true }).createSignedUrl("a.txt"),
+      ORIGIN,
+    );
     const other = new URL(url);
     other.pathname = other.pathname.replace("a.txt", "b.txt");
     const longer = new URL(url);
@@ -200,7 +208,7 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
       size: 65,
     });
     assertEquals([big.status, (await big.json()).error.code], [413, "too_large"]);
-    const plan = await storage.bucket("docs").createSignedUploadUrl("f.txt", {
+    const plan = await storage.bucket("docs", { service: true }).createSignedUploadUrl("f.txt", {
       contentType: "text/plain",
     });
     const stream = new ReadableStream({
@@ -248,10 +256,13 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
     const files = await storedFiles(app.root);
     assertEquals(files.filter((f) => !f.startsWith(".denext-meta/")), ["docs/a.txt"]);
     // A completion for an upload that never arrived is refused.
-    const ghost = await storage.bucket("docs").createSignedUploadUrl("never.txt", {
-      contentType: "text/plain",
-      size: 3,
-    });
+    const ghost = await storage.bucket("docs", { service: true }).createSignedUploadUrl(
+      "never.txt",
+      {
+        contentType: "text/plain",
+        size: 3,
+      },
+    );
     const missing = await app.sign({ op: "complete", token: ghost.token });
     assertEquals(missing.status, 404);
     await missing.body?.cancel();
@@ -302,9 +313,9 @@ Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, sy
     const link = await app.call("/_denext/storage/o/pub/link.txt");
     assertEquals(link.status, 404);
     await link.body?.cancel();
-    assertEquals(await storage.bucket("pub").head("link.txt"), null);
-    assertEquals(await storage.bucket("pub").download("link.txt"), null);
-    await storage.bucket("pub").remove("link.txt");
+    assertEquals(await storage.bucket("pub", { service: true }).head("link.txt"), null);
+    assertEquals(await storage.bucket("pub", { service: true }).download("link.txt"), null);
+    await storage.bucket("pub", { service: true }).remove("link.txt");
     assert(
       (await Deno.lstat(join(app.root, ".storage", "pub", "link.txt"))).isSymlink,
       "remove left the link alone",
@@ -312,14 +323,18 @@ Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, sy
     assertEquals(await Deno.readTextFile(join(app.root, "outside.txt")), "TOP SECRET");
     // Keys the filesystem cannot hold portably, and a key/prefix collision.
     await assertRejects(
-      () => storage.bucket("pub").upload("a:b.txt", "x"),
+      () => storage.bucket("pub", { service: true }).upload("a:b.txt", "x"),
       StorageError,
       "fs driver",
     );
-    await assertRejects(() => storage.bucket("pub").upload("dot.", "x"), StorageError, "fs driver");
-    await storage.bucket("pub").upload("dir", "x");
+    await assertRejects(
+      () => storage.bucket("pub", { service: true }).upload("dot.", "x"),
+      StorageError,
+      "fs driver",
+    );
+    await storage.bucket("pub", { service: true }).upload("dir", "x");
     const conflict = await assertRejects(
-      () => storage.bucket("pub").upload("dir/child.txt", "x"),
+      () => storage.bucket("pub", { service: true }).upload("dir/child.txt", "x"),
       StorageError,
     );
     assertEquals(conflict.code, "conflict");
@@ -395,10 +410,10 @@ Deno.test("fs storage: authorize decides every op inside a request (deny by defa
       path: "/_denext/storage/sign",
     });
 
-    // The server API inside a request runs authorize; outside one it is trusted.
+    // The server API inside a request runs authorize; outside one only a service handle works.
     const inRequest = <T>(fn: () => Promise<T>) =>
       runWithContext(createRequestContext(new Request(`${ORIGIN}/api/x`)), fn);
-    await storage.bucket("owned").upload("theirs/b.txt", "x"); // no request: trusted
+    await storage.bucket("owned", { service: true }).upload("theirs/b.txt", "x");
     await assertRejects(
       () => inRequest(() => storage.bucket("owned").download("theirs/b.txt")),
       StorageError,
@@ -422,8 +437,12 @@ Deno.test("fs storage: authorize decides every op inside a request (deny by defa
     assertEquals((await inRequest(() => storage.bucket("owned").list("mine/"))).objects, []);
     // A service handle skips authorize (the rules still apply).
     await inRequest(() => storage.bucket("owned", { service: true }).remove("theirs/b.txt"));
-    assertEquals(await storage.bucket("owned").head("theirs/b.txt"), null);
-    await assertRejects(() => storage.bucket("nope").head("x"), StorageError, "unknown bucket");
+    assertEquals(await storage.bucket("owned", { service: true }).head("theirs/b.txt"), null);
+    await assertRejects(
+      () => storage.bucket("nope", { service: true }).head("x"),
+      StorageError,
+      "unknown bucket",
+    );
   } finally {
     await app.close();
   }
@@ -480,6 +499,40 @@ Deno.test("fs storage: authorize sees the denextAuth session of the request", as
     await put.body?.cancel();
     const done = await app.sign({ op: "complete", token: plan.upload.token }, { cookie });
     assertEquals((await done.json()).object.key, "u1/me.png");
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: outside a request only a service handle (or a public download) works", async () => {
+  const app = await backendApp({
+    buckets: { owned: { authorize: () => true }, pub: { public: true, authorize: () => true } },
+  });
+  try {
+    const owned = storage.bucket("owned");
+    const refusals: Array<[string, () => Promise<unknown>]> = [
+      ["upload", () => owned.upload("a.txt", "x", { contentType: "text/plain" })],
+      ["download", () => owned.download("a.txt")],
+      ["download", () => owned.head("a.txt")],
+      ["download", () => owned.createSignedUrl("a.txt")],
+      ["upload", () => owned.createSignedUploadUrl("a.txt", { contentType: "text/plain" })],
+      ["list", () => owned.list()],
+      ["delete", () => owned.remove("a.txt")],
+    ];
+    for (const [op, run] of refusals) {
+      const error = await assertRejects(run, StorageError, "{ service: true }");
+      assertEquals([error.code, error.message.startsWith(op)], ["forbidden", true]);
+    }
+    // Even with an authorize that allows everything: there is no session to pass it.
+    await storage.bucket("owned", { service: true }).upload("a.txt", "x", {
+      contentType: "text/plain",
+    });
+    await storage.bucket("pub", { service: true }).upload("p.txt", "x", {
+      contentType: "text/plain",
+    });
+    // A public bucket's downloads are open to anyone, so they need no session.
+    assertEquals((await storage.bucket("pub").head("p.txt"))?.size, 1);
+    assertStringIncludes(await storage.bucket("pub").createSignedUrl("p.txt"), "/o/pub/p.txt");
   } finally {
     await app.close();
   }
@@ -557,7 +610,9 @@ Deno.test("fs storage: the sign route applies csrf(), its schema and its limits"
       driver: { ...fs({ dir: ".s" }), head: () => Promise.reject(new Error("disk on fire")) },
     });
     try {
-      const res = await broken.call(await storage.bucket("docs").createSignedUrl("a.txt"));
+      const res = await broken.call(
+        await storage.bucket("docs", { service: true }).createSignedUrl("a.txt"),
+      );
       assertEquals(res.status, 500);
       assertEquals((await res.json()).error.message, "storage request failed");
     } finally {
@@ -576,10 +631,15 @@ Deno.test("fs storage: public buckets serve stable URLs; transforms resize image
     },
   });
   try {
-    await storage.bucket("img").upload("logo.png", samplePng());
-    await storage.bucket("img").upload("note.txt", "plain", { contentType: "text/plain" });
-    await storage.bucket("priv").upload("p.png", new Blob([samplePng() as BlobPart]));
-    const stable = await storage.bucket("img").createSignedUrl("logo.png");
+    await storage.bucket("img", { service: true }).upload("logo.png", samplePng());
+    await storage.bucket("img", { service: true }).upload("note.txt", "plain", {
+      contentType: "text/plain",
+    });
+    await storage.bucket("priv", { service: true }).upload(
+      "p.png",
+      new Blob([samplePng() as BlobPart]),
+    );
+    const stable = await storage.bucket("img", { service: true }).createSignedUrl("logo.png");
     assertEquals(stable, "/_denext/storage/o/img/logo.png");
     const plain = await app.call(stable);
     assertEquals([
@@ -589,7 +649,7 @@ Deno.test("fs storage: public buckets serve stable URLs; transforms resize image
     ], [200, "image/png", "public, max-age=3600"]);
     await plain.body?.cancel();
     const sized = await app.call(
-      await storage.bucket("img").createSignedUrl("logo.png", {
+      await storage.bucket("img", { service: true }).createSignedUrl("logo.png", {
         transform: { width: 32, quality: 80 },
       }),
     );
@@ -611,7 +671,7 @@ Deno.test("fs storage: public buckets serve stable URLs; transforms resize image
       await res.body?.cancel();
     }
     // A private transform is part of the signature: changing the width breaks it.
-    const signed = await storage.bucket("priv").createSignedUrl("p.png", {
+    const signed = await storage.bucket("priv", { service: true }).createSignedUrl("p.png", {
       transform: { width: 64 },
     });
     assertEquals((await app.call(signed)).status, 200);
@@ -651,7 +711,7 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
     },
   });
   try {
-    const bucket = storage.bucket("files");
+    const bucket = storage.bucket("files", { service: true });
     assertEquals((await bucket.upload("png", samplePng())).contentType, "image/png");
     assertEquals(
       (await bucket.upload("bin", new Uint8Array([1, 2, 3]))).contentType,
@@ -757,7 +817,7 @@ Deno.test("backend(): setup validates options; no storage → no handler; basePa
     mode: "dev",
   });
   try {
-    const url = await storage.bucket("docs").createSignedUrl("a.txt");
+    const url = await storage.bucket("docs", { service: true }).createSignedUrl("a.txt");
     assert(url.startsWith("/base/_denext/storage/o/docs/a.txt?exp="), url);
   } finally {
     await based.close();
@@ -766,7 +826,7 @@ Deno.test("backend(): setup validates options; no storage → no handler; basePa
   try {
     if (!Deno.env.get("DENEXT_STORAGE_SECRET")) {
       await assertRejects(
-        () => storage.bucket("docs").createSignedUrl("a.txt"),
+        () => storage.bucket("docs", { service: true }).createSignedUrl("a.txt"),
         StorageError,
         "DENEXT_STORAGE_SECRET",
       );
