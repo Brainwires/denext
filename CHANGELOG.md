@@ -95,15 +95,15 @@ and this project adheres to
   target: a session whose platform files resolve unlike `web`'s (or that renders another
   `spa.shell`) gets a build of its own on its first request after an edit, kept beside `web`'s
   (`.denext/spa-dev/<gen>-<target>`), and a target with no files of its own shares `web`'s build.
-- **A chat at its end keeps its last rows in view as Android shrinks the WebView.** Android (the
-  Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
+- **A list pinned to its end keeps its last rows in view as Android shrinks the WebView.** Android
+  (the Capacitor shell, and Chrome resizing content) resizes the WebView around the keyboard itself,
   before `keyboardWillShow`, so nothing covers the page and React Native mode's
   `KeyboardChatScrollView` / `KeyboardAwareLegendList` never lifted: the scroll view shrank with
   its scroll offset unchanged and its last rows went under the keyboard. Their keyboard lift now
   puts a list that was at its end (within 20 px) as the layout viewport shrank back at its end;
   a list scrolled away, an inverted one, `keyboardLiftBehavior: "never"` and a frozen lift are
   left alone.
-- **An inverted chat scrolled away from its end keeps its rows put as the iOS keyboard hides.**
+- **An inverted list scrolled away from its end keeps its rows put as the iOS keyboard hides.**
   With `resize: "native"` / `"body"` / `"ionic"` the Capacitor shell grows the app back only
   after will-hide's animation, and the keyboard watch stopped at will-hide, so an inverted
   `KeyboardChatScrollView` that had not lifted (`keyboardLiftBehavior: "whenAtEnd"` away from
@@ -131,12 +131,12 @@ and this project adheres to
 
 ### Fixed
 
-- **A plain chat scroller keeps its last rows in view when the iOS shell resizes.** React Native
-  mode's `KeyboardChatScrollView` and `KeyboardAwareLegendList` (their keyboard lift) treated
-  the Capacitor shell's delayed resize as the keyboard closing: they scrolled the content back
-  down as the WebView / `<body>` shrank, so a chat at its end hid its last rows behind the
-  keyboard until the user scrolled. The room after the content now gives way to the shrunk
-  scroll view without moving the content, and a chat whose end was in view (within 20 px) as
+- **A plain bottom-anchored scroll view keeps its last rows in view when the iOS shell resizes.**
+  React Native mode's `KeyboardChatScrollView` and `KeyboardAwareLegendList` (their keyboard lift)
+  treated the Capacitor shell's delayed resize as the keyboard closing: they scrolled the content
+  back down as the WebView / `<body>` shrank, so a scroll view at its end hid its last rows behind
+  the keyboard until the user scrolled. The room after the content now gives way to the shrunk
+  scroll view without moving the content, and a scroll view whose end was in view (within 20 px) as
   the keyboard opened stays pinned to its end through the lift, the resize, a suggestion bar
   and the hide, until the user scrolls away from it.
 - **`KeyboardAvoidingView`, `KeyboardStickyView` and React Native mode's keyboard views lift
@@ -163,17 +163,17 @@ and this project adheres to
 
 ### Fixed
 
-- **A chat keeps its last message above the iOS keyboard while the Capacitor shell resizes.**
-  `@capacitor/keyboard` takes the keyboard's notifications away from WebKit, so the visual
-  viewport never moves, and with `resize: "native"` (the default), `"body"` or `"ionic"` it
+- **A list pinned to its end keeps its last row above the iOS keyboard while the Capacitor shell
+  resizes.** `@capacitor/keyboard` takes the keyboard's notifications away from WebKit, so the
+  visual viewport never moves, and with `resize: "native"` (the default), `"body"` or `"ionic"` it
   resizes the WebView / `<body>` / `ion-app` only after the keyboard's animation plus 200 ms.
-  `useKeyboardInset()` read 0 the whole time, so a `VirtualList` chat given it as
-  `keyboardInset` was covered while the keyboard slid in and jumped when the resize landed; the
-  documented `useKeyboard().height` instead added the room on top of the resize (the last
-  message ended a keyboard's height too high). In the iOS shell the inset now follows the
+  `useKeyboardInset()` read 0 the whole time, so a bottom-anchored `VirtualList` (`anchor="end"`)
+  given it as `keyboardInset` was covered while the keyboard slid in and jumped when the resize
+  landed; the documented `useKeyboard().height` instead added the room on top of the resize (the
+  last row ended a keyboard's height too high). In the iOS shell the inset now follows the
   plugin's will-show / will-hide: the keyboard's height while it covers the page, less however
   far the shell has resized the app since, so it drops to 0 as the viewport shrinks and the
-  last message does not move (with `resize: "none"` it stays the keyboard's height). The lists
+  last row does not move (with `resize: "none"` it stays the keyboard's height). The lists
   and mobile guides now pass `useKeyboardInset()` to `keyboardInset`.
 - **A SPA build folds `feature("KEY")` in plain `.ts` / `.mts` / `.js` / `.mjs` modules too.**
   The SPA's esbuild (compat) production build ran the fold only over `.tsx` / `.jsx` components,
@@ -303,16 +303,16 @@ and this project adheres to
   Capacitor's default layout.
 - **React Native mode: `TextInput` and the stack header look like React Native.** A focused
   `TextInput` drew the browser's focus ring, and a long placeholder in a one-line `multiline`
-  input (a chat composer) wrapped onto a clipped second line. react-native-web's `TextInput` now
+  input (a text field) wrapped onto a clipped second line. react-native-web's `TextInput` now
   has React Native's outline as its base style (0 wide, `solid`: an app's `outlineWidth`,
   `outlineColor` or Tailwind `outline-*` class still draws one) and a one-line placeholder cut
   with an ellipsis. The native-stack header's back button and bar button items were the browser's
   link colour: they now honour `headerTintColor` and otherwise default as React Navigation's
   native-stack does, to the navigation theme's `colors.primary` on iOS and `colors.text` on
   Android. `denext/navigation`'s `ScreenOptions` gains `headerTintColor`.
-- **React Native mode: chat lists lift with the keyboard.** `KeyboardAwareLegendList`
+- **React Native mode: keyboard-aware lists lift with the keyboard.** `KeyboardAwareLegendList`
   (`@legendapp/list/keyboard`) and `react-native-keyboard-controller`'s `KeyboardChatScrollView`
-  ignored their keyboard props, so the keyboard covered the newest messages in the iOS shell and
+  ignored their keyboard props, so the keyboard covered the last rows in the iOS shell and
   in Safari. While the keyboard covers the page they now get that much room after their content
   (less `keyboardOffset` / `offset`) and move their content up with it as on a phone, per
   `keyboardLiftBehavior`: `"always"` lifts and drops back, `"whenAtEnd"` lifts only when the end
@@ -329,10 +329,9 @@ and this project adheres to
   `fontScale(n)` is `n` px scaled with the root font size (`n * 1rem / 16`), `hairlineWidth()` is
   `1px / devicePixelRatio`, theme variables declared with `@variant <theme>` move to the theme's
   class, and theme-variant utilities apply inside `@scope (.theme) to (<the other themes>)`, so
-  the nearest `ScopedTheme` wins (T3 Code's appearance previews draw each theme in its own
-  colours). Both Tailwind's nested output and its `--minify` output are handled.
-  `denext/build/css`'s `buildAppCss` takes the pass as `tailwind.postprocess` (the new
-  `AppTailwind` type).
+  the nearest `ScopedTheme` wins (so a preview can draw each theme in its own colours). Both
+  Tailwind's nested output and its `--minify` output are handled. `denext/build/css`'s `buildAppCss`
+  takes the pass as `tailwind.postprocess` (the new `AppTailwind` type).
 - **An `asyncContext` build no longer fails on a module that imports by a relative path.** The
   transform writes each client module it instruments into `.denext/asyncctx/`, and the copy kept
   the original's relative specifiers, so they resolved beside the copy: `denext build` and
@@ -364,7 +363,7 @@ and this project adheres to
 - **A migrated Expo app no longer flashes white before its first frame in the Capacitor shell.**
   The native Expo app keeps its splash until the first frame and paints its root view in the app
   config's colours; the shell showed Capacitor's white placeholder splash, then a WebView page
-  with no background of its own, so a dark app (T3 Code on an iPhone in dark mode) flashed white.
+  with no background of its own, so a dark app flashed white.
   `denext migrate --from expo` now reads `userInterfaceStyle`, `backgroundColor`, `splash` and the
   `expo-splash-screen` plugin's light and `dark` colours (with their `ios.` / `android.`
   overrides), writes the page's own background into `spa.head` (a `prefers-color-scheme: dark`
@@ -382,8 +381,8 @@ and this project adheres to
 - **Deno Desktop on Linux: `secureStore` fails at once on a session with no Secret Service.** On a
   headless or minimal session, libsecret waited on D-Bus for a keyring daemon that never started,
   and the runtime's answer timeout bounds only the unlock prompt, so the first `secureStore.get`
-  hung about 30 s (T3 Code's desktop preload reads its tokens at boot, so its window stayed blank
-  that long). The first call of a session now probes the store: a lookup of an account that is
+  hung about 30 s (a desktop preload that reads its tokens at boot kept its window blank that
+  long). The first call of a session now probes the store: a lookup of an account that is
   never written (no unlock prompt) races 1.5 s, alongside the runtime's probe of the session. No
   session bus, no provider, or no answer in time is `backend_unavailable` with that reason, and
   every later call of the session fails the same way at once. A working store is probed once; a
@@ -437,11 +436,11 @@ and this project adheres to
   Docs: [Recipe: uniwind and Tailwind](/docs/react-native#recipe-uniwind-and-tailwind).
 - **`@legendapp/list/keyboard` and `@legendapp/list/reanimated` run on denext's LegendList.**
   They wrapped the real list's private `internal` API and failed the build; now
-  `KeyboardAwareLegendList` adds the composer's height (`contentInsetEndAdjustment`, a shared value
-  from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`) as room after the
-  last item, `useKeyboardScrollToEnd` scrolls to the end, and `AnimatedLegendList` keeps
-  `sharedValues` current. The LegendList shim also exports `internal` (its generic helpers), so
-  the package's own `/section-list` builds, and the ref's `reportContentInset({ bottom })` adds
+  `KeyboardAwareLegendList` adds the height of a field docked below it (`contentInsetEndAdjustment`,
+  a shared value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`) as
+  room after the last item, `useKeyboardScrollToEnd` scrolls to the end, and `AnimatedLegendList`
+  keeps `sharedValues` current. The LegendList shim also exports `internal` (its generic helpers),
+  so the package's own `/section-list` builds, and the ref's `reportContentInset({ bottom })` adds
   room after the last item instead of doing nothing.
 - **React Navigation's bar button items.** A native-stack screen's `unstable_headerLeftItems` /
   `unstable_headerRightItems` (React Navigation 7.1x) are header buttons: SF Symbol icons through
@@ -485,8 +484,8 @@ and this project adheres to
 
 ### Changed
 
-- **Rendering and committing allocate far less.** Opening a thread in T3 Code's phone build
-  (Chromium's sampling heap profiler, iPhone 13 profile) allocated 11.7 MB of JS in denext's
+- **Rendering and committing allocate far less.** Opening a screen in a large real-world app's phone
+  build (Chromium's sampling heap profiler, iPhone 13 profile) allocated 11.7 MB of JS in denext's
   runtime chunk on the first open and 19.6 MB on a warm one; it now allocates 3.3 MB and 5.3 MB
   (−72%). Nothing a component sees changes. Where the churn went:
   - an element keeps the props object JSX passes it, as React 19's `jsx` does — it is copied
@@ -511,12 +510,12 @@ and this project adheres to
     pair per effect, and its hot loops index arrays instead of allocating iterators.
     | Measure                                                                     |                    3.4.4 |                 Now |
     | --------------------------------------------------------------------------- | -----------------------: | ------------------: |
-    | T3 Code, JS allocated per thread open (whole page; first / warm open)       |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
-    | T3 Code, denext runtime chunk's share of it                                 |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
-    | T3 Code, WebKit JS heap after the first open                                |           114.5–115.6 MB |      111.3–111.4 MB |
-    | T3 Code, WebKit JS heap after 5 opens                                       |           127.4–127.9 MB |      123.9–124.0 MB |
-    | T3 Code, Chromium heap after 5 / 20 opens                                   | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
-    | T3 Code, Chromium renderer PSS after 20 opens                               |               204–209 MB |          192–194 MB |
+    | A large app, JS allocated per screen open (whole page; first / warm open)   |      46.9 / 41.3–47.7 MB | 39.1 / 27.8–28.2 MB |
+    | A large app, denext runtime chunk's share of it                             |           11.7 / 19.6 MB |        3.3 / 5.3 MB |
+    | A large app, WebKit JS heap after the first open                            |           114.5–115.6 MB |      111.3–111.4 MB |
+    | A large app, WebKit JS heap after 5 opens                                   |           127.4–127.9 MB |      123.9–124.0 MB |
+    | A large app, Chromium heap after 5 / 20 opens                               | 39.6–40.0 / 43.7–45.0 MB | 39.3–39.4 / 43.3 MB |
+    | A large app, Chromium renderer PSS after 20 opens                           |               204–209 MB |          192–194 MB |
     | `examples/hello`, JS allocated by load + hydration / by 200 clicks          |           1.79 / 10.7 MB |       1.77 / 9.4 MB |
     | 10k-row list, JS allocated per row: mount / full re-render (with a handler) |            11.8 / 5.2 KB |        8.3 / 2.6 KB |
     | 10k-row list, retained per row after the re-render (`bench:fiber-memory`)   |                  6,751 B |             6,742 B |
@@ -564,8 +563,8 @@ and this project adheres to
   app. The packages it loads with `require` at run time (those with a native addon, only the
   target OS's prebuilds, and `external` ones; ES-module ones bundled in place) travel as one
   archive beside it, unpacked into the app's cache folder on the sidecar's first start (once per
-  version, about 0.5 s for T3 Code's 78 MB), where Node's own resolution and native addons work and
-  the backend's own `createRequire(import.meta.url)` finds them: a `node_modules` tree embedded
+  version, about 0.5 s for a large app's 78 MB), where Node's own resolution and native addons work
+  and the backend's own `createRequire(import.meta.url)` finds them: a `node_modules` tree embedded
   as it is fails `deno desktop` under `--node-modules-dir=none` on a CommonJS re-export. `run: { exec }` spawns a
   program (a project file is embedded and run from a copy in the app's cache folder), which gets
   `{name, port, bootstrap, secrets}` as one JSON line on stdin and an open stdin for as long as the
@@ -635,8 +634,8 @@ and this project adheres to
   re-render pass (a component calling its own setter while it renders), the memo's deps were
   reset to the committed ones. Every pass then recomputed the memo, so a check like
   `if (last !== merged) setLast(merged)` never held and the component looped. Memo cells now
-  keep the previous pass's value and deps, as React's re-render does. This crashed T3 Code's
-  Usage page.
+  keep the previous pass's value and deps, as React's re-render does. This crashed a page of a
+  large real-world app.
 - **`<ViewTransition>` animates its nearest host nodes, whatever its children are, as React
   does.** Before, only a single host child was marked. A component child had to forward the
   config to its root element itself, and a Fragment, a list or several elements were passed
@@ -837,8 +836,8 @@ and this project adheres to
   (react-native-screens' name, mapped from React Navigation too), let the back swipe start
   anywhere, not only within 20 px of the left edge. It follows the finger like the edge swipe,
   under a stricter rule so it never takes a scroll: the axis locks only when the movement is at
-  least 1.4 times as horizontal as vertical, and a fling pops only past 72 px (T3 Code's native
-  thread back-swipe rule). It yields to text fields, horizontal scrollers and any element marked
+  least 1.4 times as horizontal as vertical, and a fling pops only past 72 px (a native
+  app's back-swipe rule). It yields to text fields, horizontal scrollers and any element marked
   `data-dnx-no-back-swipe`.
 - **`SwipeableRow`: swipe-to-reveal row actions.** A row (from `denext`) with leading and
   trailing actions, outermost first, and a full swipe that runs a side's first action. A drag
@@ -855,16 +854,16 @@ and this project adheres to
 - **Barrels of side-effect-free packages are looked through automatically.** Under esbuild code
   splitting, when the startup graph and a lazily loaded route import different names from one
   barrel, every module the barrel re-exports lands in a chunk the startup graph loads, the lazy
-  route's modules included (plain esbuild 0.24–0.28 does this). T3 Code worked around it by
-  listing `@pierre/diffs`, `@pierre/trees` and `@base-ui/react` in `optimizePackageImports`.
+  route's modules included (plain esbuild 0.24–0.28 does this). A large real-world app worked around
+  it by listing `@pierre/diffs`, `@pierre/trees` and `@base-ui/react` in `optimizePackageImports`.
   Now a package that declares itself side-effect free in its own `package.json`
   (`"sideEffects": false`, or an array naming none of the modules its barrel loads) gets the
   same import rewrite unlisted, under stricter rules than a listed package: the barrel must be
   the file the build itself resolves the specifier to (an alias or the denext runtime owning a
   name rules it out), a name it re-exports from another package stays on the barrel import,
   and every module the barrel would have loaded must be side-effect free by its package's own
-  declaration. T3 Code's boot JS with its list removed: 1,525,993 B gzip on 3.4.0, and
-  1,235,940 B with this release's fixes, byte for byte the build with the list. `"!pkg"`
+  declaration. A large real-world app's boot JS with its list removed: 1,525,993 B gzip on 3.4.0,
+  and 1,235,940 B with this release's fixes, byte for byte the build with the list. `"!pkg"`
   excludes a package, and `"!*"` turns the automatic mode off (`optimizePackageImports: false`
   still turns everything off).
 - **The packaged desktop app's icon comes from the app's own when none is set.** With no
@@ -946,34 +945,34 @@ and this project adheres to
   `--iterations 2` or more, the leak check (and a budget's `maxLeakedBytes`) now measures from
   the heap after the first run and a GC, shown as `warm` in the report. The first run loads
   what the interaction needs once (lazily loaded route chunks, their compiled code, first-visit
-  data caches); measured from the post-load heap, T3 Code's thread switch reported "+24 MB
+  data caches); measured from the post-load heap, a large app's screen switch reported "+24 MB
   retained", none of which grows when the switch repeats. One iteration keeps the post-load
   baseline. Budgets written by `--write-budget` before this change may hold a larger
   `maxLeakedBytes` than a fresh run needs.
 - **A new fiber allocates no context maps.** Every fiber was constructed with two fresh `Map`s
   that reconcile replaced before the fiber rendered. New fibers now share one empty map
   (context maps are never mutated in place): two fewer allocations per mounted element, ~9,000
-  for T3 Code's first screen.
+  for a large real-world app's first screen.
 - **A store-driven render no longer loops when the store reclaims unsubscribed entries.** A
   `useSyncExternalStore` update now runs the commit's passive effects before returning, as
   React does for a SyncLane commit. denext ran them on a later 0 ms timer, so a store that drops
   an entry nobody subscribes to on its own next task (@effect/atom's registry) could reclaim
   the entry a render had just read before the subscription effect ran; re-subscribing rebuilt
   it with a new value, which read as a change, and a component deriving its store per render
-  (`useAtomValue(atom, f)` with an inline `f`) re-rendered indefinitely. T3 Code's composer did
-  this on most launches, 30 to 110 renders a second while idle, re-attaching ~50 listeners per
-  render; its WebKit page process grew ~50 MB over two idle minutes.
+  (`useAtomValue(atom, f)` with an inline `f`) re-rendered indefinitely. A large real-world app's
+  text field did this on most launches, 30 to 110 renders a second while idle, re-attaching ~50
+  listeners per render; its WebKit page process grew ~50 MB over two idle minutes.
 - **A desktop window fits the display it opens on.** `desktop.window`'s size was applied as
   given, wherever the OS had placed the window. Windows cascades a new window from the top
-  left, so T3 Code's 1280×820 on a 1280×800 display ran off the right edge (the close button
-  out of reach) and put its composer under the taskbar, on WebView2 and CEF alike. Under
+  left, so a 1280×820 window on a 1280×800 display ran off the right edge (the close button
+  out of reach) and put its bottom edge under the taskbar, on WebView2 and CEF alike. Under
   denext's pinned runtime the size is now capped at the display's work area, and a window the
   OS left partly outside it is moved back in; one that fits keeps the OS's placement.
 - **A component without effects holds no effect queues.** Every function component got three
   fresh empty arrays (insertion, layout and passive effects) on each render, and kept them
   after the commit. They are now allocated by the component's first effect of a render and
-  released once they run. In T3 Code that is ~5,000 fewer retained arrays (~0.1 MB of JS heap)
-  and three fewer allocations per component render.
+  released once they run. In a large real-world app that is ~5,000 fewer retained arrays (~0.1 MB of
+  JS heap) and three fewer allocations per component render.
 - **An unmounted subtree is released at once.** Three references kept a deleted
   component's fibers, and with them its hook state, its props and its detached DOM, alive
   after the commit that removed it: the parent's previous buffer still listed the deleted
@@ -982,8 +981,8 @@ and this project adheres to
   kept the last fiber that scheduled an update (for one error message). The commit now
   detaches both buffers and the parent's previous child list, as React does
   (`detachFiberMutation`, `detachFiberAfterEffects`, `detachAlternateSiblings`), and the
-  scheduler keeps the component type. In T3 Code, leaving its 2,000-message thread no
-  longer keeps 87 of that view's DOM nodes and ~0.5 MB of JS heap until the next render.
+  scheduler keeps the component type. In a large real-world app, leaving a screen with a long list
+  no longer keeps 87 of that view's DOM nodes and ~0.5 MB of JS heap until the next render.
 - **The `sideEffects` array form is honored.** denext resolves `node_modules` itself and marks
   each resolved file for esbuild; it read only `"sideEffects": false` and treated the array form
   (`["*.css", "./dist/web-components.js"]`) as "every file has side effects", so nothing in such
@@ -993,16 +992,16 @@ and this project adheres to
 - **A `module` field that names a missing file no longer falls back to CommonJS.** lucide 0.564's
   `module` (`dist/esm/lucide.js`) is not in its tarball; rollup's `preserveModules` put the entry
   at `dist/esm/lucide/src/lucide.js`. The browser resolver gave up on the package and the build
-  took the CJS `main`, which esbuild can't tree-shake: 379 KB raw for T3 Code's four icons. It now
-  tries the package's other ESM entries first: the next `exports` condition when a target is
+  took the CJS `main`, which esbuild can't tree-shake: 379 KB raw for a large app's four icons. It
+  now tries the package's other ESM entries first: the next `exports` condition when a target is
   missing, `jsnext:main` / `es2015`, then the one file of the same name one or two directories
   below the `module` path (the `source` field's path first). With the barrel changes above,
-  T3 Code's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream Vite build
-  (1,242,805 B).
+  a large real-world app's boot JS goes from 1,360,833 to 1,235,940 B gzip, just under its upstream
+  Vite build (1,242,805 B).
 - **A build no longer rewrites a committed `routeTree.gen.ts` with the same routes.**
   `spa.tanstackRouter` runs denext's pinned `@tanstack/router-plugin` generator, which orders the
   tree differently from other versions (and never sees a Vite config's inline `quoteStyle` /
-  `semicolons`), so every denext build of T3 Code reordered the tracked file and every Vite run
+  `semicolons`), so every denext build reordered the tracked file and every Vite run
   reordered it back. When the regenerated tree holds the committed tree's statements, in any
   order and up to quotes, semicolons and indentation, the committed bytes are put back. A route
   added, renamed or removed is written as before.
@@ -1032,18 +1031,18 @@ and this project adheres to
   documented `client-directives.d.ts` merged into `@types/react`'s `Attributes`, a component
   that spreads props typed the way component libraries type them (each key `?: T | undefined`,
   as Base UI's are) onto an element failed `tsc` with TS2375 under
-  `exactOptionalPropertyTypes: true` (T3 Code: 103 errors). Every `ClientDirectives` key now
-  admits an explicit `undefined`, as React's own `Attributes` do.
-- **A `lists: "denext"` chat opened at the end shows its footer.** With LegendList's DOM build on
-  `VirtualList`, T3 Code's 2,000-message thread opened 188 px short of the end: the last message
-  sat on the bottom edge and the list footer (the composer's inset, 172 px, plus 16 px of
-  padding) was below it, out of view. The rows measured larger than the 90 px estimate, so while
-  the sizes landed the rendered window overflowed its estimated box and covered the footer, and
-  the space after the rows read as 0; nothing re-read it once the layout caught up. The list now
+  `exactOptionalPropertyTypes: true` (103 errors in a large real-world app). Every
+  `ClientDirectives` key now admits an explicit `undefined`, as React's own `Attributes` do.
+- **A `lists: "denext"` list opened at the end shows its footer.** With LegendList's DOM build on
+  `VirtualList`, a 2,000-row list in a large real-world app opened 188 px short of the end: the last
+  row sat on the bottom edge and the list footer (the room for a docked text field, 172 px, plus 16
+  px of padding) was below it, out of view. The rows measured larger than the 90 px estimate, so
+  while the sizes landed the rendered window overflowed its estimated box and covered the footer,
+  and the space after the rows read as 0; nothing re-read it once the layout caught up. The list now
   re-reads that space after laying out whenever the last read was covered, so
   `initialScrollAtEnd` ends at the very end, footer included, as LegendList does.
 - **LegendList renders its default `drawDistance` (250 px) beyond the viewport.** Without a
-  `drawDistance` the engine's own default applied, a whole viewport each side: that chat
+  `drawDistance` the engine's own default applied, a whole viewport each side: that list
   rendered 18 rows where LegendList renders 11. It now renders 12 (React Native mode's
   `LegendList` too).
 - **Release-gate flake: the Cron panel test under load.** `tests/ui-config-cron.test.ts` ("what
@@ -1099,9 +1098,9 @@ and this project adheres to
   them, and the CLI's command runner (shared with `mobile build`) now passes a command's
   environment through.
 - **LegendList's `maintainScrollAtEnd.on` flags are honoured.** The LegendList adapter
-  accepted `on` but kept the end pinned on every change, so with T3 Code's
-  `on: { footerLayout: false }` a composer growing while the timeline sat at its end still
-  moved the visible messages up. Given `on`, only its `true` keys (`dataChange`, `itemLayout`,
+  accepted `on` but kept the end pinned on every change, so with
+  `on: { footerLayout: false }` a footer growing while the list sat at its end still
+  moved the visible items up. Given `on`, only its `true` keys (`dataChange`, `itemLayout`,
   `layout`, `footerLayout`) keep the end pinned now, as in LegendList; any other change keeps
   the visible items in place. `VirtualList` gains the underlying `pinEndOn` prop
   (`{ data, items, layout, footer }`, all `true` by default) for `anchor="end"`.
@@ -1258,8 +1257,8 @@ and this project adheres to
 - **LegendList's `getState().contentLength` is the whole scroll content** (React Native mode, and
   the DOM build): the header, the items, the footer and the room after them, as LegendList
   reports it, read from the scroll element's scroll size. It was the items alone, off by the
-  header, so a chat that subtracts `scroll` and `scrollLength` from it to find the gap below the
-  last row (T3 Code's timeline) got it wrong. `listen("totalSize")` still reports the items'
+  header, so a list that subtracts `scroll` and `scrollLength` from it to find the gap below the
+  last row got it wrong. `listen("totalSize")` still reports the items'
   total.
 - **`defaultValue` / `defaultChecked` fill a client-rendered form, as in react-dom.** An
   `<input defaultValue>` mounted on the client (not hydrated) wrote a `defaultvalue` attribute
@@ -1880,7 +1879,7 @@ Upgrade notes for 3.4. Plugin authors:
   once per item (the first layout of a long tail walked it O(n²)); a FlashList benchmark whose
   scroll pass throws stops its FPS monitor's frame loop and can be started again.
 - **`denext migrate --desktop --backend` no longer drops a Vite proxy built in code without a
-  word.** A `vite.config` whose `server.proxy` is computed (T3 Code's
+  word.** A `vite.config` whose `server.proxy` is computed (for example
   `Object.fromEntries(PREFIXES.map(…))`) has no literal prefixes to read, so `spa.proxy` fell back
   to `/api` — and the desktop app never reached `/ws` — while `--check` said "ready". Migrate now
   prints a warning, the result carries `spa.proxyUnresolved`, and `--check` lists it as a review
@@ -2020,9 +2019,9 @@ Upgrade notes for 3.4. Plugin authors:
   list), and checks each file's SHA-256 and size the first time it serves it in a process (iOS:
   `DenextOtaRouter` in front of Capacitor's asset handler; Android: the `RouteProcessor`
   `DenextOta.prepare` gives the bridge). Hashing on first serve rather than all at launch keeps a
-  large UI's launch cost to the files a page loads (T3 Code's UI is 2,424 files, 41 MB). A
-  mismatch, or a file the manifest does not list, quarantines the version (`quarantine/`), falls
-  back to the bundled UI (or the confirmed download, re-verified) and fires `otaRejected`.
+  large UI's launch cost to the files a page loads (a large real-world app's UI is 2,424 files, 41
+  MB). A mismatch, or a file the manifest does not list, quarantines the version (`quarantine/`),
+  falls back to the bundled UI (or the confirmed download, re-verified) and fires `otaRejected`.
   Existing apps re-run `denext mobile add-ota` (an unedited plugin is upgraded in place) and ship
   a new binary. The desktop updater already re-verified the overlay (signature and every file) at
   every launch; it now has tests for an edited, unsigned or re-signed stored manifest.
@@ -2299,15 +2298,16 @@ Upgrade notes for 3.4. Plugin authors:
   reason** in `error.data.reason` (and in the message): which runtime API is missing, or what the
   session lacks.
 - **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
-  against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
-  and `denext/expo/manifest` and the [Expo APIs](https://denext.dev/docs/react-native#expo-apis)
-  table say so. What SDK 58 added is provided: `expo`'s `Platform` (Expo's web build), `uuid` (`v4`,
-  and a synchronous `v5`), `CodedError` / `UnavailabilityError`, `createSnapshotFriendlyRef` and
-  `useReleasingSharedObject` / `useReleasingSharedObjectWithLifecycle` (released on unmount or a
-  dependency change; with `shouldRecreate: false`, `update` is called on the same object);
-  `File.write` is async (it settles once the write is on disk, and rejects if it fails) beside the new `writeSync`, with
-  `digest()` (WebCrypto; MD5 rejects) and `canPreview` / `preview` as Expo's web build; `expo-font`
-  loads font families (`[{ fontFamily, fontDefinitions }]`, a `FontFace` per weight / style, Expo's
+  against the SDK 58 release a large real-world Expo app pins (the others against their latest SDK
+  58 release), and `denext/expo/manifest` and the
+  [Expo APIs](https://denext.dev/docs/react-native#expo-apis) table say so. What SDK 58 added is
+  provided: `expo`'s `Platform` (Expo's web build), `uuid` (`v4`, and a synchronous `v5`), `CodedError` /
+  `UnavailabilityError`, `createSnapshotFriendlyRef` and `useReleasingSharedObject` /
+  `useReleasingSharedObjectWithLifecycle` (released on unmount or a dependency change; with
+  `shouldRecreate: false`, `update` is called on the same object); `File.write` is async (it settles
+  once the write is on disk, and rejects if it fails) beside the new `writeSync`, with `digest()`
+  (WebCrypto; MD5 rejects) and `canPreview` / `preview` as Expo's web build; `expo-font` loads font
+  families (`[{ fontFamily, fontDefinitions }]`, a `FontFace` per weight / style, Expo's
   `ERR_FONT_API` checks) and unloads single faces by weight / style; `expo-camera`'s
   `onRecordingProgress` / `progressUpdateInterval`, `getAvailableLensesAsync`'s `LensInfo` and the
   document scanner statics (unavailable, as on the web); `expo-media-library`'s `AlbumType`,
@@ -3149,7 +3149,7 @@ Upgrade notes for 3.4. Plugin authors:
   build, whose `events` / `stream` imports failed every `/_denext/@npm/*` module.
 - **Unbundled dev crawls the app's graph before the npm bundle builds, so a large app does not
   reload in a loop.** The first build holds every package the page imports, and a rebuild under
-  a live page waits 400 ms to batch new packages and reloads once (T3 Code: one load instead of
+  a live page waits 400 ms to batch new packages and reloads once (a large app: one load instead of
   a reload every 5–20 s).
 - **One npm package that fails to bundle in dev fails only its own module.** The failing
   specifiers are found by bisection, the rest bundle together as before, and each failing one is
@@ -3646,7 +3646,7 @@ Upgrade notes for 3.4. Plugin authors:
   `react-native/Libraries/Image/resolveAssetSource` import).
 - **`onContentSizeChange` on `FlatList` / `SectionList` / `VirtualizedList`, FlashList and
   LegendList** (React Native mode): the content's width and height on mount and whenever it
-  changes, the usual cue to keep a chat scrolled to its end.
+  changes, the usual cue to keep a bottom-anchored list scrolled to its end.
 - **`useReducedMotion()` in `denext/mobile`**: `prefers-reduced-motion`, live, which the iOS and
   Android WebViews report from the OS setting (the same answer as Reanimated's hook and
   `AccessibilityInfo.isReduceMotionEnabled()`).
@@ -4116,9 +4116,9 @@ Upgrade notes for 3.4. Plugin authors:
   `maintainVisibleContentPosition` (default on; `false` is React Native's default, which shifts
   the view). During a touch fling the list absorbs corrections into its own
   layout and writes the scroll offset only at `scrollend`, so iOS momentum survives with or
-  without the momentum-safe shim. `anchor="end"` is chat (start at the bottom, bottom-align short
-  content, stay pinned through appends and a streaming last row); `onEndReached` /
-  `onStartReached` never fire on mount, fire once per data change, and fire when the content is
+  without the momentum-safe shim. `anchor="end"` is a bottom-anchored list (start at the bottom,
+  bottom-align short content, stay pinned through appends and a streaming last row); `onEndReached`
+  / `onStartReached` never fire on mount, fire once per data change, and fire when the content is
   shorter than the viewport. Also: `stickyIndices` (the real row sticks), header / footer /
   empty (fills the viewport) / separator slots, window / element / ancestor scrolling,
   horizontal lists, opt-in `recycle` pools, velocity-scaled px overscan, opt-in `findInPage`
@@ -4144,8 +4144,8 @@ Upgrade notes for 3.4. Plugin authors:
   `columnWrapperStyle`; index APIs stay item indices; the arrows move by cell).
   `contentContainerStyle` / `contentContainerClass`, `ListHeaderComponentStyle` /
   `ListFooterComponentStyle`. Sticky headers now push each other up. `keyboardInset` keeps a
-  chat's last message above an overlaying keyboard in one adjustment. `refreshControl` (+
-  `refreshing` / `onRefresh` / `progressViewOffset`) with React Native's slot semantics.
+  bottom-anchored list's last row above an overlaying keyboard in one adjustment. `refreshControl`
+  (+ `refreshing` / `onRefresh` / `progressViewOffset`) with React Native's slot semantics.
   `keepMounted` keys, and a text selection's first and last rows stay mounted while it lives.
   `restoreKey` saves the view (anchor key + offset + nearby sizes) and restores it for the same
   history entry (back / forward, reload, remount). `itemLayoutAnimation` (FLIP: moves glide,
@@ -4168,9 +4168,9 @@ Upgrade notes for 3.4. Plugin authors:
   already render, for `VirtualList`'s `refreshControl`; it shares one implementation with React
   Native mode's `RefreshControl`.
 - **Docs: [Lists & scrolling](https://denext.dev/docs/lists)** — when to virtualize, the full
-  API, and recipes for chat, huge lists, infinite loading, sticky sections, grids, masonry,
-  tables, RTL, pull-to-refresh, reordering, animations, find-in-page, a11y, restoration, print,
-  SSR and testing.
+  API, and recipes for bottom-anchored lists, huge lists, infinite loading, sticky sections, grids,
+  masonry, tables, RTL, pull-to-refresh, reordering, animations, find-in-page, a11y, restoration,
+  print, SSR and testing.
 - **`cors` config: route handlers callable from a Capacitor app or another origin.** A
   top-level `cors: { origins, methods?, headers?, exposeHeaders?, credentials?, maxAge? }`
   applies to every `route.ts` / `defineApi` route and the native `denextAuth` endpoints;
@@ -4230,10 +4230,11 @@ Upgrade notes for 3.4. Plugin authors:
   `{ visible, height, animationDuration? }` from `@capacitor/keyboard`'s will-show / will-hide
   in the shell (iOS reports UIKit's 250 ms duration), and from the VirtualKeyboard API or the
   visual viewport on the web. `<KeyboardAvoidingView behavior="padding" | "height" |
-  "position">` and `<KeyboardStickyView offset>` (a composer that rides the keyboard) move only
+  "position">` and `<KeyboardStickyView offset>` (a text field that rides the keyboard) move only
   by the part of the keyboard that covers the page, so a WebView that resizes itself is not
   lifted twice. `hideKeyboard()` and `setKeyboardResizeMode(mode)` (iOS) round it out, and
-  `denext mobile add keyboard` installs the plugin. /docs/mobile has a chat-composer recipe.
+  `denext mobile add keyboard` installs the plugin. /docs/mobile has a recipe for a text field that
+  rides the keyboard.
 - **`denext/mobile`: Android back and predictive back.** `onBack(handler)` /
   `useBackHandler(handler)` form a LIFO stack like React Native's `BackHandler` (return `true`
   to consume; otherwise history back, else the app leaves the foreground through
@@ -4743,8 +4744,8 @@ logged while the main frame's plugin calls work.
   `.web.jsx`/`.web.js` win for relative imports and package subpaths; `.js` parses as JSX;
   `__DEV__`, `global` and `process.env.EXPO_OS` are defined; and the SPA shell gets Expo web's
   root style (`reactNative: { rootStyle: false }` leaves it out). `denext dev` uses the bundled
-  loop for such an app. Measured on T3 Code's Expo app: it builds with no patches, and all 41
-  swept deep-link routes render as before. Guide: /docs/react-native.
+  loop for such an app. Measured on a large real-world Expo app: it builds with no patches, and all
+  41 swept deep-link routes render as before. Guide: /docs/react-native.
 - **Files, pickers, barcodes and quick actions in `denext/mobile`.** `readFile` /
   `writeFile` / `deleteFile` / `listDir` / `downloadToFile(url, path)` read and write the
   app's files (`"data"`, `"documents"` or `"cache"`, as text or base64) through
@@ -4983,7 +4984,7 @@ logged while the main frame's plugin calls work.
   dependency) in a worker, persisted to OPFS through the `opfs-sahpool` VFS, which needs no
   COOP/COEP headers, and in memory where OPFS is unavailable. The esbuild pipeline finds the
   installed package and emits its module and `sqlite3.wasm` as assets; a missing package is a
-  clear error naming it. T3 Code's SQLite caches (schema, server config, shell snapshots) now
+  clear error naming it. An app's SQLite caches now
   persist across reloads with no `expo-sqlite` stub.
 - **`Appearance.setColorScheme` in `reactNative` mode.** react-native-web lacks it (React
   Native 0.72+); the resolver adds it to react-native-web's `Appearance`: an override that
@@ -5280,7 +5281,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   enumerated props serialize `"true"`/`"false"`; a boolean on a renamed or string-only
   prop, an empty `src`/`href` and an invalid `cols`/`rows`/`size`/`span`/`rowSpan`/`start`
   are omitted; a hyphenated custom element keeps its prop names as written. Found by
-  running T3 Code's vitest suite against denext's React compat.
+  running a large real-world app's vitest suite against denext's React compat.
 - **`serializeStyle` matches React**: no trailing `;`, a boolean value skipped, strings
   trimmed, React's full unitless-number list, and no `style` attribute for an object with
   nothing to render. The client reconciler shares the same table, so its `msTransition`
@@ -5326,7 +5327,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   never loaded. This fixes a startup regression in apps that import icons through the
   `lucide-react` barrel and also import `lucide-react/dynamic`: every icon was a code-splitting
   entry, and esbuild kept a bare `import "./chunk-<icon>.js"` for all ~1,670 of them in the
-  startup chunk (T3 Code: 1,723 startup chunks, 1,672 of them icons). The configured list is
+  startup chunk (a large app: 1,723 startup chunks, 1,672 of them icons). The configured list is
   added to a built-in default (`lucide-react`, `date-fns`, `lodash-es`, `ramda`, `rxjs`,
   `@tabler/icons-react`, `@heroicons/react/{20,24}/solid`, `@heroicons/react/24/outline`,
   `react-icons/*`, `@mui/icons-material`, `recharts`, `react-use`, `@headlessui/react`, `effect`).
@@ -6975,7 +6976,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   non-zero numeric style value except a set of unitless properties (`opacity`, `zIndex`,
   `flex`, `lineHeight`, grid spans, …); denext now matches. This broke libraries that pass
   numeric styles — notably virtualized lists (`@legendapp/list`/LegendList) that position
-  absolutely with `top: <number>`: every row collapsed onto `top: 0` (all messages on one
+  absolutely with `top: <number>`: every row collapsed onto `top: 0` (all rows on one
   line). The SSR serializer already handled this; only the client path did not.
 - **`useOptimistic` now shows the optimistic value while a `useActionState` action is in
   flight.** `useActionState`'s dispatch ran the action inside `startTransition` but did not
@@ -8010,7 +8011,7 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
 ### Fixed
 
 - **A pnpm/Vite SPA migrated on the JSR-installed denext builds without hand
-  fixes** (found migrating T3 Code on 2.0.0). Four defects, each with a
+  fixes** (found migrating a large real-world app on 2.0.0). Four defects, each with a
   regression test and a new end-to-end test
   (`tests/e2e/remote-spa-compat-build.e2e.test.ts`: a pnpm-shaped monorepo SPA
   exported through a REMOTE framework root): (1) the compat runtime prebuild
@@ -8026,7 +8027,7 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
   config, so the app's node_modules (workspace links included) resolve as before
   (`src/build/migrate.ts`); (3) the node_modules resolver honors Node's package
   **self-reference** — a workspace package importing itself by name
-  (`@t3tools/client-runtime/media-source` from inside `packages/client-runtime`)
+  (`@acme/client-runtime/media-source` from inside `packages/client-runtime`)
   resolves through its own `exports`, since pnpm links a package into its
   consumers' `node_modules`, never its own (`resolveNodeFrom`); (4) the CLI's
   build re-exec forwards `DENEXT_MIN_DEP_AGE` as `--min-dep-age`, so a freshly
@@ -8035,7 +8036,7 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
   composition now says why.
 - **`denext migrate --desktop` names the bundle after the app.** The generated
   `desktop` task passes `-o "<title>"` (parentheticals dropped:
-  `"T3 Code (Alpha)"` → `T3 Code`) instead of letting `deno desktop` name it
+  `"My App (Alpha)"` → `My App`) instead of letting `deno desktop` name it
   after the entry file (`desktop.app`, CFBundleName "desktop").
 
 ## [2.0.0] - 2026-09-05
@@ -10506,7 +10507,7 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
   binary), and `--exclude-unused-npm` (embed only the npm packages the desktop
   entry reaches, not the app's whole lockfile — a monorepo SPA dropped from
   **2.4GB to ~104MB**). Validated by rebuilding + running a real monorepo SPA
-  (T3) end to end.
+  end to end.
 - **`migrate` writes a `.gitignore` for denext's generated build artifacts** —
   `.denext/` (build cache), `out/` (static export), and (with `--desktop`)
   `desktop-icon.png` (the icon `export` composes from `spa.desktop.icon`; the
