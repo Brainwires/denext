@@ -49,6 +49,15 @@ and this project adheres to
   are parameters, passwords are masked, and `--read-only` refuses every write in the server and
   again in the child. Guide: [Project UI › Database](https://denext.dev/docs/ui#database).
 
+### Changed
+
+- **`@denext/backend`: a single `db()` query is one round trip on `Deno.SQL`** (was two): the
+  scoped transaction hands the driver the role/claims setup and the query unstarted, as an array
+  (`begin(tx => [setup, query])`), so `BEGIN`, both statements and `COMMIT` go out together. A
+  failed setup still aborts the transaction before the query runs. The `SqlClient.begin` contract
+  now states that a returned array is awaited as a whole (as `Deno.SQL` and postgres.js do); a
+  client that does not is refused with a `TypeError` instead of running the query unscoped.
+
 ## [3.4.13] - 2026-10-12
 
 ### Added

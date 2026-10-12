@@ -311,11 +311,13 @@ Each `db()` query is one transaction: `BEGIN`, then
 `SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. Both settings
 are transaction-local, so nothing survives on a pooled connection, and it is safe behind pgbouncer
 in transaction mode; denext never issues a session-level `SET`. The setup statement and your query
-are pipelined — sent together, in that order, on the transaction's one connection — so a scoped
-query costs three round trips (`BEGIN`, setup + query, `COMMIT`) against four done one at a time. If
-the setup fails the transaction is aborted and your query never runs as the connecting role.
+are pipelined — sent together, in that order, on the transaction's one connection. On denext's
+runtime (`Deno.SQL`) `BEGIN` and `COMMIT` ride along too, so a scoped query is one round trip; a
+driver that waits for each answer (postgres.js through `fromPostgresJs`) takes more. If the setup
+fails the transaction is aborted and your query never runs as the connecting role.
 
-`db().begin(async (tx) => …)` scopes a whole transaction once (four round trips for two queries);
+`db().begin(async (tx) => …)` scopes a whole transaction once (on `Deno.SQL`, three round trips for
+two awaited queries);
 a `begin` inside it is a savepoint. A thrown error rolls back the transaction and its settings.
 
 ### The claims

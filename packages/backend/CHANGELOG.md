@@ -10,7 +10,8 @@
   `table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
 - **Row-level security, Supabase-compatible.** `db()` now runs every query inside a transaction
   that first sets `role` (`authenticated` for the request's signed-in user, else `anon`) and
-  `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query —
+  `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query
+  (one round trip per query on `Deno.SQL`: `BEGIN`, setup, query and `COMMIT` go out together) —
   so Supabase-style policies (`using (auth.uid() = owner)`) apply as written. Migration
   `backend_rls_0001` (on first use; `rls: { migrate: false }` to skip) creates the `anon` /
   `authenticated` roles, grants them to the connecting role, and adds Supabase's `auth.uid()`,

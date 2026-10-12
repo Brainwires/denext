@@ -110,7 +110,9 @@ export function fakeRealtimeClient(
     };
     client.begin = async <T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T> => {
       statements.push("BEGIN");
-      const result = await fn(clientWith({ claims: {} }));
+      // An array of queries is awaited as a whole, as Deno.SQL and postgres.js do.
+      const returned = fn(clientWith({ claims: {} }));
+      const result = (Array.isArray(returned) ? await Promise.all(returned) : await returned) as T;
       statements.push("COMMIT");
       return result;
     };

@@ -43,7 +43,11 @@ export interface SqlClient {
    * untrusted input.
    */
   unsafe<T = SqlRow>(text: string, params?: unknown[]): SqlQuery<T>;
-  /** Run `fn` in a transaction: COMMIT when it settles, ROLLBACK (and rethrow) when it throws. */
+  /**
+   * Run `fn` in a transaction: COMMIT when it settles, ROLLBACK (and rethrow) when it throws.
+   * An array `fn` returns is awaited as a whole (`Promise.all`), as `Deno.SQL` and postgres.js
+   * do: `begin(tx => [tx\`…\`, tx\`…\`])` lets the driver pipeline the statements and COMMIT.
+   */
   begin<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
   /**
    * Inside a transaction: run `fn` in a savepoint — RELEASE when it settles, ROLLBACK TO (and
