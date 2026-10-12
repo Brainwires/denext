@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Realtime limits (security).** Subscriptions are capped per identity
+  (`maxSubscriptionsPerIdentity`, default 64: a signed-in user, or one signed-out Live connection);
+  an unsubscribed key is forgotten at once and a disconnected one is kept for a reconnect only while
+  there is room; subscribe-time seed queries run four at a time within a per-identity budget (32,
+  then 8 a second). Re-reads and seeds compare the key and filter in the column's own type (read
+  from the catalog), so the key and filter indexes serve them; each runs under a transaction-local
+  `statement_timeout` (`queryTimeoutMs`, default 5 000); flushes are single-flight.
 - **Auto-REST.** `backend({ postgres, rest: {} })` serves the granted tables of a schema
   PostgREST-style under `/rest/v1/<table>`: `select=` (columns), `eq` / `neq` / `gt` / `gte` / `lt`
   / `lte` / `like` / `ilike` / `is` / `in` filters (and `not.`), `order=`, `limit` / `offset` /

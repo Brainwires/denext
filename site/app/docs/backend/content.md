@@ -454,13 +454,17 @@ policies or filter. Rows keep arrival order; sort them when you render.
 2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
    a lost connection, and every subscriber is told to re-read, since changes sent meanwhile are
    lost). Notifications are coalesced for 16 ms, as Live coalesces its own pushes: within a burst
-   the latest change per key wins.
+   the latest change per key wins. One burst is delivered at a time: changes that arrive while its
+   re-reads run go out together in the next.
 3. **Re-read as each subscriber.** Subscribers with the same identity, table and filter form a
    group, and each group's changed rows are read back with one query
-   (`select … where key in (…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
+   (`select … where key = any(…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
    and `request.jwt.claims` set for that identity, exactly as `db()` does. A burst costs one query
    per identity, not one per subscriber per row: a 500-row transaction watched by two users is one
-   flush and two re-reads.
+   flush and two re-reads. Keys and the filter value are compared in the column's own type (read
+   once from the catalog), so the primary key — and an index on a filter column — serves the
+   re-read, and each query runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a
+   re-read that fails or times out becomes a "re-read" signal for that group.
 4. **Deletes go only to those who could see the row.** A deleted row cannot be re-read against a
    policy, so each subscription tracks the keys it may know about: the rows it could see when it
    subscribed (one key-only query under its own policies, up to `maxTrackedKeys`) plus every row
@@ -477,6 +481,15 @@ the browser picks; the first subscriber binds it to their identity (the user's i
 anyone else presenting it is refused. The binding is re-checked every 60 seconds of traffic, so a
 signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
 if signed-out visitors may watch it) for its rows to be readable at all.
+
+**Limits.** Each identity — a signed-in user across all their connections, or one signed-out Live
+connection — may hold `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
+the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
+unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
+reconnect resumes it, but only while there is room: at either cap the oldest such subscription
+gives way, and only live subscriptions refuse a new one (the browser sees `denied`). Subscribing
+runs one key-only query; at most four run at a time, and each identity may start 32 in a burst,
+then 8 a second. Server-side `tableChanges` subscriptions count toward `maxSubscribers` only.
 
 ### On the server
 
@@ -512,13 +525,15 @@ through `fromPostgresJs`); without one every instance revalidates, with a warnin
 
 ### Options
 
-| Option           | Default | What it does                                                                                    |
-| ---------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `tables`         | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.        |
-| `revalidate`     | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.    |
-| `migrate`        | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead. |
-| `maxSubscribers` | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect).                |
-| `maxTrackedKeys` | 10 000  | Keys tracked per subscription, for deletes.                                                     |
+| Option                        | Default | What it does                                                                                          |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `tables`                      | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.              |
+| `revalidate`                  | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.          |
+| `migrate`                     | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.       |
+| `maxSubscribers`              | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room). |
+| `maxSubscriptionsPerIdentity` | 64      | Subscriptions per signed-in user, or per signed-out Live connection (and so its distinct filters).    |
+| `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                           |
+| `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                     |
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's Deno runtime), or the npm
 `postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.

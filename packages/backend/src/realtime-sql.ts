@@ -36,8 +36,25 @@ export interface RealtimeOptions {
    * {@linkcode realtimeSetupSql} instead.
    */
   migrate?: boolean;
-  /** Subscriptions held at once on one server instance (default 10 000). */
+  /**
+   * Subscriptions held at once on one server instance (default 10 000). A subscription whose
+   * subscriber disconnected is kept for a reconnect only while there is room: at the cap the
+   * oldest such one is dropped, and only live subscriptions refuse a new one.
+   */
   maxSubscribers?: number;
+  /**
+   * Subscriptions one identity may hold on one server instance (default 64): a signed-in user
+   * across all their connections, or one signed-out Live connection. It also bounds the distinct
+   * filters (re-read groups) an identity adds to a burst. Server-side `tableChanges`
+   * subscriptions are not counted.
+   */
+  maxSubscriptionsPerIdentity?: number;
+  /**
+   * The `statement_timeout`, in milliseconds, of every re-read and subscribe-time query
+   * (transaction-local; default 5 000). A re-read that times out becomes a `resync` for its
+   * subscribers.
+   */
+  queryTimeoutMs?: number;
   /**
    * Keys tracked per subscription, so a delete reaches only subscribers who could see the row
    * (default 10 000); see the docs for what happens past it.
@@ -85,6 +102,10 @@ export interface ResolvedRealtime {
   migrate: boolean;
   /** The subscription cap per instance. */
   maxSubscribers: number;
+  /** The subscription cap per identity. */
+  maxSubscriptionsPerIdentity: number;
+  /** The re-read / seed `statement_timeout`, in milliseconds. */
+  queryTimeoutMs: number;
   /** The tracked-key cap per subscription. */
   maxTrackedKeys: number;
 }
@@ -155,6 +176,12 @@ export function resolveRealtime(options: RealtimeOptions): ResolvedRealtime {
     revalidateOwner: revalidateOwner(options.revalidate),
     migrate: options.migrate !== false,
     maxSubscribers: positiveOption(options.maxSubscribers, 10_000, "realtime(): maxSubscribers"),
+    maxSubscriptionsPerIdentity: positiveOption(
+      options.maxSubscriptionsPerIdentity,
+      64,
+      "realtime(): maxSubscriptionsPerIdentity",
+    ),
+    queryTimeoutMs: positiveOption(options.queryTimeoutMs, 5_000, "realtime(): queryTimeoutMs"),
     maxTrackedKeys: positiveOption(options.maxTrackedKeys, 10_000, "realtime(): maxTrackedKeys"),
   };
 }

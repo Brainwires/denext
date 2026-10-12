@@ -248,7 +248,15 @@
                 "type": "boolean"
               },
               "maxSubscribers": {
-                "description": "Subscriptions held at once on one server instance (default 10 000).",
+                "description": "Subscriptions held at once on one server instance (default 10 000). A subscription whose subscriber disconnected is kept for a reconnect only while there is room: at the cap the oldest such one is dropped, and only live subscriptions refuse a new one.",
+                "type": "number"
+              },
+              "maxSubscriptionsPerIdentity": {
+                "description": "Subscriptions one identity may hold on one server instance (default 64): a signed-in user across all their connections, or one signed-out Live connection. It also bounds the distinct filters (re-read groups) an identity adds to a burst. Server-side `tableChanges` subscriptions are not counted.",
+                "type": "number"
+              },
+              "queryTimeoutMs": {
+                "description": "The `statement_timeout`, in milliseconds, of every re-read and subscribe-time query (transaction-local; default 5 000). A re-read that times out becomes a `resync` for its subscribers.",
                 "type": "number"
               },
               "maxTrackedKeys": {

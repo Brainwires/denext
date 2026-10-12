@@ -1337,6 +1337,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
+- `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).

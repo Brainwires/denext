@@ -136,6 +136,7 @@ export type {
   ChannelConfig,
   ChannelContext,
   ChannelEvent,
+  ChannelIdleReason,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,

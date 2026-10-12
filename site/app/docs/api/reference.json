@@ -5759,6 +5759,18 @@
           "denextOnly": true
         },
         {
+          "name": "ChannelIdleReason",
+          "slug": "ChannelIdleReason",
+          "kind": "typeAlias",
+          "signature": "type ChannelIdleReason = unsubscribe | disconnect",
+          "doc": "Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).",
+          "docFull": "Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ChannelRef",
           "slug": "ChannelRef",
           "kind": "interface",

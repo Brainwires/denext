@@ -29,6 +29,36 @@ and this project adheres to
   `Update` types to `.denext/rest.ts` from the live catalog (a stub without a database). Guide:
   [Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
 
+### Changed
+
+- **A channel's `onIdle` says why its key went idle.** `createChannel({ onIdle })` is now called
+  with `(key, reason)`: `"disconnect"` when the last subscriber's connection closed (it may come
+  back with the same key) and `"unsubscribe"` when it unsubscribed, was revoked or was denied on
+  re-authorization. Re-subscribing to the same key under the same subscription id no longer takes
+  the key through `onIdle` / `onActive`.
+
+### Security
+
+- **`@denext/backend` realtime: one client can no longer fill an instance's subscriptions.** Each
+  subscribe with a fresh key created a subscription (and ran a seed query of up to
+  `maxTrackedKeys` keys) that was kept 15 s after its subscriber left, against one instance-wide cap
+  of 10 000 with no per-subscriber limit, so a single signed-out client churning keys could hold
+  every slot. Subscriptions are now capped per identity (`maxSubscriptionsPerIdentity`, default 64:
+  a signed-in user across their connections, or one signed-out Live connection), an unsubscribed
+  key is forgotten at once, one whose connection closed is kept for a reconnect only while there is
+  room (at either cap the oldest such one gives way; only live subscriptions refuse a new one), and
+  seed queries run at most four at a time within a per-identity budget (a burst of 32, then 8 a
+  second).
+- **`@denext/backend` realtime: re-reads use the table's indexes and cannot pile up.** The re-read
+  and seed queries compared the key and the filter column as text (`t.id::text in (…)`), which no
+  index serves, so every burst was a sequential scan per subscriber group, and bursts arriving
+  while one ran started more in parallel. Keys and filter values are now cast to the column's own
+  type, read once from the catalog (`t.id = any(array(…)::<type>)`, an index scan); each query runs
+  under a transaction-local `statement_timeout` (`queryTimeoutMs`, default 5 000; a timed-out
+  re-read is a `resync`); and flushes are single-flight, so bursts that arrive during one are
+  delivered together by the next. Distinct filters (re-read groups) per identity are bounded by
+  `maxSubscriptionsPerIdentity`.
+
 ## [3.4.14] - 2026-10-12
 
 ### Added

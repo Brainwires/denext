@@ -535,6 +535,7 @@
     "ChannelConfig:interface",
     "ChannelContext:interface",
     "ChannelEvent:interface",
+    "ChannelIdleReason:typeAlias",
     "ChannelRef:interface",
     "ChannelTapHandlers:interface",
     "ChannelTransport:interface",

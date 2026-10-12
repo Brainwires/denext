@@ -3,7 +3,8 @@
 // Live channel hub, driven without a socket) gets the rows its own row-level-security policies
 // return — two users, a visibility change on update, deletes, a 500-row transaction coalesced, the
 // listener reconnecting after `pg_terminate_backend`, and notifications handled in the root
-// context. The app connects as a non-superuser role that owns its database.
+// context — and that the re-read and seed queries are index scans on an integer and a uuid key
+// (EXPLAIN). The app connects as a non-superuser role that owns its database.
 //
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`), with a superuser URL:
 //
@@ -26,10 +27,14 @@ import { backend } from "../packages/backend/mod.ts";
 import { db, onTableChange, type TableChangeEvent } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import {
+  COLUMN_TYPES_SQL,
   installRealtime,
   RealtimeEngine,
   realtimeEngine,
+  rereadQuery,
+  seedQuery,
 } from "../packages/backend/src/realtime.ts";
+import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -322,3 +327,98 @@ Deno.test({
     }
   },
 });
+
+/** The plan of `text` with `params`, as one string. */
+async function plan(sql: SqlClient, text: string, params: unknown[]): Promise<string> {
+  const rows = await sql.unsafe<Record<string, string>>(`explain ${text}`, params);
+  return rows.map((row) => Object.values(row)[0]).join("\n");
+}
+
+Deno.test({
+  name: `realtime on a real Postgres: re-reads and seeds use the key and filter indexes${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    try {
+      await env.app.unsafe(`
+        create table ikeys (id integer primary key, list_id integer not null, body text);
+        create index ikeys_list on ikeys (list_id);
+        insert into ikeys select g, g % 500, 'row ' || g from generate_series(1, 50000) g;
+        create table ukeys (id uuid primary key, body text);
+        insert into ukeys select gen_random_uuid(), 'row ' || g from generate_series(1, 50000) g;
+        analyze ikeys; analyze ukeys;
+      `).simple!();
+      const tables = resolveRealtime({ tables: { ikeys: {}, ukeys: {} } }).tables;
+      const typesOf = async (qualified: string) =>
+        new Map(
+          (await env.app.unsafe<{ name: string; type: string }>(COLUMN_TYPES_SQL, [qualified]))
+            .map((row) => [row.name, row.type]),
+        );
+      const ints = await typesOf('"ikeys"');
+      assertEquals(ints.get("id"), "integer");
+      const uuids = await typesOf('"ukeys"');
+      assertEquals(uuids.get("id"), "uuid");
+      const someUuids = (await env.app.unsafe<{ id: string }>(
+        "select id::text as id from ukeys limit 3",
+      )).map((row) => row.id);
+
+      const plans = {
+        "integer key": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ikeys")!, undefined, ["7", "42", "4242"], ints)),
+        ),
+        "integer key + filter": await plan(
+          env.app,
+          ...spread(
+            rereadQuery(
+              tables.get("ikeys")!,
+              { column: "list_id", value: "7" },
+              ["7", "507"],
+              ints,
+            ),
+          ),
+        ),
+        "uuid key": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ukeys")!, undefined, someUuids, uuids)),
+        ),
+        "seed with a filter": await plan(
+          env.app,
+          ...spread(
+            seedQuery(tables.get("ikeys")!, { column: "list_id", value: "7" }, 10_000, ints),
+          ),
+        ),
+        // The shape before: the key compared as text — no index can serve it.
+        "integer key as text (before)": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ikeys")!, undefined, ["7", "42"], new Map())),
+        ),
+      };
+      for (const [what, text] of Object.entries(plans)) console.log(`EXPLAIN ${what}:\n${text}\n`);
+      assert(usesIndex(plans["integer key"], "ikeys_pkey"), plans["integer key"]);
+      assert(usesIndex(plans["integer key + filter"], "ikeys_pkey"), plans["integer key + filter"]);
+      assert(usesIndex(plans["uuid key"], "ukeys_pkey"), plans["uuid key"]);
+      assert(usesIndex(plans["seed with a filter"], "ikeys_list"), plans["seed with a filter"]);
+      for (
+        const what of ["integer key", "integer key + filter", "uuid key", "seed with a filter"]
+      ) {
+        assert(!/Seq Scan/.test(plans[what as keyof typeof plans]), `${what}: no Seq Scan`);
+      }
+      assert(/Seq Scan on ikeys/.test(plans["integer key as text (before)"]));
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+/** Whether a plan reads `index` (an index scan, index-only scan or bitmap index scan). */
+function usesIndex(text: string, index: string): boolean {
+  return new RegExp(`(Index (Only )?Scan using|Bitmap Index Scan on) ${index}\\b`).test(text);
+}
+
+/** A query as `plan`'s arguments. */
+function spread(query: { text: string; params: unknown[] }): [string, unknown[]] {
+  return [query.text, query.params];
+}
