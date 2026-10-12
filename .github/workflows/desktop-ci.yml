@@ -58,6 +58,7 @@ on:
       - "src/build/ota-signing.ts"
       - "src/build/ota-manifest.ts"
       - "src/build/safe-extract.ts"
+      - "src/build/verified-download.ts"
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
       - "src/build/scaffold.ts"
