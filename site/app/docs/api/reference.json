@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.12",
+          "signature": "VERSION: 3.4.13",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -7211,6 +7211,23 @@
           "denextOnly": true
         },
         {
+          "name": "fromPostgresJs",
+          "slug": "fromPostgresJs",
+          "kind": "function",
+          "signature": "fromPostgresJs(pg: PostgresJsLike): SqlClient",
+          "doc": "Adapt an npm postgres (postgres.js) client to a SqlClient — the stock-Deno path for every denext Postgres feature. denext does not depend on the package: import it in your app (npm:postgres) and pass the wrapped client as sql.",
+          "docFull": "Adapt an npm `postgres` (postgres.js) client to a {@linkcode SqlClient} — the stock-Deno path\nfor every denext Postgres feature. denext does not depend on the package: import it in your\napp (`npm:postgres`) and pass the wrapped client as `sql`.",
+          "params": [
+            {
+              "name": "pg",
+              "doc": "The postgres.js client (postgres(url))."
+            }
+          ],
+          "returns": "The client; close() ends the pool (a no-op on a transaction's client).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "generateBackupCodes",
           "slug": "generateBackupCodes",
           "kind": "function",
@@ -7943,6 +7960,18 @@
           "signature": "isNotFound(value: unknown): value is NotFoundError",
           "doc": "True if value is a NotFoundError raised by notFound(), or (on the server) Next.js's own not-found error (digest NEXT_HTTP_ERROR_FALLBACK;404) thrown by a library built for Next.",
           "docFull": "True if `value` is a {@link NotFoundError} raised by `notFound()`, or (on the server) Next.js's\nown not-found error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isPostgresUrl",
+          "slug": "isPostgresUrl",
+          "kind": "function",
+          "signature": "isPostgresUrl(url: string | undefined): boolean",
+          "doc": "Whether a URL names a Postgres database (postgres:// / postgresql://).",
+          "docFull": "Whether a URL names a Postgres database (`postgres://` / `postgresql://`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8686,6 +8715,75 @@
           "signature": "type MiddlewareRunner = parenthesized | null",
           "doc": "A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).",
           "docFull": "A resolved, request-ready middleware runner (null when there is none). `matchPath` is the\npathname matchers are evaluated against when it differs from the request's (an i18n\nlocale prefix stripped, as Next does before running middleware).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "migratePostgres",
+          "slug": "migratePostgres",
+          "kind": "function",
+          "signature": "migratePostgres(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrateResult>",
+          "doc": "Apply every pending migration, in name order, each in its own transaction under a transaction-scoped advisory lock (so concurrent runners never apply one twice). A failing migration rolls back on its own and stops the run; the ones before it stay applied.",
+          "docFull": "Apply every pending migration, in name order, each in its own transaction under a\ntransaction-scoped advisory lock (so concurrent runners never apply one twice). A failing\nmigration rolls back on its own and stops the run; the ones before it stay applied.\n\nA migration that issues its own `BEGIN` / `COMMIT` is refused: it would end the runner's\ntransaction early, so its record and its changes could part ways.",
+          "params": [
+            {
+              "name": "sql",
+              "doc": "The client."
+            },
+            {
+              "name": "options",
+              "doc": "Where the migrations are, the tracking table, and dryRun."
+            }
+          ],
+          "returns": "What was (or, for a dry run, would be) applied.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MigrateResult",
+          "slug": "MigrateResult",
+          "kind": "interface",
+          "signature": "interface MigrateResult",
+          "doc": "What migratePostgres did.",
+          "docFull": "What {@linkcode migratePostgres} did.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Migration",
+          "slug": "Migration",
+          "kind": "interface",
+          "signature": "interface Migration",
+          "doc": "One migration: a unique, ordered name and its SQL (one or more statements).",
+          "docFull": "One migration: a unique, ordered name and its SQL (one or more statements).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MigrationState",
+          "slug": "MigrationState",
+          "kind": "interface",
+          "signature": "interface MigrationState",
+          "doc": "One migration's state, as postgresMigrationStatus reports it.",
+          "docFull": "One migration's state, as {@linkcode postgresMigrationStatus} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MigrationStatus",
+          "slug": "MigrationStatus",
+          "kind": "interface",
+          "signature": "interface MigrationStatus",
+          "doc": "What postgresMigrationStatus found.",
+          "docFull": "What {@linkcode postgresMigrationStatus} found.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9447,6 +9545,265 @@
           "signature": "type PluginTeardown = () => void | Promise<void>",
           "doc": "A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.",
           "docFull": "A disposer that releases resources a plugin opened in {@linkcode DenextPlugin.setup}\n(watchers, connections, timers). Registered with {@linkcode PluginContext.addTeardown}\nand run — most-recently-registered first — when the server drains.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "POSTGRES_UNSUPPORTED",
+          "slug": "POSTGRES_UNSUPPORTED",
+          "kind": "variable",
+          "signature": "POSTGRES_UNSUPPORTED: unsupported",
+          "doc": "The code a Postgres feature's error carries when no client is available.",
+          "docFull": "The `code` a Postgres feature's error carries when no client is available.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresAuthAdapter",
+          "slug": "postgresAuthAdapter",
+          "kind": "function",
+          "signature": "postgresAuthAdapter(options: PostgresAuthAdapterOptions): AuthAdapter",
+          "doc": "Build the AuthAdapter on Postgres: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** client and an idempotent close().",
+          "docFull": "Build the {@link ./adapter.ts | AuthAdapter} on Postgres: every method group (users,\naccounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys,\naccount deletion) plus a `sessions` store over the **same** client and an idempotent\n`close()`.\n\nIds are `crypto.randomUUID()` unless the caller supplies one; emails are matched\ncase-insensitively and whitespace-trimmed, and a unique index refuses a second user on one\naddress. The tables are created by migrations on first use (see the module doc).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, migrate, a clock override and the sweep interval."
+            }
+          ],
+          "returns": "The adapter, ready to pass as denextAuth({ adapter }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresAuthAdapterOptions",
+          "slug": "PostgresAuthAdapterOptions",
+          "kind": "interface",
+          "signature": "interface PostgresAuthAdapterOptions",
+          "doc": "Options for postgresAuthAdapter.",
+          "docFull": "Options for {@linkcode postgresAuthAdapter}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresAuthStoreOptions",
+          "slug": "PostgresAuthStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresAuthStoreOptions",
+          "doc": "Options every Postgres auth store takes: a client or URL, a schema, and migrate.",
+          "docFull": "Options every Postgres auth store takes: a client or URL, a schema, and `migrate`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresCacheStore",
+          "slug": "postgresCacheStore",
+          "kind": "function",
+          "signature": "postgresCacheStore(options: PostgresCacheStoreOptions): CacheStore & object",
+          "doc": "A CacheStore on Postgres, shared by every replica. Size-bounded: oldest-written rows past maxDataEntries / maxPageEntries are evicted, and hard-expired rows are swept on a throttle.",
+          "docFull": "A {@link CacheStore} on Postgres, shared by every replica. Size-bounded: oldest-written rows\npast `maxDataEntries` / `maxPageEntries` are evicted, and hard-expired rows are swept on a\nthrottle.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, the row caps, the sweep interval and migrate."
+            }
+          ],
+          "returns": "A store to pass to setCacheStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresCacheStoreOptions",
+          "slug": "PostgresCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresCacheStoreOptions",
+          "doc": "Options for postgresCacheStore.",
+          "docFull": "Options for {@linkcode postgresCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresClient",
+          "slug": "postgresClient",
+          "kind": "function",
+          "signature": "postgresClient(url?: string, feature?: string): SqlClient",
+          "doc": "A Postgres client on the runtime's built-in Deno.SQL — the zero-dependency path.",
+          "docFull": "A Postgres client on the runtime's built-in `Deno.SQL` — the zero-dependency path.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "A postgres:// connection string; without one, Deno.SQL's own defaults (POSTGRES_URL / DATABASE_URL / PG*)."
+            },
+            {
+              "name": "feature",
+              "doc": "The caller, named in the error when there is no Deno.SQL."
+            }
+          ],
+          "returns": "The client (nothing connects until the first query).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresConnectionOptions",
+          "slug": "PostgresConnectionOptions",
+          "kind": "interface",
+          "signature": "interface PostgresConnectionOptions",
+          "doc": "Options shared by every denext Postgres store: a client, or a URL to open one.",
+          "docFull": "Options shared by every denext Postgres store: a client, or a URL to open one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresJsLike",
+          "slug": "PostgresJsLike",
+          "kind": "interface",
+          "signature": "interface PostgresJsLike",
+          "doc": "The shape of an npm postgres (postgres.js) client that fromPostgresJs reads.",
+          "docFull": "The shape of an npm `postgres` (postgres.js) client that {@linkcode fromPostgresJs} reads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresMigrateOptions",
+          "slug": "PostgresMigrateOptions",
+          "kind": "interface",
+          "signature": "interface PostgresMigrateOptions",
+          "doc": "Options for migratePostgres and postgresMigrationStatus.",
+          "docFull": "Options for {@linkcode migratePostgres} and {@linkcode postgresMigrationStatus}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresMigrationStatus",
+          "slug": "postgresMigrationStatus",
+          "kind": "function",
+          "signature": "postgresMigrationStatus(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrationStatus>",
+          "doc": "Which migrations are applied, which are pending, and which applied ones are no longer known. Read-only: it creates nothing, not even the tracking table.",
+          "docFull": "Which migrations are applied, which are pending, and which applied ones are no longer known.\nRead-only: it creates nothing, not even the tracking table.",
+          "params": [
+            {
+              "name": "sql",
+              "doc": "The client."
+            },
+            {
+              "name": "options",
+              "doc": "Where the migrations are, and the tracking table."
+            }
+          ],
+          "returns": "The status.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresRateLimitStore",
+          "slug": "postgresRateLimitStore",
+          "kind": "function",
+          "signature": "postgresRateLimitStore(options: PostgresRateLimitStoreOptions): RateLimitStore & object",
+          "doc": "A shared RateLimitStore on Postgres.",
+          "docFull": "A shared {@linkcode RateLimitStore} on Postgres.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, migrate, and the sweep interval."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ rateLimit: { store } }); close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresRateLimitStoreOptions",
+          "slug": "PostgresRateLimitStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresRateLimitStoreOptions",
+          "doc": "Options for postgresRateLimitStore.",
+          "docFull": "Options for {@linkcode postgresRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresSessionStore",
+          "slug": "postgresSessionStore",
+          "kind": "function",
+          "signature": "postgresSessionStore(options: PostgresSessionStoreOptions): SessionStore",
+          "doc": "A durable, shared SessionStore on Postgres.",
+          "docFull": "A durable, shared {@linkcode SessionStore} on Postgres.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, migrate, and the sweep interval."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresSessionStoreOptions",
+          "slug": "PostgresSessionStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresSessionStoreOptions",
+          "doc": "Options for postgresSessionStore.",
+          "docFull": "Options for {@linkcode postgresSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "postgresTaskHistoryStore",
+          "slug": "postgresTaskHistoryStore",
+          "kind": "function",
+          "signature": "postgresTaskHistoryStore(options: PostgresTaskHistoryStoreOptions): TaskHistoryStore",
+          "doc": "Task run history on Postgres — pass it as tasks: { history: { store } }.",
+          "docFull": "Task run history on Postgres — pass it as `tasks: { history: { store } }`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A client (sql) or a postgres:// URL, an optional schema, the per-task cap and migrate: false when the table is created out of band."
+            }
+          ],
+          "returns": "The store. Nothing connects until the first run is recorded (or history is read).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresTaskHistoryStoreOptions",
+          "slug": "PostgresTaskHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresTaskHistoryStoreOptions",
+          "doc": "Options for postgresTaskHistoryStore.",
+          "docFull": "Options for {@linkcode postgresTaskHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresUnsupportedError",
+          "slug": "PostgresUnsupportedError",
+          "kind": "class",
+          "signature": "class PostgresUnsupportedError",
+          "doc": "Why a Postgres feature could not run: no Deno.SQL and no client was passed.",
+          "docFull": "Why a Postgres feature could not run: no `Deno.SQL` and no client was passed.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11341,6 +11698,18 @@
           "denextOnly": true
         },
         {
+          "name": "SqlClient",
+          "slug": "SqlClient",
+          "kind": "interface",
+          "signature": "interface SqlClient",
+          "doc": "The minimal Postgres client denext needs. Deno.SQL (denext's runtime) satisfies it as is; on stock Deno, fromPostgresJs adapts the npm postgres package.",
+          "docFull": "The minimal Postgres client denext needs. `Deno.SQL` (denext's runtime) satisfies it as is;\non stock Deno, {@linkcode fromPostgresJs} adapts the npm `postgres` package.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "sqliteAuthAdapter",
           "slug": "sqliteAuthAdapter",
           "kind": "function",
@@ -11434,6 +11803,59 @@
           "signature": "interface SqliteSessionStoreOptions",
           "doc": "Options for sqliteSessionStore.",
           "docFull": "Options for {@linkcode sqliteSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sqliteTaskHistoryStore",
+          "slug": "sqliteTaskHistoryStore",
+          "kind": "function",
+          "signature": "sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore",
+          "doc": "The default TaskHistoryStore: a SQLite file (.denext/tasks.db when denext installs it), on Deno's built-in node:sqlite.",
+          "docFull": "The default {@linkcode TaskHistoryStore}: a SQLite file (`.denext/tasks.db` when denext\ninstalls it), on Deno's built-in `node:sqlite`.\n\nThe writer opens on the first recorded run — enabling history creates no file — and is\ncreated owner-only (mode 0600). After an open failure, or three consecutive write failures,\nit latches off for the rest of the process. The readers open the file read-only and separately\nfrom the writer (WAL lets `denext ui` read while the app writes), and neither a read nor a clear\ncreates a file that is not there.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The file, the per-task cap, and an optional open hook."
+            }
+          ],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteTaskHistoryStoreOptions",
+          "slug": "SqliteTaskHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface SqliteTaskHistoryStoreOptions",
+          "doc": "Options for sqliteTaskHistoryStore.",
+          "docFull": "Options for {@linkcode sqliteTaskHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqlQuery",
+          "slug": "SqlQuery",
+          "kind": "interface",
+          "signature": "interface SqlQuery<T>",
+          "doc": "A query that may also run as a simple-protocol query (several statements, no parameters).",
+          "docFull": "A query that may also run as a simple-protocol query (several statements, no parameters).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqlRow",
+          "slug": "SqlRow",
+          "kind": "typeAlias",
+          "signature": "type SqlRow = Record<string, unknown>",
+          "doc": "One row, keyed by column name.",
+          "docFull": "One row, keyed by column name.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11657,6 +12079,114 @@
           "denextOnly": true
         },
         {
+          "name": "TaskHistory",
+          "slug": "TaskHistory",
+          "kind": "interface",
+          "signature": "interface TaskHistory",
+          "doc": "What a read returns — including why there is nothing, which is itself an answer.",
+          "docFull": "What a read returns — including why there is nothing, which is itself an answer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryCleared",
+          "slug": "TaskHistoryCleared",
+          "kind": "interface",
+          "signature": "interface TaskHistoryCleared",
+          "doc": "What clearing the history did, or why it could not.",
+          "docFull": "What clearing the history did, or why it could not.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryConfig",
+          "slug": "TaskHistoryConfig",
+          "kind": "interface",
+          "signature": "interface TaskHistoryConfig",
+          "doc": "The object form of TasksConfig.history.",
+          "docFull": "The object form of {@link TasksConfig.history}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryOptions",
+          "slug": "TaskHistoryOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryOptions",
+          "doc": "Options for taskHistoryRecorder and readTaskHistory.",
+          "docFull": "Options for {@linkcode taskHistoryRecorder} and {@linkcode readTaskHistory}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryPruneOptions",
+          "slug": "TaskHistoryPruneOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryPruneOptions",
+          "doc": "Options for TaskHistoryStore.prune.",
+          "docFull": "Options for {@linkcode TaskHistoryStore.prune}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryReadOptions",
+          "slug": "TaskHistoryReadOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryReadOptions",
+          "doc": "Options for TaskHistoryStore.read.",
+          "docFull": "Options for {@linkcode TaskHistoryStore.read}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryRow",
+          "slug": "TaskHistoryRow",
+          "kind": "interface",
+          "signature": "interface TaskHistoryRow",
+          "doc": "One task's standing, as the panel shows it.",
+          "docFull": "One task's standing, as the panel shows it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryRun",
+          "slug": "TaskHistoryRun",
+          "kind": "interface",
+          "signature": "interface TaskHistoryRun",
+          "doc": "One run in the recent feed.",
+          "docFull": "One run in the recent feed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryStore",
+          "slug": "TaskHistoryStore",
+          "kind": "interface",
+          "signature": "interface TaskHistoryStore",
+          "doc": "Where task run history is kept — the seam behind tasks: { history }.",
+          "docFull": "Where task run history is kept — the seam behind `tasks: { history }`.\n\ndenext records one row per completed run: its start (`startedAt`), how it ended (`ok`: it\nfinished; `!ok`: it threw, with the error's head in `detail`) and, for a task with `retry`,\nthe attempt. The default store is a SQLite file in `.denext/` ({@linkcode\nsqliteTaskHistoryStore}); {@linkcode postgresTaskHistoryStore} keeps it in Postgres, shared by\nevery replica. Any object with these methods works:\n\n```ts\n// denext.config.ts\nimport { postgresTaskHistoryStore } from \"denext/server\";\nexport default {\n  tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get(\"DATABASE_URL\") }) } },\n};\n```\n\nThe contract a store must keep: **recording never fails or delays a run.** `record` is\ncalled on the tail of every run and never awaited; it must not throw (a returned promise must\nnot reject), and a store that cannot write drops the row. The readers never throw either:\nan unreadable store is `{ available: false, reason }`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "taskNames",
           "slug": "taskNames",
           "kind": "function",
@@ -11675,6 +12205,18 @@
           "signature": "interface TaskRetry",
           "doc": "A task's retry policy (TaskDefinition.retry).",
           "docFull": "A task's retry policy ({@linkcode TaskDefinition.retry}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskRunRecord",
+          "slug": "TaskRunRecord",
+          "kind": "interface",
+          "signature": "interface TaskRunRecord",
+          "doc": "One completed run, as the recorder receives it.",
+          "docFull": "One completed run, as the recorder receives it.",
           "params": [],
           "returns": "",
           "examples": [],

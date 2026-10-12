@@ -1452,13 +1452,23 @@
       "name": "task",
       "summary": "Run a background task by name, or list them (--list)",
       "usage": "denext task [name] [options]",
-      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]",
+      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]\ndenext task --history [--json]\ndenext task --clear-history [--json]",
       "flags": [
         {
           "name": "list",
           "alias": "l",
           "type": "boolean",
           "description": "List the app's tasks and exit"
+        },
+        {
+          "name": "history",
+          "type": "boolean",
+          "description": "Print the run history (tasks.history) through its configured store"
+        },
+        {
+          "name": "clear-history",
+          "type": "boolean",
+          "description": "Delete every recorded run through the configured history store"
         },
         {
           "name": "payload",

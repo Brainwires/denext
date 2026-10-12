@@ -21,11 +21,12 @@
         "./client",
         "./server"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
-        "storage"
+        "storage",
+        "postgres"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -161,6 +162,32 @@
               "driver",
               "buckets"
             ]
+          },
+          "postgres": {
+            "description": "Postgres: the app's database, as `db()` from `@denext/backend/server` (and denext auth's, with `adapter: backendAuthAdapter()`). `{}` reads `DATABASE_URL`.",
+            "type": "object",
+            "properties": {
+              "url": {
+                "description": "A `postgres://` URL (default: `DATABASE_URL`), opened with `Deno.SQL` — the Postgres client built into denext's Deno runtime — and closed when the server drains.",
+                "type": "string"
+              },
+              "sql": {
+                "description": "A client to use instead of `url`: any `SqlClient` (on stock Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the plugin."
+              },
+              "rls": {
+                "description": "Row-level security: `db()` runs every query as `anon` or `authenticated` with the request's claims, so Supabase-style policies apply. The roles and `auth.*` functions are created by a migration on first use unless `migrate: false`.",
+                "type": "object",
+                "properties": {
+                  "migrate": {
+                    "description": "Apply the `backend_rls_0001` migration (the `anon` / `authenticated` roles, their grant to the connecting role, and the `auth.*` functions) on the first scoped query (default `true`). `false` when a DBA applies rlsSetupSql instead.",
+                    "type": "boolean"
+                  },
+                  "claims": {
+                    "description": "Extra claims for a signed-in user's `request.jwt.claims` (read in SQL with `auth.jwt() ->> 'tenant'`). Merged over denext's own; `sub`, `role` and `email` cannot be overridden."
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -176,7 +203,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -208,7 +235,7 @@
       "exports": [
         "."
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -237,7 +264,7 @@
         "./command",
         "./subscriptions"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -375,7 +402,7 @@
         "./command",
         "./types"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -429,7 +456,7 @@
         "./spec",
         "./types"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -589,7 +616,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -630,7 +657,7 @@
         "./dom",
         "./routes"
       ],
-      "denext": "^3.4.12",
+      "denext": "^3.4.13",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

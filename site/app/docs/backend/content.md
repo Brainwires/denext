@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage today: buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — and Postgres for your server code and for auth, with zero npm."
 ---
 
 ```sh
@@ -202,8 +202,180 @@ redirect to a presigned URL that lives five minutes.
 is a gallery in a public bucket and documents in a private one, on the filesystem or on S3 from the
 environment.
 
+## Postgres
+
+`backend({ postgres })` opens one Postgres client for the whole app. Server code gets it from
+`db()`; denext auth puts its tables on it with `backendAuthAdapter()`.
+
+```ts
+// denext.config.ts
+import { denextAuth, github } from "denext/server";
+import { backend, backendAuthAdapter } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({ postgres: { url: Deno.env.get("DATABASE_URL") } }), // `{}` reads DATABASE_URL too
+    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
+  ],
+};
+```
+
+```ts
+// app/api/posts/route.ts
+import { db } from "@denext/backend/server";
+
+export async function GET(): Promise<Response> {
+  const posts = await db()`SELECT id, title FROM posts ORDER BY id DESC LIMIT ${20}`;
+  return Response.json(posts);
+}
+```
+
+`db()` is a tagged-template query function: every interpolated value is a bound parameter, never
+text spliced into the query. It also has `unsafe(text, params)` and `begin(async (tx) => …)` for a
+transaction. Every query it runs is scoped by [row-level security](#row-level-security) to the
+request's user; `db.service()` is the unscoped connection.
+
+The client is `Deno.SQL`, the Postgres client built into denext's Deno runtime, opened at startup
+and closed when the server drains. On stock Deno there is none: the app still builds and starts,
+and `db()` throws an error with `code: "unsupported"` that says so. Pass a client of your own as
+`postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs` from
+`denext/server` works on any Deno; a client you pass is never closed by the plugin.
+
+`backendAuthAdapter({ schema?, migrate? })` is `postgresAuthAdapter` on that client (see
+[Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first
+use. Your own tables come from `denext generate migration <name>` and `denext task migrate`
+([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)).
+
+## Row-level security
+
+`db()` runs every query as the request's user, so the database itself decides which rows that user
+can read and write. It works the way Supabase does — the same roles, the same `auth.*` functions,
+the same claims — so the policies you write (or bring from Supabase) look like this:
+
+```sql
+-- migrations/20261011_notes.sql
+create table notes (id bigserial primary key, owner uuid not null, body text not null);
+alter table notes enable row level security;
+create policy "read own notes" on notes for select using (auth.uid() = owner);
+create policy "write own notes" on notes for insert with check (auth.uid() = owner);
+grant select, insert on notes to authenticated;
+grant usage on sequence notes_id_seq to authenticated;
+```
+
+```ts
+// app/api/notes/route.ts
+import { db } from "@denext/backend/server";
+
+export async function GET(): Promise<Response> {
+  // Only the signed-in user's notes: the policy filters, not this query.
+  return Response.json(await db()`select id, body from notes order by id`);
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const { body } = await request.json();
+  // `with check` refuses a row whose owner is not the caller (SQLSTATE 42501).
+  const [note] =
+    await db()`insert into notes (owner, body) values (auth.uid(), ${body}) returning id`;
+  return Response.json(note, { status: 201 });
+}
+```
+
+### Who a query runs as
+
+| Call                                                                   | Postgres role                            | `auth.uid()`  |
+| ---------------------------------------------------------------------- | ---------------------------------------- | ------------- |
+| `db()` in a request, signed in                                         | `authenticated`                          | the user's id |
+| `db()` in a request, signed out                                        | `anon`                                   | `null`        |
+| `db()` outside a request                                               | `anon`                                   | `null`        |
+| `db({ as: { id, email?, roles?, claims? } })` or `db({ as: session })` | `authenticated`                          | that id       |
+| `db({ as: "anon" })`                                                   | `anon`                                   | `null`        |
+| `db.service()` / `db({ as: "service" })`                               | the app's own database user — **no RLS** | `null`        |
+
+Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
+act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
+`db()` reads the session when it is called and keeps it, so call it where the request is handled
+rather than storing the client in a module-level variable.
+
+**`db.service()` is dangerous on purpose.** It is the app's database user with every policy
+bypassed (it owns the tables): use it for migrations, maintenance tasks and admin code that has
+already checked who is asking, never for a query built from a request on a user's behalf.
+
+### How it works
+
+Each `db()` query is one transaction: `BEGIN`, then
+`select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)` (that is
+`SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. Both settings
+are transaction-local, so nothing survives on a pooled connection, and it is safe behind pgbouncer
+in transaction mode; denext never issues a session-level `SET`. The setup statement and your query
+are pipelined — sent together, in that order, on the transaction's one connection — so a scoped
+query costs three round trips (`BEGIN`, setup + query, `COMMIT`) against four done one at a time. If
+the setup fails the transaction is aborted and your query never runs as the connecting role.
+
+`db().begin(async (tx) => …)` scopes a whole transaction once (four round trips for two queries);
+a `begin` inside it is a savepoint. A thrown error rolls back the transaction and its settings.
+
+### The claims
+
+`request.jwt.claims` has the shape of a Supabase access token, so `auth.jwt()` reads the same keys:
+
+```json
+{
+  "sub": "0b7c3c1e-…",
+  "role": "authenticated",
+  "aud": "authenticated",
+  "email": "ada@example.com",
+  "exp": 1791234567,
+  "iat": 1791230967,
+  "session_id": "…",
+  "aal": "aal1",
+  "amr": [{ "method": "pwd", "timestamp": 1791230967 }],
+  "app_metadata": { "provider": "credentials", "providers": ["credentials"], "roles": ["editor"] },
+  "user_metadata": { "name": "Ada", "image": "https://…", "email_verified": true },
+  "is_anonymous": false
+}
+```
+
+`aal` is `aal2` once the session has a second factor (`amr` includes `totp`, `bcp` or `mfa`);
+`app_metadata.roles` are the denext session's `roles`. Signed out, the claims are `{ "role": "anon" }`.
+Add your own with `backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read
+them as `auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
+
+### Setup: the roles and `auth.*`
+
+The first scoped query applies the migration `backend_rls_0001` (recorded in `backend_migrations`):
+
+- the roles `anon` and `authenticated` (`NOLOGIN NOINHERIT`), created when missing;
+- `GRANT anon, authenticated TO` the app's database user, so it may switch to them;
+- the `auth` schema with `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` — Supabase's
+  own definitions, from
+  [supabase/auth `migrations/20220224000811_update_auth_functions.up.sql`](https://github.com/supabase/auth/blob/master/migrations/20220224000811_update_auth_functions.up.sql),
+  each created only when it does not exist yet.
+
+That needs a database user that may create roles (`CREATEROLE`). Where it may not, have a database
+administrator run the same setup once — `rlsSetupSql("app_user")` from `@denext/backend` prints it —
+and set `rls: { migrate: false }`. Without the grant, the first scoped query fails with
+`… may not grant itself the role anon` and a hint naming the `GRANT`. A superuser connection works
+too, but connect as an ordinary role in production: a superuser could switch to any role.
+
+### Coming from Supabase: your policies work as-is
+
+- `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` are Supabase's functions, reading the
+  same `request.jwt.claims`; policies, `security definer` helpers and `with check` clauses that use
+  them need no change. A database restored from Supabase keeps its own `auth.*` functions.
+- `auth.uid()` returns `uuid`, as in Supabase: denext's own auth adapters issue UUID user ids. With
+  ids of another shape, compare `auth.jwt() ->> 'sub'` instead.
+- The roles are the same names. Supabase grants every table in `public` to `anon` and
+  `authenticated` by default; here a table is reachable only once you `grant` it, as above —
+  `alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;`
+  restores Supabase's default if you want it.
+- There is no `service_role` key: the server is the only client, and `db.service()` is its
+  unscoped connection.
+- RLS guards against a query that forgets a `where`, not against SQL injection: injected SQL could
+  `reset role`. Keep values bound (the tagged template does it) and never build `unsafe()` text
+  from input.
+
 ## More services
 
-Storage is the first service in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), realtime
+Storage, Postgres and row-level security are the first services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), realtime
 ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
 [tasks](/docs/tasks) are already part of denext itself.

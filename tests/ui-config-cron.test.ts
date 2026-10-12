@@ -887,3 +887,47 @@ Deno.test("the history table shows each task's retries", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("an app's own history store is read and cleared through it, never opened here", async () => {
+  // The store is project code (a call in denext.config.ts), so the panel asks `denext task
+  // --history` / `--clear-history` children; here the store is a SQLite file of the app's choosing.
+  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
+  const config = `import { sqliteTaskHistoryStore } from "${history}";
+export default {
+  tasks: { history: { store: sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname }) } },
+};
+`;
+  const dir = await project(config, { cleanup: task() });
+  const path = join(dir, "custom.db");
+  const store = taskHistoryRecorder({ path });
+  const now = Date.now();
+  store.record({ name: "cleanup", trigger: "schedule", startedAt: now, durationMs: 5, ok: true });
+  store.record({ name: "cleanup", trigger: "manual", startedAt: now, durationMs: 9, ok: false });
+  store.close();
+  try {
+    const twin = await (await call(dir, { json: true })).json();
+    assertEquals(twin.history.enabled, true);
+    assertEquals(twin.history.available, true, twin.history.reason);
+    assertEquals(twin.history.recent.length, 2);
+    const body = await (await call(dir)).text();
+    assertStringIncludes(body, "tasks.history.store");
+    assert(!body.includes("Disable run history"), "a store set in code is not a toggle");
+    const first = await call(dir, { form: { intent: "clear-history" } });
+    assertEquals(first.status, 409);
+    await first.body?.cancel();
+    assertEquals(readTaskHistory({ path }).recent.length, 2, "step one deletes nothing");
+    const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
+    assertEquals(second.status, 303);
+    await second.body?.cancel();
+    assertEquals(readTaskHistory({ path }).recent, [], "cleared through the store");
+    let defaultDb = true;
+    try {
+      await Deno.stat(join(dir, ".denext", "tasks.db"));
+    } catch {
+      defaultDb = false;
+    }
+    assert(!defaultDb, "the default file was never created");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

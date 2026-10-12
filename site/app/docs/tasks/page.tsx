@@ -198,7 +198,69 @@ export default {
           <strong>Deno Deploy:</strong>{" "}
           the file is per-isolate and ephemeral, so what you see is one isolate's fragment that
           resets when it cycles. Recording still happens and a warning says so at boot — a history
-          that is quietly wrong is worse than none.
+          that is quietly wrong is worse than none. Use a shared store (below) there instead.
+        </li>
+      </ul>
+
+      <h3 id="history-store">Where history is kept</h3>
+      <p>
+        The SQLite file is the default store. <code>tasks: {"{ history: { store } }"}</code>{" "}
+        takes any <code>TaskHistoryStore</code> instead — <code>postgresTaskHistoryStore</code>{" "}
+        keeps every run in one Postgres table, so all replicas of the app record into, and read
+        from, the same history:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+import { postgresTaskHistoryStore } from "denext/server";
+
+export default {
+  tasks: {
+    history: {
+      store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL"), maxRuns: 500 }),
+    },
+  },
+} satisfies import("denext/server").DenextConfig;`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Postgres:</strong> the table <code>task_runs</code>{" "}
+          is created by a migration on first use (recorded in <code>task_history_migrations</code>;
+          {" "}
+          <code>migrate: false</code> when your deploy creates it, <code>schema</code>{" "}
+          to keep it out of the search path). It runs on the Postgres client built into denext's
+          Deno runtime, or on any client you pass as <code>sql</code> (see{" "}
+          <a href="/docs/database#postgres">Postgres</a>). Retention and the per-task cap match the
+          file store, and so does the rule that a run is never failed or delayed: a write that fails
+          drops its row, and three failures in a row stop the store trying until the process
+          restarts.
+        </li>
+        <li>
+          <strong>Your own store:</strong> implement <code>record(run)</code>{" "}
+          (called on the tail of every completed run and never awaited — it must not throw, and a
+          promise it returns must not reject), <code>read({"{ windowDays, recentLimit }"})</code>,
+          {" "}
+          <code>listRuns(task, {"{ limit }"})</code>,{" "}
+          <code>prune({"{ maxRuns, retainDays }"})</code> and <code>clear()</code>;{" "}
+          <code>close()</code> is optional. The readers never throw: an unreadable store answers
+          {" "}
+          <code>{"{ available: false, reason }"}</code>. Each run is one record: its start time, its
+          duration, and whether it finished (<code>ok</code>) or threw (the error in{" "}
+          <code>detail</code>), with the attempt number for a task that retries.
+        </li>
+        <li>
+          <strong>Reading it:</strong> <code>denext task --history [--json]</code>{" "}
+          prints the last seven days through the configured store, and{" "}
+          <code>denext task --clear-history</code>{" "}
+          deletes every run. The Project UI's Cron page reads the default file itself and, for a
+          store your config constructs (project code, which the UI never runs in its own process),
+          asks those two commands. A store set in code is not offered as an on/off toggle there.
+        </li>
+        <li>
+          <strong>Lifetime:</strong>{" "}
+          denext closes the default store when the server stops. A store you pass is yours: the
+          server never closes it (a dev re-boot reuses it), and a one-shot{" "}
+          <code>denext task &lt;name&gt;</code>{" "}
+          waits for its write and closes it as the process ends.
         </li>
       </ul>
 
@@ -220,7 +282,8 @@ const result = await runTask("report", { month: "2026-01" }); // typed payload �
       <Code lang="bash">
         {`denext task cleanup                    # run it once, now
 denext task report --payload '{"month":"2026-01"}'
-denext task --list                    # every task + its description`}
+denext task --list                    # every task + its description
+denext task --history                 # recent runs, through the configured history store`}
       </Code>
 
       <h2>Registering a task programmatically</h2>

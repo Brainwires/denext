@@ -57,9 +57,10 @@ import { parseJsonDocument } from "../child-json.ts";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import {
-  clearTaskHistory,
-  readTaskHistory,
+  sqliteTaskHistoryStore,
   TASK_HISTORY_DB,
+  type TaskHistory,
+  type TaskHistoryCleared,
   type TaskHistoryRow,
 } from "../../server/task-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
@@ -181,6 +182,7 @@ interface TaskListing {
   readonly configScheduled?: Record<string, string | string[]>;
   readonly denoCron?: boolean;
   readonly history?: boolean;
+  readonly historyStore?: "default" | "custom";
 }
 
 /** What one request knows about this project's tasks. */
@@ -196,6 +198,12 @@ interface CronState {
    * the server uses rather than from parsing a boolean out of TypeScript.
    */
   readonly history: boolean;
+  /**
+   * Whose store keeps the history: the default `.denext/tasks.db`, which this process reads
+   * through `sqliteTaskHistoryStore`, or the app's own (`tasks: { history: { store } }`) — project
+   * code, so it is read and cleared through `denext task --history` / `--clear-history` children.
+   */
+  readonly historyStore: "default" | "custom";
   /** Why the listing is empty or incomplete, when it is. */
   readonly error?: string;
   /** The denext config's file name (the one that would be created, when there is none). */
@@ -210,6 +218,11 @@ interface CronState {
    * nor clears it. See {@linkcode historyPath}.
    */
   readonly historyDb: string | null;
+  /**
+   * The history, read once per request through the store — `null` when history is off, or when
+   * the default database resolves outside the project (see {@linkcode historyPath}).
+   */
+  readonly historyRead: TaskHistory | null;
 }
 
 /** The denext config as this panel reads it: its name, its bytes, and its stamp. */
@@ -313,7 +326,7 @@ function lastMeaningful(lines: readonly string[]): string | null {
 }
 
 /** The listing half of the state — what the discovery child found. */
-type Listing = Omit<CronState, "configName" | "source" | "base" | "historyDb">;
+type Listing = Omit<CronState, "configName" | "source" | "base" | "historyDb" | "historyRead">;
 
 /** An empty listing carrying the reason discovery produced nothing. */
 function empty(error?: string): Listing {
@@ -323,6 +336,7 @@ function empty(error?: string): Listing {
     configScheduled: {},
     denoCron: false,
     history: false,
+    historyStore: "default",
     ...(error === undefined ? {} : { error }),
   };
 }
@@ -364,6 +378,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
     configScheduled: listing.configScheduled ?? {},
     denoCron: listing.denoCron === true,
     history: listing.history === true,
+    historyStore: listing.historyStore === "custom" ? "custom" : "default",
   };
 }
 
@@ -384,7 +399,13 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
 async function readState(dir: string, offline: boolean): Promise<CronState> {
   const config = await readConfigFile(dir);
   const listing = await listingFor(dir, offline, config.base);
-  return { ...listing, ...config, historyDb: await historyPath(dir) };
+  const historyDb = await historyPath(dir);
+  return {
+    ...listing,
+    ...config,
+    historyDb,
+    historyRead: await readHistory(dir, offline, listing, historyDb),
+  };
 }
 
 /**
@@ -463,6 +484,99 @@ async function historyPath(dir: string): Promise<string | null> {
 const HISTORY_ESCAPED = `.denext/${TASK_HISTORY_DB} resolves outside the project — the UI does ` +
   "not follow it";
 
+/** How long a `denext task --history` / `--clear-history` child may take. */
+const HISTORY_CHILD_BUDGET_MS = 15_000;
+
+/** A read that produced nothing, saying why. */
+function unavailable(reason: string): TaskHistory {
+  return { available: false, reason, windowDays: HISTORY_WINDOW_DAYS, tasks: [], recent: [] };
+}
+
+/**
+ * Run `denext task --history --json` (or `--clear-history`) in the project — a custom store is
+ * project code, which never runs in this process — and return the document it printed, or the
+ * reason it printed none. Same invocation rules as discovery (`--deny-run`, offline flags).
+ */
+async function historyChild(
+  dir: string,
+  offline: boolean,
+  flag: "--history" | "--clear-history",
+): Promise<Record<string, unknown> | string> {
+  const lines: string[] = [];
+  const argv = [
+    ...cliInvocation({ offline, dir, denyRun: true }),
+    "task",
+    flag,
+    "--json",
+    "--cwd",
+    dir,
+  ];
+  try {
+    await runDeno(argv, {
+      cwd: dir,
+      onLine: (line) => lines.push(line),
+      signal: AbortSignal.timeout(HISTORY_CHILD_BUDGET_MS),
+    });
+  } catch {
+    return `denext task ${flag} did not finish`;
+  }
+  const doc = parseJsonDocument<Record<string, unknown>>(lines.join("\n"));
+  if (doc && typeof doc === "object") return doc;
+  const why = lastMeaningful(lines);
+  return why === null
+    ? `denext task ${flag} printed nothing`
+    : `denext task ${flag} failed: ${why}`;
+}
+
+/**
+ * The run history, read through its store once per request. Fresh every time (never through
+ * `listCache`): a just-finished run must show at once.
+ *
+ * @param dir The project directory.
+ * @param offline `denext ui --offline`.
+ * @param listing What discovery found (whether history is on, and whose store keeps it).
+ * @param historyDb The contained default database, or `null` when it escapes the project.
+ * @returns The history, or `null` when it is off or the default database is not followed.
+ */
+async function readHistory(
+  dir: string,
+  offline: boolean,
+  listing: Listing,
+  historyDb: string | null,
+): Promise<TaskHistory | null> {
+  // Off: there is nothing to read, and opening the file would be the UI creating state the app
+  // never asked for.
+  if (!listing.history) return null;
+  if (listing.historyStore === "custom") {
+    const doc = await historyChild(dir, offline, "--history");
+    if (typeof doc === "string") return unavailable(doc);
+    return {
+      available: doc.available === true,
+      ...(typeof doc.reason === "string" ? { reason: doc.reason } : {}),
+      windowDays: typeof doc.windowDays === "number" ? doc.windowDays : HISTORY_WINDOW_DAYS,
+      tasks: Array.isArray(doc.tasks) ? doc.tasks as TaskHistory["tasks"] : [],
+      recent: Array.isArray(doc.recent) ? doc.recent as TaskHistory["recent"] : [],
+    };
+  }
+  if (historyDb === null) return null;
+  return await sqliteTaskHistoryStore({ path: historyDb }).read({
+    windowDays: HISTORY_WINDOW_DAYS,
+  });
+}
+
+/** Clear the history through its store: in-process for the default file, a child otherwise. */
+async function clearHistory(ctx: UiContext, state: CronState): Promise<TaskHistoryCleared> {
+  if (state.historyStore === "custom") {
+    const doc = await historyChild(ctx.dir, ctx.offline === true, "--clear-history");
+    if (typeof doc === "string") return { cleared: false, reason: doc };
+    return doc.cleared === true
+      ? { cleared: true }
+      : { cleared: false, reason: typeof doc.reason === "string" ? doc.reason : "not cleared" };
+  }
+  if (state.historyDb === null) return { cleared: false, reason: HISTORY_ESCAPED };
+  return await sqliteTaskHistoryStore({ path: state.historyDb }).clear();
+}
+
 /**
  * The history half of the JSON twin.
  *
@@ -477,10 +591,10 @@ function historyPayload(state: CronState): Record<string, unknown> {
   // Off: there is nothing to read, and opening the file would be the UI creating state the app
   // never asked for.
   if (!state.history) return { available: false, windowDays: HISTORY_WINDOW_DAYS };
-  if (state.historyDb === null) {
+  const read = state.historyRead;
+  if (read === null) {
     return { available: false, reason: HISTORY_ESCAPED, windowDays: HISTORY_WINDOW_DAYS };
   }
-  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
   return {
     available: read.available,
     ...(read.reason === undefined ? {} : { reason: read.reason }),
@@ -505,10 +619,10 @@ function History(
   { ctx, state }: { readonly ctx: UiContext; readonly state: CronState },
 ): VNode {
   if (!state.history) return h(HistoryOff, { ctx, state });
-  if (state.historyDb === null) {
+  const read = state.historyRead;
+  if (read === null) {
     return h("p", { class: "lead" }, `Enabled, but the history is not read: ${HISTORY_ESCAPED}.`);
   }
-  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
   if (!read.available) {
     return h(
       "p",
@@ -525,7 +639,15 @@ function History(
     Fragment,
     null,
     h(HistoryTable, { read }),
-    h(HistoryToggle, { ctx, state, on: false }),
+    // A store the app built in code is not a boolean this page can flip: the config editor never
+    // rewrites a call expression, so the toggle is offered for the default store only.
+    state.historyStore === "custom"
+      ? h(
+        Note,
+        null,
+        "History is kept by the store your denext config passes as tasks.history.store.",
+      )
+      : h(HistoryToggle, { ctx, state, on: false }),
     h(OpForm, {
       csrf: ctx.csrf,
       action: "/config/cron",
@@ -538,7 +660,7 @@ function History(
 }
 
 /** The table of per-task standing. */
-function HistoryTable({ read }: { readonly read: ReturnType<typeof readTaskHistory> }): VNode {
+function HistoryTable({ read }: { readonly read: TaskHistory }): VNode {
   return h(Table, {
     head: ["Task", "Last run (UTC)", "Last result", "Succeeded", "Failed", "Retries"],
     rows: read.tasks.map((row) =>
@@ -691,9 +813,9 @@ function LastResult({ row }: { readonly row: TaskHistoryRow | undefined }): VNod
  * @returns The lookup, or `null` when history is off or unreadable.
  */
 function standingOf(state: CronState): Map<string, TaskHistoryRow> | null {
-  if (!state.history || state.historyDb === null) return null;
-  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
-  if (!read.available) return null;
+  if (!state.history) return null;
+  const read = state.historyRead;
+  if (read === null || !read.available) return null;
   return new Map(read.tasks.map((row) => [row.task, row]));
 }
 
@@ -1515,7 +1637,7 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   if (ctx.readOnly) return refuse(ctx, state, "read-only — the config is not written", 403);
   const intent = postedField(ctx, INTENT_FIELD);
   if (intent === INTENT_HISTORY) return await submitHistory(ctx, state);
-  if (intent === INTENT_CLEAR_HISTORY) return submitClearHistory(ctx, state);
+  if (intent === INTENT_CLEAR_HISTORY) return await submitClearHistory(ctx, state);
   const proposal = proposed(ctx, state);
   if ("no" in proposal) return refuse(ctx, state, proposal.no.reason, proposal.no.status);
   const { value } = proposal;
@@ -1584,19 +1706,28 @@ function ConfirmClear(
   );
 }
 
-function submitClearHistory(ctx: UiContext, state: CronState): Response {
-  if (state.historyDb === null) return refuse(ctx, state, HISTORY_ESCAPED, 403);
+async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Response> {
+  if (state.historyStore === "default" && state.historyDb === null) {
+    return refuse(ctx, state, HISTORY_ESCAPED, 403);
+  }
+  // History may be off while an older file is still there: clearing it is still offered.
+  const read = state.historyRead ??
+    (state.historyStore === "default" && state.historyDb !== null
+      ? await sqliteTaskHistoryStore({ path: state.historyDb }).read({
+        windowDays: HISTORY_WINDOW_DAYS,
+      })
+      : null);
   // Deleting run data cannot be previewed as a diff — no file changes — so the confirm step says
   // how much goes instead. Every other write here is two steps, and so is this.
   if (!confirmed(ctx)) {
-    const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
+    if (read === null) return refuse(ctx, state, "run history is off", 409);
     // The window total, not `recent.length`: the feed is capped at 20, so a project with
     // hundreds of runs would otherwise be told "at least 20", which is true but useless.
     const count = read.tasks.reduce((n, row) => n + row.successes + row.failures, 0);
     const body = h(ConfirmClear, { ctx, count, windowDays: read.windowDays });
     return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body })), 409);
   }
-  const done = clearTaskHistory({ path: state.historyDb });
+  const done = await clearHistory(ctx, state);
   if (!done.cleared) {
     return refuse(ctx, state, `the history could not be cleared: ${done.reason}`, 422);
   }

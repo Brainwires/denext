@@ -8,6 +8,51 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.13] - 2026-10-12
+
+### Added
+
+- **Pluggable task run history** (`denext/server`): `tasks: { history: { store } }` takes any
+  `TaskHistoryStore` (`record`, `read`, `listRuns`, `prune`, `clear`, optional `close`); the
+  `.denext/tasks.db` file stays the default (`sqliteTaskHistoryStore`, behaviour unchanged, and
+  `{ maxRuns }` is its cap), and `postgresTaskHistoryStore({ sql | url, schema, maxRuns, migrate })`
+  keeps every replica's runs in one `task_runs` table. Recording still never fails or delays a run,
+  whatever the store does. `denext task --history [--json]` / `--clear-history` read and clear
+  through the configured store, and `denext ui`'s Cron page reads through the store API (the
+  default file in-process, an app's own store through those commands). Guide:
+  [Scheduled tasks › Where history is kept](https://denext.dev/docs/tasks#history-store).
+- **Postgres everywhere** (`denext/server`): `postgresAuthAdapter({ sql | url })` meets the same
+  `AuthAdapter` contract as `sqliteAuthAdapter` (the shared contract suite runs against a real
+  server), with its `sessions` store, on a database every replica shares; `postgresSessionStore`,
+  `postgresRateLimitStore` (auth lockouts shared across replicas) and `postgresCacheStore` (data and
+  ISR page cache, `revalidateTag` / `revalidatePath` reaching every instance) take the same
+  options. `url` opens `Deno.SQL`, the Postgres client built into denext's Deno runtime; on stock
+  Deno pass `sql: fromPostgresJs(postgres(url))` with the npm `postgres` package (a `url` there
+  throws `PostgresUnsupportedError`, `code: "unsupported"`). Tables are created by migrations on
+  first use (`migrate: false` to apply them out of band; `schema` keeps them out of `public`).
+  `migratePostgres(sql, { dir | migrations, dryRun })` and `postgresMigrationStatus` apply SQL
+  migrations in name order, each in its own transaction under an advisory lock, recorded with a
+  checksum in `_migrations`. `denext generate migration` writes Postgres SQL in a Postgres project,
+  and the generated `tasks/migrate.ts` runs on Postgres when `DATABASE_URL` is a `postgres://` URL
+  (`--payload '{"dryRun":true}'` / `'{"status":true}'` list instead of applying, on SQLite too).
+  Guide: [Databases › Postgres](https://denext.dev/docs/database#postgres).
+- **`@denext/backend`: row-level security, Supabase-compatible.** `db()` runs every query in a
+  transaction that first sets the role (`authenticated` for the request's signed-in user, else
+  `anon`) and `request.jwt.claims` with `set_config(…, true)` — transaction-local, so nothing
+  survives on a pooled connection or behind pgbouncer — pipelined with the query (three round
+  trips per scoped query). Supabase's `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()`
+  read those claims, so existing policies (`using (auth.uid() = owner)`) apply as written; the
+  claims have a Supabase access token's shape plus `rls.claims(session)`. The roles and functions
+  come from migration `backend_rls_0001` on first use (or `rlsSetupSql(role)` for a DBA and
+  `rls: { migrate: false }`). `db({ as: "anon" | user | session })` picks the identity outside a
+  request (where `db()` is `anon`); `db.service()` is the unscoped connection. A `begin` inside
+  `db().begin` is a savepoint (`SqlClient.savepoint`, optional, also mapped by `fromPostgresJs`).
+  Guide: [Backend › Row-level security](https://denext.dev/docs/backend#row-level-security).
+- **`@denext/backend`: Postgres.** `backend({ postgres: { url | sql } })` opens one client for the
+  app (`DATABASE_URL` by default, closed on drain); `db()` from `@denext/backend/server` returns it,
+  and `backendAuthAdapter()` puts `denextAuth`'s tables on it. On stock Deno the app still starts
+  and `db()` explains what is missing. Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
+
 ## [3.4.12] - 2026-10-12
 
 ### Added
@@ -13170,7 +13215,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.12...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.13...development
+[3.4.13]: https://jsr.io/@denext/denext@3.4.13
 [3.4.12]: https://jsr.io/@denext/denext@3.4.12
 [3.4.11]: https://jsr.io/@denext/denext@3.4.11
 [3.4.10]: https://jsr.io/@denext/denext@3.4.10

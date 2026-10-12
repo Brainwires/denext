@@ -1,8 +1,11 @@
 /**
  * `@denext/backend` — your app's backend services as one opt-in plugin, self-hosted inside the
- * app. This release ships **storage**: buckets with per-bucket rules, signed upload and
- * download URLs, multipart uploads, image transforms on download, and session-aware access
- * checks — on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm.
+ * app: **storage** — buckets with per-bucket rules, signed upload and download URLs, multipart
+ * uploads, image transforms on download, and session-aware access checks — on S3 (AWS,
+ * Cloudflare R2, MinIO) or the local filesystem, with zero npm; and **Postgres** — `db()` for the
+ * server, scoped by Supabase-compatible row-level security (`auth.uid()` in your policies), and
+ * `backendAuthAdapter()` for denext auth, on the Postgres client built into denext's Deno runtime
+ * (`Deno.SQL`), or any client you pass (`sql`).
  *
  * ```ts
  * // denext.config.ts
@@ -29,8 +32,21 @@
  * };
  * ```
  *
- * Server code uses `storage` from `@denext/backend/server`; the browser uses `uploadFile` and
- * `getFileUrl` from `@denext/backend/client`.
+ * Server code uses `storage` and `db` from `@denext/backend/server`; the browser uses
+ * `uploadFile` and `getFileUrl` from `@denext/backend/client`. Postgres:
+ *
+ * ```ts
+ * // denext.config.ts
+ * import { denextAuth, github } from "denext/server";
+ * import { backend, backendAuthAdapter } from "@denext/backend";
+ *
+ * export default {
+ *   plugins: [
+ *     backend({ postgres: { url: Deno.env.get("DATABASE_URL") } }),
+ *     denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
+ *   ],
+ * };
+ * ```
  *
  * @module
  */
@@ -48,7 +64,12 @@ import {
 } from "./src/runtime.ts";
 import { resolveSecrets, SECRET_ENV } from "./src/signing.ts";
 import type { StorageOptions } from "./src/types.ts";
+import { installPostgres, openPostgres, type PostgresOptions } from "./src/postgres.ts";
 
+export { backendAuthAdapter } from "./src/postgres.ts";
+export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
+export { rlsMigrations, rlsSetupSql } from "./src/rls.ts";
+export type { RlsOptions } from "./src/rls.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";
@@ -76,6 +97,11 @@ export type {
 export interface BackendOptions {
   /** File storage: a driver and the buckets it serves. */
   storage?: StorageOptions;
+  /**
+   * Postgres: the app's database, as `db()` from `@denext/backend/server` (and denext auth's,
+   * with `adapter: backendAuthAdapter()`). `{}` reads `DATABASE_URL`.
+   */
+  postgres?: PostgresOptions;
 }
 
 function env(name: string): string | undefined {
@@ -104,7 +130,7 @@ function resolveBuckets(buckets: StorageOptions["buckets"]): Map<string, Resolve
 /**
  * Create the backend plugin. Place it in your `denext.config.ts` `plugins`.
  *
- * @param options The services to enable (`storage`).
+ * @param options The services to enable (`storage`, `postgres`).
  * @returns The plugin.
  */
 export function backend(options: BackendOptions = {}): DenextPlugin {
@@ -116,6 +142,11 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
+      if (options.postgres) {
+        const { slot, owned } = openPostgres(options.postgres, env);
+        installPostgres(slot);
+        if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
+      }
       if (!storageOptions || !buckets) return;
       const dev = ctx.mode === "dev";
       const secrets = resolveSecrets(storageOptions.secret, env, dev);

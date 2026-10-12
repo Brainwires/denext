@@ -16,6 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CachedPage, CacheEntryTiming, CacheStore, DataEntry } from "./cache.ts";
+import { encodePprExtras } from "./cache-ppr.ts";
 
 /** A value bindable as a SQLite statement parameter. */
 export type SqlValue = null | number | bigint | string | Uint8Array;
@@ -75,29 +76,6 @@ interface PageRow {
   csp: string | null;
   ppr: string | null;
 }
-
-// The CachedPage fields NOT stored in their own columns — the PPR/Flight extras a shell
-// carries (holeIds, flightShell, …). Serialized to the `ppr` JSON column so a cached PPR
-// shell round-trips intact; dropping them would serve a shell verbatim (no hole splicing).
-const PPR_FIELDS = [
-  "holeIds",
-  "routeCsp",
-  "headExtras",
-  "inTreeTitle",
-  "documentAttrs",
-  "flightShell",
-  "flightIslands",
-  "flightSignalState",
-] as const;
-
-const encodePprExtras = (page: CachedPage): string | null => {
-  const extras: Record<string, unknown> = {};
-  for (const f of PPR_FIELDS) {
-    const v = (page as unknown as Record<string, unknown>)[f];
-    if (v !== undefined) extras[f] = v;
-  }
-  return Object.keys(extras).length ? JSON.stringify(extras) : null;
-};
 
 /**
  * Open node:sqlite at `path`, wrapped in the {@linkcode SqliteDb} these stores drive.

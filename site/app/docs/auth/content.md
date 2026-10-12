@@ -400,9 +400,10 @@ so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the pro
 > [!NOTE]
 > A store is per node: `sqliteSessionStore` is a local file and `inMemorySessionStore` a
 > per-process map, so a session created on one replica is invisible to the others.
-> Running several replicas? Point them all at one shared store — implement `SessionStore`
-> (`create` / `get` / `delete` / `deleteByUser`, plus `update` for sliding expiry and an
-> optional `close`) over Redis or Postgres. Stateless sessions need nothing shared.
+> Running several replicas? Point them all at one shared store — `postgresSessionStore({ sql })`
+> (see [Postgres](#postgres)), or implement `SessionStore` (`create` / `get` / `delete` /
+> `deleteByUser`, plus `update` for sliding expiry and an optional `close`) over Redis or
+> anything else. Stateless sessions need nothing shared.
 
 ### The session payload
 
@@ -439,6 +440,8 @@ shared between replicas. `sqliteAuthAdapter({ path })` is the durable one, on De
 built-in `node:sqlite` — real SQLite, zero npm. It defaults to `auth.db` in the working
 directory (user data, deliberately not under `.denext/`, which the build owns), and
 `":memory:"` gives a private database that dies with the process.
+`postgresAuthAdapter({ url })` (or `{ sql }`) is the one every replica can share — see
+[Postgres](#postgres) below.
 
 ### The contract
 
@@ -477,7 +480,7 @@ A non-atomic implementation turns each of them into a replay window. The full co
 with every record type, is
 [`src/server/auth/adapter.ts`](https://github.com/Brainwires/denext/blob/main/src/server/auth/adapter.ts);
 the in-memory implementation is the executable reference, and a shared contract suite
-runs against both shipped adapters.
+runs against every shipped adapter.
 
 ### The SQLite schema
 
@@ -513,9 +516,42 @@ that same file with no migration and **no logout**. It still takes
 > [!WARNING]
 > `sqliteAuthAdapter` is single-node, like the session store: a local file suits one
 > instance. Every replica must see the same database, so for multi-replica either mount
-> one shared volume or implement `AuthAdapter` over your shared database. TOTP secrets
+> one shared volume or use [`postgresAuthAdapter`](#postgres) (or your own `AuthAdapter`
+> over your shared database). TOTP secrets
 > are sealed before they reach any adapter (see
 > [Secrets at rest](#secrets-at-rest)), so the file alone holds no usable second factor.
+
+### Postgres
+
+```ts
+import { denextAuth, postgresAuthAdapter } from "denext/server";
+
+denextAuth({
+  // …
+  adapter: postgresAuthAdapter({ url: Deno.env.get("DATABASE_URL") }),
+});
+```
+
+The same contract as the SQLite adapter, method for method (the shared contract suite runs
+against it on a real server), on a database every replica shares. `url` opens a client on
+`Deno.SQL`, the Postgres client built into denext's Deno runtime; on stock Deno pass
+`sql: fromPostgresJs(postgres(url))` with the npm `postgres` package instead (see
+[Databases › Postgres](/docs/database#postgres)) — a `url` there throws an error with
+`code: "unsupported"`. A client you pass is never closed by the adapter; one it opened is
+closed on drain.
+
+The tables are the SQLite adapter's `auth_*` set plus `auth_sessions` (the adapter's
+`sessions` store, also `postgresSessionStore({ sql })`) and `auth_rate_limits`
+(`postgresRateLimitStore({ sql })` for `rateLimit.store`, so a lockout holds on every replica).
+They are created by **migrations** on first use, through the same runner as an app's own
+(`migratePostgres`), recorded in `auth_migrations` under an advisory lock, so replicas starting
+together migrate once. Pass `migrate: false` when a deploy step applies them with a more
+privileged role, and `schema: "auth"` to keep them out of `public`. Epoch seconds are `BIGINT`,
+lists are JSON in `TEXT`, flags are `BOOLEAN`. The consume-once methods are single statements
+(`DELETE … RETURNING`, a conditional `UPDATE … RETURNING`), so they hold across replicas, not
+just within one process, and `deleteUser` removes everything in one transaction. With
+[`@denext/backend`](/docs/backend#postgres), `adapter: backendAuthAdapter()` uses the client
+`backend({ postgres })` opened.
 
 ## Account linking rules
 
@@ -1390,7 +1426,7 @@ denextAuth({
 the other four, which are tuned under `signin`, `session`, `verification` and `mfa`.
 `store` is shared by all five (their keys are namespaced apart). The default store is a bounded per-process map —
 fine for a single instance, but each replica counts on its own, so pass a shared `store`
-behind several.
+behind several — `postgresRateLimitStore({ sql })` is one (see [Postgres](#postgres)).
 
 ## API tokens and `requireBearer`
 

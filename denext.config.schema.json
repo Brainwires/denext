@@ -447,7 +447,24 @@
       "properties": {
         "history": {
           "description": "Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "store": {
+                  "description": "Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does, as its process ends)."
+                },
+                "maxRuns": {
+                  "description": "Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob). A `store` takes its own cap.",
+                  "type": "number",
+                  "minimum": 1
+                }
+              }
+            }
+          ]
         },
         "historyMaxRuns": {
           "description": "Runs kept per task before the oldest are dropped (default 500).",

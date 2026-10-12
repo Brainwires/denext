@@ -418,7 +418,10 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
   (created `0600`; each row keeps a returned string's tail and a failure's
   message/stack in plain text, up to 2 KB). Off unless set, and never able to
   fail or delay a run. `historyMaxRuns` (whole number ≥ 1, default `500`) is the
-  runs kept **per task**; rows older than 14 days go regardless. See
+  runs kept **per task**; rows older than 14 days go regardless. The object form
+  `history: { store }` records to any `TaskHistoryStore` instead (e.g.
+  `postgresTaskHistoryStore({ url })`, shared by every replica), and
+  `history: { maxRuns }` caps the default store. See
   [Run history](/docs/tasks#run-history) and the Project UI's
   [Cron page](/docs/ui#cron), which owns both keys in the editor.
 

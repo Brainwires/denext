@@ -302,4 +302,4 @@ directory it reads. See [Scheduled tasks](/docs/tasks).
 
 See also: [Production checklist](/docs/production-checklist),
 [Deployment](/docs/deploy),
-[Databases › Postgres / MySQL](/docs/database#postgres--mysql-multi-instance).
+[Databases › Postgres](/docs/database#postgres).

@@ -14,7 +14,8 @@ import {
   scheduleTasks,
   setTaskRecorder,
 } from "./tasks.ts";
-import { TASK_HISTORY_DB, taskHistoryRecorder } from "./task-history.ts";
+import { sqliteTaskHistoryStore, TASK_HISTORY_DB, type TaskHistoryStore } from "./task-history.ts";
+import type { TaskHistoryConfig } from "./config.ts";
 import { inRootContext } from "./root-context.ts";
 
 /**
@@ -70,7 +71,7 @@ export async function bootScheduledTasks(
   projectDir: string,
   config: {
     scheduledTasks?: Record<string, string | string[]>;
-    tasks?: { history?: boolean; historyMaxRuns?: number };
+    tasks?: HistoryConfigSlice;
   } | undefined,
   outDir?: string,
 ): Promise<() => void> {
@@ -93,6 +94,51 @@ export async function bootScheduledTasks(
   };
 }
 
+/** The part of the config the history wiring reads. */
+type HistoryConfigSlice = { history?: boolean | TaskHistoryConfig; historyMaxRuns?: number };
+
+/**
+ * The configured history store, or `null` when history is off. `custom` says whether the app
+ * passed its own (`tasks: { history: { store } }`) — denext owns only the default one.
+ *
+ * Not re-exported from `server/mod.ts`: denext's own wiring (`denext task --history` and the
+ * server boot share it).
+ *
+ * @param config The project config (only `tasks` is read).
+ * @param outDir The build directory the default database lives in.
+ * @returns The store and whose it is, or `null`.
+ */
+export function historyStoreFor(
+  config: { tasks?: HistoryConfigSlice } | undefined,
+  outDir: string,
+): { store: TaskHistoryStore; custom: boolean } | null {
+  const history = config?.tasks?.history;
+  if (history === true) {
+    return {
+      store: sqliteTaskHistoryStore({
+        path: join(outDir, TASK_HISTORY_DB),
+        maxRuns: config?.tasks?.historyMaxRuns,
+      }),
+      custom: false,
+    };
+  }
+  if (!history || typeof history !== "object") return null;
+  if (history.store) return { store: history.store, custom: true };
+  return {
+    store: sqliteTaskHistoryStore({
+      path: join(outDir, TASK_HISTORY_DB),
+      maxRuns: history.maxRuns ?? config?.tasks?.historyMaxRuns,
+    }),
+    custom: false,
+  };
+}
+
+/** Whether the config turns history on (`true`, or the object form). */
+export function historyEnabled(config: { tasks?: HistoryConfigSlice } | undefined): boolean {
+  const history = config?.tasks?.history;
+  return history === true || (!!history && typeof history === "object");
+}
+
 /**
  * Install the run recorder when — and only when — the project asked for it.
  *
@@ -104,37 +150,66 @@ export async function bootScheduledTasks(
  * a low-level function should not be loading config, and reading it once here means every
  * in-process `runTask` records, whether it came from the scheduler, a route handler or an action.
  *
+ * The recorder never waits on the store and swallows anything it throws or rejects with: a run
+ * is never failed or delayed by its own bookkeeping, whatever store the app configured.
+ *
  * @param config The project config (only `tasks` is read).
- * @param outDir The build directory the database lives in.
- * @returns A function that stops recording and closes the handle. A no-op when history is off.
+ * @param outDir The build directory the default database lives in.
+ * @param options `closeCustom`: the disposer also waits for the last writes and closes an
+ *   app-supplied store (a one-shot `denext task` process, which ends right after). The server
+ *   never closes one: a dev re-boot installs the same config's store again.
+ * @returns A function that stops recording and closes the default store. A no-op when history
+ *   is off.
  */
 export function startRunHistory(
-  config: { tasks?: { history?: boolean; historyMaxRuns?: number } } | undefined,
+  config: { tasks?: HistoryConfigSlice } | undefined,
   outDir: string,
-): () => void {
-  if (config?.tasks?.history !== true) return () => {};
+  options: { closeCustom?: boolean } = {},
+): () => Promise<void> {
+  const off = () => Promise.resolve();
+  if (!historyEnabled(config)) return off;
   if (onDenoDeploy()) {
     // Not refused: the app explicitly asked. But the file is per-isolate and ephemeral there, so
     // what the panel shows is one isolate's fragment that resets when it cycles — and a history
     // that is quietly wrong is worse than none. A latch cannot help, because the write SUCCEEDS.
-    console.warn(
-      "denext: tasks.history is on, but this is Deno Deploy — .denext/tasks.db is per-isolate " +
-        "and ephemeral, so the history you see is one isolate's fragment and resets when it cycles.",
-    );
+    // A custom store (Postgres) is shared, so the warning is for the default file only.
+    const history = config?.tasks?.history;
+    if (!(history && typeof history === "object" && history.store)) {
+      console.warn(
+        "denext: tasks.history is on, but this is Deno Deploy — .denext/tasks.db is per-isolate " +
+          "and ephemeral, so the history you see is one isolate's fragment and resets when it cycles.",
+      );
+    }
   }
   try {
-    const store = taskHistoryRecorder({
-      path: join(outDir, TASK_HISTORY_DB),
-      maxRuns: config.tasks.historyMaxRuns,
+    const resolved = historyStoreFor(config, outDir);
+    if (!resolved) return off;
+    const { store, custom } = resolved;
+    const pending = new Set<Promise<unknown>>();
+    setTaskRecorder((run) => {
+      try {
+        // In the root context, whatever store it is: `runTask` may run inside a request, and a
+        // store's lazily opened connection or timer must not carry that request along.
+        const result = inRootContext(() => store.record(run));
+        if (result && typeof (result as Promise<void>).then === "function") {
+          const settled = Promise.resolve(result).catch(() => {}).finally(() =>
+            pending.delete(settled)
+          );
+          pending.add(settled);
+        }
+      } catch { /* a store that throws loses its row, never the run */ }
     });
-    setTaskRecorder(store.record);
-    return () => {
+    return async () => {
       setTaskRecorder(null);
-      store.close();
+      if (custom && !options.closeCustom) return;
+      try {
+        await Promise.all(pending);
+        await store.close?.();
+      } catch { /* closing history is never worth a failed shutdown */ }
     };
   } catch {
     // Installing history is never worth failing a boot over.
-    return () => {};
+    return off;
   }
 }
 
