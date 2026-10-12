@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-10-12
+
+Requires `@denext/denext` 3.4.16 or later.
+
 - **Realtime: `timestamptz` keys match across `TimeZone` settings.** `to_jsonb()` formats a
   `timestamptz` in the session's `TimeZone`, so a write from a session in one zone and a
   subscriber's re-read in another spelled the same key differently: the change was dropped, and a

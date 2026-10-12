@@ -14,8 +14,8 @@
     },
     {
       "name": "@denext/backend",
-      "version": "0.2.0",
-      "spec": "jsr:@denext/backend@^0.2.0",
+      "version": "0.2.1",
+      "spec": "jsr:@denext/backend@^0.2.1",
       "exports": [
         ".",
         "./client",
