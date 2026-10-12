@@ -1,7 +1,7 @@
 /**
  * `@denext/backend/client` — browser helpers: upload a file with progress (multipart
- * automatically for large files on S3), get a URL to show one, and keep a realtime table's rows
- * live with `useTableChanges`.
+ * automatically for large files on S3), get a URL to show one, keep a realtime table's rows
+ * live with `useTableChanges`, and query `backend({ rest })`'s tables with `from("table")`.
  *
  * ```tsx
  * "use client";
@@ -27,6 +27,22 @@ import { STORAGE_PREFIX, type StorageTransform } from "./src/shared.ts";
 
 export type { StorageTransform } from "./src/shared.ts";
 export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
+export { from, restClient, RestClientError } from "./src/rest-client.ts";
+export type {
+  RegisteredRest,
+  RestClient,
+  RestClientOptions,
+  RestNegatable,
+  RestQuery,
+  RestResult,
+  RestTableName,
+  RestTableQuery,
+  RestTables,
+  RestTableShape,
+  RestTableShapeOf,
+  SelectColumns,
+  Selected,
+} from "./src/rest-client.ts";
 export type {
   TableChangesError,
   TableChangesState,

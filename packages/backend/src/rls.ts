@@ -326,7 +326,7 @@ export function authenticatedScope(claims: Record<string, unknown>): RlsScope {
 }
 
 /** Start a query (or a value) now, as a promise — so it goes on the wire in call order. */
-function start<T>(value: PromiseLike<T> | T): Promise<T> {
+export function start<T>(value: PromiseLike<T> | T): Promise<T> {
   if (value === null || typeof (value as PromiseLike<T>)?.then !== "function") {
     return Promise.resolve(value as T);
   }

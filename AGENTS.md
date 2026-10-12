@@ -661,6 +661,10 @@ installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, fi
 delete only to subscribers who could see the row); `onTableChange(table, fn)` /
 `tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
 `table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables PostgREST-style at
+`/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
+statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
+`@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;

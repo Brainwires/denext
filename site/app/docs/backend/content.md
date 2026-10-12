@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, and realtime changes from your tables, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, realtime changes from your tables, and an optional REST API over them, with zero npm."
 ---
 
 ```sh
@@ -527,6 +527,125 @@ Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 `TRUNCATE` sends nothing. For very high write volumes, logical replication is planned; LISTEN/NOTIFY
 serializes on commit.
 
+## Auto-REST
+
+Opt in, and the tables of one schema are served as HTTP routes in the PostgREST style, so the
+browser (or a native app) can read and write them directly — every statement run through `db()`,
+so [row-level security](#row-level-security) scopes it to the request's user, or to `anon`.
+
+```ts
+// denext.config.ts
+import { backend } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({
+      postgres: {},
+      rest: {}, // every table of "public" the anon / authenticated roles hold a privilege on
+    }),
+  ],
+};
+```
+
+```ts
+// app/notes/notes-api.ts — used from client components
+import "../../.denext/rest.ts"; // the generated row types
+import { from } from "@denext/backend/client";
+
+export async function latestNotes(listId: number) {
+  const { data, error, count } = await from("notes")
+    .select("id,body", { count: "exact" }) // data: { id: number; body: string }[] | null
+    .eq("list_id", listId)
+    .order("id", { ascending: false })
+    .limit(20);
+  if (error) throw error; // a RestClientError: { code, status, message, details, hint }
+  return { notes: data ?? [], total: count };
+}
+
+export const addNote = (listId: number, body: string) =>
+  from("notes").insert({ list_id: listId, body }).select().single();
+export const editNote = (id: number, body: string) => from("notes").update({ body }).eq("id", id);
+export const removeNote = (id: number) => from("notes").delete().eq("id", id);
+```
+
+The builder's shape loosely follows supabase-js's — `select`, `eq` / `neq` / `gt` / `gte` / `lt`
+/ `lte` / `like` / `ilike` / `is` / `in` / `not`, `order`, `limit`, `offset`, `range`, `single`,
+`insert` / `update` / `delete` with an optional `.select()` to get the written rows back — and
+resolves to `{ data, error, count, status }` without throwing. It is not a drop-in for supabase-js.
+`restClient({ url, headers, fetch })` makes a client with a base URL (an app on another origin, a
+native app's `Authorization: Bearer …` session); `from` uses the page's own origin and cookies.
+
+### Routes
+
+`GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`:
+
+| Request                                          | What it does                                                                                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `select=id,body`                                 | The columns to return (default `*`). Columns of this table only: embedded resources, aliases, casts and JSON paths are refused (400).   |
+| `col=eq.value`                                   | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%` matches any run), `is.null\|true\|false`, `in.(a,"b,c")`. |
+| `col=not.eq.value`                               | The filter negated. Every filter is ANDed; `or=` and `and=` are not supported.                                                          |
+| `order=col.desc.nullslast,other`                 | The order: `asc` / `desc`, `nullsfirst` / `nullslast`.                                                                                  |
+| `limit=20&offset=40`, or a `Range: 40-59` header | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                             |
+| `Prefer: count=exact`                            | Count every matching row too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them.                                  |
+| `Accept: application/vnd.pgrst.object+json`      | One object instead of an array; zero or several rows are a `406` (and a write is rolled back).                                          |
+| `POST` with an object or an array of objects     | Insert (every object with the same keys). `201`; columns left out take their default.                                                   |
+| `PATCH` with an object, plus filters             | Update the matching rows. A request without a filter is refused (`400`, `21000`).                                                       |
+| `DELETE` plus filters                            | Delete the matching rows. A request without a filter is refused.                                                                        |
+| `Prefer: return=representation` on a write       | Answer with the written rows (`select=` shapes them); the default, `return=minimal`, answers `201` / `204` with no body.                |
+
+**What is safe.** A table, column or type name is never taken from the request as text: each is
+looked up in the catalog the plugin read and only a name found there is quoted into the SQL, so an
+unknown column or operator is a `400`, never a statement. Every filter value is a `$n` parameter
+cast to its column's type, and a request body is one JSON parameter expanded by
+`json_populate_record(set)` against the table's own row type — Postgres parses every value. The
+rows come back as one JSON text built by Postgres (`json_agg`), so a `bigint` keeps its digits.
+Each request runs in a transaction that sets the role and claims, then a `statement_timeout`.
+
+**CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
+cross-site one is refused (`403`, `csrf_failed`). A native app's bearer token
+(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie) needs no such check.
+
+**Errors** are PostgREST-shaped JSON — `{ code, message, details, hint }` — with Postgres's
+SQLSTATE as the code where Postgres refused (`23505` → `409`, `42501` → `403`, `23502` / `22P02` →
+`400`, `57014` statement timeout → `504`), and `PGRST100` (a malformed query), `PGRST102` (a bad
+body), `PGRST103` (a range past the rows), `PGRST116` (not exactly one row), `PGRST205` (no such
+table) or `42703` (no such column) otherwise. A 5xx hides the database's message (it is logged).
+
+### Which tables
+
+The plugin reads the catalog when the server starts (and again, under `denext dev`, when a request
+names a table it does not know): every table, view, materialized view and foreign table of
+`schema` that the `anon` or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or
+`UPDATE` on any column, or `DELETE`. A table with no grant to either role gets no route, so a
+table stays private until you `grant`. Which rows a caller then reads or writes is up to its
+policies; enable RLS on every exposed table.
+
+### Generated types
+
+At `denext dev` startup and `denext build`, the plugin writes `.denext/rest.ts` from the live
+catalog: each exposed table's `Row`, `Insert` (columns with a default, or nullable, optional;
+generated columns left out) and `Update` shapes, registered on `RegisteredRest` so `from("notes")`
+autocompletes table names, types filters by column, and narrows `select("id,body")` to those
+columns. Import it once. Without a database to read (no `DATABASE_URL` at build time) the plugin
+says so, keeps an earlier generated file, or writes a stub under which rows are
+`Record<string, unknown>`.
+
+### Options
+
+| Option             | Default      | What it does                                                                       |
+| ------------------ | ------------ | ---------------------------------------------------------------------------------- |
+| `schema`           | `"public"`   | The schema whose tables are served.                                                |
+| `tables`           | `"*"`        | The tables to serve, by name; a listed table the roles cannot reach gets no route. |
+| `basePath`         | `"/rest/v1"` | Where the routes live (app-relative; `basePath` is prepended).                     |
+| `maxRows`          | 1000         | The most rows one read returns, whatever `limit` asks for.                         |
+| `maxBodyBytes`     | 1 MiB        | The largest request body.                                                          |
+| `statementTimeout` | 8000         | Each request's `statement_timeout`, in milliseconds.                               |
+
+Not offered: embedded resources (joins through foreign keys — read the related table with a
+second request, or write a route handler), `or` / `and` groups, upserts (`on_conflict`), RPC
+(`/rpc/<function>` — call it with `db()` in a route handler) and CSV bodies. The routes are not
+listed in the `@denext/openapi` document.
+
 ## Browse it in `denext ui`
 
 [`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
@@ -537,6 +656,6 @@ and honours `--read-only`.
 
 ## More services
 
-Storage, Postgres, row-level security and realtime from the database are the services in
+Storage, Postgres, row-level security, realtime from the database and auto-REST are the services in
 `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
 [tasks](/docs/tasks) are already part of denext itself.

@@ -27,7 +27,8 @@
       "configKeys": [
         "storage",
         "postgres",
-        "realtime"
+        "realtime",
+        "rest"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -258,6 +259,48 @@
             "required": [
               "tables"
             ]
+          },
+          "rest": {
+            "description": "Auto-REST: the schema's tables (those the `anon` / `authenticated` roles hold a privilege on) served PostgREST-style under `/rest/v1/<table>` — filters, ordering, paging, inserts, filtered updates and deletes — each statement run through `db()`, so row-level security scopes it to the request's user. Row types are generated into `.denext/rest.ts`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "schema": {
+                "description": "The schema whose tables are served (default `\"public\"`).",
+                "type": "string"
+              },
+              "tables": {
+                "description": "The tables to serve, by name, or `\"*\"` (the default) for every table and view of the schema that the `anon` or `authenticated` role holds a privilege on. A listed table those roles cannot reach gets no route either.",
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "enum": [
+                      "*"
+                    ]
+                  }
+                ]
+              },
+              "basePath": {
+                "description": "Where the routes live, app-relative (default `\"/rest/v1\"`).",
+                "type": "string"
+              },
+              "maxRows": {
+                "description": "The most rows one read returns, whatever `limit` asks for (default 1000).",
+                "type": "number"
+              },
+              "maxBodyBytes": {
+                "description": "The largest request body accepted, in bytes (default 1 MiB).",
+                "type": "number"
+              },
+              "statementTimeout": {
+                "description": "Each request's `statement_timeout`, in milliseconds (default 8000).",
+                "type": "number"
+              }
+            }
           }
         }
       }

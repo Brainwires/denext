@@ -222,6 +222,19 @@ export function scopedFor(scope: RlsScope): SqlClient {
 }
 
 /**
+ * Resolves once the RLS migration has been applied (at once when `rls.migrate` is `false`), so
+ * the `anon` / `authenticated` roles exist before anything asks about them.
+ *
+ * @returns When the roles are in place; rejects when Postgres is not configured.
+ */
+export function rlsReady(): Promise<void> {
+  return Promise.resolve().then(() => {
+    const { sql, rls } = installed();
+    return rls.migrate === false ? undefined : ensureRlsMigrated(sql);
+  });
+}
+
+/**
  * The connecting role's client (`db.service()`), resolved on every call so it can be built
  * before the plugin's setup — what denext auth's own tables are reached through.
  */

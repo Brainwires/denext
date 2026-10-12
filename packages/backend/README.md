@@ -109,6 +109,14 @@ row-level security, so a change reaches only the subscribers whose policies retu
 `onTableChange` and `tableChanges` from `@denext/backend/server` react on the server. Guide:
 [Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
 
+**Auto-REST.** `backend({ postgres: {}, rest: {} })` serves the schema's tables (those the `anon` /
+`authenticated` roles were granted) PostgREST-style under `/rest/v1/<table>`: `select=`, filters
+(`col=eq.x`, `in.(…)`, `like`, `is`, `not.`), `order=`, `limit` / `offset` / `Range`,
+`Prefer: count=exact`, inserts, and updates and deletes that require a filter — every statement
+run through `db()`, so row-level security applies. `from("notes").select("id,body").eq("id", 1)`
+from `@denext/backend/client` builds the requests, typed by the generated `.denext/rest.ts`. Guide:
+[Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
+
 ## What it enforces
 
 - **`authorize`** decides every operation (`upload`, `download`, `delete`, `list`) made inside a

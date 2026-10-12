@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Auto-REST.** `backend({ postgres, rest: {} })` serves the granted tables of a schema
+  PostgREST-style under `/rest/v1/<table>`: `select=` (columns), `eq` / `neq` / `gt` / `gte` / `lt`
+  / `lte` / `like` / `ilike` / `is` / `in` filters (and `not.`), `order=`, `limit` / `offset` /
+  `Range`, `Prefer: count=exact`, single-object responses, inserts, and updates and deletes that
+  require a filter. Every statement runs through `db()` under row-level security and a
+  `statement_timeout`; identifiers come from the catalog only, values are typed parameters; errors
+  are PostgREST-shaped; cross-site cookie writes are refused. `from()` / `restClient()` from
+  `@denext/backend/client`, typed by the generated `.denext/rest.ts`. Options: `schema`, `tables`,
+  `basePath`, `maxRows`, `maxBodyBytes`, `statementTimeout`.
 - **Realtime from the database.** `backend({ postgres, realtime: realtime({ tables }) })`: per-table
   AFTER triggers (migrations `backend_realtime_0001` + one per table; `realtimeMigrations()` /
   `realtimeSetupSql()` and `migrate: false` for a DBA) NOTIFY keys only; one listener per instance

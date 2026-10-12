@@ -7,7 +7,9 @@
  * `backendAuthAdapter()` for denext auth, on the Postgres client built into denext's Deno runtime
  * (`Deno.SQL`), or any client you pass (`sql`); and **realtime** — `realtime({ tables })` sends
  * each table's inserts, updates and deletes to `useTableChanges` subscribers, every row re-read
- * under that subscriber's row-level security.
+ * under that subscriber's row-level security; and **auto-REST** — `rest: {}` serves the schema's
+ * tables PostgREST-style under `/rest/v1/<table>`, every statement scoped by the same row-level
+ * security, with row types generated into `.denext/rest.ts` for `from("table")`.
  *
  * ```ts
  * // denext.config.ts
@@ -69,6 +71,7 @@ import type { StorageOptions } from "./src/types.ts";
 import { db, installPostgres, openPostgres, type PostgresOptions } from "./src/postgres.ts";
 import { createRealtimeChannel, installRealtime, RealtimeEngine } from "./src/realtime.ts";
 import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
+import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -81,6 +84,7 @@ export type {
 } from "./src/realtime-sql.ts";
 export type { TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
+export type { RestOptions } from "./src/rest.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";
@@ -119,6 +123,14 @@ export interface BackendOptions {
    * `onTableChange` hooks. Needs `postgres`.
    */
   realtime?: RealtimeOptions;
+  /**
+   * Auto-REST: the schema's tables (those the `anon` / `authenticated` roles hold a privilege
+   * on) served PostgREST-style under `/rest/v1/<table>` — filters, ordering, paging, inserts,
+   * filtered updates and deletes — each statement run through `db()`, so row-level security
+   * scopes it to the request's user. Row types are generated into `.denext/rest.ts`. Needs
+   * `postgres`.
+   */
+  rest?: RestOptions;
 }
 
 function env(name: string): string | undefined {
@@ -170,7 +182,7 @@ function setupRealtime(
 /**
  * Create the backend plugin. Place it in your `denext.config.ts` `plugins`.
  *
- * @param options The services to enable (`storage`, `postgres`, `realtime`).
+ * @param options The services to enable (`storage`, `postgres`, `realtime`, `rest`).
  * @returns The plugin.
  */
 export function backend(options: BackendOptions = {}): DenextPlugin {
@@ -183,6 +195,8 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
     if (!options.postgres) throw new TypeError("backend(): realtime needs `postgres`");
     resolveRealtime(options.realtime);
   }
+  if (options.rest && !options.postgres) throw new TypeError("backend(): rest needs `postgres`");
+  const rest = options.rest ? resolveRest(options.rest) : undefined;
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
@@ -191,6 +205,7 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
         installPostgres(slot);
         if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
         if (options.realtime) setupRealtime(ctx, options.realtime, slot);
+        if (rest) setupRest(ctx, rest);
       }
       if (!storageOptions || !buckets) return;
       const dev = ctx.mode === "dev";

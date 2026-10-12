@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`@denext/backend`: auto-REST.** `backend({ postgres, rest: { schema?, tables?, basePath?,
+  maxRows?, maxBodyBytes?, statementTimeout? } })` serves the schema's tables PostgREST-style
+  under `/rest/v1/<table>` — only those the `anon` / `authenticated` roles hold a privilege on, read
+  from the catalog at startup (and on a miss under `denext dev`). `GET` / `HEAD` with `select=`
+  (columns only), filters (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, each
+  behind an optional `not.`), `order=`, `limit` / `offset` / `Range` capped at `maxRows`,
+  `Prefer: count=exact` → `Content-Range`, and `Accept: application/vnd.pgrst.object+json`; `POST`
+  (an object or an array), and `PATCH` / `DELETE` that refuse a request without a filter, with
+  `Prefer: return=representation`. Every statement runs through `db()` (the request's user, or
+  `anon`) under a per-request `statement_timeout`; identifiers come only from the catalog and every
+  value is a typed `$n` parameter (a body is one `$n::json` expanded by `json_populate_record(set)`).
+  Errors are PostgREST-shaped `{ code, message, details, hint }` with SQLSTATEs mapped (`23505` →
+  409, `42501` → 403, `57014` → 504). Cookie-carrying cross-site writes are refused (the `csrf()`
+  rule). `from("table")` / `restClient()` from `@denext/backend/client` build the requests
+  (`select`, filters, `order`, `limit`, `range`, `single`, `insert`, `update`, `delete`) and resolve
+  to `{ data, error, count, status }`; a prepare step writes each table's `Row` / `Insert` /
+  `Update` types to `.denext/rest.ts` from the live catalog (a stub without a database). Guide:
+  [Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
+
 ## [3.4.14] - 2026-10-12
 
 ### Added

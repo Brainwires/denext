@@ -7,6 +7,7 @@
 // SELECT ever leaves the database on their behalf).
 
 import type { Migration } from "@denext/denext/server";
+import { positiveOption } from "./options.ts";
 import { IDENTIFIER, REALTIME_NOTIFY_CHANNEL, type TableEvent } from "./realtime-shared.ts";
 
 /** One table opted in to realtime. */
@@ -90,15 +91,6 @@ export interface ResolvedRealtime {
 
 const EVENTS: readonly TableEvent[] = ["insert", "update", "delete"];
 
-/** `options[field]` as a positive integer, or `fallback`. */
-function positive(value: number | undefined, fallback: number, field: string): number {
-  if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new TypeError(`realtime(): ${field} must be a positive integer`);
-  }
-  return value;
-}
-
 /** `revalidate`'s owner, validated. */
 function revalidateOwner(revalidate: RealtimeOptions["revalidate"]): "every" | "one" {
   if (revalidate === undefined || typeof revalidate === "boolean") return "every";
@@ -162,8 +154,8 @@ export function resolveRealtime(options: RealtimeOptions): ResolvedRealtime {
       (typeof options.revalidate === "object" && options.revalidate !== null),
     revalidateOwner: revalidateOwner(options.revalidate),
     migrate: options.migrate !== false,
-    maxSubscribers: positive(options.maxSubscribers, 10_000, "maxSubscribers"),
-    maxTrackedKeys: positive(options.maxTrackedKeys, 10_000, "maxTrackedKeys"),
+    maxSubscribers: positiveOption(options.maxSubscribers, 10_000, "realtime(): maxSubscribers"),
+    maxTrackedKeys: positiveOption(options.maxTrackedKeys, 10_000, "realtime(): maxTrackedKeys"),
   };
 }
 

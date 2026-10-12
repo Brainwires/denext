@@ -1,7 +1,7 @@
 ---
 title: Coming from Supabase
 slug: coming-from-supabase
-lead: A concept map and migration checklist for Supabase developers. With denext and the opt-in @denext/backend plugin your backend lives in your app — auth, Postgres scoped by row-level security, storage and realtime — and you bring the Postgres.
+lead: A concept map and migration checklist for Supabase developers. With denext and the opt-in @denext/backend plugin your backend lives in your app — auth, Postgres scoped by row-level security, storage, realtime and a PostgREST-style REST API — and you bring the Postgres.
 ---
 
 Supabase is a hosted platform your app talks to over HTTP. denext is the other way round: the
@@ -38,31 +38,31 @@ export default {
 
 ## Concept map
 
-| Supabase                                            | denext                                                                                                                                                                                            |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A hosted project (`https://<ref>.supabase.co`)      | Your app, plus a Postgres you run or rent. Nothing to sign up for.                                                                                                                                |
-| `supabase.from("t").select()` (PostgREST)           | `db()` from `@denext/backend/server`: a tagged-template SQL query, run as the request's user. No generated REST API — see [What is missing](#what-is-missing). [Postgres](/docs/backend#postgres) |
-| Row-level security, `auth.uid()`, `auth.jwt()`      | The same: `db()` sets `role` and `request.jwt.claims` per query, and Supabase's own `auth.*` functions read them. [Row-level security](/docs/backend#row-level-security)                          |
-| `anon` / `authenticated` roles                      | The same names, created by the plugin's first migration. Tables need an explicit `grant`.                                                                                                         |
-| `service_role` key                                  | `db.service()` on the server — the app's own database user, no RLS. There is no key to leak: the server is the only client.                                                                       |
-| `supabase.rpc("fn", args)`                          | `` db()`select * from fn(${a}, ${b})` `` — your SQL functions, `security definer` included, run as before.                                                                                        |
-| Supabase Auth: email + password                     | `credentials()` with an adapter. [Password sign-in](/docs/auth#password-sign-in-without-an-authorize)                                                                                             |
-| Supabase Auth: magic link, email OTP                | `magicLink()`, `emailOtp()` — through your own mailer. [Passwordless](/docs/auth#passwordless-magic-links-and-one-time-codes)                                                                     |
-| Supabase Auth: OAuth providers                      | `github()`, `google()`, `apple()`, `discord()`, … and generic `oidc()`. [Providers](/docs/auth#providers)                                                                                         |
-| Supabase Auth: MFA (TOTP), passkeys                 | TOTP with backup codes, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                            |
-| `auth.users`, `auth.identities`                     | denext auth's `auth_*` tables on the same database via `backendAuthAdapter()`. [Auth › Postgres](/docs/auth#postgres)                                                                             |
-| `supabase.auth.getUser()` on the server             | `await auth()` from `denext/server`.                                                                                                                                                              |
-| Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem: `public` buckets, signed URLs, `transform`. [Storage](/docs/backend#storage)                                                           |
-| Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                   |
-| Realtime: Postgres changes                          | `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server, each change re-read under the viewer's policies. [Realtime](/docs/backend#realtime-from-the-database)    |
-| Realtime: broadcast, presence                       | `createChannel` / `useChannel` and `usePresence` from `denext/live`. [Live](/docs/live)                                                                                                           |
-| Edge Functions                                      | Route handlers (`app/api/<name>/route.ts`) and validated `defineApi` handlers; Server Actions for form mutations. [Typed API](/docs/typed-api)                                                    |
-| `supabase.functions.invoke()`, generated types      | `createApiClient()` / `useApi()`, typed from your route handlers. [Typed API](/docs/typed-api)                                                                                                    |
-| Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                            |
-| `pg_cron`, scheduled functions                      | `defineTask` in `tasks/` with a cron `schedule`. [Scheduled tasks](/docs/tasks)                                                                                                                   |
-| `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext task migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                      |
-| Studio (table editor, policies, storage, users)     | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                           |
-| Vault, project secrets                              | Environment variables (`Deno.env.get`), `.env` in development. [Environment](/docs/environment)                                                                                                   |
+| Supabase                                            | denext                                                                                                                                                                                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A hosted project (`https://<ref>.supabase.co`)      | Your app, plus a Postgres you run or rent. Nothing to sign up for.                                                                                                                                                                  |
+| `supabase.from("t").select()` (PostgREST)           | `from("t").select()` from `@denext/backend/client` over `backend({ rest })`'s PostgREST-style routes, run as the request's user; or `db()` in server code. [Auto-REST](/docs/backend#auto-rest), [Postgres](/docs/backend#postgres) |
+| Row-level security, `auth.uid()`, `auth.jwt()`      | The same: `db()` sets `role` and `request.jwt.claims` per query, and Supabase's own `auth.*` functions read them. [Row-level security](/docs/backend#row-level-security)                                                            |
+| `anon` / `authenticated` roles                      | The same names, created by the plugin's first migration. Tables need an explicit `grant`.                                                                                                                                           |
+| `service_role` key                                  | `db.service()` on the server — the app's own database user, no RLS. There is no key to leak: the server is the only client.                                                                                                         |
+| `supabase.rpc("fn", args)`                          | `` db()`select * from fn(${a}, ${b})` `` — your SQL functions, `security definer` included, run as before.                                                                                                                          |
+| Supabase Auth: email + password                     | `credentials()` with an adapter. [Password sign-in](/docs/auth#password-sign-in-without-an-authorize)                                                                                                                               |
+| Supabase Auth: magic link, email OTP                | `magicLink()`, `emailOtp()` — through your own mailer. [Passwordless](/docs/auth#passwordless-magic-links-and-one-time-codes)                                                                                                       |
+| Supabase Auth: OAuth providers                      | `github()`, `google()`, `apple()`, `discord()`, … and generic `oidc()`. [Providers](/docs/auth#providers)                                                                                                                           |
+| Supabase Auth: MFA (TOTP), passkeys                 | TOTP with backup codes, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                              |
+| `auth.users`, `auth.identities`                     | denext auth's `auth_*` tables on the same database via `backendAuthAdapter()`. [Auth › Postgres](/docs/auth#postgres)                                                                                                               |
+| `supabase.auth.getUser()` on the server             | `await auth()` from `denext/server`.                                                                                                                                                                                                |
+| Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem: `public` buckets, signed URLs, `transform`. [Storage](/docs/backend#storage)                                                                                             |
+| Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                                                     |
+| Realtime: Postgres changes                          | `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server, each change re-read under the viewer's policies. [Realtime](/docs/backend#realtime-from-the-database)                                      |
+| Realtime: broadcast, presence                       | `createChannel` / `useChannel` and `usePresence` from `denext/live`. [Live](/docs/live)                                                                                                                                             |
+| Edge Functions                                      | Route handlers (`app/api/<name>/route.ts`) and validated `defineApi` handlers; Server Actions for form mutations. [Typed API](/docs/typed-api)                                                                                      |
+| `supabase.functions.invoke()`, generated types      | `createApiClient()` / `useApi()`, typed from your route handlers. [Typed API](/docs/typed-api)                                                                                                                                      |
+| Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                                                              |
+| `pg_cron`, scheduled functions                      | `defineTask` in `tasks/` with a cron `schedule`. [Scheduled tasks](/docs/tasks)                                                                                                                                                     |
+| `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext task migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                                                        |
+| Studio (table editor, policies, storage, users)     | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                                                             |
+| Vault, project secrets                              | Environment variables (`Deno.env.get`), `.env` in development. [Environment](/docs/environment)                                                                                                                                     |
 
 ## Side by side
 
@@ -86,10 +86,21 @@ const notes = await db()`
 `;
 ```
 
-Both run as the signed-in user, and your policies decide which rows come back. The difference is
-where the query lives: with Supabase the browser can build queries against any granted table;
-with denext a query exists only where your server code wrote it, and the browser gets what a route
-handler, Server Action or Server Component chose to return. Every interpolated value is a bound
+```ts
+// denext — the browser, through backend({ rest })'s PostgREST-style routes
+import { from } from "@denext/backend/client";
+
+const { data: notes, error } = await from("notes")
+  .select("id,body")
+  .eq("list_id", listId)
+  .order("id");
+```
+
+All three run as the signed-in user, and your policies decide which rows come back. With
+[auto-REST](/docs/backend#auto-rest) on, the browser can build queries against any table the
+`anon` / `authenticated` roles were granted, as with Supabase; without it, a query exists only
+where your server code wrote it, and the browser gets what a route handler, Server Action or
+Server Component chose to return. Every interpolated value is a bound
 parameter. Outside a request (a task, a script) `db()` runs as `anon`; act for a user with
 `db({ as: { id: userId } })`, or as the server with `db.service()`.
 
@@ -393,9 +404,9 @@ allowed, and set the store's CORS rules to allow your origin to `GET` and `PUT` 
 
 denext covers the app-backend half of Supabase; some of the platform is not there:
 
-- **No generated REST API.** There is no PostgREST equivalent that turns tables into HTTP
-  endpoints, so the browser cannot query a table directly; queries live in server code. An
-  auto-generated API over the RLS-scoped client is planned.
+- **Auto-REST is a subset of PostgREST.** `backend({ rest })` serves tables with filters,
+  ordering, paging, inserts, filtered updates and deletes, but no embedded resources (joins), no
+  `or` / `and` groups, no upserts and no `/rpc` route.
 - **No supabase-js drop-in.** Calls have to be rewritten, as above.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
@@ -408,7 +419,8 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   (multipart on S3), not TUS resumable uploads.
 - **Realtime is LISTEN/NOTIFY.** `TRUNCATE` sends nothing, and very high write volumes serialize
   on commit; logical replication is planned.
-- **No database type generator.** `createApiClient` types your API, not your tables; use an ORM
+- **Types for REST tables only.** `.denext/rest.ts` types the tables auto-REST serves (from the
+  live catalog); there is no generator for the rest of the schema, so for server queries use an ORM
   such as [Drizzle](/docs/database#orms) or write the row types.
 - **No Vault, no extensions catalogue.** Secrets are environment variables, and the Postgres
   extensions you have are the ones your provider installs.
