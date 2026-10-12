@@ -157,7 +157,13 @@ export function inTransaction<T>(
     await tx.unsafe(`SET LOCAL lock_timeout = ${Math.min(ms, 3000)}`);
     if (scope) {
       await tx.unsafe(
-        "select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)",
+        // As @denext/backend's RLS_SETUP: the legacy per-claim settings are blanked so one left
+        // on a pooled connection can't override the previewed user in `auth.uid()`.
+        "select set_config('role', $1, true), set_config('request.jwt.claims', $2, true), " +
+          "set_config('request.jwt.claim.sub', '', true), " +
+          "set_config('request.jwt.claim.role', '', true), " +
+          "set_config('request.jwt.claim.email', '', true), " +
+          "set_config('request.jwt.claim', '', true)",
         [scope.role, scope.claims],
       );
     }

@@ -630,8 +630,8 @@ s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, 
 authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
 `storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
 head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
-session and its absence denies (`{ service: true }` skips it). Browser: `uploadFile(bucket, file,
-{ onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
+session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
+Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
 chars). Docs: https://denext.dev/docs/backend
 
 **A database (zero-npm, server-only module):**
@@ -661,8 +661,8 @@ installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, fi
 delete only to subscribers who could see the row); `onTableChange(table, fn)` /
 `tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
 `table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
-Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables PostgREST-style at
-`/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
+Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS on (and
+`security_invoker` views; others only when named in `rest.tables`) PostgREST-style at `/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
 statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
 `@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a

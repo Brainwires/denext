@@ -53,6 +53,11 @@ and this project adheres to
 
 ### Security
 
+- **`denext ui`'s "Read as" preview ignores leftover per-claim settings.** It set only `role` and
+  `request.jwt.claims`, so a `request.jwt.claim.sub` left on a pooled connection could make
+  `auth.uid()` answer for another user in the preview. It now blanks those settings, as
+  `@denext/backend` does.
+
 - **`@denext/backend` realtime: one client can no longer fill an instance's subscriptions.** Each
   subscribe with a fresh key created a subscription (and ran a seed query of up to
   `maxTrackedKeys` keys) that was kept 15 s after its subscriber left, against one instance-wide cap
