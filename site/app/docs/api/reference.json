@@ -4262,7 +4262,7 @@
           "kind": "variable",
           "signature": "VirtualList: (props: VirtualListProps<T>) => VNode",
           "doc": "A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.",
-          "docFull": "A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast\nas 100. Rows are measured as they render (`estimatedItemSize` is only a hint), rows keep\ntheir identity (and state) across data changes, and content changes above the viewport\nnever move what you are looking at — including on iOS, where the list never writes the\nscroll offset during a fling. Past the browser's element-height limit the scroll space is\nscaled, and `scrollToIndex` still lands exactly.\n\n**Chat:** `anchor=\"end\"` starts at the bottom, bottom-aligns short content, stays pinned\nwhile at the bottom (appends, a streaming last message, the keyboard opening with\n`keyboardInset`), and `onStartReached` loads history without a jump. **Sections:**\n`stickyIndices` (the real row sticks, so it stays focusable; the next header pushes it up).\n**Grids:** `numColumns` + `gap`. **Accessibility:** `role=\"list\"` / `\"listitem\"` with\n`aria-setsize` / `aria-posinset`, Arrow / Page / Home / End (and optional typeahead)\nnavigation into rows not yet rendered, and the focused row stays mounted while scrolled\naway. **SSR:** the server renders the first window (at `initialScrollIndex`, or the end\nfor `anchor=\"end\"`), which hydrates without moving. **React Native parity:**\n`onViewableItemsChanged`, `onScroll` / momentum events, `refreshControl`,\n`contentContainerStyle`, `ListHeaderComponentStyle`.\n\n**Testing:** without a `ResizeObserver` (as under `denext/testing`) nothing is measured:\nsizes come from `getItemSize` (exact) or the estimates, and the viewport from the scroller's\n`clientHeight`, else `viewportSize` (default 800) — so `render(<VirtualList>)` shows a\ndeterministic set of rows with no layout engine.",
+          "docFull": "A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast\nas 100. Rows are measured as they render (`estimatedItemSize` is only a hint), rows keep\ntheir identity (and state) across data changes, and content changes above the viewport\nnever move what you are looking at — including on iOS, where the list never writes the\nscroll offset during a fling. Past the browser's element-height limit the scroll space is\nscaled, and `scrollToIndex` still lands exactly.\n\n**Bottom-anchored lists** (messages, logs, feeds): `anchor=\"end\"` starts at the bottom,\nbottom-aligns short content, stays pinned while at the bottom (appends, a streaming last row,\nthe keyboard opening with `keyboardInset`), and `onStartReached` loads history without a\njump. **Sections:**\n`stickyIndices` (the real row sticks, so it stays focusable; the next header pushes it up).\n**Grids:** `numColumns` + `gap`. **Accessibility:** `role=\"list\"` / `\"listitem\"` with\n`aria-setsize` / `aria-posinset`, Arrow / Page / Home / End (and optional typeahead)\nnavigation into rows not yet rendered, and the focused row stays mounted while scrolled\naway. **SSR:** the server renders the first window (at `initialScrollIndex`, or the end\nfor `anchor=\"end\"`), which hydrates without moving. **React Native parity:**\n`onViewableItemsChanged`, `onScroll` / momentum events, `refreshControl`,\n`contentContainerStyle`, `ListHeaderComponentStyle`.\n\n**Testing:** without a `ResizeObserver` (as under `denext/testing`) nothing is measured:\nsizes come from `getItemSize` (exact) or the estimates, and the viewport from the scroller's\n`clientHeight`, else `viewportSize` (default 800) — so `render(<VirtualList>)` shows a\ndeterministic set of rows with no layout engine.",
           "params": [
             {
               "name": "props",
@@ -4271,7 +4271,7 @@
           ],
           "returns": "The list element.",
           "examples": [
-            "A chat thread\n```tsx\n\"use client\";\nimport { VirtualList } from \"denext\";\n\nexport function Thread({ messages, loadOlder }) {\n  return (\n    <VirtualList\n      style={{ height: \"100%\" }}\n      data={messages}\n      keyExtractor={(m) => m.id}\n      anchor=\"end\"\n      onStartReached={loadOlder}\n      renderItem={(m) => <Message message={m} />}\n    />\n  );\n}\n```"
+            "A bottom-anchored list\n```tsx\n\"use client\";\nimport { VirtualList } from \"denext\";\n\nexport function Feed({ entries, loadOlder }) {\n  return (\n    <VirtualList\n      style={{ height: \"100%\" }}\n      data={entries}\n      keyExtractor={(e) => e.id}\n      anchor=\"end\"\n      onStartReached={loadOlder}\n      renderItem={(e) => <Entry entry={e} />}\n    />\n  );\n}\n```"
           ],
           "denextOnly": true
         },
@@ -20095,8 +20095,8 @@
           "slug": "installKeyboardInset",
           "kind": "function",
           "signature": "installKeyboardInset(opts?: KeyboardInsetOptions): () => void",
-          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
-          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so\nlayout can lift a composer or a bottom bar above it: `padding-bottom:\nvar(--denext-keyboard-inset)`.\n\nIn a browser and on Android it is\nderived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame; it\nstays `0px` where `visualViewport` is unavailable. In the iOS shell with `@capacitor/keyboard`\nit follows the plugin's will-show / will-hide: the keyboard's height while it slides in over\nthe page, then `0` once the shell has resized the WebView (`resize: \"native\"`, the default),\n`<body>` (`\"body\"`) or `ion-app` (`\"ionic\"`) around it, which the plugin does only after the\nkeyboard's animation; with `resize: \"none\"` it stays the keyboard's height. It is set to `0px`\nimmediately.\n\nPass it as `VirtualList`'s `keyboardInset` and a chat (`anchor=\"end\"`) keeps its last message\nabove the keyboard from the moment the keyboard starts to open, in every resize mode, with no\njump when the shell's resize lands.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
+          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a docked text field or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
+          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so\nlayout can lift a docked text field or a bottom bar above it: `padding-bottom:\nvar(--denext-keyboard-inset)`.\n\nIn a browser and on Android it is\nderived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame; it\nstays `0px` where `visualViewport` is unavailable. In the iOS shell with `@capacitor/keyboard`\nit follows the plugin's will-show / will-hide: the keyboard's height while it slides in over\nthe page, then `0` once the shell has resized the WebView (`resize: \"native\"`, the default),\n`<body>` (`\"body\"`) or `ion-app` (`\"ionic\"`) around it, which the plugin does only after the\nkeyboard's animation; with `resize: \"none\"` it stays the keyboard's height. It is set to `0px`\nimmediately.\n\nPass it as `VirtualList`'s `keyboardInset` and a bottom-anchored list (`anchor=\"end\"`) keeps\nits last row above the keyboard from the moment the keyboard starts to open, in every resize\nmode, with no jump when the shell's resize lands.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
           "params": [
             {
               "name": "opts",
@@ -20105,7 +20105,7 @@
           ],
           "returns": "A dispose function that stops listening and, for the last install, removes the property.",
           "examples": [
-            "```ts\nimport { installKeyboardInset } from \"denext/mobile\";\nconst dispose = installKeyboardInset();\n// CSS: .composer { bottom: var(--denext-keyboard-inset, 0px); }\n```"
+            "```ts\nimport { installKeyboardInset } from \"denext/mobile\";\nconst dispose = installKeyboardInset();\n// CSS: .input-bar { bottom: var(--denext-keyboard-inset, 0px); }\n```"
           ],
           "denextOnly": true
         },
@@ -20314,8 +20314,8 @@
           "slug": "KeyboardStickyView",
           "kind": "function",
           "signature": "KeyboardStickyView(props: KeyboardStickyViewProps): VNode",
-          "doc": "A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is the composer of a chat screen: see the chat-composer recipe on /docs/mobile.",
-          "docFull": "A `<div>` that rides on top of the on-screen keyboard: while the keyboard covers the page it\nmoves up by the covered height (a compositor-only `translateY`), and back down when the\nkeyboard hides. Place it at the bottom of the screen yourself (`position: fixed` /\n`sticky`, `bottom: 0`); the view only adds the transform. This is the composer of a chat\nscreen: see the chat-composer recipe on /docs/mobile.\n\nLike {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the\npage, so once the WebView has resized around the keyboard it stays put (the resize already\nmoved it); in the iOS shell it rides the keyboard while it slides in, before the shell's\nresize lands. `offset` adds a fixed shift in each state.",
+          "doc": "A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is a text field docked above the keyboard: see the text-field recipe on /docs/mobile.",
+          "docFull": "A `<div>` that rides on top of the on-screen keyboard: while the keyboard covers the page it\nmoves up by the covered height (a compositor-only `translateY`), and back down when the\nkeyboard hides. Place it at the bottom of the screen yourself (`position: fixed` /\n`sticky`, `bottom: 0`); the view only adds the transform. This is a text field docked above\nthe keyboard: see the text-field recipe on /docs/mobile.\n\nLike {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the\npage, so once the WebView has resized around the keyboard it stays put (the resize already\nmoved it); in the iOS shell it rides the keyboard while it slides in, before the shell's\nresize lands. `offset` adds a fixed shift in each state.",
           "params": [
             {
               "name": "props",
@@ -20324,7 +20324,7 @@
           ],
           "returns": "The <div>.",
           "examples": [
-            "```tsx\n\"use client\";\nimport { KeyboardStickyView } from \"denext/mobile\";\n\nexport function Composer() {\n  return (\n    <KeyboardStickyView style={{ position: \"fixed\", left: 0, right: 0, bottom: 0 }}>\n      <textarea placeholder=\"Message\" />\n    </KeyboardStickyView>\n  );\n}\n```"
+            "```tsx\n\"use client\";\nimport { KeyboardStickyView } from \"denext/mobile\";\n\nexport function InputBar() {\n  return (\n    <KeyboardStickyView style={{ position: \"fixed\", left: 0, right: 0, bottom: 0 }}>\n      <textarea placeholder=\"Add a note\" />\n    </KeyboardStickyView>\n  );\n}\n```"
           ],
           "denextOnly": true
         },
@@ -21095,7 +21095,7 @@
           "kind": "function",
           "signature": "onAppResume(cb: (awayMs: number) => void): () => void",
           "doc": "Call cb each time the page returns to the foreground, with how long it was away in milliseconds.",
-          "docFull": "Call `cb` each time the page returns to the foreground, with how long it was away in\nmilliseconds.\n\nIt listens for `visibilitychange` (every browser and webview), `pagehide`/`pageshow`\n(a back-forward-cache restore) and the `pause`/`resume` document events that Capacitor's\niOS shell fires on scene background/foreground. Whichever signal arrives first counts; the\nothers are deduplicated, so `cb` runs once per return. A subscription made while the page is\nalready hidden measures from the moment of subscribing.\n\nThe time away is wall-clock (`Date.now()`), not `performance.now()`: iOS's monotonic clock\nstops while the device sleeps, which would under-report a phone left locked for an hour.\nA backwards clock jump reads as `0`.\n\n**The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the\nconnection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume\nthe OS froze the page and its sockets, so reconnect and refetch.\n\nSSR-safe: without a `document` it subscribes to nothing and returns a no-op.",
+          "docFull": "Call `cb` each time the page returns to the foreground, with how long it was away in\nmilliseconds.\n\nIt listens for `visibilitychange` (every browser and webview), `pagehide`/`pageshow`\n(a back-forward-cache restore) and the `pause`/`resume` document events that Capacitor's\niOS shell fires on scene background/foreground. Whichever signal arrives first counts; the\nothers are deduplicated, so `cb` runs once per return. A subscription made while the page is\nalready hidden measures from the moment of subscribing.\n\nThe time away is wall-clock (`Date.now()`), not `performance.now()`: iOS's monotonic clock\nstops while the device sleeps, which would under-report a phone left locked for an hour.\nA backwards clock jump reads as `0`.\n\n**The intended pattern** (the rule native apps commonly use): under 10 s away, the\nconnection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume\nthe OS froze the page and its sockets, so reconnect and refetch.\n\nSSR-safe: without a `document` it subscribes to nothing and returns a no-op.",
           "params": [
             {
               "name": "cb",
@@ -21443,7 +21443,7 @@
           ],
           "returns": "A function that unsubscribes.",
           "examples": [
-            "```ts\nimport { onQuickAction } from \"denext/mobile\";\n\nconst stop = onQuickAction((id) => {\n  if (id === \"new-chat\") location.assign(\"/chat/new\");\n});\n```"
+            "```ts\nimport { onQuickAction } from \"denext/mobile\";\n\nconst stop = onQuickAction((id) => {\n  if (id === \"new-note\") location.assign(\"/notes/new\");\n});\n```"
           ],
           "denextOnly": true
         },
@@ -23159,7 +23159,7 @@
           ],
           "returns": "A promise that settles once the mode is set; it rejects with a TypeError for an unknown mode, or if the native plugin rejects.",
           "examples": [
-            "```ts\nimport { setKeyboardResizeMode } from \"denext/mobile\";\n// Let the keyboard cover the page; <KeyboardStickyView> lifts the composer itself.\nawait setKeyboardResizeMode(\"none\");\n```"
+            "```ts\nimport { setKeyboardResizeMode } from \"denext/mobile\";\n// Let the keyboard cover the page; <KeyboardStickyView> lifts the docked field itself.\nawait setKeyboardResizeMode(\"none\");\n```"
           ],
           "denextOnly": true
         },
@@ -23220,7 +23220,7 @@
           ],
           "returns": "A promise that settles once the OS has them. It rejects with a TypeError for an action without an id or title (before anything changes).",
           "examples": [
-            "```ts\nimport { setQuickActions } from \"denext/mobile\";\n\nawait setQuickActions([\n  { id: \"new-chat\", title: \"New chat\", subtitle: \"Start a thread\", icon: \"square.and.pencil\" },\n  { id: \"search\", title: \"Search\" },\n]);\n```"
+            "```ts\nimport { setQuickActions } from \"denext/mobile\";\n\nawait setQuickActions([\n  { id: \"new-note\", title: \"New note\", subtitle: \"Start a draft\", icon: \"square.and.pencil\" },\n  { id: \"search\", title: \"Search\" },\n]);\n```"
           ],
           "denextOnly": true
         },
@@ -24033,7 +24033,7 @@
           ],
           "returns": "The px of the page the on-screen keyboard covers.",
           "examples": [
-            "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
+            "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function InputBar() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
           ],
           "denextOnly": true
         },
@@ -24291,7 +24291,7 @@
           ],
           "returns": "",
           "examples": [
-            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useQuickAction } from \"denext/mobile\";\n\nexport function QuickActions() {\n  const router = useRouter();\n  useQuickAction((id) => router.push(id === \"search\" ? \"/search\" : \"/chat/new\"));\n  return null;\n}\n```"
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useQuickAction } from \"denext/mobile\";\n\nexport function QuickActions() {\n  const router = useRouter();\n  useQuickAction((id) => router.push(id === \"search\" ? \"/search\" : \"/notes/new\"));\n  return null;\n}\n```"
           ],
           "denextOnly": true
         },
@@ -24846,7 +24846,7 @@
           "params": [],
           "returns": "",
           "examples": [
-            "```tsx\n\"use client\";\nimport { HistoryStack, tanstackHistory, useScreenMatch } from \"denext/navigation\";\nimport { router } from \"./router.ts\";\n\nconst history = tanstackHistory(router);\nconst screens = [\n  { path: \"/\", render: () => <ThreadList />, options: { title: \"Threads\" } },\n  { path: \"/$threadId\", render: (m) => <Thread id={m.params.threadId} /> },\n  {\n    path: \"/$threadId/diff\",\n    render: (m) => <Diff id={m.params.threadId} />,\n    options: { presentation: \"formSheet\", sheetAllowedDetents: [\"medium\", \"large\"] },\n  },\n];\n\nexport function PhoneShell() {\n  return <HistoryStack history={history} screens={screens} />;\n}\n```"
+            "```tsx\n\"use client\";\nimport { HistoryStack, tanstackHistory, useScreenMatch } from \"denext/navigation\";\nimport { router } from \"./router.ts\";\n\nconst history = tanstackHistory(router);\nconst screens = [\n  { path: \"/\", render: () => <ProjectList />, options: { title: \"Projects\" } },\n  { path: \"/$projectId\", render: (m) => <Project id={m.params.projectId} /> },\n  {\n    path: \"/$projectId/settings\",\n    render: (m) => <ProjectSettings id={m.params.projectId} />,\n    options: { presentation: \"formSheet\", sheetAllowedDetents: [\"medium\", \"large\"] },\n  },\n];\n\nexport function PhoneShell() {\n  return <HistoryStack history={history} screens={screens} />;\n}\n```"
           ],
           "denextOnly": true
         },
@@ -24884,7 +24884,7 @@
           "params": [],
           "returns": "",
           "examples": [
-            "```tsx\n\"use client\";\nimport { HistoryStack, HistoryTabs, tanstackHistory } from \"denext/navigation\";\nconst history = tanstackHistory(router);\nexport function Phone() {\n  return (\n    <HistoryTabs\n      history={history}\n      tabs={[\n        { name: \"threads\", href: \"/threads\", title: \"Threads\",\n          render: () => <HistoryStack history={history} base=\"/threads\" screens={threadScreens} /> },\n        { name: \"settings\", href: \"/settings\", title: \"Settings\", render: () => <Settings /> },\n      ]}\n    />\n  );\n}\n```"
+            "```tsx\n\"use client\";\nimport { HistoryStack, HistoryTabs, tanstackHistory } from \"denext/navigation\";\nconst history = tanstackHistory(router);\nexport function Phone() {\n  return (\n    <HistoryTabs\n      history={history}\n      tabs={[\n        { name: \"projects\", href: \"/projects\", title: \"Projects\",\n          render: () => <HistoryStack history={history} base=\"/projects\" screens={projectScreens} /> },\n        { name: \"settings\", href: \"/settings\", title: \"Settings\", render: () => <Settings /> },\n      ]}\n    />\n  );\n}\n```"
           ],
           "denextOnly": true
         },
@@ -25446,7 +25446,7 @@
           "params": [],
           "returns": "",
           "examples": [
-            "```tsx\n\"use client\";\nimport { useScreenMatch } from \"denext/navigation\";\nexport function Thread() {\n  const id = useScreenMatch()?.params.threadId;\n  return <h1>Thread {id}</h1>;\n}\n```"
+            "```tsx\n\"use client\";\nimport { useScreenMatch } from \"denext/navigation\";\nexport function Project() {\n  const id = useScreenMatch()?.params.projectId;\n  return <h1>Project {id}</h1>;\n}\n```"
           ],
           "denextOnly": true
         },

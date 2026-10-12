@@ -33,7 +33,7 @@ function listen(target: EventTarget | undefined, pairs: readonly Listener[]): ()
  * stops while the device sleeps, which would under-report a phone left locked for an hour.
  * A backwards clock jump reads as `0`.
  *
- * **The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the
+ * **The intended pattern** (the rule native apps commonly use): under 10 s away, the
  * connection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume
  * the OS froze the page and its sockets, so reconnect and refetch.
  *

@@ -33,8 +33,8 @@ export interface EdgeSwipeConfig {
 /**
  * The tunables of the full-screen back swipe (a swipe that may start anywhere on the screen,
  * not only at the left edge): the axis locks only when the movement is at least 1.4 × as
- * horizontal as vertical, and a fling commits only past 72 px — the gesture rule T3 Code's
- * native app uses for its thread back swipe.
+ * horizontal as vertical, and a fling commits only past 72 px — the rule native apps commonly use
+ * for a full-screen back swipe.
  */
 export const FULL_SCREEN_SWIPE: EdgeSwipeConfig = {
   edgeWidth: Infinity,

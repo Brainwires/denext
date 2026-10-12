@@ -1,6 +1,6 @@
 /**
  * The `denext/expo/*` shim manifest: which `expo-*` package each shim stands in for, the
- * version its API was matched against (T3 Code's `apps/mobile`, Expo SDK 58), how complete
+ * version its API was matched against (a large real-world Expo app, Expo SDK 58), how complete
  * it is, and what it leaves out.
  *
  * React Native mode (`reactNative` in `denext.config.ts`) aliases every package listed here

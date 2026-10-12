@@ -62,8 +62,8 @@ export interface HistoryTabsProps extends NavigationThemeProps {
  *     <HistoryTabs
  *       history={history}
  *       tabs={[
- *         { name: "threads", href: "/threads", title: "Threads",
- *           render: () => <HistoryStack history={history} base="/threads" screens={threadScreens} /> },
+ *         { name: "projects", href: "/projects", title: "Projects",
+ *           render: () => <HistoryStack history={history} base="/projects" screens={projectScreens} /> },
  *         { name: "settings", href: "/settings", title: "Settings", render: () => <Settings /> },
  *       ]}
  *     />

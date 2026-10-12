@@ -88,7 +88,7 @@ function toShortcut(action: QuickAction) {
  * import { setQuickActions } from "denext/mobile";
  *
  * await setQuickActions([
- *   { id: "new-chat", title: "New chat", subtitle: "Start a thread", icon: "square.and.pencil" },
+ *   { id: "new-note", title: "New note", subtitle: "Start a draft", icon: "square.and.pencil" },
  *   { id: "search", title: "Search" },
  * ]);
  * ```
@@ -136,7 +136,7 @@ let fanout: Fanout<string> | undefined;
  * import { onQuickAction } from "denext/mobile";
  *
  * const stop = onQuickAction((id) => {
- *   if (id === "new-chat") location.assign("/chat/new");
+ *   if (id === "new-note") location.assign("/notes/new");
  * });
  * ```
  */
@@ -166,7 +166,7 @@ export function onQuickAction(callback: (id: string) => void): () => void {
  *
  * export function QuickActions() {
  *   const router = useRouter();
- *   useQuickAction((id) => router.push(id === "search" ? "/search" : "/chat/new"));
+ *   useQuickAction((id) => router.push(id === "search" ? "/search" : "/notes/new"));
  *   return null;
  * }
  * ```

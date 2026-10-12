@@ -9,7 +9,7 @@
  *   scroll. `itemLayoutAnimation` and `animatedProps` have no effect (items move with their
  *   measurements).
  * - `KeyboardAwareLegendList`: the list with the room after the last item that
- *   `contentInsetEndAdjustment` (a shared value: the composer's height) plus
+ *   `contentInsetEndAdjustment` (a shared value: a docked field's height) plus
  *   `contentInsetEndStaticAdjustment` describe, and the keyboard's lift: while the keyboard
  *   covers the page the list gets that much more room and its content moves up with the
  *   keyboard, as `keyboardLiftBehavior` (`"always"`, `"whenAtEnd"`, `"persistent"`, `"never"`),

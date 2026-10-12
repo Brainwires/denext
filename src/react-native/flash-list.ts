@@ -102,7 +102,7 @@ export interface FlashListMaintainVisibleContentPosition {
   readonly disabled?: boolean;
   /** Within this many px of the start when items are added there: scroll to the start. */
   readonly autoscrollToTopThreshold?: number;
-  /** Within this many px of the end when items are added: scroll to the end (chat). */
+  /** Within this many px of the end when items are added: scroll to the end (a bottom-anchored list). */
   readonly autoscrollToBottomThreshold?: number;
   /** Animate that scroll to the end. */
   readonly animateAutoScrollToBottom?: boolean;

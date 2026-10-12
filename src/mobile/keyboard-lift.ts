@@ -1,5 +1,5 @@
 /**
- * The keyboard lift of a chat scroll view, for React Native mode's
+ * The keyboard lift of a bottom-anchored scroll view, for React Native mode's
  * `react-native-keyboard-controller` (`KeyboardChatScrollView`) and `@legendapp/list/keyboard`
  * (`KeyboardAwareLegendList`): while the keyboard covers the page, the scroll view gets that much
  * room after its content, and its content moves up with the keyboard as on a phone

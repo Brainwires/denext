@@ -10,7 +10,7 @@
  * ```ts
  * import * as QuickActions from "denext/expo/quick-actions";
  *
- * await QuickActions.setItems([{ id: "new", title: "New chat", icon: "symbol:square.and.pencil" }]);
+ * await QuickActions.setItems([{ id: "new", title: "New note", icon: "symbol:square.and.pencil" }]);
  * QuickActions.addListener((action) => navigate(action.params?.href));
  * ```
  *

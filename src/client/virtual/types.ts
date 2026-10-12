@@ -173,7 +173,7 @@ export interface VirtualListOptions<T> {
   /** Scroll horizontally. */
   readonly horizontal?: boolean;
   /**
-   * `"end"` for chat: start at the end, align short content to the end, and stay pinned to
+   * `"end"` for a bottom-anchored list: start at the end, align short content to the end, and stay pinned to
    * the end while the view is there (appends, a growing last row, streaming). Default
    * `"start"`.
    */
@@ -181,10 +181,10 @@ export interface VirtualListOptions<T> {
   /**
    * With `anchor="end"`, which changes keep a view that is at the end pinned there: a data change
    * (`data`), a row's size (`items`), the scroller's size (`layout`), and the size of what follows
-   * the rows (`footer`: `ListFooterComponent`, a composer inset). Each defaults to `true`; a change
+   * the rows (`footer`: `ListFooterComponent`, a docked text field's inset). Each defaults to `true`; a change
    * whose flag is `false` keeps the visible rows in place instead (LegendList's
-   * `maintainScrollAtEnd.on`). `{ footer: false }` keeps a chat's messages still while its
-   * composer grows. With all four `false` the list still opens at the end: its first row sizes
+   * `maintainScrollAtEnd.on`). `{ footer: false }` keeps the visible rows still while a text
+   * field in the footer grows. With all four `false` the list still opens at the end: its first row sizes
    * and viewport size land there, until the first data change or scroll away from the end.
    */
   readonly pinEndOn?: {
@@ -226,7 +226,7 @@ export interface VirtualListOptions<T> {
   readonly onEndReached?: () => void;
   /** Distance from the end, in viewports, that fires `onEndReached`. Default 0.5. */
   readonly onEndReachedThreshold?: number;
-  /** Like `onEndReached`, at the start (older history in a chat). */
+  /** Like `onEndReached`, at the start (older rows in a bottom-anchored list). */
   readonly onStartReached?: () => void;
   /** Distance from the start, in viewports, that fires `onStartReached`. Default 0.5. */
   readonly onStartReachedThreshold?: number;
@@ -395,8 +395,8 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
    * Px of the list's viewport covered by the on-screen keyboard: `useKeyboardInset()` from
    * `denext/mobile`, which is the covered part in every Capacitor resize mode (not
    * `useKeyboard().height`, the whole keyboard even once the shell has resized the app). The
-   * list adds that much room after the last row, and a list at its end (`anchor="end"`, a chat)
-   * stays at its end — the last message above the keyboard, with one adjustment.
+   * list adds that much room after the last row, and a list at its end (`anchor="end"`)
+   * stays at its end — the last row above the keyboard, with one adjustment.
    */
   readonly keyboardInset?: number;
   /**

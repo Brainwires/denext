@@ -166,7 +166,7 @@ a `denext/expo/*` shim over `denext/mobile`, expo-router and React Navigation on
 → [React Native / Expo](https://denext.dev/docs/react-native) ·
 [denext vs React Native](https://denext.dev/docs/vs-react-native)
 
-**Native-feel UI.** `VirtualList` renders ten-million-row lists with exact `scrollToIndex`, chat
+**Native-feel UI.** `VirtualList` renders ten-million-row lists with exact `scrollToIndex`, bottom
 anchoring and intact iOS momentum; `denext/navigation` keeps pushed screens mounted with platform
 transitions, the iOS swipe back, state-keeping tabs and bottom sheets. →
 [Lists](https://denext.dev/docs/lists) ·

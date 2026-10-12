@@ -1,4 +1,4 @@
-// Keyboard: a 2,000-message chat on VirtualList anchor="end" with its composer in
+// Keyboard: a 2,000-row bottom-anchored list on VirtualList anchor="end" with a text field in
 // KeyboardStickyView, a live useKeyboard() readout, and a form in KeyboardAvoidingView.
 import { type Ref, useRef, useState, VirtualList, type VirtualListHandle } from "denext";
 import {
@@ -47,7 +47,7 @@ export function Bubble({ m }: { m: Message }) {
   );
 }
 
-/** The chat thread: newest at the bottom, stays pinned there as messages arrive. */
+/** The bottom-anchored list: newest at the bottom, stays pinned there as rows arrive. */
 export function ChatList(
   { messages, listRef }: {
     messages: Message[];
@@ -85,7 +85,7 @@ export function KeyboardScreen() {
       fill
       insetBottom={false}
       title="Keyboard"
-      todo="Tap the composer: it rides on top of the keyboard, the readout shows visible: true and a height > 0, and the list stays pinned to the newest message. Send a message: it appears at the bottom. Fling up through history: momentum never stops mid-fling. 'Form' opens the KeyboardAvoidingView form."
+      todo="Tap the text field: it rides on top of the keyboard, the readout shows visible: true and a height > 0, and the list stays pinned to the newest message. Send a message: it appears at the bottom. Fling up through history: momentum never stops mid-fling. 'Form' opens the KeyboardAvoidingView form."
     >
       <div class="kb-readout btn-row" data-selftest="kb-readout">
         useKeyboard(): visible <strong>{String(kb.visible)}</strong> · height{" "}

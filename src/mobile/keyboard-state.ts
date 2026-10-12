@@ -231,7 +231,7 @@ export async function hideKeyboard(): Promise<void> {
  * @example
  * ```ts
  * import { setKeyboardResizeMode } from "denext/mobile";
- * // Let the keyboard cover the page; <KeyboardStickyView> lifts the composer itself.
+ * // Let the keyboard cover the page; <KeyboardStickyView> lifts the docked field itself.
  * await setKeyboardResizeMode("none");
  * ```
  */

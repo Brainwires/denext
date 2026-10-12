@@ -81,7 +81,7 @@ export interface EngineOptions {
   readonly overscan?: number;
   /** Keep the visible items in place on changes above them (default: only with RN's prop). */
   readonly mvcp?: boolean;
-  /** Start at the (visual) end and bottom-align short content, as a chat does. */
+  /** Start at the (visual) end and bottom-align short content, as a bottom-anchored list does. */
   readonly anchorEnd?: boolean;
   /** Px from the data start within which an insertion there scrolls to it. */
   readonly autoscrollStart?: number;

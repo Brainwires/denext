@@ -172,8 +172,8 @@ export default function AppShell(props: { placeholder: string }) {
   return (
     <main className="layout">
       <header className="bar">My App</header>
-      <textarea className="composer" placeholder={props.placeholder}
-        data-denext-shell-key="composer" />
+      <textarea className="draft" placeholder={props.placeholder}
+        data-denext-shell-key="draft" />
     </main>
   );
 }`}
@@ -200,7 +200,7 @@ export default function AppShell(props: { placeholder: string }) {
 
 const editor = new Editor({
   onCreate({ editor }) {
-    const typed = consumeShellHandoff("composer"); // { text, selectionStart, selectionEnd, focused, scrollTop }
+    const typed = consumeShellHandoff("draft"); // { text, selectionStart, selectionEnd, focused, scrollTop }
     if (typed) editor.commands.setContent(typed.text);
     shellReady().then(() => {
       if (typed?.focused) editor.commands.focus(typed.selectionStart + 1);

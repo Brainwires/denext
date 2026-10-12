@@ -20,7 +20,7 @@
  *   the scale offset: small scrolls stay 1:1, a large jump (scrollbar drag) re-maps linearly,
  *   and settling re-syncs `s` to the linear mapping so both ends stay reachable;
  * - server rendering and the first client render place the initial window at physical 0
- *   (`delta = v`), so an `initialScrollIndex` or a chat list starting at the bottom paints its
+ *   (`delta = v`), so an `initialScrollIndex` or a bottom-anchored list starting at the end paints its
  *   target rows before any script runs, and hydration reconciles without a visible move.
  *
  * @module
@@ -57,7 +57,7 @@ export interface CoreConfig {
   readonly defaultSize: number;
   /** Base overscan in px (default: one viewport). */
   readonly overscan?: number;
-  /** `"end"` sticks to the end while the view is at the end (chat). */
+  /** `"end"` sticks to the end while the view is at the end (a bottom-anchored list). */
   readonly anchor: "start" | "end";
   /**
    * Keep the visible rows in place when data above them changes (inserts, removals). Size
@@ -768,7 +768,7 @@ export class VirtualCore {
 
   /**
    * The range `updateRange` would render now (hysteresis + velocity-scaled overscan), at most
-   * `maxRows` rows from the viewport's leading row (its trailing row at the end of a chat).
+   * `maxRows` rows from the viewport's leading row (its trailing row at the end of a bottom-anchored list).
    */
   #nextRange(): RowRange {
     const base = this.#cfg.overscan ?? Math.max(this.vp, 1);

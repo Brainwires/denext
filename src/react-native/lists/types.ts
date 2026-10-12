@@ -195,7 +195,7 @@ export interface ListScrollProps {
   readonly onLayout?: (event: LayoutEvent) => void;
   /**
    * Called with the scrollable content's width and height on mount and whenever it changes (an
-   * item measured, added or removed): the usual cue to scroll a chat to its end.
+   * item measured, added or removed): the usual cue to scroll a bottom-anchored list to its end.
    */
   readonly onContentSizeChange?: (width: number, height: number) => void;
 }

@@ -1934,13 +1934,13 @@ async function resolveInPackageDirBrowser(
 }
 
 /**
- * Resolve a bare `spec` (`effect`, `effect/Array`, `@t3tools/shared/devProxy`) to a
+ * Resolve a bare `spec` (`effect`, `effect/Array`, `@acme/shared/devProxy`) to a
  * concrete file by walking up `node_modules` from `fromDir` — the standard node
  * algorithm, which handles both hoisted deps (`apps/web/node_modules/<pkg>`) and
  * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
  * Honors the package's `exports` map (else `module`/`main`/`index`). Also resolves Node's
  * **package self-reference**: a module inside a package importing its OWN package by name
- * (`@t3tools/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
+ * (`@acme/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
  * through that package's `exports` — pnpm links a workspace package into its consumers'
  * `node_modules`, never into its own, so the walk alone can't find it.
  * `platformExtensions` are probed ahead of the default extensions for a package subpath.

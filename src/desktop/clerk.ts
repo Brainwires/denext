@@ -10,7 +10,7 @@
  *   - `tokenCache.{getToken,saveToken,clearToken}` keep Clerk's client JWT in the OS keychain (the
  *     `secure-store` capability), under a per-app key prefix (the keychain service is already
  *     the app's identifier);
- *   - `oauthTransport.getRedirectUrl()` is the page origin plus `/` (`t3code://app/`), exactly what
+ *   - `oauthTransport.getRedirectUrl()` is the page origin plus `/` (`myapp://app/`), exactly what
  *     `@clerk/electron`'s main process returns for `createClerkBridge({ renderer: { scheme, host }
  *     })`, plus a per-flow `?denext_nonce=…` on Windows and Linux (see below);
  *     `oauthTransport.open(url)` opens the provider in the system browser and resolves
@@ -110,7 +110,7 @@ export interface ClerkDesktopBridgeOptions {
   readonly passkeys?: boolean;
   /**
    * The OAuth redirect URL: default the page origin plus `/` (`desktop.app.origin`, e.g.
-   * `t3code://app/`). Its scheme must be in `desktop.app.deepLinks`, and the URL in the Clerk
+   * `myapp://app/`). Its scheme must be in `desktop.app.deepLinks`, and the URL in the Clerk
    * instance's allowed redirect URLs.
    */
   readonly redirectUrl?: string;
@@ -522,7 +522,7 @@ function passkeyBridge(
  * the app's `desktop.preload`, so the globals exist before the page's Clerk code reads them.
  * Outside a Deno Desktop window it installs nothing.
  *
- * Needs `desktop.app.origin` (a custom-scheme page origin, e.g. `t3code://app`) whose scheme is in
+ * Needs `desktop.app.origin` (a custom-scheme page origin, e.g. `myapp://app`) whose scheme is in
  * `desktop.app.deepLinks`, the `secure-store` and `auth-session` capabilities (and `passkeys` for
  * native passkeys), and denext's pinned runtime.
  *
@@ -546,7 +546,7 @@ export function installClerkDesktopBridge(
     if (url === undefined) {
       throw new Error(
         "denext/desktop/clerk: Clerk's native OAuth needs a custom page origin " +
-          "(desktop.app.origin, e.g. t3code://app) or a redirectUrl option",
+          "(desktop.app.origin, e.g. myapp://app) or a redirectUrl option",
       );
     }
     return url;

@@ -81,12 +81,12 @@ motion and keep long lists virtualized; there is no second thread for worklets. 
 mode, Reanimated's `transform` / `opacity` animations are moved to the compositor for you
 ([details](/docs/react-native#animations-on-the-compositor)).
 
-**Performance expectations.** On iOS, WKWebView holds up well for the app denext's mobile work
-is measured against (T3 Code's web UI), and on an iPhone `VirtualList` lands `scrollToIndex`
+**Performance expectations.** On iOS, WKWebView holds up well for the large real-world app denext's
+mobile work is measured against, and on an iPhone `VirtualList` lands `scrollToIndex`
 exactly on a 100,000-row list and flings without blank frames. A migrated Expo SDK 57 app
 has run in React Native mode on an iPhone too
 ([`examples/expo-app`](https://github.com/Brainwires/denext/tree/main/examples/expo-app)).
-On Android only an emulator has been measured so far: the Capacitor build of T3 Code started
+On Android only an emulator has been measured so far: the Capacitor build of that app started
 in less than half the time of its React Native build and used less memory, but scrolled a long
 list clearly worse. The emulator composites on a weak host GPU, which costs a WebView more than native views, so this is not settled until a
 real-device run. The numbers are in

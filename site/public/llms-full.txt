@@ -102,7 +102,7 @@ A SPA can paint and take typing before its bundle runs: `spa.shell: { component:
 "./src/AppShell.tsx", props?, bootScript?, platforms?, readyOn?, maxHoldMs? }` server-renders that
 pure component (same markup and classes as the app's first screen; `AppShell.desktop.tsx` etc. per
 target) into `#root` at build/export/dev, replacing `spa.loading`. Mark fields
-`data-denext-shell-key="composer"`; the app renders off-screen and swaps in on its first settled
+`data-denext-shell-key="draft"`; the app renders off-screen and swaps in on its first settled
 commit (or `shellReady()` from `denext` with `readyOn: "shellReady"`), and a keyed
 `<input>`/`<textarea>` gets the typed text, caret and focus; an editor takes it with
 `useShellHandoff(key)` / `consumeShellHandoff(key)`.
@@ -436,8 +436,8 @@ only the app's own modules take a variant; keep a plain file so type checking re
 Docs: https://denext.dev/docs/platform-files
 
 **A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
-10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
-`onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
+10M rows, exact `scrollToIndex`, `anchor="end"` for bottom-anchored lists, sticky headers,
+grids, `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
 `denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
 makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Swipe actions:
 `<SwipeableRow leading={[…]} trailing={[{ label, tone, onPress }]}>` from `denext` (transform-only,
@@ -2372,7 +2372,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface IdTokenSession<User>` — The session half signInNative drives: nativeSession(...) from denext.
 - `type ImageSource = camera | photos | prompt` — Where pickImage gets the picture: "camera" (take one), "photos" (the photo library) or "prompt" (ask the user which; the default).
 - `initCrashReporting(opts: CrashReportingOptions): Promise<CrashReportingStarted>` — Start crash reporting once: load the SDKs, work out the release (the OTA UI version), and call Sentry.init(options, sibling.init). Later calls return the first call's result. Call it as early as possible, before the app renders.
-- `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
+- `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the px of the page the on-screen keyboard covers, so layout can lift a docked text field or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
 - `installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void` — Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.
 - `installOfflineScreen(opts?: OfflineScreenOptions): () => void` — Show a full-screen offline notice whenever the device loses its connection. Idempotent per page: a second call replaces the first. A no-op without a DOM (SSR, workers).
 - `isBackgroundLocationAvailable(): boolean` — Whether background location is available here: the shell has the BackgroundGeolocation plugin (denext mobile add background-location). When false, watchPositionInBackground watches in the foreground only.
@@ -2386,7 +2386,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface KeyboardInsetOptions` — Options for installKeyboardInset and useKeyboardInset.
 - `type KeyboardResizeMode = native | body | ionic | none` — How @capacitor/keyboard resizes the app when the keyboard shows (iOS only): the whole WebView ("native", the plugin's default), only <body>, only ion-app, or nothing ("none": the keyboard covers the page, and KeyboardAvoidingView lifts it).
 - `interface KeyboardState` — The keyboard as useKeyboard and onKeyboardChange report it.
-- `KeyboardStickyView(props: KeyboardStickyViewProps): VNode` — A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is the composer of a chat screen: see the chat-composer recipe on /docs/mobile.
+- `KeyboardStickyView(props: KeyboardStickyViewProps): VNode` — A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is a text field docked above the keyboard: see the text-field recipe on /docs/mobile.
 - `interface KeyboardStickyViewProps` — Props of KeyboardStickyView; any other prop goes to its <div>.
 - `type KeyboardViewStyle = Readonly<Record<string, string | number | undefined>>` — An inline style object, as the views accept and extend it.
 - `type KeyValueBackend = native | sqlite | desktop | indexeddb | memory` — Where a KeyValueStore keeps its data: "native" (the DenextStorage plugin), "sqlite" (@capacitor-community/sqlite in the shell), "desktop" (the Deno Desktop runtime's SQLite), "indexeddb" (the browser's; evictable inside a native shell) or "memory" (gone when the page closes).

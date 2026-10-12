@@ -229,17 +229,17 @@ import { router } from "./router.ts";
 
 const history = tanstackHistory(router); // once, at module scope
 
-function Thread() {
-  const id = useScreenMatch()!.params.threadId; // this screen's own location
-  return <ThreadView id={id} />;
+function Project() {
+  const id = useScreenMatch()!.params.projectId; // this screen's own location
+  return <ProjectView id={id} />;
 }
 
 const screens = [
-  { path: "/", render: () => <ThreadList />, options: { title: "Threads" } },
-  { path: "/$threadId", render: () => <Thread />, options: { headerShown: true } },
+  { path: "/", render: () => <ProjectList />, options: { title: "Projects" } },
+  { path: "/$projectId", render: () => <Project />, options: { headerShown: true } },
   {
-    path: "/$threadId/diff",
-    render: (m) => <Diff threadId={m.params.threadId} />,
+    path: "/$projectId/settings",
+    render: (m) => <ProjectSettings projectId={m.params.projectId} />,
     options: { presentation: "formSheet", sheetAllowedDetents: ["medium", "large"] },
   },
 ];

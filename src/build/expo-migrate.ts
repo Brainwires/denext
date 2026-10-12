@@ -883,7 +883,7 @@ function extraNodeModuleNames(ast: Node): string[] {
 
 // --- generated files ----------------------------------------------------------------------
 
-/** A reverse-DNS id segment from free text (`"T3 Code"` → `"t3code"`). */
+/** A reverse-DNS id segment from free text (`"My App"` → `"myapp"`). */
 function idSegment(text: string): string {
   const s = text.toLowerCase().replace(/[^a-z0-9]/g, "");
   return /^[a-z]/.test(s) ? s : `app${s}`;

@@ -5,7 +5,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Lists & scrolling",
   description:
-    "VirtualList and useVirtualList: 10M-row lists, chat anchoring, sticky sections, grids, masonry, tables, reorder, pull-to-refresh, viewability, SSR and iOS-momentum-safe scrolling.",
+    "VirtualList and useVirtualList: 10M-row lists, bottom anchoring, sticky sections, grids, masonry, tables, reorder, pull-to-refresh, viewability, SSR and iOS-momentum-safe scrolling.",
 };
 
 export default async function Lists() {

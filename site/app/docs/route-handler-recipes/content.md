@@ -118,7 +118,7 @@ the client's disconnect upstream with an `AbortController` so a closed tab stops
 the paid tokens.
 
 ```ts
-// app/api/chat/route.ts
+// app/api/complete/route.ts
 export async function POST(request: Request): Promise<Response> {
   const { prompt } = await request.json();
   const upstream = new AbortController();

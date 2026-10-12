@@ -109,7 +109,7 @@ function dialogInput(type: AlertType): DialogInput {
  * ```ts
  * import { Alert } from "react-native";
  *
- * Alert.alert("Delete thread?", "This cannot be undone.", [
+ * Alert.alert("Delete note?", "This cannot be undone.", [
  *   { text: "Cancel", style: "cancel" },
  *   { text: "Delete", style: "destructive", onPress: () => remove(id) },
  * ]);

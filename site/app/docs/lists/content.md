@@ -1,7 +1,7 @@
 ---
 title: Lists & scrolling
 slug: lists
-lead: VirtualList and useVirtualList render only the rows near the viewport, so a list of 10 million rows scrolls like one of 100. Rows are measured as they render, the view never jumps when content above it changes, chat lists start at the bottom and stay there, and iOS momentum scrolling is never interrupted.
+lead: VirtualList and useVirtualList render only the rows near the viewport, so a list of 10 million rows scrolls like one of 100. Rows are measured as they render, the view never jumps when content above it changes, bottom-anchored lists start at the end and stay there, and iOS momentum scrolling is never interrupted.
 ---
 
 ## When to use it
@@ -15,7 +15,7 @@ Use `VirtualList` when any of these is true:
 
 - the list can grow to thousands of rows (a feed, a log, a table, search results);
 - rows are expensive to render (rich text, images, embeds);
-- it is a chat or a timeline that loads history as you scroll up;
+- it is anchored to its end and loads older rows as you scroll up (messages, logs, activity feeds);
 - the rows scroll inside a Capacitor app on a phone.
 
 `VirtualList` renders only the rows in and near the viewport. Everything below comes from
@@ -52,7 +52,7 @@ On a server-rendered page, a list whose rows are plain HTML costs no JavaScript,
 find-in-page, search engines, screen readers, text selection and printing all see every row. A
 `VirtualList` renders a window, so none of that reaches the rows outside it. The scroll
 benchmark's server-rendered app (`examples/scroll-bench/ssr`) measures where one stops paying
-off. Both kinds of row were measured: 56 px contact rows, and chat messages of 20–2000 px with
+off. Both kinds of row were measured: 56 px contact rows, and rich rows of 20–2000 px with
 prose and code. Each list was loaded cold in headless Chromium, 3 runs per cell. Desktop is
 1280×800 with no throttling. Mobile is 412×915 with 4× CPU throttling and a 9 Mbps, 60 ms
 network.
@@ -63,8 +63,8 @@ Time to interactive (ms), desktop / mobile:
 | ------------------------------------- | --------- | ---------- | ---------- | ----------- | ------------ |
 | HTML + `content-visibility`, 56 px    | 90 / 235  | 136 / 304  | 339 / 712  | 861 / 1265  | 3078 / 7929  |
 | `VirtualList` island, 56 px           | 111 / 717 | 102 / 657  | 114 / 643  | 110 / 862   | 124 / 662    |
-| HTML + `content-visibility`, chat     | 210 / 319 | 336 / 633  | 821 / 1576 | 1542 / 3065 | 7073 / 15611 |
-| `VirtualList` island, chat            | 103 / 666 | 95 / 652   | 96 / 651   | 94 / 647    | 100 / 629    |
+| HTML + `content-visibility`, rich     | 210 / 319 | 336 / 633  | 821 / 1576 | 1542 / 3065 | 7073 / 15611 |
+| `VirtualList` island, rich            | 103 / 666 | 95 / 652   | 96 / 651   | 94 / 647    | 100 / 629    |
 | HTML + a `client:load` island per row | 249 / 877 | 372 / 1217 | 811 / 2424 | 1428 / 4477 | 6979 / 24783 |
 
 Measured 2026-09-27 on denext 2.10 and Chromium 125, on an AMD EPYC-Milan Linux VM (8 vCPU,
@@ -88,7 +88,7 @@ What the numbers say:
   about 100 ms on desktop and 650 ms on mobile, at any size. HTML grows with every row: at
   10,000 56 px rows it takes 1.3 s on mobile and 145 MB of renderer memory (the island takes
   103 MB), and a fling runs at 67 ms frames on desktop. At 50,000 it takes 8–16 s on mobile.
-- **Keep `content-visibility: auto` on large HTML lists.** Without it, 10,000 chat messages
+- **Keep `content-visibility: auto` on large HTML lists.** Without it, 10,000 rich rows
   take 9.6 s to become interactive on mobile instead of 3.1 s, and 425 MB of memory instead of
   162 MB.
 
@@ -160,7 +160,7 @@ Layout and position:
 | Prop                                                             | Default      | What it does                                                                                                                                        |
 | ---------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `horizontal`                                                     | `false`      | Scroll along x. Right-to-left pages are handled.                                                                                                    |
-| `anchor`                                                         | `"start"`    | `"end"` for chat: start at the end, bottom-align short content, stay pinned there.                                                                  |
+| `anchor`                                                         | `"start"`    | `"end"` for a bottom-anchored list: start at the end, bottom-align short content, stay pinned there.                                                |
 | `maintainVisibleContentPosition`                                 | `true`       | Keep the visible rows still when rows are added or removed above them. See below.                                                                   |
 | `initialScrollIndex` / `initialScrollAlign`                      |              | The row shown first, with no flash of row 0 (also on the server).                                                                                   |
 | `overscan`                                                       | one viewport | Px rendered beyond the viewport on each side. The side you scroll toward grows with speed.                                                          |
@@ -180,23 +180,23 @@ never moves the view with either setting, and `scrollToIndex` lands exactly eith
 
 Slots and styles (React Native's names):
 
-| Prop                                                              | What it does                                                         |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `ListHeaderComponent` / `ListFooterComponent`                     | Before and after the rows (a component or an element).               |
-| `ListHeaderComponentStyle` / `ListFooterComponentStyle`           | Style of their wrappers.                                             |
-| `ListEmptyComponent`                                              | Shown when there are no rows. It fills the viewport.                 |
-| `ItemSeparatorComponent`                                          | Between rows.                                                        |
-| `contentContainerStyle` / `contentContainerClass`                 | The element around the header, rows and footer: padding, `flexGrow`. |
-| `class` / `className`, `style`                                    | The outer element. Give it a height when the list scrolls itself.    |
-| `refreshControl`, `refreshing`, `onRefresh`, `progressViewOffset` | [Pull-to-refresh](#pull-to-refresh).                                 |
-| `keyboardInset`                                                   | Px of the list covered by the on-screen keyboard ([chat](#chat)).    |
+| Prop                                                              | What it does                                                                                        |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `ListHeaderComponent` / `ListFooterComponent`                     | Before and after the rows (a component or an element).                                              |
+| `ListHeaderComponentStyle` / `ListFooterComponentStyle`           | Style of their wrappers.                                                                            |
+| `ListEmptyComponent`                                              | Shown when there are no rows. It fills the viewport.                                                |
+| `ItemSeparatorComponent`                                          | Between rows.                                                                                       |
+| `contentContainerStyle` / `contentContainerClass`                 | The element around the header, rows and footer: padding, `flexGrow`.                                |
+| `class` / `className`, `style`                                    | The outer element. Give it a height when the list scrolls itself.                                   |
+| `refreshControl`, `refreshing`, `onRefresh`, `progressViewOffset` | [Pull-to-refresh](#pull-to-refresh).                                                                |
+| `keyboardInset`                                                   | Px of the list covered by the on-screen keyboard ([bottom-anchored lists](#bottom-anchored-lists)). |
 
 Callbacks:
 
 | Prop                                                                                      | What it does                                                                                                        |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `onEndReached` / `onEndReachedThreshold`                                                  | Load more at the end ([semantics](#infinite-loading)). Threshold in viewports, default 0.5.                         |
-| `onStartReached` / `onStartReachedThreshold`                                              | The same at the start (chat history).                                                                               |
+| `onStartReached` / `onStartReachedThreshold`                                              | The same at the start (older rows).                                                                                 |
 | `onRangeChange(first, last)`                                                              | The visible rows changed.                                                                                           |
 | `onViewableItemsChanged`, `viewabilityConfig`, `viewabilityConfigCallbackPairs`           | React Native's viewability, with its token shape.                                                                   |
 | `onScroll`, `scrollEventThrottle`                                                         | React Native's scroll event (`nativeEvent.contentOffset`, `contentSize`, `layoutMeasurement`), plus `programmatic`. |
@@ -288,36 +288,37 @@ keys, a text selection's ends). Each has its own `offset`, so they need no speci
 
 ## Recipes
 
-### Chat
+### Bottom-anchored lists
 
-`anchor="end"` is the whole chat behaviour:
+A list that starts at its newest row and grows at the end (messages, logs, activity feeds)
+needs only `anchor="end"`:
 
-- the list starts at the newest message, already there in the server-rendered HTML;
-- a short conversation sits at the bottom of the viewport;
-- while you are at the bottom, new messages and a streaming last message keep it pinned;
-- scrolled up, nothing moves when messages arrive;
-- `onStartReached` loads older messages, and prepending them does not move the view, even
+- the list starts at the newest row, already there in the server-rendered HTML;
+- a short list sits at the bottom of the viewport;
+- while you are at the bottom, new rows and a streaming last row keep it pinned;
+- scrolled up, nothing moves when rows arrive;
+- `onStartReached` loads older rows, and prepending them does not move the view, even
   when they are much taller than estimated.
 - `pinEndOn` picks which changes keep it pinned (`data`, `items`, `layout`, `footer`; all by
-  default). `pinEndOn={{ footer: false }}` leaves the visible messages where they are while a
-  composer in the footer grows.
+  default). `pinEndOn={{ footer: false }}` leaves the visible rows where they are while a
+  text field in the footer grows.
 
 ```tsx
 "use client";
 import { useKeyboardInset } from "denext/mobile";
 import { VirtualList } from "denext";
 
-export function Thread({ messages, loadOlder }: Props) {
+export function Feed({ entries, loadOlder }: Props) {
   const keyboardInset = useKeyboardInset(); // px of the page the keyboard covers
   return (
     <VirtualList
       style={{ height: "100%" }}
-      data={messages}
-      keyExtractor={(m) => m.id}
+      data={entries}
+      keyExtractor={(e) => e.id}
       anchor="end"
       onStartReached={loadOlder}
       keyboardInset={keyboardInset}
-      renderItem={(m) => <Message message={m} />}
+      renderItem={(e) => <Entry entry={e} />}
     />
   );
 }
@@ -327,15 +328,15 @@ There is no `inverted` transform. The data stays in natural order, so the wheel,
 scrollbar, keyboard scrolling and copy-paste all go the right way.
 
 **The keyboard.** `keyboardInset` is the part of the list the keyboard covers. The list makes
-that much room after the last row, and a list at its end stays at its end, so the last message
+that much room after the last row, and a list at its end stays at its end, so the last row
 sits right above the keyboard after one adjustment. When the viewport itself shrinks (the
 WebView resizing around the keyboard), a pinned list stays pinned too. Pass
 `useKeyboardInset()` from `denext/mobile`: it is the covered part in every setup. In the iOS
 Capacitor shell the Keyboard plugin's `resize: "native"` (the default), `"body"` and `"ionic"`
 modes resize the app only after the keyboard has finished sliding in (its 250 ms animation
 plus 200 ms). Until then the keyboard covers the page, so the inset is the keyboard's height
-and the last message rises with it; when the resize lands the inset drops to 0 as the viewport
-shrinks by the same amount, and the message does not move. With `resize: "none"` the inset
+and the last row rises with it; when the resize lands the inset drops to 0 as the viewport
+shrinks by the same amount, and the row does not move. With `resize: "none"` the inset
 stays the keyboard's height. Don't pass `useKeyboard().height`: that is the keyboard's whole
 height even after the shell has resized the app, so the room would be added twice. The list
 never imports `denext/mobile` itself, so an app that does not use it pays nothing.
@@ -631,7 +632,7 @@ swipe that runs a side's first action.
 import { SwipeableRow, VirtualList } from "denext";
 
 <VirtualList
-  data={threads}
+  data={mail}
   renderItem={(item) => (
     <SwipeableRow
       leading={[{ label: "Unread", tone: "accent", onPress: () => markUnread(item.id) }]}
@@ -640,7 +641,7 @@ import { SwipeableRow, VirtualList } from "denext";
         { label: "Mute", onPress: () => mute(item.id) },
       ]}
     >
-      <ThreadRow thread={item} />
+      <MailRow mail={item} />
     </SwipeableRow>
   )}
 />;
@@ -731,7 +732,7 @@ The list saves the row at the top, its offset, and the sizes around it when it u
 the page is hidden. It restores that view when it mounts again for the same history entry:
 back and forward (through denext's router, or a reload), or a remount on the same page. A new
 navigation to the page starts at the top. The snapshot is keyed by the history entry and the
-`restoreKey`, and lives in `sessionStorage`. A chat that was at its end comes back at its new
+`restoreKey`, and lives in `sessionStorage`. A list that was at its end comes back at its new
 end.
 
 You don't need `restoreKey` for development. An edit normally updates the list in place, so it
@@ -818,10 +819,10 @@ changes:
 - `@legendapp/list/reanimated` and `@legendapp/list/keyboard`, which wrap LegendList's native
   scroll view: `AnimatedLegendList` is the list with `sharedValues` kept current
   (`itemLayoutAnimation` and `animatedProps` have no effect), and `KeyboardAwareLegendList` the
-  list with room after the last item for the composer (`contentInsetEndAdjustment`, a shared
-  value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`). While the
-  keyboard covers the page the list gets that much more room (minus `keyboardOffset`) and its
-  content moves up with the keyboard as on a phone: `keyboardLiftBehavior` `"always"` (the
+  list with room after the last item for a field docked below it (`contentInsetEndAdjustment`,
+  a shared value from `useKeyboardChatComposerInset`, plus `contentInsetEndStaticAdjustment`).
+  While the keyboard covers the page the list gets that much more room (minus `keyboardOffset`)
+  and its content moves up with the keyboard as on a phone: `keyboardLiftBehavior` `"always"` (the
   default) lifts it and drops it back, `"whenAtEnd"` only when the last item was in view,
   `"persistent"` stays lifted when the keyboard hides, and `"never"` only adds the room; `freeze`
   pauses it. Where the WebView resizes around the keyboard nothing covers the page, so nothing
@@ -946,12 +947,12 @@ build adds over the React Native one:
   and `refScrollView` give the scroll element itself.
 - `contentInsetEndAdjustment` and the end of `contentInset` add room after the last item.
 
-Chat lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
+Bottom-anchored lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
 `maintainScrollAtEnd` (with `maintainScrollAtEndThreshold` and its `{ animated }` form) follows
 new items and size changes while the view is at the end (its `on` keys pick which, as in
 LegendList: `dataChange`, `itemLayout`, `layout`, `footerLayout`; given `on`, only the keys set
 to `true` keep the end pinned), `alignItemsAtEnd` bottom-aligns a
-short conversation, and `anchoredEndSpace` keeps a sent message at the top while the reply
+short list, and `anchoredEndSpace` keeps a newly added item at the top while the next one
 streams in. The ref's `scrollToEnd`, `scrollToIndex`, `scrollToOffset`, `scrollToItem` and
 `scrollIndexIntoView` return promises, and `getState()` reports the scroll position, the
 visible range and each item's position and size. Its `listen` calls back with `totalSize`,

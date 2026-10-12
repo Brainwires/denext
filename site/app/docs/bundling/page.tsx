@@ -172,8 +172,8 @@ export default {
         startup graph and a lazily loaded route import different names from one barrel, esbuild
         places every module the barrel re-exports in a chunk the startup graph loads, the lazy
         route&apos;s modules included. Rewritten imports keep each module with the code that uses it
-        (T3 Code with its list removed: boot JS 1.53 MB → 1.24 MB gzip with the ESM-entry fix above,
-        the same bytes as with the list).
+        (a large real-world app with its list removed: boot JS 1.53 MB → 1.24 MB gzip with the
+        ESM-entry fix above, the same bytes as with the list).
       </p>
       <p>
         The automatic path is narrower than a listed package: the barrel must be the file the build

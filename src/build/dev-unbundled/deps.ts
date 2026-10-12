@@ -219,7 +219,7 @@ function npmBundleCurrent(st: UnbundledState): boolean {
  * compat: crawl the app's import graph from `roots` (the SPA entry, a route's modules, the
  * Flight islands) before the npm bundle builds, so the first build already holds every package
  * the page will import. Without it each module request found a few packages at a time and every
- * find rebuilt the bundle and reloaded the page: T3 Code's graph never finished loading. The
+ * find rebuilt the bundle and reloaded the page: a large app's graph never finished loading. The
  * crawl runs in the background; {@link ensureNpmBundle} waits for it. Each root is crawled once.
  */
 export function prewarmNpmBundle(st: UnbundledState, roots: readonly string[]): void {

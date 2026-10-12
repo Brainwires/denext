@@ -106,8 +106,8 @@ export interface MaintainScrollAtEndOptions {
    * Which changes keep a list at its end pinned there: new data (`dataChange`), an item's size
    * (`itemLayout`), the list's size (`layout`) and the footer's (`footerLayout`). Omitted, all
    * do; given, only the keys set to `true` (LegendList's rule), and any other change keeps the
-   * visible items in place (`footerLayout: false`: a chat's composer growing leaves the messages
-   * where they are).
+   * visible items in place (`footerLayout: false`: a text field in the footer growing leaves the
+   * visible items where they are).
    */
   readonly on?: {
     readonly dataChange?: boolean;
@@ -146,12 +146,12 @@ export interface LegendListProps<T>
   readonly renderItem?: (props: LegendListRenderItemProps<T>) => VNodeChild;
   /** Children mode: each child is an item. */
   readonly children?: VNodeChild | VNodeChild[];
-  /** Bottom-align short content (a chat). */
+  /** Bottom-align short content (a bottom-anchored list). */
   readonly alignItemsAtEnd?: boolean;
   /**
    * Keep item `anchorIndex` at the viewport's start (plus `anchorOffset`) by adding room after
-   * the last item while the items from the anchor on are shorter than the viewport: a sent chat
-   * message stays at the top while the reply streams in below it. The room is the viewport
+   * the last item while the items from the anchor on are shorter than the viewport: a newly added
+   * item stays at the top while the next one streams in below it. The room is the viewport
    * minus the anchor's and the following items' sizes (the anchor's capped at
    * `anchorMaxSize`), the footer and the content's end padding; `onSizeChanged` reports it and
    * `onReady` fires once every item from the anchor on has a known size. Those items stay
@@ -386,7 +386,7 @@ export interface LegendListRef {
   /** The list's state now. */
   getState(): LegendListState;
   /**
-   * Set content insets measured outside the list (a composer over its end), merged over
+   * Set content insets measured outside the list (a text field docked over its end), merged over
    * `contentInset`; `null` clears them. The end one is room after the last item.
    */
   reportContentInset(inset?: Record<string, number> | null): void;
@@ -530,7 +530,7 @@ function keptRows(
 
 /**
  * LegendList's default `drawDistance`: px rendered beyond the viewport. The engine's own default
- * is a whole viewport each side, which renders a chat opened at the end with half again as many
+ * is a whole viewport each side, which renders a list opened at its end with half again as many
  * rows as LegendList does.
  */
 const DRAW_DISTANCE = 250;

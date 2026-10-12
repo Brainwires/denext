@@ -136,7 +136,7 @@ export interface ShellKeyboardReport {
  * is the will-show height less how far the shell has resized the app since: the whole keyboard
  * while it slides in over the page, `0` once the app has shrunk around it, and the whole
  * keyboard throughout with `resize: "none"`. A bottom-anchored view that adds it as room (a
- * chat: `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole
+ * list pinned to its end: `VirtualList`'s `keyboardInset`) so keeps its last row above the keyboard the whole
  * way, with no jump when the resize lands. The shell grows the app back only after will-hide's
  * animation too, so the watch outlives the keyboard until it has (or {@linkcode GROW_BACK_MS}).
  */
@@ -270,7 +270,7 @@ function install(property: string, onInset?: (px: number) => void): () => void {
 /**
  * Keep a CSS custom property on `document.documentElement` (default
  * `--denext-keyboard-inset`) equal to the px of the page the on-screen keyboard covers, so
- * layout can lift a composer or a bottom bar above it: `padding-bottom:
+ * layout can lift a docked text field or a bottom bar above it: `padding-bottom:
  * var(--denext-keyboard-inset)`.
  *
  * In a browser and on Android it is
@@ -283,9 +283,9 @@ function install(property: string, onInset?: (px: number) => void): () => void {
  * keyboard's animation; with `resize: "none"` it stays the keyboard's height. It is set to `0px`
  * immediately.
  *
- * Pass it as `VirtualList`'s `keyboardInset` and a chat (`anchor="end"`) keeps its last message
- * above the keyboard from the moment the keyboard starts to open, in every resize mode, with no
- * jump when the shell's resize lands.
+ * Pass it as `VirtualList`'s `keyboardInset` and a bottom-anchored list (`anchor="end"`) keeps
+ * its last row above the keyboard from the moment the keyboard starts to open, in every resize
+ * mode, with no jump when the shell's resize lands.
  *
  * Several installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}
  * components); the property is removed when the last one is disposed. SSR-safe: without a
@@ -298,7 +298,7 @@ function install(property: string, onInset?: (px: number) => void): () => void {
  * ```ts
  * import { installKeyboardInset } from "denext/mobile";
  * const dispose = installKeyboardInset();
- * // CSS: .composer { bottom: var(--denext-keyboard-inset, 0px); }
+ * // CSS: .input-bar { bottom: var(--denext-keyboard-inset, 0px); }
  * ```
  */
 export function installKeyboardInset(opts: KeyboardInsetOptions = {}): () => void {
@@ -317,7 +317,7 @@ export function installKeyboardInset(opts: KeyboardInsetOptions = {}): () => voi
  * "use client";
  * import { useKeyboardInset } from "denext/mobile";
  *
- * export function Composer() {
+ * export function InputBar() {
  *   const inset = useKeyboardInset();
  *   return <form style={{ paddingBottom: inset }}><textarea /></form>;
  * }
