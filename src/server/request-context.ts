@@ -14,7 +14,7 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { lastForwardedHop, remoteAddrOf } from "./remote-addr.ts";
+import { clientAddrOf } from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -532,11 +532,7 @@ export function clientIp(): string | undefined {
   if (isForceStatic(ctx)) return undefined;
   if (shouldPostpone()) postponeDynamic("clientIp");
   ctx.usedDynamicApi = true; // the client IP is per-request
-  if (ctx.trustForwardedHeaders) {
-    const last = lastForwardedHop(ctx.request);
-    if (last) return last;
-  }
-  return remoteAddrOf(ctx.request);
+  return clientAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
 }
 
 /**

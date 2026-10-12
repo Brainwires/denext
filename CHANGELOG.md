@@ -51,13 +51,35 @@ and this project adheres to
 - **`nativeBearerToken(request)`** is exported from `denext/server`: the `Authorization: Bearer
   nat_…` parser `auth()` uses, for handlers that exempt native-app requests from a cookie check.
 
+### Fixed
+
+- **`clientIp()` works inside Live hooks.** A channel's `authorize`, a `defineSubscription`
+  resolver or `authorize`, `live.authorize` / `canJoinRoom` / `canSubscribe` / `canWatchTags`, a
+  `useLive` fetcher and a `<Live>` re-render ran on a request rebuilt from the connection's cookie
+  with no client address, so `clientIp()` returned `undefined` there. They now see the address
+  `clientIp()` answered in the upgrade request: the socket peer, or the trusted proxy's last
+  `x-forwarded-for` hop under `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`.
+- **`@denext/backend` realtime: a timestamp key no longer loses its changes.** The re-read and
+  seed queries returned the key as `t."key"::text` while the trigger's notification spells it
+  `to_jsonb(row) ->> 'key'`; for a `timestamp` key the two differ (`2026-01-02 03:04:05` against
+  `2026-01-02T03:04:05`), so a re-read row matched no notification and a seeded key matched no
+  delete. Both queries now return the key the way the trigger does; the comparison stays in the
+  column's own type, so the key index still serves it.
+
 ### Security
 
 - **`denext ui`'s "Read as" preview ignores leftover per-claim settings.** It set only `role` and
   `request.jwt.claims`, so a `request.jwt.claim.sub` left on a pooled connection could make
   `auth.uid()` answer for another user in the preview. It now blanks those settings, as
   `@denext/backend` does.
-
+- **Live connections are capped per client address.** `live.limits.maxConnectionsPerIp` (default
+  64) refuses, with 429 before upgrading, a handshake from an address that already holds that many
+  sockets — the address `clientIp()` answers (an IPv6 address counts as its /64), so behind a proxy
+  set `trustForwardedHeaders`. One client could otherwise take every one of `maxConnections`.
+- **`@denext/backend` realtime: signed-out subscribers share one quota per address.** A signed-out
+  subscriber's `maxSubscriptionsPerIdentity` and seed budget were per Live connection, so opening
+  more sockets bought more of both. They are now per client address (`anon:<address>`), falling back
+  to the connection when the address is unknown.
 - **`@denext/backend` realtime: one client can no longer fill an instance's subscriptions.** Each
   subscribe with a fresh key created a subscription (and ran a seed query of up to
   `maxTrackedKeys` keys) that was kept 15 s after its subscriber left, against one instance-wide cap

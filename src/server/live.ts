@@ -48,6 +48,8 @@ import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
 import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
+import { clientAddrOf, setClientAddr } from "./remote-addr.ts";
+import { ipBucket } from "./auth/rate-limit.ts";
 import { inRootContext } from "./root-context.ts";
 import {
   LIVE_REF_ID,
@@ -96,6 +98,11 @@ interface Conn {
   url: string;
   /** The upgrade request's Cookie header, replayed so re-renders use the viewer's identity. */
   cookie: string;
+  /**
+   * The upgrade request's client address (what `clientIp()` answered there), recorded on every
+   * synthetic request the connection runs so `clientIp()` works in its hooks and re-renders.
+   */
+  ip?: string;
   boundaries: LiveBoundarySub[];
   /** Live-data subscriptions ({@link useLive}), keyed by client sub id. */
   dataSubs: Map<string, DataSub>;
@@ -136,10 +143,18 @@ const rooms = new Map<string, Set<Conn>>();
 let appHandler: ((req: Request) => Promise<Response>) | null = null;
 let originAllowed: (req: Request) => boolean = () => false;
 let policy: LiveConfig = {};
+/** Whether the app trusts its proxy's `x-forwarded-for` (resolves a connection's client address). */
+let trustForwardedHeaders = false;
+/**
+ * Open connections per client address bucket (an IPv6 address counts as its /64, as the auth
+ * rate limiter does), for {@link LiveLimits.maxConnectionsPerIp}.
+ */
+const connectionsPerIp = new Map<string, number>();
 
 /** Built-in resource caps — apply unless overridden via `live.limits`. */
 const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxConnections: 10_000,
+  maxConnectionsPerIp: 64,
   maxSubscriptionsPerConnection: 64,
   maxRoomsPerConnection: 32,
   maxPeersPerRoom: 1000,
@@ -224,15 +239,20 @@ function renderDeadlineMs(): number {
  * @param opts.appHandler The `createApp` handler (re-invoked with synthetic requests).
  * @param opts.originAllowed Predicate gating the upgrade to same-origin clients.
  * @param opts.config The app's `live` policy + limits (optional).
+ * @param opts.trustForwardedHeaders Whether the app trusts its proxy's `x-forwarded-for` — the
+ *   app's own `trustForwardedHeaders` — so a connection's client address is what `clientIp()`
+ *   answers in the upgrade request.
  */
 export function installLiveHub(opts: {
   appHandler: (req: Request) => Promise<Response>;
   originAllowed: (req: Request) => boolean;
   config?: LiveConfig;
+  trustForwardedHeaders?: boolean;
 }): void {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
   policy = opts.config ?? {};
+  trustForwardedHeaders = opts.trustForwardedHeaders === true;
   limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(invalidateTags);
@@ -272,6 +292,7 @@ export function uninstallLiveHub(): void {
   channelHub.dispose();
   appHandler = null;
   policy = {};
+  trustForwardedHeaders = false;
   limits = DEFAULT_LIMITS;
   for (const conn of connections) {
     // `close()` triggers `onclose` → `dropConnection` (which clears this too), but that
@@ -285,6 +306,7 @@ export function uninstallLiveHub(): void {
     } catch { /* already closing */ }
   }
   connections.clear();
+  connectionsPerIp.clear();
   rooms.clear();
   // Disarm any pending coalesce flush so teardown leaves no dangling timer (the Deno
   // test op-sanitizer flags one) and no tags leak into the next install.
@@ -306,10 +328,26 @@ function connContext(conn: Conn): LiveConnectionContext {
  * `cookies()` resolve to the acting user. Mirrors {@link runFetcher}.
  */
 function withConnContext<T>(conn: Conn, fn: () => T | Promise<T>): Promise<T> {
-  const request = new Request(conn.url || conn.origin, {
-    headers: conn.cookie ? { cookie: conn.cookie } : {},
-  });
+  const request = connRequest(conn.url || conn.origin, conn);
   return Promise.resolve(runWithContext(createRequestContext(request), fn));
+}
+
+/**
+ * A synthetic request acting as a connection's viewer: its replayed cookie, and its client
+ * address recorded as the request's peer (already resolved, so `clientIp()` answers it whether
+ * or not the proxy is trusted — the request carries no `x-forwarded-for`).
+ */
+function connRequest(
+  url: string,
+  conn: { cookie: string; ip?: string },
+  init: { method?: string; headers?: Record<string, string>; signal?: AbortSignal } = {},
+): Request {
+  const request = new Request(url, {
+    ...init,
+    headers: { ...init.headers, ...(conn.cookie ? { cookie: conn.cookie } : {}) },
+  });
+  setClientAddr(request, conn.ip);
+  return request;
 }
 
 /**
@@ -409,11 +447,13 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   if (!originAllowed(request)) {
     return new Response("forbidden", { status: 403 });
   }
-  // Total-connection cap (DoS guard): refuse before upgrading rather than accept and
-  // immediately close, so a flood can't churn upgrades.
-  if (connections.size >= limits.maxConnections) {
-    return new Response("too many connections", { status: 503 });
-  }
+  // The client address, as `clientIp()` answers it in this request (the trusted proxy's last
+  // hop, else the socket peer) — carried into every hook and re-render of the connection.
+  const ip = clientAddrOf(request, trustForwardedHeaders);
+  // Total and per-address connection caps (DoS guard): refuse before upgrading rather than
+  // accept and immediately close, so a flood can't churn upgrades.
+  const full = connectionsFull(ip);
+  if (full) return full;
   // Capture the identity-bearing headers BEFORE upgrading — `Deno.upgradeWebSocket`
   // consumes the request, after which reading its headers throws "Request closed".
   const origin = new URL(request.url).origin;
@@ -421,28 +461,44 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }))) {
+  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }, ip))) {
     return new Response("forbidden", { status: 403 });
   }
-  // Re-check the cap after the (async) authorization: concurrent handshakes all passed the
+  // Re-check the caps after the (async) authorization: concurrent handshakes all passed the
   // first check while none had attached yet.
-  if (connections.size >= limits.maxConnections) {
-    return new Response("too many connections", { status: 503 });
-  }
+  const stillFull = connectionsFull(ip);
+  if (stillFull) return stillFull;
   let upgrade: { socket: WebSocket; response: Response };
   try {
     upgrade = Deno.upgradeWebSocket(request, { idleTimeout: limits.idleTimeoutSeconds });
   } catch {
     return new Response("upgrade failed", { status: 400 });
   }
-  attachConnection(upgrade.socket, { peerId, origin, cookie });
+  attachConnection(upgrade.socket, { peerId, origin, cookie, ip });
   return upgrade.response;
 }
 
+/**
+ * The refusal when the hub is at `maxConnections`, or `ip` at `maxConnectionsPerIp`; `null` when
+ * there is room. A connection with no known address counts only against the total.
+ */
+function connectionsFull(ip: string | undefined): Response | null {
+  if (connections.size >= limits.maxConnections) {
+    return new Response("too many connections", { status: 503 });
+  }
+  if (ip !== undefined && (connectionsPerIp.get(ipBucket(ip)) ?? 0) >= limits.maxConnectionsPerIp) {
+    return new Response("too many connections from this address", { status: 429 });
+  }
+  return null;
+}
+
 /** Run the app's `authorize` hook under the viewer's own session; a throw is a refusal. */
-async function connectionAuthorized(ctx: LiveConnectionContext): Promise<boolean> {
+async function connectionAuthorized(
+  ctx: LiveConnectionContext,
+  ip: string | undefined,
+): Promise<boolean> {
   if (!policy.authorize) return true;
-  const req = new Request(ctx.origin, { headers: ctx.cookie ? { cookie: ctx.cookie } : {} });
+  const req = connRequest(ctx.origin, { cookie: ctx.cookie, ip });
   try {
     return await Promise.resolve(
       runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
@@ -455,7 +511,7 @@ async function connectionAuthorized(ctx: LiveConnectionContext): Promise<boolean
 /** Register the upgraded socket as a live connection and wire its message/close handlers. */
 function attachConnection(
   socket: WebSocket,
-  identity: { peerId: string; origin: string; cookie: string },
+  identity: { peerId: string; origin: string; cookie: string; ip?: string },
 ): void {
   const conn: Conn = {
     socket,
@@ -494,11 +550,21 @@ function attachConnection(
     } catch { /* already closing */ }
   };
   connections.add(conn);
+  if (conn.ip !== undefined) {
+    const bucket = ipBucket(conn.ip);
+    connectionsPerIp.set(bucket, (connectionsPerIp.get(bucket) ?? 0) + 1);
+  }
 }
 
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
 function dropConnection(conn: Conn): void {
-  connections.delete(conn);
+  // `onerror` and `onclose` both drop: count the address down once.
+  if (connections.delete(conn) && conn.ip !== undefined) {
+    const bucket = ipBucket(conn.ip);
+    const left = (connectionsPerIp.get(bucket) ?? 1) - 1;
+    if (left > 0) connectionsPerIp.set(bucket, left);
+    else connectionsPerIp.delete(bucket);
+  }
   channelHub.drop(conn);
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
@@ -1030,10 +1096,7 @@ function runFetcher(conn: Conn, sub: DataSub, signal?: AbortSignal): Promise<unk
     ? (input: unknown) => sub.def!.run(input, { connection: connContext(conn), signal })
     : getServerAction(actionId);
   if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
-  const request = new Request(conn.url || conn.origin, {
-    headers: conn.cookie ? { cookie: conn.cookie } : {},
-    ...(signal ? { signal } : {}),
-  });
+  const request = connRequest(conn.url || conn.origin, conn, signal ? { signal } : {});
   // Thread the deadline signal onto the request context so `fetch`/cache reads inside
   // the fetcher observe it (cooperative abort), not just the outer race.
   return Promise.resolve(
@@ -1086,12 +1149,11 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
  */
 async function rerender(conn: Conn, signal?: AbortSignal): Promise<FlightNode | null> {
   if (!appHandler) return null;
-  const req = new Request(conn.url, {
+  const req = connRequest(conn.url, conn, {
     method: "GET",
     headers: {
       "x-denext-nav": "1", // request the Flight soft-nav payload, not full HTML
       accept: "application/json",
-      ...(conn.cookie ? { cookie: conn.cookie } : {}),
     },
     ...(signal ? { signal } : {}),
   });

@@ -7,6 +7,7 @@
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
 import { watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
+import { setClientAddr } from "../../src/server/remote-addr.ts";
 import { credentials } from "../../src/server/auth/providers.ts";
 import { issueAuthSession } from "../../src/server/auth/session.ts";
 import type { AuthConfig } from "../../src/server/auth/types.ts";
@@ -41,6 +42,8 @@ export async function cookieFor(id: string, email = `${id.slice(-4)}@x.test`): P
 export interface TestConn extends ChannelConn {
   /** The viewer's cookie (empty: signed out). */
   cookie: string;
+  /** The connection's client address (what `clientIp()` answers in its hooks), if known. */
+  ip?: string;
   /** Every `channel` frame's value, in order. */
   frames: TableChangesFrame[];
   /** Every refusal / error code. */
@@ -51,8 +54,8 @@ export interface TestConn extends ChannelConn {
 
 /** The hub and its helpers. */
 export interface Harness {
-  /** Open a connection as the viewer with this cookie. */
-  conn(cookie?: string): TestConn;
+  /** Open a connection as the viewer with this cookie (from this client address, if given). */
+  conn(cookie?: string, ip?: string): TestConn;
   /** Subscribe; resolves with the key and whether it was acknowledged. */
   subscribe(
     conn: TestConn,
@@ -86,9 +89,9 @@ export function realtimeHarness(): Harness {
     refuse: (conn, decision) => conn.errors.push(decision),
     withConnContext: (conn, fn) => {
       const headers: HeadersInit = conn.cookie ? { cookie: conn.cookie } : {};
-      return Promise.resolve(
-        runWithContext(createRequestContext(new Request(`${ORIGIN}/`, { headers })), fn),
-      );
+      const request = new Request(`${ORIGIN}/`, { headers });
+      setClientAddr(request, conn.ip); // as the Live hub records the upgrade's client address
+      return Promise.resolve(runWithContext(createRequestContext(request), fn));
     },
     connContext: (conn) => ({ origin: ORIGIN, url: "", cookie: conn.cookie, peerId: conn.peerId }),
     isConnected: () => true,
@@ -99,12 +102,13 @@ export function realtimeHarness(): Harness {
   const { current, stop } = watchChannelTransport(() => {});
   const unsubscribe = current.subscribe((ev) => hub.deliver(ev));
   return {
-    conn(cookie = "") {
+    conn(cookie = "", ip) {
       return {
         socket: {} as WebSocket,
         channelSubs: new Map(),
         peerId: `peer-${++peers}`,
         cookie,
+        ip,
         frames: [],
         errors: [],
         readies: 0,

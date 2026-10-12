@@ -594,6 +594,24 @@ Deno.test("realtime: subscriptions are capped per identity — a user, or one si
   }
 });
 
+Deno.test("realtime: signed out, the quota is per client address — across that address's connections", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 2 });
+  try {
+    // Two tabs (two Live connections) from one address share one quota…
+    const [tab1, tab2] = [env.hub.conn("", "198.51.100.7"), env.hub.conn("", "198.51.100.7")];
+    assert((await env.hub.subscribe(tab1, "notes", { subId: "1" })).ok);
+    assert((await env.hub.subscribe(tab2, "notes", { subId: "2" })).ok);
+    assertEquals((await env.hub.subscribe(tab2, "notes", { subId: "3" })).ok, false);
+    assertEquals(tab2.errors, ["deny"]);
+    // …which another address does not touch, nor a signed-in user at the same address.
+    assert((await env.hub.subscribe(env.hub.conn("", "198.51.100.8"), "notes")).ok);
+    assert((await env.hub.subscribe(env.hub.conn(env.a, "198.51.100.7"), "notes")).ok);
+    assertEquals(realtimeEngine().size, 4);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: at the instance cap a disconnected subscription gives way; live ones refuse", async () => {
   const env = await setUp({ maxSubscribers: 2 });
   const original = console.warn;
@@ -657,15 +675,15 @@ Deno.test("realtime: re-reads compare keys and filters in the column's type, und
     // The column types are read once, by the table's (quoted) name.
     const lookups = statements.flatMap((s, i) => /pg_attribute/.test(s) ? [parameters[i]] : []);
     assertEquals(lookups, [['"notes"']]);
-    const seed = statements.find((s) => /^select t\."id"::text as k from/.test(s))!;
+    const seed = statements.find((s) => /^select to_jsonb\(t\) ->> 'id' as k from/.test(s))!;
     assertEquals(
       seed,
-      'select t."id"::text as k from "notes" t where t."list" = $2::text::integer limit $1',
+      `select to_jsonb(t) ->> 'id' as k from "notes" t where t."list" = $2::text::integer limit $1`,
     );
     const reread = statements.findIndex((s) => /to_jsonb\(t\)::text as r/.test(s));
     assertEquals(
       statements[reread],
-      'select t."id"::text as k, to_jsonb(t)::text as r from "notes" t where t."id" = ' +
+      `select to_jsonb(t) ->> 'id' as k, to_jsonb(t)::text as r from "notes" t where t."id" = ` +
         'any(array(select jsonb_array_elements_text($1::jsonb)::bigint)) and t."list" = $2::text::integer',
     );
     // In its own transaction: the RLS setup, then the timeout, then the re-read.

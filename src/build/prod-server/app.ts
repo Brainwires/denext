@@ -159,7 +159,7 @@ export async function createProdApp(
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
   const rules = await bootProdServices(paths, info);
-  const appHandler = createApp(prodAppConfig(
+  const appConfig = prodAppConfig(
     paths,
     manifest,
     info,
@@ -167,8 +167,11 @@ export async function createProdApp(
     assets,
     load,
     { middlewareRunner, instrumentation, rules },
-  ));
-  if (flightRoutes.size > 0) installProdLiveHub(paths, appHandler);
+  );
+  const appHandler = createApp(appConfig);
+  if (flightRoutes.size > 0) {
+    installProdLiveHub(paths, appHandler, appConfig.trustForwardedHeaders);
+  }
   return appHandler;
 }
 
@@ -254,6 +257,7 @@ function prodAppConfig(
 function installProdLiveHub(
   paths: ProjectPaths,
   appHandler: (request: Request) => Promise<Response>,
+  trustForwardedHeaders: boolean | undefined,
 ): void {
   // Strict same-origin for the Live handshake; a Deno Desktop window's own
   // `desktop.app.origin` (exactly) counts as same-origin.
@@ -262,5 +266,6 @@ function installProdLiveHub(
     appHandler,
     originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
     config: resolveLive(paths.config),
+    trustForwardedHeaders,
   });
 }

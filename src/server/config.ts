@@ -2055,6 +2055,13 @@ export interface LiveSubscriptionRequest {
 export interface LiveLimits {
   /** Max simultaneous connections (default 10000). */
   maxConnections?: number;
+  /**
+   * Max simultaneous connections from one client address (default 64) — the address
+   * `clientIp()` answers in the upgrade request, so behind a proxy set `trustForwardedHeaders`
+   * (or `DENEXT_TRUST_PROXY=1`), or every visitor shares the proxy's address and this cap. An
+   * IPv6 address counts as its /64. A handshake past it is refused with 429.
+   */
+  maxConnectionsPerIp?: number;
   /** Max `useLive` subscriptions per connection (default 64). */
   maxSubscriptionsPerConnection?: number;
   /** Max presence rooms per connection (default 32). */

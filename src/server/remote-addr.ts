@@ -29,9 +29,33 @@ export function remoteAddrOf(request: Request): string | undefined {
  * @param request The incoming request.
  * @returns The last non-empty hop, or `undefined` when the header is absent or empty.
  */
-export function lastForwardedHop(request: Request): string | undefined {
+function lastForwardedHop(request: Request): string | undefined {
   const hops = request.headers.get("x-forwarded-for")?.split(",").map((h) => h.trim());
   return hops?.filter(Boolean).at(-1);
+}
+
+/**
+ * Record `ip` as the client address of a synthetic request built for a long-lived connection
+ * (a Live socket's re-renders and policy hooks), so `clientIp()` inside them answers the address
+ * the upgrade request came from. The address is already resolved (proxy trust applied).
+ *
+ * @param request The synthetic request.
+ * @param ip The connection's client address, or `undefined` to record none.
+ */
+export function setClientAddr(request: Request, ip: string | undefined): void {
+  if (ip !== undefined) addrs.set(request, ip);
+}
+
+/**
+ * The client address of a request as `clientIp()` answers it: the last `x-forwarded-for` hop
+ * when the proxy is trusted (and the header carries one), else the socket peer.
+ *
+ * @param request The incoming request.
+ * @param trustForwardedHeaders Whether the app trusts its fronting proxy.
+ * @returns The client address, or `undefined` when none is known.
+ */
+export function clientAddrOf(request: Request, trustForwardedHeaders: boolean): string | undefined {
+  return (trustForwardedHeaders ? lastForwardedHop(request) : undefined) ?? remoteAddrOf(request);
 }
 
 /** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */

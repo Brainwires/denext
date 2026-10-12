@@ -135,6 +135,7 @@ export function createDevApp(st: DevState): RequestHandler {
     appHandler,
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins),
     config: resolveLive(paths.config),
+    trustForwardedHeaders: appConfig.trustForwardedHeaders,
   });
   return appHandler;
 }

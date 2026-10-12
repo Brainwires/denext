@@ -33,7 +33,7 @@
  * @module
  */
 
-import { lastForwardedHop, remoteAddrOf } from "../remote-addr.ts";
+import { clientAddrOf, remoteAddrOf } from "../remote-addr.ts";
 import { currentContext } from "../request-context.ts";
 
 /** One key's open failure window. */
@@ -281,11 +281,7 @@ export interface RateLimitKeyOptions {
  * `"unknown"` only when neither is available (an embedder calling the handler directly).
  */
 export function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
-  if (options.trustForwardedHeaders) {
-    const last = lastForwardedHop(request);
-    if (last) return last;
-  }
-  return remoteAddrOf(request) ?? "unknown";
+  return clientAddrOf(request, options.trustForwardedHeaders === true) ?? "unknown";
 }
 
 /**
@@ -298,9 +294,13 @@ export function resolveClientIp(request: Request, options: RateLimitKeyOptions):
  * 128 bits hands one client an effectively unbounded supply of fresh buckets.
  *
  * An address that parses as neither is lower-cased and returned unchanged (it is already
- * whatever the socket peer or the trusted proxy said).
+ * whatever the socket peer or the trusted proxy said). The Live hub keys its per-address
+ * connection cap on it too.
+ *
+ * @param ip A client address.
+ * @returns The bucket the address counts against.
  */
-function ipBucket(ip: string): string {
+export function ipBucket(ip: string): string {
   const trimmed = ip.trim().replace(/^\[|\]$/g, "");
   if (!trimmed.includes(":")) return trimmed;
   const groups = parseIPv6Groups(trimmed);

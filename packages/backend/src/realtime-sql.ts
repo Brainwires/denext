@@ -44,7 +44,9 @@ export interface RealtimeOptions {
   maxSubscribers?: number;
   /**
    * Subscriptions one identity may hold on one server instance (default 64): a signed-in user
-   * across all their connections, or one signed-out Live connection. It also bounds the distinct
+   * across all their connections, or the signed-out visitors at one client address (`clientIp()`:
+   * set `trustForwardedHeaders` behind a proxy; one Live connection when the address is
+   * unknown). It also bounds the distinct
    * filters (re-read groups) an identity adds to a burst. Server-side `tableChanges`
    * subscriptions are not counted.
    */

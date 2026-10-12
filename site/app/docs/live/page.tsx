@@ -206,6 +206,20 @@ export default {
         the fleet.
       </Callout>
       <p>
+        Every hook above — and a channel&#39;s{" "}
+        <code>authorize</code>, a subscription&#39;s resolver, a <code>useLive</code> fetcher and a
+        {" "}
+        <code>{"<Live>"}</code> re-render — runs with the connection&#39;s client address, so{" "}
+        <code>clientIp()</code>{" "}
+        answers there what it answered in the upgrade request: the socket peer, or the trusted
+        proxy&#39;s last <code>x-forwarded-for</code> hop under <code>trustForwardedHeaders</code>.
+        {" "}
+        <code>limits.maxConnectionsPerIp</code>{" "}
+        (default 64; an IPv6 address counts as its /64) refuses a handshake from an address that
+        already holds that many sockets with 429 — behind a proxy, set{" "}
+        <code>trustForwardedHeaders</code>, or every visitor shares the proxy&#39;s address.
+      </p>
+      <p>
         Or, instead of a <code>canSubscribe</code>{" "}
         policy, mark individual read-only fetchers as readable over the live channel:
       </p>

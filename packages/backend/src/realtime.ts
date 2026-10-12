@@ -16,8 +16,9 @@
 // key-only query under its own policies) plus every row sent to it since. A delete — or an
 // update that moves a row out of its policies or filter — is sent only for a tracked key.
 //
-// Subscriptions are bounded per identity (`maxSubscriptionsPerIdentity`: a signed-in user, or one
-// signed-out Live connection) as well as per instance, and so are the subscribe-time seed queries
+// Subscriptions are bounded per identity (`maxSubscriptionsPerIdentity`: a signed-in user, or the
+// signed-out visitors at one client address — one Live connection when the address is unknown)
+// as well as per instance, and so are the subscribe-time seed queries
 // (a few at once, and a refilling budget per identity). An unsubscribed key is forgotten at once;
 // one whose connection closed is kept for a reconnect, but only while there is room — at a cap,
 // the oldest such one goes first, and only live subscriptions refuse a new one.
@@ -36,6 +37,7 @@
 // so when the owner stops or dies the next instance to see a burst takes it over.
 
 import {
+  clientIp,
   createChannel,
   migratePostgres,
   type Migration,
@@ -109,8 +111,9 @@ interface Audience {
   /** `anon`, or `authenticated:<sub>`: the identity the key is bound to. */
   identity: string;
   /**
-   * Whose quota it counts against: the identity, or `anon:<peer id>` for a signed-out Live
-   * connection; empty for a server-side subscription (not counted).
+   * Whose quota it counts against: the identity, or `anon:<client address>` for a signed-out
+   * Live subscriber (`anon:<peer id>` when the address is unknown); empty for a server-side
+   * subscription (not counted).
    */
   owner: string;
   scope: RlsScope;
@@ -719,16 +722,17 @@ export class RealtimeEngine {
    * the subscriber's session). Binds a new key to the identity, seeding its tracked keys.
    *
    * @param key The subscription key.
-   * @param peerId The Live connection's id: a signed-out subscriber's quota is per connection.
+   * @param peer Whose quota a signed-out subscriber counts against: its client address, or its
+   *   Live connection's id when the address is unknown.
    * @returns Whether the subscriber may receive it.
    */
-  async authorize(key: string, peerId = ""): Promise<boolean> {
+  async authorize(key: string, peer = ""): Promise<boolean> {
     const parts = decodeSubscriptionKey(key);
     const table = parts && this.config.tables.get(parts.table);
     if (!parts || !table) return false;
     try {
       const scope = await resolveScope();
-      const owner = scope.role === "anon" ? `anon:${peerId}` : identityOf(scope);
+      const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
       if (existing) return this.#rebind(existing, scope, owner);
       const sink = { channel: key };
@@ -964,6 +968,15 @@ function equals(column: string, param: string, types: Map<string, string>): stri
 }
 
 /**
+ * The key column of `t` as text, spelled as the trigger spells it (`to_jsonb(row) ->> key`), so a
+ * re-read row and a seeded key match the notification's key in every type — `t."key"::text`
+ * differs for a timestamp (`2026-01-02 03:04:05` against JSON's `2026-01-02T03:04:05`).
+ */
+function keyText(column: string): string {
+  return `to_jsonb(t) ->> '${column}'`;
+}
+
+/**
  * `select key, row` for the given keys, under the caller's scope (and the filter). The keys
  * travel as one JSON array and are cast to the key column's type, so the match is
  * `key = any(<array of that type>)` — an index scan on the key.
@@ -979,7 +992,7 @@ export function rereadQuery(
   const match = type
     ? `t."${table.key}" = any(array(select jsonb_array_elements_text($1::jsonb)::${type}))`
     : `t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
-  let text = `select t."${table.key}"::text as k, to_jsonb(t)::text as r ` +
+  let text = `select ${keyText(table.key)} as k, to_jsonb(t)::text as r ` +
     `from ${table.qualified} t where ${match}`;
   if (filter) {
     params.push(filter.value);
@@ -996,7 +1009,7 @@ export function seedQuery(
   types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [limit];
-  let text = `select t."${table.key}"::text as k from ${table.qualified} t`;
+  let text = `select ${keyText(table.key)} as k from ${table.qualified} t`;
   if (filter) {
     params.push(filter.value);
     text += ` where ${equals(filter.column, "$2", types)}`;
@@ -1139,6 +1152,18 @@ export function realtimeEngine(): RealtimeEngine {
 }
 
 /**
+ * The signed-out subscriber's client address — `clientIp()` in the Live connection's context (the
+ * socket peer, or the trusted proxy's hop) — or `undefined` when it is not known.
+ */
+function subscriberAddress(): string | undefined {
+  try {
+    return clientIp();
+  } catch {
+    return undefined; // outside a request context: no address to key on
+  }
+}
+
+/**
  * Create the realtime channel. The engine is looked up on every call, so a reinstall (a dev
  * reload) takes over the same channel id.
  */
@@ -1154,7 +1179,7 @@ export function createRealtimeChannel(): {
     key: (key) => decodeSubscriptionKey(key) !== null,
     authorize: (ctx, key) => {
       const current: RealtimeEngine | undefined = engine();
-      return current ? current.authorize(key, ctx.peerId) : false;
+      return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId) : false;
     },
     authTtlSeconds: 60,
     onActive: (key) => {

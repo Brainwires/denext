@@ -498,8 +498,10 @@ anyone else presenting it is refused. The binding is re-checked every 60 seconds
 signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
 if signed-out visitors may watch it) for its rows to be readable at all.
 
-**Limits.** Each identity — a signed-in user across all their connections, or one signed-out Live
-connection — may hold `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
+**Limits.** Each identity — a signed-in user across all their connections, or the signed-out
+visitors at one client address (the address `clientIp()` answers, so set `trustForwardedHeaders`
+behind a proxy; one Live connection when no address is known) — may hold
+`maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
 the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
 unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
 reconnect resumes it, but only while there is room: at either cap the oldest such subscription
@@ -547,7 +549,7 @@ through `fromPostgresJs`); without one every instance revalidates, with a warnin
 | `revalidate`                  | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.          |
 | `migrate`                     | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.       |
 | `maxSubscribers`              | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room). |
-| `maxSubscriptionsPerIdentity` | 64      | Subscriptions per signed-in user, or per signed-out Live connection (and so its distinct filters).    |
+| `maxSubscriptionsPerIdentity` | 64      | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).     |
 | `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                           |
 | `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                     |
 

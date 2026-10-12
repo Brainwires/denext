@@ -90,7 +90,7 @@ export function fakeRealtimeClient(
     statements.push(text);
     parameters.push(params);
     const reread = /to_jsonb\(t\)::text as r from "(\w+)" t/.exec(text);
-    const seed = /^select t\."(\w+)"::text as k from "(\w+)" t/.exec(text);
+    const seed = /^select to_jsonb\(t\) ->> '(\w+)' as k from "(\w+)" t/.exec(text);
     const filter = /t\."(\w+)"(?:::text)? = \$2/.exec(text);
     if (/from pg_attribute a where a\.attrelid = \$1::regclass/.test(text)) return typesOf(params);
     const filterOk = (row: Row) => !filter || String(row[filter[1]]) === String(params[1]);
@@ -132,7 +132,7 @@ export function fakeRealtimeClient(
   const kindOf = (text: string) =>
     /to_jsonb\(t\)::text as r/.test(text)
       ? "reread"
-      : /^select t\."\w+"::text as k from/.test(text)
+      : /^select to_jsonb\(t\) ->> '\w+' as k from/.test(text)
       ? "seed"
       : undefined;
 

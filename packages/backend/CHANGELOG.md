@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Realtime: signed-out quota per client address.** A signed-out subscriber's
+  `maxSubscriptionsPerIdentity` and seed budget now apply per client address (`clientIp()` in the
+  Live connection's context; set `trustForwardedHeaders` behind a proxy), not per Live connection,
+  so more sockets no longer buy more of either. Without a known address it stays per connection.
+- **Realtime: timestamp keys.** Re-read and seed queries return the key as the trigger spells it
+  (`to_jsonb(row) ->> 'key'`), so a key whose text form differs from its JSON form (a `timestamp`)
+  is matched to its notifications; the typed, index-served comparison is unchanged.
 - **Realtime limits (security).** Subscriptions are capped per identity
   (`maxSubscriptionsPerIdentity`, default 64: a signed-in user, or one signed-out Live connection);
   an unsubscribed key is forgotten at once and a disconnected one is kept for a reconnect only while
