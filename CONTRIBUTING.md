@@ -229,6 +229,7 @@ exactly that package.
 | `@denext/graphql`             | `graphql-v*`             | `packages/graphql/deno.json`             |
 | `@denext/react-router`        | `react-router-v*`        | `packages/react-router/deno.json`        |
 | `@denext/content-collections` | `content-collections-v*` | `packages/content-collections/deno.json` |
+| `@denext/backend`             | `backend-v*`             | `packages/backend/deno.json`             |
 | `@denext/lightningcss`        | `lightningcss-v*`        | `packages/lightningcss/deno.json`        |
 | `@denext/swc`                 | `swc-v*`                 | `packages/swc/deno.json`                 |
 

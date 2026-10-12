@@ -79,6 +79,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   openapi: "apis",
   graphql: "apis",
   auth: "apis",
+  "backend-storage": "apis",
   clerk: "apis",
   htmx: "apis",
   "effect-runtime": "apis",

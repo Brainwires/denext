@@ -625,6 +625,15 @@ suggests them).
 (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
 https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-native
 
+**File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
+s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
+authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
+head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
+session and its absence denies (`{ service: true }` skips it). Browser: `uploadFile(bucket, file,
+{ onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
+chars). Docs: https://denext.dev/docs/backend
+
 **A database (zero-npm, server-only module):**
 
 ```ts

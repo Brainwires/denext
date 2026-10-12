@@ -7651,6 +7651,18 @@
           "denextOnly": true
         },
         {
+          "name": "ImageTransform",
+          "slug": "ImageTransform",
+          "kind": "interface",
+          "signature": "interface ImageTransform",
+          "doc": "A resize + re-encode of in-memory image bytes, for transformImageBytes.",
+          "docFull": "A resize + re-encode of in-memory image bytes, for {@linkcode transformImageBytes}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "inMemoryAuthAdapter",
           "slug": "inMemoryAuthAdapter",
           "kind": "function",
@@ -9206,6 +9218,27 @@
           "docFull": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "parseRange",
+          "slug": "parseRange",
+          "kind": "function",
+          "signature": "parseRange(header: string, size: number): object | null | undefined",
+          "doc": "One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).",
+          "docFull": "One `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range against `size`:\n`undefined` = ignore the header (unsupported form or multiple ranges → serve the whole\nfile), `null` = unsatisfiable (416).",
+          "params": [
+            {
+              "name": "header",
+              "doc": "The request's Range header."
+            },
+            {
+              "name": "size",
+              "doc": "The resource's size in bytes."
+            }
+          ],
+          "returns": "The inclusive byte range, undefined to serve it all, or null for a 416.",
           "examples": [],
           "denextOnly": true
         },
@@ -11778,6 +11811,47 @@
           "signature": "type TotpVerifyResult = object | object",
           "doc": "The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.",
           "docFull": "The outcome of {@linkcode verifyTotp}: on a match, the time step the code belongs to —\nhand it to the adapter's `claimTotpStep` so the same code can't be presented twice.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "transformImageBytes",
+          "slug": "transformImageBytes",
+          "kind": "function",
+          "signature": "transformImageBytes(bytes: Uint8Array, transform: ImageTransform, options?: TransformImageOptions, gate?: () => Promise<() => void>): Promise<Response>",
+          "doc": "Resize and re-encode image bytes the caller already holds — the /_denext/image pipeline (the same codecs, decompression-bomb and SVG refusal, concurrency gate and output cache) for a source that is not a URL, such as an object in storage. The size is bounded like the endpoint's: width and height must each be one of images.deviceSizes ∪ images.imageSizes, so a caller cannot ask for an unbounded number of distinct encodes. With both, the image is fitted inside the box (aspect ratio kept); it is never enlarged past the source.",
+          "docFull": "Resize and re-encode image bytes the caller already holds — the `/_denext/image` pipeline\n(the same codecs, decompression-bomb and SVG refusal, concurrency gate and output cache) for\na source that is not a URL, such as an object in storage. The size is bounded like the\nendpoint's: `width` and `height` must each be one of `images.deviceSizes ∪ images.imageSizes`,\nso a caller cannot ask for an unbounded number of distinct encodes. With both, the image is\nfitted inside the box (aspect ratio kept); it is never enlarged past the source.",
+          "params": [
+            {
+              "name": "bytes",
+              "doc": "The source image (PNG, JPEG, GIF or WebP)."
+            },
+            {
+              "name": "transform",
+              "doc": "The target size, quality and format."
+            },
+            {
+              "name": "options",
+              "doc": "The app's images config and an optional cache identity."
+            },
+            {
+              "name": "gate",
+              "doc": "Concurrency gate (defaults to the shared optimizer gate; injectable for tests)."
+            }
+          ],
+          "returns": "200 with the encoded image and its content-type, or the error response (400 bad transform or unsupported source, 413 too large, 503 busy).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TransformImageOptions",
+          "slug": "TransformImageOptions",
+          "kind": "interface",
+          "signature": "interface TransformImageOptions",
+          "doc": "Options for transformImageBytes.",
+          "docFull": "Options for {@linkcode transformImageBytes}.",
           "params": [],
           "returns": "",
           "examples": [],

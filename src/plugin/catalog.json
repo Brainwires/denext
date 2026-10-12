@@ -13,6 +13,159 @@
       "blurb": "A Deno-native AVIF encoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
     },
     {
+      "name": "@denext/backend",
+      "version": "0.1.0",
+      "spec": "jsr:@denext/backend@^0.1.0",
+      "exports": [
+        ".",
+        "./client",
+        "./server"
+      ],
+      "denext": "^3.4.11",
+      "kind": "plugin",
+      "factory": "backend",
+      "configKeys": [
+        "storage"
+      ],
+      "title": "@denext/backend",
+      "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
+      "docs": "/docs/backend",
+      "optionsType": "BackendOptions",
+      "optionsSchema": {
+        "description": "Options for backend.",
+        "type": "object",
+        "properties": {
+          "storage": {
+            "description": "File storage: a driver and the buckets it serves.",
+            "type": "object",
+            "properties": {
+              "driver": {
+                "description": "Where objects live: `s3({ … })` or `fs({ dir })`.",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "A short name for messages (`\"s3\"`, `\"fs\"`).",
+                    "type": "string"
+                  },
+                  "init": {
+                    "description": "Called once at plugin setup with the project root (resolve relative paths against it)."
+                  },
+                  "put": {
+                    "description": "Store an object. The stream errors when the body breaks a rule; the driver then stores nothing."
+                  },
+                  "get": {
+                    "description": "Read an object (a range of it), or `null` when it does not exist."
+                  },
+                  "head": {
+                    "description": "An object's info, or `null` when it does not exist."
+                  },
+                  "remove": {
+                    "description": "Delete an object (no error when it does not exist)."
+                  },
+                  "list": {
+                    "description": "One page of the objects whose key starts with `prefix`, in key order."
+                  },
+                  "direct": {
+                    "description": "Direct-to-store URLs, when the store serves clients itself (S3).",
+                    "type": "object",
+                    "properties": {
+                      "presignPut": {
+                        "description": "A presigned PUT. `size` pins `content-length`; `contentType` pins `content-type`."
+                      },
+                      "presignGet": {
+                        "description": "A presigned GET."
+                      },
+                      "createMultipart": {
+                        "description": "Start a multipart upload; returns its upload id."
+                      },
+                      "presignPart": {
+                        "description": "A presigned PUT for one part (1-based)."
+                      },
+                      "completeMultipart": {
+                        "description": "Assemble the uploaded parts into the object."
+                      },
+                      "abortMultipart": {
+                        "description": "Abandon a multipart upload and free its parts."
+                      }
+                    },
+                    "required": [
+                      "presignPut",
+                      "presignGet",
+                      "createMultipart",
+                      "presignPart",
+                      "completeMultipart",
+                      "abortMultipart"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "put",
+                  "get",
+                  "head",
+                  "remove",
+                  "list"
+                ]
+              },
+              "buckets": {
+                "description": "The buckets, by name (lowercase letters, digits, `-`, `_`).",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "public": {
+                      "description": "Anyone may download (no signature, no authorize call), and download URLs are stable and cacheable. Uploads, deletes and listings still need authorize. Default `false`.",
+                      "type": "boolean"
+                    },
+                    "maxBytes": {
+                      "description": "Largest object accepted, in bytes (default 50 MiB).",
+                      "type": "number"
+                    },
+                    "mime": {
+                      "description": "Allowed content types — exact (`application/pdf`) or `type/*` (`image/*`). Checked on every upload; a declared raster image is also sniffed from its first bytes and must be what it claims. Omitted: any type.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "authorize": {
+                      "description": "Decide one operation for the current request. Runs whenever a storage call is made inside a request (the plugin's endpoints, and the server API called from a route handler, Server Action or page); a call outside any request (a task, a script) is trusted and skips it. Absent, every operation is denied — except downloads from a public bucket."
+                    }
+                  }
+                }
+              },
+              "secret": {
+                "description": "The HMAC secret (≥ 32 characters) for the plugin's signed URLs and upload tokens — or a list, current first, to rotate one out. Default: `DENEXT_STORAGE_SECRET`; under `denext dev` a random per-process secret when neither is set.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "multipartThreshold": {
+                "description": "Uploads larger than this go multipart, when the driver supports it (default 64 MiB).",
+                "type": "number"
+              },
+              "partSize": {
+                "description": "Multipart part size in bytes (default 16 MiB, at least 5 MiB).",
+                "type": "number"
+              }
+            },
+            "required": [
+              "driver",
+              "buckets"
+            ]
+          }
+        }
+      }
+    },
+    {
       "name": "@denext/content-collections",
       "version": "0.4.0",
       "spec": "jsr:@denext/content-collections@^0.4.0",

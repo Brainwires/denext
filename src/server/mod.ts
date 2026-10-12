@@ -51,7 +51,7 @@ export { collapseHeadTags } from "../jsx/render-to-string.ts";
 export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
-export { serveStatic } from "./static.ts";
+export { parseRange, serveStatic } from "./static.ts";
 export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
@@ -456,7 +456,13 @@ export type {
 // Dynamic OG images: render JSX to a PNG (next/og-style ImageResponse).
 export { ImageResponse, type ImageResponseOptions } from "./image-response.ts";
 // Self-hosted image optimization endpoint (backs <Image loader={denextImageLoader}>).
-export { type ImageOptimizeOptions, optimizeImage } from "./image-optimizer.ts";
+export {
+  type ImageOptimizeOptions,
+  type ImageTransform,
+  optimizeImage,
+  transformImageBytes,
+  type TransformImageOptions,
+} from "./image-optimizer.ts";
 export {
   safeFetch,
   SafeFetchError,

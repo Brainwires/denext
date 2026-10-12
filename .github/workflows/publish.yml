@@ -20,6 +20,7 @@ name: Publish to JSR
 #   git tag graphql-v0.1.0    && git push origin graphql-v0.1.0      # @denext/graphql
 #   git tag react-router-v0.1.0 && git push origin react-router-v0.1.0  # @denext/react-router
 #   git tag content-collections-v0.1.0 && git push origin content-collections-v0.1.0  # @denext/content-collections
+#   git tag backend-v0.1.0    && git push origin backend-v0.1.0      # @denext/backend
 #   git tag lightningcss-v1.0.0-rc.72 && git push origin lightningcss-v1.0.0-rc.72  # @denext/lightningcss
 #   git tag swc-v76.0.0      && git push origin swc-v76.0.0          # @denext/swc
 #   (likewise avif-v* / og-v* / sqlite-v*)
@@ -43,6 +44,7 @@ on:
       - "graphql-v*" # @denext/graphql
       - "react-router-v*" # @denext/react-router
       - "content-collections-v*" # @denext/content-collections
+      - "backend-v*" # @denext/backend
       - "lightningcss-v*" # @denext/lightningcss
       - "swc-v*" # @denext/swc
 
@@ -94,6 +96,7 @@ jobs:
             graphql-v*)      cfg=packages/graphql/deno.json ;;
             react-router-v*) cfg=packages/react-router/deno.json ;;
             content-collections-v*) cfg=packages/content-collections/deno.json ;;
+            backend-v*)      cfg=packages/backend/deno.json ;;
             lightningcss-v*) cfg=packages/lightningcss/deno.json ;;
             swc-v*)          cfg=packages/swc/deno.json ;;
             v*)              cfg=deno.json ;;

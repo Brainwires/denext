@@ -116,6 +116,10 @@ async function rangeOrFull(
  * One `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range against `size`:
  * `undefined` = ignore the header (unsupported form or multiple ranges → serve the whole
  * file), `null` = unsatisfiable (416).
+ *
+ * @param header The request's `Range` header.
+ * @param size The resource's size in bytes.
+ * @returns The inclusive byte range, `undefined` to serve it all, or `null` for a 416.
  */
 export function parseRange(
   header: string,

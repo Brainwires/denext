@@ -629,6 +629,15 @@ suggests them).
 (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
 https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-native
 
+**File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
+s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
+authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
+head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
+session and its absence denies (`{ service: true }` skips it). Browser: `uploadFile(bucket, file,
+{ onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
+chars). Docs: https://denext.dev/docs/backend
+
 **A database (zero-npm, server-only module):**
 
 ```ts
@@ -1447,6 +1456,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `ImageResponse(element: VNode | object, options?: ImageResponseOptions): Response` — Render JSX (or a satori element object) to a PNG Response.
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
+- `interface ImageTransform` — A resize + re-encode of in-memory image bytes, for transformImageBytes.
 - `inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter` — Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.
 - `interface InMemoryAuthAdapterOptions` — Options for inMemoryAuthAdapter.
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
@@ -1564,6 +1574,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
 - `parseAcceptLanguage(header: string | null): string[]` — Parse an Accept-Language header into an ordered list of locale codes.
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
+- `parseRange(header: string, size: number): object | null | undefined` — One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).
 - `interface PasskeyChallengeRecord` — A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.
 - `interface PasskeyRecord` — A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, "credential record"): what verifying its later assertions needs. Nothing in it is secret: the public key verifies, it cannot sign.
 - `interface PasskeySummary` — A passkey as the app may show it — no key material.
@@ -1752,6 +1763,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TotpQrSvgOptions` — Options for totpQrSvg.
 - `interface TotpVerifyOptions` — Options for verifyTotp.
 - `type TotpVerifyResult = object | object` — The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.
+- `transformImageBytes(bytes: Uint8Array, transform: ImageTransform, options?: TransformImageOptions, gate?: () => Promise<() => void>): Promise<Response>` — Resize and re-encode image bytes the caller already holds — the /_denext/image pipeline (the same codecs, decompression-bomb and SVG refusal, concurrency gate and output cache) for a source that is not a URL, such as an object in storage. The size is bounded like the endpoint's: width and height must each be one of images.deviceSizes ∪ images.imageSizes, so a caller cannot ask for an unbounded number of distinct encodes. With both, the image is fitted inside the box (aspect ratio kept); it is never enlarged past the source.
+- `interface TransformImageOptions` — Options for transformImageBytes.
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
 - `type TranslationVars = Record<string, string | number>` — Values interpolated into a message template's {name} placeholders.
 - `interface TwitterMetadata` — Twitter Card metadata (twitter:* tags), Next.js-shaped (images, not image).

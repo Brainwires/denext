@@ -8,6 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`@denext/backend` 0.1.0: storage.** A new first-party plugin, `backend({ storage })`: buckets
+  declared in `denext.config.ts` with `public`, `maxBytes`, a `mime` allow-list (a declared raster
+  image is sniffed from its first bytes) and `authorize({ session, op, key, bucket, request })`,
+  which runs for every operation made inside a request with the `denextAuth` session and denies
+  when absent. Drivers: `s3()` for AWS S3, Cloudflare R2 and MinIO (SigV4 on `crypto.subtle`, no
+  SDK; presigned PUT/GET, multipart upload, ListObjectsV2 paging) and `fs({ dir })` for development
+  and self-hosting (HMAC-signed, expiring URLs served at `/_denext/storage/`, `Range` downloads).
+  `storage.bucket(name)` from `@denext/backend/server` signs uploads and downloads, uploads,
+  downloads, heads, lists and removes; `uploadFile` (progress, multipart above a threshold) and
+  `getFileUrl` from `@denext/backend/client` drive it from the browser through
+  `POST /_denext/storage/sign`, which applies the `csrf()` rule and validates its body. Downloads
+  can resize images (`transform: { width, height, quality, format }`). Guide:
+  [Backend](https://denext.dev/docs/backend); example: `examples/backend-storage`.
+- **`transformImageBytes(bytes, transform, { images, cacheKey })`** (`denext/server`): the
+  `/_denext/image` pipeline for image bytes the caller already holds — the same codecs, SVG and
+  decompression-bomb refusal, concurrency gate and output cache, with `width` / `height` bounded to
+  `images.deviceSizes ∪ images.imageSizes`, the image fitted inside the box and never enlarged.
+- **`parseRange(header, size)`** (`denext/server`): the single-range `Range` header parser the
+  static file server uses, for handlers that serve bytes themselves (`undefined` = serve it all,
+  `null` = 416).
+
 ## [3.4.11] - 2026-10-12
 
 ### Fixed

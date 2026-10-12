@@ -2096,6 +2096,12 @@
       "npm:ws@8"
     ],
     "members": {
+      "packages/backend": {
+        "dependencies": [
+          "jsr:@denext/denext@^3.4.11",
+          "jsr:@std/path@1"
+        ]
+      },
       "packages/content-collections": {
         "dependencies": [
           "jsr:@denext/denext@^3.4.11",
