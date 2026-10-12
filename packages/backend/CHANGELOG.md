@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Row-level security, Supabase-compatible.** `db()` now runs every query inside a transaction
+  that first sets `role` (`authenticated` for the request's signed-in user, else `anon`) and
+  `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query —
+  so Supabase-style policies (`using (auth.uid() = owner)`) apply as written. Migration
+  `backend_rls_0001` (on first use; `rls: { migrate: false }` to skip) creates the `anon` /
+  `authenticated` roles, grants them to the connecting role, and adds Supabase's `auth.uid()`,
+  `auth.role()`, `auth.email()` and `auth.jwt()`; `rlsSetupSql(role)` prints the same setup for a
+  DBA. The claims have a Supabase access token's shape (`sub`, `role`, `aud`, `email`, `aal`,
+  `amr`, `app_metadata`, `user_metadata`, …) plus `rls.claims(session)`. `db({ as })` acts as
+  `"anon"`, a user or a session; `db.service()` (or `db({ as: "service" })`) is the unscoped
+  connection. A `begin` inside `db().begin` is a savepoint. **Breaking:** `db()` outside a request
+  is now `anon`, not the server's own connection — use `db.service()` there.
 - **Postgres.** `backend({ postgres: { url | sql } })` opens one client for the app (`DATABASE_URL`
   by default; `Deno.SQL`, built into denext's Deno runtime, closed when the server drains) or
   adopts yours (`sql`, never closed by the plugin — the npm `postgres` package through

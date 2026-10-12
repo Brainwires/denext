@@ -651,6 +651,10 @@ tagged-template client on `Deno.SQL`, built into denext's Deno runtime (on stock
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
 tables by migration on first use. With `@denext/backend`, `backend({ postgres: {} })` (reads
 `DATABASE_URL`) + `db()` from `@denext/backend/server` + `denextAuth({ adapter: backendAuthAdapter() })`.
+`db()` is scoped by Supabase-compatible row-level security: each query runs as `authenticated`
+(the request's user in `request.jwt.claims`, so policies use `auth.uid()` / `auth.jwt()`) or `anon`
+(signed out, or outside a request), transaction-locally; `db({ as: { id } })` acts for a user in a
+task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant … to authenticated`.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
@@ -664,7 +668,9 @@ tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matc
 weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
 `tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
-14 days); the Cron page of `denext ui` shows it. `defineTask({ retry: { attempts, backoff } })`
+14 days); the Cron page of `denext ui` shows it. `tasks: { history: { store } }` takes any
+`TaskHistoryStore` — `postgresTaskHistoryStore({ url })` shares one history across replicas.
+`defineTask({ retry: { attempts, backoff } })`
 re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
 
 ```ts

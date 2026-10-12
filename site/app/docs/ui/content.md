@@ -790,6 +790,14 @@ On Deno Deploy it records and says so: `.denext/tasks.db` is per-isolate and eph
 what you see is one isolate's fragment that resets when it cycles. A history that is quietly wrong
 is worse than none, so the caveat is printed at boot rather than the setting being ignored.
 
+A project can keep its history somewhere else — `tasks: { history: { store } }`, such as
+`postgresTaskHistoryStore` (see [Where history is kept](/docs/tasks#history-store)). That store is
+constructed by your config, which is project code, and project code never runs in the UI's process:
+the page reads and clears it by running `denext task --history --json` and
+`denext task --clear-history --json` in the project, as it lists tasks, and shows the same four
+states. A store set in code is not offered as the on/off toggle, because the page never rewrites a
+call expression in your config.
+
 ## Project commands
 
 `/commands` lists every verb available in this project — built-ins, verbs a plugin

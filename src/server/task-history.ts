@@ -14,7 +14,7 @@
 // which must never create files in `.denext/` on the app's behalf.
 
 import { chmodSync, statSync } from "node:fs";
-import { openSqliteFile, type SqliteDb } from "./sqlite-cache.ts";
+import { openSqliteFile, type SqliteDb, type SqlValue } from "./sqlite-cache.ts";
 import type { TaskRunRecord } from "./tasks.ts";
 
 /** The history database, inside `ProjectPaths.outDir` — the filename is spelled once, here. */
@@ -117,6 +117,62 @@ export interface TaskHistory {
   readonly recent: readonly TaskHistoryRun[];
 }
 
+/** Options for {@linkcode TaskHistoryStore.read}. */
+export interface TaskHistoryReadOptions {
+  /** How many days the per-task counts cover (default 7). */
+  readonly windowDays?: number;
+  /** How many runs the recent feed holds (default 20). */
+  readonly recentLimit?: number;
+}
+
+/** Options for {@linkcode TaskHistoryStore.prune}. */
+export interface TaskHistoryPruneOptions {
+  /** Runs kept per task (default: the store's own `maxRuns`, else 500). */
+  readonly maxRuns?: number;
+  /** Runs older than this many days are dropped (default 14). */
+  readonly retainDays?: number;
+}
+
+/**
+ * Where task run history is kept — the seam behind `tasks: { history }`.
+ *
+ * denext records one row per completed run: its start (`startedAt`), how it ended (`ok`: it
+ * finished; `!ok`: it threw, with the error's head in `detail`) and, for a task with `retry`,
+ * the attempt. The default store is a SQLite file in `.denext/` ({@linkcode
+ * sqliteTaskHistoryStore}); {@linkcode postgresTaskHistoryStore} keeps it in Postgres, shared by
+ * every replica. Any object with these methods works:
+ *
+ * ```ts
+ * // denext.config.ts
+ * import { postgresTaskHistoryStore } from "denext/server";
+ * export default {
+ *   tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } },
+ * };
+ * ```
+ *
+ * The contract a store must keep: **recording never fails or delays a run.** `record` is
+ * called on the tail of every run and never awaited; it must not throw (a returned promise must
+ * not reject), and a store that cannot write drops the row. The readers never throw either:
+ * an unreadable store is `{ available: false, reason }`.
+ */
+export interface TaskHistoryStore {
+  /**
+   * Record one completed run. Called on the run's tail, never awaited: must not throw, and a
+   * returned promise must not reject.
+   */
+  record(run: TaskRunRecord): void | Promise<void>;
+  /** The panel summary: per-task standing inside the window, and the recent feed (newest first). */
+  read(options?: TaskHistoryReadOptions): Promise<TaskHistory>;
+  /** One task's runs, newest first (default: the 20 most recent). Never throws: `[]` instead. */
+  listRuns(task: string, options?: { readonly limit?: number }): Promise<TaskHistoryRun[]>;
+  /** Drop runs past the per-task cap and the retention window. Never throws. */
+  prune(options?: TaskHistoryPruneOptions): Promise<void>;
+  /** Delete every recorded run, keeping the store itself. Never throws. */
+  clear(): Promise<TaskHistoryCleared>;
+  /** Release what the store holds (a file handle, a pool it opened). */
+  close?(): void | Promise<void>;
+}
+
 /**
  * Apply pragmas and create the schema. Each pragma is applied on its own: a refused one keeps the
  * default rather than failing the open. WAL is the one that matters — it is what lets the UI read
@@ -178,6 +234,24 @@ function restrictFileMode(path: string): void {
 }
 
 /**
+ * Drop runs older than `retainDays`, then every task's runs past `maxRuns`.
+ *
+ * Per task, not global: a global cap would let a minute-cron task evict a daily task's whole
+ * history and silently corrupt the quiet task's counts. And EVERY task, not the one whose run
+ * triggered this: a task that only ever runs from `denext task <name>` gets one row per process
+ * and would otherwise never be the trigger. One windowed DELETE (SQLite ≥ 3.25).
+ */
+function pruneRuns(d: SqliteDb, maxRuns: number, retainDays: number): void {
+  const cutoff = Date.now() - retainDays * 86_400_000;
+  d.exec("DELETE FROM runs WHERE started_at < ?", [cutoff]);
+  d.exec(
+    "DELETE FROM runs WHERE id IN (SELECT id FROM (SELECT id, row_number() OVER " +
+      "(PARTITION BY task ORDER BY started_at DESC, id DESC) AS rn FROM runs) WHERE rn > ?)",
+    [maxRuns],
+  );
+}
+
+/**
  * A recorder to hand {@linkcode setTaskRecorder}: it writes one row per run and can never throw.
  *
  * The handle opens on the first record, not here — enabling history must not create a file. After
@@ -216,19 +290,7 @@ export function taskHistoryRecorder(
     }
   };
 
-  const prune = (d: SqliteDb): void => {
-    const cutoff = Date.now() - RETAIN_DAYS * 86_400_000;
-    d.exec("DELETE FROM runs WHERE started_at < ?", [cutoff]);
-    // Per task, not global: a global cap would let a minute-cron task evict a daily task's whole
-    // history and silently corrupt the quiet task's counts. And EVERY task, not the one whose
-    // run triggered this: a task that only ever runs from `denext task <name>` gets one row per
-    // process and would otherwise never be the trigger. One windowed DELETE (SQLite ≥ 3.25).
-    d.exec(
-      "DELETE FROM runs WHERE id IN (SELECT id FROM (SELECT id, row_number() OVER " +
-        "(PARTITION BY task ORDER BY started_at DESC, id DESC) AS rn FROM runs) WHERE rn > ?)",
-      [maxRuns],
-    );
-  };
+  const prune = (d: SqliteDb): void => pruneRuns(d, maxRuns, RETAIN_DAYS);
 
   return {
     record(run: TaskRunRecord): void {
@@ -281,17 +343,60 @@ export function taskHistoryRecorder(
   };
 }
 
+/** The recent feed's default length. */
+const DEFAULT_RECENT = 20;
+
+/**
+ * Runs, newest first — every task's, or one task's with `where`. A version-1 file (read-only to
+ * a reader, so never migrated by one) has no retry columns; they read as a first attempt.
+ */
+function queryRuns(
+  d: SqliteDb,
+  where: string,
+  params: SqlValue[],
+  limit: number,
+): TaskHistoryRun[] {
+  const retryCols = columnsOf(d).includes("will_retry");
+  const attemptCol = retryCols ? "attempt" : "1 AS attempt";
+  const willRetryCol = retryCols ? "will_retry" : "0 AS will_retry";
+  return d.query<{
+    task: string;
+    trigger: string;
+    started_at: number;
+    duration_ms: number;
+    ok: number;
+    detail: string | null;
+    attempt: number;
+    will_retry: number;
+  }>(
+    `SELECT task, trigger, started_at, duration_ms, ok, detail, ${attemptCol}, ${willRetryCol} ` +
+      `FROM runs ${where} ORDER BY started_at DESC, id DESC LIMIT ?`,
+    [...params, Math.max(0, Math.trunc(limit))],
+  ).map((row) => ({
+    task: row.task,
+    trigger: row.trigger,
+    startedAt: row.started_at,
+    durationMs: row.duration_ms,
+    ok: row.ok === 1,
+    detail: row.detail,
+    attempt: Number(row.attempt),
+    willRetry: row.will_retry === 1,
+  }));
+}
+
 /**
  * Read the history for a panel. Never throws: a database that is missing, unreadable or has no
  * rows yet are three different answers, and the caller has to tell them apart.
  *
  * @param options The database path and an optional open hook.
  * @param windowDays How many days the counts cover (default 7).
+ * @param recentLimit How many runs the recent feed holds (default 20).
  * @returns The rows, the recent feed, and whether anything could be read at all.
  */
 export function readTaskHistory(
   options: TaskHistoryOptions,
   windowDays = 7,
+  recentLimit = DEFAULT_RECENT,
 ): TaskHistory {
   const open = options.openDb ?? ((path: string) => openSqliteFile(path, { readOnly: true }));
   const empty = { windowDays, tasks: [], recent: [] };
@@ -310,8 +415,6 @@ export function readTaskHistory(
     const since = Date.now() - windowDays * 86_400_000;
     // A version-1 file (read-only here, so never migrated by the reader) has no retry columns.
     const retryCols = columnsOf(d).includes("will_retry");
-    const attemptCol = retryCols ? "attempt" : "1 AS attempt";
-    const willRetryCol = retryCols ? "will_retry" : "0 AS will_retry";
     const tasks = d.query<{
       task: string;
       last_ok: number;
@@ -341,28 +444,7 @@ export function readTaskHistory(
       failures: Number(row.failures),
       retries: Number(row.retries),
     }));
-    const recent = d.query<{
-      task: string;
-      trigger: string;
-      started_at: number;
-      duration_ms: number;
-      ok: number;
-      detail: string | null;
-      attempt: number;
-      will_retry: number;
-    }>(
-      `SELECT task, trigger, started_at, duration_ms, ok, detail, ${attemptCol}, ${willRetryCol} ` +
-        "FROM runs ORDER BY started_at DESC, id DESC LIMIT 20",
-    ).map((row) => ({
-      task: row.task,
-      trigger: row.trigger,
-      startedAt: row.started_at,
-      durationMs: row.duration_ms,
-      ok: row.ok === 1,
-      detail: row.detail,
-      attempt: Number(row.attempt),
-      willRetry: row.will_retry === 1,
-    }));
+    const recent = queryRuns(d, "", [], recentLimit);
     return { available: true, windowDays, tasks, recent };
   } catch (err) {
     return { available: false, reason: reasonOf(options.path, err), ...empty };
@@ -453,4 +535,93 @@ export function clearTaskHistory(options: TaskHistoryOptions): TaskHistoryCleare
       d.close();
     } catch { /* already gone */ }
   }
+}
+
+/** Options for {@linkcode sqliteTaskHistoryStore}. */
+export interface SqliteTaskHistoryStoreOptions extends TaskHistoryOptions {}
+
+/**
+ * One task's runs from the file, newest first; `[]` when there is nothing to read. Opens
+ * read-only, so it never creates the file.
+ */
+function listTaskRuns(options: TaskHistoryOptions, task: string, limit: number): TaskHistoryRun[] {
+  const open = options.openDb ?? ((path: string) => openSqliteFile(path, { readOnly: true }));
+  if (options.openDb === undefined && !fileExists(options.path)) return [];
+  let d: SqliteDb;
+  try {
+    d = open(options.path);
+  } catch {
+    return [];
+  }
+  try {
+    try {
+      d.exec(`PRAGMA busy_timeout = ${BUSY_READ_MS}`);
+    } catch { /* keep the default */ }
+    return queryRuns(d, "WHERE task = ?", [task], limit);
+  } catch {
+    return [];
+  } finally {
+    try {
+      d.close();
+    } catch { /* already gone */ }
+  }
+}
+
+/**
+ * Prune the file on demand. Never creates it: a history that does not exist has nothing to prune.
+ */
+function pruneFile(options: TaskHistoryOptions, maxRuns: number, retainDays: number): void {
+  if (options.openDb === undefined && !fileExists(options.path)) return;
+  const open = options.openDb ?? ((path: string) => openSqliteFile(path));
+  let d: SqliteDb;
+  try {
+    d = open(options.path);
+  } catch {
+    return;
+  }
+  try {
+    try {
+      d.exec(`PRAGMA busy_timeout = ${BUSY_READ_MS}`);
+    } catch { /* keep the default */ }
+    if (columnsOf(d).length > 0) pruneRuns(d, maxRuns, retainDays);
+  } catch {
+    /* a busy or foreign file: nothing pruned this time */
+  } finally {
+    try {
+      d.close();
+    } catch { /* already gone */ }
+  }
+}
+
+/**
+ * The default {@linkcode TaskHistoryStore}: a SQLite file (`.denext/tasks.db` when denext
+ * installs it), on Deno's built-in `node:sqlite`.
+ *
+ * The writer opens on the first recorded run — enabling history creates no file — and is
+ * created owner-only (mode 0600). After an open failure, or three consecutive write failures,
+ * it latches off for the rest of the process. The readers open the file read-only and separately
+ * from the writer (WAL lets `denext ui` read while the app writes), and neither a read nor a clear
+ * creates a file that is not there.
+ *
+ * @param options The file, the per-task cap, and an optional open hook.
+ * @returns The store.
+ */
+export function sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore {
+  const recorder = taskHistoryRecorder(options);
+  const maxRuns = options.maxRuns ?? DEFAULT_MAX_RUNS;
+  return {
+    record: (run) => recorder.record(run),
+    read: (read = {}) =>
+      Promise.resolve(
+        readTaskHistory(options, read.windowDays ?? 7, read.recentLimit ?? DEFAULT_RECENT),
+      ),
+    listRuns: (task, list = {}) =>
+      Promise.resolve(listTaskRuns(options, task, list.limit ?? DEFAULT_RECENT)),
+    prune: (prune = {}) =>
+      Promise.resolve(
+        pruneFile(options, prune.maxRuns ?? maxRuns, prune.retainDays ?? RETAIN_DAYS),
+      ),
+    clear: () => Promise.resolve(clearTaskHistory(options)),
+    close: () => recorder.close(),
+  };
 }

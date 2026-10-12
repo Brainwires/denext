@@ -91,8 +91,16 @@ const posts = await db()`SELECT id, title FROM posts WHERE author = ${userId}`; 
 
 The client is `Deno.SQL`, built into denext's Deno runtime. On stock Deno pass your own:
 `backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })` with the npm `postgres` package
-(`fromPostgresJs` is in `denext/server`). `db()` is the server's own connection, not scoped to the
-request's user. Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
+(`fromPostgresJs` is in `denext/server`). Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
+
+**Row-level security, Supabase-compatible.** `db()` runs each query as the request's user: a
+transaction that sets the role (`authenticated`, or `anon` when signed out or outside a request)
+and `request.jwt.claims` transaction-locally, so policies written with Supabase's `auth.uid()`,
+`auth.role()`, `auth.email()` and `auth.jwt()` apply unchanged. The roles and functions are created
+by a migration on first use (or by a DBA with `rlsSetupSql(role)` and `rls: { migrate: false }`).
+`db({ as: user })` acts for a user outside a request; `db.service()` bypasses RLS entirely — the
+app's own database user, for maintenance code only. Guide:
+[Backend › Row-level security](https://denext.dev/docs/backend#row-level-security).
 
 ## What it enforces
 

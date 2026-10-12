@@ -3,8 +3,9 @@
  * app: **storage** — buckets with per-bucket rules, signed upload and download URLs, multipart
  * uploads, image transforms on download, and session-aware access checks — on S3 (AWS,
  * Cloudflare R2, MinIO) or the local filesystem, with zero npm; and **Postgres** — `db()` for the
- * server and `backendAuthAdapter()` for denext auth, on the Postgres client built into denext's
- * Deno runtime (`Deno.SQL`), or any client you pass (`sql`).
+ * server, scoped by Supabase-compatible row-level security (`auth.uid()` in your policies), and
+ * `backendAuthAdapter()` for denext auth, on the Postgres client built into denext's Deno runtime
+ * (`Deno.SQL`), or any client you pass (`sql`).
  *
  * ```ts
  * // denext.config.ts
@@ -67,6 +68,8 @@ import { installPostgres, openPostgres, type PostgresOptions } from "./src/postg
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
+export { rlsMigrations, rlsSetupSql } from "./src/rls.ts";
+export type { RlsOptions } from "./src/rls.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";

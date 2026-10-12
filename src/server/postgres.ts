@@ -45,6 +45,12 @@ export interface SqlClient {
   unsafe<T = SqlRow>(text: string, params?: unknown[]): SqlQuery<T>;
   /** Run `fn` in a transaction: COMMIT when it settles, ROLLBACK (and rethrow) when it throws. */
   begin<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
+  /**
+   * Inside a transaction: run `fn` in a savepoint — RELEASE when it settles, ROLLBACK TO (and
+   * rethrow) when it throws. Optional: `Deno.SQL` and {@linkcode fromPostgresJs} have it; a
+   * nested transaction needs it.
+   */
+  savepoint?<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
   /** Close the client's connections. */
   close(options?: { timeout?: number }): Promise<void>;
 }
@@ -115,6 +121,8 @@ export interface PostgresJsLike {
   };
   /** A transaction (postgres.js passes the transaction's own client). */
   begin(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
+  /** A savepoint (on a transaction's client). */
+  savepoint?(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
   /** Close the pool (absent on a transaction's client). */
   end?(options?: { timeout?: number }): Promise<void>;
 }
@@ -134,6 +142,11 @@ export function fromPostgresJs(pg: PostgresJsLike): SqlClient {
     pg.unsafe(text, params) as unknown as SqlQuery<T>;
   client.begin = <T>(fn: (tx: SqlClient) => T | Promise<T>) =>
     pg.begin((tx) => fn(fromPostgresJs(tx))) as Promise<T>;
+  if (pg.savepoint) {
+    const savepoint = pg.savepoint.bind(pg);
+    client.savepoint = <T>(fn: (tx: SqlClient) => T | Promise<T>) =>
+      savepoint((tx) => fn(fromPostgresJs(tx))) as Promise<T>;
+  }
   client.close = async (options) => {
     await pg.end?.(options);
   };

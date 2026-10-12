@@ -308,6 +308,7 @@ export {
   type SpaShellConfig,
   type SpaTanstackRouterConfig,
   type TailwindConfig,
+  type TaskHistoryConfig,
   type TasksConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
@@ -373,7 +374,28 @@ export type { RenderScope } from "../runtime/render-scope.ts";
 // Scheduled/background tasks: define one in `tasks/<name>.ts`, schedule it via `scheduledTasks`
 // in denext.config.ts or a per-task `schedule`, and/or run it on demand (`runTask` / `denext task`).
 export { defineTask, getTask, isTask, registerTask, runTask, taskNames } from "./tasks.ts";
-export type { Task, TaskBackoff, TaskContext, TaskDefinition, TaskRetry } from "./tasks.ts";
+export type {
+  Task,
+  TaskBackoff,
+  TaskContext,
+  TaskDefinition,
+  TaskRetry,
+  TaskRunRecord,
+} from "./tasks.ts";
+export { sqliteTaskHistoryStore } from "./task-history.ts";
+export type {
+  SqliteTaskHistoryStoreOptions,
+  TaskHistory,
+  TaskHistoryCleared,
+  TaskHistoryOptions,
+  TaskHistoryPruneOptions,
+  TaskHistoryReadOptions,
+  TaskHistoryRow,
+  TaskHistoryRun,
+  TaskHistoryStore,
+} from "./task-history.ts";
+export { postgresTaskHistoryStore } from "./postgres-task-history.ts";
+export type { PostgresTaskHistoryStoreOptions } from "./postgres-task-history.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";

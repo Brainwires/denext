@@ -115,3 +115,78 @@ Deno.test("--list --json reports whether history is on, resolved rather than gue
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** Run the verb with `--json`, returning what it printed as one document. */
+async function invokeJson(dir: string, flags: Record<string, unknown>): Promise<unknown> {
+  const printed: string[] = [];
+  const log = console.log;
+  console.log = (...args: unknown[]) => void printed.push(args.map(String).join(" "));
+  try {
+    await taskCommand.run({
+      positionals: [],
+      flags,
+      global: { cwd: dir, json: true, verbose: false, quiet: false } as CommandContext["global"],
+      rest: [],
+    } as CommandContext);
+  } finally {
+    console.log = log;
+  }
+  return JSON.parse(printed.join("\n"));
+}
+
+/** A config whose history goes to the app's own store (a SQLite file of its choosing). */
+function customStoreConfig(): string {
+  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
+  return `import { sqliteTaskHistoryStore } from "${history}";\n` +
+    "export default { tasks: { history: { store: sqliteTaskHistoryStore({ path: " +
+    "new URL('./custom.db', import.meta.url).pathname }) } } };\n";
+}
+
+Deno.test("a custom store: runs land in it; --history and --clear-history go through it", async () => {
+  clearTasks();
+  const dir = await project(customStoreConfig());
+  try {
+    const listing = await invokeJson(dir, { list: true }) as Record<string, unknown>;
+    assertEquals([listing.history, listing.historyStore], [true, "custom"]);
+    clearTasks();
+    assertEquals(await invoke(dir, { positionals: ["cleanup"] }), []);
+    let tasksDb = true;
+    try {
+      await Deno.stat(join(dir, ".denext", "tasks.db"));
+    } catch {
+      tasksDb = false;
+    }
+    assert(!tasksDb, "the default file is not written when a store is configured");
+    const read = await invokeJson(dir, { history: true }) as {
+      enabled: boolean;
+      available: boolean;
+      recent: { task: string; trigger: string }[];
+    };
+    assertEquals([read.enabled, read.available], [true, true]);
+    assertEquals(read.recent.map((r) => [r.task, r.trigger]), [["cleanup", "manual"]]);
+    assertEquals(await invokeJson(dir, { "clear-history": true }), {
+      enabled: true,
+      cleared: true,
+    });
+    const after = await invokeJson(dir, { history: true }) as { recent: unknown[] };
+    assertEquals(after.recent, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--history with history off is an answer, and the default store says default", async () => {
+  clearTasks();
+  const dir = await project(null);
+  try {
+    assertEquals(await invokeJson(dir, { history: true }), {
+      enabled: false,
+      available: false,
+      windowDays: 7,
+    });
+    const listing = await invokeJson(dir, { list: true }) as Record<string, unknown>;
+    assertEquals([listing.history, listing.historyStore], [false, "default"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

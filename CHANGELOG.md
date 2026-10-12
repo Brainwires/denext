@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **Pluggable task run history** (`denext/server`): `tasks: { history: { store } }` takes any
+  `TaskHistoryStore` (`record`, `read`, `listRuns`, `prune`, `clear`, optional `close`); the
+  `.denext/tasks.db` file stays the default (`sqliteTaskHistoryStore`, behaviour unchanged, and
+  `{ maxRuns }` is its cap), and `postgresTaskHistoryStore({ sql | url, schema, maxRuns, migrate })`
+  keeps every replica's runs in one `task_runs` table. Recording still never fails or delays a run,
+  whatever the store does. `denext task --history [--json]` / `--clear-history` read and clear
+  through the configured store, and `denext ui`'s Cron page reads through the store API (the
+  default file in-process, an app's own store through those commands). Guide:
+  [Scheduled tasks › Where history is kept](https://denext.dev/docs/tasks#history-store).
 - **Postgres everywhere** (`denext/server`): `postgresAuthAdapter({ sql | url })` meets the same
   `AuthAdapter` contract as `sqliteAuthAdapter` (the shared contract suite runs against a real
   server), with its `sessions` store, on a database every replica shares; `postgresSessionStore`,
@@ -25,6 +34,18 @@ and this project adheres to
   and the generated `tasks/migrate.ts` runs on Postgres when `DATABASE_URL` is a `postgres://` URL
   (`--payload '{"dryRun":true}'` / `'{"status":true}'` list instead of applying, on SQLite too).
   Guide: [Databases › Postgres](https://denext.dev/docs/database#postgres).
+- **`@denext/backend`: row-level security, Supabase-compatible.** `db()` runs every query in a
+  transaction that first sets the role (`authenticated` for the request's signed-in user, else
+  `anon`) and `request.jwt.claims` with `set_config(…, true)` — transaction-local, so nothing
+  survives on a pooled connection or behind pgbouncer — pipelined with the query (three round
+  trips per scoped query). Supabase's `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()`
+  read those claims, so existing policies (`using (auth.uid() = owner)`) apply as written; the
+  claims have a Supabase access token's shape plus `rls.claims(session)`. The roles and functions
+  come from migration `backend_rls_0001` on first use (or `rlsSetupSql(role)` for a DBA and
+  `rls: { migrate: false }`). `db({ as: "anon" | user | session })` picks the identity outside a
+  request (where `db()` is `anon`); `db.service()` is the unscoped connection. A `begin` inside
+  `db().begin` is a savepoint (`SqlClient.savepoint`, optional, also mapped by `fromPostgresJs`).
+  Guide: [Backend › Row-level security](https://denext.dev/docs/backend#row-level-security).
 - **`@denext/backend`: Postgres.** `backend({ postgres: { url | sql } })` opens one client for the
   app (`DATABASE_URL` by default, closed on drain); `db()` from `@denext/backend/server` returns it,
   and `backendAuthAdapter()` puts `denextAuth`'s tables on it. On stock Deno the app still starts

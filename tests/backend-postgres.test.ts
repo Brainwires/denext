@@ -57,12 +57,12 @@ Deno.test("db() before backend({ postgres }) names the missing configuration", (
   assertThrows(() => db(), Error, "add backend({ postgres");
 });
 
-Deno.test("backend({ postgres: { sql } }): db() is that client, never closed by the plugin", async () => {
+Deno.test("backend({ postgres: { sql } }): db.service() is that client, never closed by the plugin", async () => {
   const sql = fakeSqlClient();
   await setUp({ sql });
   try {
-    assertEquals(db(), sql);
-    assertEquals(await db()`select ${1} as one`, [{ one: 1 }]);
+    assertEquals(db.service(), sql);
+    assertEquals(await db.service()`select ${1} as one`, [{ one: 1 }]);
     await runPluginTeardown();
     assertEquals(sql.closes, 0);
   } finally {
@@ -82,7 +82,7 @@ Deno.test("backend({ postgres: {} }) opens DATABASE_URL on Deno.SQL and closes i
   }
   await withRuntime(FakeSql, "postgres://u@h/app", async () => {
     await setUp({});
-    assertEquals(db(), sql);
+    assertEquals(db.service(), sql);
     assertEquals(urls, ["postgres://u@h/app"]);
     await runPluginTeardown();
     assertEquals(sql.closes, 1);

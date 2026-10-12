@@ -9769,6 +9769,35 @@
           "denextOnly": true
         },
         {
+          "name": "postgresTaskHistoryStore",
+          "slug": "postgresTaskHistoryStore",
+          "kind": "function",
+          "signature": "postgresTaskHistoryStore(options: PostgresTaskHistoryStoreOptions): TaskHistoryStore",
+          "doc": "Task run history on Postgres — pass it as tasks: { history: { store } }.",
+          "docFull": "Task run history on Postgres — pass it as `tasks: { history: { store } }`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A client (sql) or a postgres:// URL, an optional schema, the per-task cap and migrate: false when the table is created out of band."
+            }
+          ],
+          "returns": "The store. Nothing connects until the first run is recorded (or history is read).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresTaskHistoryStoreOptions",
+          "slug": "PostgresTaskHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresTaskHistoryStoreOptions",
+          "doc": "Options for postgresTaskHistoryStore.",
+          "docFull": "Options for {@linkcode postgresTaskHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PostgresUnsupportedError",
           "slug": "PostgresUnsupportedError",
           "kind": "class",
@@ -11780,6 +11809,35 @@
           "denextOnly": true
         },
         {
+          "name": "sqliteTaskHistoryStore",
+          "slug": "sqliteTaskHistoryStore",
+          "kind": "function",
+          "signature": "sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore",
+          "doc": "The default TaskHistoryStore: a SQLite file (.denext/tasks.db when denext installs it), on Deno's built-in node:sqlite.",
+          "docFull": "The default {@linkcode TaskHistoryStore}: a SQLite file (`.denext/tasks.db` when denext\ninstalls it), on Deno's built-in `node:sqlite`.\n\nThe writer opens on the first recorded run — enabling history creates no file — and is\ncreated owner-only (mode 0600). After an open failure, or three consecutive write failures,\nit latches off for the rest of the process. The readers open the file read-only and separately\nfrom the writer (WAL lets `denext ui` read while the app writes), and neither a read nor a clear\ncreates a file that is not there.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The file, the per-task cap, and an optional open hook."
+            }
+          ],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteTaskHistoryStoreOptions",
+          "slug": "SqliteTaskHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface SqliteTaskHistoryStoreOptions",
+          "doc": "Options for sqliteTaskHistoryStore.",
+          "docFull": "Options for {@linkcode sqliteTaskHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SqlQuery",
           "slug": "SqlQuery",
           "kind": "interface",
@@ -12021,6 +12079,114 @@
           "denextOnly": true
         },
         {
+          "name": "TaskHistory",
+          "slug": "TaskHistory",
+          "kind": "interface",
+          "signature": "interface TaskHistory",
+          "doc": "What a read returns — including why there is nothing, which is itself an answer.",
+          "docFull": "What a read returns — including why there is nothing, which is itself an answer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryCleared",
+          "slug": "TaskHistoryCleared",
+          "kind": "interface",
+          "signature": "interface TaskHistoryCleared",
+          "doc": "What clearing the history did, or why it could not.",
+          "docFull": "What clearing the history did, or why it could not.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryConfig",
+          "slug": "TaskHistoryConfig",
+          "kind": "interface",
+          "signature": "interface TaskHistoryConfig",
+          "doc": "The object form of TasksConfig.history.",
+          "docFull": "The object form of {@link TasksConfig.history}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryOptions",
+          "slug": "TaskHistoryOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryOptions",
+          "doc": "Options for taskHistoryRecorder and readTaskHistory.",
+          "docFull": "Options for {@linkcode taskHistoryRecorder} and {@linkcode readTaskHistory}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryPruneOptions",
+          "slug": "TaskHistoryPruneOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryPruneOptions",
+          "doc": "Options for TaskHistoryStore.prune.",
+          "docFull": "Options for {@linkcode TaskHistoryStore.prune}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryReadOptions",
+          "slug": "TaskHistoryReadOptions",
+          "kind": "interface",
+          "signature": "interface TaskHistoryReadOptions",
+          "doc": "Options for TaskHistoryStore.read.",
+          "docFull": "Options for {@linkcode TaskHistoryStore.read}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryRow",
+          "slug": "TaskHistoryRow",
+          "kind": "interface",
+          "signature": "interface TaskHistoryRow",
+          "doc": "One task's standing, as the panel shows it.",
+          "docFull": "One task's standing, as the panel shows it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryRun",
+          "slug": "TaskHistoryRun",
+          "kind": "interface",
+          "signature": "interface TaskHistoryRun",
+          "doc": "One run in the recent feed.",
+          "docFull": "One run in the recent feed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskHistoryStore",
+          "slug": "TaskHistoryStore",
+          "kind": "interface",
+          "signature": "interface TaskHistoryStore",
+          "doc": "Where task run history is kept — the seam behind tasks: { history }.",
+          "docFull": "Where task run history is kept — the seam behind `tasks: { history }`.\n\ndenext records one row per completed run: its start (`startedAt`), how it ended (`ok`: it\nfinished; `!ok`: it threw, with the error's head in `detail`) and, for a task with `retry`,\nthe attempt. The default store is a SQLite file in `.denext/` ({@linkcode\nsqliteTaskHistoryStore}); {@linkcode postgresTaskHistoryStore} keeps it in Postgres, shared by\nevery replica. Any object with these methods works:\n\n```ts\n// denext.config.ts\nimport { postgresTaskHistoryStore } from \"denext/server\";\nexport default {\n  tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get(\"DATABASE_URL\") }) } },\n};\n```\n\nThe contract a store must keep: **recording never fails or delays a run.** `record` is\ncalled on the tail of every run and never awaited; it must not throw (a returned promise must\nnot reject), and a store that cannot write drops the row. The readers never throw either:\nan unreadable store is `{ available: false, reason }`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "taskNames",
           "slug": "taskNames",
           "kind": "function",
@@ -12039,6 +12205,18 @@
           "signature": "interface TaskRetry",
           "doc": "A task's retry policy (TaskDefinition.retry).",
           "docFull": "A task's retry policy ({@linkcode TaskDefinition.retry}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskRunRecord",
+          "slug": "TaskRunRecord",
+          "kind": "interface",
+          "signature": "interface TaskRunRecord",
+          "doc": "One completed run, as the recorder receives it.",
+          "docFull": "One completed run, as the recorder receives it.",
           "params": [],
           "returns": "",
           "examples": [],

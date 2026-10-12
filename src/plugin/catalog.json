@@ -173,6 +173,19 @@
               },
               "sql": {
                 "description": "A client to use instead of `url`: any `SqlClient` (on stock Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the plugin."
+              },
+              "rls": {
+                "description": "Row-level security: `db()` runs every query as `anon` or `authenticated` with the request's claims, so Supabase-style policies apply. The roles and `auth.*` functions are created by a migration on first use unless `migrate: false`.",
+                "type": "object",
+                "properties": {
+                  "migrate": {
+                    "description": "Apply the `backend_rls_0001` migration (the `anon` / `authenticated` roles, their grant to the connecting role, and the `auth.*` functions) on the first scoped query (default `true`). `false` when a DBA applies rlsSetupSql instead.",
+                    "type": "boolean"
+                  },
+                  "claims": {
+                    "description": "Extra claims for a signed-in user's `request.jwt.claims` (read in SQL with `auth.jwt() ->> 'tenant'`). Merged over denext's own; `sub`, `role` and `email` cannot be overridden."
+                  }
+                }
               }
             }
           }

@@ -21,6 +21,11 @@ export interface FakeSqlClient extends SqlClient {
   failNext(pattern: RegExp, error: Error & { code?: string }): void;
   /** The underlying database, for direct reads. */
   readonly raw: DatabaseSync;
+  /**
+   * The settings `set_config(name, value, is_local)` made, as Postgres keeps them: a local one
+   * lasts until the transaction ends (COMMIT or ROLLBACK), a session one until the client goes.
+   */
+  readonly settings: Map<string, string>;
 }
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -64,6 +69,25 @@ export function fakeSqlClient(): FakeSqlClient {
   const failures: Array<{ pattern: RegExp; error: Error }> = [];
   let closes = 0;
   let queue: Promise<unknown> = Promise.resolve();
+  // `set_config` / `current_setting`, as Postgres scopes them: a local setting ends with the
+  // transaction, a session one stays.
+  const settings = new Map<string, string>();
+  const session = new Map<string, string>();
+  raw.function("set_config", (name: unknown, value: unknown, local: unknown) => {
+    const key = String(name);
+    const text = value === null ? "" : String(value);
+    settings.set(key, text);
+    if (!local) session.set(key, text);
+    return text;
+  });
+  raw.function("current_setting", { varargs: true }, (name: unknown) => {
+    return settings.get(String(name)) ?? null;
+  });
+  let savepoints = 0;
+  const endTransaction = () => {
+    settings.clear();
+    for (const [key, value] of session) settings.set(key, value);
+  };
 
   const run = (text: string, params: unknown[] = [], simple = false): SqlRow[] => {
     const sql = text.replace(/\$(\d+)/g, "?$1");
@@ -100,6 +124,7 @@ export function fakeSqlClient(): FakeSqlClient {
     failNext(pattern: RegExp, error: Error) {
       failures.push({ pattern, error });
     },
+    settings,
     begin<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T> {
       // One connection: transactions take turns, as they would each hold a pooled one.
       const next = queue.then(async () => {
@@ -111,10 +136,27 @@ export function fakeSqlClient(): FakeSqlClient {
         } catch (error) {
           run("ROLLBACK");
           throw error;
+        } finally {
+          endTransaction();
         }
       });
       queue = next.catch(() => {});
       return next;
+    },
+    async savepoint<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T> {
+      const name = `s${++savepoints}`;
+      const saved = new Map(settings);
+      run(`SAVEPOINT ${name}`);
+      try {
+        const result = await fn(client);
+        run(`RELEASE SAVEPOINT ${name}`);
+        return result;
+      } catch (error) {
+        run(`ROLLBACK TO SAVEPOINT ${name}`);
+        settings.clear();
+        for (const [key, value] of saved) settings.set(key, value);
+        throw error;
+      }
     },
     close() {
       closes++;

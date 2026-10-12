@@ -6,6 +6,7 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
+import type { TaskHistoryStore } from "./task-history.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
@@ -541,8 +542,16 @@ export interface TasksConfig {
    * a DSN or another secret should return nothing instead. The file is `tasks.db` (with its
    * `-wal`/`-shm` siblings) inside the build output directory, `.denext/` by default, created
    * owner-only (mode 0600) where the platform has file modes.
+   *
+   * The object form picks where the history is kept: `{ store }` takes any
+   * {@link TaskHistoryStore} — `postgresTaskHistoryStore({ url })` shares one history across
+   * every replica — and `{ maxRuns }` sets the default store's cap. `{}` is the same as `true`.
+   *
+   * ```ts
+   * tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } }
+   * ```
    */
-  history?: boolean;
+  history?: boolean | TaskHistoryConfig;
   /**
    * Runs kept per task before the oldest are dropped (default 500).
    *
@@ -553,6 +562,23 @@ export interface TasksConfig {
    * @minimum 1
    */
   historyMaxRuns?: number;
+}
+
+/** The object form of {@link TasksConfig.history}. */
+export interface TaskHistoryConfig {
+  /**
+   * Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is
+   * the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does,
+   * as its process ends).
+   */
+  store?: TaskHistoryStore;
+  /**
+   * Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob).
+   * A `store` takes its own cap.
+   *
+   * @minimum 1
+   */
+  maxRuns?: number;
 }
 
 /** The object form of {@link DenextConfig.platformExtensions}. */

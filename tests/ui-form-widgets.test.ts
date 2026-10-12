@@ -113,6 +113,8 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "plugins[].setup",
     // The shell component's props: `Record<string, unknown>`, values opaque as `i18n.messages`'.
     "spa.shell.props",
+    // A task-history store: an object of methods, as opaque as `cache.store`.
+    "tasks.history.store",
   ]);
 });
 
