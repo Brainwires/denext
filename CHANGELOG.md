@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.16] - 2026-10-12
+
 ### Added
 
 - **`clientIpForLimits({ bucket: true })`** answers the address's limit bucket instead of the
@@ -13469,7 +13471,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.15...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.16...development
+[3.4.16]: https://jsr.io/@denext/denext@3.4.16
 [3.4.15]: https://jsr.io/@denext/denext@3.4.15
 [3.4.14]: https://jsr.io/@denext/denext@3.4.14
 [3.4.13]: https://jsr.io/@denext/denext@3.4.13
