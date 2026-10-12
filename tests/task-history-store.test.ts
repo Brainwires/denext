@@ -91,15 +91,42 @@ Deno.test("postgres store: a failing database drops rows, latches after three, n
   await store.close?.();
 });
 
-Deno.test("postgres store: a failed migration is retried, and read reports it instead of throwing", async () => {
+Deno.test("postgres store: a failed migration is retried by the next write", async () => {
   const sql = fakeSqlClient();
   const store = postgresTaskHistoryStore({ sql });
   sql.failNext(/CREATE TABLE IF NOT EXISTS task_runs/, new Error("permission denied"));
+  await store.record(run({ name: "a" })); // the migration fails: the row is dropped
   const read = await store.read();
-  assertEquals(read.available, false);
-  assert((read.reason ?? "").includes("permission denied"), read.reason);
+  assertEquals([read.available, read.reason], [false, "no history recorded yet"]);
   await store.record(run({ name: "a" }));
-  assertEquals((await store.read()).recent.length, 1, "the next call migrated");
+  assertEquals((await store.read()).recent.length, 1, "the next write migrated");
+  await store.close?.();
+});
+
+Deno.test("postgres store: reads never migrate — no table yet is no history yet", async () => {
+  const sql = fakeSqlClient();
+  const store = postgresTaskHistoryStore({ sql });
+  const read = await store.read({ readOnly: true });
+  assertEquals([read.available, read.reason, read.tasks, read.recent], [
+    false,
+    "no history recorded yet",
+    [],
+    [],
+  ]);
+  assertEquals(await store.listRuns("a"), []);
+  assertEquals(
+    sql.statements.filter((s) => /CREATE|ALTER|INSERT|task_history_migrations/i.test(s)),
+    [],
+    "no DDL, no migration bookkeeping, nothing written",
+  );
+  assertEquals(sql.raw.prepare("SELECT name FROM sqlite_master").all(), [], "nothing created");
+  // A read right after a write waits for the migration that write started.
+  void store.record(run({ name: "a" }));
+  assertEquals((await store.read()).recent.map((r) => r.task), ["a"]);
+  // Any other failure is still reported as such.
+  sql.failNext(/FROM task_runs/, Object.assign(new Error("connection reset"), { code: "08006" }));
+  const failed = await store.read();
+  assertEquals([failed.available, failed.reason], [false, "connection reset"]);
   await store.close?.();
 });
 

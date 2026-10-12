@@ -845,6 +845,11 @@ recorded yet, on with no runs inside the window, and on with results. "Off" and 
 yet" are different facts, and reading one as the other is how you end up waiting for data that was
 never going to arrive.
 
+A store your config constructs (`tasks: { history: { store } }`) is read through a
+`denext task --history` child; under `--read-only` that child runs with `--read-only` too, which
+the store receives as `read({ readOnly: true })`. Reading never creates or migrates anything —
+the Postgres store answers "no history recorded yet" until its first run creates the table.
+
 Clearing is its own button, and its own two steps: the first press says how many runs will go and
 asks you to confirm, the second deletes them. It is a `DELETE`, not a file unlink — the running app
 may hold that database open — so the database survives and recording simply continues. Your denext

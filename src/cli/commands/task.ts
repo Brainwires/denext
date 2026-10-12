@@ -109,7 +109,7 @@ const HISTORY_WINDOW_DAYS = 7;
  */
 async function historyVerb(ctx: CommandContext, paths: ProjectPaths): Promise<void> {
   const clear = ctx.flags["clear-history"] === true;
-  const out = await historyAnswer(paths, clear);
+  const out = await historyAnswer(paths, clear, ctx.flags["read-only"] === true);
   if (ctx.global.json) console.log(JSON.stringify(out, null, 2));
   else if (clear) console.log(out.cleared ? "run history cleared" : `not cleared: ${out.reason}`);
   else printHistory(out);
@@ -119,6 +119,7 @@ async function historyVerb(ctx: CommandContext, paths: ProjectPaths): Promise<vo
 async function historyAnswer(
   paths: ProjectPaths,
   clear: boolean,
+  readOnly: boolean,
 ): Promise<Record<string, unknown>> {
   const resolved = historyStoreFor(paths.config ?? undefined, paths.outDir);
   if (!resolved) {
@@ -126,11 +127,13 @@ async function historyAnswer(
       ? { enabled: false, cleared: false, reason: "run history is off" }
       : { enabled: false, available: false, windowDays: HISTORY_WINDOW_DAYS };
   }
+  // Refused before the store is touched: clearing is the one write this verb can make.
+  if (clear && readOnly) return { enabled: true, cleared: false, reason: "read-only" };
   const { store } = resolved;
   try {
     const answer = clear
       ? await store.clear()
-      : await store.read({ windowDays: HISTORY_WINDOW_DAYS });
+      : await store.read({ windowDays: HISTORY_WINDOW_DAYS, readOnly });
     return { enabled: true, ...answer };
   } finally {
     try {
@@ -231,6 +234,11 @@ export const taskCommand: CommandSpec = {
       help: "Delete every recorded run through the configured history store",
     },
     {
+      name: "read-only",
+      type: "boolean",
+      help: "With --history: read without changing anything; refuses --clear-history",
+    },
+    {
       name: "payload",
       type: "string",
       valueName: "<json>",
@@ -242,7 +250,7 @@ export const taskCommand: CommandSpec = {
   // the CLI's module-loading gate doesn't treat the task name as the project dir.
   moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
   usage: "denext task <name> [--payload '<json>']\ndenext task --list [--json]\n" +
-    "denext task --history [--json]\ndenext task --clear-history [--json]",
+    "denext task --history [--read-only] [--json]\ndenext task --clear-history [--json]",
   run: async (ctx: CommandContext) => {
     if (ctx.flags.history === true || ctx.flags["clear-history"] === true) {
       // No task module is imported for this: only the config (and its store) is needed.

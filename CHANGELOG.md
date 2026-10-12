@@ -49,6 +49,14 @@ and this project adheres to
   are parameters, passwords are masked, and `--read-only` refuses every write in the server and
   again in the child. Guide: [Project UI › Database](https://denext.dev/docs/ui#database).
 
+### Fixed
+
+- **Reading task run history never changes the database.** `postgresTaskHistoryStore`'s `read()`
+  and `listRuns()` no longer run the table migration: before the first recorded run they answer
+  "no history recorded yet" (as the SQLite store does). `denext task --history --read-only` passes
+  `readOnly: true` to the store's `read()` (new `TaskHistoryReadOptions.readOnly`) and refuses
+  `--clear-history`; `denext ui --read-only` reads a custom store's history that way.
+
 ### Changed
 
 - **`@denext/backend`: a single `db()` query is one round trip on `Deno.SQL`** (was two): the

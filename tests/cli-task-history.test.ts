@@ -175,6 +175,41 @@ Deno.test("a custom store: runs land in it; --history and --clear-history go thr
   }
 });
 
+Deno.test("--read-only: --history tells the store, --clear-history is refused before it", async () => {
+  clearTasks();
+  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
+  // A store of the app's own that writes down how it was read, and what it was asked to clear.
+  const dir = await project(`import { sqliteTaskHistoryStore } from "${history}";
+const inner = sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
+export default { tasks: { history: { store: {
+  record: (run) => inner.record(run),
+  read: (options) => { note("read " + JSON.stringify(options)); return inner.read(options); },
+  listRuns: (task, options) => inner.listRuns(task, options),
+  prune: (options) => inner.prune(options),
+  clear: () => { note("clear"); return inner.clear(); },
+  close: () => inner.close(),
+} } } };
+`);
+  try {
+    assertEquals(await invoke(dir, { positionals: ["cleanup"] }), []);
+    const read = await invokeJson(dir, { history: true, "read-only": true }) as {
+      available: boolean;
+      recent: unknown[];
+    };
+    assertEquals([read.available, read.recent.length], [true, 1]);
+    assertEquals(await invokeJson(dir, { "clear-history": true, "read-only": true }), {
+      enabled: true,
+      cleared: false,
+      reason: "read-only",
+    });
+    const calls = (await Deno.readTextFile(join(dir, "calls.log"))).trim().split("\n");
+    assertEquals(calls, ['read {"windowDays":7,"readOnly":true}'], "never asked to clear");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("--history with history off is an answer, and the default store says default", async () => {
   clearTasks();
   const dir = await project(null);

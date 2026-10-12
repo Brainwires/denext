@@ -251,9 +251,14 @@ export default {
           <strong>Reading it:</strong> <code>denext task --history [--json]</code>{" "}
           prints the last seven days through the configured store, and{" "}
           <code>denext task --clear-history</code>{" "}
-          deletes every run. The Project UI's Cron page reads the default file itself and, for a
-          store your config constructs (project code, which the UI never runs in its own process),
-          asks those two commands. A store set in code is not offered as an on/off toggle there.
+          deletes every run. A read changes nothing (the Postgres store sends no DDL to answer one);
+          {" "}
+          <code>--read-only</code>{" "}
+          also tells the store so (<code>read({"{ readOnly: true }"})</code>) and refuses{" "}
+          <code>--clear-history</code>. The Project UI's Cron page reads the default file itself
+          and, for a store your config constructs (project code, which the UI never runs in its own
+          process), asks those two commands. A store set in code is not offered as an on/off toggle
+          there.
         </li>
         <li>
           <strong>Lifetime:</strong>{" "}

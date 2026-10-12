@@ -12,7 +12,8 @@
  * ```
  *
  * Runs live in `task_runs`, created by a migration (recorded in `task_history_migrations`) on
- * first use. Like the SQLite store, recording can never fail or delay a run: `record` starts the
+ * the first write — never by a read: `read()` and `listRuns()` send no DDL, and answer "no history
+ * recorded yet" while the table does not exist (so `denext ui --read-only` changes nothing). Like the SQLite store, recording can never fail or delay a run: `record` starts the
  * insert and returns, a failed insert drops its row, and after three failures in a row the store
  * stops trying for the life of the process. Retention matches the default store: a per-task cap
  * (500 by default) and a 14-day window, applied on the first insert of a process and then every
@@ -26,6 +27,7 @@ import {
   resolveConnection,
   schemaPrefix,
   type SqlClient,
+  sqlState,
   toNumber,
 } from "./postgres.ts";
 import { migratePostgres, type Migration } from "./postgres-migrate.ts";
@@ -56,6 +58,10 @@ const FAILURE_LATCH = 3;
 const PRUNE_EVERY = 200;
 const PRUNE_INTERVAL_MS = 600_000;
 const FEATURE = "postgresTaskHistoryStore";
+/** What a read says before the first run created the table — the SQLite store's words. */
+const NOTHING_YET = "no history recorded yet";
+/** SQLSTATEs for a table (or its schema) that does not exist yet. */
+const MISSING = new Set(["42P01", "3F000"]);
 
 /** The schema, as migrations. `p` qualifies a table. Integers, not booleans: `SUM(ok)` reads. */
 function historyMigrations(p: string): Migration[] {
@@ -141,6 +147,17 @@ class PostgresTaskHistory implements TaskHistoryStore {
     return this.#sql;
   }
 
+  /**
+   * The client for a read: never migrates. A migration this process already started is waited
+   * for (a read right after a record sees its row); otherwise the table may not exist yet, which
+   * the caller reports as {@linkcode NOTHING_YET}.
+   */
+  async #reader(): Promise<SqlClient> {
+    if (this.#closed) throw new Error(`${FEATURE}: this store has been closed`);
+    await this.#migrated?.catch(() => {});
+    return this.#sql;
+  }
+
   record(run: TaskRunRecord): Promise<void> {
     if (this.#disabled || this.#closed) return Promise.resolve();
     // Started in the root context: `runTask` may be called from a request, and the insert (or
@@ -206,7 +223,7 @@ class PostgresTaskHistory implements TaskHistoryStore {
     const windowDays = options.windowDays ?? 7;
     const empty = { windowDays, tasks: [], recent: [] };
     try {
-      const db = await this.#db();
+      const db = await this.#reader();
       const since = Date.now() - windowDays * 86_400_000;
       const t = this.#t;
       const rows = await db.unsafe(
@@ -236,7 +253,8 @@ class PostgresTaskHistory implements TaskHistoryStore {
       )).map(toRun);
       return { available: true, windowDays, tasks, recent };
     } catch (error) {
-      return { available: false, reason: reasonOf(error), ...empty };
+      const reason = MISSING.has(sqlState(error) ?? "") ? NOTHING_YET : reasonOf(error);
+      return { available: false, reason, ...empty };
     }
   }
 
@@ -245,7 +263,7 @@ class PostgresTaskHistory implements TaskHistoryStore {
     options: { readonly limit?: number } = {},
   ): Promise<TaskHistoryRun[]> {
     try {
-      const db = await this.#db();
+      const db = await this.#reader();
       const rows = await db.unsafe(
         `SELECT task, trigger, started_at, duration_ms, ok, detail, attempt, will_retry FROM ${this.#t} ` +
           "WHERE task = $1 ORDER BY started_at DESC, id DESC LIMIT $2",

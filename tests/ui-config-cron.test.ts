@@ -970,3 +970,28 @@ export default {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("--read-only reaches an app's own store: its history child reads with readOnly", async () => {
+  const config = `import { sqliteTaskHistoryStore } from "denext/server";
+const inner = sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
+export default { tasks: { history: { store: {
+  record: (run) => inner.record(run),
+  read: (options) => { note(JSON.stringify(options ?? {})); return inner.read(options); },
+  listRuns: (task, options) => inner.listRuns(task, options),
+  prune: (options) => inner.prune(options),
+  clear: () => inner.clear(),
+  close: () => inner.close(),
+} } } };
+`;
+  const dir = await project(config, { cleanup: task() });
+  try {
+    await (await call(dir, { readOnly: true })).body?.cancel();
+    await (await call(dir)).body?.cancel();
+    const reads = (await Deno.readTextFile(join(dir, "calls.log"))).trim().split("\n")
+      .map((line) => JSON.parse(line).readOnly === true);
+    assertEquals(reads, [true, false]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
