@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+- **Realtime from the database.** `backend({ postgres, realtime: realtime({ tables }) })`: per-table
+  AFTER triggers (migrations `backend_realtime_0001` + one per table; `realtimeMigrations()` /
+  `realtimeSetupSql()` and `migrate: false` for a DBA) NOTIFY keys only; one listener per instance
+  coalesces bursts and re-reads each subscriber's rows under their row-level security.
+  `useTableChanges` (client), `onTableChange` and `tableChanges` (server), `revalidate: true` for
+  `table:<name>` tags (`revalidate: { owner: "one" }`: on one instance per database, elected with
+  a Postgres advisory lock, for a shared cache). Needs a client with `listen` (`Deno.SQL`, or
+  `fromPostgresJs`).
 - **Row-level security, Supabase-compatible.** `db()` now runs every query inside a transaction
   that first sets `role` (`authenticated` for the request's signed-in user, else `anon`) and
-  `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query —
+  `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query
+  (one round trip per query on `Deno.SQL`: `BEGIN`, setup, query and `COMMIT` go out together) —
   so Supabase-style policies (`using (auth.uid() = owner)`) apply as written. Migration
   `backend_rls_0001` (on first use; `rls: { migrate: false }` to skip) creates the `anon` /
   `authenticated` roles, grants them to the connecting role, and adds Supabase's `auth.uid()`,

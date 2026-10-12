@@ -21,17 +21,35 @@ import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 // rows — which read as `[""]` where two schedules were expected.
 setCronDiscoveryBudget(300_000);
 
+/**
+ * The import map a project pinning this checkout has: `denext` and every `denext/<subpath>` the
+ * package exports, as `jsr:@denext/denext` would resolve them. (A bare `"denext/": <repo root>`
+ * prefix is not that: `denext/server` would be `<root>/server`, which does not exist — a config
+ * importing it loaded only where the framework's own deno.json did the resolving.)
+ */
+async function denextImports(): Promise<Record<string, string>> {
+  const pkg = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url))) as {
+    exports: Record<string, string>;
+  };
+  return Object.fromEntries(
+    Object.entries(pkg.exports).map((
+      [key, path],
+    ) => [
+      key === "." ? "denext" : `denext/${key.slice(2)}`,
+      new URL(`.${path.slice(1)}`, new URL("../", import.meta.url)).href,
+    ]),
+  );
+}
+
 /** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
 async function project(
   config: string,
   tasks: Record<string, string> = {},
 ): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_cron_" });
-  const mod = new URL("../mod.ts", import.meta.url).href;
-  const root = new URL("../", import.meta.url).href;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
-    JSON.stringify({ imports: { denext: mod, "denext/": root } }),
+    JSON.stringify({ imports: await denextImports() }),
   );
   await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
   await Deno.mkdir(join(dir, "app"), { recursive: true });
@@ -888,11 +906,32 @@ Deno.test("the history table shows each task's retries", async () => {
   }
 });
 
+Deno.test("a test project resolves denext/server through its own import map", async () => {
+  // What a child resolving with the project's deno.json (not the framework's) sees.
+  const dir = await project(`import { sqliteTaskHistoryStore } from "denext/server";
+export default { tasks: { history: { store: sqliteTaskHistoryStore({ path: ":memory:" }) } } };
+`);
+  try {
+    const { stdout } = await new Deno.Command(Deno.execPath(), {
+      args: ["info", "--json", "--config", join(dir, "deno.json"), join(dir, "denext.config.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const graph = JSON.parse(new TextDecoder().decode(stdout)) as {
+      modules: { specifier: string; error?: string }[];
+    };
+    assertEquals(graph.modules.filter((m) => m.error).map((m) => m.error), []);
+    assert(graph.modules.some((m) => m.specifier.endsWith("/src/server/mod.ts")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("an app's own history store is read and cleared through it, never opened here", async () => {
   // The store is project code (a call in denext.config.ts), so the panel asks `denext task
   // --history` / `--clear-history` children; here the store is a SQLite file of the app's choosing.
-  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
-  const config = `import { sqliteTaskHistoryStore } from "${history}";
+  const config = `import { sqliteTaskHistoryStore } from "denext/server";
 export default {
   tasks: { history: { store: sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname }) } },
 };
@@ -927,6 +966,31 @@ export default {
       defaultDb = false;
     }
     assert(!defaultDb, "the default file was never created");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--read-only reaches an app's own store: its history child reads with readOnly", async () => {
+  const config = `import { sqliteTaskHistoryStore } from "denext/server";
+const inner = sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
+export default { tasks: { history: { store: {
+  record: (run) => inner.record(run),
+  read: (options) => { note(JSON.stringify(options ?? {})); return inner.read(options); },
+  listRuns: (task, options) => inner.listRuns(task, options),
+  prune: (options) => inner.prune(options),
+  clear: () => inner.clear(),
+  close: () => inner.close(),
+} } } };
+`;
+  const dir = await project(config, { cleanup: task() });
+  try {
+    await (await call(dir, { readOnly: true })).body?.cancel();
+    await (await call(dir)).body?.cancel();
+    const reads = (await Deno.readTextFile(join(dir, "calls.log"))).trim().split("\n")
+      .map((line) => JSON.parse(line).readOnly === true);
+    assertEquals(reads, [true, false]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — and Postgres for your server code and for auth, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, and realtime changes from your tables, with zero npm."
 ---
 
 ```sh
@@ -10,6 +10,10 @@ denext plugin add @denext/backend
 
 Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.1.0"` to `deno.json`'s `imports`,
 then the plugin to `denext.config.ts`.
+
+Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
+Supabase feature to its denext equivalent and walks through moving the schema, policies, users and
+files.
 
 ## Storage
 
@@ -307,11 +311,13 @@ Each `db()` query is one transaction: `BEGIN`, then
 `SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. Both settings
 are transaction-local, so nothing survives on a pooled connection, and it is safe behind pgbouncer
 in transaction mode; denext never issues a session-level `SET`. The setup statement and your query
-are pipelined — sent together, in that order, on the transaction's one connection — so a scoped
-query costs three round trips (`BEGIN`, setup + query, `COMMIT`) against four done one at a time. If
-the setup fails the transaction is aborted and your query never runs as the connecting role.
+are pipelined — sent together, in that order, on the transaction's one connection. On denext's
+runtime (`Deno.SQL`) `BEGIN` and `COMMIT` ride along too, so a scoped query is one round trip; a
+driver that waits for each answer (postgres.js through `fromPostgresJs`) takes more. If the setup
+fails the transaction is aborted and your query never runs as the connecting role.
 
-`db().begin(async (tx) => …)` scopes a whole transaction once (four round trips for two queries);
+`db().begin(async (tx) => …)` scopes a whole transaction once (on `Deno.SQL`, three round trips for
+two awaited queries);
 a `begin` inside it is a savepoint. A thrown error rolls back the transaction and its settings.
 
 ### The claims
@@ -374,8 +380,163 @@ too, but connect as an ordinary role in production: a superuser could switch to 
   `reset role`. Keep values bound (the tagged template does it) and never build `unsafe()` text
   from input.
 
+## Realtime from the database
+
+Opt tables in, and every insert, update and delete reaches the browsers watching them — each change
+re-read as that viewer, under their [row-level security](#row-level-security), so a subscriber
+receives a row only when their own SELECT policies return it.
+
+```ts
+// denext.config.ts
+import { backend, realtime } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({
+      postgres: {},
+      realtime: realtime({
+        tables: {
+          notes: { events: ["insert", "update", "delete"], key: "id" }, // both are the defaults
+        },
+      }),
+    }),
+  ],
+};
+```
+
+```tsx
+// app/notes/page.tsx — the first rows come from the server, under the same policies
+import { db } from "@denext/backend/server";
+import { NoteList } from "./note-list.tsx";
+
+export default async function Page() {
+  const notes = await db()<Note>`select id, body from notes order by id`;
+  return <NoteList initial={notes} />;
+}
+```
+
+```tsx
+// app/notes/note-list.tsx
+"use client";
+import { useTableChanges } from "@denext/backend/client";
+
+export function NoteList({ initial }: { initial: Note[] }) {
+  const { rows, stale } = useTableChanges<Note>("notes", { initial });
+  return <ul>{rows.map((note) => <li key={note.id}>{note.body}</li>)}</ul>;
+}
+```
+
+`useTableChanges(table, options)` returns `{ rows, changes, status, stale, error }`:
+
+| Option     | What it does                                                                                                                                          |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `initial`  | The rows to start from. A new array replaces the hook's rows (and clears `stale`).                                                                    |
+| `filter`   | One column compared for equality: `{ list_id: 42 }`, or Supabase's `"list_id=eq.42"`. Applied in SQL, after the policies.                             |
+| `key`      | The rows' key column, as configured for the table (default `"id"`).                                                                                   |
+| `onChange` | Called with each batch: `{ op: "insert" \| "update", key, row }`, `{ op: "update", key, oldKey, row }` when the key changed, `{ op: "delete", key }`. |
+| `onResync` | Called when changes may have been missed: re-read and pass the rows as `initial`.                                                                     |
+| `enabled`  | `false` keeps the hook idle.                                                                                                                          |
+
+From a subscriber's side, `insert` means a row entered their view — inserted, or updated so their
+policies or filter now match it — and `delete` means one left it: deleted, or updated out of their
+policies or filter. Rows keep arrival order; sort them when you render.
+
+### How it works
+
+1. **Triggers send keys, never rows.** The first subscription applies migration
+   `backend_realtime_0001` (a trigger function, `denext_realtime_notify()`) and one migration per
+   table (`backend_realtime_t_<table>_<hash>`): an `AFTER INSERT OR UPDATE OR DELETE … FOR EACH ROW`
+   trigger that sends `pg_notify('denext_realtime', '{"table","op","key","old_key"?,"ts"}')`. A
+   NOTIFY payload is capped at 8000 bytes, and a row would leak past the policies, so only the key
+   travels; a key too long to send becomes a "re-read" signal instead of failing the write. Changing
+   a table's `events` or `key` installs a new migration that replaces its trigger; a table removed
+   from the options keeps its trigger until you `drop trigger denext_realtime on <table>`.
+2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
+   a lost connection, and every subscriber is told to re-read, since changes sent meanwhile are
+   lost). Notifications are coalesced for 16 ms, as Live coalesces its own pushes: within a burst
+   the latest change per key wins.
+3. **Re-read as each subscriber.** Subscribers with the same identity, table and filter form a
+   group, and each group's changed rows are read back with one query
+   (`select … where key in (…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
+   and `request.jwt.claims` set for that identity, exactly as `db()` does. A burst costs one query
+   per identity, not one per subscriber per row: a 500-row transaction watched by two users is one
+   flush and two re-reads.
+4. **Deletes go only to those who could see the row.** A deleted row cannot be re-read against a
+   policy, so each subscription tracks the keys it may know about: the rows it could see when it
+   subscribed (one key-only query under its own policies, up to `maxTrackedKeys`) plus every row
+   sent to it since. A delete, or an update that moves a row out of view, is sent only for a tracked
+   key. Past `maxTrackedKeys` (default 10 000) further rows are delivered but not tracked, so their
+   deletes are not sent: keep subscriptions narrow with a `filter`, or raise the limit.
+5. **Frames.** Changes ride the Live socket on the backend's own channel, split to fit its payload
+   cap (a row too large for one frame arrives with `truncated: true` and no `row`) and numbered per
+   subscription; a gap, a burst over the queue limit, or a reconnect sets `stale` and calls
+   `onResync`. Delivery is at-most-once, like every Live channel.
+
+**Who receives what.** The subscription key holds the table, the filter and a 128-bit random value
+the browser picks; the first subscriber binds it to their identity (the user's id, or anon), and
+anyone else presenting it is refused. The binding is re-checked every 60 seconds of traffic, so a
+signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
+if signed-out visitors may watch it) for its rows to be readable at all.
+
+### On the server
+
+```ts
+import { onTableChange, tableChanges } from "@denext/backend/server";
+
+// Keys only, in the service context (no RLS): invalidate, enqueue, notify another system.
+onTableChange("notes", ({ op, key }) => console.log(op, key));
+
+// The rows an identity may see — the same re-read the browser gets — for an SSE stream, a GraphQL
+// subscription, a worker acting for a user.
+const stop = await tableChanges("notes", {
+  as: { id: userId },
+  filter: { list_id: 42 },
+  onChange: ({ changes, resync }) => {/* … */},
+});
+```
+
+`onTableChange` runs once per changed key per burst, on every instance (with `op: "resync"` when
+changes may have been missed). `realtime({ revalidate: true })` also calls
+`revalidateTag("table:<name>")` once per burst, so existing [Live](/docs/live) code —
+`<Live tags={["table:notes"]}>`, `defineSubscription({ tags })`, `useApi({ tags })` — is pushed by
+database writes from anywhere, including another service or `psql`.
+
+Every instance runs its own listener, so with several instances that revalidation happens once per
+instance — what an instance-local cache needs. When the cache is shared (a Postgres cache store),
+`realtime({ revalidate: { owner: "one" } })` has one instance per database do it: the holder of a
+session-level Postgres advisory lock, taken on a reserved connection and checked once per burst
+(one round trip). The lock goes with its connection, so when the owner stops or dies the next
+instance to see a burst takes over. It needs a client with `reserve()` (`Deno.SQL`, or postgres.js
+through `fromPostgresJs`); without one every instance revalidates, with a warning.
+`onTableChange` hooks still run on every instance.
+
+### Options
+
+| Option           | Default | What it does                                                                                    |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `tables`         | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.        |
+| `revalidate`     | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.    |
+| `migrate`        | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead. |
+| `maxSubscribers` | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect).                |
+| `maxTrackedKeys` | 10 000  | Keys tracked per subscription, for deletes.                                                     |
+
+Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's Deno runtime), or the npm
+`postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
+Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
+(`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.
+`TRUNCATE` sends nothing. For very high write volumes, logical replication is planned; LISTEN/NOTIFY
+serializes on commit.
+
+## Browse it in `denext ui`
+
+[`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
+and their rows (paged, editable, each write previewed as the exact SQL first), row-level security
+policies — with an "as user" preview of what a user id sees under them — migrations, the storage
+buckets and their objects, and denext auth's users. It runs on loopback with the rest of the UI,
+and honours `--read-only`.
+
 ## More services
 
-Storage, Postgres and row-level security are the first services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), realtime
-([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
+Storage, Postgres, row-level security and realtime from the database are the services in
+`@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
 [tasks](/docs/tasks) are already part of denext itself.

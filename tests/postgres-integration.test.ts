@@ -147,4 +147,34 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
       }
     },
   });
+
+  Deno.test({
+    name: `Postgres via ${driver}: listen() receives a NOTIFY, unlisten() stops it${label}`,
+    ignore: reason !== undefined,
+    sanitizeResources: false,
+    sanitizeOps: false,
+    async fn() {
+      const sql = await connect(driver);
+      try {
+        const got: string[] = [];
+        let listened = 0;
+        const channel = `dnx_listen_${crypto.randomUUID().slice(0, 8)}`;
+        const listener = await sql.listen!(channel, (payload) => got.push(payload), () => {
+          listened++;
+        });
+        await sql.unsafe("select pg_notify($1, $2)", [channel, "one"]);
+        const deadline = Date.now() + 5_000;
+        while (got.length === 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assertEquals([got, listened], [["one"], 1]);
+        await listener.unlisten();
+        await sql.unsafe("select pg_notify($1, $2)", [channel, "two"]);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assertEquals(got, ["one"]);
+      } finally {
+        await sql.close();
+      }
+    },
+  });
 }

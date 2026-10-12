@@ -20,6 +20,7 @@ export const NAV: {
       { slug: "fixed", label: "Fixed in denext" },
       { slug: "coming-from-react-native", label: "Coming from React Native" },
       { slug: "vs-react-native", label: "denext vs React Native" },
+      { slug: "coming-from-supabase", label: "Coming from Supabase" },
       { slug: "patches", label: "Patching packages" },
     ],
   },

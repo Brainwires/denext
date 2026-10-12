@@ -102,6 +102,13 @@ by a migration on first use (or by a DBA with `rlsSetupSql(role)` and `rls: { mi
 app's own database user, for maintenance code only. Guide:
 [Backend › Row-level security](https://denext.dev/docs/backend#row-level-security).
 
+**Realtime from the database.** `backend({ postgres: {}, realtime: realtime({ tables: { notes: {} } }) })`
+adds triggers that NOTIFY the changed row's key; `useTableChanges("notes", { initial })` from
+`@denext/backend/client` keeps a row list live, every row re-read as the viewer under their
+row-level security, so a change reaches only the subscribers whose policies return it.
+`onTableChange` and `tableChanges` from `@denext/backend/server` react on the server. Guide:
+[Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
+
 ## What it enforces
 
 - **`authorize`** decides every operation (`upload`, `download`, `delete`, `list`) made inside a

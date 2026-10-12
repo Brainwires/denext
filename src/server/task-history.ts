@@ -123,6 +123,12 @@ export interface TaskHistoryReadOptions {
   readonly windowDays?: number;
   /** How many runs the recent feed holds (default 20). */
   readonly recentLimit?: number;
+  /**
+   * The reader may not change anything (`denext ui --read-only`). A read never should — create a
+   * table, migrate, prune — and the built-in stores never do; a store of your own can check this
+   * to skip anything it would otherwise do on the way.
+   */
+  readonly readOnly?: boolean;
 }
 
 /** Options for {@linkcode TaskHistoryStore.prune}. */
@@ -161,7 +167,11 @@ export interface TaskHistoryStore {
    * returned promise must not reject.
    */
   record(run: TaskRunRecord): void | Promise<void>;
-  /** The panel summary: per-task standing inside the window, and the recent feed (newest first). */
+  /**
+   * The panel summary: per-task standing inside the window, and the recent feed (newest first).
+   * Reads only: no table is created or migrated to answer (nothing recorded yet is
+   * `{ available: false, reason }`).
+   */
   read(options?: TaskHistoryReadOptions): Promise<TaskHistory>;
   /** One task's runs, newest first (default: the 20 most recent). Never throws: `[]` instead. */
   listRuns(task: string, options?: { readonly limit?: number }): Promise<TaskHistoryRun[]>;

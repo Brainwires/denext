@@ -22,6 +22,8 @@ export interface Fresh {
 
 type Case = (db: Fresh) => Promise<void>;
 
+// Seconds from now. A case that compares a stored time with an expected one computes it ONCE and
+// reuses that value: computing `at(…)` again could land on the next second.
 const at = (offset: number): number => Math.floor(Date.now() / 1000) + offset;
 
 const passkey = (id: string, userId: string, createdAt = at(0)): PasskeyRecord => ({
@@ -40,11 +42,12 @@ const PASSKEY_CASES: Record<string, Case> = {
   "passkeys: create refuses a taken ID, get/list read back, delete removes": async (db) => {
     const adapter = postgresAuthAdapter(db);
     try {
-      assertEquals(await adapter.createPasskey!(passkey("cred-1", "u1", at(-10))), true);
+      const created = at(-10);
+      assertEquals(await adapter.createPasskey!(passkey("cred-1", "u1", created)), true);
       assertEquals(await adapter.createPasskey!(passkey("cred-1", "u2")), false, "ID taken");
       await adapter.createPasskey!(passkey("cred-2", "u1"));
       const read = await adapter.getPasskey!("cred-1");
-      assertEquals(read, { ...passkey("cred-1", "u1", at(-10)) });
+      assertEquals(read, { ...passkey("cred-1", "u1", created) });
       assertEquals((await adapter.listPasskeys!("u1")).map((p) => p.id), ["cred-1", "cred-2"]);
       assertEquals(await adapter.getPasskey!("nope"), undefined);
       await adapter.deletePasskey!("cred-1");
@@ -64,7 +67,10 @@ const PASSKEY_CASES: Record<string, Case> = {
       ]);
       assertEquals(both.filter(Boolean).length, 1);
       const read = await adapter.getPasskey!("c");
-      assertEquals([read?.signCount, read?.backedUp, read?.lastUsedAt], [5, true, at(0)]);
+      assertEquals(
+        [read?.signCount, read?.backedUp, read?.lastUsedAt],
+        [5, true, update.lastUsedAt],
+      );
     } finally {
       await adapter.close?.();
     }
@@ -139,8 +145,9 @@ const SESSION_CASES: Record<string, Case> = {
       await store.create("a", s("alice"));
       await store.create("b", s("bob"));
       assertEquals((await store.get("a"))?.user.id, "alice");
-      assertEquals(await store.update!("a", s("alice", at(7200))), true);
-      assertEquals((await store.get("a"))?.expiresAt, at(7200));
+      const later = at(7200);
+      assertEquals(await store.update!("a", s("alice", later)), true);
+      assertEquals((await store.get("a"))?.expiresAt, later);
       assertEquals(await store.update!("nope", s("x")), false, "write-only-if-present");
       await store.create("old", s("carol", at(-1)));
       assertEquals(await store.get("old"), undefined, "expired is a miss");

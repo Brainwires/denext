@@ -1452,7 +1452,7 @@
       "name": "task",
       "summary": "Run a background task by name, or list them (--list)",
       "usage": "denext task [name] [options]",
-      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]\ndenext task --history [--json]\ndenext task --clear-history [--json]",
+      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]\ndenext task --history [--read-only] [--json]\ndenext task --clear-history [--json]",
       "flags": [
         {
           "name": "list",
@@ -1469,6 +1469,11 @@
           "name": "clear-history",
           "type": "boolean",
           "description": "Delete every recorded run through the configured history store"
+        },
+        {
+          "name": "read-only",
+          "type": "boolean",
+          "description": "With --history: read without changing anything; refuses --clear-history"
         },
         {
           "name": "payload",

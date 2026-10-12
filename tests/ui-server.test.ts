@@ -9,7 +9,7 @@ import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { toHtml, UI_NAV, UI_TITLE_HEADER } from "../src/ui/html.ts";
+import { DATABASE_NAV_HREF, toHtml, UI_NAV, UI_TITLE_HEADER } from "../src/ui/html.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
@@ -89,7 +89,12 @@ Deno.test("the overview page renders the shell, the nav and the project dir", as
     assertStringIncludes(body, '<link rel="stylesheet" href="/_ui/ui.css">');
     assertStringIncludes(body, '<script type="module" src="/_ui/ui.js">');
     assertStringIncludes(body, 'name="denext-csrf"');
-    for (const item of UI_NAV) assertStringIncludes(body, `href="${item.href}"`);
+    // Every destination but Database, which is offered only to a project that uses Postgres
+    // (tests/ui-database-feature.test.ts) — this one does not.
+    for (const item of UI_NAV) {
+      if (item.href === DATABASE_NAV_HREF) assert(!body.includes(`href="${item.href}"`));
+      else assertStringIncludes(body, `href="${item.href}"`);
+    }
     assert(!body.includes("<script>"), "the UI ships no inline script");
   } finally {
     await stop(h);

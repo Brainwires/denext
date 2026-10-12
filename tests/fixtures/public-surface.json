@@ -821,6 +821,7 @@
     "SpaShellConfig:interface",
     "SpaTanstackRouterConfig:interface",
     "SqlClient:interface",
+    "SqlListener:interface",
     "SqlQuery:interface",
     "SqlRow:typeAlias",
     "SqlValue:typeAlias",

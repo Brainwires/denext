@@ -117,7 +117,7 @@ const DOTENV_DATABASE_URL = /^\s*(?:export\s+)?DATABASE_URL\s*=\s*["']?postgres(
  * @param projectDir The project root.
  * @returns True for a Postgres project.
  */
-async function usesPostgres(projectDir: string): Promise<boolean> {
+export async function usesPostgres(projectDir: string): Promise<boolean> {
   let env: string | undefined;
   try {
     env = Deno.env.get("DATABASE_URL");

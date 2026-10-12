@@ -197,6 +197,31 @@ export const db: Db = Object.assign(
 );
 
 /**
+ * Who a query would run as, resolved now: `as` when given, else the current request's user (or
+ * `anon` outside a request) — what `db()` binds. Used by realtime to re-read rows per
+ * subscriber.
+ *
+ * @param as An explicit identity.
+ * @returns The scope.
+ */
+export function resolveScope(as?: Exclude<DbIdentity, "service">): Promise<RlsScope> {
+  return identityOf(as, installed().rls);
+}
+
+/**
+ * A client scoped to an already resolved identity (the RLS migration still runs first, unless
+ * `rls.migrate` is `false`).
+ *
+ * @param scope The role and claims.
+ * @returns The scoped client.
+ */
+export function scopedFor(scope: RlsScope): SqlClient {
+  const { sql, rls } = installed();
+  const ready = rls.migrate === false ? Promise.resolve() : undefined;
+  return scopedClient(sql, () => (ready ?? ensureRlsMigrated(sql)).then(() => scope));
+}
+
+/**
  * The connecting role's client (`db.service()`), resolved on every call so it can be built
  * before the plugin's setup — what denext auth's own tables are reached through.
  */

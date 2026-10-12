@@ -288,6 +288,82 @@ Deno.test("a failed setup fails the query and rolls back", async () => {
   }
 });
 
+Deno.test("a single scoped query hands begin() the setup and the query, synchronously and unstarted", async () => {
+  const sql = await setUp();
+  try {
+    // What Deno.SQL needs to send BEGIN, both statements and COMMIT in one round trip: the
+    // callback returns an array of not-yet-started queries, without awaiting anything.
+    const shapes: Array<{ array: boolean; length: number; thenables: boolean; ranSync: number }> =
+      [];
+    const base = sql.begin.bind(sql);
+    (sql as unknown as { begin: unknown }).begin = (fn: (tx: unknown) => unknown) =>
+      base((tx) => {
+        const before = sql.statements.length;
+        const returned = fn(tx);
+        const items = Array.isArray(returned) ? returned : [];
+        shapes.push({
+          array: Array.isArray(returned),
+          length: items.length,
+          thenables: items.every((item) => typeof item?.then === "function"),
+          ranSync: sql.statements.length - before,
+        });
+        return returned as never;
+      });
+    const before = sql.statements.length;
+    assertEquals(await db()`select ${1} as one`, [{ one: 1 }], "the query's rows, not the array");
+    assertEquals(await db().unsafe("select 2 as two"), [{ two: 2 }]);
+    await db().unsafe("select 3 as three").simple!();
+    const expected = { array: true, length: 2, thenables: true, ranSync: 0 };
+    assertEquals(shapes, [expected, expected, expected]);
+    assertEquals(since(sql, before), [
+      "BEGIN",
+      SETUP,
+      "select ?1 as one",
+      "COMMIT",
+      "BEGIN",
+      SETUP,
+      "select 2 as two",
+      "COMMIT",
+      "BEGIN",
+      SETUP,
+      "select 3 as three",
+      "COMMIT",
+    ]);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("a failed setup aborts the single-query transaction: the query never succeeds", async () => {
+  const sql = await setUp();
+  try {
+    sql.raw.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
+    sql.failNext(/set_config\('role'/, Object.assign(new Error("no role"), { code: "22023" }));
+    await assertRejects(
+      () => db()`insert into notes (body) values (${"unscoped"})`,
+      Error,
+      "no role",
+    );
+    assertEquals(sql.raw.prepare("select count(*) as n from notes").get(), { n: 0 });
+    assertEquals(sql.statements.at(-1), "ROLLBACK");
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("a client whose begin() does not await a returned array is refused, nothing unscoped runs", async () => {
+  const sql = await setUp();
+  try {
+    (sql as unknown as { begin: unknown }).begin = (fn: (tx: unknown) => unknown) =>
+      Promise.resolve(fn(sql));
+    const before = sql.statements.length;
+    await assertRejects(() => db()`select 1 as one`, TypeError, "must await an array");
+    assertEquals(since(sql, before), [], "neither the setup nor the query was started");
+  } finally {
+    tearDown();
+  }
+});
+
 Deno.test("unsafe() and unsafe().simple() are scoped; a query runs once however often awaited", async () => {
   const sql = await setUp();
   try {

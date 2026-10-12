@@ -24,6 +24,7 @@ import { pluginCommand } from "./commands/plugin.ts";
 import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
 import { uiCommand } from "./commands/ui.ts";
+import { dbAdminCommand } from "./commands/db-admin.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
 import { makeCommandsCommand } from "./commands/commands.ts";
 
@@ -69,6 +70,8 @@ export function buildRegistry(): CommandRegistry {
   reg.register(patchCommand);
   // Project management UI (loopback GUI).
   reg.register(uiCommand);
+  // Its Database section's child process (hidden: a protocol, not a command to type).
+  reg.register(dbAdminCommand);
   // AI-agent tooling (MCP server over stdio).
   reg.register(mcpCommand);
   // Both bound to the assembled registry, so they enumerate the real verb set: `commands`

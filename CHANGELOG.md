@@ -8,6 +8,73 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.14] - 2026-10-12
+
+### Added
+
+- **Docs: a Coming from Supabase guide.** `/docs/coming-from-supabase` maps each Supabase feature
+  to denext and `@denext/backend` (with side-by-side snippets for queries under row-level security,
+  sign-in, storage, realtime and edge functions), gives a migration checklist (schema and policies,
+  users with their ids and bcrypt hashes, storage objects, environment) and lists what is not there
+  yet.
+- **`@denext/backend`: realtime from the database.** `backend({ postgres, realtime: realtime({ tables:
+  { notes: { events?, key? } } }) })` opts tables in: migration `backend_realtime_0001` installs a
+  trigger function, and one migration per table an AFTER … FOR EACH ROW trigger, that
+  `pg_notify('denext_realtime', …)` with `{ table, op, key, old_key?, ts }` — keys only, never row
+  data. One listening connection per server instance (`SqlClient.listen`, optional; `Deno.SQL` has
+  it and `fromPostgresJs` maps postgres.js's) coalesces a burst within 16 ms; each subscriber's
+  rows are re-read under their own row-level security, one query per identity per burst (a
+  500-row transaction for two users: one flush, two re-reads). `useTableChanges(table, { initial,
+  filter, key, onChange, onResync })` from `@denext/backend/client` keeps a row list live over the
+  Live socket; a subscription key is bound to one identity, a delete reaches only subscribers who
+  could see the row (tracked keys, seeded at subscribe), and a lost frame or reconnect marks it
+  `stale`. On the server, `onTableChange(table, fn)` (keys, service context) and
+  `tableChanges(table, { as, filter, onChange })` (RLS-scoped); `revalidate: true` calls
+  `revalidateTag("table:<name>")` per burst. Without `listen` it throws
+  `RealtimeUnsupportedError` (`code: "unsupported"`). Guide:
+  [Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
+- **Channel lifecycle hooks** (`denext/server`): `createChannel({ onActive, onIdle })` is told when
+  a key gains its first or loses its last subscriber on this instance — where a channel releases
+  per-key state. `SqlClient` gains an optional `listen(channel, fn, onlisten)` (`SqlListener`).
+- **`denext ui`: a Database section** for a project that uses Postgres (`DATABASE_URL` is
+  `postgres://`, or the config declares `postgres:`). Tables (row estimates, columns, keys,
+  indexes, foreign keys); rows — 50 a page, keyset-paged on the primary key, sort, `column = value`
+  filter, view, edit a value, insert, delete; row-level security policies, with an "as user"
+  preview (`anon`, or a user id under the claims `db({ as: user })` sends) beside the clearly
+  labelled service role; migrations (status, apply); `backend({ storage })` buckets and objects
+  (download as an `octet-stream` attachment, delete); denext auth's users (sessions, MFA,
+  passkeys; revoke sessions, delete). Every write is previewed as the exact SQL and its parameters
+  first and works with JavaScript disabled; enabling RLS writes a migration rather than altering
+  the table. The UI still runs no project code: each page asks a hidden `denext db-admin` child,
+  which uses the project's own client and storage driver; every query runs in its own transaction
+  with a statement timeout (reads `READ ONLY`), identifiers come only from `pg_catalog`, values
+  are parameters, passwords are masked, and `--read-only` refuses every write in the server and
+  again in the child. Guide: [Project UI › Database](https://denext.dev/docs/ui#database).
+- **`@denext/backend`: realtime revalidation on one instance.** `realtime({ revalidate: { owner:
+  "one" } })` has a single server instance per database call `revalidateTag("table:<name>")` per
+  burst — the holder of a session-level Postgres advisory lock on a reserved connection, checked
+  once per burst; when it stops or dies the next instance to see a burst takes over. For a cache
+  shared by every instance; the default (`true`, `{ owner: "every" }`) stays one revalidation per
+  instance. `SqlClient` gains an optional `reserve()` (`Deno.SQL` has it; `fromPostgresJs` maps
+  postgres.js's), which the lock needs; without it every instance revalidates, with a warning.
+
+### Changed
+
+- **`@denext/backend`: a single `db()` query is one round trip on `Deno.SQL`** (was two): the
+  scoped transaction hands the driver the role/claims setup and the query unstarted, as an array
+  (`begin(tx => [setup, query])`), so `BEGIN`, both statements and `COMMIT` go out together. A
+  failed setup still aborts the transaction before the query runs. The `SqlClient.begin` contract
+  now states that a returned array is awaited as a whole (as `Deno.SQL` and postgres.js do); a
+  client that does not is refused with a `TypeError` instead of running the query unscoped.
+
+### Fixed
+
+- **Reading task run history never changes the database.** `postgresTaskHistoryStore`'s `read()`
+  and `listRuns()` no longer run the table migration: before the first recorded run they answer
+  "no history recorded yet" (as the SQLite store does). `denext task --history --read-only` passes
+  `readOnly: true` to the store's `read()` (new `TaskHistoryReadOptions.readOnly`) and refuses
+  `--clear-history`; `denext ui --read-only` reads a custom store's history that way.
+
 ## [3.4.13] - 2026-10-12
 
 ### Added
@@ -13215,7 +13282,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.13...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.14...development
+[3.4.14]: https://jsr.io/@denext/denext@3.4.14
 [3.4.13]: https://jsr.io/@denext/denext@3.4.13
 [3.4.12]: https://jsr.io/@denext/denext@3.4.12
 [3.4.11]: https://jsr.io/@denext/denext@3.4.11

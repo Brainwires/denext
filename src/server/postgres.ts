@@ -43,7 +43,11 @@ export interface SqlClient {
    * untrusted input.
    */
   unsafe<T = SqlRow>(text: string, params?: unknown[]): SqlQuery<T>;
-  /** Run `fn` in a transaction: COMMIT when it settles, ROLLBACK (and rethrow) when it throws. */
+  /**
+   * Run `fn` in a transaction: COMMIT when it settles, ROLLBACK (and rethrow) when it throws.
+   * An array `fn` returns is awaited as a whole (`Promise.all`), as `Deno.SQL` and postgres.js
+   * do: `begin(tx => [tx\`…\`, tx\`…\`])` lets the driver pipeline the statements and COMMIT.
+   */
   begin<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
   /**
    * Inside a transaction: run `fn` in a savepoint — RELEASE when it settles, ROLLBACK TO (and
@@ -51,8 +55,30 @@ export interface SqlClient {
    * nested transaction needs it.
    */
   savepoint?<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
+  /**
+   * Subscribe `fn` to a Postgres NOTIFY channel (`LISTEN`) on a connection of the client's own,
+   * re-listening after a lost connection; `onlisten` runs once subscribed and again after each
+   * reconnect (notifications sent while it was down are lost). Optional: `Deno.SQL` and
+   * {@linkcode fromPostgresJs} have it; realtime features need it.
+   */
+  listen?(
+    channel: string,
+    fn: (payload: string) => void,
+    onlisten?: () => void,
+  ): Promise<SqlListener>;
+  /**
+   * A connection of the pool for this caller alone, until `release()` returns it — what holds a
+   * session-level lock. Optional: `Deno.SQL` and {@linkcode fromPostgresJs} have it.
+   */
+  reserve?(): Promise<SqlClient & { release(): void | Promise<void> }>;
   /** Close the client's connections. */
   close(options?: { timeout?: number }): Promise<void>;
+}
+
+/** A subscription made with {@linkcode SqlClient.listen}. */
+export interface SqlListener {
+  /** Stop delivering to this callback (`UNLISTEN` once the channel has no callback left). */
+  unlisten(): Promise<void>;
 }
 
 /** The `code` a Postgres feature's error carries when no client is available. */
@@ -123,6 +149,14 @@ export interface PostgresJsLike {
   begin(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
   /** A savepoint (on a transaction's client). */
   savepoint?(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
+  /** LISTEN on a channel (on the pool's client). */
+  listen?(
+    channel: string,
+    fn: (payload: string) => void,
+    onlisten?: () => void,
+  ): Promise<{ unlisten(): Promise<unknown> }>;
+  /** A reserved connection (on the pool's client). */
+  reserve?(): Promise<PostgresJsLike & { release(): void }>;
   /** Close the pool (absent on a transaction's client). */
   end?(options?: { timeout?: number }): Promise<void>;
 }
@@ -146,6 +180,28 @@ export function fromPostgresJs(pg: PostgresJsLike): SqlClient {
     const savepoint = pg.savepoint.bind(pg);
     client.savepoint = <T>(fn: (tx: SqlClient) => T | Promise<T>) =>
       savepoint((tx) => fn(fromPostgresJs(tx))) as Promise<T>;
+  }
+  if (pg.listen) {
+    const listen = pg.listen.bind(pg);
+    client.listen = async (channel, fn, onlisten) => {
+      const listener = await listen(channel, fn, onlisten);
+      return {
+        async unlisten() {
+          await listener.unlisten();
+        },
+      };
+    };
+  }
+  if (pg.reserve) {
+    const reserve = pg.reserve.bind(pg);
+    client.reserve = async () => {
+      const reserved = await reserve();
+      return Object.assign(fromPostgresJs(reserved), {
+        release: () => reserved.release(),
+        // Closing a reserved handle returns it; the pool stays the caller's.
+        close: () => Promise.resolve(reserved.release()),
+      });
+    };
   }
   client.close = async (options) => {
     await pg.end?.(options);

@@ -62,6 +62,17 @@ export interface ChannelConfig<T> {
   authorize: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
   /** Re-authorize a subscriber lazily after this many seconds (default: `live.limits.channelAuthTtlSeconds`). */
   authTtlSeconds?: number;
+  /**
+   * Called when `key` gets its first subscriber on THIS instance (after `authorize` allowed it
+   * and the subscription was registered). Runs in the root context; a throw is logged.
+   */
+  onActive?: (key: string) => void;
+  /**
+   * Called when the last subscriber of `key` on THIS instance leaves (unsubscribed, revoked,
+   * denied on re-authorization, or its connection closed) — the place to release per-key state
+   * a channel keeps for its subscribers. Runs in the root context; a throw is logged.
+   */
+  onIdle?: (key: string) => void;
 }
 
 /** A channel on the server. */
@@ -133,6 +144,10 @@ export interface ChannelInternals {
   authorize?: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
   /** Per-channel re-auth TTL override. */
   authTtlSeconds?: number;
+  /** A key's first local subscriber arrived. */
+  onActive?: (key: string) => void;
+  /** A key's last local subscriber left. */
+  onIdle?: (key: string) => void;
 }
 
 /** Brand shared across module instances. */
@@ -180,6 +195,8 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     keyOk: keyMatcher(config.key),
     authorize: config.authorize,
     authTtlSeconds: config.authTtlSeconds,
+    onActive: config.onActive,
+    onIdle: config.onIdle,
   };
   const channel: Channel<T> = {
     denextChannelId: internals.id,

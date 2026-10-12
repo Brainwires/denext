@@ -394,9 +394,10 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
  *
  * @param dir The project directory.
  * @param offline `denext ui --offline`: the child runs `--deny-net --cached-only --deny-run`.
+ * @param readOnly `denext ui --read-only`: passed on to a custom store's history child.
  * @returns The state the panel renders.
  */
-async function readState(dir: string, offline: boolean): Promise<CronState> {
+async function readState(dir: string, offline: boolean, readOnly: boolean): Promise<CronState> {
   const config = await readConfigFile(dir);
   const listing = await listingFor(dir, offline, config.base);
   const historyDb = await historyPath(dir);
@@ -404,7 +405,7 @@ async function readState(dir: string, offline: boolean): Promise<CronState> {
     ...listing,
     ...config,
     historyDb,
-    historyRead: await readHistory(dir, offline, listing, historyDb),
+    historyRead: await readHistory({ dir, offline, readOnly }, listing, historyDb),
   };
 }
 
@@ -501,12 +502,14 @@ async function historyChild(
   dir: string,
   offline: boolean,
   flag: "--history" | "--clear-history",
+  readOnly = false,
 ): Promise<Record<string, unknown> | string> {
   const lines: string[] = [];
   const argv = [
     ...cliInvocation({ offline, dir, denyRun: true }),
     "task",
     flag,
+    ...(readOnly ? ["--read-only"] : []),
     "--json",
     "--cwd",
     dir,
@@ -532,15 +535,14 @@ async function historyChild(
  * The run history, read through its store once per request. Fresh every time (never through
  * `listCache`): a just-finished run must show at once.
  *
- * @param dir The project directory.
- * @param offline `denext ui --offline`.
+ * @param where The project directory, `denext ui --offline` and `--read-only` (a custom store's
+ *   child reads with `--read-only`, so it changes nothing).
  * @param listing What discovery found (whether history is on, and whose store keeps it).
  * @param historyDb The contained default database, or `null` when it escapes the project.
  * @returns The history, or `null` when it is off or the default database is not followed.
  */
 async function readHistory(
-  dir: string,
-  offline: boolean,
+  where: { dir: string; offline: boolean; readOnly: boolean },
   listing: Listing,
   historyDb: string | null,
 ): Promise<TaskHistory | null> {
@@ -548,7 +550,7 @@ async function readHistory(
   // never asked for.
   if (!listing.history) return null;
   if (listing.historyStore === "custom") {
-    const doc = await historyChild(dir, offline, "--history");
+    const doc = await historyChild(where.dir, where.offline, "--history", where.readOnly);
     if (typeof doc === "string") return unavailable(doc);
     return {
       available: doc.available === true,
@@ -1386,7 +1388,7 @@ function payload(state: CronState): Record<string, unknown> {
  * @returns The panel, its JSON twin, a preview, or a `303` back to the tab.
  */
 export async function cronPanel(_request: Request, ctx: UiContext): Promise<Response> {
-  const state = await readState(ctx.dir, ctx.offline === true);
+  const state = await readState(ctx.dir, ctx.offline === true, ctx.readOnly);
   if (ctx.method === "POST") return await submit(ctx, state);
   if (ctx.json) return jsonResponse({ ok: true, ...payload(state) });
   // A write redirects here with `?saved=1` (POST/redirect/GET, so a reload never re-posts); say

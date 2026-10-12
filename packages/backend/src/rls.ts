@@ -7,7 +7,10 @@
 //
 // The setup statement and the caller's query are pipelined: both are sent before either answer
 // is read, on the transaction's one connection, in that order — the query never runs before the
-// role is set, and a failed setup aborts the transaction so the query cannot run at all.
+// role is set, and a failed setup aborts the transaction so the query cannot run at all. A single
+// scoped query hands both to `begin` unstarted, as an array returned synchronously
+// (`begin(tx => [setup, query])`): `Deno.SQL` then sends BEGIN, both and COMMIT in one round trip
+// (postgres.js runs the same shape).
 
 import type { AuthSession, SqlClient, SqlQuery } from "@denext/denext/server";
 import { migratePostgres, type Migration } from "@denext/denext/server";
@@ -356,6 +359,37 @@ async function inScope<T>(
 }
 
 /**
+ * Run one query scoped, in a transaction of its own: the callback returns the setup and the
+ * query synchronously, both unstarted, so the driver can pipeline BEGIN, both and COMMIT
+ * (`Deno.SQL`: one round trip; an async callback costs two). The driver awaits the array
+ * together; the query's rows are returned, not the array.
+ *
+ * @param base The connecting role's client.
+ * @param scope The role and claims.
+ * @param query Builds the caller's query on the transaction's client (not started).
+ * @returns The query's rows.
+ */
+async function scopedQuery<T>(
+  base: SqlClient,
+  scope: RlsScope,
+  query: (tx: SqlClient) => PromiseLike<T[]>,
+): Promise<T[]> {
+  const settled = await (base.begin as unknown as (
+    fn: (tx: SqlClient) => [PromiseLike<unknown>, PromiseLike<T[]>],
+  ) => Promise<unknown>)((tx) => [tx.unsafe(RLS_SETUP, [scope.role, scope.claims]), query(tx)]);
+  const rows = Array.isArray(settled) ? settled[1] : undefined;
+  // A client whose begin() does not await a returned array would hand the queries back
+  // unstarted — awaiting them now would run them outside the scoped transaction.
+  if (!Array.isArray(rows)) {
+    throw new TypeError(
+      "db(): the Postgres client's begin() must await an array its callback returns " +
+        "(Deno.SQL and postgres.js do)",
+    );
+  }
+  return rows as T[];
+}
+
+/**
  * The client a scoped transaction's callback gets: the transaction's own, except that `begin`
  * opens a savepoint (Postgres has no nested transactions) and `close` is refused — every other
  * method (`unsafe`, `savepoint`, `Deno.SQL`'s helpers) runs on the same, scoped connection.
@@ -421,18 +455,20 @@ export function scopedClient(base: SqlClient, scope: () => Promise<RlsScope>): S
         ? base.begin(body)
         : (base.begin as unknown as (o: string, f: typeof body) => Promise<T>)(options, body);
     });
+  const oneQuery = <T>(query: (tx: SqlClient) => PromiseLike<T[]>) =>
+    scope().then((resolved) => scopedQuery(base, resolved, query));
   const client = ((first: unknown, ...rest: unknown[]) => {
     // `sql(object)` / `sql("name")` build a value (a helper or an identifier); nothing runs.
     if (!isTemplate(first)) {
       return (base as unknown as (...a: unknown[]) => unknown)(first, ...rest);
     }
-    return lazyQuery(() => inTransaction((tx) => tx(first, ...rest)));
+    return lazyQuery(() => oneQuery((tx) => tx(first, ...rest)));
   }) as SqlClient;
   client.unsafe = <T>(text: string, params?: unknown[]) =>
     lazyQuery<T>(
-      () => inTransaction((tx) => tx.unsafe<T>(text, params)),
+      () => oneQuery((tx) => tx.unsafe<T>(text, params)),
       () =>
-        inTransaction((tx) => {
+        oneQuery((tx) => {
           const query = tx.unsafe<T>(text, params);
           return query.simple ? query.simple() : query;
         }),

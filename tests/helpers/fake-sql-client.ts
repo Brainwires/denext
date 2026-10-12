@@ -89,19 +89,33 @@ export function fakeSqlClient(): FakeSqlClient {
     for (const [key, value] of session) settings.set(key, value);
   };
 
+  // As Postgres does: once a statement fails in a transaction, every statement but a rollback
+  // fails (25P02) until the transaction (or a savepoint) is rolled back.
+  let inTransaction = false;
+  let aborted = false;
   const run = (text: string, params: unknown[] = [], simple = false): SqlRow[] => {
     const sql = text.replace(/\$(\d+)/g, "?$1");
     statements.push(sql);
-    const failure = failures.findIndex((f) => f.pattern.test(sql));
-    if (failure >= 0) throw failures.splice(failure, 1)[0].error;
-    if (SKIP.test(sql)) return [];
+    if (sql === "BEGIN") inTransaction = true;
+    if (/^(COMMIT|ROLLBACK)$/.test(sql)) inTransaction = aborted = false;
+    if (sql.startsWith("ROLLBACK TO SAVEPOINT")) aborted = false;
+    if (aborted) {
+      throw Object.assign(
+        new Error("current transaction is aborted, commands ignored until end of block"),
+        { code: "25P02" },
+      );
+    }
     try {
+      const failure = failures.findIndex((f) => f.pattern.test(sql));
+      if (failure >= 0) throw failures.splice(failure, 1)[0].error;
+      if (SKIP.test(sql)) return [];
       if (simple) {
         raw.exec(sql);
         return [];
       }
       return raw.prepare(sql).all(...params.map(bindable)) as SqlRow[];
     } catch (error) {
+      if (inTransaction) aborted = true;
       throw translate(error);
     }
   };
@@ -110,7 +124,11 @@ export function fakeSqlClient(): FakeSqlClient {
     const settle = () => Promise.resolve().then(() => run(text, params) as T[]);
     return {
       then: (ok, fail) => settle().then(ok, fail),
-      simple: () => Promise.resolve().then(() => run(text, params, true) as T[]),
+      // Lazy as well, as a driver's own simple() query is: it starts when awaited.
+      simple: () => ({
+        then: (ok, fail) =>
+          Promise.resolve().then(() => run(text, params, true) as T[]).then(ok, fail),
+      }),
     };
   };
 
@@ -130,7 +148,10 @@ export function fakeSqlClient(): FakeSqlClient {
       const next = queue.then(async () => {
         run("BEGIN");
         try {
-          const result = await fn(client);
+          // An array of queries is awaited as a whole, as Deno.SQL and postgres.js do.
+          const returned = fn(client);
+          const result =
+            (Array.isArray(returned) ? await Promise.all(returned) : await returned) as T;
           run("COMMIT");
           return result;
         } catch (error) {

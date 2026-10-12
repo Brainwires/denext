@@ -14,6 +14,7 @@ import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { jsonResponse, type UiContext } from "./html.ts";
 import { broadcast, closeAll } from "./events.ts";
 import { UI_ROUTES } from "./routes.ts";
+import { projectUsesDatabase } from "./database/detect.ts";
 import {
   applySecurityHeaders,
   authorized,
@@ -197,6 +198,7 @@ async function buildContext(
       body,
       events,
       signal,
+      database: await projectUsesDatabase(options.dir),
     },
   };
 }
