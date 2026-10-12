@@ -23,6 +23,7 @@
  */
 
 import { REACT_COMPAT_VERSION } from "./react-version.ts";
+import { detachedFromRequest } from "../runtime/root-context-bridge.ts";
 import { renderToReadableStream as denextRenderToReadableStream } from "../jsx/render-to-stream.ts";
 import { renderToStringSync } from "../jsx/render-to-string.ts";
 import type { VNodeChildren } from "../jsx/types.ts";
@@ -40,7 +41,10 @@ let nodeStream: NodeStreamModule | undefined;
 let nodeStreamLoad: Promise<NodeStreamModule> | undefined;
 function loadNodeStream(): Promise<NodeStreamModule> {
   const spec = "node:stream"; // variable specifier → esbuild leaves it a runtime import
-  return (nodeStreamLoad ??= import(spec).then((m) => (nodeStream = m as NodeStreamModule)));
+  // A shared, memoized load: created outside any request so it never carries one.
+  return (nodeStreamLoad ??= detachedFromRequest(() =>
+    import(spec).then((m) => (nodeStream = m as NodeStreamModule))
+  ));
 }
 void loadNodeStream();
 

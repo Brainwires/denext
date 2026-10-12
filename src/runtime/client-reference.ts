@@ -11,6 +11,7 @@
 // exported component is tagged `clientId#exportName`.
 
 import { isComponentType } from "./react-brands.ts";
+import { detachedFromRequest } from "./root-context-bridge.ts";
 
 /** Symbol under which a client-reference id is stored on a tagged component. */
 export const CLIENT_REF: unique symbol = /* @__PURE__ */ Symbol.for("denext.clientRef");
@@ -116,7 +117,11 @@ export async function tagClientModules(
     : null;
   await Promise.all(
     pending.map(async ([clientId, ref], i) => {
-      const mod = barrel ? barrel[i] : load ? await load(ref.url) : await import(ref.url);
+      const mod = barrel
+        ? barrel[i]
+        : load
+        ? await load(ref.url)
+        : await detachedFromRequest(() => import(ref.url));
       tagClientExports(mod as Record<string, unknown>, clientId);
       // `forgetTaggedClients` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass tag the current one.
@@ -149,7 +154,10 @@ async function importViaBarrel(urls: string[]): Promise<unknown[] | null> {
   const src = urls.map((u, i) => `import * as m${i} from ${JSON.stringify(u)};`).join("\n") +
     `\nexport default [${urls.map((_, i) => `m${i}`).join(",")}];`;
   try {
-    const mod = await import("data:text/javascript," + encodeURIComponent(src));
+    // Outside the tagging request: the islands are shared by every request.
+    const mod = await detachedFromRequest(() =>
+      import("data:text/javascript," + encodeURIComponent(src))
+    );
     return mod.default as unknown[];
   } catch {
     return null;

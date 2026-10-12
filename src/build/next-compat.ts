@@ -83,6 +83,7 @@ import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
 import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
+import { inRootContext } from "../server/root-context.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -1488,7 +1489,8 @@ async function emitAsset(
 // @mdx-js/mdx is loaded lazily so an app without any `.mdx`/`.md` never pays for it.
 let mdxCompile: Promise<typeof import("@mdx-js/mdx")["compile"]> | null = null;
 function mdxCompiler(): Promise<typeof import("@mdx-js/mdx")["compile"]> {
-  if (!mdxCompile) mdxCompile = import("@mdx-js/mdx").then((m) => m.compile);
+  // Shared and memoized: loaded outside the request that first needs it.
+  if (!mdxCompile) mdxCompile = inRootContext(() => import("@mdx-js/mdx").then((m) => m.compile));
   return mdxCompile;
 }
 

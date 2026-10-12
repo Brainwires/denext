@@ -12,9 +12,6 @@ import { storage } from "../packages/backend/server.ts";
 import { getFileUrl, StorageClientError, uploadFile } from "../packages/backend/client.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
-// See backend-storage.test.ts: load the codec outside any request.
-await import("@denext/photon");
-
 const CREDENTIALS = { accessKeyId: "AKIDTEST", secretAccessKey: "secret-test-key" };
 const S3_ENDPOINT = "http://s3.test";
 

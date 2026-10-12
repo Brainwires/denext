@@ -26,11 +26,6 @@ import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
-// Load the image codec before any request runs: Deno carries the async context of the request
-// that first evaluates a module into later, unrelated tasks, which would make the next test's
-// "outside a request" calls look like they run inside that old request.
-await import("@denext/photon");
-
 const allow = () => true;
 const docs = { mime: ["text/plain", "image/png"], maxBytes: 64, authorize: allow };
 

@@ -7,6 +7,7 @@ import type { RenderedPage } from "./render-page.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { warnUnkeyedParamReads } from "./request-context.ts";
+import { inRootContext } from "./root-context.ts";
 import { raceAbort } from "./abort.ts";
 import { DEFAULT_REQUEST_TIMEOUT, REGEN_HEADER, REGEN_TOKEN } from "./app-config.ts";
 import {
@@ -213,7 +214,13 @@ function regenBackedOff(cacheKey: string): boolean {
   return false;
 }
 
+// The regen is shared, detached work the visiting request only triggered: its deadline timer and
+// pipeline start outside that request's async context.
 function scheduleBackgroundRegen(pr: PageRequest): void {
+  inRootContext(() => startBackgroundRegen(pr));
+}
+
+function startBackgroundRegen(pr: PageRequest): void {
   const { app, request } = pr.state;
   const { cacheKey } = pr;
   if (pageRegenInFlight.has(cacheKey) || regenBackedOff(cacheKey)) return;

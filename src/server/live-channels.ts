@@ -11,6 +11,7 @@
 // post-await connected + cap re-check. No initial frame: a channel is stateless.
 
 import { type ChannelEvent, getChannel } from "../runtime/channel.ts";
+import { inRootContext } from "./root-context.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 
 /** One connection's subscription to a (channel, key). */
@@ -276,7 +277,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     deliver(ev) {
       if (ev.kind === "revoke") return revokeAll(ev);
       pendingEvents.set(`${ev.channelId}\0${ev.key}`, ev); // latest publish wins in the window
-      if (flushTimer === null) flushTimer = setTimeout(flush, COALESCE_MS);
+      // The flush serves every subscriber, not the publisher: start its timer outside the
+      // publishing request's context.
+      if (flushTimer === null) flushTimer = inRootContext(() => setTimeout(flush, COALESCE_MS));
     },
     replayPending(conn) {
       const ids = conn.recoverChannels;

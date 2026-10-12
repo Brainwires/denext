@@ -1350,7 +1350,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CsrfOptions` — Options for csrf.
 - `currentContext(): RequestContext | undefined` — The current request context, or undefined if none is active.
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
-- `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path.
+- `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.
 - `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
 - `defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):

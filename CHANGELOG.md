@@ -31,6 +31,20 @@ and this project adheres to
   static file server uses, for handlers that serve bytes themselves (`undefined` = serve it all,
   `null` = 416).
 
+### Fixed
+
+- **Security: a request's context could leak into later code after a lazily loaded module.** The
+  first `import()` of a module made during a request (an image codec on the first
+  `/_denext/image` or storage transform, a route module, a wasm tool in dev) left that request's
+  async context active afterwards: the next request the server dispatched, a scheduled task or a
+  timer the module started could see `currentContext()` return the finished request, so a
+  `cookies()` / `auth()` read or a storage `authorize` check could run with another user's
+  session. Shared loaders (route and island modules, the image, OG, Sass, Lightning CSS, SWC and
+  MDX tools, the cache store, task and instrumentation modules, content collections' store and
+  MDX modules) now load outside the request, every request and scheduled run starts with no
+  request context, and shared timers (Live and channel flushes, ISR background regeneration)
+  start outside the request that triggered them.
+
 ## [3.4.11] - 2026-10-12
 
 ### Fixed

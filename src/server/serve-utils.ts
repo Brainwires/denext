@@ -3,6 +3,7 @@
 
 import { applyDefaultSecurityHeaders } from "./app.ts";
 import { setRemoteAddr } from "./remote-addr.ts";
+import { withoutRequestContext } from "./request-context.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
 
@@ -211,10 +212,13 @@ function serveOn(
       onListen: options.onListen ??
         (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
     },
-    (request, info) => {
-      setRemoteAddr(request, info.remoteAddr);
-      return handler(request);
-    },
+    // Each request starts with no ambient request context (see `withoutRequestContext`): the
+    // runtime may otherwise hand it the context of an earlier request that first loaded a module.
+    (request, info) =>
+      withoutRequestContext(() => {
+        setRemoteAddr(request, info.remoteAddr);
+        return handler(request);
+      }),
   );
   const { signal } = options;
   if (signal) {

@@ -1,5 +1,12 @@
 # @denext/content-collections
 
+## [Unreleased]
+
+### Fixed
+
+- **Security: the store read and an entry's MDX module load outside the request that first needs
+  them**, so the request's context no longer leaks into later code (see denext's changelog).
+
 ## [0.4.0] - 2026-09-13
 
 ### Added

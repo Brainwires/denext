@@ -13,6 +13,7 @@
 import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
 import { createGate, GateOverloadError } from "./gate.ts";
+import { inRootContext } from "./root-context.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
 
@@ -507,7 +508,10 @@ async function encodeOutput(
     // Lazy runtime import, kept off the static module graph (see the header note).
     // @denext/avif is denext's own first-party codec, so it is always resolvable —
     // no peer-codec guard needed (mirrors the @denext/photon load below).
-    const { encode: encodeAvif } = await import("@denext/avif") as unknown as AvifModule;
+    // Loaded outside the request: a codec is shared by every request (src/server/root-context.ts).
+    const { encode: encodeAvif } = await inRootContext(() =>
+      import("@denext/avif")
+    ) as unknown as AvifModule;
     const raw = resized.get_raw_pixels(); // RGBA, width*height*4
     const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
     // @denext/avif honors `quality` (0..100, higher = better) directly.
@@ -697,7 +701,10 @@ async function decodeResizeEncode(
   if (probed && exceedsSourceLimits(probed.width, probed.height)) {
     return new Response("image too large", { status: 413 });
   }
-  const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
+  // Loaded outside the request: the codec is shared by every request (src/server/root-context.ts).
+  const { PhotonImage, resize, SamplingFilter } = await inRootContext(() =>
+    import("@denext/photon")
+  );
   let img: PhotonImageT | undefined;
   let resized: PhotonImageT | undefined;
   try {

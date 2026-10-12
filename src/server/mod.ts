@@ -17,6 +17,7 @@ import { toFileUrl } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "./app.ts";
 import type { ModuleLoader } from "./types.ts";
 import { serveWithPortFallback } from "./serve-utils.ts";
+import { inRootContext } from "./root-context.ts";
 
 export { createApp } from "./app.ts";
 export type { AppConfig, FlightBoundaryState, RequestHandler, RequestLogInfo } from "./app.ts";
@@ -641,10 +642,14 @@ export type {
   SitemapModule,
 } from "./metadata-files.ts";
 
-/** Default module loader: dynamic import by absolute file path. */
+/**
+ * Default module loader: dynamic import by absolute file path. A module is shared by every
+ * request, so it is loaded outside the request that first asks for it: its top-level code, and
+ * anything that code schedules, never runs as that request.
+ */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
   const url = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
-  return import(url);
+  return inRootContext(() => import(url));
 };
 
 /** Options for {@linkcode serve}: app configuration plus HTTP listen settings. */

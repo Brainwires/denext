@@ -17,6 +17,7 @@ import {
   type SpaConfig,
 } from "../../server/config.ts";
 import { domListAliases } from "../dom-lists.ts";
+import { inRootContext } from "../../server/root-context.ts";
 import { appRendersDocumentTags, appUsesActivity, appUsesViewTransition } from "../bundle.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
 import { buildAppCss, extractRouteCss } from "../css.ts";
@@ -386,7 +387,8 @@ export function devShell(st: SpaDevState, platform: Platform): Promise<SpaShellP
   let hit = st.shells.get(key);
   if (!hit) {
     for (const k of st.shells.keys()) if (!k.startsWith(`${st.generation}:`)) st.shells.delete(k);
-    hit = renderSpaShell(st.paths, platform, false);
+    // Shared by every navigation of this generation: rendered outside the triggering request.
+    hit = inRootContext(() => renderSpaShell(st.paths, platform, false));
     // A failed render is retried on the next navigation (after the fix's edit, or as is).
     hit.catch(() => st.shells.delete(key));
     st.shells.set(key, hit);

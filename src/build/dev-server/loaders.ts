@@ -3,6 +3,7 @@
 
 import { join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../../server/types.ts";
+import { inRootContext } from "../../server/root-context.ts";
 import { createUseCacheLoaders } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
 import { devPlatformRedirects, renderPlatform } from "./platform.ts";
@@ -21,7 +22,9 @@ import type { Platform } from "../platform-extensions.ts";
 export function baseLoaderFor(st: DevState, bust = true): ModuleLoader {
   return (filePath) => {
     const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
-    return import(bust ? `${href}?g=${st.generation}` : href);
+    // Outside the request that first asks for it: a module is shared by every request (see
+    // src/server/root-context.ts).
+    return inRootContext(() => import(bust ? `${href}?g=${st.generation}` : href));
   };
 }
 
