@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.14] - 2026-10-12
+
 ### Added
 
 - **Docs: a Coming from Supabase guide.** `/docs/coming-from-supabase` maps each Supabase feature
@@ -56,14 +58,6 @@ and this project adheres to
   instance. `SqlClient` gains an optional `reserve()` (`Deno.SQL` has it; `fromPostgresJs` maps
   postgres.js's), which the lock needs; without it every instance revalidates, with a warning.
 
-### Fixed
-
-- **Reading task run history never changes the database.** `postgresTaskHistoryStore`'s `read()`
-  and `listRuns()` no longer run the table migration: before the first recorded run they answer
-  "no history recorded yet" (as the SQLite store does). `denext task --history --read-only` passes
-  `readOnly: true` to the store's `read()` (new `TaskHistoryReadOptions.readOnly`) and refuses
-  `--clear-history`; `denext ui --read-only` reads a custom store's history that way.
-
 ### Changed
 
 - **`@denext/backend`: a single `db()` query is one round trip on `Deno.SQL`** (was two): the
@@ -72,6 +66,14 @@ and this project adheres to
   failed setup still aborts the transaction before the query runs. The `SqlClient.begin` contract
   now states that a returned array is awaited as a whole (as `Deno.SQL` and postgres.js do); a
   client that does not is refused with a `TypeError` instead of running the query unscoped.
+
+### Fixed
+
+- **Reading task run history never changes the database.** `postgresTaskHistoryStore`'s `read()`
+  and `listRuns()` no longer run the table migration: before the first recorded run they answer
+  "no history recorded yet" (as the SQLite store does). `denext task --history --read-only` passes
+  `readOnly: true` to the store's `read()` (new `TaskHistoryReadOptions.readOnly`) and refuses
+  `--clear-history`; `denext ui --read-only` reads a custom store's history that way.
 
 ## [3.4.13] - 2026-10-12
 
@@ -13280,7 +13282,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.13...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.14...development
+[3.4.14]: https://jsr.io/@denext/denext@3.4.14
 [3.4.13]: https://jsr.io/@denext/denext@3.4.13
 [3.4.12]: https://jsr.io/@denext/denext@3.4.12
 [3.4.11]: https://jsr.io/@denext/denext@3.4.11
