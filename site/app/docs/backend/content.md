@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage today: buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — and Postgres for your server code and for auth, with zero npm."
 ---
 
 ```sh
@@ -202,8 +202,52 @@ redirect to a presigned URL that lives five minutes.
 is a gallery in a public bucket and documents in a private one, on the filesystem or on S3 from the
 environment.
 
+## Postgres
+
+`backend({ postgres })` opens one Postgres client for the whole app. Server code gets it from
+`db()`; denext auth puts its tables on it with `backendAuthAdapter()`.
+
+```ts
+// denext.config.ts
+import { denextAuth, github } from "denext/server";
+import { backend, backendAuthAdapter } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({ postgres: { url: Deno.env.get("DATABASE_URL") } }), // `{}` reads DATABASE_URL too
+    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
+  ],
+};
+```
+
+```ts
+// app/api/posts/route.ts
+import { db } from "@denext/backend/server";
+
+export async function GET(): Promise<Response> {
+  const posts = await db()`SELECT id, title FROM posts ORDER BY id DESC LIMIT ${20}`;
+  return Response.json(posts);
+}
+```
+
+`db()` is a tagged-template query function: every interpolated value is a bound parameter, never
+text spliced into the query. It also has `unsafe(text, params)` and `begin(async (tx) => …)` for a
+transaction. It is the server's own connection — it is not scoped to the request's user, so the
+authorization checks are yours (per-user row-level security is a later release).
+
+The client is `Deno.SQL`, the Postgres client built into denext's Deno runtime, opened at startup
+and closed when the server drains. On stock Deno there is none: the app still builds and starts,
+and `db()` throws an error with `code: "unsupported"` that says so. Pass a client of your own as
+`postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs` from
+`denext/server` works on any Deno; a client you pass is never closed by the plugin.
+
+`backendAuthAdapter({ schema?, migrate? })` is `postgresAuthAdapter` on that client (see
+[Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first
+use. Your own tables come from `denext generate migration <name>` and `denext task migrate`
+([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)).
+
 ## More services
 
-Storage is the first service in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), realtime
+Storage and Postgres are the first services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), realtime
 ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
 [tasks](/docs/tasks) are already part of denext itself.

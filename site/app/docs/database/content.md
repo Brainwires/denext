@@ -74,27 +74,55 @@ for await (const e of kv.list({ prefix: ["notes"] })) notes.push(e.value);
 Run with `--unstable-kv` (add it to your `deno task` definitions; the framework
 itself does not need it).
 
-## Postgres / MySQL (multi-instance)
+## Postgres
 
-For a horizontally-scaled app, use a networked database via a Deno-native or
-`npm:` driver — all of which run on Deno:
+For a horizontally scaled app, every replica needs the same database. denext's own Postgres
+support runs on **`Deno.SQL`**, the Postgres client built into denext's Deno runtime (tagged
+templates, a pool, transactions, `LISTEN` / `NOTIFY`), so it needs no driver at all:
 
 ```ts
-import postgres from "npm:postgres"; // or "jsr:@db/postgres", "npm:mysql2"
-const sql = postgres(Deno.env.get("DATABASE_URL")!);
-export const getUsers = () => sql`SELECT id, email FROM users`;
+// lib/db.ts
+import { postgresClient } from "denext/server";
+export const sql = postgresClient(Deno.env.get("DATABASE_URL"));
+export const getUsers = () => sql`SELECT id, email FROM users`; // values are bound, never spliced
 ```
 
-Keep the pool a module singleton. These drivers are **not part of denext's CI**
-— they're standard Deno usage, but validate your driver + pooling under your
-load.
+On stock Deno there is no `Deno.SQL`, and `postgresClient()` throws an error with
+`code: "unsupported"` that says so. Bring a driver instead and adapt it with `fromPostgresJs`
+(denext does not depend on the npm `postgres` package; your app does):
+
+```ts
+import postgres from "npm:postgres";
+import { fromPostgresJs } from "denext/server";
+export const sql = fromPostgresJs(postgres(Deno.env.get("DATABASE_URL")!));
+```
+
+Either way the result is a `SqlClient` (a tagged-template query, `unsafe(text, params)`,
+`begin(fn)` and `close()`), which every denext Postgres feature takes as `sql`. Pass `url`
+instead and denext opens the client on `Deno.SQL` itself, and closes it on drain.
+
+| What                       | API                                                     | Tables                                    |
+| -------------------------- | ------------------------------------------------------- | ----------------------------------------- |
+| Auth users, accounts, MFA… | `denextAuth({ adapter: postgresAuthAdapter({ sql }) })` | `auth_*` ([details](/docs/auth#postgres)) |
+| Revocable sessions         | `sessionStore: postgresSessionStore({ sql })`           | `auth_sessions`                           |
+| Auth rate limits           | `rateLimit: { store: postgresRateLimitStore({ sql }) }` | `auth_rate_limits`                        |
+| Data and ISR page cache    | `setCacheStore(postgresCacheStore({ sql }))`            | `cache_data`, `cache_pages`, `cache_tags` |
+| Your own migrations        | `migratePostgres(sql, { dir })`                         | `_migrations`                             |
+
+Each store creates its tables through `migratePostgres` on first use (recorded in
+`auth_migrations` / `cache_migrations`; pass `migrate: false` when a deploy step applies them
+with a more privileged role), and takes `schema` to keep them out of `public`. With
+[`@denext/backend`](/docs/backend#postgres), `backend({ postgres })` opens one client for the
+whole app and `backendAuthAdapter()` puts auth on it.
+
+Other drivers work as they always have — `jsr:@db/postgres`, `npm:mysql2` and the rest are
+standard Deno code. Keep the pool a module singleton.
 [`examples/postgres-load`](https://github.com/Brainwires/denext/tree/main/examples/postgres-load)
-does exactly that: a real Postgres pool (`jsr:@db/postgres`, zero npm) driven by
-a load harness that fires thousands of concurrent requests and reports
-throughput + latency percentiles — demonstrating that with a bounded pool,
-concurrency above the pool size **queues** for a free connection instead of
-exhausting the database. (Verified locally: 5,000 requests at concurrency 100
-over a 10-connection pool, 0 errors.)
+drives a real Postgres pool (`jsr:@db/postgres`, zero npm) with a load harness that fires
+thousands of concurrent requests and reports throughput + latency percentiles — with a bounded
+pool, concurrency above the pool size **queues** for a free connection instead of exhausting the
+database. (Verified locally: 5,000 requests at concurrency 100 over a 10-connection pool, 0
+errors.)
 
 ## ORMs
 
@@ -323,6 +351,33 @@ the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the
 database's directory, which the scaffold's `-A` tasks already grant. Down
 migrations are deliberately absent: write a new forward file.
+
+### Plain SQL files on Postgres
+
+`denext generate migration <name>` writes Postgres SQL when the project uses Postgres
+(`DATABASE_URL` is a `postgres://` URL in the environment, `.env` or `.env.local`, or the denext
+config has a `postgres:` key), and the `tasks/migrate.ts` it writes picks the database when it
+runs: Postgres when `DATABASE_URL` is a `postgres://` URL, else `node:sqlite`. On Postgres it
+calls `migratePostgres`:
+
+- every pending `migrations/*.sql`, in file-name order, each in **its own transaction** — a file
+  with its own `BEGIN` / `COMMIT` is refused, since it would end the runner's transaction early;
+- recorded once in `_migrations` (name, SHA-256 of the SQL, time applied);
+- under a **transaction-scoped advisory lock**, so two instances deploying at once take turns
+  and the one that waited skips what the other applied;
+- a failing file rolls back alone and stops the run, naming itself.
+
+```sh
+denext task migrate                              # apply what is pending
+denext task migrate --payload '{"dryRun":true}'  # list what would run, run nothing
+denext task migrate --payload '{"status":true}'  # applied / pending / changed / unknown
+```
+
+The same calls work from your own code: `migratePostgres(sql, { dir, dryRun })` and
+`postgresMigrationStatus(sql, { dir })` from `denext/server` (`migrations: [{ name, sql }]`
+works instead of a directory). A file edited after it was applied is reported as `changed` by
+the status, never re-run. On stock Deno, swap `postgresClient(url)` in the generated task for
+`fromPostgresJs(postgres(url))`. A Prisma or Drizzle project keeps its own tool.
 
 ### Drizzle: `drizzle-kit generate` + `migrate()` (verified)
 

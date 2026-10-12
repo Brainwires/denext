@@ -37,20 +37,27 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SqliteDb, SqlValue } from "../sqlite-cache.ts";
-import type {
-  AdapterAccount,
-  AdapterUser,
-  ApiTokenRecord,
-  AuthAdapter,
-  MfaRecord,
-  NativeGrantRecord,
-  NativeSessionRecord,
-  PasskeyChallengeRecord,
-  PasskeyRecord,
-  VerificationTokenRecord,
-} from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, MfaRecord } from "./adapter.ts";
 import { emailKey } from "./email-key.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
+import {
+  ACCOUNT_MAP,
+  API_TOKEN_MAP,
+  type FieldMap,
+  fromRow,
+  MFA_MAP,
+  NATIVE_GRANT_MAP,
+  NATIVE_SESSION_MAP,
+  NATIVE_SESSION_RETENTION,
+  PASSKEY_CHALLENGE_MAP,
+  PASSKEY_MAP,
+  patchUser,
+  spendBackupCode,
+  toRow as sharedToRow,
+  USER_MAP,
+  VERIFICATION_MAP,
+  withUserId,
+} from "./adapter-rows.ts";
 
 /** Options for {@linkcode sqliteAuthAdapter}. */
 export interface SqliteAuthAdapterOptions {
@@ -381,165 +388,17 @@ function rekeyInternationalisedEmails(db: SqliteDb): void {
 
 // ---- rows ------------------------------------------------------------------
 
-/** How one record field crosses the SQL boundary in both directions. */
-interface Codec {
-  /** Column value → field value (`undefined` drops the field from the record). */
-  from(value: SqlValue): unknown;
-  /** Field value → bound parameter (`null` for an absent field). */
-  to(value: unknown): SqlValue;
-}
-
-/** Which column (and codec) each field of a record lives in. */
-type FieldMap<T> = { [K in keyof T]?: readonly [column: string, codec: Codec] };
-
-/** A `TEXT` column holding an optional string. */
-const TEXT: Codec = {
-  from: (value) => typeof value === "string" ? value : undefined,
-  to: (value) => typeof value === "string" ? value : null,
-};
-
-/** An `INTEGER` column holding an optional number (epoch seconds, a TOTP step). */
-const INT: Codec = {
-  from: (value) => typeof value === "number" ? value : undefined,
-  to: (value) => typeof value === "number" ? value : null,
-};
-
-/** An `INTEGER` 0/1 column holding a boolean (absent → `false`). */
-const BOOL: Codec = {
-  from: (value) => value === 1,
-  to: (value) => value === true ? 1 : 0,
-};
-
-/** A `TEXT` column holding a JSON array of strings — absent when the column is NULL. */
-const LIST: Codec = {
-  from: (value) => parseList(value),
-  to: (value) => Array.isArray(value) ? JSON.stringify(value) : null,
-};
-
-/** A `TEXT` column holding a JSON array of strings that is never absent, only empty. */
-const CODES: Codec = { from: (value) => parseList(value) ?? [], to: LIST.to };
-
-/** Parse a JSON string array, tolerating a NULL or a value another writer corrupted. */
-function parseList(value: SqlValue): string[] | undefined {
-  if (typeof value !== "string") return undefined;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Build a record from a row — the one read path every table shares. */
-function fromRow<T>(map: FieldMap<T>, row: Record<string, SqlValue>): T {
-  const record: Record<string, unknown> = {};
-  for (const [field, spec] of Object.entries(map) as Array<[string, [string, Codec]]>) {
-    const value = spec[1].from(row[spec[0]] ?? null);
-    // An absent field, never `key: undefined`: a row must map to the shape a hand-written
-    // record has, or the shared contract suite would mean two different things.
-    if (value !== undefined) record[field] = value;
-  }
-  return record as T;
-}
-
-/** Build a column → parameter object from a record — the one write path every table shares. */
+/**
+ * A record as node:sqlite parameters: the shared field map's values, with booleans as 0/1
+ * (node:sqlite binds no booleans).
+ */
 function toRow<T extends object>(map: FieldMap<T>, record: T): Record<string, SqlValue> {
   const row: Record<string, SqlValue> = {};
-  for (const [field, spec] of Object.entries(map) as Array<[string, [string, Codec]]>) {
-    row[spec[0]] = spec[1].to((record as Record<string, unknown>)[field]);
+  for (const [column, value] of Object.entries(sharedToRow(map, record))) {
+    row[column] = typeof value === "boolean" ? (value ? 1 : 0) : value as SqlValue;
   }
   return row;
 }
-
-const USER_MAP: FieldMap<AdapterUser> = {
-  id: ["id", TEXT],
-  email: ["email", TEXT],
-  emailVerified: ["email_verified", INT],
-  name: ["name", TEXT],
-  image: ["image", TEXT],
-  roles: ["roles", LIST],
-};
-
-const ACCOUNT_MAP: FieldMap<AdapterAccount> = {
-  userId: ["user_id", TEXT],
-  provider: ["provider", TEXT],
-  providerAccountId: ["provider_account_id", TEXT],
-  type: ["type", TEXT],
-  accessToken: ["access_token", TEXT],
-  refreshToken: ["refresh_token", TEXT],
-  expiresAt: ["expires_at", INT],
-  tokenType: ["token_type", TEXT],
-  scope: ["scope", TEXT],
-  idToken: ["id_token", TEXT],
-};
-
-const VERIFICATION_MAP: FieldMap<VerificationTokenRecord> = {
-  identifier: ["identifier", TEXT],
-  purpose: ["purpose", TEXT],
-  tokenHash: ["token_hash", TEXT],
-  expires: ["expires", INT],
-  data: ["data", TEXT],
-};
-
-const API_TOKEN_MAP: FieldMap<ApiTokenRecord> = {
-  id: ["id", TEXT],
-  userId: ["user_id", TEXT],
-  name: ["name", TEXT],
-  tokenHash: ["token_hash", TEXT],
-  scopes: ["scopes", LIST],
-  createdAt: ["created_at", INT],
-  expiresAt: ["expires_at", INT],
-  lastUsedAt: ["last_used_at", INT],
-  revokedAt: ["revoked_at", INT],
-};
-
-const MFA_MAP: FieldMap<MfaRecord> = {
-  userId: ["user_id", TEXT],
-  secret: ["secret", TEXT],
-  confirmedAt: ["confirmed_at", INT],
-  backupCodeHashes: ["backup_code_hashes", CODES],
-  lastStep: ["last_step", INT],
-};
-
-const NATIVE_GRANT_MAP: FieldMap<NativeGrantRecord> = {
-  hash: ["hash", TEXT],
-  kind: ["kind", TEXT],
-  expiresAt: ["expires_at", INT],
-  data: ["data", TEXT],
-};
-
-const PASSKEY_MAP: FieldMap<PasskeyRecord> = {
-  id: ["id", TEXT],
-  userId: ["user_id", TEXT],
-  publicKey: ["public_key", TEXT],
-  alg: ["alg", INT],
-  signCount: ["sign_count", INT],
-  backupEligible: ["backup_eligible", BOOL],
-  backedUp: ["backed_up", BOOL],
-  transports: ["transports", LIST],
-  aaguid: ["aaguid", TEXT],
-  name: ["name", TEXT],
-  createdAt: ["created_at", INT],
-  lastUsedAt: ["last_used_at", INT],
-};
-
-const PASSKEY_CHALLENGE_MAP: FieldMap<PasskeyChallengeRecord> = {
-  hash: ["hash", TEXT],
-  expiresAt: ["expires_at", INT],
-  data: ["data", TEXT],
-};
-
-const NATIVE_SESSION_MAP: FieldMap<NativeSessionRecord> = {
-  id: ["id", TEXT],
-  userId: ["user_id", TEXT],
-  generation: ["generation", INT],
-  salt: ["salt", TEXT],
-  session: ["session", TEXT],
-  createdAt: ["created_at", INT],
-  expiresAt: ["expires_at", INT],
-  revokedAt: ["revoked_at", INT],
-  rotatedAt: ["rotated_at", INT],
-};
 
 // ---- statements ------------------------------------------------------------
 
@@ -640,10 +499,7 @@ function userMethods(
     return row && fromRow(USER_MAP, row);
   };
   return {
-    createUser(user) {
-      const { id, ...rest } = user;
-      return saveUser(state, { ...rest, id: id ?? crypto.randomUUID() }, state.now());
-    },
+    createUser: (user) => saveUser(state, withUserId(user), state.now()),
     getUser: (id) => read("SELECT * FROM auth_users WHERE id = ?", [id]),
     getUserByEmail: (email) =>
       read("SELECT * FROM auth_users WHERE email_lc = ?", [emailKey(email)]),
@@ -655,18 +511,11 @@ function userMethods(
       ),
     updateUser(patch) {
       const row = one(state.db(), "SELECT * FROM auth_users WHERE id = ?", [patch.id]);
-      if (!row) {
-        throw new Error(`sqliteAuthAdapter: no user with id ${JSON.stringify(patch.id)}`);
-      }
-      const next = fromRow(USER_MAP, row);
-      // An absent field means "unchanged", so `undefined` never clears a stored value.
-      for (const [key, value] of Object.entries(patch)) {
-        if (value !== undefined) Reflect.set(next, key, value);
-      }
+      const next = patchUser(row, patch, "sqliteAuthAdapter");
       return saveUser(
         state,
         next,
-        typeof row.created_at === "number" ? row.created_at : state.now(),
+        typeof row?.created_at === "number" ? row.created_at : state.now(),
       );
     },
   };
@@ -787,26 +636,6 @@ function apiTokenMethods(
   };
 }
 
-/** How many times a losing compare-and-swap re-reads before giving up. */
-const SWAP_ATTEMPTS = 4;
-
-/**
- * The index of the first hash the caller's comparison accepts, or `-1`.
- *
- * @param hashes The stored backup-code hashes, in order.
- * @param matches Constant-time comparison of the presented code against one stored hash.
- * @returns The matching index, or `-1` when none matched.
- */
-async function firstMatch(
-  hashes: string[],
-  matches: (hash: string) => boolean | Promise<boolean>,
-): Promise<number> {
-  for (const [index, hash] of hashes.entries()) {
-    if (await matches(hash)) return index;
-  }
-  return -1;
-}
-
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: SqliteState,
@@ -835,29 +664,19 @@ function mfaMethods(
       );
       return swapped.length === 1;
     },
-    async consumeBackupCode(userId, matches) {
-      // The comparison is the caller's (scrypt), so the read-match-write cannot be one
-      // statement. Compare-and-swap instead of a lock: the write lands only while the
-      // stored list is still the one that was matched, so a concurrent redemption — in
-      // this process or in another one on the same file — loses the swap and retries
-      // against the rewritten list. Racing on ONE code therefore yields exactly one
-      // `true`, and racing on two different codes still spends both.
-      for (let attempt = 0; attempt < SWAP_ATTEMPTS; attempt++) {
-        const record = read(userId);
-        if (!record) return false;
-        const before = JSON.stringify(record.backupCodeHashes);
-        const index = await firstMatch(record.backupCodeHashes, matches);
-        if (index < 0) return false;
-        const rest = record.backupCodeHashes.filter((_, at) => at !== index);
-        const swapped = state.db().query(
-          "UPDATE auth_mfa SET backup_code_hashes = ? " +
-            "WHERE user_id = ? AND backup_code_hashes = ? RETURNING user_id",
-          [JSON.stringify(rest), userId, before],
-        );
-        if (swapped.length === 1) return true;
-      }
-      return false;
-    },
+    consumeBackupCode: (userId, matches) =>
+      // Compare-and-swap on the whole list (see spendBackupCode): a concurrent redemption — in
+      // this process or in another one on the same file — loses the swap and retries.
+      spendBackupCode(
+        () => read(userId),
+        (next, before) =>
+          state.db().query(
+            "UPDATE auth_mfa SET backup_code_hashes = ? " +
+              "WHERE user_id = ? AND backup_code_hashes = ? RETURNING user_id",
+            [next, userId, before],
+          ).length === 1,
+        matches,
+      ),
     claimTotpStep(userId, step) {
       // Strictly monotonic, decided by the WHERE clause: the step a code verified against
       // is spent, and so is every older one. The row is claimed or it is not.
@@ -1013,11 +832,7 @@ function passkeyMethods(
   };
 }
 
-/**
- * How long (seconds) a native session family is kept after it expired or was revoked: 30
- * days, then the next sign-in deletes it.
- */
-export const NATIVE_SESSION_RETENTION = 30 * 24 * 60 * 60;
+export { NATIVE_SESSION_RETENTION };
 
 /** The tables keyed by `user_id` that a user's deletion clears. */
 const USER_TABLES = [

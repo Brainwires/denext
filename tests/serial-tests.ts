@@ -12,6 +12,7 @@
 /** The test files run one at a time (paths from the repo root). */
 export const SERIAL_TESTS: readonly string[] = [
   "tests/auth-example.test.ts",
+  "tests/backend-postgres.test.ts",
   "tests/build-next-config-eval.test.ts",
   "tests/build.test.ts",
   "tests/cache-default-store.test.ts",

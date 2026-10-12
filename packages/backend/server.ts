@@ -1,6 +1,6 @@
 /**
- * `@denext/backend/server` — the storage server API, for route handlers, Server Actions,
- * Server Components and tasks.
+ * `@denext/backend/server` — the storage server API and the app's Postgres client (`db()`), for
+ * route handlers, Server Actions, Server Components and tasks.
  *
  * ```ts
  * // app/api/avatar/route.ts
@@ -22,6 +22,7 @@
  */
 
 export { storage } from "./src/storage.ts";
+export { db } from "./src/postgres.ts";
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";

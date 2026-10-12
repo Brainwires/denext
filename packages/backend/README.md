@@ -1,10 +1,11 @@
 # @denext/backend
 
 **Backend services inside your [denext](https://denext.dev) app**, as one opt-in plugin: no hosted
-service, nothing to run beside it. This release ships **storage** — buckets with per-bucket rules,
-signed upload and download URLs, multipart uploads, image transforms on download and access checks
-tied to the request's session — on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with
-zero npm.
+service, nothing to run beside it. It ships **storage** — buckets with per-bucket rules, signed
+upload and download URLs, multipart uploads, image transforms on download and access checks tied to
+the request's session — on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm;
+and **Postgres** — one client for your server code (`db()`) and for denext auth
+(`backendAuthAdapter()`).
 
 ```ts
 // denext.config.ts
@@ -66,6 +67,32 @@ const { key } = await uploadFile("avatars", file, {
 });
 const src = await getFileUrl("avatars", key, { transform: { width: 256 } });
 ```
+
+## Postgres
+
+```ts
+// denext.config.ts
+import { denextAuth, github } from "denext/server";
+import { backend, backendAuthAdapter } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({ postgres: { url: Deno.env.get("DATABASE_URL") } }),
+    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
+  ],
+};
+```
+
+```ts
+import { db } from "@denext/backend/server";
+
+const posts = await db()`SELECT id, title FROM posts WHERE author = ${userId}`; // bound, not spliced
+```
+
+The client is `Deno.SQL`, built into denext's Deno runtime. On stock Deno pass your own:
+`backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })` with the npm `postgres` package
+(`fromPostgresJs` is in `denext/server`). `db()` is the server's own connection, not scoped to the
+request's user. Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
 
 ## What it enforces
 

@@ -25,7 +25,8 @@
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
-        "storage"
+        "storage",
+        "postgres"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -161,6 +162,19 @@
               "driver",
               "buckets"
             ]
+          },
+          "postgres": {
+            "description": "Postgres: the app's database, as `db()` from `@denext/backend/server` (and denext auth's, with `adapter: backendAuthAdapter()`). `{}` reads `DATABASE_URL`.",
+            "type": "object",
+            "properties": {
+              "url": {
+                "description": "A `postgres://` URL (default: `DATABASE_URL`), opened with `Deno.SQL` — the Postgres client built into denext's Deno runtime — and closed when the server drains.",
+                "type": "string"
+              },
+              "sql": {
+                "description": "A client to use instead of `url`: any `SqlClient` (on stock Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the plugin."
+              }
+            }
           }
         }
       }

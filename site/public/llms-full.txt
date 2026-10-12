@@ -649,6 +649,12 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 ```
 
 Open the connection once at module scope; do writes in Server Actions.
+Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
+tagged-template client on `Deno.SQL`, built into denext's Deno runtime (on stock Deno:
+`fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
+`postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
+tables by migration on first use. With `@denext/backend`, `backend({ postgres: {} })` (reads
+`DATABASE_URL`) + `db()` from `@denext/backend/server` + `denextAuth({ adapter: backendAuthAdapter() })`.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
@@ -1424,6 +1430,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
+- `fromPostgresJs(pg: PostgresJsLike): SqlClient` — Adapt an npm postgres (postgres.js) client to a SqlClient — the stock-Deno path for every denext Postgres feature. denext does not depend on the package: import it in your app (npm:postgres) and pass the wrapped client as sql.
 - `generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>` — Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.
 - `generateTotpSecret(bytes?: number): string` — Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
@@ -1478,6 +1485,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden() (or Next's own).
 - `interface IslandPayload` — A deferred-hydration island: its tree-path id, strategy, and own Flight tree.
 - `isNotFound(value: unknown): value is NotFoundError` — True if value is a NotFoundError raised by notFound(), or (on the server) Next.js's own not-found error (digest NEXT_HTTP_ERROR_FALLBACK;404) thrown by a library built for Next.
+- `isPostgresUrl(url: string | undefined): boolean` — Whether a URL names a Postgres database (postgres:// / postgresql://).
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
 - `isRedirect(value: unknown): value is RedirectError` — True if value is a RedirectError raised by redirect(), or (on the server) Next.js's own redirect error (a NEXT_REDIRECT;… digest) thrown by a library built for Next — which is then given the url / status / redirectType a RedirectError has.
 - `isServerAction(value: unknown): value is ServerActionRef` — True if value is a ServerActionRef.
@@ -1533,6 +1541,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type MiddlewareOutcome = object | object | object` — The normalized result of running the middleware runner for a request.
 - `type MiddlewareResult = Response | NextCommand | RewriteCommand | void | undefined` — Anything a middleware handler may return: a response, a command, or nothing.
 - `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
+- `migratePostgres(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrateResult>` — Apply every pending migration, in name order, each in its own transaction under a transaction-scoped advisory lock (so concurrent runners never apply one twice). A failing migration rolls back on its own and stops the run; the ones before it stay applied.
+- `interface MigrateResult` — What migratePostgres did.
+- `interface Migration` — One migration: a unique, ordered name and its SQL (one or more statements).
+- `interface MigrationState` — One migration's state, as postgresMigrationStatus reports it.
+- `interface MigrationStatus` — What postgresMigrationStatus found.
 - `interface MobileAdaptiveIconConfig` — Android adaptive-icon layers under MobileConfig.adaptiveIcon.
 - `interface MobileConfig` — Settings for denext mobile build / denext mobile assets (the Capacitor shell).
 - `interface MobileFlavorConfig` — One build flavor of the Capacitor shell under MobileConfig.flavors: what denext mobile build --flavor <name> changes for that build only. Every change is undone when the build ends (the native sources and capacitor.config.* are restored byte for byte).
@@ -1591,6 +1604,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PluginPrepareStep = (context: PluginPrepareContext) => void | Promise<void>` — A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build / export), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Its PluginPrepareContext is a build step's context without the emit seam: a prepare step generates inputs, not published output.
 - `type PluginRequestHandler = (request: Request) => Response | null | undefined | Promise<Response | null | undefined>` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
 - `type PluginTeardown = () => void | Promise<void>` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
+- `POSTGRES_UNSUPPORTED: unsupported` — The code a Postgres feature's error carries when no client is available.
+- `postgresAuthAdapter(options: PostgresAuthAdapterOptions): AuthAdapter` — Build the AuthAdapter on Postgres: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** client and an idempotent close().
+- `interface PostgresAuthAdapterOptions` — Options for postgresAuthAdapter.
+- `interface PostgresAuthStoreOptions` — Options every Postgres auth store takes: a client or URL, a schema, and migrate.
+- `postgresCacheStore(options: PostgresCacheStoreOptions): CacheStore & object` — A CacheStore on Postgres, shared by every replica. Size-bounded: oldest-written rows past maxDataEntries / maxPageEntries are evicted, and hard-expired rows are swept on a throttle.
+- `interface PostgresCacheStoreOptions` — Options for postgresCacheStore.
+- `postgresClient(url?: string, feature?: string): SqlClient` — A Postgres client on the runtime's built-in Deno.SQL — the zero-dependency path.
+- `interface PostgresConnectionOptions` — Options shared by every denext Postgres store: a client, or a URL to open one.
+- `interface PostgresJsLike` — The shape of an npm postgres (postgres.js) client that fromPostgresJs reads.
+- `interface PostgresMigrateOptions` — Options for migratePostgres and postgresMigrationStatus.
+- `postgresMigrationStatus(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrationStatus>` — Which migrations are applied, which are pending, and which applied ones are no longer known. Read-only: it creates nothing, not even the tracking table.
+- `postgresRateLimitStore(options: PostgresRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Postgres.
+- `interface PostgresRateLimitStoreOptions` — Options for postgresRateLimitStore.
+- `postgresSessionStore(options: PostgresSessionStoreOptions): SessionStore` — A durable, shared SessionStore on Postgres.
+- `interface PostgresSessionStoreOptions` — Options for postgresSessionStore.
+- `class PostgresUnsupportedError` — Why a Postgres feature could not run: no Deno.SQL and no client was passed.
 - `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
@@ -1727,6 +1756,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaTanstackRouterConfig` — TanStack Router build settings under SpaConfig.tanstackRouter.
 - `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
 - `spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>` — Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.
+- `interface SqlClient` — The minimal Postgres client denext needs. Deno.SQL (denext's runtime) satisfies it as is; on stock Deno, fromPostgresJs adapts the npm postgres package.
 - `sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter` — Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** database handle and an idempotent close().
 - `interface SqliteAuthAdapterOptions` — Options for sqliteAuthAdapter.
 - `sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
@@ -1734,6 +1764,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
 - `sqliteSessionStore(options?: SqliteSessionStoreOptions): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
 - `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
+- `interface SqlQuery<T>` — A query that may also run as a simple-protocol query (several statements, no parameters).
+- `type SqlRow = Record<string, unknown>` — One row, keyed by column name.
 - `type SqlValue = null | number | bigint | string | Uint8Array` — A value bindable as a SQLite statement parameter.
 - `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.

@@ -7,6 +7,7 @@ import { join, toFileUrl } from "@std/path";
 import { parse as parseYaml } from "@std/yaml";
 import { generateArtifact, OPTIONAL_NAME_KINDS } from "../src/build/generate.ts";
 import { migrationPlan, slugName } from "../src/build/generate-ops.ts";
+import { fakeSqlClient } from "./helpers/fake-sql-client.ts";
 
 const SERVER_MOD = toFileUrl(join(Deno.cwd(), "src/server/mod.ts")).href;
 
@@ -22,13 +23,29 @@ async function project(files: Record<string, string> = {}): Promise<string> {
 }
 
 /** Import a generated task file with `denext/server` pointed at this checkout. */
-async function runGeneratedTask(path: string): Promise<unknown> {
+async function runGeneratedTask(path: string, payload?: unknown): Promise<unknown> {
   const text = await Deno.readTextFile(path);
   const runnable = path.replace(/\.ts$/, ".run.ts");
   await Deno.writeTextFile(runnable, text.replace('"denext/server"', JSON.stringify(SERVER_MOD)));
   const mod = await import(toFileUrl(runnable).href);
   const signal = new AbortController().signal;
-  return await mod.default.handler({ name: "t", trigger: "manual", signal, attempt: 1 });
+  return await mod.default.handler({ name: "t", trigger: "manual", signal, attempt: 1, payload });
+}
+
+/** Run `fn` with env vars set (or deleted, for `undefined`), restoring them afterwards. */
+async function withEnv(vars: Record<string, string | undefined>, fn: () => Promise<void>) {
+  const before = Object.fromEntries(Object.keys(vars).map((k) => [k, Deno.env.get(k)]));
+  const apply = (values: Record<string, string | undefined>) => {
+    for (const [k, v] of Object.entries(values)) {
+      v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    }
+  };
+  apply(vars);
+  try {
+    await fn();
+  } finally {
+    apply(before);
+  }
 }
 
 Deno.test("slugName: a file-safe migration name", () => {
@@ -219,4 +236,98 @@ Deno.test("seed and ci take no required name; migration does", () => {
   assert(OPTIONAL_NAME_KINDS.has("seed"));
   assert(OPTIONAL_NAME_KINDS.has("ci"));
   assert(!OPTIONAL_NAME_KINDS.has("migration"));
+});
+
+Deno.test("generate migration: a Postgres project gets Postgres SQL", async () => {
+  const stamp = new Date("2026-10-07T09:30:05Z");
+  const sqlOf = async (dir: string) => (await migrationPlan(dir, "x", stamp))[0].contents;
+  await withEnv({ DATABASE_URL: undefined }, async () => {
+    const plain = await project();
+    const dotenv = await project({ ".env": 'export DATABASE_URL="postgres://u@h/db"\n' });
+    const local = await project({ ".env.local": "DATABASE_URL=postgresql://h/db\n" });
+    const config = await project({
+      "denext.config.ts": "export default { plugins: [backend({ postgres: { url } })] };",
+    });
+    const sqliteEnv = await project({ ".env": "DATABASE_URL=file:app.db\n" });
+    try {
+      assert((await sqlOf(plain)).includes("datetime('now')"), "SQLite by default");
+      assert((await sqlOf(sqliteEnv)).includes("datetime('now')"));
+      for (const dir of [dotenv, local, config]) {
+        const text = await sqlOf(dir);
+        assert(text.includes("TIMESTAMPTZ") && text.includes("no\n-- BEGIN / COMMIT"), text);
+      }
+      await withEnv({ DATABASE_URL: "postgres://u@h/db" }, async () => {
+        assert((await sqlOf(plain)).includes("GENERATED ALWAYS AS IDENTITY"), "from the env");
+      });
+    } finally {
+      for (const dir of [plain, dotenv, local, config, sqliteEnv]) {
+        await Deno.remove(dir, { recursive: true });
+      }
+    }
+  });
+});
+
+Deno.test("the generated migrate task runs on Postgres when DATABASE_URL says so", async () => {
+  const dir = await project();
+  const sql = fakeSqlClient();
+  const deno = Deno as unknown as { SQL?: unknown };
+  const urls: unknown[] = [];
+  // Deno.SQL as denext's runtime has it, answering with one fake database.
+  deno.SQL = class {
+    constructor(url: unknown) {
+      urls.push(url);
+      return sql;
+    }
+  };
+  try {
+    await withEnv({ DATABASE_URL: "postgres://u@h/app" }, async () => {
+      await generateArtifact(dir, "migration", "create example");
+      // The fake speaks SQLite underneath: replace the Postgres example with portable SQL.
+      for await (const entry of Deno.readDir(join(dir, "migrations"))) {
+        await Deno.writeTextFile(
+          join(dir, "migrations", entry.name),
+          "CREATE TABLE ex (id INTEGER);",
+        );
+      }
+      const migrate = join(dir, "tasks", "migrate.ts");
+      assertMatch(
+        String(await runGeneratedTask(migrate, { status: true })),
+        /^pending {2}\d{14}_create_example\.sql$/,
+      );
+      assertMatch(
+        String(await runGeneratedTask(migrate, { dryRun: true })),
+        /^would apply \d{14}_create/,
+      );
+      assertMatch(String(await runGeneratedTask(migrate)), /^applied \d{14}_create_example\.sql$/);
+      assertEquals(await runGeneratedTask(migrate), "up to date");
+      assertEquals(await runGeneratedTask(migrate, { dryRun: true }), "up to date");
+      assertMatch(
+        String(await runGeneratedTask(migrate, { status: true })),
+        /^applied {2}\d{14}_create/,
+      );
+      assertEquals(urls[0], "postgres://u@h/app");
+      assertEquals(sql.closes, urls.length, "every run closes its client");
+      assert(sql.statements.some((s) => s.includes("pg_advisory_xact_lock")));
+    });
+  } finally {
+    delete deno.SQL;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the generated migrate task on node:sqlite: dryRun and status apply nothing", async () => {
+  const dir = await project();
+  try {
+    await withEnv({ DATABASE_URL: undefined, DB_PATH: join(dir, "app.db") }, async () => {
+      await generateArtifact(dir, "migration", "create example");
+      const migrate = join(dir, "tasks", "migrate.ts");
+      assertMatch(String(await runGeneratedTask(migrate, { dryRun: true })), /^would apply /);
+      assertMatch(String(await runGeneratedTask(migrate, { status: true })), /^pending {2}/);
+      assertMatch(String(await runGeneratedTask(migrate)), /^applied /);
+      assertEquals(await runGeneratedTask(migrate, { dryRun: true }), "up to date");
+      assertMatch(String(await runGeneratedTask(migrate, { status: true })), /^applied {2}/);
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

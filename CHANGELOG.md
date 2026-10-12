@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Postgres everywhere** (`denext/server`): `postgresAuthAdapter({ sql | url })` meets the same
+  `AuthAdapter` contract as `sqliteAuthAdapter` (the shared contract suite runs against a real
+  server), with its `sessions` store, on a database every replica shares; `postgresSessionStore`,
+  `postgresRateLimitStore` (auth lockouts shared across replicas) and `postgresCacheStore` (data and
+  ISR page cache, `revalidateTag` / `revalidatePath` reaching every instance) take the same
+  options. `url` opens `Deno.SQL`, the Postgres client built into denext's Deno runtime; on stock
+  Deno pass `sql: fromPostgresJs(postgres(url))` with the npm `postgres` package (a `url` there
+  throws `PostgresUnsupportedError`, `code: "unsupported"`). Tables are created by migrations on
+  first use (`migrate: false` to apply them out of band; `schema` keeps them out of `public`).
+  `migratePostgres(sql, { dir | migrations, dryRun })` and `postgresMigrationStatus` apply SQL
+  migrations in name order, each in its own transaction under an advisory lock, recorded with a
+  checksum in `_migrations`. `denext generate migration` writes Postgres SQL in a Postgres project,
+  and the generated `tasks/migrate.ts` runs on Postgres when `DATABASE_URL` is a `postgres://` URL
+  (`--payload '{"dryRun":true}'` / `'{"status":true}'` list instead of applying, on SQLite too).
+  Guide: [Databases › Postgres](https://denext.dev/docs/database#postgres).
+- **`@denext/backend`: Postgres.** `backend({ postgres: { url | sql } })` opens one client for the
+  app (`DATABASE_URL` by default, closed on drain); `db()` from `@denext/backend/server` returns it,
+  and `backendAuthAdapter()` puts `denextAuth`'s tables on it. On stock Deno the app still starts
+  and `db()` explains what is missing. Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
+
 ## [3.4.12] - 2026-10-12
 
 ### Added

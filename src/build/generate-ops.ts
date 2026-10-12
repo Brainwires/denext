@@ -6,8 +6,11 @@
 //
 // - `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,
 //   `tasks/migrate.ts`: a `defineTask` that applies every pending file in order on Deno's
-//   built-in `node:sqlite`, recording each in a `_migrations` table (`denext task migrate`).
-//   A Prisma or Drizzle project is pointed at its own migration tool instead.
+//   built-in `node:sqlite`, recording each in a `_migrations` table (`denext task migrate`) —
+//   or, when `DATABASE_URL` is a `postgres://` URL, on Postgres through `migratePostgres`. A
+//   project that uses Postgres (that URL in the environment or `.env`, or a `postgres:` key in
+//   its denext config) gets Postgres SQL in the new file. A Prisma or Drizzle project is pointed
+//   at its own migration tool instead.
 // - `seed [name]` writes `tasks/seed.ts` (`denext task seed`): a `node:sqlite` seed by
 //   default, a `PrismaClient` one in a Prisma project.
 // - `ci` writes `.github/workflows/ci.yml`: Deno pinned to the version generating it, then the
@@ -77,79 +80,209 @@ function migrationStamp(now: Date): string {
   return now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
 }
 
-/** The SQL file one migration starts as. */
-function migrationSql(slug: string): string {
-  return `${sentinel("migration", "--")} — applied in file-name order by \`denext task migrate\`.
--- Write forward-only SQL; each file runs once, inside a transaction (one that begins and commits
--- its own transaction runs as written).
-
--- ${slug}
-CREATE TABLE IF NOT EXISTS example (
+/** The SQL file one migration starts as, in the project's dialect. */
+function migrationSql(slug: string, postgres: boolean): string {
+  const example = postgres
+    ? `CREATE TABLE IF NOT EXISTS example (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`
+    : `CREATE TABLE IF NOT EXISTS example (
   id INTEGER PRIMARY KEY,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+);`;
+  const transaction = postgres
+    ? "-- Write forward-only SQL; each file runs once, inside a transaction of its own (so no\n" +
+      "-- BEGIN / COMMIT here)."
+    : "-- Write forward-only SQL; each file runs once, inside a transaction (one that begins and commits\n" +
+      "-- its own transaction runs as written).";
+  return `${sentinel("migration", "--")} — applied in file-name order by \`denext task migrate\`.
+${transaction}
+
+-- ${slug}
+${example}
 `;
 }
 
-/** `tasks/migrate.ts`: applies pending `migrations/*.sql` on `node:sqlite`. */
+/** A `postgres://` / `postgresql://` URL. */
+const POSTGRES_URL = /^\s*postgres(?:ql)?:\/\//i;
+
+/** `DATABASE_URL=…` in a dotenv file, quoted or not. */
+const DOTENV_DATABASE_URL = /^\s*(?:export\s+)?DATABASE_URL\s*=\s*["']?postgres(?:ql)?:\/\//im;
+
+/**
+ * Whether the project uses Postgres: `DATABASE_URL` is a `postgres://` URL (in the environment,
+ * `.env` or `.env.local`), or its denext config has a `postgres:` key (`backend({ postgres })`).
+ *
+ * @param projectDir The project root.
+ * @returns True for a Postgres project.
+ */
+async function usesPostgres(projectDir: string): Promise<boolean> {
+  let env: string | undefined;
+  try {
+    env = Deno.env.get("DATABASE_URL");
+  } catch { /* no env permission: the files below still decide */ }
+  if (env && POSTGRES_URL.test(env)) return true;
+  for (const name of [".env", ".env.local"]) {
+    const text = await readText(join(projectDir, name));
+    if (text && DOTENV_DATABASE_URL.test(text)) return true;
+  }
+  for (const ext of ["ts", "js", "mjs", "mts"]) {
+    const text = await readText(join(projectDir, `denext.config.${ext}`));
+    if (text && /\bpostgres\s*:/.test(text)) return true;
+  }
+  return false;
+}
+
+/** A file's text, or `undefined` when it can't be read. */
+async function readText(path: string): Promise<string | undefined> {
+  try {
+    return await Deno.readTextFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `tasks/migrate.ts`: applies pending `migrations/*.sql` on Postgres when `DATABASE_URL` is a
+ * `postgres://` URL, else on `node:sqlite`. `{ "dryRun": true }` / `{ "status": true }` as the
+ * payload list instead of applying.
+ */
 const MIGRATE_TASK = `${sentinel("migration", "//")} — run it with \`denext task migrate\`.
 //
 // Applies every \`migrations/*.sql\` not yet recorded in the \`_migrations\` table, in file-name
-// order, each inside its own transaction, on Deno's built-in SQLite (no npm). A file that manages
-// its own transaction (a \`BEGIN;\` / \`COMMIT;\` statement) runs as written: SQLite can't nest
-// one inside ours. DB_PATH picks the database file (default app.db) — the same one lib/db.ts opens.
+// order, each inside its own transaction. \`denext task migrate --payload '{"dryRun":true}'\`
+// lists what would run; \`--payload '{"status":true}'\` shows what ran.
+//
+// Postgres when DATABASE_URL is a postgres:// URL: migratePostgres takes an advisory lock, so two
+// instances deploying at once never apply a migration twice. postgresClient() uses Deno.SQL, the
+// Postgres client built into denext's Deno runtime; on stock Deno use the npm \`postgres\` package
+// instead: \`fromPostgresJs(postgres(url))\` (import postgres from "npm:postgres").
+//
+// SQLite otherwise, on Deno's built-in node:sqlite (no npm). A file that manages its own
+// transaction (a \`BEGIN;\` / \`COMMIT;\` statement) runs as written: SQLite can't nest one inside
+// ours. DB_PATH picks the database file (default app.db) — the same one lib/db.ts opens.
 import { DatabaseSync } from "node:sqlite";
-import { defineTask } from "denext/server";
+import {
+  defineTask,
+  isPostgresUrl,
+  migratePostgres,
+  postgresClient,
+  postgresMigrationStatus,
+} from "denext/server";
 
 const DIR = new URL("../migrations/", import.meta.url);
 // A transaction statement of the file's own (a trigger's BEGIN … END; body is not one).
 const OWN_TRANSACTION =
   /^\\s*(?:BEGIN(?:\\s+(?:DEFERRED|IMMEDIATE|EXCLUSIVE))?(?:\\s+TRANSACTION)?|COMMIT(?:\\s+TRANSACTION)?|END\\s+TRANSACTION)\\s*;/im;
 
+/** What to do instead of applying: list pending (\`dryRun\`) or everything (\`status\`). */
+interface MigratePayload {
+  dryRun?: boolean;
+  status?: boolean;
+}
+
 export default defineTask({
   description: "Apply pending SQL migrations",
-  handler: async () => {
-    const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
-    try {
-      db.exec(
-        "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
-      );
-      const done = new Set(
-        db.prepare("SELECT name FROM _migrations").all().map((r) => String(r.name)),
-      );
-      const files: string[] = [];
-      for await (const entry of Deno.readDir(DIR)) {
-        if (entry.isFile && entry.name.endsWith(".sql")) files.push(entry.name);
-      }
-      const pending = files.sort().filter((name) => !done.has(name));
-      for (const name of pending) {
-        // Encoded: a \`#\`, \`?\` or \`%\` in a file name is part of the name, not URL syntax.
-        const sql = await Deno.readTextFile(new URL(encodeURIComponent(name), DIR));
-        const own = OWN_TRANSACTION.test(sql);
-        if (!own) db.exec("BEGIN");
-        try {
-          db.exec(sql);
-          db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)")
-            .run(name, new Date().toISOString());
-          if (!own) db.exec("COMMIT");
-        } catch (err) {
-          try {
-            db.exec("ROLLBACK");
-          } catch { /* the file's own transaction already ended */ }
-          throw new Error(\`migration \${name} failed: \${(err as Error).message}\`);
-        }
-      }
-      return pending.length ? \`applied \${pending.join(", ")}\` : "up to date";
-    } finally {
-      db.close();
-    }
+  handler: async ({ payload }) => {
+    const options = (payload ?? {}) as MigratePayload;
+    const url = Deno.env.get("DATABASE_URL");
+    if (url && isPostgresUrl(url)) return await onPostgres(url, options);
+    return await onSqlite(options);
   },
 });
+
+async function onPostgres(
+  url: string,
+  options: MigratePayload,
+): Promise<string> {
+  const sql = postgresClient(url);
+  try {
+    if (options.status) {
+      const status = await postgresMigrationStatus(sql, { dir: DIR });
+      return status.migrations
+        .map((m) =>
+          \`\${m.applied ? "applied" : "pending"}  \${m.name}\${
+            m.changed ? "  (changed)" : ""
+          }\`
+        )
+        .concat(status.unknown.map((name) => \`unknown  \${name}\`))
+        .join("\\n") || "no migrations";
+    }
+    const result = await migratePostgres(sql, {
+      dir: DIR,
+      dryRun: options.dryRun === true,
+    });
+    if (result.dryRun) {
+      return result.pending.length
+        ? \`would apply \${result.pending.join(", ")}\`
+        : "up to date";
+    }
+    return result.applied.length
+      ? \`applied \${result.applied.join(", ")}\`
+      : "up to date";
+  } finally {
+    await sql.close();
+  }
+}
+
+async function onSqlite(options: MigratePayload): Promise<string> {
+  const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
+  try {
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+    );
+    const done = new Set(
+      db.prepare("SELECT name FROM _migrations").all().map((r) =>
+        String(r.name)
+      ),
+    );
+    const files: string[] = [];
+    for await (const entry of Deno.readDir(DIR)) {
+      if (entry.isFile && entry.name.endsWith(".sql")) files.push(entry.name);
+    }
+    const pending = files.sort().filter((name) => !done.has(name));
+    if (options.status) {
+      return files.map((name) =>
+        \`\${done.has(name) ? "applied" : "pending"}  \${name}\`
+      )
+        .join("\\n") || "no migrations";
+    }
+    if (options.dryRun) {
+      return pending.length
+        ? \`would apply \${pending.join(", ")}\`
+        : "up to date";
+    }
+    for (const name of pending) {
+      // Encoded: a \`#\`, \`?\` or \`%\` in a file name is part of the name, not URL syntax.
+      const sql = await Deno.readTextFile(
+        new URL(encodeURIComponent(name), DIR),
+      );
+      const own = OWN_TRANSACTION.test(sql);
+      if (!own) db.exec("BEGIN");
+      try {
+        db.exec(sql);
+        db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)")
+          .run(name, new Date().toISOString());
+        if (!own) db.exec("COMMIT");
+      } catch (err) {
+        try {
+          db.exec("ROLLBACK");
+        } catch { /* the file's own transaction already ended */ }
+        throw new Error(\`migration \${name} failed: \${(err as Error).message}\`);
+      }
+    }
+    return pending.length ? \`applied \${pending.join(", ")}\` : "up to date";
+  } finally {
+    db.close();
+  }
+}
 `;
 
 /**
- * The files `denext generate migration <name>` writes: the timestamped SQL file, plus the
- * `tasks/migrate.ts` runner when the project has none.
+ * The files `denext generate migration <name>` writes: the timestamped SQL file (Postgres SQL
+ * in a project that uses Postgres), plus the `tasks/migrate.ts` runner — Postgres or
+ * `node:sqlite`, chosen by `DATABASE_URL` when it runs — when the project has none.
  *
  * @param projectDir The project root.
  * @param name The migration's name (`add_users`).
@@ -178,7 +311,7 @@ export async function migrationPlan(
   if (!slug) throw new Error(`denext: migration name "${name}" has no letters or digits.`);
   const plan: OpsPlanFile[] = [{
     path: join(projectDir, "migrations", `${migrationStamp(now)}_${slug}.sql`),
-    contents: migrationSql(slug),
+    contents: migrationSql(slug, await usesPostgres(projectDir)),
   }];
   const runner = join(projectDir, "tasks", "migrate.ts");
   if (!(await exists(runner))) plan.push({ path: runner, contents: MIGRATE_TASK });

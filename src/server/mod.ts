@@ -438,6 +438,33 @@ export type {
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions, SqliteDb, SqlValue } from "./sqlite-cache.ts";
 
+// Postgres: the client seam (Deno.SQL or an adapted driver), the migration runner, and a
+// CacheStore shared by every replica.
+export {
+  fromPostgresJs,
+  isPostgresUrl,
+  POSTGRES_UNSUPPORTED,
+  postgresClient,
+  PostgresUnsupportedError,
+} from "./postgres.ts";
+export type {
+  PostgresConnectionOptions,
+  PostgresJsLike,
+  SqlClient,
+  SqlQuery,
+  SqlRow,
+} from "./postgres.ts";
+export { migratePostgres, postgresMigrationStatus } from "./postgres-migrate.ts";
+export type {
+  MigrateResult,
+  Migration,
+  MigrationState,
+  MigrationStatus,
+  PostgresMigrateOptions,
+} from "./postgres-migrate.ts";
+export { postgresCacheStore } from "./postgres-cache.ts";
+export type { PostgresCacheStoreOptions } from "./postgres-cache.ts";
+
 // Server Actions — runtime registration + secure same-origin dispatch.
 export { isServerAction, serverAction } from "../runtime/server-action.ts";
 export type { ServerActionRef } from "../runtime/server-action.ts";
@@ -558,6 +585,15 @@ export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
+// Postgres: the auth adapter, session and rate-limit stores shared by every replica — on the
+// runtime's Deno.SQL, or any SqlClient (`fromPostgresJs` for the npm postgres package).
+export { postgresAuthAdapter } from "./auth/postgres-adapter.ts";
+export type { PostgresAuthAdapterOptions } from "./auth/postgres-adapter.ts";
+export type { PostgresAuthStoreOptions } from "./auth/postgres-schema.ts";
+export { postgresSessionStore } from "./auth/postgres-session-store.ts";
+export type { PostgresSessionStoreOptions } from "./auth/postgres-session-store.ts";
+export { postgresRateLimitStore } from "./auth/postgres-rate-limit.ts";
+export type { PostgresRateLimitStoreOptions } from "./auth/postgres-rate-limit.ts";
 // Email verification + password reset — what `{basePath}/verify` and `/reset` run, callable
 // from your own Server Actions too.
 export {

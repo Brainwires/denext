@@ -645,6 +645,12 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 ```
 
 Open the connection once at module scope; do writes in Server Actions.
+Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
+tagged-template client on `Deno.SQL`, built into denext's Deno runtime (on stock Deno:
+`fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
+`postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
+tables by migration on first use. With `@denext/backend`, `backend({ postgres: {} })` (reads
+`DATABASE_URL`) + `db()` from `@denext/backend/server` + `denextAuth({ adapter: backendAuthAdapter() })`.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;

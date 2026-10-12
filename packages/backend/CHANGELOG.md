@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Postgres.** `backend({ postgres: { url | sql } })` opens one client for the app (`DATABASE_URL`
+  by default; `Deno.SQL`, built into denext's Deno runtime, closed when the server drains) or
+  adopts yours (`sql`, never closed by the plugin — the npm `postgres` package through
+  `fromPostgresJs` on stock Deno). `db()` from `@denext/backend/server` returns it; on stock Deno
+  without `sql` the app still starts and `db()` throws `PostgresUnsupportedError`
+  (`code: "unsupported"`). `backendAuthAdapter({ schema?, migrate? })` is denext's
+  `postgresAuthAdapter` on that client, for `denextAuth({ adapter })`. Needs denext with the
+  Postgres stores (the release after 3.4.12).
+
 ## 0.1.0
 
 - **Storage.** `backend({ storage: { driver, buckets } })`: buckets with `public`, `maxBytes`, a
