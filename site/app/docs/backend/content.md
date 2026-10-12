@@ -250,7 +250,7 @@ text spliced into the query. It also has `unsafe(text, params)` and `begin(async
 transaction. Every query it runs is scoped by [row-level security](#row-level-security) to the
 request's user; `db.service()` is the unscoped connection.
 
-The client is `Deno.SQL`, the Postgres client built into denext's Deno runtime, opened at startup
+The client is `Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain), opened at startup
 and closed when the server drains. On stock Deno there is none: the app still builds and starts,
 and `db()` throws an error with `code: "unsupported"` that says so. Pass a client of your own as
 `postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs` from
@@ -557,7 +557,7 @@ through `fromPostgresJs`); without one every instance revalidates, with a warnin
 | `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                           |
 | `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                     |
 
-Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's Deno runtime), or the npm
+Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's [Deno toolchain](/docs/toolchain)), or the npm
 `postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
 Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 (`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.

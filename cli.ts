@@ -19,7 +19,11 @@ import {
   entrypointArg,
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
+  maybeReexecToolchain,
+  runsProjectCode,
 } from "./src/cli/self-exec.ts";
+import { resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
+import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import {
   buildAppCss,
@@ -195,6 +199,29 @@ async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
 }
 
 /**
+ * Run a CLI child — `deno run [flags] <cli> <this process's argv>` under `deno` with `env` added
+ * — stdio inherited and shutdown signals forwarded; resolves the code to exit with. The one
+ * spawn behind both whole-invocation re-execs: the pinned denext ({@linkcode maybeReexecPinned})
+ * and denext's Deno toolchain ({@linkcode toolchainGate}).
+ */
+function spawnCliChild(
+  deno: string,
+  flags: string[],
+  cli: string,
+  env: Record<string, string>,
+): Promise<number> {
+  return forwardShutdown(
+    new Deno.Command(deno, {
+      args: ["run", ...flags, cli, ...Deno.args],
+      env,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn(),
+  );
+}
+
+/**
  * A compiled binary defers a module verb to the denext the project pins — the decision is
  * {@linkcode reexecPinned} (src/cli/self-exec.ts, where it is testable); this wires it to the
  * process: the pinned CLI runs as a `deno run` child with stdio and shutdown signals forwarded,
@@ -206,16 +233,56 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
   return reexecPinned(dir, VERSION, Deno.args, {
     standalone: isStandaloneBinary,
     env: (name) => Deno.env.get(name),
+    // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
+    // `denoExecutable()` is denext's Deno toolchain once {@linkcode toolchainGate} chose it.
     spawn: (cli) =>
-      forwardShutdown(
-        new Deno.Command(denoExecutable(), {
-          // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
-          args: ["run", "-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs(), cli, ...Deno.args],
-          env: { DENEXT_PINNED_ACTIVE: "1" },
-          stdin: "inherit",
-          stdout: "inherit",
-          stderr: "inherit",
-        }).spawn(),
+      spawnCliChild(denoExecutable(), ["-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs()], cli, {
+        DENEXT_PINNED_ACTIVE: "1",
+      }),
+    exit: (code) => Deno.exit(code),
+    warn: (message) => console.error(message),
+  });
+}
+
+/**
+ * The toolchain child's permission flags: `-A` when this process holds every coarse grant (it was
+ * run with `-A`, which also allows remote imports from any host — a grant Deno's permission query
+ * can't name), else the coarse grants it holds ({@linkcode childPermissionFlags}).
+ */
+async function toolchainPermissionFlags(): Promise<string[]> {
+  const flags = await childPermissionFlags();
+  return flags.length === 7 ? ["-A"] : flags;
+}
+
+/** The directory a verb's re-exec gates read the project from. */
+function gateDir(command: CommandSpec, ctx: CommandContext): string {
+  return command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
+}
+
+/**
+ * Run a verb that executes project code on denext's Deno toolchain — the decision is
+ * {@linkcode maybeReexecToolchain} (src/cli/self-exec.ts); this wires it to the process: the same
+ * invocation re-runs under the toolchain binary with this process's permission grants, stdio and
+ * shutdown signals forwarded, and the process exits with the child's code. Returns whether the
+ * caller should stop.
+ */
+function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
+  return maybeReexecToolchain(runsProjectCode(command, ctx.positionals[0]), {
+    env: (name) => Deno.env.get(name),
+    setEnv: (name, value) => Deno.env.set(name, value),
+    denoVersion: Deno.version.deno,
+    standalone: isStandaloneBinary,
+    resolve: () => resolveDenoToolchain(),
+    spawn: async (deno, marker) =>
+      spawnCliChild(
+        deno,
+        [
+          ...await toolchainPermissionFlags(),
+          ...cliNpmModeArgs(gateDir(command, ctx)),
+          ...minDepAgeArgs(),
+        ],
+        entrypointArg(import.meta.url),
+        { DENEXT_TOOLCHAIN_ACTIVE: marker },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -307,7 +374,7 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
-  const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
+  const dir = gateDir(command, ctx);
   if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
@@ -404,6 +471,9 @@ async function hasDenextConfig(dir: string): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
+  // `denext deno …` hands every token to deno verbatim — global flags (`--config`, `--json`)
+  // included, which the parser would otherwise claim.
+  if (Deno.args[0] === "deno") return await runDenoPassthrough(Deno.args.slice(1));
   const registry = buildRegistry();
   let outcome = registry.parse(Deno.args);
   // An unknown verb may be one the project contributes — load them and retry.
@@ -423,6 +493,7 @@ async function main(): Promise<void> {
       : null;
     return printOutcome(registry, outcome, project);
   }
+  if (await toolchainGate(outcome.command, outcome.ctx)) return;
   if (await moduleGate(outcome.command, outcome.ctx)) return;
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).

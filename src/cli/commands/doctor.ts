@@ -27,6 +27,7 @@ import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
 import { readJson } from "../../build/json-edit.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 
@@ -305,6 +306,58 @@ export async function desktopRuntimeCheck(
   return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
 }
 
+/** A task command that runs `deno test` itself (stock Deno under `deno task`). */
+const STOCK_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
+
+/** The deno.json tasks that call `deno test` directly. */
+async function stockDenoTestTasks(dir: string): Promise<string[]> {
+  const tasks = (await readDenoJson(dir))?.tasks;
+  if (typeof tasks !== "object" || tasks === null) return [];
+  return Object.entries(tasks as Record<string, unknown>)
+    .filter(([, v]) => {
+      const command = typeof v === "string" ? v : (v as { command?: unknown })?.command;
+      return typeof command === "string" && STOCK_DENO_TEST.test(command);
+    })
+    .map(([name]) => name);
+}
+
+/**
+ * denext's Deno toolchain: the pinned version, whether it is cached and verified, and whether
+ * this run is on it (or stock Deno, and why). When the toolchain is in use, it also names the
+ * deno.json tasks that call `deno test` themselves — `deno task` runs those on the Deno that
+ * started it, stock Deno, so they miss the toolchain's Vitest/Jest compat and `Deno.SQL`.
+ * Advisory; never downloads.
+ *
+ * @param dir The project directory.
+ * @param options Seams for {@linkcode denoToolchainStatus}.
+ * @returns The check.
+ */
+export async function denoToolchainCheck(
+  dir: string,
+  options: Parameters<typeof denoToolchainStatus>[0] = {},
+): Promise<Check> {
+  let status;
+  try {
+    status = await denoToolchainStatus(options);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { name: "deno toolchain", ok: false, detail, critical: false };
+  }
+  const tasks = status.mode === "stock" || status.state === "unpinned" ||
+      status.state === "unsupported"
+    ? []
+    : await stockDenoTestTasks(dir);
+  const note = tasks.length === 0 ? "" : `; deno.json task${tasks.length > 1 ? "s" : ""} ` +
+    `${tasks.map((t) => `"${t}"`).join(", ")} run${tasks.length > 1 ? "" : "s"} \`deno test\` ` +
+    "on stock Deno under `deno task` — use `denext test` (or `denext deno test`) there";
+  return {
+    name: "deno toolchain",
+    ok: status.ok && tasks.length === 0,
+    detail: status.detail + note,
+    critical: false,
+  };
+}
+
 /**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
@@ -329,7 +382,7 @@ async function builtClientChunks(outDir: string): Promise<BundleChunk[] | null> 
  * @returns The report; see {@link DoctorReport} for when a section is `null`.
  */
 export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
-  const checks: Check[] = [denoVersionCheck()];
+  const checks: Check[] = [denoVersionCheck(), await denoToolchainCheck(dir)];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it
   // so `doctor` reports config *correctness* as a failed check, not a crash before any print.

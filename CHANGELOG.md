@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **denext's Deno toolchain.** The verbs that run project code (`dev`, `build`, `export`, `start`,
+  `test`, `check`, `task`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`, and a project's own verbs) now re-run themselves on denext's pinned Deno build
+  (`2.9.7-denext.N`: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`) —
+  same argv, cwd, stdio, exit code and forwarded shutdown signals, with a
+  `DENEXT_TOOLCHAIN_ACTIVE` marker so it never loops. It downloads on first need into
+  `<DENO_DIR>/denext-deno/<version>/<platform>/`, is pinned by version and SHA-256 (checked before
+  the file is extracted, made executable or renamed; a mismatch deletes it), installs atomically
+  under the Cargo-style cache lock, and is re-hashed when its size or mtime changes. Nothing new to
+  install, and the `deno` on PATH is never replaced. `DENEXT_DENO=stock` opts out,
+  `DENEXT_DENO=<path>` uses a given binary unverified; an unsupported platform, no network, a
+  failed download or a process without `--allow-run` falls back to stock Deno with one warning.
+  This release pins no toolchain build yet, so everything still runs on stock Deno.
+- **`denext toolchain install | status | path | link | unlink`** (`status --json`, `--verify`) and
+  **`denext deno <args…>`**, which runs the toolchain's `deno` with the arguments verbatim and
+  passes its exit code back. `link` writes an opt-in `~/.denext/bin/deno` (a `deno.cmd` shim on
+  Windows) and prints the `PATH` line; `unlink` removes only what `link` created.
+- `denext doctor` reports the toolchain (pinned version, cached and verified, whether the run is on
+  it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
+  on stock Deno. `denext create` scaffolds a `test` task through `denext test`.
+
+### Fixed
+
+- The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
+  (`2.9.7-denext.N` is Deno 2.9.7).
+
 ## [3.4.16] - 2026-10-12
 
 ### Added

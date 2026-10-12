@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "placeholder": "No CLI archives are pinned for this denext version yet: the toolchain reports itself not available and every command runs on stock Deno. Fill version + targets with the first fork release that ships CLI archives (2.9.7-denext.15).",
+  "version": null,
+  "repository": "https://github.com/Brainwires/deno",
+  "deno": "2.9.7",
+  "targets": {}
+}

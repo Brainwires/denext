@@ -3,6 +3,11 @@
 
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import {
+  type DenoToolchainChoice,
+  isToolchainDenoVersion,
+  TOOLCHAIN_ACTIVE_ENV,
+} from "../build/deno-toolchain.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -297,5 +302,103 @@ export async function maybeReexecPinned(
     deps.warn(`denext: using this project's pinned denext (${pinnedVersion(cli) ?? "latest"})`);
   }
   deps.exit(await deps.spawn(cli));
+  return true;
+}
+
+/** The verbs that run project code everywhere they run (beside a project's own verbs). */
+const TOOLCHAIN_VERBS: ReadonlySet<string> = new Set([
+  "dev",
+  "build",
+  "export",
+  "start",
+  "test",
+  "check",
+  "task",
+  "analyze",
+  "profile",
+  "doctor",
+]);
+
+/** The actions of `desktop` / `mobile` that build or run the app (`desktop`'s default is `run`). */
+const TOOLCHAIN_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  desktop: new Set(["run", "dev", "build", "package"]),
+  mobile: new Set(["dev", "build"]),
+};
+
+/**
+ * Whether a verb runs the project's code — and so runs on denext's Deno toolchain: the serve and
+ * build verbs, `test` / `check` / `task`, `analyze` / `profile` / `doctor`, `desktop
+ * run|dev|build|package`, `mobile dev|build`, and every verb a project or plugin contributes.
+ * Help, `--version`, scaffolding, dependency edits, `toolchain`, `upgrade` and `create` stay on
+ * the Deno that started the CLI.
+ *
+ * @param command The verb's name and where it came from.
+ * @param action Its first positional (the `desktop` / `mobile` action).
+ * @returns Whether the toolchain applies.
+ */
+export function runsProjectCode(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+  action: string | undefined,
+): boolean {
+  if ((command.source ?? "core") !== "core") return true;
+  if (TOOLCHAIN_VERBS.has(command.name)) return true;
+  const actions = TOOLCHAIN_ACTIONS[command.name];
+  if (!actions) return false;
+  return actions.has(action ?? (command.name === "desktop" ? "run" : ""));
+}
+
+/** What {@linkcode maybeReexecToolchain} touches in the process (injectable for tests). */
+export interface ReexecToolchainDeps {
+  /** An environment variable (production: `Deno.env.get`). */
+  readonly env: (name: string) => string | undefined;
+  /** Set one for this process and its children (production: `Deno.env.set`). */
+  readonly setEnv: (name: string, value: string) => void;
+  /** This process's `Deno.version.deno`. */
+  readonly denoVersion: string;
+  /** Whether this process is a compiled binary. */
+  readonly standalone: () => boolean;
+  /** Pick the Deno to run on (production: `resolveDenoToolchain`). */
+  readonly resolve: () => Promise<DenoToolchainChoice>;
+  /**
+   * Re-run this exact invocation under `deno` with `DENEXT_TOOLCHAIN_ACTIVE=<marker>` and resolve
+   * its exit code (production: a `deno run` child, stdio + shutdown signals forwarded).
+   */
+  readonly spawn: (deno: string, marker: string) => Promise<number>;
+  /** End the process (production: `Deno.exit`). */
+  readonly exit: (code: number) => void;
+  /** Say something on stderr. */
+  readonly warn: (message: string) => void;
+}
+
+/**
+ * Run a project-code verb on denext's Deno toolchain: under stock Deno, re-exec the same
+ * invocation (argv, cwd, stdio, exit code, shutdown signals) under the pinned toolchain binary.
+ * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
+ * instead — `DENO_BIN` (unless the user set one) — and its pinned-denext re-exec runs on it.
+ *
+ * Loops are impossible: the child carries `DENEXT_TOOLCHAIN_ACTIVE`, and a process that has it,
+ * or whose Deno already is the toolchain (`-denext.N`), never re-execs. Every reason to stay on
+ * stock Deno (an opt-out, no pin yet, an unsupported host, a failed download) continues the
+ * command in-process, after the choice's one warning.
+ *
+ * @param applies Whether the verb runs project code ({@linkcode runsProjectCode}).
+ * @param deps The process seams.
+ * @returns Whether the caller should stop (the process re-exec'd; only a test observes `true`).
+ */
+export async function maybeReexecToolchain(
+  applies: boolean,
+  deps: ReexecToolchainDeps,
+): Promise<boolean> {
+  if (!applies || deps.env(TOOLCHAIN_ACTIVE_ENV)) return false;
+  if (isToolchainDenoVersion(deps.denoVersion)) return false;
+  const choice = await deps.resolve();
+  if (choice.warning) deps.warn(choice.warning);
+  if (choice.kind === "stock") return false;
+  if (deps.standalone()) {
+    deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
+    if (!deps.env("DENO_BIN")) deps.setEnv("DENO_BIN", choice.deno);
+    return false;
+  }
+  deps.exit(await deps.spawn(choice.deno, choice.version));
   return true;
 }

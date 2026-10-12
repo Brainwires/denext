@@ -98,6 +98,7 @@ A [denext](https://denext.dev) app — write it once, ship it to the web, iOS, A
 | \`deno task dev\`   | Dev server with per-module HMR at http://localhost:3000             |
 | \`deno task build\` | Production build into \`.denext/\`                                    |
 | \`deno task start\` | Serve the production build (least-privilege permissions)            |
+| \`deno task test\`  | Run the tests on denext's Deno toolchain (Vitest/Jest compat)        |
 ${
     opts.desktop || opts.capacitor
       ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
@@ -174,6 +175,9 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
     start: `deno run --allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
+    // Through the CLI rather than a bare `deno test`: `deno task` runs a task's `deno` on the
+    // Deno that started it (stock), while `denext test` runs on denext's Deno toolchain.
+    test: `deno run -A ${cli} test`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {

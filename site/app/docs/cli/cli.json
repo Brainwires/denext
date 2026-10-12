@@ -240,6 +240,21 @@
       ]
     },
     {
+      "name": "deno",
+      "summary": "Run denext's Deno toolchain with the given arguments",
+      "usage": "denext deno [args...] [-- <deno args>]",
+      "description": "Runs denext's pinned Deno (downloaded and verified on first use) with the arguments\nverbatim, and exits with its code:\n  denext deno test              deno test on the toolchain (Vitest/Jest compat)\n  denext deno task check        a deno task whose `deno …` steps run on it too\n  denext deno --version",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "args",
+          "required": false,
+          "variadic": true,
+          "description": "Arguments for deno"
+        }
+      ]
+    },
+    {
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
@@ -1503,6 +1518,27 @@
           "required": false,
           "variadic": false,
           "description": "Test files/dirs (default: all)"
+        }
+      ]
+    },
+    {
+      "name": "toolchain",
+      "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink)",
+      "usage": "denext toolchain <action> [options]",
+      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain status       Pinned version, cache state, active or not (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
+      "flags": [
+        {
+          "name": "verify",
+          "type": "boolean",
+          "description": "status: re-hash the cached binary instead of the size + mtime check"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "install | status | path | link | unlink"
         }
       ]
     },

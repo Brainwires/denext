@@ -77,7 +77,7 @@ itself does not need it).
 ## Postgres
 
 For a horizontally scaled app, every replica needs the same database. denext's own Postgres
-support runs on **`Deno.SQL`**, the Postgres client built into denext's Deno runtime (tagged
+support runs on **`Deno.SQL`**, the Postgres client built into [denext's Deno toolchain](/docs/toolchain) (tagged
 templates, a pool, transactions, `LISTEN` / `NOTIFY`), so it needs no driver at all:
 
 ```ts

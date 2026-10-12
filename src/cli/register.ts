@@ -15,6 +15,7 @@ import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/t
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { upgradeCommand } from "./commands/upgrade.ts";
+import { denoCommand, toolchainCommand } from "./commands/deno-toolchain.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
 import { profileCommand } from "./commands/profile.ts";
@@ -43,6 +44,9 @@ export function buildRegistry(): CommandRegistry {
   reg.register(lintCommand);
   reg.register(fmtCommand);
   reg.register(checkCommand);
+  // denext's managed Deno toolchain, and running it directly.
+  reg.register(toolchainCommand);
+  reg.register(denoCommand);
   // Dependencies.
   reg.register(addCommand);
   reg.register(removeCommand);
