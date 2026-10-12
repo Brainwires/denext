@@ -5,10 +5,8 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.4** is in progress on `development`: LegendList on `VirtualList` (`lists`), SPA
-> builds at Vite parity (plugins, `client:*` deferred mounts, `spa.assetsDir`, TanStack Router
-> code-splitting), React Router's browser half, React 19.2's same-page `<ViewTransition>` and
-> hidden `<Activity>`, and `denext migrate --enable-capacitor`.
+> denext **3.4.x** ships continuously from `development` as patch releases; what each one added is in
+> the changelog.
 
 ## Deno Desktop
 

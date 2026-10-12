@@ -1,6 +1,7 @@
 # denext — Known differences
 
-Where denext **deliberately** behaves differently from React or Next.js. Each entry
+Where denext **deliberately** behaves differently from what it is compatible with — React, Next.js,
+React Native and Supabase. Each entry
 is an observable behavior, documented so a port knows what to expect — not a gap
 waiting to be closed. A surface that is missing, throwing, or wrong is a
 _limitation_ and lives in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); an
