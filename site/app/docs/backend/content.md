@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, and realtime changes from your tables, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, realtime changes from your tables, and an optional REST API over them, with zero npm."
 ---
 
 ```sh
@@ -65,10 +65,11 @@ no auth.
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
-request's session. A call outside any request (a [task](/docs/tasks), a script) is trusted and skips
-it. To act as the server inside a request (a webhook, an admin action), take a service handle:
-`storage.bucket("invoices", { service: true })` skips `authorize`; the size cap, allow-list and
-sniffing still apply.
+request's session. Outside any request (a [task](/docs/tasks), a script, module load) there is no
+session to authorize, so a plain handle is refused (`forbidden`; a public bucket's downloads stay
+open): code that acts as the server takes a service handle, there or inside a request (a webhook,
+an admin action). `storage.bucket("invoices", { service: true })` skips `authorize`; the size cap,
+allow-list and sniffing still apply.
 
 **The signing secret.** The plugin signs its own URLs and upload tokens with HMAC-SHA256. Set
 `DENEXT_STORAGE_SECRET` (at least 32 characters) or `storage.secret`; pass a list, current first,
@@ -166,6 +167,16 @@ plugin, which enforces the size cap and the declared length while streaming and 
 bytes before anything is stored. On S3 the bytes go to the store directly, so completion checks
 what arrived: the size against the cap and the declared length, the stored content type, and the
 first bytes against the declared type. An object that fails is deleted.
+
+**An S3 upload that is never completed** has been checked by nobody: a client can `PUT` to its
+presigned URL and skip the completion call. Such bytes can still only be served with the type the
+URL pinned, and every presigned `GET` the plugin signs carries `response-content-type` (the stored
+type) and `response-content-disposition`: `inline` only for raster images, audio, video, PDF and
+plain text, `attachment` for everything else — the same rule the plugin's own object route
+applies — so an HTML or SVG file downloads instead of rendering. Record the keys
+`uploadFile` / completion returned (in your own table) and sign download URLs only for those, and
+give the S3 bucket a lifecycle rule that removes what was never recorded, plus one that aborts
+incomplete multipart uploads after a day (`AbortIncompleteMultipartUpload`).
 
 ### Image transforms
 
@@ -297,8 +308,10 @@ export async function POST(request: Request): Promise<Response> {
 
 Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
 act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
-`db()` reads the session when it is called and keeps it, so call it where the request is handled
-rather than storing the client in a module-level variable.
+`db()` reads who is asking for each query, from the request that makes it (once per request), not
+when the client was made — so a module-level `const sql = db()` is fine: it serves each visitor
+as themself, and is `anon` for a query made outside any request. `db({ as })` is fixed to that
+identity wherever it runs.
 
 **`db.service()` is dangerous on purpose.** It is the app's database user with every policy
 bypassed (it owns the tables): use it for migrations, maintenance tasks and admin code that has
@@ -307,8 +320,11 @@ already checked who is asking, never for a query built from a request on a user'
 ### How it works
 
 Each `db()` query is one transaction: `BEGIN`, then
-`select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)` (that is
-`SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. Both settings
+`select set_config('role', $1, true), set_config('request.jwt.claims', $2, true), …` (that is
+`SET LOCAL ROLE` with a parameter — the form PostgREST uses), your query, `COMMIT`. The same
+statement blanks the legacy per-claim settings (`request.jwt.claim.sub`, `.role`, `.email` and
+`request.jwt.claim`), which Supabase's `auth.*` functions read first, so a value left on the
+connection or set as a role default can never override the identity. Both settings
 are transaction-local, so nothing survives on a pooled connection, and it is safe behind pgbouncer
 in transaction mode; denext never issues a session-level `SET`. The setup statement and your query
 are pipelined — sent together, in that order, on the transaction's one connection. On denext's
@@ -454,13 +470,17 @@ policies or filter. Rows keep arrival order; sort them when you render.
 2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
    a lost connection, and every subscriber is told to re-read, since changes sent meanwhile are
    lost). Notifications are coalesced for 16 ms, as Live coalesces its own pushes: within a burst
-   the latest change per key wins.
+   the latest change per key wins. One burst is delivered at a time: changes that arrive while its
+   re-reads run go out together in the next.
 3. **Re-read as each subscriber.** Subscribers with the same identity, table and filter form a
    group, and each group's changed rows are read back with one query
-   (`select … where key in (…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
+   (`select … where key = any(…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
    and `request.jwt.claims` set for that identity, exactly as `db()` does. A burst costs one query
    per identity, not one per subscriber per row: a 500-row transaction watched by two users is one
-   flush and two re-reads.
+   flush and two re-reads. Keys and the filter value are compared in the column's own type (read
+   once from the catalog), so the primary key — and an index on a filter column — serves the
+   re-read, and each query runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a
+   re-read that fails or times out becomes a "re-read" signal for that group.
 4. **Deletes go only to those who could see the row.** A deleted row cannot be re-read against a
    policy, so each subscription tracks the keys it may know about: the rows it could see when it
    subscribed (one key-only query under its own policies, up to `maxTrackedKeys`) plus every row
@@ -477,6 +497,18 @@ the browser picks; the first subscriber binds it to their identity (the user's i
 anyone else presenting it is refused. The binding is re-checked every 60 seconds of traffic, so a
 signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
 if signed-out visitors may watch it) for its rows to be readable at all.
+
+**Limits.** Each identity — a signed-in user across all their connections, or the signed-out
+visitors at one client address (`clientIpForLimits()`: one Live connection when no address is
+known, or when it is a loopback/private socket peer — a reverse proxy every visitor shares; set
+`trustForwardedHeaders` behind one to key on each visitor's address) — may hold
+`maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
+the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
+unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
+reconnect resumes it, but only while there is room: at either cap the oldest such subscription
+gives way, and only live subscriptions refuse a new one (the browser sees `denied`). Subscribing
+runs one key-only query; at most four run at a time, and each identity may start 32 in a burst,
+then 8 a second. Server-side `tableChanges` subscriptions count toward `maxSubscribers` only.
 
 ### On the server
 
@@ -512,13 +544,15 @@ through `fromPostgresJs`); without one every instance revalidates, with a warnin
 
 ### Options
 
-| Option           | Default | What it does                                                                                    |
-| ---------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `tables`         | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.        |
-| `revalidate`     | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.    |
-| `migrate`        | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead. |
-| `maxSubscribers` | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect).                |
-| `maxTrackedKeys` | 10 000  | Keys tracked per subscription, for deletes.                                                     |
+| Option                        | Default | What it does                                                                                          |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `tables`                      | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.              |
+| `revalidate`                  | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.          |
+| `migrate`                     | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.       |
+| `maxSubscribers`              | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room). |
+| `maxSubscriptionsPerIdentity` | 64      | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).     |
+| `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                           |
+| `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                     |
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's Deno runtime), or the npm
 `postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
@@ -526,6 +560,174 @@ Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 (`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.
 `TRUNCATE` sends nothing. For very high write volumes, logical replication is planned; LISTEN/NOTIFY
 serializes on commit.
+
+## Auto-REST
+
+Opt in, and the tables of one schema are served as HTTP routes in the PostgREST style, so the
+browser (or a native app) can read and write them directly — every statement run through `db()`,
+so [row-level security](#row-level-security) scopes it to the request's user, or to `anon`.
+
+```ts
+// denext.config.ts
+import { backend } from "@denext/backend";
+
+export default {
+  plugins: [
+    backend({
+      postgres: {},
+      rest: {}, // the RLS-enabled tables of "public" the anon / authenticated roles can reach
+    }),
+  ],
+};
+```
+
+```ts
+// app/notes/notes-api.ts — used from client components
+import "../../.denext/rest.ts"; // the generated row types
+import { from } from "@denext/backend/client";
+
+export async function latestNotes(listId: number) {
+  const { data, error, count } = await from("notes")
+    .select("id,body", { count: "exact" }) // data: { id: number; body: string }[] | null
+    .eq("list_id", listId)
+    .order("id", { ascending: false })
+    .limit(20);
+  if (error) throw error; // a RestClientError: { code, status, message, details, hint }
+  return { notes: data ?? [], total: count };
+}
+
+export const addNote = (listId: number, body: string) =>
+  from("notes").insert({ list_id: listId, body }).select().single();
+export const editNote = (id: number, body: string) => from("notes").update({ body }).eq("id", id);
+export const removeNote = (id: number) => from("notes").delete().eq("id", id);
+```
+
+The builder's shape loosely follows supabase-js's — `select`, `eq` / `neq` / `gt` / `gte` / `lt`
+/ `lte` / `like` / `ilike` / `is` / `in` / `not`, `order`, `limit`, `offset`, `range`, `single`,
+`insert` / `update` / `delete` with an optional `.select()` to get the written rows back — and
+resolves to `{ data, error, count, status }` without throwing. It is not a drop-in for supabase-js.
+`restClient({ url, headers, fetch })` makes a client with a base URL (an app on another origin, a
+native app's `Authorization: Bearer …` session); `from` uses the page's own origin and cookies.
+
+### Routes
+
+`GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`:
+
+| Request                                          | What it does                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `select=id,body`                                 | The columns to return (default `*`). Columns of this table only: embedded resources, aliases, casts and JSON paths are refused (400).            |
+| `col=eq.value`                                   | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%` matches any run), `is.null\|true\|false`, `in.(a,"b,c")`.          |
+| `col=not.eq.value`                               | The filter negated. Every filter is ANDed; `or=` and `and=` are not supported.                                                                   |
+| `order=col.desc.nullslast,other`                 | The order: `asc` / `desc`, `nullsfirst` / `nullslast`.                                                                                           |
+| `limit=20&offset=40`, or a `Range: 40-59` header | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                                      |
+| `Prefer: count=exact`                            | Count every matching row too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them. Signed-in only by default (`exactCount`). |
+| `Accept: application/vnd.pgrst.object+json`      | One object instead of an array; zero or several rows are a `406` (and a write is rolled back).                                                   |
+| `POST` with an object or an array of objects     | Insert (every object with the same keys). `201`; columns left out take their default.                                                            |
+| `PATCH` with an object, plus filters             | Update the matching rows. A request without a filter is refused (`400`, `21000`).                                                                |
+| `DELETE` plus filters                            | Delete the matching rows. A request without a filter is refused.                                                                                 |
+| `Prefer: return=representation` on a write       | Answer with the written rows (`select=` shapes them); the default, `return=minimal`, answers `201` / `204` with no body.                         |
+
+**What is safe.** A table, column or type name is never taken from the request as text: each is
+looked up in the catalog the plugin read and only a name found there is quoted into the SQL, so an
+unknown column or operator is a `400`, never a statement. Every filter value is a `$n` parameter
+cast to its column's type, and a request body is one JSON parameter expanded by
+`json_populate_record(set)` against the table's own row type — Postgres parses every value. The
+rows come back as one JSON text built by Postgres (`json_agg`), so a `bigint` keeps its digits.
+Each request runs in a transaction that sets the role and claims, then a `statement_timeout`
+(5 seconds by default).
+
+**The shared pool.** The routes use the app's one Postgres pool, so at most `maxConcurrent` REST
+statements run at once — half the pool's `max` by default (`Deno.SQL` and postgres.js report it;
+5 when the client does not). A request past that waits up to a second for a slot, then is answered
+`503` (`PGRST003`) with `Retry-After: 1`, leaving connections for the rest of the app. A full count
+(`Prefer: count=exact`) reads every matching row, so by default only a signed-in request may ask
+for one; an anonymous one is refused with `400` (`PGRST100`) and a hint (`exactCount: "all"`
+allows everyone, `"never"` no one).
+
+The plugin does not rate-limit the routes itself. [`middleware.ts`](/docs/middleware) runs before
+them, so `rateLimit` from `denext/server` can guard them there:
+
+```ts
+// middleware.ts
+import { apiErrorResponse, isApiError, next, rateLimit } from "denext/server";
+
+const limitRest = rateLimit({ max: 300, windowMs: 60_000 }); // per client IP, method and path
+
+export async function middleware(request: Request) {
+  if (new URL(request.url).pathname.startsWith("/rest/v1/")) {
+    try {
+      await limitRest({ request, params: {}, ctx: {}, method: request.method as "GET" });
+    } catch (error) {
+      if (isApiError(error)) return apiErrorResponse(error); // 429 with Retry-After
+      throw error;
+    }
+  }
+  return next();
+}
+```
+
+**CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
+cross-site one is refused (`403`, `csrf_failed`). A native app's bearer token
+(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie) needs no such check;
+the exemption uses `auth()`'s own parser (`nativeBearerToken` from `denext/server`), so it applies
+exactly when the session comes from the token, never from the cookie.
+
+**Errors** are PostgREST-shaped JSON — `{ code, message, details, hint }` — with Postgres's
+SQLSTATE as the code where Postgres refused (`23505` → `409`, `42501` → `403`, `23502` / `22P02` →
+`400`, `57014` statement timeout → `504`), and `PGRST100` (a malformed query), `PGRST102` (a bad
+body), `PGRST103` (a range past the rows), `PGRST116` (not exactly one row), `PGRST205` (no such
+table) or `42703` (no such column) otherwise. A 5xx hides the database's message (it is logged).
+
+### Which tables
+
+The plugin reads the catalog when the server starts (and again, under `denext dev`, when a request
+names a table it does not know): the relations of `schema` that the `anon` or `authenticated` role
+holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or `DELETE`. A table with no
+grant to either role gets no route, so a table stays private until you `grant`.
+
+With the default `tables: "*"`, a reachable relation is served only when row-level security
+applies to the caller:
+
+| Relation                                                 | Served by `"*"`                                     |
+| -------------------------------------------------------- | --------------------------------------------------- |
+| a table (or partitioned table) with RLS enabled          | yes — its policies decide the rows                  |
+| a view created `with (security_invoker = true)` (PG 15+) | yes — the base tables' policies apply to the caller |
+| a table with RLS off                                     | no                                                  |
+| an ordinary view (it runs with its owner's rights)       | no                                                  |
+| a materialized view, a foreign table                     | no — neither has row-level security                 |
+
+Everything skipped is listed in one warning at startup, with the reason, so a grant that would
+have exposed a whole table is visible instead of silent. To serve one anyway, name it:
+`tables: ["notes", "public_stats"]` exposes exactly the listed relations, whatever their RLS —
+naming a table is your decision that its grants are the policy.
+
+### Generated types
+
+At `denext dev` startup and `denext build`, the plugin writes `.denext/rest.ts` from the live
+catalog: each exposed table's `Row`, `Insert` (columns with a default, or nullable, optional;
+generated columns left out) and `Update` shapes, registered on `RegisteredRest` so `from("notes")`
+autocompletes table names, types filters by column, and narrows `select("id,body")` to those
+columns. Import it once. Without a database to read (no `DATABASE_URL` at build time) the plugin
+says so, keeps an earlier generated file, or writes a stub under which rows are
+`Record<string, unknown>`.
+
+### Options
+
+| Option             | Default                       | What it does                                                                                                                                             |
+| ------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`           | `"public"`                    | The schema whose tables are served.                                                                                                                      |
+| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names, served as named (a listed table the roles cannot reach gets no route). |
+| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                           |
+| `maxRows`          | 1000                          | The most rows one read returns, whatever `limit` asks for.                                                                                               |
+| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                |
+| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                     |
+| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                    |
+| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                        |
+
+Not offered: embedded resources (joins through foreign keys — read the related table with a
+second request, or write a route handler), `or` / `and` groups, upserts (`on_conflict`), RPC
+(`/rpc/<function>` — call it with `db()` in a route handler) and CSV bodies. The routes are not
+listed in the `@denext/openapi` document.
 
 ## Browse it in `denext ui`
 
@@ -537,6 +739,6 @@ and honours `--read-only`.
 
 ## More services
 
-Storage, Postgres, row-level security and realtime from the database are the services in
+Storage, Postgres, row-level security, realtime from the database and auto-REST are the services in
 `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
 [tasks](/docs/tasks) are already part of denext itself.

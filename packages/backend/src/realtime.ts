@@ -16,6 +16,19 @@
 // key-only query under its own policies) plus every row sent to it since. A delete — or an
 // update that moves a row out of its policies or filter — is sent only for a tracked key.
 //
+// Subscriptions are bounded per identity (`maxSubscriptionsPerIdentity`: a signed-in user, or the
+// signed-out visitors at one client address — one Live connection when the address is unknown
+// or an untrusted proxy-looking peer)
+// as well as per instance, and so are the subscribe-time seed queries
+// (a few at once, and a refilling budget per identity). An unsubscribed key is forgotten at once;
+// one whose connection closed is kept for a reconnect, but only while there is room — at a cap,
+// the oldest such one goes first, and only live subscriptions refuse a new one.
+//
+// Re-reads compare keys and filters in the column's own type (read once from the catalog), so a
+// primary-key or filter index serves them; each runs under a transaction-local
+// `statement_timeout`, and flushes are single-flight: a burst arriving while one runs is
+// delivered by the next.
+//
 // Everything shared runs in the root async context: the listener, the flush timer and the
 // pacing timers serve every subscriber, not whichever request first started them.
 //
@@ -25,6 +38,7 @@
 // so when the owner stops or dies the next instance to see a burst takes it over.
 
 import {
+  clientIpForLimits,
   createChannel,
   migratePostgres,
   type Migration,
@@ -97,10 +111,18 @@ interface Audience {
   filter?: ParsedFilter;
   /** `anon`, or `authenticated:<sub>`: the identity the key is bound to. */
   identity: string;
+  /**
+   * Whose quota it counts against: the identity, or `anon:<client address>` for a signed-out
+   * Live subscriber (`anon:<peer id>` when there is no address to limit on); empty for a server-side
+   * subscription (not counted).
+   */
+  owner: string;
   scope: RlsScope;
   /** Keys this subscriber may know about (see the module comment). */
   tracked: Set<string>;
   active: boolean;
+  /** It has had a subscriber (a never-activated one is not evicted while it is being admitted). */
+  everActive: boolean;
   idleSince: number;
   seq: number;
   sink: Sink;
@@ -146,6 +168,22 @@ const FRAME_BYTES = 12_000;
 const IDLE_GRACE_MS = 15_000;
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
+/** Subscribe-time seed queries run at once (more wait their turn). */
+const SEED_CONCURRENCY = 4;
+/** New subscriptions an identity may open in a burst… */
+const SEED_BURST = 32;
+/** …and per second after it. */
+const SEED_PER_SECOND = 8;
+/** How long a just-admitted subscription is safe from eviction before its subscriber arrives. */
+const ADMIT_GRACE_MS = 1_000;
+
+/** The type of each column of a table (`format_type`, no modifier), by `$1::regclass`. */
+export const COLUMN_TYPES_SQL = "select a.attname::text as name, " +
+  "format_type(a.atttypid, null) as type from pg_attribute a " +
+  "where a.attrelid = $1::regclass and a.attnum > 0 and not a.attisdropped";
+
+/** Sets the transaction's `statement_timeout` (`$1`: milliseconds, as text). */
+const STATEMENT_TIMEOUT_SQL = "select set_config('statement_timeout', $1, true)";
 
 /**
  * The advisory lock (two int4 keys: "denx", 1) whose holder revalidates for every instance on
@@ -201,6 +239,16 @@ export class RealtimeEngine {
   /** The reserved connection that holds (or tries for) the owner lock; `null` until needed. */
   #lockConn: Promise<Reserved> | null = null;
   #warnedReserve = false;
+  /** The flush in progress, and whether another burst arrived while it ran. */
+  #flushing: Promise<void> | null = null;
+  #flushAgain = false;
+  /** Each table's column types, read once (by table name). */
+  #types = new Map<string, Promise<Map<string, string>>>();
+  /** Seed queries running, and those waiting for a turn. */
+  #seeding = 0;
+  #seedWaiters: Array<() => void> = [];
+  /** Each owner's seed budget: tokens left, as of `at`. */
+  #budgets = new Map<string, { tokens: number; at: number }>();
 
   /**
    * @param options The realtime options.
@@ -332,13 +380,36 @@ export class RealtimeEngine {
   }
 
   /**
-   * Deliver the current burst now (the timer calls it; tests may too).
+   * Deliver the current burst now (the timer calls it; tests may too). Single-flight: while a
+   * flush runs, a further call only marks that another burst is waiting, and the running flush
+   * delivers it next — so a slow re-read never has bursts piling up behind it in parallel.
    *
-   * @returns When every subscriber's re-read has run and its frames are queued.
+   * @returns When every subscriber's re-read has run and its frames are queued (including a
+   *   burst that arrived meanwhile).
    */
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = null;
+    if (this.#flushing) {
+      this.#flushAgain = true;
+      return this.#flushing;
+    }
+    const run = async () => {
+      try {
+        do {
+          this.#flushAgain = false;
+          await this.#flushOnce();
+        } while (this.#flushAgain && !this.#stopped);
+      } finally {
+        this.#flushing = null;
+      }
+    };
+    this.#flushing = run();
+    return this.#flushing;
+  }
+
+  /** Deliver the burst gathered so far. */
+  async #flushOnce(): Promise<void> {
     const pending = this.#pending;
     const resync = this.#resyncTables;
     this.#pending = new Map();
@@ -463,6 +534,7 @@ export class RealtimeEngine {
     try {
       rows = await this.#reread(first, keys);
     } catch (error) {
+      this.#types.delete(first.table.name); // the table may have changed: read its types again
       console.error(`[@denext/backend] realtime re-read of ${first.table.name} failed`, error);
       for (const audience of group) this.#enqueue(audience, { resync: true });
       return;
@@ -476,15 +548,46 @@ export class RealtimeEngine {
   /** The rows among `keys` the audience's scope (and filter) can SELECT, as parsed JSON. */
   async #reread(audience: Audience, keys: string[]): Promise<Map<string, unknown>> {
     const rows = new Map<string, unknown>();
-    const client = scopedFor(audience.scope);
+    const types = await this.#columnTypes(audience.table);
     for (let i = 0; i < keys.length; i += KEYS_PER_QUERY) {
       const chunk = keys.slice(i, i + KEYS_PER_QUERY);
-      const { text, params } = rereadQuery(audience.table, audience.filter, chunk);
+      const { text, params } = rereadQuery(audience.table, audience.filter, chunk, types);
       this.stats.rereads++;
-      const result = await client.unsafe<{ k: string; r: string }>(text, params);
+      const result = await this.#timed<{ k: string; r: string }>(audience.scope, text, params);
       for (const row of result) rows.set(String(row.k), JSON.parse(String(row.r)));
     }
     return rows;
+  }
+
+  /**
+   * One query as `scope`, in a transaction of its own under the `statement_timeout`: the RLS
+   * setup, the timeout and the query are pipelined on the transaction's connection.
+   */
+  #timed<T>(scope: RlsScope, text: string, params: unknown[]): Promise<T[]> {
+    const timeout = String(this.config.queryTimeoutMs);
+    return scopedFor(scope).begin((tx) =>
+      Promise.all([tx.unsafe(STATEMENT_TIMEOUT_SQL, [timeout]), tx.unsafe<T>(text, params)])
+        .then(([, rows]) => rows)
+    );
+  }
+
+  /**
+   * The table's column types (read once, in the root context, as the connecting role: the
+   * catalog holds no user data), so keys and filters are compared in the column's own type.
+   */
+  #columnTypes(table: ResolvedTable): Promise<Map<string, string>> {
+    const known = this.#types.get(table.name);
+    if (known) return known;
+    const read = inRoot(() =>
+      Promise.resolve().then(() =>
+        this.#client().unsafe<{ name: string; type: string }>(COLUMN_TYPES_SQL, [table.qualified])
+      )
+    ).then((rows) => new Map(rows.map((row) => [String(row.name), String(row.type)])));
+    this.#types.set(table.name, read);
+    read.catch(() => {
+      if (this.#types.get(table.name) === read) this.#types.delete(table.name);
+    });
+    return read;
   }
 
   /** Queue a frame and make sure the audience's pump runs. */
@@ -542,11 +645,76 @@ export class RealtimeEngine {
     }
   }
 
-  /** Drop audiences that have had no subscriber for the grace period. */
+  /** Drop audiences that have had no subscriber for the grace period, and full budgets. */
   #sweep(): void {
-    const cutoff = Date.now() - IDLE_GRACE_MS;
+    const now = Date.now();
+    const cutoff = now - IDLE_GRACE_MS;
     for (const [key, audience] of this.#audiences) {
       if (!audience.active && audience.idleSince < cutoff) this.#audiences.delete(key);
+    }
+    for (const [owner, budget] of this.#budgets) {
+      if (refilled(budget, now) >= SEED_BURST) this.#budgets.delete(owner);
+    }
+  }
+
+  /**
+   * Whether one more audience fits `among` under `cap` — dropping the oldest one kept only for a
+   * reconnect when it does not.
+   */
+  #room(among: Iterable<Audience>, cap: number, except?: Audience): boolean {
+    const now = Date.now();
+    let count = 0;
+    let oldest: Audience | undefined;
+    for (const audience of among) {
+      if (audience === except) continue;
+      count++;
+      const evictable = !audience.active &&
+        (audience.everActive || audience.idleSince < now - ADMIT_GRACE_MS);
+      if (evictable && (!oldest || audience.idleSince < oldest.idleSince)) oldest = audience;
+    }
+    if (count < cap) return true;
+    if (!oldest) return false;
+    this.#audiences.delete(oldest.key);
+    return true;
+  }
+
+  /** Room for one more audience of `owner`: under its own cap, then the instance's. */
+  #roomFor(owner: string, except?: Audience): boolean {
+    if (owner) {
+      const owned = [...this.#audiences.values()].filter((audience) => audience.owner === owner);
+      if (!this.#room(owned, this.config.maxSubscriptionsPerIdentity, except)) return false;
+    }
+    if (this.#room(this.#audiences.values(), this.config.maxSubscribers, except)) return true;
+    console.warn(
+      `[@denext/backend] realtime: ${this.config.maxSubscribers} subscriptions held; refusing more`,
+    );
+    return false;
+  }
+
+  /** Spend one of the owner's seed budget (refilling at {@linkcode SEED_PER_SECOND}). */
+  #spend(owner: string): boolean {
+    if (!owner) return true;
+    const now = Date.now();
+    const budget = this.#budgets.get(owner) ?? { tokens: SEED_BURST, at: now };
+    budget.tokens = refilled(budget, now);
+    budget.at = now;
+    this.#budgets.set(owner, budget);
+    if (budget.tokens < 1) return false;
+    budget.tokens--;
+    return true;
+  }
+
+  /** Run a seed query when one of the {@linkcode SEED_CONCURRENCY} slots is free. */
+  async #seedSlot<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.#seeding >= SEED_CONCURRENCY) {
+      await new Promise<void>((resolve) => this.#seedWaiters.push(resolve));
+    }
+    this.#seeding++;
+    try {
+      return await fn();
+    } finally {
+      this.#seeding--;
+      this.#seedWaiters.shift()?.();
     }
   }
 
@@ -555,55 +723,69 @@ export class RealtimeEngine {
    * the subscriber's session). Binds a new key to the identity, seeding its tracked keys.
    *
    * @param key The subscription key.
+   * @param peer Whose quota a signed-out subscriber counts against: its client address, or its
+   *   Live connection's id when the address is unknown.
    * @returns Whether the subscriber may receive it.
    */
-  async authorize(key: string): Promise<boolean> {
+  async authorize(key: string, peer = ""): Promise<boolean> {
     const parts = decodeSubscriptionKey(key);
     const table = parts && this.config.tables.get(parts.table);
     if (!parts || !table) return false;
     try {
       const scope = await resolveScope();
+      const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
-      if (existing) return this.#rebind(existing, scope);
-      return await this.#admit({ key, table, filter: parts.filter, scope, sink: { channel: key } });
+      if (existing) return this.#rebind(existing, scope, owner);
+      const sink = { channel: key };
+      return await this.#admit({ key, table, filter: parts.filter, scope, sink }, owner);
     } catch (error) {
       this.#warnOnce(error);
       return false;
     }
   }
 
-  /** Re-authorization of a known key: same identity only; the claims are refreshed. */
-  #rebind(audience: Audience, scope: RlsScope): boolean {
+  /**
+   * Re-authorization of a known key: same identity only; the claims are refreshed. A signed-out
+   * subscriber back on a new connection takes the subscription into that connection's quota.
+   */
+  #rebind(audience: Audience, scope: RlsScope, owner: string): boolean {
     if (identityOf(scope) !== audience.identity) return false;
+    if (owner !== audience.owner) {
+      if (!this.#roomFor(owner, audience)) return false;
+      audience.owner = owner;
+    }
     audience.scope = scope;
     return true;
   }
 
-  /** Create an audience: listener up first (no change slips between seed and listen), then seed. */
+  /**
+   * Create an audience: room and budget first (a refused subscribe costs no query), the listener
+   * up next (no change slips between seed and listen), then the seed — and room again, since
+   * other subscribes may have been admitted while it ran.
+   */
   async #admit(init: {
     key: string;
     table: ResolvedTable;
     filter?: ParsedFilter;
     scope: RlsScope;
     sink: Sink;
-  }): Promise<boolean> {
+  }, owner: string): Promise<boolean> {
     this.#sweep();
-    if (this.#audiences.size >= this.config.maxSubscribers) {
-      console.warn(
-        `[@denext/backend] realtime: ${this.config.maxSubscribers} subscriptions held; refusing more`,
-      );
-      return false;
-    }
+    if (!this.#roomFor(owner) || !this.#spend(owner)) return false;
     await this.start();
-    const tracked = await this.#seed(init.table, init.filter, init.scope);
+    const tracked = await this.#seedSlot(() => this.#seed(init.table, init.filter, init.scope));
     const identity = identityOf(init.scope);
     const raced = this.#audiences.get(init.key);
     if (raced) return raced.identity === identity; // a concurrent subscribe of the same key
+    if (!this.#roomFor(owner)) return false;
+    const server = "fn" in init.sink;
     this.#audiences.set(init.key, {
       ...init,
       identity,
+      owner,
       tracked,
-      active: "fn" in init.sink,
+      active: server,
+      everActive: server,
       idleSince: Date.now(),
       seq: 0,
       queue: [],
@@ -618,8 +800,9 @@ export class RealtimeEngine {
     filter: ParsedFilter | undefined,
     scope: RlsScope,
   ): Promise<Set<string>> {
-    const { text, params } = seedQuery(table, filter, this.config.maxTrackedKeys);
-    const rows = await scopedFor(scope).unsafe<{ k: string }>(text, params);
+    const types = await this.#columnTypes(table);
+    const { text, params } = seedQuery(table, filter, this.config.maxTrackedKeys, types);
+    const rows = await this.#timed<{ k: string }>(scope, text, params);
     return new Set(rows.map((row) => String(row.k)));
   }
 
@@ -635,13 +818,25 @@ export class RealtimeEngine {
   /** A key's first subscriber arrived (the channel's `onActive`). */
   activate(key: string): void {
     const audience = this.#audiences.get(key);
-    if (audience) audience.active = true;
+    if (audience) audience.active = audience.everActive = true;
   }
 
-  /** A key's last subscriber left (the channel's `onIdle`): kept for a reconnect, then swept. */
-  deactivate(key: string): void {
+  /**
+   * A key's last subscriber left (the channel's `onIdle`). Unsubscribed (or revoked): forgotten
+   * at once. Disconnected: kept for a reconnect of the same identity — swept after
+   * {@linkcode IDLE_GRACE_MS}, or sooner when a cap needs the room.
+   *
+   * @param key The subscription key.
+   * @param reason Why it went idle (an older hub passes none: kept, as for a disconnect).
+   */
+  deactivate(key: string, reason?: "unsubscribe" | "disconnect"): void {
     const audience = this.#audiences.get(key);
     if (!audience) return;
+    if (reason === "unsubscribe") {
+      audience.queue.length = 0;
+      this.#audiences.delete(key);
+      return;
+    }
     audience.active = false;
     audience.idleSince = Date.now();
     audience.queue.length = 0;
@@ -668,7 +863,7 @@ export class RealtimeEngine {
       filter,
       scope,
       sink: { fn: options.onChange },
-    });
+    }, "");
     if (!ok) {
       throw new Error(`tableChanges(${table}): ${this.config.maxSubscribers} subscriptions held`);
     }
@@ -764,36 +959,70 @@ export function parseNotification(payload: string): TableChangeEvent | null {
   return event;
 }
 
-/** `select key, row` for the given keys, under the caller's scope (and the filter). */
-function rereadQuery(
+/**
+ * `t."column" = $n` in the column's own type (`$n::text::<type>`), so an index on the column
+ * serves it; compared as text only when the type is unknown.
+ */
+function equals(column: string, param: string, types: Map<string, string>): string {
+  const type = types.get(column);
+  return type ? `t."${column}" = ${param}::text::${type}` : `t."${column}"::text = ${param}`;
+}
+
+/**
+ * The key column of `t` as text, spelled as the trigger spells it (`to_jsonb(row) ->> key`), so a
+ * re-read row and a seeded key match the notification's key in every type — `t."key"::text`
+ * differs for a timestamp (`2026-01-02 03:04:05` against JSON's `2026-01-02T03:04:05`). The
+ * column alone goes through JSON (`#>> '{}'` unwraps it to the same text), not the whole row, so
+ * a seed over many rows does not build a document per row.
+ */
+function keyText(column: string): string {
+  return `to_jsonb(t."${column}") #>> '{}'`;
+}
+
+/**
+ * `select key, row` for the given keys, under the caller's scope (and the filter). The keys
+ * travel as one JSON array and are cast to the key column's type, so the match is
+ * `key = any(<array of that type>)` — an index scan on the key.
+ */
+export function rereadQuery(
   table: ResolvedTable,
   filter: ParsedFilter | undefined,
   keys: string[],
+  types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [JSON.stringify(keys)];
-  let text =
-    `select t."${table.key}"::text as k, to_jsonb(t)::text as r from ${table.qualified} t ` +
-    `where t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
+  const type = types.get(table.key);
+  const match = type
+    ? `t."${table.key}" = any(array(select jsonb_array_elements_text($1::jsonb)::${type}))`
+    : `t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
+  let text = `select ${keyText(table.key)} as k, to_jsonb(t)::text as r ` +
+    `from ${table.qualified} t where ${match}`;
   if (filter) {
     params.push(filter.value);
-    text += ` and t."${filter.column}"::text = $2`;
+    text += ` and ${equals(filter.column, "$2", types)}`;
   }
   return { text, params };
 }
 
 /** `select key` of every visible row (bounded), under the caller's scope (and the filter). */
-function seedQuery(
+export function seedQuery(
   table: ResolvedTable,
   filter: ParsedFilter | undefined,
   limit: number,
+  types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [limit];
-  let text = `select t."${table.key}"::text as k from ${table.qualified} t`;
+  let text = `select ${keyText(table.key)} as k from ${table.qualified} t`;
   if (filter) {
     params.push(filter.value);
-    text += ` where t."${filter.column}"::text = $2`;
+    text += ` where ${equals(filter.column, "$2", types)}`;
   }
   return { text: `${text} limit $1`, params };
+}
+
+/** A seed budget's tokens as of `now`. */
+function refilled(budget: { tokens: number; at: number }, now: number): number {
+  return Math.min(SEED_BURST, budget.tokens + ((now - budget.at) / 1000) * SEED_PER_SECOND);
 }
 
 /**
@@ -926,6 +1155,19 @@ export function realtimeEngine(): RealtimeEngine {
 }
 
 /**
+ * The signed-out subscriber's client address to key its quota on — `clientIpForLimits()` in the
+ * Live connection's context (a public socket peer, or the trusted proxy's hop) — or `undefined`
+ * when it is not known, or is an untrusted loopback/private peer (a proxy every visitor shares).
+ */
+function subscriberAddress(): string | undefined {
+  try {
+    return clientIpForLimits();
+  } catch {
+    return undefined; // outside a request context: no address to key on
+  }
+}
+
+/**
  * Create the realtime channel. The engine is looked up on every call, so a reinstall (a dev
  * reload) takes over the same channel id.
  */
@@ -939,18 +1181,18 @@ export function createRealtimeChannel(): {
   return createChannel<TableChangesFrame>({
     id: REALTIME_CHANNEL_ID,
     key: (key) => decodeSubscriptionKey(key) !== null,
-    authorize: (_ctx, key) => {
+    authorize: (ctx, key) => {
       const current: RealtimeEngine | undefined = engine();
-      return current ? current.authorize(key) : false;
+      return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId) : false;
     },
     authTtlSeconds: 60,
     onActive: (key) => {
       const current: RealtimeEngine | undefined = engine();
       if (current) current.activate(key);
     },
-    onIdle: (key) => {
+    onIdle: (key, reason) => {
       const current: RealtimeEngine | undefined = engine();
-      if (current) current.deactivate(key);
+      if (current) current.deactivate(key, reason);
     },
   });
 }

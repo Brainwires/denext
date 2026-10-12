@@ -3,7 +3,8 @@
 // Live channel hub, driven without a socket) gets the rows its own row-level-security policies
 // return — two users, a visibility change on update, deletes, a 500-row transaction coalesced, the
 // listener reconnecting after `pg_terminate_backend`, and notifications handled in the root
-// context. The app connects as a non-superuser role that owns its database.
+// context, a timestamp key read back as the notification spells it — and that the re-read and seed
+// queries are index scans on an integer, a uuid and a timestamp key (EXPLAIN). The app connects as a non-superuser role that owns its database.
 //
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`), with a superuser URL:
 //
@@ -26,10 +27,14 @@ import { backend } from "../packages/backend/mod.ts";
 import { db, onTableChange, type TableChangeEvent } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import {
+  COLUMN_TYPES_SQL,
   installRealtime,
   RealtimeEngine,
   realtimeEngine,
+  rereadQuery,
+  seedQuery,
 } from "../packages/backend/src/realtime.ts";
+import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -65,7 +70,17 @@ const NOTES = `
   grant usage on sequence notes_id_seq to authenticated;
 `;
 
-async function install(app: SqlClient): Promise<Harness> {
+/** Rows keyed by a timestamp: `to_jsonb` spells it `2026-01-02T03:04:05.5`, `::text` with a space. */
+const STAMPS = `
+  create table stamps (at timestamp primary key, body text not null);
+  grant select on stamps to authenticated;
+`;
+
+async function install(
+  app: SqlClient,
+  tables: Record<string, { key?: string }> = { notes: {} },
+  ddl = NOTES,
+): Promise<Harness> {
   resetPlugins();
   resetChannels();
   installPostgres(undefined);
@@ -76,7 +91,7 @@ async function install(app: SqlClient): Promise<Harness> {
     config: {
       plugins: [
         denextAuth(authConfig),
-        backend({ postgres: { sql: app }, realtime: { tables: { notes: {} } } }),
+        backend({ postgres: { sql: app }, realtime: { tables } }),
       ],
     } as DenextConfig,
     mode: "prod",
@@ -84,7 +99,7 @@ async function install(app: SqlClient): Promise<Harness> {
   });
   // The RLS roles and auth.* come with the first scoped query; the policies use them.
   await db({ as: "anon" })`select 1`;
-  await db.service().unsafe(NOTES).simple!();
+  await db.service().unsafe(ddl).simple!();
   return realtimeHarness();
 }
 
@@ -165,6 +180,43 @@ Deno.test({
         `real Postgres: 500 notifications → ${flushes} flush(es), ${rereads} re-reads, ${frames} frames`,
       );
       assert(changesOf(ca).slice(2).every((c) => c.op === "insert" && c.row?.owner === A));
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: a timestamp key reads back as the notification spells it${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      hub = await install(env.app, { stamps: { key: "at" } }, STAMPS);
+      // Seeded before the subscription: its key is tracked as the seed query returns it.
+      await db.service()`insert into stamps (at, body) values ('2026-01-02 03:04:05', 'seeded')`;
+      await settle(150); // its notification (if heard at all) lands before anyone subscribes
+      const ca = hub.conn(await cookieFor(A));
+      assert((await hub.subscribe(ca, "stamps")).ok);
+
+      // An insert: the re-read row is matched to the notification's key.
+      await db.service()`insert into stamps (at, body) values ('2026-01-02 03:04:06.5', 'new')`;
+      await until(() => ca.frames.length === 1, 5_000, "the insert");
+      assertEquals(changesOf(ca), [{
+        op: "insert",
+        key: "2026-01-02T03:04:06.5",
+        row: { at: "2026-01-02T03:04:06.5", body: "new" },
+      }]);
+
+      // A delete of the seeded row: sent, since the seeded key matches the notification's.
+      await db.service()`delete from stamps where at = '2026-01-02 03:04:05'`;
+      await until(() => ca.frames.length === 2, 5_000, "the delete");
+      assertEquals(ca.frames[1].changes, [{ op: "delete", key: "2026-01-02T03:04:05" }]);
     } finally {
       await uninstall(hub);
       await env.drop();
@@ -322,3 +374,178 @@ Deno.test({
     }
   },
 });
+
+/** The plan of `text` with `params`, as one string. */
+async function plan(sql: SqlClient, text: string, params: unknown[]): Promise<string> {
+  const rows = await sql.unsafe<Record<string, string>>(`explain ${text}`, params);
+  return rows.map((row) => Object.values(row)[0]).join("\n");
+}
+
+Deno.test({
+  name: `realtime on a real Postgres: re-reads and seeds use the key and filter indexes${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    try {
+      await env.app.unsafe(`
+        create table ikeys (id integer primary key, list_id integer not null, body text);
+        create index ikeys_list on ikeys (list_id);
+        insert into ikeys select g, g % 500, 'row ' || g from generate_series(1, 50000) g;
+        create table ukeys (id uuid primary key, body text);
+        insert into ukeys select gen_random_uuid(), 'row ' || g from generate_series(1, 50000) g;
+        create table tkeys (at timestamp primary key, body text);
+        insert into tkeys select timestamp '2026-01-01' + g * interval '1.5 seconds', 'row ' || g
+          from generate_series(1, 50000) g;
+        analyze ikeys; analyze ukeys; analyze tkeys;
+      `).simple!();
+      const tables =
+        resolveRealtime({ tables: { ikeys: {}, ukeys: {}, tkeys: { key: "at" } } }).tables;
+      const typesOf = async (qualified: string) =>
+        new Map(
+          (await env.app.unsafe<{ name: string; type: string }>(COLUMN_TYPES_SQL, [qualified]))
+            .map((row) => [row.name, row.type]),
+        );
+      const ints = await typesOf('"ikeys"');
+      assertEquals(ints.get("id"), "integer");
+      const uuids = await typesOf('"ukeys"');
+      assertEquals(uuids.get("id"), "uuid");
+      const stamps = await typesOf('"tkeys"');
+      assertEquals(stamps.get("at"), "timestamp without time zone");
+      const someUuids = (await env.app.unsafe<{ id: string }>(
+        "select id::text as id from ukeys limit 3",
+      )).map((row) => row.id);
+
+      const plans = {
+        "integer key": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ikeys")!, undefined, ["7", "42", "4242"], ints)),
+        ),
+        "integer key + filter": await plan(
+          env.app,
+          ...spread(
+            rereadQuery(
+              tables.get("ikeys")!,
+              { column: "list_id", value: "7" },
+              ["7", "507"],
+              ints,
+            ),
+          ),
+        ),
+        "uuid key": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ukeys")!, undefined, someUuids, uuids)),
+        ),
+        // Keys as the notification spells them (JSON's `T`), cast back to the key's type.
+        "timestamp key": await plan(
+          env.app,
+          ...spread(
+            rereadQuery(
+              tables.get("tkeys")!,
+              undefined,
+              ["2026-01-01T00:00:01.5", "2026-01-01T00:00:03"],
+              stamps,
+            ),
+          ),
+        ),
+        "seed with a filter": await plan(
+          env.app,
+          ...spread(
+            seedQuery(tables.get("ikeys")!, { column: "list_id", value: "7" }, 10_000, ints),
+          ),
+        ),
+        // The shape before: the key compared as text — no index can serve it.
+        "integer key as text (before)": await plan(
+          env.app,
+          ...spread(rereadQuery(tables.get("ikeys")!, undefined, ["7", "42"], new Map())),
+        ),
+      };
+      for (const [what, text] of Object.entries(plans)) console.log(`EXPLAIN ${what}:\n${text}\n`);
+      assert(usesIndex(plans["integer key"], "ikeys_pkey"), plans["integer key"]);
+      assert(usesIndex(plans["integer key + filter"], "ikeys_pkey"), plans["integer key + filter"]);
+      assert(usesIndex(plans["uuid key"], "ukeys_pkey"), plans["uuid key"]);
+      assert(usesIndex(plans["timestamp key"], "tkeys_pkey"), plans["timestamp key"]);
+      assert(usesIndex(plans["seed with a filter"], "ikeys_list"), plans["seed with a filter"]);
+      for (
+        const what of [
+          "integer key",
+          "integer key + filter",
+          "uuid key",
+          "timestamp key",
+          "seed with a filter",
+        ]
+      ) {
+        assert(!/Seq Scan/.test(plans[what as keyof typeof plans]), `${what}: no Seq Scan`);
+      }
+      assert(/Seq Scan on ikeys/.test(plans["integer key as text (before)"]));
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: seeds and re-reads spell every key type as the trigger does${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    try {
+      // One table per key type, with the values whose text forms differ most.
+      const keys: Record<string, [string, string]> = {
+        int: ["integer", "(-2147483648), (0), (42)"],
+        big: ["bigint", "(9007199254740993), (-1)"],
+        uid: [
+          "uuid",
+          "('0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000a'), ('00000000-0000-0000-0000-000000000000')",
+        ],
+        txt: ["text", `('plain'), ('it''s "quoted"'), ('ünï ☃'), ('back\\slash'), ('')`],
+        num: ["numeric", "(1.50), (-0.000), (1e20), (3.14159265358979323846)"],
+        ts: [
+          "timestamp",
+          "('2026-01-02 03:04:05.5'), ('2026-01-02 00:00:00'), ('1999-12-31 23:59:59.999999')",
+        ],
+        tz: ["timestamptz", "('2026-01-02 03:04:05.5+02')"],
+      };
+      for (const [table, [type, values]] of Object.entries(keys)) {
+        await env.app.unsafe(
+          `create table k_${table} (k ${type} primary key); insert into k_${table} values ${values};`,
+        ).simple!();
+      }
+      const tables = resolveRealtime({
+        tables: Object.fromEntries(Object.keys(keys).map((t) => [`k_${t}`, { key: "k" }])),
+      }).tables;
+      for (const [table, [type]] of Object.entries(keys)) {
+        const name = `k_${table}`;
+        // What the trigger puts in a notification: `to_jsonb(row) ->> key`.
+        const trigger = (await env.app.unsafe<{ k: string }>(
+          `select to_jsonb(t) ->> 'k' as k from ${name} t order by t.k`,
+        )).map((row) => row.k);
+        const types = new Map([["k", type]]);
+        const seeded = (await env.app.unsafe<{ k: string }>(
+          ...spread(seedQuery(tables.get(name)!, undefined, 100, types)),
+        )).map((row) => row.k).sort();
+        assertEquals(seeded, [...trigger].sort(), `${type}: the seed spells keys as the trigger`);
+        const reread = (await env.app.unsafe<{ k: string }>(
+          ...spread(rereadQuery(tables.get(name)!, undefined, trigger, types)),
+        )).map((row) => row.k).sort();
+        assertEquals(reread, [...trigger].sort(), `${type}: a re-read finds and spells every key`);
+      }
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+/** Whether a plan reads `index` (an index scan, index-only scan or bitmap index scan). */
+function usesIndex(text: string, index: string): boolean {
+  return new RegExp(`(Index (Only )?Scan using|Bitmap Index Scan on) ${index}\\b`).test(text);
+}
+
+/** A query as `plan`'s arguments. */
+function spread(query: { text: string; params: unknown[] }): [string, unknown[]] {
+  return [query.text, query.params];
+}

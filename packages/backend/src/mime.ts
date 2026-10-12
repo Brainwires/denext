@@ -47,6 +47,22 @@ function isFtyp(b: Uint8Array, brands: string[]): boolean {
   return ascii(b, 4, 8) === "ftyp" && brands.includes(ascii(b, 8, 12));
 }
 
+/** Types a browser may render inline (everything else downloads as an attachment). */
+const INLINE =
+  /^(image\/(png|jpeg|gif|webp|avif|bmp|x-icon)|video\/|audio\/|application\/pdf$|text\/plain$)/;
+
+/**
+ * How an object of this type is served: `inline` only for the types a browser renders without
+ * running anything (raster images, audio, video, PDF, plain text) — an HTML, SVG or unknown file
+ * is always an attachment, so it never runs script with the serving origin.
+ *
+ * @param type The content type's essence.
+ * @returns The `Content-Disposition` type.
+ */
+export function dispositionFor(type: string): "inline" | "attachment" {
+  return INLINE.test(type) ? "inline" : "attachment";
+}
+
 /**
  * The essence of a content type: lowercased, without parameters (`Image/PNG; x=1` → `image/png`).
  *

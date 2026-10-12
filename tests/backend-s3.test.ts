@@ -127,10 +127,13 @@ Deno.test("s3 storage: content that contradicts its type is deleted at completio
     assertEquals([err.code, err.status], ["mime_mismatch", 415]);
     assertEquals(fake.objects.has("media/evil.png"), false, "the object is gone");
     // The store refuses a body other than the signed size (S3 checks signed headers).
-    const plan = await storage.bucket("media").createSignedUploadUrl("sized.bin", {
-      contentType: "application/octet-stream",
-      size: 4,
-    });
+    const plan = await storage.bucket("media", { service: true }).createSignedUploadUrl(
+      "sized.bin",
+      {
+        contentType: "application/octet-stream",
+        size: 4,
+      },
+    );
     const wrong = await fake.fetch(plan.url, { method: "PUT", body: new Uint8Array(4) });
     assertEquals(wrong.status, 403, "content-type was signed but not sent");
     await wrong.body?.cancel();
@@ -236,7 +239,7 @@ Deno.test("s3 storage: server-side upload streams multipart, lists URL-encoded k
     driver: driver(fake),
   });
   try {
-    const bucket = storage.bucket("media");
+    const bucket = storage.bucket("media", { service: true });
     const big = new Uint8Array(9 * 1024 * 1024 + 5);
     big[big.length - 1] = 1;
     const chunks = new ReadableStream<Uint8Array>({
@@ -292,7 +295,7 @@ Deno.test("s3 storage: public objects redirect to a short-lived presigned GET; a
   const fake = new FakeS3();
   const app = await backendApp({ buckets, driver: driver(fake), multipartThreshold: 1024 });
   try {
-    await storage.bucket("pub").upload("logo.png", samplePng());
+    await storage.bucket("pub", { service: true }).upload("logo.png", samplePng());
     const res = await app.call("/_denext/storage/o/pub/logo.png");
     assertEquals(res.status, 302);
     const location = new URL(res.headers.get("location")!);
@@ -404,4 +407,45 @@ Deno.test("s3(): options, addressing styles and credentials", async () => {
   });
   const err = await assertRejects(() => denied.head("b", "k"), StorageError);
   assertEquals([err.code, err.message], ["driver_error", "s3 HEAD: HTTP 403"]);
+});
+
+Deno.test("s3 storage: presigned GETs force attachment unless the stored type is inline-safe", async () => {
+  const fake = new FakeS3();
+  const app = await backendApp({ buckets, driver: driver(fake) });
+  try {
+    const media = storage.bucket("media", { service: true });
+    // A client PUT to its presigned URL and never completed: nothing sniffed the bytes.
+    const plan = await media.createSignedUploadUrl("ghost.bin", {
+      contentType: "application/octet-stream",
+    });
+    const html = new TextEncoder().encode("<script>alert(document.domain)</script>");
+    const put = await fake.fetch(plan.url, {
+      method: "PUT",
+      headers: plan.headers,
+      body: html,
+    });
+    assertEquals(put.status, 200);
+    await put.body?.cancel();
+    const ghost = new URL(await media.createSignedUrl("ghost.bin"));
+    assertEquals(ghost.searchParams.get("response-content-disposition"), "attachment");
+    assertEquals(ghost.searchParams.get("response-content-type"), "application/octet-stream");
+    assertStringIncludes(ghost.searchParams.get("X-Amz-SignedHeaders") ?? "", "host");
+    // A raster image stays inline; a key with nothing stored is an attachment, untyped.
+    await media.upload("p.png", samplePng());
+    const png = new URL(await media.createSignedUrl("p.png"));
+    assertEquals(png.searchParams.get("response-content-disposition"), "inline");
+    assertEquals(png.searchParams.get("response-content-type"), "image/png");
+    const missing = new URL(await media.createSignedUrl("nothing-here"));
+    assertEquals(missing.searchParams.get("response-content-disposition"), "attachment");
+    assertEquals(missing.searchParams.has("response-content-type"), false);
+    // The public redirect carries the same overrides.
+    await storage.bucket("pub", { service: true }).upload("page.txt", "x", {
+      contentType: "application/octet-stream",
+    });
+    const res = await app.call("/_denext/storage/o/pub/page.txt");
+    const location = new URL(res.headers.get("location")!);
+    assertEquals(location.searchParams.get("response-content-disposition"), "attachment");
+  } finally {
+    await app.close();
+  }
 });

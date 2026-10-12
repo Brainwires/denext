@@ -30,6 +30,7 @@ import {
   type TableChangesFrame,
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
+import { RLS_SETUP } from "../packages/backend/src/rls.ts";
 import {
   installRealtime,
   parseNotification,
@@ -324,8 +325,9 @@ Deno.test("realtime: an idle subscription costs no re-read, resumes within its g
     env.sql.insert("notes", { id: 2, owner: A, body: "after" });
     await until(() => back.frames.length === 2);
     assertEquals(back.frames[1].changes?.[0].key, "2");
-    // An unsubscribe makes it idle again.
+    // An unsubscribe ends it: nothing more is sent, and it is forgotten at once.
     env.hub.unsubscribe(back);
+    assertEquals(engine.size, 0);
     env.sql.insert("notes", { id: 3, owner: A, body: "gone" });
     await settle(120);
     assertEquals(back.frames.length, 2);
@@ -536,6 +538,217 @@ Deno.test("realtime: the subscription cap refuses more subscribers", async () =>
   }
 });
 
+Deno.test("realtime: an unsubscribed key is forgotten at once, so churn holds nothing", async () => {
+  const env = await setUp({ maxSubscribers: 5 });
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    // One signed-out connection subscribing with a fresh key and unsubscribing, over and over:
+    // each key used to be kept 15 s, so twenty of them filled the instance's five slots.
+    const anon = env.hub.conn();
+    for (let i = 0; i < 20; i++) {
+      assert((await env.hub.subscribe(anon, "notes")).ok, `subscribe ${i}`);
+      env.hub.unsubscribe(anon);
+    }
+    assertEquals(realtimeEngine().size, 0);
+    assert((await env.hub.subscribe(env.hub.conn(env.a), "notes")).ok, "others still get in");
+  } finally {
+    console.warn = original;
+    await env.done();
+  }
+});
+
+Deno.test("realtime: subscriptions are capped per identity — a user, or one signed-out connection", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 3 });
+  try {
+    const engine = realtimeEngine();
+    // A, across two connections (two tabs): three subscriptions — three filters, three re-read
+    // groups — and no more.
+    const [ca, ca2] = [env.hub.conn(env.a), env.hub.conn(env.a)];
+    for (const [conn, list] of [[ca, 1], [ca, 2], [ca2, 3]] as const) {
+      assert((await env.hub.subscribe(conn, "notes", { filter: { list }, subId: `l${list}` })).ok);
+    }
+    assertEquals((await env.hub.subscribe(ca2, "notes", { subId: "l4" })).ok, false);
+    assertEquals(ca2.errors, ["deny"]);
+    // B is not affected by A's quota.
+    assert((await env.hub.subscribe(env.hub.conn(env.b), "notes")).ok);
+    // Signed out, the quota is per connection.
+    const [anon, anon2] = [env.hub.conn(), env.hub.conn()];
+    for (const subId of ["1", "2", "3"]) {
+      assert((await env.hub.subscribe(anon, "notes", { subId })).ok);
+    }
+    assertEquals((await env.hub.subscribe(anon, "notes", { subId: "4" })).ok, false);
+    assert((await env.hub.subscribe(anon2, "notes")).ok);
+    assertEquals(engine.size, 3 + 1 + 3 + 1);
+
+    // A's first tab closes: its two subscriptions are kept for a reconnect, but count — and give
+    // way (oldest first) when A subscribes anew rather than refusing it.
+    env.hub.drop(ca);
+    assertEquals(engine.size, 8);
+    assert((await env.hub.subscribe(ca2, "notes", { subId: "l5" })).ok);
+    assertEquals(engine.size, 8, "one kept subscription made room");
+    assert((await env.hub.subscribe(ca2, "notes", { subId: "l6" })).ok);
+    assertEquals((await env.hub.subscribe(ca2, "notes", { subId: "l7" })).ok, false);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: signed out, the quota is per client address — across that address's connections", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 2 });
+  try {
+    // Two tabs (two Live connections) from one address share one quota…
+    const [tab1, tab2] = [env.hub.conn("", "198.51.100.7"), env.hub.conn("", "198.51.100.7")];
+    assert((await env.hub.subscribe(tab1, "notes", { subId: "1" })).ok);
+    assert((await env.hub.subscribe(tab2, "notes", { subId: "2" })).ok);
+    assertEquals((await env.hub.subscribe(tab2, "notes", { subId: "3" })).ok, false);
+    assertEquals(tab2.errors, ["deny"]);
+    // …which another address does not touch, nor a signed-in user at the same address.
+    assert((await env.hub.subscribe(env.hub.conn("", "198.51.100.8"), "notes")).ok);
+    assert((await env.hub.subscribe(env.hub.conn(env.a, "198.51.100.7"), "notes")).ok);
+    assertEquals(realtimeEngine().size, 4);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: signed out behind an untrusted proxy-looking address, the quota is per connection", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 1 });
+  try {
+    // Every visitor behind a reverse proxy (no trustForwardedHeaders) arrives from its loopback
+    // or private address: keying the quota on it would make one quota site-wide.
+    for (const proxy of ["127.0.0.1", "10.1.2.3", "::1", "::ffff:192.168.0.9", "fd00::7"]) {
+      const [tab1, tab2] = [env.hub.conn("", proxy), env.hub.conn("", proxy)];
+      assert((await env.hub.subscribe(tab1, "notes", { subId: "1" })).ok, proxy);
+      assert((await env.hub.subscribe(tab2, "notes", { subId: "1" })).ok, `${proxy}: own quota`);
+      assertEquals((await env.hub.subscribe(tab2, "notes", { subId: "2" })).ok, false, proxy);
+    }
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: at the instance cap a disconnected subscription gives way; live ones refuse", async () => {
+  const env = await setUp({ maxSubscribers: 2 });
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "notes")).ok);
+    assert((await env.hub.subscribe(env.hub.conn(env.b), "notes")).ok);
+    assertEquals((await env.hub.subscribe(env.hub.conn(), "notes")).ok, false, "both live");
+    env.hub.drop(ca); // kept for a reconnect…
+    assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "…until the room is needed");
+    assertEquals(engine.size, 2);
+  } finally {
+    console.warn = original;
+    await env.done();
+  }
+});
+
+Deno.test("realtime: subscribe-time seed queries are bounded — a few at once, a budget per identity", async () => {
+  const env = await setUp();
+  try {
+    // Ten subscriptions at once: at most four seed queries run together.
+    env.sql.delay.seed = 30;
+    const ca = env.hub.conn(env.a);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => env.hub.subscribe(ca, "notes", { subId: `p${i}` })),
+    );
+    assert(results.every((r) => r.ok));
+    assertEquals(env.sql.inFlight.maxSeed, 4);
+    env.sql.delay.seed = 0;
+
+    // A signed-out connection opening (and closing) subscriptions as fast as it can: a burst of
+    // 32, then about 8 a second.
+    const anon = env.hub.conn();
+    let admitted = 0;
+    for (let i = 0; i < 48; i++) {
+      if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
+      env.hub.unsubscribe(anon);
+    }
+    assert(admitted >= 32 && admitted < 40, `admitted ${admitted}`);
+    assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
+    assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: re-reads compare keys and filters in the column's type, under a statement timeout", async () => {
+  const sql = fakeRealtimeClient({
+    notes: { policy: ownerOnly, types: { id: "bigint", owner: "uuid", list: "integer" } },
+    items: { key: "sku" },
+  });
+  const env = await setUp({ queryTimeoutMs: 1_234 }, sql);
+  try {
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "notes", { filter: { list: 1 } })).ok);
+    env.sql.insert("notes", { id: 1, owner: A, list: 1, body: "in" });
+    await until(() => ca.frames.length === 1);
+    const { statements, parameters } = env.sql;
+    // The column types are read once, by the table's (quoted) name.
+    const lookups = statements.flatMap((s, i) => /pg_attribute/.test(s) ? [parameters[i]] : []);
+    assertEquals(lookups, [['"notes"']]);
+    const seed = statements.find((s) =>
+      /^select to_jsonb\(t\."id"\) #>> '\{\}' as k from/.test(s)
+    )!;
+    assertEquals(
+      seed,
+      `select to_jsonb(t."id") #>> '{}' as k from "notes" t where t."list" = $2::text::integer limit $1`,
+    );
+    const reread = statements.findIndex((s) => /to_jsonb\(t\)::text as r/.test(s));
+    assertEquals(
+      statements[reread],
+      `select to_jsonb(t."id") #>> '{}' as k, to_jsonb(t)::text as r from "notes" t where t."id" = ` +
+        'any(array(select jsonb_array_elements_text($1::jsonb)::bigint)) and t."list" = $2::text::integer',
+    );
+    // In its own transaction: the RLS setup, then the timeout, then the re-read.
+    assertEquals(statements.slice(reread - 3, reread), [
+      "BEGIN",
+      RLS_SETUP,
+      "select set_config('statement_timeout', $1, true)",
+    ]);
+    assertEquals(parameters[reread - 1], ["1234"]);
+    assertEquals(statements[reread + 1], "COMMIT");
+    // A table whose types are unknown (items: none reported) is still compared as text.
+    const cb = env.hub.conn(env.b);
+    assert((await env.hub.subscribe(cb, "items")).ok);
+    env.sql.insert("items", { sku: "x1" });
+    await until(() => cb.frames.length === 1);
+    assert(
+      statements.some((s) =>
+        s.includes('where t."sku"::text in (select jsonb_array_elements_text($1::jsonb))')
+      ),
+    );
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: flushes are single-flight — bursts during a slow re-read coalesce into the next", async () => {
+  const env = await setUp();
+  try {
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    const engine = realtimeEngine();
+    const flushes = engine.stats.flushes;
+    env.sql.delay.reread = 120;
+    env.sql.insert("notes", { id: 1, owner: A, body: "first" });
+    await until(() => env.sql.inFlight.reread === 1, 3_000, "the first re-read");
+    env.sql.insert("notes", { id: 2, owner: A, body: "second" });
+    await settle(40); // its flush is due while the first still runs
+    env.sql.insert("notes", { id: 3, owner: A, body: "third" });
+    await until(() => changesOf(ca).length === 3, 5_000, "all three");
+    assertEquals(env.sql.inFlight.maxReread, 1, "never two re-reads at once");
+    assertEquals(engine.stats.flushes - flushes, 2, "the two later bursts went out together");
+    assertEquals(changesOf(ca).map((c) => c.key), ["1", "2", "3"]);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: a malformed notification is ignored; an overflow or keyless one is a resync", async () => {
   const env = await setUp();
   try {
@@ -582,6 +795,16 @@ Deno.test("realtime: a failed re-read becomes a resync for that group", async ()
 
 Deno.test("realtime(): options are validated; backend() needs postgres for it", () => {
   assertThrows(() => realtime({ tables: {} }), TypeError, "names no table");
+  assertThrows(
+    () => realtime({ tables: { notes: {} }, maxSubscriptionsPerIdentity: 0 }),
+    TypeError,
+    "maxSubscriptionsPerIdentity must be a positive integer",
+  );
+  assertThrows(
+    () => realtime({ tables: { notes: {} }, queryTimeoutMs: 1.5 }),
+    TypeError,
+    "queryTimeoutMs must be a positive integer",
+  );
   assertThrows(() => realtime({ tables: { "bad name": {} } }), TypeError, "plain identifier");
   assertThrows(
     () => realtime({ tables: { t: { events: ["upsert" as "insert"] } } }),

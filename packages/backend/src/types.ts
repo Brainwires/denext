@@ -164,8 +164,16 @@ export interface DirectAccess {
     key: string,
     options: { expiresIn: number; contentType: string; size?: number },
   ): Promise<string>;
-  /** A presigned GET. */
-  presignGet(bucket: string, key: string, options: { expiresIn: number }): Promise<string>;
+  /**
+   * A presigned GET. `disposition` and `contentType`, when given, are signed in as the store's
+   * `response-content-disposition` / `response-content-type` overrides, so the store serves the
+   * object with them (a store without such overrides must refuse rather than drop them).
+   */
+  presignGet(
+    bucket: string,
+    key: string,
+    options: { expiresIn: number; disposition?: "inline" | "attachment"; contentType?: string },
+  ): Promise<string>;
   /** Start a multipart upload; returns its upload id. */
   createMultipart(bucket: string, key: string, contentType: string): Promise<string>;
   /** A presigned PUT for one part (1-based). */

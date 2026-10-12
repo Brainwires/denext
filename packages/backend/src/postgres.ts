@@ -93,9 +93,10 @@ export function openPostgres(
 
 type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
 
-/** Whether this code runs inside a request (not a task, a script, or module load). */
-function inRequest(): boolean {
-  return !!(globalThis as ContextBridge).__denextCurrentRequestContext?.()?.request;
+/** The request context the code runs in, or `undefined` (a task, a script, module load). */
+function currentRequestContext(): object | undefined {
+  const context = (globalThis as ContextBridge).__denextCurrentRequestContext?.();
+  return context?.request ? context : undefined;
 }
 
 /** The installed slot's client and RLS options, or the reason there is none. */
@@ -116,32 +117,49 @@ async function sessionScope(session: AuthSession, rls: RlsOptions): Promise<RlsS
   return authenticatedScope(sessionClaims(session, custom ?? {}));
 }
 
+/** Each request's resolved identity, so its queries read the session once. */
+const requestScopes = new WeakMap<object, Promise<RlsScope>>();
+
 /**
- * Resolve who the client acts as. Called once per `db()` call, synchronously: a client made
- * inside a request reads THAT request's session (started now, so the identity is bound to the
- * request that asked even if a query runs later), and one made outside a request is `anon`
- * unless an identity is given.
+ * The identity of the request current right now — read for each query as it is made, never when
+ * the client was made, so a `db()` client kept at module scope always acts as the visitor whose
+ * request makes the query, and as `anon` outside any request (fail closed). Memoized per request context; a
+ * failed read is not remembered.
+ */
+function currentScope(rls: RlsOptions): Promise<RlsScope> {
+  const context = currentRequestContext();
+  if (!context) return Promise.resolve(ANON_SCOPE);
+  let pending = requestScopes.get(context);
+  if (!pending) {
+    pending = auth().then((session) => session ? sessionScope(session, rls) : ANON_SCOPE);
+    requestScopes.set(context, pending);
+    pending.catch(() => requestScopes.delete(context));
+  }
+  return pending;
+}
+
+/**
+ * Resolve an explicit identity (`db({ as })`), once: it never depends on the request.
+ * Without one, the current request's identity (see {@linkcode currentScope}).
  */
 function identityOf(
   as: Exclude<DbIdentity, "service"> | undefined,
   rls: RlsOptions,
 ): Promise<RlsScope> {
   if (as === "anon") return Promise.resolve(ANON_SCOPE);
-  if (as !== undefined) {
-    return isSession(as)
-      ? sessionScope(as, rls)
-      : Promise.resolve().then(() => authenticatedScope(userClaims(as)));
-  }
-  if (!inRequest()) return Promise.resolve(ANON_SCOPE);
-  return auth().then((session) => session ? sessionScope(session, rls) : ANON_SCOPE);
+  if (as === undefined) return currentScope(rls);
+  return isSession(as)
+    ? sessionScope(as, rls)
+    : Promise.resolve().then(() => authenticatedScope(userClaims(as)));
 }
 
 /** `db()`: the app's Postgres, scoped by row-level security; `db.service()` bypasses it. */
 export interface Db {
   /**
-   * The app's Postgres client, scoped: every query runs as `authenticated` with the request's
-   * user in `request.jwt.claims` (or as `anon`), so the tables' RLS policies decide what it
-   * sees. Outside a request it is `anon` unless `as` says otherwise.
+   * The app's Postgres client, scoped: every query runs as `authenticated` with the user of the
+   * request current when the QUERY is made in `request.jwt.claims` (or as `anon`), so the tables'
+   * RLS policies decide what it sees — a client kept at module scope is fine. Outside a request
+   * it is `anon` unless `as` fixes an identity.
    */
   (options?: DbOptions): SqlClient;
   /**
@@ -166,6 +184,10 @@ export interface Db {
  * await db.service()`delete from notes where created_at < now() - interval '1 year'`;
  * ```
  *
+ * Without `as`, who a query acts as is read when the query is made, from the request current at
+ * that moment — so `const sql = db()` at module scope serves every visitor as themself, and is
+ * `anon` outside a request. `db({ as })` is fixed to that identity wherever it runs.
+ *
  * Every interpolated value is a bound parameter. Each query runs in a transaction of its own
  * that first sets the role and claims (transaction-local, so nothing lingers on a pooled
  * connection); `db().begin(fn)` scopes a whole transaction, and a `begin` inside it is a
@@ -180,14 +202,18 @@ export const db: Db = Object.assign(
   (options: DbOptions = {}): SqlClient => {
     const { sql, rls } = installed();
     if (options.as === "service") return sql;
-    const identity = identityOf(options.as, rls);
+    // An explicit identity is fixed when the client is made; without one, each query takes the
+    // request current when the query is made (its session read once per request).
+    const fixed = options.as === undefined ? undefined : identityOf(options.as, rls);
     // Settled by the first query; a client never queried must not leave a rejection unhandled.
-    identity.catch(() => {});
+    fixed?.catch(() => {});
     const ready = rls.migrate === false ? Promise.resolve() : undefined;
-    return scopedClient(
-      sql,
-      () => Promise.all([ready ?? ensureRlsMigrated(sql), identity]).then(([, scope]) => scope),
-    );
+    return scopedClient(sql, () => {
+      const identity = fixed ?? currentScope(rls);
+      identity.catch(() => {});
+      return () =>
+        Promise.all([ready ?? ensureRlsMigrated(sql), identity]).then(([, scope]) => scope);
+    });
   },
   {
     service(): SqlClient {
@@ -218,7 +244,20 @@ export function resolveScope(as?: Exclude<DbIdentity, "service">): Promise<RlsSc
 export function scopedFor(scope: RlsScope): SqlClient {
   const { sql, rls } = installed();
   const ready = rls.migrate === false ? Promise.resolve() : undefined;
-  return scopedClient(sql, () => (ready ?? ensureRlsMigrated(sql)).then(() => scope));
+  return scopedClient(sql, () => () => (ready ?? ensureRlsMigrated(sql)).then(() => scope));
+}
+
+/**
+ * Resolves once the RLS migration has been applied (at once when `rls.migrate` is `false`), so
+ * the `anon` / `authenticated` roles exist before anything asks about them.
+ *
+ * @returns When the roles are in place; rejects when Postgres is not configured.
+ */
+export function rlsReady(): Promise<void> {
+  return Promise.resolve().then(() => {
+    const { sql, rls } = installed();
+    return rls.migrate === false ? undefined : ensureRlsMigrated(sql);
+  });
 }
 
 /**

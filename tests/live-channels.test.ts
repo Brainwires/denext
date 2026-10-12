@@ -65,6 +65,36 @@ Deno.test("channel hub: dropping one connection de-indexes without scanning the 
   resetChannels();
 });
 
+Deno.test("channel hub: onIdle says whether the key was unsubscribed or its connection closed", async () => {
+  resetChannels();
+  const events: string[] = [];
+  createChannel<{ n: number }>({
+    id: "why",
+    authorize: () => true,
+    onActive: (key) => events.push(`active:${key}`),
+    onIdle: (key, reason) => events.push(`idle:${key}:${reason}`),
+  });
+  const { hub, conn } = fakeHub();
+  const [a, b] = [conn(1), conn(2)];
+  await hub.subscribe(a, { subId: "s", channelId: "why", key: "k" });
+  hub.unsubscribe(a, "s");
+  await hub.subscribe(b, { subId: "s", channelId: "why", key: "j" });
+  hub.drop(b);
+  assertEquals(events, ["active:k", "idle:k:unsubscribe", "active:j", "idle:j:disconnect"]);
+
+  // Re-subscribing the same key under the same id never takes the key through idle; a different
+  // key under that id makes the old one idle (as an unsubscribe) after the new one is active.
+  events.length = 0;
+  await hub.subscribe(a, { subId: "s", channelId: "why", key: "k" });
+  await hub.subscribe(a, { subId: "s", channelId: "why", key: "k" });
+  await hub.subscribe(a, { subId: "s", channelId: "why", key: "other" });
+  assertEquals(events, ["active:k", "active:other", "idle:k:unsubscribe"]);
+  assertEquals(a.channelSubs.size, 1);
+  hub.dispose();
+  assertEquals(events.at(-1), "idle:other:disconnect");
+  resetChannels();
+});
+
 Deno.test("channel hub: onActive fires for a key's first local subscriber, onIdle when its last leaves", async () => {
   resetChannels();
   const events: string[] = [];

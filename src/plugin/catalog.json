@@ -21,13 +21,14 @@
         "./client",
         "./server"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
         "storage",
         "postgres",
-        "realtime"
+        "realtime",
+        "rest"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -75,7 +76,7 @@
                         "description": "A presigned PUT. `size` pins `content-length`; `contentType` pins `content-type`."
                       },
                       "presignGet": {
-                        "description": "A presigned GET."
+                        "description": "A presigned GET. `disposition` and `contentType`, when given, are signed in as the store's `response-content-disposition` / `response-content-type` overrides, so the store serves the object with them (a store without such overrides must refuse rather than drop them)."
                       },
                       "createMultipart": {
                         "description": "Start a multipart upload; returns its upload id."
@@ -247,7 +248,15 @@
                 "type": "boolean"
               },
               "maxSubscribers": {
-                "description": "Subscriptions held at once on one server instance (default 10 000).",
+                "description": "Subscriptions held at once on one server instance (default 10 000). A subscription whose subscriber disconnected is kept for a reconnect only while there is room: at the cap the oldest such one is dropped, and only live subscriptions refuse a new one.",
+                "type": "number"
+              },
+              "maxSubscriptionsPerIdentity": {
+                "description": "Subscriptions one identity may hold on one server instance (default 64): a signed-in user across all their connections, or the signed-out visitors at one client address (`clientIpForLimits()`: one Live connection when the address is unknown or an untrusted loopback/private peer — set `trustForwardedHeaders` behind a proxy). It also bounds the distinct filters (re-read groups) an identity adds to a burst. Server-side `tableChanges` subscriptions are not counted.",
+                "type": "number"
+              },
+              "queryTimeoutMs": {
+                "description": "The `statement_timeout`, in milliseconds, of every re-read and subscribe-time query (transaction-local; default 5 000). A re-read that times out becomes a `resync` for its subscribers.",
                 "type": "number"
               },
               "maxTrackedKeys": {
@@ -258,6 +267,60 @@
             "required": [
               "tables"
             ]
+          },
+          "rest": {
+            "description": "Auto-REST: the schema's tables (those the `anon` / `authenticated` roles hold a privilege on) served PostgREST-style under `/rest/v1/<table>` — filters, ordering, paging, inserts, filtered updates and deletes — each statement run through `db()`, so row-level security scopes it to the request's user. Row types are generated into `.denext/rest.ts`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "schema": {
+                "description": "The schema whose tables are served (default `\"public\"`).",
+                "type": "string"
+              },
+              "tables": {
+                "description": "The tables to serve, by name, or `\"*\"` (the default) for every relation of the schema that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either.",
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "enum": [
+                      "*"
+                    ]
+                  }
+                ]
+              },
+              "basePath": {
+                "description": "Where the routes live, app-relative (default `\"/rest/v1\"`).",
+                "type": "string"
+              },
+              "maxRows": {
+                "description": "The most rows one read returns, whatever `limit` asks for (default 1000).",
+                "type": "number"
+              },
+              "maxBodyBytes": {
+                "description": "The largest request body accepted, in bytes (default 1 MiB).",
+                "type": "number"
+              },
+              "statementTimeout": {
+                "description": "Each request's `statement_timeout`, in milliseconds (default 5000).",
+                "type": "number"
+              },
+              "maxConcurrent": {
+                "description": "The most REST statements running at once, so the routes cannot take every connection of the pool the rest of the app shares (default: half the pool's `max` when the client reports it — `Deno.SQL` and postgres.js do — else 5). A request past it waits up to a second, then is answered 503 `PGRST003` with `Retry-After`.",
+                "type": "number"
+              },
+              "exactCount": {
+                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`.",
+                "enum": [
+                  "all",
+                  "authenticated",
+                  "never"
+                ]
+              }
+            }
           }
         }
       }
@@ -273,7 +336,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -305,7 +368,7 @@
       "exports": [
         "."
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -334,7 +397,7 @@
         "./command",
         "./subscriptions"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -472,7 +535,7 @@
         "./command",
         "./types"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -526,7 +589,7 @@
         "./spec",
         "./types"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -686,7 +749,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -727,7 +790,7 @@
         "./dom",
         "./routes"
       ],
-      "denext": "^3.4.14",
+      "denext": "^3.4.15",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

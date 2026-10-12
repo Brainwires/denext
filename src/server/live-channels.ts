@@ -10,7 +10,7 @@
 // the subscriber's session (`no-policy` when the channel has none; a throw is a deny); a
 // post-await connected + cap re-check. No initial frame: a channel is stateless.
 
-import { type ChannelEvent, getChannel } from "../runtime/channel.ts";
+import { type ChannelEvent, type ChannelIdleReason, getChannel } from "../runtime/channel.ts";
 import { inRootContext } from "./root-context.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 
@@ -115,20 +115,20 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     if (!set) byKey.set(key, set = new Set());
     return set;
   };
-  const deindex = (sub: ChannelSub): void => {
+  const deindex = (sub: ChannelSub, reason: ChannelIdleReason): void => {
     const set = index.get(sub.channelId)?.get(sub.key);
     if (!set) return;
     if (sub.entry) set.delete(sub.entry as { conn: C; subId: string }); // O(1), no scan
     if (set.size === 0) {
       index.get(sub.channelId)!.delete(sub.key);
-      keyLifecycle(sub.channelId, sub.key, "onIdle");
+      keyLifecycle(sub.channelId, sub.key, "onIdle", reason);
     }
   };
-  const remove = (conn: C, subId: string): void => {
+  const remove = (conn: C, subId: string, reason: ChannelIdleReason = "unsubscribe"): void => {
     const sub = conn.channelSubs.get(subId);
     if (!sub) return;
     conn.channelSubs.delete(subId);
-    deindex(sub);
+    deindex(sub, reason);
   };
   const atCap = (conn: C, subId: string): boolean =>
     !conn.channelSubs.has(subId) && conn.channelSubs.size >= deps.limits().maxChannelsPerConnection;
@@ -255,13 +255,16 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
         return deps.sendError(conn, "limit", "too many subscriptions", { subId });
       }
       sub.authExpires = Date.now() + ttlMs(channelId);
-      remove(conn, subId); // a re-subscribe under the same id replaces the old one
+      // A re-subscribe under the same id replaces the old one — indexed first, so re-subscribing
+      // to the same key never takes it through idle (and the channel's per-key state with it).
+      const replaced = conn.channelSubs.get(subId);
       conn.channelSubs.set(subId, sub);
       const entry = { conn, subId };
       sub.entry = entry;
       const subscribers = indexFor(channelId, key);
       subscribers.add(entry);
       if (subscribers.size === 1) keyLifecycle(channelId, key, "onActive");
+      if (replaced) deindex(replaced, "unsubscribe");
       // Acknowledge the now-live subscription. Unlike a data subscription (whose first `data`
       // frame implies registration), a channel has no initial value, so this is the client's only
       // signal that a subsequent publish will reach it — sent as a control frame, not a per-sub
@@ -271,14 +274,14 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     },
     unsubscribe: remove,
     drop(conn) {
-      for (const subId of [...conn.channelSubs.keys()]) remove(conn, subId);
+      for (const subId of [...conn.channelSubs.keys()]) remove(conn, subId, "disconnect");
     },
     dispose() {
       if (flushTimer !== null) clearTimeout(flushTimer);
       flushTimer = null;
       pendingEvents.clear();
       for (const [channelId, byKey] of index) {
-        for (const key of byKey.keys()) keyLifecycle(channelId, key, "onIdle");
+        for (const key of byKey.keys()) keyLifecycle(channelId, key, "onIdle", "disconnect");
       }
       index.clear();
     },
@@ -309,11 +312,16 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
  * subscriber. The hook serves the channel, not whichever connection's frame triggered it, so it
  * runs in the root context; a throw is logged, never propagated into the hub.
  */
-function keyLifecycle(channelId: string, key: string, hook: "onActive" | "onIdle"): void {
+function keyLifecycle(
+  channelId: string,
+  key: string,
+  hook: "onActive" | "onIdle",
+  reason: ChannelIdleReason = "unsubscribe",
+): void {
   const fn = getChannel(channelId)?.[hook];
   if (typeof fn !== "function") return;
   try {
-    inRootContext(() => fn(key));
+    inRootContext(() => fn(key, reason));
   } catch (err) {
     console.error(`denext channels: ${hook} on ${channelId} threw`, err);
   }

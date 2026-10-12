@@ -71,9 +71,16 @@ export interface ChannelConfig<T> {
    * Called when the last subscriber of `key` on THIS instance leaves (unsubscribed, revoked,
    * denied on re-authorization, or its connection closed) — the place to release per-key state
    * a channel keeps for its subscribers. Runs in the root context; a throw is logged.
+   *
+   * `reason` is `"disconnect"` when the last subscriber's connection closed (or the hub shut
+   * down) — it may come back with the same key — and `"unsubscribe"` otherwise (unsubscribed,
+   * revoked, or denied on re-authorization).
    */
-  onIdle?: (key: string) => void;
+  onIdle?: (key: string, reason: ChannelIdleReason) => void;
 }
+
+/** Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}). */
+export type ChannelIdleReason = "unsubscribe" | "disconnect";
 
 /** A channel on the server. */
 export interface Channel<T> {
@@ -147,7 +154,7 @@ export interface ChannelInternals {
   /** A key's first local subscriber arrived. */
   onActive?: (key: string) => void;
   /** A key's last local subscriber left. */
-  onIdle?: (key: string) => void;
+  onIdle?: (key: string, reason: ChannelIdleReason) => void;
 }
 
 /** Brand shared across module instances. */

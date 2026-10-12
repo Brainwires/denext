@@ -88,7 +88,7 @@ Deno.test(
   async () => {
     const a = await app();
     try {
-      const bucket = storage.bucket(RUN);
+      const bucket = storage.bucket(RUN, { service: true });
       const plan = await bucket.createSignedUploadUrl("docs/hello world+1.txt", {
         contentType: "text/plain",
         size: 11,
@@ -118,10 +118,13 @@ Deno.test(
   async () => {
     const a = await app();
     try {
-      const plan = await storage.bucket(RUN).createSignedUploadUrl("pinned.txt", {
-        contentType: "text/plain",
-        size: 5,
-      });
+      const plan = await storage.bucket(RUN, { service: true }).createSignedUploadUrl(
+        "pinned.txt",
+        {
+          contentType: "text/plain",
+          size: 5,
+        },
+      );
       const wrongType = await fetch(plan.url, {
         method: "PUT",
         headers: { "content-type": "text/html" },
@@ -139,7 +142,7 @@ Deno.test(
         `MinIO accepted a body of the wrong size (${wrongSize.status})`,
       );
       await wrongSize.body?.cancel();
-      assertEquals(await storage.bucket(RUN).head("pinned.txt"), null);
+      assertEquals(await storage.bucket(RUN, { service: true }).head("pinned.txt"), null);
     } finally {
       await a.close();
     }
@@ -160,11 +163,14 @@ Deno.test(
         () => uploadFile(RUN, new Blob([bytes], { type: "image/png" }), { key: "big/part.png" }),
       );
       assertEquals(stored.size, size);
-      const head = await storage.bucket(RUN).head("big/part.png");
+      const head = await storage.bucket(RUN, { service: true }).head("big/part.png");
       assertEquals([head?.size, head?.contentType], [size, "image/png"]);
-      const tail = await fetch(await storage.bucket(RUN).createSignedUrl("big/part.png"), {
-        headers: { range: `bytes=${size - 1}-` },
-      });
+      const tail = await fetch(
+        await storage.bucket(RUN, { service: true }).createSignedUrl("big/part.png"),
+        {
+          headers: { range: `bytes=${size - 1}-` },
+        },
+      );
       assertEquals((await tail.bytes())[0], 42);
     } finally {
       await a.close();
@@ -178,7 +184,7 @@ Deno.test({
 }, async () => {
   const a = await app();
   try {
-    const bucket = storage.bucket(RUN);
+    const bucket = storage.bucket(RUN, { service: true });
     const keys = ["list/a b.txt", "list/a+b.txt", "list/ü.txt", "list/z/deep.txt", "list/%41.txt"];
     for (const key of keys) await bucket.upload(key, key, { contentType: "text/plain" });
     const big = new Uint8Array(9 * 1024 * 1024);

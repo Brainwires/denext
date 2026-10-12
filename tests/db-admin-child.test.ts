@@ -230,6 +230,10 @@ Deno.test("rows: a keyset page, the next cursor, and the 'as user' role and clai
   const scope = sent.find((s) => s.text.includes("set_config('role'"));
   assertEquals(scope?.params[0], "authenticated");
   assertEquals(JSON.parse(String(scope?.params[1])).sub, "u1");
+  // A legacy per-claim setting left on a pooled connection must not override the previewed user.
+  for (const legacy of ["request.jwt.claim.sub", "request.jwt.claim.role", "request.jwt.claim"]) {
+    assertStringIncludes(scope?.text ?? "", `set_config('${legacy}', '', true)`);
+  }
   // The page read ran in the scoped transaction, the catalog in another, unscoped one.
   const page = sent.find((s) => s.text.includes('FROM "public"."notes"'))!;
   assertEquals(scope?.tx, page.tx);

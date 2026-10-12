@@ -23,7 +23,7 @@ import {
 } from "@denext/denext/server";
 import { isStorageError, StorageError } from "./errors.ts";
 import { normalizeKey } from "./keys.ts";
-import { essence } from "./mime.ts";
+import { dispositionFor, essence } from "./mime.ts";
 import {
   bucketOf,
   type ResolvedBucket,
@@ -39,6 +39,7 @@ import {
   completeUpload,
   downloadPayload,
   planUpload,
+  presignedDownload,
   storage,
   storeChecked,
   uploadPayload,
@@ -52,9 +53,6 @@ const SIGN_BODY_LIMIT = 1024 * 1024;
 const TRANSFORM_SOURCE_LIMIT = 25 * 1024 * 1024;
 /** Raster types the image pipeline decodes. */
 const TRANSFORMABLE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-/** Types a browser may render inline (everything else downloads as an attachment). */
-const INLINE =
-  /^(image\/(png|jpeg|gif|webp|avif|bmp|x-icon)|video\/|audio\/|application\/pdf$|text\/plain$)/;
 
 /** Map anything thrown to the JSON error envelope denext's typed API uses. */
 function errorResponse(err: unknown): Response {
@@ -216,7 +214,7 @@ async function download(
   if (transform) return await transformed(rt, bucket, key, transform, cache, request);
   if (rt.driver.direct) {
     // A public object on a direct store: hand the client a short-lived presigned GET.
-    const url = await rt.driver.direct.presignGet(bucket.name, key, { expiresIn: 300 });
+    const url = await presignedDownload(rt, bucket.name, key, 300);
     return new Response(null, {
       status: 302,
       headers: { location: url, "cache-control": "private, max-age=60" },
@@ -235,7 +233,7 @@ function objectHeaders(info: ObjectInfo, cache: string): Headers {
     "x-content-type-options": "nosniff",
     // An uploaded HTML or SVG file must never run script with the app's origin.
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-    "content-disposition": INLINE.test(type) ? "inline" : "attachment",
+    "content-disposition": dispositionFor(type),
   });
   if (info.etag) headers.set("etag", `"${info.etag}"`);
   if (info.lastModified) headers.set("last-modified", info.lastModified.toUTCString());

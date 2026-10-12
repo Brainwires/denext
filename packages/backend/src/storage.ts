@@ -5,7 +5,14 @@
 import { auth } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
 import { normalizeKey, normalizePrefix } from "./keys.ts";
-import { checkSniffed, essence, mimeAllowed, SNIFF_BYTES, sniffMime } from "./mime.ts";
+import {
+  checkSniffed,
+  dispositionFor,
+  essence,
+  mimeAllowed,
+  SNIFF_BYTES,
+  sniffMime,
+} from "./mime.ts";
 import {
   bucketOf,
   clampExpiry,
@@ -59,9 +66,10 @@ function currentRequest(): Request | null {
 }
 
 /**
- * Enforce `authorize` for one operation. Outside a request, and for a service handle, nothing
- * is checked; a public bucket's downloads are open; otherwise `authorize` must return `true`
- * (absent → denied).
+ * Enforce `authorize` for one operation. A service handle is never checked; a public bucket's
+ * downloads are open; inside a request `authorize` must return `true` (absent → denied). Outside
+ * any request (a task, a script, module load) there is no session to authorize, so the operation
+ * is refused: such code uses `storage.bucket(name, { service: true })`, knowingly.
  *
  * @param bucket The bucket's rules.
  * @param op The operation.
@@ -75,9 +83,16 @@ async function authorizeOp(
   key: string,
   service = false,
 ): Promise<void> {
-  const request = currentRequest();
-  if (!request || service) return;
+  if (service) return;
   if (op === "download" && bucket.public) return;
+  const request = currentRequest();
+  if (!request) {
+    throw new StorageError(
+      "forbidden",
+      `${op} on ${bucket.name}/${key} outside a request has no session to authorize: ` +
+        `use storage.bucket(${JSON.stringify(bucket.name)}, { service: true }) in a task or script`,
+    );
+  }
   const allowed = bucket.authorize
     ? await bucket.authorize({ session: await auth(), op, key, bucket: bucket.name, request })
     : false;
@@ -378,7 +393,7 @@ async function signedUrl(
   }
   const expiresIn = clampExpiry(options.expiresIn, DOWNLOAD_EXPIRY);
   if (!options.transform && rt.driver.direct) {
-    return await rt.driver.direct.presignGet(bucket.name, k, { expiresIn });
+    return await presignedDownload(rt, bucket.name, k, expiresIn);
   }
   const exp = nowSeconds() + expiresIn;
   params.set("exp", String(exp));
@@ -386,6 +401,35 @@ async function signedUrl(
   const payload = downloadPayload(bucket.name, k, exp, options.transform);
   params.set("sig", await signPayload(payload, secretsOf(rt)));
   return `${path}?${params}`;
+}
+
+/**
+ * A presigned GET on a direct store that the store answers the way the app's own object route
+ * does: `response-content-type` from the stored metadata and `response-content-disposition`
+ * `attachment` for every type that is not safe inline (`dispositionFor`). The browser fetches
+ * from the store's origin, which sends no `nosniff` or sandbox CSP of its own, so an HTML, SVG
+ * or unknown object — including one a client PUT but never completed, whose bytes were never
+ * sniffed — downloads instead of rendering.
+ *
+ * @param rt The runtime (its driver has `direct`).
+ * @param bucket The bucket.
+ * @param key The normalized key.
+ * @param expiresIn The URL's lifetime (seconds).
+ * @returns The URL.
+ */
+export async function presignedDownload(
+  rt: StorageRuntime,
+  bucket: string,
+  key: string,
+  expiresIn: number,
+): Promise<string> {
+  const info = await rt.driver.head(bucket, key);
+  const type = info ? essence(info.contentType) : "";
+  return await rt.driver.direct!.presignGet(bucket, key, {
+    expiresIn,
+    disposition: type ? dispositionFor(type) : "attachment",
+    ...(type ? { contentType: type } : {}),
+  });
 }
 
 /** Run `fn` over `items`, at most `width` at a time. */

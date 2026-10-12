@@ -136,6 +136,7 @@ export type {
   ChannelConfig,
   ChannelContext,
   ChannelEvent,
+  ChannelIdleReason,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,
@@ -346,6 +347,7 @@ export type {
 export {
   after,
   clientIp,
+  clientIpForLimits,
   connection,
   cookies,
   draftMode,
@@ -535,6 +537,7 @@ export {
   updateAuthSession,
 } from "./auth/mod.ts";
 export type { RequireAuthOptions } from "./auth/mod.ts";
+export { nativeBearerToken } from "./auth/native.ts";
 export {
   apple,
   auth0,

@@ -75,10 +75,20 @@ const BACKEND_MIGRATIONS_TABLE = "backend_migrations";
 /**
  * The one statement that scopes a transaction: `set_config('role', …, true)` is
  * `SET LOCAL ROLE` (the form PostgREST uses, since `SET` cannot take a parameter), and
- * `request.jwt.claims` is what Supabase's `auth.*` functions read. Both are transaction-local.
+ * `request.jwt.claims` is what Supabase's `auth.*` functions read. All are transaction-local.
+ *
+ * Supabase's `auth.uid()` / `auth.role()` / `auth.email()` / `auth.jwt()` read the legacy
+ * per-claim settings (`request.jwt.claim.sub`, …, `request.jwt.claim`) FIRST and fall back to
+ * `request.jwt.claims` only when they are empty, so the statement blanks them too: a value left
+ * on the connection's session (or set by the database's or role's defaults) never overrides the
+ * identity this transaction runs as.
  */
-export const RLS_SETUP =
-  "select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)";
+export const RLS_SETUP = "select set_config('role', $1, true), " +
+  "set_config('request.jwt.claims', $2, true), " +
+  "set_config('request.jwt.claim.sub', '', true), " +
+  "set_config('request.jwt.claim.role', '', true), " +
+  "set_config('request.jwt.claim.email', '', true), " +
+  "set_config('request.jwt.claim', '', true)";
 
 /** The anonymous scope: Supabase's anon key carries `role: "anon"` and no subject. */
 export const ANON_SCOPE: RlsScope = { role: "anon", claims: JSON.stringify({ role: "anon" }) };
@@ -286,14 +296,23 @@ export function sessionClaims(
     },
     user_metadata: metadata,
     is_anonymous: false,
-    ...custom,
+    ...withoutIdentity(custom),
     ...identityClaims(user.id, user.email),
   };
 }
 
-/** The claims nothing may override. */
+/** The claims nothing may override: `email` comes from the user alone, or is absent. */
 function identityClaims(id: string, email: string | undefined): Record<string, unknown> {
   return { sub: id, role: "authenticated", ...(email === undefined ? {} : { email }) };
+}
+
+/**
+ * Custom claims without the identity keys (`sub`, `role`, `email`) — stripped, not just
+ * overwritten, so a user without an email cannot be given one by the app's own claims.
+ */
+function withoutIdentity(custom: Record<string, unknown> | undefined): Record<string, unknown> {
+  const { sub: _sub, role: _role, email: _email, ...rest } = custom ?? {};
+  return rest;
 }
 
 /**
@@ -307,7 +326,7 @@ export function userClaims(user: DbUser): Record<string, unknown> {
     aud: "authenticated",
     app_metadata: { roles: user.roles ?? [] },
     is_anonymous: false,
-    ...user.claims,
+    ...withoutIdentity(user.claims),
     ...identityClaims(user.id, user.email),
   };
 }
@@ -326,7 +345,7 @@ export function authenticatedScope(claims: Record<string, unknown>): RlsScope {
 }
 
 /** Start a query (or a value) now, as a promise — so it goes on the wire in call order. */
-function start<T>(value: PromiseLike<T> | T): Promise<T> {
+export function start<T>(value: PromiseLike<T> | T): Promise<T> {
   if (value === null || typeof (value as PromiseLike<T>)?.then !== "function") {
     return Promise.resolve(value as T);
   }
@@ -444,35 +463,45 @@ function isTemplate(value: unknown): value is TemplateStringsArray {
  * `db.service()` for those, knowingly.
  *
  * @param base The connecting role's client.
- * @param scope Resolves the role and claims (and anything that must happen first).
+ * @param scopeOf Called synchronously when a query is MADE (the template call, `unsafe`,
+ *   `begin`) — so it sees the request that made it; returns what resolves that query's role and
+ *   claims (and anything that must happen first) when the query runs.
  * @returns The scoped client.
  */
-export function scopedClient(base: SqlClient, scope: () => Promise<RlsScope>): SqlClient {
+export function scopedClient(
+  base: SqlClient,
+  scopeOf: () => () => Promise<RlsScope>,
+): SqlClient {
   const inTransaction = <T>(work: (tx: SqlClient) => PromiseLike<T> | T, options?: string) =>
-    scope().then((resolved) => {
+    scopeOf()().then((resolved) => {
       const body = (tx: SqlClient) => inScope(tx, resolved, work);
       return options === undefined
         ? base.begin(body)
         : (base.begin as unknown as (o: string, f: typeof body) => Promise<T>)(options, body);
     });
-  const oneQuery = <T>(query: (tx: SqlClient) => PromiseLike<T[]>) =>
-    scope().then((resolved) => scopedQuery(base, resolved, query));
+  const oneQuery = <T>(
+    scope: () => Promise<RlsScope>,
+    query: (tx: SqlClient) => PromiseLike<T[]>,
+  ) => scope().then((resolved) => scopedQuery(base, resolved, query));
   const client = ((first: unknown, ...rest: unknown[]) => {
     // `sql(object)` / `sql("name")` build a value (a helper or an identifier); nothing runs.
     if (!isTemplate(first)) {
       return (base as unknown as (...a: unknown[]) => unknown)(first, ...rest);
     }
-    return lazyQuery(() => oneQuery((tx) => tx(first, ...rest)));
+    const scope = scopeOf();
+    return lazyQuery(() => oneQuery(scope, (tx) => tx(first, ...rest)));
   }) as SqlClient;
-  client.unsafe = <T>(text: string, params?: unknown[]) =>
-    lazyQuery<T>(
-      () => oneQuery((tx) => tx.unsafe<T>(text, params)),
+  client.unsafe = <T>(text: string, params?: unknown[]) => {
+    const scope = scopeOf();
+    return lazyQuery<T>(
+      () => oneQuery(scope, (tx) => tx.unsafe<T>(text, params)),
       () =>
-        oneQuery((tx) => {
+        oneQuery(scope, (tx) => {
           const query = tx.unsafe<T>(text, params);
           return query.simple ? query.simple() : query;
         }),
     );
+  };
   client.begin = (<T>(a: unknown, b?: unknown) => {
     const options = typeof a === "string" ? a : undefined;
     const fn = (typeof a === "function" ? a : b) as (tx: SqlClient) => T | Promise<T>;

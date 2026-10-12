@@ -8,6 +8,139 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.15] - 2026-10-12
+
+### Added
+
+- **`@denext/backend`: auto-REST.** `backend({ postgres, rest: { schema?, tables?, basePath?,
+  maxRows?, maxBodyBytes?, statementTimeout? } })` serves the schema's tables PostgREST-style
+  under `/rest/v1/<table>` — only those the `anon` / `authenticated` roles hold a privilege on, read
+  from the catalog at startup (and on a miss under `denext dev`). `GET` / `HEAD` with `select=`
+  (columns only), filters (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `is`, `in`, each
+  behind an optional `not.`), `order=`, `limit` / `offset` / `Range` capped at `maxRows`,
+  `Prefer: count=exact` → `Content-Range`, and `Accept: application/vnd.pgrst.object+json`; `POST`
+  (an object or an array), and `PATCH` / `DELETE` that refuse a request without a filter, with
+  `Prefer: return=representation`. Every statement runs through `db()` (the request's user, or
+  `anon`) under a per-request `statement_timeout`; identifiers come only from the catalog and every
+  value is a typed `$n` parameter (a body is one `$n::json` expanded by `json_populate_record(set)`).
+  Errors are PostgREST-shaped `{ code, message, details, hint }` with SQLSTATEs mapped (`23505` →
+  409, `42501` → 403, `57014` → 504). Cookie-carrying cross-site writes are refused (the `csrf()`
+  rule). `from("table")` / `restClient()` from `@denext/backend/client` build the requests
+  (`select`, filters, `order`, `limit`, `range`, `single`, `insert`, `update`, `delete`) and resolve
+  to `{ data, error, count, status }`; a prepare step writes each table's `Row` / `Insert` /
+  `Update` types to `.denext/rest.ts` from the live catalog (a stub without a database). Guide:
+  [Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
+
+### Changed
+
+- **A channel's `onIdle` says why its key went idle.** `createChannel({ onIdle })` is now called
+  with `(key, reason)`: `"disconnect"` when the last subscriber's connection closed (it may come
+  back with the same key) and `"unsubscribe"` when it unsubscribed, was revoked or was denied on
+  re-authorization. Re-subscribing to the same key under the same subscription id no longer takes
+  the key through `onIdle` / `onActive`.
+- **`@denext/backend`: `db()` reads the identity at each query.** Without `as`, who a `db()` client
+  acts as is resolved for each query, from the request current when the query is made (once per
+  request), not when the client was made — so a module-level `const sql = db()` serves every
+  visitor as themself and is `anon` outside a request. `db({ as })` stays fixed.
+- **`@denext/backend`: storage outside a request needs a service handle.** With no request there is
+  no session to pass `authorize`, so a plain `storage.bucket(name)` call from a task or script is
+  refused (`forbidden`, naming `{ service: true }`); a public bucket's downloads stay open. Use
+  `storage.bucket(name, { service: true })` there.
+- **`@denext/backend` auto-REST defaults.** `statementTimeout` is 5000 ms (was 8000); new
+  `maxConcurrent` (default half the pool's `max`, else 5; excess requests wait up to 1 s, then get
+  `503` `PGRST003` with `Retry-After`) and `exactCount` (`"authenticated"` by default: an anonymous
+  `Prefer: count=exact` is refused with `400`; `"all"` / `"never"`).
+- **`nativeBearerToken(request)`** is exported from `denext/server`: the `Authorization: Bearer
+  nat_…` parser `auth()` uses, for handlers that exempt native-app requests from a cookie check.
+- **`clientIpForLimits()`** is exported from `denext/server`: the address to key a per-address
+  limit on — `clientIp()`, or `undefined` when that is an untrusted loopback, private, link-local
+  or unique-local socket peer (a reverse proxy every visitor shares, so a limit on it would be
+  site-wide).
+
+### Fixed
+
+- **`clientIp()` works inside Live hooks.** A channel's `authorize`, a `defineSubscription`
+  resolver or `authorize`, `live.authorize` / `canJoinRoom` / `canSubscribe` / `canWatchTags`, a
+  `useLive` fetcher and a `<Live>` re-render ran on a request rebuilt from the connection's cookie
+  with no client address, so `clientIp()` returned `undefined` there. They now see the address
+  `clientIp()` answered in the upgrade request: the socket peer, or the trusted proxy's last
+  `x-forwarded-for` hop under `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`.
+- **`@denext/backend` realtime: a timestamp key no longer loses its changes.** The re-read and
+  seed queries returned the key as `t."key"::text` while the trigger's notification spells it
+  `to_jsonb(row) ->> 'key'`; for a `timestamp` key the two differ (`2026-01-02 03:04:05` against
+  `2026-01-02T03:04:05`), so a re-read row matched no notification and a seeded key matched no
+  delete. Both queries now return the key the way the trigger does (`to_jsonb(t."key") #>> '{}'`,
+  the same text without building a JSON document per row); the comparison stays in the column's
+  own type, so the key index still serves it.
+
+### Security
+
+- **`denext ui`'s "Read as" preview ignores leftover per-claim settings.** It set only `role` and
+  `request.jwt.claims`, so a `request.jwt.claim.sub` left on a pooled connection could make
+  `auth.uid()` answer for another user in the preview. It now blanks those settings, as
+  `@denext/backend` does.
+- **Live connections are capped per client address.** `live.limits.maxConnectionsPerIp` (default
+  64) refuses, with 429 before upgrading, a handshake from an address that already holds that many
+  sockets — the address `clientIp()` answers (an IPv6 address counts as its /64). One client could
+  otherwise take every one of `maxConnections`. The cap is off for a connection whose address is
+  an untrusted loopback, private, link-local or unique-local socket peer (`127.0.0.0/8`, `10/8`,
+  `172.16/12`, `192.168/16`, `169.254/16`, `::1`, `fc00::/7`, `fe80::/10`, and their IPv4-mapped
+  forms): behind a reverse proxy without `trustForwardedHeaders` every visitor arrives from the
+  proxy's address, so the cap would be site-wide. Such connections still count against
+  `maxConnections`, and the server warns once that per-address limits are off until
+  `trustForwardedHeaders` (or `DENEXT_TRUST_PROXY=1`) is set; the first 429 from the cap is logged
+  once too, naming the address and the option.
+- **`@denext/backend` realtime: signed-out subscribers share one quota per address.** A signed-out
+  subscriber's `maxSubscriptionsPerIdentity` and seed budget were per Live connection, so opening
+  more sockets bought more of both. They are now per client address (`anon:<address>`, from
+  `clientIpForLimits()`), falling back to the connection when the address is unknown or an
+  untrusted proxy-looking peer.
+- **`@denext/backend` realtime: one client can no longer fill an instance's subscriptions.** Each
+  subscribe with a fresh key created a subscription (and ran a seed query of up to
+  `maxTrackedKeys` keys) that was kept 15 s after its subscriber left, against one instance-wide cap
+  of 10 000 with no per-subscriber limit, so a single signed-out client churning keys could hold
+  every slot. Subscriptions are now capped per identity (`maxSubscriptionsPerIdentity`, default 64:
+  a signed-in user across their connections, or one signed-out Live connection), an unsubscribed
+  key is forgotten at once, one whose connection closed is kept for a reconnect only while there is
+  room (at either cap the oldest such one gives way; only live subscriptions refuse a new one), and
+  seed queries run at most four at a time within a per-identity budget (a burst of 32, then 8 a
+  second).
+- **`@denext/backend` realtime: re-reads use the table's indexes and cannot pile up.** The re-read
+  and seed queries compared the key and the filter column as text (`t.id::text in (…)`), which no
+  index serves, so every burst was a sequential scan per subscriber group, and bursts arriving
+  while one ran started more in parallel. Keys and filter values are now cast to the column's own
+  type, read once from the catalog (`t.id = any(array(…)::<type>)`, an index scan); each query runs
+  under a transaction-local `statement_timeout` (`queryTimeoutMs`, default 5 000; a timed-out
+  re-read is a `resync`); and flushes are single-flight, so bursts that arrive during one are
+  delivered together by the next. Distinct filters (re-read groups) per identity are bounded by
+  `maxSubscriptionsPerIdentity`.
+- **`@denext/backend` auto-REST no longer exposes relations without row-level security by
+  default.** With `tables: "*"` only tables (and partitioned tables) with RLS enabled and views
+  created `with (security_invoker = true)` get a route; a granted table with RLS off, an ordinary
+  (owner's-rights) view, a materialized view or a foreign table is skipped and listed, with the
+  reason, in one startup warning. Naming a relation in `rest.tables` still serves it as named.
+- **`@denext/backend` auto-REST can no longer exhaust the shared Postgres pool** (`maxConcurrent`,
+  a shorter `statement_timeout`, and no anonymous exact counts by default — see Changed).
+- **`@denext/backend` auto-REST CSRF exemption matches `auth()`.** Only a request whose
+  `Authorization` header `auth()` itself reads as a native bearer session skips the cross-site
+  check; a look-alike spelling (`Bearer<TAB>nat_…`) that left the session on the cookie no longer
+  does.
+- **`@denext/backend`: a `db()` client kept at module scope no longer keeps its first visitor's
+  identity** (see Changed).
+- **`@denext/backend` row-level security: legacy claim settings can't override the identity.** The
+  setup statement also blanks `request.jwt.claim.sub`, `.role`, `.email` and `request.jwt.claim`
+  transaction-locally (still one pipelined statement), so a value left on a pooled connection or
+  set as a role default never wins over `request.jwt.claims` in Supabase's `auth.*` functions.
+- **`@denext/backend`: custom claims can't set `email`.** `sub`, `role` and `email` are stripped
+  from `rls.claims` and `db({ as: { claims } })`; `email` comes from the user alone.
+- **`@denext/backend` storage fails closed outside a request** (see Changed).
+- **`@denext/backend` S3 presigned downloads carry a content disposition.** Every presigned `GET`
+  the plugin signs sets `response-content-type` to the stored type and
+  `response-content-disposition` to `inline` only for raster images, audio, video, PDF and plain
+  text (the object route's rule) and `attachment` otherwise, so an object a client uploaded but
+  never completed (never sniffed) cannot render as HTML or SVG from the store's origin. The guide
+  documents bucket lifecycle rules for uploads that were never completed.
+
 ## [3.4.14] - 2026-10-12
 
 ### Added
@@ -13282,7 +13415,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.14...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.15...development
+[3.4.15]: https://jsr.io/@denext/denext@3.4.15
 [3.4.14]: https://jsr.io/@denext/denext@3.4.14
 [3.4.13]: https://jsr.io/@denext/denext@3.4.13
 [3.4.12]: https://jsr.io/@denext/denext@3.4.12

@@ -3,7 +3,7 @@
 // starts on its own, so a request that first loaded the image codec (an image transform on
 // download) used to leave its request visible to the next test here — and a task calling the
 // storage server API would then run the bucket's `authorize` with that old request's session
-// instead of the trusted out-of-request path. This file is its own isolate on purpose: the codec
+// instead of the out-of-request path (which refuses anything but a service handle). This file is its own isolate on purpose: the codec
 // must be loaded for the first time by the request below.
 
 import { assertEquals } from "@std/assert";
@@ -28,10 +28,14 @@ Deno.test("backend task context: a request loads the image codec for the first t
       },
     },
   });
-  await storage.bucket("img").upload("logo.png", samplePng()); // no request: trusted
-  await storage.bucket("vault").upload("secret.txt", "s3cret", { contentType: "text/plain" });
+  await storage.bucket("img", { service: true }).upload("logo.png", samplePng());
+  await storage.bucket("vault", { service: true }).upload("secret.txt", "s3cret", {
+    contentType: "text/plain",
+  });
   const sized = await app.call(
-    await storage.bucket("img").createSignedUrl("logo.png", { transform: { width: 32 } }),
+    await storage.bucket("img", { service: true }).createSignedUrl("logo.png", {
+      transform: { width: 32 },
+    }),
   );
   assertEquals([sized.status, sized.headers.get("content-type")], [200, "image/webp"]);
   await sized.body?.cancel();
@@ -47,7 +51,13 @@ Deno.test("backend task context: a scheduled task afterwards runs with no reques
       defineTask({
         handler: async () => {
           sawContext = currentContext();
-          return (await storage.bucket("vault").list()).objects.map((o) => o.key);
+          // A plain handle has no session to authorize out of a request: refused — never
+          // checked against a leaked request's session.
+          const refused = await storage.bucket("vault").list().then(() => "", (e) => e.message);
+          if (!refused.includes("{ service: true }")) throw new Error(`not refused: ${refused}`);
+          return (await storage.bucket("vault", { service: true }).list()).objects.map((o) =>
+            o.key
+          );
         },
       }),
     );
@@ -65,8 +75,8 @@ Deno.test("backend task context: a scheduled task afterwards runs with no reques
       else delete denoAny.cron;
     }
     assertEquals(fired.length, 1);
-    // Out of a request the server API is trusted: `authorize` is not consulted, so the task can
-    // read the vault — it is not refused as the old request, nor checked with its session.
+    // Out of a request `authorize` is never consulted: a plain handle is refused and a service
+    // handle reads the vault — nothing is checked with the old request's session.
     assertEquals(await fired[0](), ["secret.txt"]);
     assertEquals(sawContext, undefined);
     assertEquals(authorizeCalls, []);

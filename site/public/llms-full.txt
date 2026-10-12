@@ -634,8 +634,8 @@ s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, 
 authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
 `storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
 head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
-session and its absence denies (`{ service: true }` skips it). Browser: `uploadFile(bucket, file,
-{ onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
+session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
+Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
 chars). Docs: https://denext.dev/docs/backend
 
 **A database (zero-npm, server-only module):**
@@ -665,6 +665,10 @@ installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, fi
 delete only to subscribers who could see the row); `onTableChange(table, fn)` /
 `tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
 `table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS on (and
+`security_invoker` views; others only when named in `rest.tables`) PostgREST-style at `/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
+statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
+`@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
@@ -1208,7 +1212,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 3.4.14` — The denext framework version.
+- `VERSION: 3.4.15` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1333,10 +1337,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
+- `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
 - `clientIp(): string | undefined` — The client's IP address for the current request. Throws outside a request context (like headers); undefined when the request has no recorded peer (a handler invoked directly in a test, not through denext's server loop).
+- `clientIpForLimits(): string | undefined` — The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them.
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
@@ -1563,6 +1569,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MobileFlavorConfig` — One build flavor of the Capacitor shell under MobileConfig.flavors: what denext mobile build --flavor <name> changes for that build only. Every change is undone when the build ends (the native sources and capacitor.config.* are restored byte for byte).
 - `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).
 - `interface NativeAppleConfig` — Sign in with Apple for a native app: NativeIdTokenProviderConfig plus the secret.
+- `nativeBearerToken(request: Request | undefined): string | undefined` — The native access token an Authorization header carries: the token for a Bearer nat_… header, undefined when the header is absent or carries something else (an API token, Basic auth) — so cookie sessions keep working beside bearer API tokens.
 - `interface NativeGrantRecord` — A single-use native grant: an authorization **code** (handed to the app's redirect URI) or a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
 - `interface NativeIdTokenProviderConfig` — A provider whose id_tokens a native app may exchange at POST {basePath}/native/<id>.
 - `interface NativeSessionRecord` — One native-app session: a refresh-token rotation chain (a "family"). The refresh token the app holds names this record and its NativeSessionRecord.generation; each refresh advances the generation, so presenting an older one is a replay and revokes the family.
