@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **Docs: a Coming from Supabase guide.** `/docs/coming-from-supabase` maps each Supabase feature
+  to denext and `@denext/backend` (with side-by-side snippets for queries under row-level security,
+  sign-in, storage, realtime and edge functions), gives a migration checklist (schema and policies,
+  users with their ids and bcrypt hashes, storage objects, environment) and lists what is not there
+  yet.
 - **`@denext/backend`: realtime from the database.** `backend({ postgres, realtime: realtime({ tables:
   { notes: { events?, key? } } }) })` opts tables in: migration `backend_realtime_0001` installs a
   trigger function, and one migration per table an AFTER … FOR EACH ROW trigger, that

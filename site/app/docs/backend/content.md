@@ -11,6 +11,10 @@ denext plugin add @denext/backend
 Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.1.0"` to `deno.json`'s `imports`,
 then the plugin to `denext.config.ts`.
 
+Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
+Supabase feature to its denext equivalent and walks through moving the schema, policies, users and
+files.
+
 ## Storage
 
 ### Configure buckets
