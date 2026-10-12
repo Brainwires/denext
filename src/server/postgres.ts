@@ -66,6 +66,11 @@ export interface SqlClient {
     fn: (payload: string) => void,
     onlisten?: () => void,
   ): Promise<SqlListener>;
+  /**
+   * A connection of the pool for this caller alone, until `release()` returns it — what holds a
+   * session-level lock. Optional: `Deno.SQL` and {@linkcode fromPostgresJs} have it.
+   */
+  reserve?(): Promise<SqlClient & { release(): void | Promise<void> }>;
   /** Close the client's connections. */
   close(options?: { timeout?: number }): Promise<void>;
 }
@@ -150,6 +155,8 @@ export interface PostgresJsLike {
     fn: (payload: string) => void,
     onlisten?: () => void,
   ): Promise<{ unlisten(): Promise<unknown> }>;
+  /** A reserved connection (on the pool's client). */
+  reserve?(): Promise<PostgresJsLike & { release(): void }>;
   /** Close the pool (absent on a transaction's client). */
   end?(options?: { timeout?: number }): Promise<void>;
 }
@@ -183,6 +190,17 @@ export function fromPostgresJs(pg: PostgresJsLike): SqlClient {
           await listener.unlisten();
         },
       };
+    };
+  }
+  if (pg.reserve) {
+    const reserve = pg.reserve.bind(pg);
+    client.reserve = async () => {
+      const reserved = await reserve();
+      return Object.assign(fromPostgresJs(reserved), {
+        release: () => reserved.release(),
+        // Closing a reserved handle returns it; the pool stays the caller's.
+        close: () => Promise.resolve(reserved.release()),
+      });
     };
   }
   client.close = async (options) => {

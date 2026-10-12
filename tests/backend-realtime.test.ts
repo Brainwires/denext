@@ -34,9 +34,11 @@ import {
   installRealtime,
   parseNotification,
   realtimeEngine,
+  REVALIDATE_OWNER_SQL,
   splitFrame,
   toFrames,
 } from "../packages/backend/src/realtime.ts";
+import type { SqlClient } from "../src/server/postgres.ts";
 import {
   decodeSubscriptionKey,
   encodeSubscriptionKey,
@@ -388,6 +390,86 @@ Deno.test("realtime: onTableChange runs in the root context; revalidate re-pushe
   }
 });
 
+/** A reserved connection whose owner-lock answer the test steers, recording what it was sent. */
+function lockConnection(log: string[], answer: () => boolean | Error) {
+  return () => {
+    log.push("reserve");
+    const conn = Object.assign(() => Promise.resolve([]), {
+      unsafe: (text: string) => {
+        log.push(text === REVALIDATE_OWNER_SQL ? "owner?" : text);
+        const result = text === REVALIDATE_OWNER_SQL ? answer() : true;
+        return result instanceof Error
+          ? Promise.reject(result)
+          : Promise.resolve([{ owner: result }]);
+      },
+      begin: () => Promise.reject(new Error("unused")),
+      close: () => Promise.resolve(),
+      release: () => void log.push("release"),
+    }) as unknown as SqlClient & { release(): void };
+    return Promise.resolve(conn);
+  };
+}
+
+Deno.test("realtime: revalidate { owner: 'one' } revalidates only while this instance holds the lock", async () => {
+  const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+  const log: string[] = [];
+  let owner: boolean | Error = false;
+  sql.reserve = lockConnection(log, () => owner);
+  const env = await setUp({ revalidate: { owner: "one" } }, sql);
+  try {
+    const engine = realtimeEngine();
+    const hooks: string[] = [];
+    onTableChange("notes", (event) => hooks.push(event.key ?? ""));
+    await engine.start();
+    // Not the owner: the hooks run here, the revalidation is another instance's.
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => hooks.length === 1 && log.includes("owner?"));
+    await settle(30);
+    assertEquals(engine.stats.revalidations, 0);
+    // The owner: it revalidates, on the same reserved connection.
+    owner = true;
+    env.sql.insert("notes", { id: 2, owner: A, body: "y" });
+    await until(() => engine.stats.revalidations === 1, 2_000, "the owner's revalidation");
+    assertEquals(log.filter((l) => l === "reserve").length, 1, "one connection, reused");
+    // The connection died (its lock with it): this burst is not revalidated here, the
+    // connection is returned, and the next burst checks on a fresh one.
+    owner = new Error("connection terminated");
+    env.sql.insert("notes", { id: 3, owner: A, body: "z" });
+    await until(() => log.includes("release"), 2_000, "the dead connection released");
+    assertEquals(engine.stats.revalidations, 1);
+    owner = true;
+    env.sql.insert("notes", { id: 4, owner: A, body: "w" });
+    await until(() => engine.stats.revalidations === 2, 2_000, "revalidation after failover");
+    assertEquals(log.filter((l) => l === "reserve").length, 2);
+    // Stopping gives the lock up before the connection goes back to the pool.
+    log.length = 0;
+    await engine.stop();
+    assertEquals(log, ["select pg_advisory_unlock(1684369016, 1)", "release"]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: revalidate { owner: 'one' } without reserve() warns and revalidates everywhere", async () => {
+  const env = await setUp({ revalidate: { owner: "one" } });
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+  try {
+    const engine = realtimeEngine();
+    await engine.start();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => engine.stats.revalidations === 1, 2_000, "revalidation");
+    env.sql.insert("notes", { id: 2, owner: A, body: "y" });
+    await until(() => engine.stats.revalidations === 2, 2_000, "revalidation");
+    assertEquals(warnings.length, 1, "warned once");
+    assert(warnings[0].includes("reserve()"));
+  } finally {
+    console.warn = warn;
+    await env.done();
+  }
+});
+
 Deno.test("realtime: tableChanges() subscribes on the server as an identity", async () => {
   const env = await setUp();
   try {
@@ -510,6 +592,16 @@ Deno.test("realtime(): options are validated; backend() needs postgres for it", 
   assertThrows(() => realtime({ tables: { t: { key: "a-b" } } }), TypeError, "key");
   assertThrows(() => realtime({ tables: { t: { schema: "1x" } } }), TypeError, "schema");
   assertThrows(() => realtime({ tables: { t: {} }, maxSubscribers: 0 }), TypeError);
+  assertThrows(
+    () => realtime({ tables: { t: {} }, revalidate: { owner: "all" as "one" } }),
+    TypeError,
+    'revalidate.owner must be "every" or "one"',
+  );
+  assertThrows(
+    () => realtime({ tables: { t: {} }, revalidate: "yes" as unknown as boolean }),
+    TypeError,
+    "revalidate must be",
+  );
   assertThrows(() => backend({ realtime: { tables: { t: {} } } }), TypeError, "needs `postgres`");
   const options = { tables: { t: {} } };
   assertEquals(realtime(options), options);

@@ -74,7 +74,11 @@ export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
 export { rlsMigrations, rlsSetupSql } from "./src/rls.ts";
 export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-sql.ts";
-export type { RealtimeOptions, RealtimeTableOptions } from "./src/realtime-sql.ts";
+export type {
+  RealtimeOptions,
+  RealtimeRevalidateOptions,
+  RealtimeTableOptions,
+} from "./src/realtime-sql.ts";
 export type { TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export { fs } from "./src/fs-driver.ts";

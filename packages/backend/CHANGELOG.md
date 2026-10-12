@@ -7,7 +7,9 @@
   `realtimeSetupSql()` and `migrate: false` for a DBA) NOTIFY keys only; one listener per instance
   coalesces bursts and re-reads each subscriber's rows under their row-level security.
   `useTableChanges` (client), `onTableChange` and `tableChanges` (server), `revalidate: true` for
-  `table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+  `table:<name>` tags (`revalidate: { owner: "one" }`: on one instance per database, elected with
+  a Postgres advisory lock, for a shared cache). Needs a client with `listen` (`Deno.SQL`, or
+  `fromPostgresJs`).
 - **Row-level security, Supabase-compatible.** `db()` now runs every query inside a transaction
   that first sets `role` (`authenticated` for the request's signed-in user, else `anon`) and
   `request.jwt.claims` with `set_config(…, true)` — transaction-local, pipelined with the query

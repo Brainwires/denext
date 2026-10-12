@@ -208,3 +208,38 @@ Deno.test("fromPostgresJs maps listen() (and leaves it out when the driver has n
   }) as unknown as PostgresJsLike);
   assertEquals(without.listen, undefined);
 });
+
+Deno.test("fromPostgresJs maps reserve(): queries on the reserved connection, release returns it", async () => {
+  const calls: string[] = [];
+  const reserved = Object.assign(() => Promise.resolve([]), {
+    unsafe: (text: string) => {
+      calls.push(`reserved: ${text}`);
+      return Promise.resolve([{ owner: true }]);
+    },
+    begin: () => Promise.resolve(),
+    release: () => void calls.push("release"),
+  });
+  const pg = Object.assign(() => Promise.resolve([]), {
+    unsafe: () => Promise.resolve([]),
+    begin: () => Promise.resolve(),
+    reserve: () => {
+      calls.push("reserve");
+      return Promise.resolve(reserved);
+    },
+    end: () => Promise.resolve(void calls.push("end")),
+  }) as unknown as PostgresJsLike;
+  const conn = await fromPostgresJs(pg).reserve!();
+  assertEquals(await conn.unsafe("select 1"), [{ owner: true }]);
+  await conn.release();
+  await conn.close();
+  assertEquals(
+    calls,
+    ["reserve", "reserved: select 1", "release", "release"],
+    "never ends the pool",
+  );
+  const without = fromPostgresJs(Object.assign(() => Promise.resolve([]), {
+    unsafe: () => Promise.resolve([]),
+    begin: () => Promise.resolve(),
+  }) as unknown as PostgresJsLike);
+  assertEquals(without.reserve, undefined);
+});

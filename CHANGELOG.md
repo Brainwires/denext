@@ -48,6 +48,13 @@ and this project adheres to
   with a statement timeout (reads `READ ONLY`), identifiers come only from `pg_catalog`, values
   are parameters, passwords are masked, and `--read-only` refuses every write in the server and
   again in the child. Guide: [Project UI › Database](https://denext.dev/docs/ui#database).
+- **`@denext/backend`: realtime revalidation on one instance.** `realtime({ revalidate: { owner:
+  "one" } })` has a single server instance per database call `revalidateTag("table:<name>")` per
+  burst — the holder of a session-level Postgres advisory lock on a reserved connection, checked
+  once per burst; when it stops or dies the next instance to see a burst takes over. For a cache
+  shared by every instance; the default (`true`, `{ owner: "every" }`) stays one revalidation per
+  instance. `SqlClient` gains an optional `reserve()` (`Deno.SQL` has it; `fromPostgresJs` maps
+  postgres.js's), which the lock needs; without it every instance revalidates, with a warning.
 
 ### Fixed
 

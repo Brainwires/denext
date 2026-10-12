@@ -18,6 +18,11 @@
 //
 // Everything shared runs in the root async context: the listener, the flush timer and the
 // pacing timers serve every subscriber, not whichever request first started them.
+//
+// Every instance runs its own listener, so hooks and `revalidate` fire once per instance. With
+// `revalidate: { owner: "one" }` only the holder of a session-level advisory lock (taken on a
+// reserved connection, checked once per burst) revalidates; the lock goes with its connection,
+// so when the owner stops or dies the next instance to see a burst takes it over.
 
 import {
   createChannel,
@@ -121,6 +126,8 @@ export interface RealtimeStats {
   frames: number;
   /** Times the listener (re)subscribed. */
   listens: number;
+  /** `revalidateTag` calls this instance made (one per table per burst it owned). */
+  revalidations: number;
 }
 
 /** The burst window: Live's own flush interval. */
@@ -140,6 +147,25 @@ const IDLE_GRACE_MS = 15_000;
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
 
+/**
+ * The advisory lock (two int4 keys: "denx", 1) whose holder revalidates for every instance on
+ * the database (`revalidate: { owner: "one" }`). Advisory locks are per database.
+ */
+const OWNER_LOCK = [0x64656e78, 1] as const;
+
+/**
+ * Whether this connection holds the owner lock — taking it when it is free. Already holding it
+ * is read from `pg_locks` (by this backend's pid) rather than taken again: a session-level lock
+ * is reentrant, so a second `pg_try_advisory_lock` would stack another hold on every burst.
+ */
+export const REVALIDATE_OWNER_SQL = "select case when exists (select 1 from pg_locks where " +
+  `locktype = 'advisory' and pid = pg_backend_pid() and classid = ${OWNER_LOCK[0]} and ` +
+  `objid = ${OWNER_LOCK[1]} and objsubid = 2 and granted) then true else ` +
+  `pg_try_advisory_lock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]}) end as owner`;
+
+/** A reserved connection, as `SqlClient.reserve` hands it out. */
+type Reserved = SqlClient & { release(): void | Promise<void> };
+
 type RootBridge = { __denextInRootContext?: <R>(fn: () => R) => R };
 
 /** Run `fn` in the root async context (see src/server/root-context.ts). */
@@ -157,6 +183,7 @@ export class RealtimeEngine {
     rereads: 0,
     frames: 0,
     listens: 0,
+    revalidations: 0,
   };
   #client: () => SqlClient;
   #audiences = new Map<string, Audience>();
@@ -171,6 +198,9 @@ export class RealtimeEngine {
   #publish: (key: string, frame: TableChangesFrame) => Promise<void>;
   #stopped = false;
   #warned = false;
+  /** The reserved connection that holds (or tries for) the owner lock; `null` until needed. */
+  #lockConn: Promise<Reserved> | null = null;
+  #warnedReserve = false;
 
   /**
    * @param options The realtime options.
@@ -323,13 +353,13 @@ export class RealtimeEngine {
       if (resync.has(name)) continue;
       work.push(...this.#deliverTable(name, changes));
     }
+    this.#revalidate([...new Set([...resync, ...pending.keys()])]);
     await runLimited(work, REREAD_CONCURRENCY);
   }
 
   /** A table whose changes were lost: tell its hooks and subscribers to re-read. */
   #resyncTable(name: string): Array<() => Promise<void>> {
     this.#runHooks({ table: name, op: "resync" });
-    this.#revalidate(name);
     for (const audience of this.#audiences.values()) {
       if (audience.table.name === name && audience.active) {
         this.#enqueue(audience, { resync: true });
@@ -345,7 +375,6 @@ export class RealtimeEngine {
       if (change.oldKey !== undefined) event.oldKey = change.oldKey;
       this.#runHooks(event);
     }
-    this.#revalidate(name);
     const groups = new Map<string, Audience[]>();
     for (const audience of this.#audiences.values()) {
       if (audience.table.name !== name || !audience.active) continue;
@@ -367,11 +396,63 @@ export class RealtimeEngine {
     }
   }
 
-  #revalidate(table: string): void {
+  /** `revalidateTag("table:<name>")` for a burst's tables — here, or only on the owner. */
+  #revalidate(tables: string[]): void {
     if (!this.config.revalidate) return;
-    revalidateTag(`table:${table}`).catch((error) =>
-      console.error(`[@denext/backend] revalidateTag(table:${table}) failed`, error)
-    );
+    const run = () => {
+      for (const table of tables) {
+        this.stats.revalidations++;
+        revalidateTag(`table:${table}`).catch((error) =>
+          console.error(`[@denext/backend] revalidateTag(table:${table}) failed`, error)
+        );
+      }
+    };
+    if (this.config.revalidateOwner === "every") return run();
+    void this.#ownsRevalidation().then((owner) => {
+      if (owner && !this.#stopped) run();
+    });
+  }
+
+  /**
+   * Whether this instance holds the owner lock (taking it when free), on its reserved
+   * connection. A failed check — the connection (and with it the lock) is gone — answers `false`
+   * for this burst and reserves a fresh connection next time. A client without `reserve()`
+   * cannot hold the lock: every instance revalidates (warned once), never none.
+   */
+  async #ownsRevalidation(): Promise<boolean> {
+    const sql = this.#client();
+    if (typeof sql.reserve !== "function") {
+      if (!this.#warnedReserve) {
+        this.#warnedReserve = true;
+        console.warn(
+          '[@denext/backend] realtime revalidate.owner "one" needs a client with reserve() ' +
+            "(Deno.SQL, or postgres.js via fromPostgresJs); every instance revalidates instead",
+        );
+      }
+      return true;
+    }
+    const pending = this.#lockConn ??= inRoot(() => sql.reserve!());
+    try {
+      const [row] = await (await pending).unsafe<{ owner: boolean }>(REVALIDATE_OWNER_SQL);
+      return row?.owner === true;
+    } catch {
+      if (this.#lockConn === pending) this.#lockConn = null;
+      void pending.then((conn) => conn.release()).catch(() => {});
+      return false;
+    }
+  }
+
+  /** Give the owner lock up and return its connection to the pool (it must not keep the lock). */
+  async #releaseLock(): Promise<void> {
+    const pending = this.#lockConn;
+    this.#lockConn = null;
+    if (!pending) return;
+    try {
+      const conn = await pending;
+      await conn.unsafe(`select pg_advisory_unlock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]})`)
+        .then(() => {}, () => {});
+      await conn.release();
+    } catch { /* never reserved, or already gone: nothing is held */ }
   }
 
   /** Re-read the burst's rows once for the group, then work out each audience's changes. */
@@ -630,6 +711,7 @@ export class RealtimeEngine {
     const listener = this.#listener;
     this.#listener = null;
     await listener?.unlisten().catch(() => {});
+    await this.#releaseLock();
   }
 }
 

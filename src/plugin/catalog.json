@@ -223,8 +223,24 @@
                 }
               },
               "revalidate": {
-                "description": "Also `revalidateTag(\"table:<name>\")` once per burst of changes, so `<Live>`, `useLive`, `useApi({ tags })` and `defineSubscription({ tags })` watchers of that tag are pushed (default `false`).",
-                "type": "boolean"
+                "description": "Also `revalidateTag(\"table:<name>\")` once per burst of changes, so `<Live>`, `useLive`, `useApi({ tags })` and `defineSubscription({ tags })` watchers of that tag are pushed (default `false`). `true` is `{ owner: \"every\" }`.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "owner": {
+                        "description": "`\"every\"` (the default): each instance revalidates for every burst its own listener receives — right for an instance-local cache. `\"one\"`: one instance per database does, elected with a session-level Postgres advisory lock held on a reserved connection; when that connection closes (the instance stops or dies) the next instance to see a burst takes over. Use `\"one\"` only when the cache is shared by every instance (a Postgres cache store); it needs a client with `reserve()` (`Deno.SQL`, or postgres.js through `fromPostgresJs`), and without one every instance revalidates.",
+                        "enum": [
+                          "every",
+                          "one"
+                        ]
+                      }
+                    }
+                  }
+                ]
               },
               "migrate": {
                 "description": "Install the triggers by migration (recorded in `backend_migrations`) the first time realtime is used (default `true`). `false` when a database administrator applies realtimeSetupSql instead.",

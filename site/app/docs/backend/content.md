@@ -501,12 +501,21 @@ changes may have been missed). `realtime({ revalidate: true })` also calls
 `<Live tags={["table:notes"]}>`, `defineSubscription({ tags })`, `useApi({ tags })` — is pushed by
 database writes from anywhere, including another service or `psql`.
 
+Every instance runs its own listener, so with several instances that revalidation happens once per
+instance — what an instance-local cache needs. When the cache is shared (a Postgres cache store),
+`realtime({ revalidate: { owner: "one" } })` has one instance per database do it: the holder of a
+session-level Postgres advisory lock, taken on a reserved connection and checked once per burst
+(one round trip). The lock goes with its connection, so when the owner stops or dies the next
+instance to see a burst takes over. It needs a client with `reserve()` (`Deno.SQL`, or postgres.js
+through `fromPostgresJs`); without one every instance revalidates, with a warning.
+`onTableChange` hooks still run on every instance.
+
 ### Options
 
 | Option           | Default | What it does                                                                                    |
 | ---------------- | ------- | ----------------------------------------------------------------------------------------------- |
 | `tables`         | —       | `{ name: { events?, key?, schema? } }`: the tables, their events, key column and schema.        |
-| `revalidate`     | `false` | `revalidateTag("table:<name>")` per burst.                                                      |
+| `revalidate`     | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.    |
 | `migrate`        | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead. |
 | `maxSubscribers` | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect).                |
 | `maxTrackedKeys` | 10 000  | Keys tracked per subscription, for deletes.                                                     |

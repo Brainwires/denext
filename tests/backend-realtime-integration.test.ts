@@ -25,7 +25,11 @@ import { resetChannels } from "../src/runtime/channel.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { db, onTableChange, type TableChangeEvent } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
-import { installRealtime, realtimeEngine } from "../packages/backend/src/realtime.ts";
+import {
+  installRealtime,
+  RealtimeEngine,
+  realtimeEngine,
+} from "../packages/backend/src/realtime.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -213,6 +217,107 @@ Deno.test({
       );
     } finally {
       await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+/** Two server instances' engines on one database: two clients, two listeners. */
+async function twoInstances(
+  env: { app: SqlClient; url: string },
+  revalidate: boolean | { owner: "every" | "one" },
+): Promise<{ engines: RealtimeEngine[]; clients: SqlClient[] }> {
+  await env.app.unsafe("create table if not exists notes (id bigserial primary key, body text)");
+  const clients = [env.app, new SQL!(env.url)];
+  const engines = clients.map((client) =>
+    new RealtimeEngine({ tables: { notes: {} }, revalidate }, () => client, () => Promise.resolve())
+  );
+  for (const engine of engines) await engine.start();
+  return { engines, clients };
+}
+
+/** Insert one row and wait for every running engine's flush and ownership check. */
+async function burst(app: SqlClient, engines: RealtimeEngine[]): Promise<number[]> {
+  const before = engines.map((e) => e.stats.flushes);
+  await app.unsafe("insert into notes (body) values ('x')");
+  await until(() => engines.every((e, i) => e.stats.flushes > before[i]), 5_000, "the flushes");
+  await settle(250); // the owner check is one round trip after the flush
+  return engines.map((e) => e.stats.revalidations);
+}
+
+const OWNER_HOLDERS = `select pid from pg_locks where locktype = 'advisory'
+  and classid = 1684369016 and objid = 1 and objsubid = 2 and granted
+  and database = (select oid from pg_database where datname = $1)`;
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: revalidate owner "one" — one instance revalidates, with failover${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let engines: RealtimeEngine[] = [];
+    let clients: SqlClient[] = [];
+    try {
+      ({ engines, clients } = await twoInstances(env, { owner: "one" }));
+      const total = (counts: number[]) => counts.reduce((a, b) => a + b, 0);
+      let counts = await burst(env.app, engines);
+      assertEquals(total(counts), 1, `one instance revalidated (${counts})`);
+      const owner = counts.indexOf(1);
+      counts = await burst(env.app, engines);
+      assertEquals(total(counts), 2);
+      assertEquals(counts[owner], 2, "the same owner, every burst");
+      assertEquals((await env.admin.unsafe(OWNER_HOLDERS, [env.database])).length, 1);
+
+      // The owner's connection dies (the instance hung, the network dropped): its lock goes
+      // with it, and the next burst is revalidated exactly once, by whoever takes the lock.
+      const [{ pid }] = await env.admin.unsafe<{ pid: number }>(OWNER_HOLDERS, [env.database]);
+      await env.admin.unsafe("select pg_terminate_backend($1)", [pid]);
+      const deadline = Date.now() + 5_000;
+      while ((await env.admin.unsafe(OWNER_HOLDERS, [env.database])).length > 0) {
+        if (Date.now() > deadline) throw new Error("the terminated owner kept its lock");
+        await settle(50);
+      }
+      let previous = counts;
+      counts = await burst(env.app, engines);
+      const failover = counts.map((n, i) => n - previous[i]);
+      assertEquals(total(failover), 1, `failover revalidated once (${failover})`);
+      const owning = failover.indexOf(1);
+      previous = counts;
+      counts = await burst(env.app, engines);
+      assertEquals(counts.map((n, i) => n - previous[i])[owning], 1, "and keeps the lock");
+
+      // The owner stops (a deploy): it gives the lock up, and the survivor takes over.
+      await engines[owning].stop();
+      const survivor = engines[1 - owning];
+      const before = survivor.stats.revalidations;
+      await burst(env.app, [survivor]);
+      assertEquals(survivor.stats.revalidations - before, 1, "the survivor revalidates");
+    } finally {
+      for (const engine of engines) await engine.stop();
+      if (clients[1]) await clients[1].close();
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `realtime on a real Postgres: revalidate "every" — each instance revalidates${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let engines: RealtimeEngine[] = [];
+    let clients: SqlClient[] = [];
+    try {
+      ({ engines, clients } = await twoInstances(env, true));
+      assertEquals(await burst(env.app, engines), [1, 1]);
+      assertEquals((await env.admin.unsafe(OWNER_HOLDERS, [env.database])).length, 0, "no lock");
+    } finally {
+      for (const engine of engines) await engine.stop();
+      if (clients[1]) await clients[1].close();
       await env.drop();
     }
   },

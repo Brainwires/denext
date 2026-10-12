@@ -26,9 +26,9 @@ export interface RealtimeOptions {
   /**
    * Also `revalidateTag("table:<name>")` once per burst of changes, so `<Live>`, `useLive`,
    * `useApi({ tags })` and `defineSubscription({ tags })` watchers of that tag are pushed
-   * (default `false`).
+   * (default `false`). `true` is `{ owner: "every" }`.
    */
-  revalidate?: boolean;
+  revalidate?: boolean | RealtimeRevalidateOptions;
   /**
    * Install the triggers by migration (recorded in `backend_migrations`) the first time
    * realtime is used (default `true`). `false` when a database administrator applies
@@ -42,6 +42,20 @@ export interface RealtimeOptions {
    * (default 10 000); see the docs for what happens past it.
    */
   maxTrackedKeys?: number;
+}
+
+/** `realtime({ revalidate: { owner } })`: which server instances revalidate. */
+export interface RealtimeRevalidateOptions {
+  /**
+   * `"every"` (the default): each instance revalidates for every burst its own listener
+   * receives — right for an instance-local cache. `"one"`: one instance per database does,
+   * elected with a session-level Postgres advisory lock held on a reserved connection; when that
+   * connection closes (the instance stops or dies) the next instance to see a burst takes over.
+   * Use `"one"` only when the cache is shared by every instance (a Postgres cache store);
+   * it needs a client with `reserve()` (`Deno.SQL`, or postgres.js through `fromPostgresJs`),
+   * and without one every instance revalidates.
+   */
+  owner?: "every" | "one";
 }
 
 /** A table's resolved options. */
@@ -64,6 +78,8 @@ export interface ResolvedRealtime {
   tables: Map<string, ResolvedTable>;
   /** Revalidate `table:<name>` per burst. */
   revalidate: boolean;
+  /** Which instances revalidate (see {@linkcode RealtimeRevalidateOptions.owner}). */
+  revalidateOwner: "every" | "one";
   /** Migrate on first use. */
   migrate: boolean;
   /** The subscription cap per instance. */
@@ -81,6 +97,19 @@ function positive(value: number | undefined, fallback: number, field: string): n
     throw new TypeError(`realtime(): ${field} must be a positive integer`);
   }
   return value;
+}
+
+/** `revalidate`'s owner, validated. */
+function revalidateOwner(revalidate: RealtimeOptions["revalidate"]): "every" | "one" {
+  if (revalidate === undefined || typeof revalidate === "boolean") return "every";
+  if (typeof revalidate !== "object" || revalidate === null) {
+    throw new TypeError("realtime(): revalidate must be a boolean or { owner }");
+  }
+  const owner = revalidate.owner ?? "every";
+  if (owner !== "every" && owner !== "one") {
+    throw new TypeError(`realtime(): revalidate.owner must be "every" or "one"`);
+  }
+  return owner;
 }
 
 function identifier(value: string, what: string): string {
@@ -129,7 +158,9 @@ export function resolveRealtime(options: RealtimeOptions): ResolvedRealtime {
   if (entries.length === 0) throw new TypeError("realtime(): `tables` names no table");
   return {
     tables: new Map(entries.map(([name, table]) => [name, resolveTable(name, table ?? {})])),
-    revalidate: options.revalidate === true,
+    revalidate: options.revalidate === true ||
+      (typeof options.revalidate === "object" && options.revalidate !== null),
+    revalidateOwner: revalidateOwner(options.revalidate),
     migrate: options.migrate !== false,
     maxSubscribers: positive(options.maxSubscribers, 10_000, "maxSubscribers"),
     maxTrackedKeys: positive(options.maxTrackedKeys, 10_000, "maxTrackedKeys"),
