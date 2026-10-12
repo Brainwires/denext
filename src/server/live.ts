@@ -48,8 +48,7 @@ import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
 import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
-import { clientAddrOf, limitAddrOf, setClientAddr } from "./remote-addr.ts";
-import { ipBucket } from "./auth/rate-limit.ts";
+import { clientAddrOf, ipBucket, limitAddrOf, setClientAddr } from "./remote-addr.ts";
 import { inRootContext } from "./root-context.ts";
 import {
   LIVE_REF_ID,

@@ -107,7 +107,7 @@ export function copyRemoteAddr(from: Request, to: Request): void {
  * Expands `::`, accepts a trailing embedded IPv4 (`::ffff:1.2.3.4`) and strips a zone id
  * (`%eth0`) — so every spelling of one address decodes to the same groups.
  */
-export function parseIPv6Groups(input: string): number[] | null {
+function parseIPv6Groups(input: string): number[] | null {
   const s = input.toLowerCase().split("%")[0];
   const halves = s.split("::");
   if (halves.length > 2) return null;
@@ -117,6 +117,39 @@ export function parseIPv6Groups(input: string): number[] | null {
   if (halves.length === 1) return head.length === 8 ? head : null;
   const fill = 8 - head.length - tail.length;
   return fill < 0 ? null : [...head, ...new Array<number>(fill).fill(0), ...tail];
+}
+
+/**
+ * The limiter bucket for a client address.
+ *
+ * IPv4 is used as-is. **IPv6 is normalised and bucketed by /64**, for two reasons: the
+ * same address has many spellings (`::1`, `0:0:0:0:0:0:0:1`, `[::1]`, `::0001`), each of
+ * which used to open its own window, and a residential IPv6 allocation is at least a /64, so
+ * keying on the full 128 bits hands one client an effectively unbounded supply of fresh buckets.
+ *
+ * An IPv4-mapped IPv6 address (`::ffff:198.51.100.7`, `::ffff:c633:6407`) is the IPv4 address it
+ * carries — on a dual-stack listener every IPv4 client is reported that way, and their shared /64
+ * would be one bucket for all of them.
+ *
+ * An address that parses as neither is lower-cased and returned unchanged (it is already
+ * whatever the socket peer or the trusted proxy said). The Live hub's per-address connection cap,
+ * `rateLimit()` and `clientIpForLimits({ bucket: true })` key on it too.
+ *
+ * @param ip A client address.
+ * @returns The bucket the address counts against.
+ */
+export function ipBucket(ip: string): string {
+  const trimmed = ip.trim().replace(/^\[|\]$/g, "");
+  if (!trimmed.includes(":")) return trimmed;
+  const groups = parseIPv6Groups(trimmed);
+  if (!groups) return trimmed.toLowerCase();
+  // An IPv4-mapped address (a dual-stack listener's IPv4 client) is that IPv4 client: its /64
+  // would be one bucket for every IPv4 visitor.
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return `${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`;
+  }
+  // The /64 prefix: the four high hextets, hex, with the host half zeroed.
+  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(":")}::/64`;
 }
 
 /** One `:`-separated run of hextets (a trailing dotted IPv4 counts as two), or `null`. */

@@ -17,7 +17,12 @@ import type { LiveConfig } from "../src/server/config.ts";
 import { createChannel, resetChannels } from "../src/runtime/channel.ts";
 import { defineSubscription } from "../src/runtime/define-subscription.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
-import { clientIp, clientIpForLimits } from "../src/server/request-context.ts";
+import {
+  clientIp,
+  clientIpForLimits,
+  createRequestContext,
+  runWithContext,
+} from "../src/server/request-context.ts";
 import { isLocalAddress, limitAddrOf, setRemoteAddr } from "../src/server/remote-addr.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -362,4 +367,19 @@ Deno.test("isLocalAddress / limitAddrOf: loopback, private, link-local and ULA p
   const forwarded = upgradeFrom("127.0.0.1", { "x-forwarded-for": "10.0.0.1" });
   assertEquals(limitAddrOf(forwarded, true), "10.0.0.1", "a trusted hop, even private");
   assertEquals(limitAddrOf(forwarded, false), undefined, "an untrusted header is ignored");
+});
+
+Deno.test("clientIpForLimits({ bucket: true }): an IPv6 address's /64, IPv4 as it is, none stays none", () => {
+  const at = (ip: string) => {
+    const request = new Request("http://app.test/");
+    setRemoteAddr(request, { transport: "tcp", hostname: ip, port: 1 });
+    return request;
+  };
+  const read = (request: Request, options?: { bucket?: boolean }) =>
+    runWithContext(createRequestContext(request), () => clientIpForLimits(options));
+  assertEquals(read(at("2001:db8:1:2::a")), "2001:db8:1:2::a", "the address by default");
+  assertEquals(read(at("2001:db8:1:2::a"), { bucket: true }), "2001:db8:1:2::/64");
+  assertEquals(read(at("2001:0DB8:1:2:ffff:0:0:1"), { bucket: true }), "2001:db8:1:2::/64");
+  assertEquals(read(at("198.51.100.7"), { bucket: true }), "198.51.100.7");
+  assertEquals(read(at("::1"), { bucket: true }), undefined, "an untrusted local peer: none");
 });

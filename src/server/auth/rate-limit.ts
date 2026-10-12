@@ -33,7 +33,7 @@
  * @module
  */
 
-import { clientAddrOf, isLocalAddress, parseIPv6Groups, remoteAddrOf } from "../remote-addr.ts";
+import { clientAddrOf, ipBucket, isLocalAddress, remoteAddrOf } from "../remote-addr.ts";
 import { currentContext } from "../request-context.ts";
 
 /** One key's open failure window. */
@@ -280,33 +280,8 @@ export interface RateLimitKeyOptions {
  * whatever the client sent — so a per-request forged header can't dodge the limiter.
  * `"unknown"` only when neither is available (an embedder calling the handler directly).
  */
-export function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
+function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
   return clientAddrOf(request, options.trustForwardedHeaders === true) ?? "unknown";
-}
-
-/**
- * The limiter bucket for a client address.
- *
- * IPv4 is used as-is. **IPv6 is normalised and bucketed by /64**, for two reasons: the
- * same address has many spellings (`::1`, `0:0:0:0:0:0:0:1`, `[::1]`, `::0001`,
- * `::ffff:7f00:1`), each of which used to open its own window — five spellings, five
- * budgets — and a residential IPv6 allocation is at least a /64, so keying on the full
- * 128 bits hands one client an effectively unbounded supply of fresh buckets.
- *
- * An address that parses as neither is lower-cased and returned unchanged (it is already
- * whatever the socket peer or the trusted proxy said). The Live hub keys its per-address
- * connection cap on it too.
- *
- * @param ip A client address.
- * @returns The bucket the address counts against.
- */
-export function ipBucket(ip: string): string {
-  const trimmed = ip.trim().replace(/^\[|\]$/g, "");
-  if (!trimmed.includes(":")) return trimmed;
-  const groups = parseIPv6Groups(trimmed);
-  if (!groups) return trimmed.toLowerCase();
-  // The /64 prefix: the four high hextets, hex, with the host half zeroed.
-  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(":")}::/64`;
 }
 
 /**

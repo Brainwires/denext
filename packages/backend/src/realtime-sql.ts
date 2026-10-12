@@ -1,5 +1,5 @@
 // The realtime options and the SQL that makes a table send changes: `backend_realtime_0001`
-// installs one trigger function, `denext_realtime_notify()`, and each opted-in table gets an
+// (replaced by `backend_realtime_0002`) installs one trigger function, `denext_realtime_notify()`, and each opted-in table gets an
 // AFTER … FOR EACH ROW trigger calling it with the table's name and key column. The function
 // sends `pg_notify('denext_realtime', json)` with `{ table, op, key, old_key?, ts }` — the KEY
 // only, never row data: a NOTIFY payload is capped at 8000 bytes, and the row is re-read for
@@ -239,6 +239,57 @@ BEGIN
   RETURN NULL;
 END $fn$;`;
 
+/**
+ * `backend_realtime_0002`: the trigger function again (`CREATE OR REPLACE`, so it replaces
+ * `backend_realtime_0001`'s on a database that has it), spelling a `timestamptz` key in UTC.
+ * `to_jsonb(row) ->> key` formats a `timestamptz` in the writing session's `TimeZone`, so a
+ * writer and a reader with different settings spelled one instant differently and a change was
+ * never matched to its re-read row. The key column's type comes from the catalog on each call,
+ * so a column altered to or from `timestamptz` is spelled right at once; the re-read and seed
+ * queries spell such a key the same way (`to_jsonb(k AT TIME ZONE 'UTC') #>> '{}'`).
+ */
+const NOTIFY_FUNCTION_UTC_KEYS =
+  `CREATE OR REPLACE FUNCTION denext_realtime_notify() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  key_column text := TG_ARGV[1];
+  in_utc boolean;
+  old_key text;
+  new_key text;
+  payload jsonb;
+  body text;
+BEGIN
+  SELECT a.atttypid = 'pg_catalog.timestamptz'::pg_catalog.regtype INTO in_utc
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = TG_RELID AND a.attname = key_column AND NOT a.attisdropped;
+  IF TG_OP <> 'INSERT' THEN old_key := to_jsonb(OLD) ->> key_column; END IF;
+  IF TG_OP <> 'DELETE' THEN new_key := to_jsonb(NEW) ->> key_column; END IF;
+  IF in_utc THEN
+    -- The JSON text carries its offset, so it parses back to the same instant in any TimeZone.
+    old_key := to_jsonb(old_key::timestamptz AT TIME ZONE 'UTC') #>> '{}';
+    new_key := to_jsonb(new_key::timestamptz AT TIME ZONE 'UTC') #>> '{}';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    payload := jsonb_build_object('op', 'delete', 'key', old_key);
+  ELSIF TG_OP = 'INSERT' THEN
+    payload := jsonb_build_object('op', 'insert', 'key', new_key);
+  ELSE
+    payload := jsonb_build_object('op', 'update', 'key', new_key);
+    IF old_key IS DISTINCT FROM new_key THEN
+      payload := payload || jsonb_build_object('old_key', old_key);
+    END IF;
+  END IF;
+  payload := payload || jsonb_build_object('table', TG_ARGV[0],
+    'ts', floor(extract(epoch FROM clock_timestamp()) * 1000));
+  body := payload::text;
+  IF octet_length(body) > ${MAX_PAYLOAD} THEN
+    -- A key too long to send: tell subscribers to re-read rather than fail the write.
+    body := jsonb_build_object('table', TG_ARGV[0], 'op', lower(TG_OP), 'overflow', true)::text;
+  END IF;
+  PERFORM pg_notify('${REALTIME_NOTIFY_CHANNEL}', body);
+  RETURN NULL;
+END $fn$;`;
+
 /** The SQL that (re)creates one table's trigger. */
 function tableTrigger(table: ResolvedTable): string {
   const on = table.events.map((event) => event.toUpperCase()).join(" OR ");
@@ -258,8 +309,8 @@ function shortHash(text: string): string {
 }
 
 /**
- * The realtime migrations, as `migratePostgres` takes them: `backend_realtime_0001` (the
- * trigger function) and one per table, named after the table and a hash of its trigger — so a
+ * The realtime migrations, as `migratePostgres` takes them: `backend_realtime_0001` and
+ * `backend_realtime_0002` (the trigger function, then its replacement) and one per table, named after the table and a hash of its trigger — so a
  * changed `events` or `key` installs a new migration that replaces the trigger. Removing a
  * table from the options leaves its trigger in place (`DROP TRIGGER denext_realtime ON t`).
  *
@@ -273,7 +324,11 @@ export function realtimeMigrations(options: RealtimeOptions): Migration[] {
     const sql = tableTrigger(table);
     return { name: `backend_realtime_t_${table.name}_${shortHash(sql)}`, sql };
   });
-  return [{ name: "backend_realtime_0001", sql: NOTIFY_FUNCTION }, ...tables];
+  return [
+    { name: "backend_realtime_0001", sql: NOTIFY_FUNCTION },
+    { name: "backend_realtime_0002", sql: NOTIFY_FUNCTION_UTC_KEYS },
+    ...tables,
+  ];
 }
 
 /**
