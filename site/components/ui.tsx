@@ -40,7 +40,7 @@ export const NAV: {
       { slug: "lists", label: "Lists & scrolling" },
       { slug: "navigation-native", label: "Native-feel navigation" },
       { slug: "uploads", label: "File uploads" },
-      { slug: "backend", label: "Backend: storage" },
+      { slug: "backend", label: "Backend" },
       { slug: "error-handling", label: "Error handling" },
       { slug: "tasks", label: "Scheduled tasks" },
       { slug: "live", label: "Live components" },

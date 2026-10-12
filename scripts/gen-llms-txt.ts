@@ -68,6 +68,10 @@ export function llmsIndex(): string {
 - [Fixed in denext](${SITE}/docs/fixed): problems on Next.js, React, Vite and React Native
   stacks that denext handles, each with the test that proves it (source:
   \`catalog/fixed-in-denext.json\`).
+- [Backend](${SITE}/docs/backend): the opt-in \`@denext/backend\` plugin — storage, Postgres
+  scoped by row-level security (\`db()\`), realtime from tables, auto-REST with a typed client.
+- [Coming from Supabase](${SITE}/docs/coming-from-supabase): a concept map and migration
+  checklist (schema, policies, users and files).
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.
 - [GitHub](${REPO}): source, examples, and issues.
 

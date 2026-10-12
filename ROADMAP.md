@@ -121,6 +121,8 @@ Each is documented as a manual recipe today (the
   to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
 - **`@denext/backend` database type generator:** row types for every table of the schema, for
   server-side `db()` queries (auto-REST's `.denext/rest.ts` types only the tables it serves).
+- **`@denext/backend` realtime over logical replication,** for the very high write volumes that
+  LISTEN/NOTIFY serializes on commit.
 
 ## `denext ui` and DevTools
 
