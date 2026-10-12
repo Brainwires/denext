@@ -622,7 +622,9 @@ export function runWithContext<T>(ctx: RequestContext, fn: () => T): T {
  * @returns What `fn` returns.
  */
 export function withoutRequestContext<T>(fn: () => T): T {
-  return storage.exit(fn);
+  // `run(undefined)` rather than `exit()`: Deno 2.9.6's `exit()` restores the outer store after the
+  // first `await` inside `fn`, so an async request would resume in the stale request again.
+  return storage.run(undefined as unknown as RequestContext, fn);
 }
 
 /** The current request context, or undefined if none is active. */
