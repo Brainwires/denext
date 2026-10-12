@@ -193,6 +193,19 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
   const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
   const u = (rel: string) => new URL(rel, base).href;
   return {
+    ...coreRuntimeEntries(u),
+    ...platformRuntimeEntries(u),
+    ...compatRuntimeEntries(u),
+    ...reactNativeRuntimeEntries(u),
+  };
+}
+
+/** Resolves a framework-relative path against the runtime's base URL. */
+type EntryUrl = (rel: string) => string;
+
+/** The core runtime: the React family, the JSX runtime, SSR and the client entries. */
+function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
     // The bare `denext` entry (`import { SwipeableRow } from "denext"`): the root barrel,
     // prebuilt into the same graph so its hooks and reconciler are the one shared instance.
     "denext": u("mod.ts"),
@@ -232,6 +245,12 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+  };
+}
+
+/** The mobile, navigation, desktop and updates client modules. */
+function platformRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
     // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
     "mobile": u("src/mobile/mod.ts"),
     "mobile-clerk": u("src/mobile/clerk.ts"),
@@ -249,6 +268,12 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "desktop-clerk": u("src/desktop/clerk.ts"),
     // `denext/updates` — one update API over the OTA client, the desktop bridge and a reload.
     "updates": u("src/updates/mod.ts"),
+  };
+}
+
+/** The React-ecosystem helpers and the next-intl, next/* and Remix compat modules. */
+function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
     // The React-ecosystem helpers denext exports as subpaths (`denext/slot`,
     // `denext/compose-refs`) and the next-intl compat's client modules.
     "slot": u("src/compat/slot.ts"),
@@ -281,6 +306,12 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
     // migrated Remix app's client components share the one denext instance.
     "remix": u("src/compat/remix/mod.ts"),
+  };
+}
+
+/** React Native mode's shims: `denext/expo/*`, the shell overlay, the lists and stand-ins. */
+function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
+  return {
     // The `denext/expo/*` shims (`expo-<name>`): React Native mode aliases `expo-*` to them,
     // and their hooks must share the one denext instance, as `denext/mobile`'s do.
     ...expoRuntimeEntries(u),
@@ -2234,56 +2265,67 @@ export function viteAssetPlugin(
         }
         return { path: resolved.path, namespace: VITE_ASSET_NS[flag] ?? "vite-url" };
       });
-      if (assets.emitDir) {
-        // Bare asset imports: a file under `emitDir/assets/`, imported as its URL.
-        build.onResolve({ filter: EMIT_ASSET_RE }, async (args) => {
-          if (args.namespace !== "file" && args.namespace !== "") return null;
-          // Re-entry guard: the on-behalf resolve below runs this hook again for the same
-          // path; the marker lets that inner pass fall through to the real resolvers.
-          if ((args.pluginData as { denextAsset?: boolean } | undefined)?.denextAsset) return null;
-          const resolved = await build.resolve(args.path, {
-            kind: args.kind,
-            importer: args.importer,
-            resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
-            pluginData: { denextAsset: true },
-          });
-          if (resolved.errors.length > 0 || !resolved.path) return null;
-          return { path: resolved.path, namespace: "vite-emit" };
-        });
-        build.onLoad({ filter: /.*/, namespace: "vite-emit" }, async (args) => ({
-          contents: `export default ${
-            JSON.stringify(await emitAsset(assets, args.path, await Deno.readFile(args.path)))
-          };`,
-          loader: "js",
-        }));
-        build.onLoad({ filter: /.*/, namespace: "vite-css-url" }, async (args) => ({
-          contents: `export default ${
-            JSON.stringify(
-              await emitAsset(assets, args.path, await assets.compileCss!(args.path), ".css"),
-            )
-          };`,
-          loader: "js",
-        }));
-      }
-      build.onLoad({ filter: /.*/, namespace: "vite-url" }, async (args) => ({
-        contents: await Deno.readFile(args.path),
-        loader: "file",
-        resolveDir: dirname(args.path),
-      }));
-      build.onLoad({ filter: /.*/, namespace: "vite-raw" }, async (args) => ({
-        contents: await Deno.readTextFile(args.path),
-        loader: "text",
-      }));
-      build.onLoad({ filter: /.*/, namespace: "vite-inline" }, async (args) => ({
-        contents: await Deno.readFile(args.path),
-        loader: "dataurl",
-      }));
-      build.onLoad({ filter: /.*/, namespace: "vite-worker" }, async (args) => ({
-        contents: workerStub(await workerUrl(args.path)),
-        loader: "js",
-      }));
+      if (assets.emitDir) emitAssetHooks(build, assets);
+      viteQueryLoaders(build, workerUrl);
     },
   };
+}
+
+/** Bare asset imports under `emitDir/assets/`, and the loaders that emit an asset as its URL. */
+function emitAssetHooks(build: esbuild.PluginBuild, assets: AssetOptions): void {
+  // Bare asset imports: a file under `emitDir/assets/`, imported as its URL.
+  build.onResolve({ filter: EMIT_ASSET_RE }, async (args) => {
+    if (args.namespace !== "file" && args.namespace !== "") return null;
+    // Re-entry guard: the on-behalf resolve below runs this hook again for the same
+    // path; the marker lets that inner pass fall through to the real resolvers.
+    if ((args.pluginData as { denextAsset?: boolean } | undefined)?.denextAsset) return null;
+    const resolved = await build.resolve(args.path, {
+      kind: args.kind,
+      importer: args.importer,
+      resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
+      pluginData: { denextAsset: true },
+    });
+    if (resolved.errors.length > 0 || !resolved.path) return null;
+    return { path: resolved.path, namespace: "vite-emit" };
+  });
+  build.onLoad({ filter: /.*/, namespace: "vite-emit" }, async (args) => ({
+    contents: `export default ${
+      JSON.stringify(await emitAsset(assets, args.path, await Deno.readFile(args.path)))
+    };`,
+    loader: "js",
+  }));
+  build.onLoad({ filter: /.*/, namespace: "vite-css-url" }, async (args) => ({
+    contents: `export default ${
+      JSON.stringify(
+        await emitAsset(assets, args.path, await assets.compileCss!(args.path), ".css"),
+      )
+    };`,
+    loader: "js",
+  }));
+}
+
+/** The loaders behind the `?url` / `?raw` / `?inline` / `?worker` namespaces. */
+function viteQueryLoaders(
+  build: esbuild.PluginBuild,
+  workerUrl: (path: string) => Promise<string>,
+): void {
+  build.onLoad({ filter: /.*/, namespace: "vite-url" }, async (args) => ({
+    contents: await Deno.readFile(args.path),
+    loader: "file",
+    resolveDir: dirname(args.path),
+  }));
+  build.onLoad({ filter: /.*/, namespace: "vite-raw" }, async (args) => ({
+    contents: await Deno.readTextFile(args.path),
+    loader: "text",
+  }));
+  build.onLoad({ filter: /.*/, namespace: "vite-inline" }, async (args) => ({
+    contents: await Deno.readFile(args.path),
+    loader: "dataurl",
+  }));
+  build.onLoad({ filter: /.*/, namespace: "vite-worker" }, async (args) => ({
+    contents: workerStub(await workerUrl(args.path)),
+    loader: "js",
+  }));
 }
 
 /**

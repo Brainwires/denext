@@ -169,29 +169,7 @@ export async function prepareExport(
   });
   const manifest = await scanRoutes(paths.appDir);
   const platform = options.platform ?? "web";
-  // The native App Router path resolves the target's platform files through file-URL
-  // redirects; a next-compat app resolves them in its esbuild bundles instead.
-  const native = !(await detectNextCompat(paths));
-  const platformRedirects = native
-    ? await projectPlatformRedirects(paths.projectDir, paths.config, platform)
-    : {};
-  // The client bundles and crawls resolve aliases with Deno's own resolver, so the modules that
-  // reach a variant through one are rewritten for them (the server loader follows aliases).
-  const platformImports = await platformImportMap(
-    paths.projectDir,
-    platformRedirects,
-    join(paths.outDir, "platform-imports", platform),
-  );
-  // The boundary / hydration crawls see the modules this target loads, and a module that only
-  // other targets have fails here with a message naming its variants.
-  setModuleGraphRedirects(paths.configPath, platformImports);
-  if (native) {
-    await assertPlatformFilesResolve(
-      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
-      paths.projectDir,
-      platformResolution(paths.config, platform),
-    );
-  }
+  const platformRedirects = await targetPlatformFiles(paths, manifest, platform);
   // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
   // previous export stays intact (and servable) until the new one is complete — a failed
   // export never leaves an empty `out/`.
@@ -227,6 +205,41 @@ export async function prepareExport(
     pages: 0,
     skipped: [],
   };
+}
+
+/**
+ * The export target's platform files: file-URL redirects on the native App Router path (a
+ * next-compat app resolves them in its esbuild bundles instead), set for the module crawls.
+ */
+async function targetPlatformFiles(
+  paths: ProjectPaths,
+  manifest: ExportContext["manifest"],
+  platform: ExportContext["platform"],
+): Promise<ExportContext["platformRedirects"]> {
+  // The native App Router path resolves the target's platform files through file-URL
+  // redirects; a next-compat app resolves them in its esbuild bundles instead.
+  const native = !(await detectNextCompat(paths));
+  const platformRedirects = native
+    ? await projectPlatformRedirects(paths.projectDir, paths.config, platform)
+    : {};
+  // The client bundles and crawls resolve aliases with Deno's own resolver, so the modules that
+  // reach a variant through one are rewritten for them (the server loader follows aliases).
+  const platformImports = await platformImportMap(
+    paths.projectDir,
+    platformRedirects,
+    join(paths.outDir, "platform-imports", platform),
+  );
+  // The boundary / hydration crawls see the modules this target loads, and a module that only
+  // other targets have fails here with a message naming its variants.
+  setModuleGraphRedirects(paths.configPath, platformImports);
+  if (native) {
+    await assertPlatformFilesResolve(
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+      paths.projectDir,
+      platformResolution(paths.config, platform),
+    );
+  }
+  return platformRedirects;
 }
 
 /**

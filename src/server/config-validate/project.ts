@@ -1,0 +1,117 @@
+// The project-level parts of denext.config: Tailwind, i18n, feature flags, project CLI verbs and
+// the `optimizePackageImports` lists.
+
+import type { DenextConfig } from "../config.ts";
+import { VERB_NAME } from "../../cli/command.ts";
+import { validateRemovedExperimental } from "./keys.ts";
+import type { Fail } from "./shared.ts";
+
+/** `tailwind.input`/`output` are required non-empty path strings. */
+function validateTailwind(tailwind: unknown, fail: Fail): void {
+  if (tailwind === undefined) return;
+  if (typeof tailwind !== "object" || tailwind === null) {
+    return fail("tailwind", "must be an object");
+  }
+  const tw = tailwind as Record<string, unknown>;
+  for (const k of ["input", "output"]) {
+    if (typeof tw[k] !== "string" || !tw[k]) {
+      fail(`tailwind.${k}`, "must be a non-empty path string");
+    }
+  }
+}
+
+/** `i18n.locales` is a non-empty string list and `defaultLocale` is one of them. */
+function validateI18n(i18n: unknown, fail: Fail): void {
+  if (i18n === undefined) return;
+  const { locales, defaultLocale } = (i18n ?? {}) as { locales?: unknown; defaultLocale?: unknown };
+  const list = Array.isArray(locales) ? locales : [];
+  if (list.length === 0 || list.some((l) => typeof l !== "string")) {
+    return fail("i18n.locales", "must be a non-empty array of locale strings");
+  }
+  if (typeof defaultLocale !== "string" || !list.includes(defaultLocale)) {
+    fail("i18n.defaultLocale", "must be one of i18n.locales");
+  }
+}
+
+/**
+ * `features` must be a flat map of booleans — the fold replaces a `feature("KEY")` call with
+ * the literal, so a non-boolean value would emit invalid code (and a nested object is always a
+ * mistake). Absent keeps every flag off.
+ */
+function validateFeatures(features: unknown, at: string, fail: Fail): void {
+  if (features === undefined) return;
+  if (typeof features !== "object" || features === null || Array.isArray(features)) {
+    fail(at, "must be an object mapping flag names to booleans");
+  }
+  for (const [key, value] of Object.entries(features as Record<string, unknown>)) {
+    if (typeof value !== "boolean") {
+      fail(`${at}.${key}`, "must be a boolean");
+    }
+  }
+}
+
+/**
+ * One `commands[i]` entry: a usable verb name, a summary to show in `denext --help`,
+ * and a callable `run`. Nothing here checks for a collision with a built-in verb —
+ * that is not an error: the CLI simply keeps the built-in (core wins) and skips the
+ * entry, so a denext release adding a verb can never break a project's config load.
+ */
+function validateCommand(command: unknown, index: number, seen: Set<string>, fail: Fail): void {
+  const at = `commands[${index}]`;
+  if (typeof command !== "object" || command === null || Array.isArray(command)) {
+    return fail(at, "must be an object with `name`, `summary`, and `run`");
+  }
+  const { name, summary, run } = command as Record<string, unknown>;
+  // The one grammar for a verb name, shared with the CLI's help cache: what validation admits
+  // here is exactly what the cache accepts back from disk (`src/cli/command-cache.ts`).
+  if (typeof name !== "string" || !VERB_NAME.test(name)) {
+    fail(`${at}.name`, `must be a lowercase verb name matching ${VERB_NAME}`);
+  }
+  if (seen.has(name as string)) {
+    fail(`${at}.name`, `duplicates an earlier \`commands\` entry ("${name}")`);
+  }
+  seen.add(name as string);
+  if (typeof summary !== "string" || !summary) {
+    fail(`${at}.summary`, "must be a non-empty one-line description");
+  }
+  if (typeof run !== "function") fail(`${at}.run`, "must be a function");
+}
+
+/** `commands` is a list of shape-valid, uniquely named project verbs. */
+export function validateCommands(commands: unknown, fail: Fail): void {
+  if (commands === undefined) return;
+  if (!Array.isArray(commands)) return fail("commands", "must be an array of command objects");
+  const seen = new Set<string>();
+  commands.forEach((command, i) => validateCommand(command, i, seen, fail));
+}
+
+/**
+ * `optimizePackageImports` (and Next's `experimental.optimizePackageImports`) is a list of
+ * package names, `"!pkg"` exclusions, or (top-level only) `false` — a non-string entry would
+ * otherwise never match an import, silently.
+ */
+function validatePackageList(list: unknown, at: string, fail: Fail, allowFalse = false): void {
+  if (list === undefined || (allowFalse && list === false)) return;
+  const bad = (p: unknown) => typeof p !== "string" || p === "" || p === "!";
+  if (!Array.isArray(list) || list.some(bad)) {
+    fail(
+      at,
+      "must be an array of package names (e.g. " +
+        '["lucide-react", "react-icons/*", "!recharts"])' + (allowFalse ? " or false" : ""),
+    );
+  }
+}
+
+/** Nested fields whose absence would crash at request time rather than at boot. */
+export function validateNestedRequired(config: DenextConfig, fail: Fail): void {
+  validateRemovedExperimental(config.experimental, fail);
+  validateFeatures(config.features, "features", fail);
+  validatePackageList(config.optimizePackageImports, "optimizePackageImports", fail, true);
+  validatePackageList(
+    config.experimental?.optimizePackageImports,
+    "experimental.optimizePackageImports",
+    fail,
+  );
+  validateTailwind(config.tailwind, fail);
+  validateI18n(config.i18n, fail);
+}

@@ -216,6 +216,34 @@ export async function resolveDesktopCapabilities(
     (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier;
   const appId = explicitId ?? DEFAULT_APP_ID;
   const dirs = desktopAppDirs(appId);
+  const base = desktopLaunchBase(config, caps, explicitId, dirs);
+
+  if (!caps) return { capabilities: [], ...base };
+  assertAppIdentity(Boolean(explicitId), caps);
+  const capabilities = await buildBuiltinCaps(caps, {
+    dirs,
+    appId,
+    base: options.base,
+    picked: base.pickedPaths,
+    updater: base.updater,
+    manifestUrl: (desktop as { update?: { manifestUrl?: unknown } } | undefined)?.update
+      ?.manifestUrl,
+  });
+  return { capabilities, ...base };
+}
+
+/**
+ * Everything {@linkcode resolveDesktopCapabilities} resolves besides the capabilities: the app
+ * dirs, the auth-session flag, the app origin, deep links, the picked-path set, the window
+ * settings, the UI updater, `spa.proxy` and the configured sidecars.
+ */
+function desktopLaunchBase(
+  config: DenextConfig | undefined,
+  caps: DesktopCapabilitiesConfig | undefined,
+  explicitId: string | undefined,
+  dirs: ReturnType<typeof desktopAppDirs>,
+) {
+  const desktop = config?.desktop;
   // `auth-session` is a runtime endpoint, not a bridge capability, so it never becomes a
   // `DesktopCapability`; the flag only gates the loopback OAuth endpoint in `runDesktop`.
   const authSessionEnabled = (caps as { authSession?: unknown } | undefined)?.authSession === true;
@@ -234,7 +262,7 @@ export async function resolveDesktopCapabilities(
     (desktop as { update?: { ui?: unknown } } | undefined)?.update?.ui,
     explicitId,
   );
-  const base = {
+  return {
     appSupportDir: dirs.data,
     authSessionEnabled,
     deepLinks,
@@ -249,19 +277,6 @@ export async function resolveDesktopCapabilities(
     ...(updater ? { updater } : {}),
     configSidecars: launchSidecars((desktop as { sidecars?: unknown } | undefined)?.sidecars),
   };
-
-  if (!caps) return { capabilities: [], ...base };
-  assertAppIdentity(Boolean(explicitId), caps);
-  const capabilities = await buildBuiltinCaps(caps, {
-    dirs,
-    appId,
-    base: options.base,
-    picked: pickedPaths,
-    updater,
-    manifestUrl: (desktop as { update?: { manifestUrl?: unknown } } | undefined)?.update
-      ?.manifestUrl,
-  });
-  return { capabilities, ...base };
 }
 
 /**

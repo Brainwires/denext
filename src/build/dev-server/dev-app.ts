@@ -121,59 +121,7 @@ export function createDevApp(st: DevState): RequestHandler {
   const { paths } = st;
   const rules = startConfigRules(st);
   installDefaultCacheStore(st);
-  const appConfig: AppConfig = {
-    getManifest: () => getManifest(st),
-    load: st.load,
-    publicDir: paths.publicDir,
-    clientEntryFor: (route) => clientEntryFor(st, route),
-    styleHrefsFor: (route) => styleHrefsFor(st, route),
-    // A constant URL; the handler serves it on demand and renderGlobalError only references it
-    // when a global-error.tsx exists (else it returns null before touching the entry).
-    globalErrorEntry: GLOBAL_ERROR_BUNDLE_PATH,
-    getMiddleware: () => getMiddleware(st),
-    // Plugins register lazily on the first getManifest (after createApp), so resolve the
-    // combined handler per request. Only wired when plugins exist.
-    matchExternal: paths.config?.plugins?.length
-      ? async (request: Request) => {
-        const handler = getPluginRequestHandler();
-        return handler ? await handler(request) : null;
-      }
-      : undefined,
-    onRequestError: onRequestError(st),
-    devScriptSrc: DEV_RELOAD_JS_PATH,
-    i18n: paths.i18n ?? undefined,
-    basePath: paths.config?.basePath,
-    trailingSlash: paths.config?.trailingSlash,
-    redirects: rules.redirects,
-    rewrites: rules.rewrites,
-    headerRules: rules.headers,
-    flight: true,
-    appDir: paths.appDir,
-    tagLoad: st.tagLoad,
-    // Each target's island instances (its platform files) are tagged on its first render.
-    tagScope: renderPlatform,
-    // An action runs the requesting target's own (and, after an edit, current) implementation.
-    actionScope: (request) => devActionScope(st, devPlatformOf(request), request),
-    flightRoutes: st.flightRoutes,
-    // A platform session's own boundary (its platform files may reach other islands).
-    flightBoundary: async () => {
-      const platform = renderPlatform();
-      return platform === "web" ? null : await devBoundaryFor(st, platform);
-    },
-    flightClients: st.flightClients,
-    flightServers: st.flightServers,
-    cacheComponents: resolveCacheComponents(paths.config),
-    csp: paths.config?.csp,
-    streaming: resolveStreaming(paths.config),
-    hsts: paths.config?.hsts,
-    apiBatch: paths.config?.apiBatch,
-    apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
-    cors: paths.config?.cors,
-    appLinks: paths.config?.appLinks,
-    // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
-    // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
-    ...resolveServerOptions(paths.config),
-  };
+  const appConfig = devAppConfig(st, rules);
   // `onRequest` is read from the config object per request, so it is set on it once the
   // (async) instrumentation load lands — unset until then, which keeps the `DENEXT_LOG`
   // default logger in place for a project without the export.
@@ -189,4 +137,77 @@ export function createDevApp(st: DevState): RequestHandler {
     config: resolveLive(paths.config),
   });
   return appHandler;
+}
+
+/** The {@linkcode createApp} configuration of this dev server (`onRequest` is set later). */
+function devAppConfig(st: DevState, rules: ReturnType<typeof startConfigRules>): AppConfig {
+  const { paths } = st;
+  return {
+    getManifest: () => getManifest(st),
+    load: st.load,
+    publicDir: paths.publicDir,
+    clientEntryFor: (route) => clientEntryFor(st, route),
+    styleHrefsFor: (route) => styleHrefsFor(st, route),
+    // A constant URL; the handler serves it on demand and renderGlobalError only references it
+    // when a global-error.tsx exists (else it returns null before touching the entry).
+    globalErrorEntry: GLOBAL_ERROR_BUNDLE_PATH,
+    getMiddleware: () => getMiddleware(st),
+    matchExternal: devPluginHandler(paths),
+    onRequestError: onRequestError(st),
+    devScriptSrc: DEV_RELOAD_JS_PATH,
+    i18n: paths.i18n ?? undefined,
+    basePath: paths.config?.basePath,
+    trailingSlash: paths.config?.trailingSlash,
+    redirects: rules.redirects,
+    rewrites: rules.rewrites,
+    headerRules: rules.headers,
+    flight: true,
+    appDir: paths.appDir,
+    ...devPlatformScopes(st),
+    flightClients: st.flightClients,
+    flightServers: st.flightServers,
+    cacheComponents: resolveCacheComponents(paths.config),
+    csp: paths.config?.csp,
+    streaming: resolveStreaming(paths.config),
+    hsts: paths.config?.hsts,
+    apiBatch: paths.config?.apiBatch,
+    apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
+    cors: paths.config?.cors,
+    appLinks: paths.config?.appLinks,
+    // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
+    // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
+    ...resolveServerOptions(paths.config),
+  };
+}
+
+/**
+ * Plugins register lazily on the first getManifest (after createApp), so resolve the
+ * combined handler per request. Only wired when plugins exist.
+ */
+function devPluginHandler(paths: DevState["paths"]): AppConfig["matchExternal"] {
+  return paths.config?.plugins?.length
+    ? async (request: Request) => {
+      const handler = getPluginRequestHandler();
+      return handler ? await handler(request) : null;
+    }
+    : undefined;
+}
+
+/** The per-target hooks: each target's island tags, actions and Flight boundary. */
+function devPlatformScopes(
+  st: DevState,
+): Pick<AppConfig, "tagLoad" | "tagScope" | "actionScope" | "flightRoutes" | "flightBoundary"> {
+  return {
+    tagLoad: st.tagLoad,
+    // Each target's island instances (its platform files) are tagged on its first render.
+    tagScope: renderPlatform,
+    // An action runs the requesting target's own (and, after an edit, current) implementation.
+    actionScope: (request) => devActionScope(st, devPlatformOf(request), request),
+    flightRoutes: st.flightRoutes,
+    // A platform session's own boundary (its platform files may reach other islands).
+    flightBoundary: async () => {
+      const platform = renderPlatform();
+      return platform === "web" ? null : await devBoundaryFor(st, platform);
+    },
+  };
 }

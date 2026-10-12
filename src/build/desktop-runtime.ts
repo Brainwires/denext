@@ -430,6 +430,67 @@ const LAUFEY_APPS = [
   "laufey/cef/build/Release/laufey.app",
 ];
 
+/** Whether codesign reports `path` as carrying no signature at all. */
+async function unsigned(path: string, run: CaptureRunner): Promise<boolean> {
+  return (await run("codesign", ["-dv", path])).text.includes("not signed at all");
+}
+
+/** Ad-hoc sign `path` when it carries no signature; whether it signed. */
+async function adHocSignIfUnsigned(path: string, run: CaptureRunner): Promise<boolean> {
+  if (!await unsigned(path, run)) return false;
+  const signed = await run("codesign", ["--force", "--sign", "-", path]);
+  if (signed.code !== 0) throw new Error(`denext: codesign failed for ${path}: ${signed.text}`);
+  return true;
+}
+
+/** The Mach-O regular files under `dir` (symlinks skipped), sorted. */
+async function machOFilesUnder(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    const path = join(dir, e.name);
+    if (e.isDirectory) out.push(...await machOFilesUnder(path));
+    else if (e.isFile && await isMachO(path)) out.push(path);
+  }
+  return out.sort();
+}
+
+/** The `Contents/Frameworks` directories whose name ends in `suffix`, sorted. */
+async function nestedBundles(app: string, suffix: string): Promise<string[]> {
+  const dir = join(app, "Contents", "Frameworks");
+  if (!(await Deno.stat(dir).catch(() => null))?.isDirectory) return [];
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    if (e.isDirectory && e.name.endsWith(suffix)) out.push(join(dir, e.name));
+  }
+  return out.sort();
+}
+
+/**
+ * Ad-hoc sign, inside-out, the nested code of an `.app` that ships with no signature at all (the
+ * x86_64 CEF archive: Apple's linker signs arm64 Mach-Os ad hoc, x86_64 ones are left unsigned).
+ * codesign refuses to sign a bundle whose nested code is unsigned, so each framework's libraries
+ * go first, then the framework, then each helper app; {@linkcode harmonizeApp} signs the main
+ * executable after this. Code that already carries a signature is left alone. Returns whether it
+ * signed anything.
+ */
+async function signUnsignedNested(app: string, run: CaptureRunner): Promise<boolean> {
+  let changed = false;
+  for (const framework of await nestedBundles(app, ".framework")) {
+    // The framework's own binary is signed through the framework; its top-level link and
+    // `Versions/Current` are symlinks, which the walk skips.
+    const binary = basename(framework, ".framework");
+    for (const lib of await machOFilesUnder(framework)) {
+      if (basename(lib) === binary) continue;
+      changed = await adHocSignIfUnsigned(lib, run) || changed;
+    }
+    changed = await adHocSignIfUnsigned(framework, run) || changed;
+  }
+  for (const helper of await nestedBundles(app, ".app")) {
+    changed = await adHocSignIfUnsigned(helper, run) || changed;
+  }
+  return changed;
+}
+
 /** Re-sign the Mach-Os in one `.app`'s `Contents/MacOS` whose identifier isn't the bundle id. */
 async function harmonizeApp(app: string, run: CaptureRunner): Promise<boolean> {
   const plist = join(app, "Contents", "Info.plist");
@@ -455,14 +516,17 @@ async function harmonizeApp(app: string, run: CaptureRunner): Promise<boolean> {
  * `LAUFEY_DEV_DIR` laufey `.app` on EVERY build (`harmonize_laufey_app_identifiers`: each Mach-O
  * in `Contents/MacOS` gets the bundle's `CFBundleIdentifier` as its signing identifier). The CLI
  * skips binaries that already match, so after this it never rewrites the verified cache, and two
- * packagers never re-sign the same file at once. Returns the app dirs it changed.
+ * packagers never re-sign the same file at once. An app shipped with no signature at all (the
+ * x86_64 CEF build) first gets its nested code signed ad hoc. Returns the app dirs it changed.
  */
 async function harmonizeLaufeyApps(root: string, run: CaptureRunner): Promise<string[]> {
   const changed: string[] = [];
   for (const rel of LAUFEY_APPS) {
     const app = join(root, ...rel.split("/"));
     if (!(await Deno.stat(app).catch(() => null))?.isDirectory) continue;
-    if (await harmonizeApp(app, run)) changed.push(rel);
+    // Nested code first: codesign refuses a main executable whose bundle holds unsigned code.
+    const nested = await signUnsignedNested(app, run);
+    if (await harmonizeApp(app, run) || nested) changed.push(rel);
   }
   return changed;
 }

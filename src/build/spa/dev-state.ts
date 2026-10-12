@@ -267,11 +267,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
     // the loop's dependency bundle; it needs the compat (react→denext) runtime.
     const rn = reactNativeBundleOptions(paths.config, paths.projectDir, true);
     const compat = rn !== null || await detectNextCompat(paths);
-    const [activity, viewTransition, singletons] = await Promise.all([
-      appUsesActivity(paths.projectDir, [entryPath]),
-      appUsesViewTransition(paths.projectDir, [entryPath]),
-      appRendersDocumentTags(paths.projectDir, [entryPath]),
-    ]);
+    const spaInstall = await unbundledSpaInstall(st, rn !== null);
     st.unbundled = createUnbundledDev({
       projectDir: paths.projectDir,
       appDir: resolve(entryPath, ".."),
@@ -289,24 +285,8 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       spaIslands: true,
       // Each target's platform files for the app's own modules (`web` unless the page names one).
       resolvePlatform: (platform) => platformResolution(paths.config, platform),
-      // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).
-      spaInstall: supportInstall({
-        classComponents: paths.config?.classComponents ?? true,
-        activity: activity || rn !== null,
-        viewTransition,
-        singletons,
-        // One install for every target: on a page without the shell it does nothing.
-        shell: spaShellInstall(st.spa.shell ?? null),
-      }) + (rn ? REACT_NATIVE_SPLASH : "") + (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : ""),
-      // The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals,
-      // and `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).
-      define: compat
-        ? {
-          ...spaDefines(st.spa, true),
-          ...rn?.define,
-          "process.env.NODE_ENV": JSON.stringify("development"),
-        }
-        : undefined,
+      spaInstall,
+      define: compat ? unbundledCompatDefines(st, rn?.define) : undefined,
       reactNative: rn
         ? {
           plugins: rn.plugins,
@@ -319,6 +299,43 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
     });
     return true;
   })();
+}
+
+/**
+ * The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity), for the
+ * unbundled loop's entry.
+ */
+async function unbundledSpaInstall(st: SpaDevState, reactNative: boolean): Promise<string> {
+  const { paths, entryPath } = st;
+  const [activity, viewTransition, singletons] = await Promise.all([
+    appUsesActivity(paths.projectDir, [entryPath]),
+    appUsesViewTransition(paths.projectDir, [entryPath]),
+    appRendersDocumentTags(paths.projectDir, [entryPath]),
+  ]);
+  return supportInstall({
+    classComponents: paths.config?.classComponents ?? true,
+    activity: activity || reactNative,
+    viewTransition,
+    singletons,
+    // One install for every target: on a page without the shell it does nothing.
+    shell: spaShellInstall(st.spa.shell ?? null),
+  }) + (reactNative ? REACT_NATIVE_SPLASH : "") +
+    (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : "");
+}
+
+/**
+ * The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals, and
+ * `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).
+ */
+function unbundledCompatDefines(
+  st: SpaDevState,
+  rnDefine: Record<string, string> | undefined,
+): Record<string, string> {
+  return {
+    ...spaDefines(st.spa, true),
+    ...rnDefine,
+    "process.env.NODE_ENV": JSON.stringify("development"),
+  };
 }
 
 /**

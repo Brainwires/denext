@@ -411,3 +411,111 @@ export async function desktopMacosSigning(
     ...(identifier ? { identifier } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Hardened Runtime defaults. `codesign --options runtime` (required for notarization) denies a
+// process the executable memory a JIT needs unless its signature grants it, so a Developer ID
+// re-sign without entitlements leaves V8 unable to run on Apple Silicon.
+
+/**
+ * The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs
+ * its own release binary with these (`cli/entitlements.plist` in denoland/deno, applied by
+ * `tools/release/promote_to_release.ts`); its other two keys there,
+ * `allow-dyld-environment-variables` and `disable-executable-page-protection`, are left out: V8
+ * needs neither, and both widen what can be injected into a signed app.
+ */
+export const V8_ENTITLEMENTS: Readonly<Record<string, boolean>> = Object.freeze({
+  "com.apple.security.cs.allow-jit": true,
+  "com.apple.security.cs.allow-unsigned-executable-memory": true,
+  "com.apple.security.cs.disable-library-validation": true,
+});
+
+/**
+ * Chromium's per-helper entitlements, keyed by the helper app's suffix: the Renderer and GPU
+ * helpers get `allow-jit` (`chrome/app/helper-renderer-entitlements.plist`,
+ * `helper-gpu-entitlements.plist`); the Plugin helper gets `allow-unsigned-executable-memory` +
+ * `disable-library-validation` (`chrome/app/helper-plugin-entitlements.plist`, as of Chromium
+ * 120). The plain and Alerts helpers get none.
+ */
+const CEF_HELPER_ENTITLEMENTS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
+  Renderer: { "com.apple.security.cs.allow-jit": true },
+  GPU: { "com.apple.security.cs.allow-jit": true },
+  Plugin: {
+    "com.apple.security.cs.allow-unsigned-executable-memory": true,
+    "com.apple.security.cs.disable-library-validation": true,
+  },
+};
+
+/**
+ * Chromium's default entitlements for the CEF helper app `path` lies in (`… Helper (Renderer).app`
+ * and its executable), or `undefined` for any other code.
+ *
+ * @param path A Mach-O or bundle path inside a CEF app.
+ * @returns The helper's default entitlements, if it is a Renderer, GPU or Plugin helper.
+ */
+export function cefHelperEntitlements(
+  path: string,
+): Readonly<Record<string, boolean>> | undefined {
+  const m = path.match(/ Helper \((Renderer|GPU|Plugin)\)\.app(?:\/|$)/);
+  return m ? CEF_HELPER_ENTITLEMENTS[m[1]] : undefined;
+}
+
+/** Options for {@linkcode macosSigningEntitlements}. */
+export interface MacosSigningEntitlementsOptions {
+  /**
+   * An explicit entitlements plist (`DENEXT_ENTITLEMENTS` / `desktop.macos.entitlements`, as
+   * {@linkcode desktopMacosSigning} wrote it). It replaces `current`'s entitlements.
+   */
+  readonly explicit?: string;
+  /** Signed code whose current entitlements are kept when there is no `explicit` plist. */
+  readonly current?: string;
+  /** Reads `current`'s entitlements as an XML plist (default `codesign -d --entitlements - --xml`). */
+  readonly readSigned?: (path: string) => Promise<string>;
+}
+
+/** `codesign -d --entitlements - --xml <path>`: the signed entitlements, or "" when it has none. */
+async function codesignEntitlements(path: string): Promise<string> {
+  try {
+    const out = await new Deno.Command("codesign", {
+      args: ["-d", "--entitlements", "-", "--xml", path],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return out.success ? new TextDecoder().decode(out.stdout) : "";
+  } catch {
+    return ""; // no codesign (not macOS): nothing to keep
+  }
+}
+
+/** The dict of a plist text, or undefined when it is empty or not a dict. */
+function dictOf(xml: string): PlistDict | undefined {
+  if (!xml.trim()) return undefined;
+  const node = parsePlist(xml);
+  return node.kind === "dict" ? node : undefined;
+}
+
+/**
+ * Write the entitlements to sign one piece of code with under the Hardened Runtime: the explicit
+ * plist (or, without one, what `current` is signed with now), plus each of `defaults` it does not
+ * set. A key the base sets, to `false` too, is kept as set: `allow-jit = false` in
+ * `DENEXT_ENTITLEMENTS` turns the JIT default off.
+ *
+ * @param defaults The keys to add (e.g. {@linkcode V8_ENTITLEMENTS}).
+ * @param options The explicit plist and the code to read the current entitlements from.
+ * @returns The path of a temporary plist (the caller removes it after signing).
+ */
+export async function macosSigningEntitlements(
+  defaults: Readonly<Record<string, boolean>>,
+  options: MacosSigningEntitlementsOptions = {},
+): Promise<string> {
+  const base = options.explicit
+    ? await readBaseEntitlements(options.explicit)
+    : options.current
+    ? dictOf(await (options.readSigned ?? codesignEntitlements)(options.current))
+    : undefined;
+  const set = new Set((base?.entries ?? []).map(([k]) => k));
+  const missing = Object.fromEntries(Object.entries(defaults).filter(([k]) => !set.has(k)));
+  const file = await Deno.makeTempFile({ prefix: "denext-entitlements-", suffix: ".plist" });
+  await Deno.writeTextFile(file, renderPlist(mergeEntitlements(base, missing)));
+  return file;
+}

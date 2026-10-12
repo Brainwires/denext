@@ -44,12 +44,7 @@ export async function startSpaProdServer(
   const clientDir = join(paths.outDir, "client");
   const emittedDir = join(paths.outDir, EMITTED_DIR);
   const shellPath = join(clientDir, SHELL_FILE);
-  let shell: string;
-  try {
-    shell = await Deno.readTextFile(shellPath);
-  } catch {
-    throw new Error(`No SPA build at ${shellPath}. Run \`denext build\` first.`);
-  }
+  const shell = await readSpaShell(shellPath);
   const hstsCfg = paths.config?.hsts;
   // Optional backend reverse proxy (spa.proxy). Imported lazily so proxy-less SPAs
   // never pull in the proxy module (and its `npm:ws` dependency) at all.
@@ -62,27 +57,14 @@ export async function startSpaProdServer(
   const encodings = compressEncodings(paths.config?.compress);
   const prefix = spaClientPrefix(paths.config?.spa);
 
-  const serveLocal = async (request: Request, url: URL, secure: boolean): Promise<Response> => {
-    if (url.pathname.startsWith(prefix)) {
-      const rel = "/" + url.pathname.slice(prefix.length);
-      const asset = await serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
-      // `spa.assetsDir` shares its directory with `public/` (as Vite's `assets/` does): a path
-      // the build does not hold falls through to the public files below.
-      if (asset.status !== 404 || prefix === CLIENT_PREFIX) return asset;
-      await asset.body?.cancel();
-    }
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    // The files plugin build steps published with `emitFile` at build, then `public/` (an
-    // emitted file replaces a same-named public one, as in an export).
-    for (const dir of [emittedDir, paths.publicDir]) {
-      const pub = await serveStatic(dir, url.pathname, accEnc, request);
-      if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
-    }
-    const res = wantsShell(request, url.pathname)
-      ? shellResponse(request, shell)
-      : new Response("not found", { status: 404 });
-    return applyDefaultSecurityHeaders(res, secure, hstsCfg);
-  };
+  const serveLocal = spaLocalServer({
+    clientDir,
+    emittedDir,
+    publicDir: paths.publicDir,
+    prefix,
+    shell,
+    hstsCfg,
+  });
 
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -112,4 +94,50 @@ export async function startSpaProdServer(
     },
     handler,
   );
+}
+
+/** The built SPA's HTML shell, or an error saying to build first. */
+async function readSpaShell(shellPath: string): Promise<string> {
+  try {
+    return await Deno.readTextFile(shellPath);
+  } catch {
+    throw new Error(`No SPA build at ${shellPath}. Run \`denext build\` first.`);
+  }
+}
+
+/**
+ * The built SPA's local files: the client bundles (immutable), the files plugins emitted, then
+ * `public/`, then the HTML shell for a navigation, else 404.
+ */
+function spaLocalServer(ctx: {
+  clientDir: string;
+  emittedDir: string;
+  publicDir: string;
+  prefix: string;
+  shell: string;
+  hstsCfg: Parameters<typeof applyDefaultSecurityHeaders>[2];
+}): (request: Request, url: URL, secure: boolean) => Promise<Response> {
+  // Unpacked once: the per-request path reads closure locals, as it did inline.
+  const { clientDir, emittedDir, publicDir, prefix, shell, hstsCfg } = ctx;
+  return async (request, url, secure) => {
+    if (url.pathname.startsWith(prefix)) {
+      const rel = "/" + url.pathname.slice(prefix.length);
+      const asset = await serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
+      // `spa.assetsDir` shares its directory with `public/` (as Vite's `assets/` does): a path
+      // the build does not hold falls through to the public files below.
+      if (asset.status !== 404 || prefix === CLIENT_PREFIX) return asset;
+      await asset.body?.cancel();
+    }
+    const accEnc = request.headers.get("accept-encoding") ?? undefined;
+    // The files plugin build steps published with `emitFile` at build, then `public/` (an
+    // emitted file replaces a same-named public one, as in an export).
+    for (const dir of [emittedDir, publicDir]) {
+      const pub = await serveStatic(dir, url.pathname, accEnc, request);
+      if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
+    }
+    const res = wantsShell(request, url.pathname)
+      ? shellResponse(request, shell)
+      : new Response("not found", { status: 404 });
+    return applyDefaultSecurityHeaders(res, secure, hstsCfg);
+  };
 }

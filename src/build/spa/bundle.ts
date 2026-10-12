@@ -9,6 +9,7 @@ import {
 import { join, resolve, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
 import {
+  type DenextConfig,
   domListsEnabled,
   featureFlags,
   momentumSafeScrollEnabled,
@@ -244,19 +245,8 @@ async function bundleCompatSpa(
     entries: [{ id: "index", source: entrySource }],
     minify,
     classComponents: config.classComponents ?? true,
-    // Vite `import.meta.env` values, plus the feature-flag map seeding the `denext/feature`
-    // shim for any `feature()` call the onLoad fold leaves (non-literal arg, unset key).
-    define: {
-      ...spaDefines(spa, dev),
-      ...rn?.define,
-      __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
-    },
-    // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
-    // prefixed with the path the SPA servers already serve them at. With `spa.assetsDir` (Vite's
-    // `build.assetsDir`) they sit beside the chunks as `name-HASH.ext`, as Vite places them.
-    assets: spa.assetsDir === undefined
-      ? { publicPath: CLIENT_PREFIX }
-      : { publicPath: spaClientPrefix(spa), assetNames: "[name]-[hash]" },
+    define: compatSpaDefine(config, dev, rn?.define),
+    assets: compatSpaAssets(spa),
     // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve — denext
     // resolves these straight from node_modules (front-runs the loader).
     catalogPackages: await pnpmCatalogPackages(paths.projectDir),
@@ -287,6 +277,33 @@ async function bundleCompatSpa(
   // every rebuild, so stopping it would force a cold re-init each keystroke (and could
   // kill the process-shared service mid-flight); the dev server stops it once on shutdown.
   if (!dev) await stopNextCompat();
+}
+
+/**
+ * Vite `import.meta.env` values, plus the feature-flag map seeding the `denext/feature` shim for
+ * any `feature()` call the onLoad fold leaves (non-literal arg, unset key).
+ */
+function compatSpaDefine(
+  config: DenextConfig,
+  dev: boolean,
+  rnDefine: Record<string, string> | undefined,
+): Record<string, string> {
+  return {
+    ...spaDefines(config.spa!, dev),
+    ...rnDefine,
+    __DENEXT_FEATURES__: JSON.stringify(featureFlags(config)),
+  };
+}
+
+/**
+ * Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs prefixed with the
+ * path the SPA servers already serve them at. With `spa.assetsDir` (Vite's `build.assetsDir`) they
+ * sit beside the chunks as `name-HASH.ext`, as Vite places them.
+ */
+function compatSpaAssets(spa: SpaConfig): { publicPath: string; assetNames?: string } {
+  return spa.assetsDir === undefined
+    ? { publicPath: CLIENT_PREFIX }
+    : { publicPath: spaClientPrefix(spa), assetNames: "[name]-[hash]" };
 }
 
 /**
@@ -429,6 +446,34 @@ export async function bundleSpaInto(
   const spa = paths.config!.spa!;
   const cssRoots = await spaCssRoots(paths, entryPath, platform);
   const css = await spaCss(paths, cssRoots, minify, await spaCssGraph(paths, platform));
+  const entrySource = await spaEntrySource(paths, entryPath, dev, platform);
+  // React Native mode needs the esbuild path (its resolver and loaders live there).
+  const compat = reactNativeOptions(paths.config) !== null || await detectNextCompat(paths);
+  if (!compat) warnIgnoredSpaEnv(spa);
+  // The client modules a plugin build step reads (`clientModules`), collected only when one
+  // is registered (esbuild's metafile is otherwise not built).
+  const modules = compat && !dev && hasPluginBuildSteps() ? [] as string[] : undefined;
+  if (compat) {
+    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform, modules);
+  } else {
+    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
+  }
+  // A split chunk that fails to load dispatches `vite:preloadError` / `denext:chunkError`.
+  if (!dev) await wrapDynamicImports(clientDir, spaClientPrefix(spa));
+  if (!css) return { hasStyles: false, modules };
+  const text = await extractRouteCss(cssRoots, css);
+  if (text.trim().length === 0) return { hasStyles: false, modules };
+  await Deno.writeTextFile(join(clientDir, STYLE_FILE), text);
+  return { hasStyles: true, modules };
+}
+
+/** The SPA's generated entry module: the app's entry wrapped with the runtimes it needs. */
+async function spaEntrySource(
+  paths: ProjectPaths,
+  entryPath: string,
+  dev: boolean,
+  platform: Platform,
+): Promise<string> {
   // Auto-detect which reconciler-seam runtimes the entry must install. Class components default
   // ON for SPA (an explicit `classComponents:false` opts out) — a compat SPA bundles npm deps
   // that can render class components, which a source scan wouldn't see. `<Activity>`/
@@ -445,7 +490,7 @@ export async function bundleSpaInto(
   // call `createRoot` while it evaluates, before any statement of this entry has run.
   // Production: the chunk-load error handler, installed ahead of the app (the rewritten
   // `import()` calls look it up when they fail; see chunk-error.ts).
-  const entrySource = (dev ? "" : CHUNK_ERROR_SEED) +
+  return (dev ? "" : CHUNK_ERROR_SEED) +
     momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +
     generateSpaEntry(
       toFileUrl(entryPath).href,
@@ -459,33 +504,20 @@ export async function bundleSpaInto(
         expoRouterLinks: await usesExpoRouter(paths),
         reactNative: reactNativeOptions(paths.config) !== null,
         // `spa.shell` for this target: the app mounts off-screen and swaps the shell out.
-        shell: spaShellInstall(spaShellFor(spa, platform)),
+        shell: spaShellInstall(spaShellFor(paths.config!.spa!, platform)),
       },
     );
-  // React Native mode needs the esbuild path (its resolver and loaders live there).
-  const compat = reactNativeOptions(paths.config) !== null || await detectNextCompat(paths);
+}
+
+/** Warn that a denext-native SPA ignores `spa.env` (see {@linkcode bundleSpaInto}). */
+function warnIgnoredSpaEnv(spa: SpaConfig): void {
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the compat
   // (esbuild) path; a denext-native SPA bundles with plain `deno bundle`. Warn rather
   // than silently ignore, so the footgun surfaces.
-  if (!compat && spa.env && Object.keys(spa.env).length > 0) {
+  if (spa.env && Object.keys(spa.env).length > 0) {
     console.warn(
       "  denext: `spa.env` is ignored — it applies only when the app uses npm React " +
         "(node_modules/react, or set `compatibilityMode: true`).",
     );
   }
-  // The client modules a plugin build step reads (`clientModules`), collected only when one
-  // is registered (esbuild's metafile is otherwise not built).
-  const modules = compat && !dev && hasPluginBuildSteps() ? [] as string[] : undefined;
-  if (compat) {
-    await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev, platform, modules);
-  } else {
-    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev, platform);
-  }
-  // A split chunk that fails to load dispatches `vite:preloadError` / `denext:chunkError`.
-  if (!dev) await wrapDynamicImports(clientDir, spaClientPrefix(spa));
-  if (!css) return { hasStyles: false, modules };
-  const text = await extractRouteCss(cssRoots, css);
-  if (text.trim().length === 0) return { hasStyles: false, modules };
-  await Deno.writeTextFile(join(clientDir, STYLE_FILE), text);
-  return { hasStyles: true, modules };
 }

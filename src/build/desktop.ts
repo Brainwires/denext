@@ -180,9 +180,13 @@ export {
 // `desktop.macos` for scripts/package-macos.ts: the provisioning profile it embeds and the
 // entitlements it signs with, checked against the app before the build.
 export {
+  cefHelperEntitlements,
   type DesktopMacosSigning,
   desktopMacosSigning,
   type DesktopMacosSigningOptions,
+  macosSigningEntitlements,
+  type MacosSigningEntitlementsOptions,
+  V8_ENTITLEMENTS,
 } from "./desktop-macos-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
@@ -914,80 +918,60 @@ export function createDesktopHandler(
   preloadKey?: string,
   wsUrl?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
-  const proxyCfg = options.proxy;
-  const indexHtmlPath = join(outDir, "index.html");
   // `desktop.preload` runs only in the memory world (the pinned runtime at its stable origin), and
   // only where the token goes (a top-level document over the memory transport): never into an
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
-  // What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
-  // the memory world, the one place the page runs at a custom origin), and the web `Notification`
-  // shim when the `notifications` capability is on (the pinned runtime's OS notifications).
-  const memory = trust.kind === "memory";
-  const page: DesktopPageGlobals = {
-    ...(memory && wsUrl ? { wsUrl } : {}),
-    ...(memory && options.capabilities?.some((c) => c.name === "notifications")
-      ? { notifications: true }
-      : {}),
-  };
+  const page = desktopPageGlobals(options, trust, wsUrl);
+  const serveShell = desktopShellServer({
+    indexHtmlPath: join(outDir, "index.html"),
+    token,
+    beacon: onBooted !== undefined,
+    memoryPreload,
+    preloadKey,
+    page,
+  });
+  const serveBackendOrExport = backendOrExportServer(options.proxy, proxy, outDir, serveShell);
 
-  /** Serve an exported page (`html`, else the export's `index.html` shell) with the desktop
-   * global (and, with the updater on, the boot-confirm beacon) injected. `injectToken` gates the
-   * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
-   * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
-  const serveShell = async (
-    isHead: boolean,
-    injectToken: boolean,
-    pageHtml?: string,
-  ): Promise<Response | null> => {
-    const html = pageHtml ?? await Deno.readTextFile(indexHtmlPath).catch(() => null);
-    if (html === null) return null;
-    const injected = await injectDesktopGlobal(
-      html,
-      injectToken ? token : null,
-      onBooted !== undefined,
-      injectToken ? memoryPreload : undefined,
-      preloadKey,
-      page,
-    );
-    return noStore(
-      new Response(isHead ? null : injected, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      }),
-    );
-  };
+  const serveLocal = localDesktopStage({ options, token, onBooted, bridge, onQuit, trust });
+  const serveDev = devProxy
+    ? devProxyServer(devProxy, token, devInjectToken, memoryPreload, preloadKey, page)
+    : undefined;
 
-  /** The backend proxy (when configured + matched), then the static export, its `index.html` shell
-   * for navigations, else 404. Split out so the top-level handler stays simple. */
-  const serveBackendOrExport = async (
-    request: Request,
-    url: URL,
-    injectToken: boolean,
-  ): Promise<Response> => {
-    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
-      return await proxy.proxyToBackend(request, url, proxyCfg);
+  return async (request, url, info) => {
+    const local = await serveLocal(request, url, info);
+    if (local) return local;
+    // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
+    // document when absent) served over the memory transport (the pinned runtime) or to a LOOPBACK
+    // Host (the stock runtime) — so a subframe AND a DNS-rebinding Host each get the desktop global
+    // without the token, and cannot reach the bridge.
+    const injectToken = shouldInjectDesktopToken(request, url, trust, info);
+    // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
+    // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
+    if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
+      await bridge.pageLoaded();
     }
-    // An exported page (`/route` → `route/index.html` or `route.html`, `/x.html`, `/`): served
-    // with the desktop global injected (read uncompressed, so the injection is not fighting
-    // content-encoding on the static response). Without this every path got the ROOT shell, so
-    // a multi-page export's `<a href="/protected">` reloaded the home page.
-    if (request.method === "GET" || request.method === "HEAD") {
-      const pageHtml = await readExportPage(outDir, url.pathname);
-      if (pageHtml !== null) {
-        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
-        if (page) return page;
-      }
-    }
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
-    if (asset) return noStore(asset);
-    if (wantsShell(request, url.pathname)) {
-      const shell = await serveShell(request.method === "HEAD", injectToken);
-      if (shell) return shell;
-    }
-    return new Response("not found", { status: 404 });
+    // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`.
+    if (serveDev) return await serveDev(request, url, injectToken);
+    return await serveBackendOrExport(request, url, injectToken);
   };
+}
 
+/**
+ * The requests a desktop window's server always answers locally, ahead of any proxy: a refused
+ * cross-origin endpoint or foreign WebSocket, the `onRequest` escape hatch, the token-gated
+ * local endpoints and the capability bridge. `null` hands the request on.
+ */
+function localDesktopStage(ctx: {
+  options: RunDesktopOptions;
+  token: string;
+  onBooted: (() => void | Promise<void>) | undefined;
+  bridge: DesktopBridge | undefined;
+  onQuit: (() => void) | undefined;
+  trust: DesktopTrust;
+}): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response | null> {
+  // Unpacked once: the per-request path reads closure locals, as it did inline.
+  const { options, token, onBooted, bridge, onQuit, trust } = ctx;
   return async (request, url, info) => {
     // A desktop endpoint request marked cross-origin is refused, and in the memory world a
     // WebSocket upgrade must carry the exact app origin (the relay checked it too) — before even
@@ -1017,33 +1001,126 @@ export function createDesktopHandler(
       const bridged = await bridge.handle(request, url, token, info);
       if (bridged) return bridged;
     }
-    // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
-    // document when absent) served over the memory transport (the pinned runtime) or to a LOOPBACK
-    // Host (the stock runtime) — so a subframe AND a DNS-rebinding Host each get the desktop global
-    // without the token, and cannot reach the bridge.
-    const injectToken = shouldInjectDesktopToken(request, url, trust, info);
-    // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
-    // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
-    if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
-      await bridge.pageLoaded();
+    return null;
+  };
+}
+
+/**
+ * Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
+ * with the per-launch desktop token stripped so it never reaches the dev server. The token is
+ * injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
+ * that is also a top-level loopback-Host document, never in --lan mode.
+ */
+function devProxyServer(
+  devProxy: DesktopProxyFn,
+  token: string,
+  devInjectToken: boolean,
+  memoryPreload: string | undefined,
+  preloadKey: string | undefined,
+  page: DesktopPageGlobals,
+): (request: Request, url: URL, injectToken: boolean) => Promise<Response> {
+  return (request, url, injectToken) =>
+    devProxyResponse(
+      request,
+      url,
+      devProxy,
+      token,
+      devInjectToken && injectToken,
+      memoryPreload,
+      preloadKey,
+      page,
+    );
+}
+
+/** Serves an exported page (`pageHtml`, else the export's `index.html` shell) to a desktop window. */
+type DesktopShellServer = (
+  isHead: boolean,
+  injectToken: boolean,
+  pageHtml?: string,
+) => Promise<Response | null>;
+
+/**
+ * What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
+ * the memory world, the one place the page runs at a custom origin), and the web `Notification`
+ * shim when the `notifications` capability is on (the pinned runtime's OS notifications).
+ */
+function desktopPageGlobals(
+  options: RunDesktopOptions,
+  trust: DesktopTrust,
+  wsUrl: string | undefined,
+): DesktopPageGlobals {
+  const memory = trust.kind === "memory";
+  return {
+    ...(memory && wsUrl ? { wsUrl } : {}),
+    ...(memory && options.capabilities?.some((c) => c.name === "notifications")
+      ? { notifications: true }
+      : {}),
+  };
+}
+
+/** Serve an exported page (`html`, else the export's `index.html` shell) with the desktop
+ * global (and, with the updater on, the boot-confirm beacon) injected. `injectToken` gates the
+ * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
+ * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
+function desktopShellServer(ctx: {
+  indexHtmlPath: string;
+  token: string;
+  /** Inject the boot-confirm beacon (the updater is on). */
+  beacon: boolean;
+  memoryPreload: string | undefined;
+  preloadKey: string | undefined;
+  page: DesktopPageGlobals;
+}): DesktopShellServer {
+  return async (isHead, injectToken, pageHtml) => {
+    const html = pageHtml ?? await Deno.readTextFile(ctx.indexHtmlPath).catch(() => null);
+    if (html === null) return null;
+    const injected = await injectDesktopGlobal(
+      html,
+      injectToken ? ctx.token : null,
+      ctx.beacon,
+      injectToken ? ctx.memoryPreload : undefined,
+      ctx.preloadKey,
+      ctx.page,
+    );
+    return noStore(
+      new Response(isHead ? null : injected, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+  };
+}
+
+/** The backend proxy (when configured + matched), then the static export, its `index.html` shell
+ * for navigations, else 404. Split out so the top-level handler stays simple. */
+function backendOrExportServer(
+  proxyCfg: RunDesktopOptions["proxy"],
+  proxy: ProxyModule | undefined,
+  outDir: string,
+  serveShell: DesktopShellServer,
+): (request: Request, url: URL, injectToken: boolean) => Promise<Response> {
+  return async (request, url, injectToken) => {
+    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
+      return await proxy.proxyToBackend(request, url, proxyCfg);
     }
-    // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
-    // with the per-launch desktop token stripped so it never reaches the dev server. The token is
-    // injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
-    // that is also a top-level loopback-Host document, never in --lan mode.
-    if (devProxy) {
-      return await devProxyResponse(
-        request,
-        url,
-        devProxy,
-        token,
-        devInjectToken && injectToken,
-        memoryPreload,
-        preloadKey,
-        page,
-      );
+    // An exported page (`/route` → `route/index.html` or `route.html`, `/x.html`, `/`): served
+    // with the desktop global injected (read uncompressed, so the injection is not fighting
+    // content-encoding on the static response). Without this every path got the ROOT shell, so
+    // a multi-page export's `<a href="/protected">` reloaded the home page.
+    if (request.method === "GET" || request.method === "HEAD") {
+      const pageHtml = await readExportPage(outDir, url.pathname);
+      if (pageHtml !== null) {
+        const page = await serveShell(request.method === "HEAD", injectToken, pageHtml);
+        if (page) return page;
+      }
     }
-    return await serveBackendOrExport(request, url, injectToken);
+    const accEnc = request.headers.get("accept-encoding") ?? undefined;
+    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
+    if (asset) return noStore(asset);
+    if (wantsShell(request, url.pathname)) {
+      const shell = await serveShell(request.method === "HEAD", injectToken);
+      if (shell) return shell;
+    }
+    return new Response("not found", { status: 404 });
   };
 }
 

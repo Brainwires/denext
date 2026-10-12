@@ -94,16 +94,7 @@ async function maybeReexecForCss(dir: string, minify: boolean, heal = true): Pro
   if (!css) return false; // no CSS in the project — run normally
 
   if (isStandaloneBinary()) {
-    // A binary cannot re-exec ITSELF under a different `--config`: there is no module URL to
-    // re-run. Reaching here at all means {@linkcode maybeReexecPinned} did not defer, which for
-    // a module verb it always does — so this is the residual path (a verb that builds CSS
-    // without loading modules). Running from JSR or a remote URL is fine: Deno runs remote
-    // entrypoints, so we re-exec `import.meta.url`.
-    console.error(
-      "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
-        'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
-        "run the CLI with `deno run -A jsr:@denext/denext/cli` instead of the binary.",
-    );
+    warnStandaloneCss();
     return false;
   }
   // A manual-`node_modules` app (converted pnpm/yarn) re-execs under
@@ -119,30 +110,56 @@ async function maybeReexecForCss(dir: string, minify: boolean, heal = true): Pro
   // backup is kept) and restore the committed deno.json once the build child exits, so
   // `deno task build/export` leaves the app's config byte-identical.
   if (css.appConfigRedirects) {
-    // A previous run killed mid-build (SIGKILL, power loss) skipped its restore and left the
-    // redirects — and its backup — behind; put the committed config back before injecting
-    // again, or the stale entries would be captured as the "original".
-    await restoreAppConfig(paths.configPath, paths.outDir);
-    // Restore on Ctrl-C / SIGTERM / a closed terminal / Deno.exit too — the normal restore
-    // below only runs once the child has exited. Before the child is spawned the guard
-    // restores and exits; while it runs, the child is stopped (forwardShutdown already relays
-    // SIGINT/SIGTERM) and this process exits with its code, as reexecWithConfig does.
-    guardRestore(() => restoreAppConfigSync(paths.configPath, paths.outDir), {
-      onSignal: (sig) => {
-        if (!runningChild) Deno.exit(signalExitCode(sig));
-        if (SHUTDOWN_SIGNALS.includes(sig)) return; // relayed by forwardShutdown
-        try {
-          runningChild.kill("SIGTERM");
-        } catch { /* already exited */ }
-      },
-    });
-    await injectAppConfigRedirects(paths.configPath, paths.outDir, css.appConfigRedirects);
+    await injectCssRedirectsTransiently(paths.configPath, paths.outDir, css.appConfigRedirects);
   }
   return await reexecWithConfig(
     css.configPath,
     "DENEXT_CSS_ACTIVE",
     () => restoreAppConfig(paths.configPath, paths.outDir),
   );
+}
+
+/** The residual standalone-binary path of {@linkcode maybeReexecForCss}: CSS imports cannot work. */
+function warnStandaloneCss(): void {
+  // A binary cannot re-exec ITSELF under a different `--config`: there is no module URL to
+  // re-run. Reaching here at all means {@linkcode maybeReexecPinned} did not defer, which for
+  // a module verb it always does — so this is the residual path (a verb that builds CSS
+  // without loading modules). Running from JSR or a remote URL is fine: Deno runs remote
+  // entrypoints, so we re-exec `import.meta.url`.
+  console.error(
+    "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
+      'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
+      "run the CLI with `deno run -A jsr:@denext/denext/cli` instead of the binary.",
+  );
+}
+
+/**
+ * Inject the css→shim redirects into the app's own deno.json for the build child, with a
+ * backup and a restore guard (see {@linkcode maybeReexecForCss}).
+ */
+async function injectCssRedirectsTransiently(
+  configPath: string,
+  outDir: string,
+  redirects: Parameters<typeof injectAppConfigRedirects>[2],
+): Promise<void> {
+  // A previous run killed mid-build (SIGKILL, power loss) skipped its restore and left the
+  // redirects — and its backup — behind; put the committed config back before injecting
+  // again, or the stale entries would be captured as the "original".
+  await restoreAppConfig(configPath, outDir);
+  // Restore on Ctrl-C / SIGTERM / a closed terminal / Deno.exit too — the normal restore
+  // (the caller's, after reexecWithConfig) only runs once the child has exited. Before the child is spawned the guard
+  // restores and exits; while it runs, the child is stopped (forwardShutdown already relays
+  // SIGINT/SIGTERM) and this process exits with its code, as reexecWithConfig does.
+  guardRestore(() => restoreAppConfigSync(configPath, outDir), {
+    onSignal: (sig) => {
+      if (!runningChild) Deno.exit(signalExitCode(sig));
+      if (SHUTDOWN_SIGNALS.includes(sig)) return; // relayed by forwardShutdown
+      try {
+        runningChild.kill("SIGTERM");
+      } catch { /* already exited */ }
+    },
+  });
+  await injectAppConfigRedirects(configPath, outDir, redirects);
 }
 
 /** The re-exec child while it runs (its exit, not a signal, then ends this process). */

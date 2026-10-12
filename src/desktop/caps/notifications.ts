@@ -528,6 +528,419 @@ function scheduleRequest(args: unknown): ScheduleRequest {
   };
 }
 
+/** The ids a `cancel` / `removeDelivered` call names, checked to be an array. */
+function idsOf(args: unknown): unknown[] {
+  const ids = (record(args, "arguments").ids ?? []) as unknown;
+  if (!Array.isArray(ids)) throw invalid("ids must be an array");
+  return ids;
+}
+
+/** A notification id argument of `method`, checked. */
+function notificationId(method: string, id: unknown): number {
+  return checked(() => int(method, "id", id, -0x80000000, 0x7fffffff));
+}
+
+/** The arguments of `webShow`, checked. */
+function webShowRequest(args: unknown): WebShowRequest {
+  const a = record(args, "arguments");
+  if (typeof a.key !== "string" || !WEB_KEY.test(a.key)) {
+    throw invalid("key must be 1-64 letters, digits, '-' or '_'");
+  }
+  return {
+    key: a.key,
+    title: text(a.title, "title"),
+    body: text(a.body ?? "", "body"),
+    ...(a.silent === true ? { silent: true as const } : {}),
+  };
+}
+
+/** One validated `webShow` call. */
+interface WebShowRequest {
+  readonly key: string;
+  readonly title: string;
+  readonly body: string;
+  readonly silent?: true;
+}
+
+/** Our scheduled notifications. */
+async function scheduledOf(n: DesktopNotificationsApi): Promise<DesktopScheduledNotification[]> {
+  return (await n.getScheduled()).filter((e) =>
+    typeof e.tag === "string" && e.tag.startsWith(TAG_PREFIX)
+  );
+}
+
+/** The app notifications `pending` lists: one per id, soonest first, web ones left out. */
+function pendingList(list: DesktopScheduledNotification[]) {
+  const seen = new Set<number>();
+  const out: Array<{ id: number; title: string; body: string; extra: unknown }> = [];
+  for (const e of list.sort((a, b) => atOf(a) - atOf(b))) {
+    const found = webKeyOf(e.data, e.tag) === undefined ? metaOf(e.data, e.tag) : undefined;
+    if (!found || seen.has(found.meta.id)) continue;
+    seen.add(found.meta.id);
+    out.push({
+      id: found.meta.id,
+      title: e.title ?? "",
+      body: e.body ?? "",
+      extra: found.data,
+    });
+  }
+  return out;
+}
+
+/** The capability's state, shared by its methods and the series top-up. */
+interface NotificationsState {
+  readonly options: NotificationsCapabilityOptions;
+  readonly api: () => DesktopAppApi | undefined;
+  readonly now: () => number;
+  readonly categories: Map<string, DesktopNotificationAction[]>;
+  readonly log: ReturnType<typeof createDeliveredLog>;
+  readonly permission: ReturnType<typeof permissionRequests>;
+  queue?: PullQueue<NotificationTapWire>;
+  webQueue?: PullQueue<WebTapWire>;
+  cancelTopUp?: () => void;
+  /** The last scheduling change (they read and write the same list). */
+  chain: Promise<unknown>;
+}
+
+/** Run `fn` after every earlier scheduling change (they read and write the same list). */
+function serial<T>(s: NotificationsState, fn: () => Promise<T>): Promise<T> {
+  const run = s.chain.then(fn, fn);
+  s.chain = run.catch(() => {});
+  return run;
+}
+
+/** Cancel every scheduled (and delivered) notification of `id`. */
+async function cancelId(
+  s: NotificationsState,
+  n: DesktopNotificationsApi,
+  id: number,
+): Promise<void> {
+  for (const e of await scheduledOf(n)) if (ownsTag(e.tag, id)) n.cancel(e.tag);
+  n.cancel(tagOf(id));
+  s.log.forget(id);
+}
+
+/** Queue a click on one of our notifications for the page (the app's, or a web one). */
+function route(s: NotificationsState, r: DesktopNotificationResponse, launch: boolean): void {
+  const web = webTapOf(r);
+  if (web) return void s.webQueue?.push(web);
+  const tap = tapOf(r, launch);
+  if (tap) s.queue?.push(tap);
+}
+
+/** Show now where the runtime cannot schedule: the Deno `Notification`, its clicks queued. */
+function showNow(
+  s: NotificationsState,
+  shown: { title: string; body: string; tag: string; silent?: boolean },
+  actions: DesktopNotificationAction[],
+  data: unknown,
+): void {
+  const Ctor = s.options.showNow ??
+    (globalThis as { Notification?: NotificationCtor }).Notification;
+  if (typeof Ctor !== "function") {
+    throw new DesktopCapError("unsupported", "notifications cannot be shown here", {
+      status: 501,
+    });
+  }
+  const n = new Ctor(shown.title, {
+    body: shown.body,
+    tag: shown.tag,
+    data,
+    actions,
+    ...(shown.silent ? { silent: true } : {}),
+  });
+  const onResponse = (action: string | null) => route(s, { tag: shown.tag, action, data }, false);
+  n.addEventListener("click", () => onResponse(null));
+  n.addEventListener(
+    "action",
+    (e) => onResponse((e as Event & { action?: string }).action ?? null),
+  );
+}
+
+/** Schedule one notification (every occurrence ahead, for a repeating one). */
+async function schedule(s: NotificationsState, req: ScheduleRequest): Promise<void> {
+  const n = nativeApi(s.api());
+  const actions = req.categoryId ? s.categories.get(req.categoryId) ?? [] : [];
+  const first = checked(() => firstAt(req.trigger, s.now()));
+  if (first === null) throw invalid("the trigger never fires");
+  await cancelId(s, n, req.id);
+  const meta = {
+    id: req.id,
+    t: req.title,
+    b: req.body,
+    ...(req.threadId ? { th: req.threadId } : {}),
+    ...(req.silent ? { s: true as const } : {}),
+  };
+  const logged = { id: req.id, threadId: req.threadId, title: req.title, data: req.data };
+  const can = n.capabilities?.() ?? {};
+  if (!req.trigger && can.schedule === false) {
+    showNow(s, { ...req, tag: tagOf(req.id) }, actions, storedData(meta, req.data));
+    return s.log.posted(logged, tagOf(req.id), first);
+  }
+  if (can.schedule === false) {
+    throw new DesktopCapError("unsupported", "notifications cannot be scheduled here", {
+      status: 501,
+    });
+  }
+  const quiet = req.silent ? { silent: true } : {};
+  if (!req.trigger || !repeats(req.trigger)) {
+    const data = storedData(meta, req.data);
+    await n.schedule({
+      title: req.title,
+      body: req.body,
+      at: first,
+      tag: tagOf(req.id),
+      actions,
+      data,
+      ...quiet,
+    });
+    return s.log.posted(logged, tagOf(req.id), first);
+  }
+  const series: SeriesSpec = { trigger: req.trigger, anchor: first };
+  const room = Math.max(1, MAX_PENDING - (await scheduledOf(n)).length);
+  const times = [first, ...seriesTimes(series, first, Math.min(REPEAT_HORIZON, room) - 1)];
+  const data = storedData({ ...meta, r: series }, req.data);
+  for (const at of times) {
+    await n.schedule({
+      title: req.title,
+      body: req.body,
+      at,
+      tag: tagOf(req.id, at),
+      actions,
+      data,
+      ...quiet,
+    });
+    s.log.posted(logged, tagOf(req.id, at), at);
+  }
+  armTopUp(s, times);
+}
+
+/** Schedule the next check of the repeating series, when half of `times` has fired. */
+function armTopUp(s: NotificationsState, times: number[]): void {
+  if (times.length === 0) return;
+  const due = times[Math.floor(times.length / 2)] - s.now();
+  const delay = Math.min(Math.max(due, 1000), 6 * 3600 * 1000);
+  s.cancelTopUp?.();
+  s.cancelTopUp = (s.options.timer ?? unrefTimer)(
+    () => void serial(s, () => topUp(s)).catch(() => {}),
+    delay,
+  );
+}
+
+/** Schedule the missing occurrences of one series (at most `room`); returns all its times. */
+async function topUpSeries(
+  s: NotificationsState,
+  n: DesktopNotificationsApi,
+  entries: DesktopScheduledNotification[],
+  room: number,
+): Promise<{ times: number[]; added: number }> {
+  const times = entries.map(atOf).sort((a, b) => a - b);
+  const sample = entries[0];
+  const { meta, data: appData } = metaOf(sample.data, sample.tag)!;
+  const logged = { id: meta.id, threadId: meta.th, title: sample.title ?? "", data: appData };
+  const need = Math.min(REPEAT_HORIZON - times.length, room);
+  const more = need > 0 ? seriesTimes(meta.r!, times[times.length - 1], need) : [];
+  for (const at of more) {
+    await n.schedule({
+      title: sample.title ?? "",
+      body: sample.body ?? "",
+      at,
+      tag: tagOf(meta.id, at),
+      actions: sample.actions ?? [],
+      data: sample.data,
+      ...(meta.s ? { silent: true } : {}),
+    });
+    s.log.posted(logged, tagOf(meta.id, at), at);
+  }
+  return { times: [...times, ...more], added: more.length };
+}
+
+/** Keep every repeating series {@linkcode REPEAT_HORIZON} occurrences ahead. */
+async function topUp(s: NotificationsState): Promise<void> {
+  const n = nativeApi(s.api());
+  const list = await scheduledOf(n);
+  const bySeries = new Map<number, DesktopScheduledNotification[]>();
+  for (const e of list) {
+    const found = metaOf(e.data, e.tag);
+    if (found?.meta.r) bySeries.set(found.meta.id, [...bySeries.get(found.meta.id) ?? [], e]);
+  }
+  let room = MAX_PENDING - list.length;
+  let soonest: number[] | undefined;
+  const middle = (t: number[]) => t[Math.floor(t.length / 2)];
+  for (const entries of bySeries.values()) {
+    const { times, added } = await topUpSeries(s, n, entries, room);
+    room -= added;
+    if (!soonest || middle(times) < middle(soonest)) soonest = times;
+  }
+  if (soonest) armTopUp(s, soonest);
+}
+
+/**
+ * Start queueing clicks (once): the cold-start ones first, then the live event. The app's go to
+ * `take` (signalled by `tap`), the page's web notifications' to `webTake` (`webtap`).
+ */
+function install(
+  s: NotificationsState,
+  ctx: DesktopCapCtx,
+): { queue: PullQueue<NotificationTapWire>; webQueue: PullQueue<WebTapWire> } {
+  if (s.queue && s.webQueue) return { queue: s.queue, webQueue: s.webQueue };
+  const queue = s.queue = createPullQueue<NotificationTapWire>(() => ctx.emit("tap", null));
+  const webQueue = s.webQueue = createPullQueue<WebTapWire>(() => ctx.emit("webtap", null));
+  const a = s.api();
+  const launched = a?.launchNotificationResponses;
+  for (const r of Array.isArray(launched) ? launched : []) route(s, r, true);
+  a?.addEventListener?.(
+    "notificationresponse",
+    (e) => route(s, (e as CustomEvent).detail ?? {}, false),
+  );
+  return { queue, webQueue };
+}
+
+/** Post a web notification now (`webShow`), replacing one with the same key. */
+async function webShow(s: NotificationsState, req: WebShowRequest): Promise<void> {
+  const n = nativeApi(s.api());
+  const tag = `${WEB_TAG_PREFIX}${req.key}`;
+  const data = { denext: { w: req.key } };
+  n.cancel(tag);
+  if ((n.capabilities?.() ?? {}).schedule === false) {
+    return showNow(s, { title: req.title, body: req.body, tag, silent: req.silent }, [], data);
+  }
+  await n.schedule({
+    title: req.title,
+    body: req.body,
+    at: s.now(),
+    tag,
+    actions: [],
+    data,
+    ...(req.silent ? { silent: true } : {}),
+  });
+}
+
+/** The scheduling methods: `capabilities`, `schedule`, `cancel`, `pending`. */
+function schedulingMethods(s: NotificationsState): DesktopCapability["methods"] {
+  return {
+    capabilities: {
+      handler: async () => ({
+        ...nativeApi(s.api()).capabilities(),
+        categories: true,
+        ...await notificationFacts(s.api()),
+      }),
+    },
+    // Posting an OS notification needs an UNSCOPED `--allow-sys` under the pinned runtime.
+    schedule: {
+      permissions: { sys: ["*"] },
+      handler: async (args) => {
+        const req = scheduleRequest(args);
+        await serial(s, () => schedule(s, req));
+        return { id: req.id };
+      },
+    },
+    cancel: {
+      handler: async (args) => {
+        const ids = idsOf(args);
+        const n = nativeApi(s.api());
+        await serial(s, async () => {
+          for (const id of ids) await cancelId(s, n, notificationId("cancel", id));
+        });
+        return null;
+      },
+    },
+    pending: {
+      handler: async () => pendingList(await scheduledOf(nativeApi(s.api()))),
+    },
+  };
+}
+
+/** The delivered list, the categories, the permission and the clicks of the app's notifications. */
+function deliveryMethods(s: NotificationsState): DesktopCapability["methods"] {
+  return {
+    // The notifications posted this run whose time has come (the runtime lists none).
+    delivered: {
+      handler: () => {
+        nativeApi(s.api());
+        return s.log.delivered();
+      },
+    },
+    removeDelivered: {
+      handler: (args) => {
+        const ids = idsOf(args);
+        const n = nativeApi(s.api());
+        for (const id of ids) {
+          for (const tag of s.log.takeDelivered(notificationId("removeDelivered", id))) {
+            n.cancel(tag);
+          }
+        }
+        return null;
+      },
+    },
+    setCategories: {
+      handler: (args) => {
+        nativeApi(s.api());
+        const list = record(args, "arguments").categories;
+        if (!Array.isArray(list)) throw invalid("categories must be an array");
+        const next = new Map<string, DesktopNotificationAction[]>();
+        for (const c of list) {
+          const x = record(c, "category");
+          next.set(text(x.id, "category id"), categoryActions(x.actions));
+        }
+        s.categories.clear();
+        for (const [id, actions] of next) s.categories.set(id, actions);
+        return null;
+      },
+    },
+    permission: {
+      // The handler bounds a prompting request itself (`permissionTimeoutMs`), then answers with
+      // the state known so far; the bridge's own timeout would answer `timeout` instead.
+      timeoutMs: false,
+      handler: async (args) => {
+        const n = nativeApi(s.api());
+        const a = record(args, "arguments");
+        const state = a.request === true
+          ? await s.permission.request(() =>
+            n.requestPermission(a.provisional === true ? { provisional: true } : undefined)
+          )
+          : await s.permission.query();
+        return { state };
+      },
+    },
+    take: {
+      handler: (_args, ctx) => {
+        nativeApi(s.api());
+        return install(s, ctx).queue.take();
+      },
+    },
+  };
+}
+
+/** The page's web `Notification` (the injected shim): show now, close, and its clicks. */
+function webMethods(s: NotificationsState): DesktopCapability["methods"] {
+  return {
+    webShow: {
+      permissions: { sys: ["*"] },
+      handler: async (args, ctx) => {
+        const req = webShowRequest(args);
+        install(s, ctx);
+        await serial(s, () => webShow(s, req));
+        return null;
+      },
+    },
+    webClose: {
+      handler: (args) => {
+        const key = record(args, "arguments").key;
+        if (typeof key !== "string" || !WEB_KEY.test(key)) throw invalid("key is malformed");
+        nativeApi(s.api()).cancel(`${WEB_TAG_PREFIX}${key}`);
+        return null;
+      },
+    },
+    webTake: {
+      handler: (_args, ctx) => {
+        nativeApi(s.api());
+        return install(s, ctx).webQueue.take();
+      },
+    },
+  };
+}
+
 /**
  * Build the `notifications` capability.
  *
@@ -537,372 +950,22 @@ function scheduleRequest(args: unknown): ScheduleRequest {
 export function notificationsCapability(
   options: NotificationsCapabilityOptions = {},
 ): DesktopCapability {
-  const api = () => options.api ?? desktopAppApi();
   const now = options.now ?? Date.now;
-  const categories = new Map<string, DesktopNotificationAction[]>();
-  const log = createDeliveredLog(now);
-  let queue: PullQueue<NotificationTapWire> | undefined;
-  let webQueue: PullQueue<WebTapWire> | undefined;
-  let cancelTopUp: (() => void) | undefined;
-  let chain: Promise<unknown> = Promise.resolve();
-  const permission = permissionRequests(
-    options.permissionTimeoutMs ?? PERMISSION_REQUEST_TIMEOUT_MS,
-  );
-
-  /** Run `fn` after every earlier scheduling change (they read and write the same list). */
-  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = chain.then(fn, fn);
-    chain = run.catch(() => {});
-    return run;
+  const s: NotificationsState = {
+    options,
+    api: () => options.api ?? desktopAppApi(),
+    now,
+    categories: new Map(),
+    log: createDeliveredLog(now),
+    permission: permissionRequests(options.permissionTimeoutMs ?? PERMISSION_REQUEST_TIMEOUT_MS),
+    chain: Promise.resolve(),
   };
-
-  /** Our scheduled notifications. */
-  const scheduled = async (n: DesktopNotificationsApi) =>
-    (await n.getScheduled()).filter((e) =>
-      typeof e.tag === "string" && e.tag.startsWith(TAG_PREFIX)
-    );
-
-  /** Cancel every scheduled (and delivered) notification of `id`. */
-  const cancelId = async (n: DesktopNotificationsApi, id: number) => {
-    for (const e of await scheduled(n)) if (ownsTag(e.tag, id)) n.cancel(e.tag);
-    n.cancel(tagOf(id));
-    log.forget(id);
-  };
-
-  /** Queue a click on one of our notifications for the page (the app's, or a web one). */
-  const route = (r: DesktopNotificationResponse, launch: boolean) => {
-    const web = webTapOf(r);
-    if (web) return void webQueue?.push(web);
-    const tap = tapOf(r, launch);
-    if (tap) queue?.push(tap);
-  };
-
-  /** Show now where the runtime cannot schedule: the Deno `Notification`, its clicks queued. */
-  const showNow = (
-    shown: { title: string; body: string; tag: string; silent?: boolean },
-    actions: DesktopNotificationAction[],
-    data: unknown,
-  ) => {
-    const Ctor = options.showNow ??
-      (globalThis as { Notification?: NotificationCtor }).Notification;
-    if (typeof Ctor !== "function") {
-      throw new DesktopCapError("unsupported", "notifications cannot be shown here", {
-        status: 501,
-      });
-    }
-    const n = new Ctor(shown.title, {
-      body: shown.body,
-      tag: shown.tag,
-      data,
-      actions,
-      ...(shown.silent ? { silent: true } : {}),
-    });
-    const onResponse = (action: string | null) => route({ tag: shown.tag, action, data }, false);
-    n.addEventListener("click", () => onResponse(null));
-    n.addEventListener(
-      "action",
-      (e) => onResponse((e as Event & { action?: string }).action ?? null),
-    );
-  };
-
-  /** Schedule one notification (every occurrence ahead, for a repeating one). */
-  const schedule = async (req: ScheduleRequest): Promise<void> => {
-    const n = nativeApi(api());
-    const actions = req.categoryId ? categories.get(req.categoryId) ?? [] : [];
-    const first = checked(() => firstAt(req.trigger, now()));
-    if (first === null) throw invalid("the trigger never fires");
-    await cancelId(n, req.id);
-    const meta = {
-      id: req.id,
-      t: req.title,
-      b: req.body,
-      ...(req.threadId ? { th: req.threadId } : {}),
-      ...(req.silent ? { s: true as const } : {}),
-    };
-    const quiet = req.silent ? { silent: true } : {};
-    const logged = { id: req.id, threadId: req.threadId, title: req.title, data: req.data };
-    const can = n.capabilities?.() ?? {};
-    if (!req.trigger && can.schedule === false) {
-      showNow({ ...req, tag: tagOf(req.id) }, actions, storedData(meta, req.data));
-      return log.posted(logged, tagOf(req.id), first);
-    }
-    if (can.schedule === false) {
-      throw new DesktopCapError("unsupported", "notifications cannot be scheduled here", {
-        status: 501,
-      });
-    }
-    if (!req.trigger || !repeats(req.trigger)) {
-      const data = storedData(meta, req.data);
-      await n.schedule({
-        title: req.title,
-        body: req.body,
-        at: first,
-        tag: tagOf(req.id),
-        actions,
-        data,
-        ...quiet,
-      });
-      return log.posted(logged, tagOf(req.id), first);
-    }
-    const series: SeriesSpec = { trigger: req.trigger, anchor: first };
-    const room = Math.max(1, MAX_PENDING - (await scheduled(n)).length);
-    const times = [first, ...seriesTimes(series, first, Math.min(REPEAT_HORIZON, room) - 1)];
-    const data = storedData({ ...meta, r: series }, req.data);
-    for (const at of times) {
-      await n.schedule({
-        title: req.title,
-        body: req.body,
-        at,
-        tag: tagOf(req.id, at),
-        actions,
-        data,
-        ...quiet,
-      });
-      log.posted(logged, tagOf(req.id, at), at);
-    }
-    armTopUp(times);
-  };
-
-  /** Schedule the next check of the repeating series, when half of `times` has fired. */
-  const armTopUp = (times: number[]) => {
-    if (times.length === 0) return;
-    const due = times[Math.floor(times.length / 2)] - now();
-    const delay = Math.min(Math.max(due, 1000), 6 * 3600 * 1000);
-    cancelTopUp?.();
-    cancelTopUp = (options.timer ?? unrefTimer)(() => void serial(topUp).catch(() => {}), delay);
-  };
-
-  /** Schedule the missing occurrences of one series (at most `room`); returns all its times. */
-  const topUpSeries = async (
-    n: DesktopNotificationsApi,
-    entries: DesktopScheduledNotification[],
-    room: number,
-  ): Promise<{ times: number[]; added: number }> => {
-    const times = entries.map(atOf).sort((a, b) => a - b);
-    const sample = entries[0];
-    const { meta, data: appData } = metaOf(sample.data, sample.tag)!;
-    const logged = { id: meta.id, threadId: meta.th, title: sample.title ?? "", data: appData };
-    const need = Math.min(REPEAT_HORIZON - times.length, room);
-    const more = need > 0 ? seriesTimes(meta.r!, times[times.length - 1], need) : [];
-    for (const at of more) {
-      await n.schedule({
-        title: sample.title ?? "",
-        body: sample.body ?? "",
-        at,
-        tag: tagOf(meta.id, at),
-        actions: sample.actions ?? [],
-        data: sample.data,
-        ...(meta.s ? { silent: true } : {}),
-      });
-      log.posted(logged, tagOf(meta.id, at), at);
-    }
-    return { times: [...times, ...more], added: more.length };
-  };
-
-  /** Keep every repeating series {@linkcode REPEAT_HORIZON} occurrences ahead. */
-  const topUp = async (): Promise<void> => {
-    const n = nativeApi(api());
-    const list = await scheduled(n);
-    const bySeries = new Map<number, DesktopScheduledNotification[]>();
-    for (const e of list) {
-      const found = metaOf(e.data, e.tag);
-      if (found?.meta.r) bySeries.set(found.meta.id, [...bySeries.get(found.meta.id) ?? [], e]);
-    }
-    let room = MAX_PENDING - list.length;
-    let soonest: number[] | undefined;
-    const middle = (t: number[]) => t[Math.floor(t.length / 2)];
-    for (const entries of bySeries.values()) {
-      const { times, added } = await topUpSeries(n, entries, room);
-      room -= added;
-      if (!soonest || middle(times) < middle(soonest)) soonest = times;
-    }
-    if (soonest) armTopUp(soonest);
-  };
-
-  /**
-   * Start queueing clicks (once): the cold-start ones first, then the live event. The app's go to
-   * `take` (signalled by `tap`), the page's web notifications' to `webTake` (`webtap`).
-   */
-  const install = (ctx: DesktopCapCtx) => {
-    if (queue && webQueue) return { queue, webQueue };
-    queue = createPullQueue<NotificationTapWire>(() => ctx.emit("tap", null));
-    webQueue = createPullQueue<WebTapWire>(() => ctx.emit("webtap", null));
-    const a = api();
-    const launched = a?.launchNotificationResponses;
-    for (const r of Array.isArray(launched) ? launched : []) route(r, true);
-    a?.addEventListener?.(
-      "notificationresponse",
-      (e) => route((e as CustomEvent).detail ?? {}, false),
-    );
-    return { queue, webQueue };
-  };
-
-  /** Post a web notification now (`webShow`), replacing one with the same key. */
-  const webShow = async (req: { key: string; title: string; body: string; silent?: true }) => {
-    const n = nativeApi(api());
-    const tag = `${WEB_TAG_PREFIX}${req.key}`;
-    const data = { denext: { w: req.key } };
-    n.cancel(tag);
-    if ((n.capabilities?.() ?? {}).schedule === false) {
-      return showNow({ title: req.title, body: req.body, tag, silent: req.silent }, [], data);
-    }
-    await n.schedule({
-      title: req.title,
-      body: req.body,
-      at: now(),
-      tag,
-      actions: [],
-      data,
-      ...(req.silent ? { silent: true } : {}),
-    });
-  };
-
-  if (options.autoTopUp !== false && api()?.notifications) {
-    queueMicrotask(() => void serial(topUp).catch(() => {}));
+  if (options.autoTopUp !== false && s.api()?.notifications) {
+    queueMicrotask(() => void serial(s, () => topUp(s)).catch(() => {}));
   }
-
   return {
     name: "notifications",
-    methods: {
-      capabilities: {
-        handler: async () => ({
-          ...nativeApi(api()).capabilities(),
-          categories: true,
-          ...await notificationFacts(api()),
-        }),
-      },
-      // Posting an OS notification needs an UNSCOPED `--allow-sys` under the pinned runtime.
-      schedule: {
-        permissions: { sys: ["*"] },
-        handler: async (args) => {
-          const req = scheduleRequest(args);
-          await serial(() => schedule(req));
-          return { id: req.id };
-        },
-      },
-      cancel: {
-        handler: async (args) => {
-          const ids = (record(args, "arguments").ids ?? []) as unknown;
-          if (!Array.isArray(ids)) throw invalid("ids must be an array");
-          const n = nativeApi(api());
-          await serial(async () => {
-            for (const id of ids) {
-              await cancelId(n, checked(() => int("cancel", "id", id, -0x80000000, 0x7fffffff)));
-            }
-          });
-          return null;
-        },
-      },
-      pending: {
-        handler: async () => {
-          const seen = new Set<number>();
-          const out: Array<{ id: number; title: string; body: string; extra: unknown }> = [];
-          const list = (await scheduled(nativeApi(api()))).sort((a, b) => atOf(a) - atOf(b));
-          for (const e of list) {
-            const found = webKeyOf(e.data, e.tag) === undefined ? metaOf(e.data, e.tag) : undefined;
-            if (!found || seen.has(found.meta.id)) continue;
-            seen.add(found.meta.id);
-            out.push({
-              id: found.meta.id,
-              title: e.title ?? "",
-              body: e.body ?? "",
-              extra: found.data,
-            });
-          }
-          return out;
-        },
-      },
-      // The notifications posted this run whose time has come (the runtime lists none).
-      delivered: {
-        handler: () => {
-          nativeApi(api());
-          return log.delivered();
-        },
-      },
-      removeDelivered: {
-        handler: (args) => {
-          const ids = (record(args, "arguments").ids ?? []) as unknown;
-          if (!Array.isArray(ids)) throw invalid("ids must be an array");
-          const n = nativeApi(api());
-          for (const id of ids) {
-            const checkedId = checked(() =>
-              int("removeDelivered", "id", id, -0x80000000, 0x7fffffff)
-            );
-            for (const tag of log.takeDelivered(checkedId)) n.cancel(tag);
-          }
-          return null;
-        },
-      },
-      setCategories: {
-        handler: (args) => {
-          nativeApi(api());
-          const list = record(args, "arguments").categories;
-          if (!Array.isArray(list)) throw invalid("categories must be an array");
-          const next = new Map<string, DesktopNotificationAction[]>();
-          for (const c of list) {
-            const x = record(c, "category");
-            next.set(text(x.id, "category id"), categoryActions(x.actions));
-          }
-          categories.clear();
-          for (const [id, actions] of next) categories.set(id, actions);
-          return null;
-        },
-      },
-      permission: {
-        // The handler bounds a prompting request itself (`permissionTimeoutMs`), then answers with
-        // the state known so far; the bridge's own timeout would answer `timeout` instead.
-        timeoutMs: false,
-        handler: async (args) => {
-          const n = nativeApi(api());
-          const a = record(args, "arguments");
-          const state = a.request === true
-            ? await permission.request(() =>
-              n.requestPermission(a.provisional === true ? { provisional: true } : undefined)
-            )
-            : await permission.query();
-          return { state };
-        },
-      },
-      take: {
-        handler: (_args, ctx) => {
-          nativeApi(api());
-          return install(ctx).queue.take();
-        },
-      },
-      // The page's web `Notification` (the injected shim): show now, close, and its clicks.
-      webShow: {
-        permissions: { sys: ["*"] },
-        handler: async (args, ctx) => {
-          const a = record(args, "arguments");
-          if (typeof a.key !== "string" || !WEB_KEY.test(a.key)) {
-            throw invalid("key must be 1-64 letters, digits, '-' or '_'");
-          }
-          const req = {
-            key: a.key,
-            title: text(a.title, "title"),
-            body: text(a.body ?? "", "body"),
-            ...(a.silent === true ? { silent: true as const } : {}),
-          };
-          install(ctx);
-          await serial(() => webShow(req));
-          return null;
-        },
-      },
-      webClose: {
-        handler: (args) => {
-          const key = record(args, "arguments").key;
-          if (typeof key !== "string" || !WEB_KEY.test(key)) throw invalid("key is malformed");
-          nativeApi(api()).cancel(`${WEB_TAG_PREFIX}${key}`);
-          return null;
-        },
-      },
-      webTake: {
-        handler: (_args, ctx) => {
-          nativeApi(api());
-          return install(ctx).webQueue.take();
-        },
-      },
-    },
+    methods: { ...schedulingMethods(s), ...deliveryMethods(s), ...webMethods(s) },
     events: ["tap", "webtap"],
   };
 }

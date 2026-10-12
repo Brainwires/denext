@@ -413,6 +413,41 @@ deno task desktop:package --arch universal`}
         <code>DENEXT_ENTITLEMENTS=/path/to/entitlements.plist</code>{" "}
         if your app needs specific capabilities.
       </p>
+      <p id="desktop-macos-jit-entitlements">
+        The Hardened Runtime denies a process executable memory for JIT code unless its signature
+        grants it, so the script signs with these defaults:
+      </p>
+      <ul>
+        <li>
+          <strong>The main executable</strong> (it hosts V8):{" "}
+          <code>com.apple.security.cs.allow-jit</code>,{" "}
+          <code>com.apple.security.cs.allow-unsigned-executable-memory</code> and{" "}
+          <code>com.apple.security.cs.disable-library-validation</code>, the set Deno signs its own
+          release binary with (its <code>cli/entitlements.plist</code>) without the{" "}
+          <code>allow-dyld-environment-variables</code> and{" "}
+          <code>disable-executable-page-protection</code>{" "}
+          keys, which V8 does not need. These keys are added to your{" "}
+          <code>DENEXT_ENTITLEMENTS</code> / <code>desktop.macos.entitlements</code>{" "}
+          when they don&apos;t set them; a key you set, to <code>false</code>{" "}
+          too, is kept as you set it. Without explicit entitlements they are added to whatever{" "}
+          <code>deno desktop</code>&apos;s own signing pass applied.
+        </li>
+        <li>
+          <strong>The CEF helpers</strong> get Chromium&apos;s own: <code>allow-jit</code>{" "}
+          for the Renderer and GPU helpers; <code>allow-unsigned-executable-memory</code> and{" "}
+          <code>disable-library-validation</code>{" "}
+          for the Plugin helper; none for the others. Other nested code (the runtime library, the
+          CEF framework) keeps the entitlements it has.
+        </li>
+      </ul>
+      <p>
+        An ad-hoc signature (no identity) keeps every entitlement <code>deno desktop</code>{" "}
+        applied and, like{" "}
+        <code>deno desktop</code>&apos;s own ad-hoc pass, leaves the Hardened Runtime off: only
+        notarization needs it, and that needs an identity. Check what an app was signed with with
+        {" "}
+        <code>codesign -d --entitlements - MyApp.app/Contents/MacOS/&lt;executable&gt;</code>.
+      </p>
       <h3 id="desktop-macos-profile">A provisioning profile and restricted entitlements</h3>
       <p>
         Some entitlements are <em>restricted</em>: macOS honours{" "}
@@ -3369,7 +3404,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           profile name. Set (with a real identity) to notarize + staple.
         </li>
         <li>
-          <code>DENEXT_ENTITLEMENTS</code> — path to an entitlements <code>.plist</code> (optional).
+          <code>DENEXT_ENTITLEMENTS</code> — path to an entitlements <code>.plist</code>{" "}
+          (optional; the main executable&apos;s JIT keys are merged in, see{" "}
+          <a href="#desktop-macos-jit-entitlements">the defaults</a>).
         </li>
         <li>
           <code>DENEXT_PROVISIONING_PROFILE</code> — a <code>.provisionprofile</code>{" "}

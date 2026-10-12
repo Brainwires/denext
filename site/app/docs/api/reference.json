@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.10",
+          "signature": "VERSION: 3.4.11",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16270,6 +16270,23 @@
           "denextOnly": true
         },
         {
+          "name": "cefHelperEntitlements",
+          "slug": "cefHelperEntitlements",
+          "kind": "function",
+          "signature": "cefHelperEntitlements(path: string): Readonly<Record<string, boolean>> | undefined",
+          "doc": "Chromium's default entitlements for the CEF helper app path lies in (… Helper (Renderer).app and its executable), or undefined for any other code.",
+          "docFull": "Chromium's default entitlements for the CEF helper app `path` lies in (`… Helper (Renderer).app`\nand its executable), or `undefined` for any other code.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "A Mach-O or bundle path inside a CEF app."
+            }
+          ],
+          "returns": "The helper's default entitlements, if it is a Renderer, GPU or Plugin helper.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
@@ -17416,6 +17433,39 @@
           "denextOnly": true
         },
         {
+          "name": "macosSigningEntitlements",
+          "slug": "macosSigningEntitlements",
+          "kind": "function",
+          "signature": "macosSigningEntitlements(defaults: Readonly<Record<string, boolean>>, options?: MacosSigningEntitlementsOptions): Promise<string>",
+          "doc": "Write the entitlements to sign one piece of code with under the Hardened Runtime: the explicit plist (or, without one, what current is signed with now), plus each of defaults it does not set. A key the base sets, to false too, is kept as set: allow-jit = false in DENEXT_ENTITLEMENTS turns the JIT default off.",
+          "docFull": "Write the entitlements to sign one piece of code with under the Hardened Runtime: the explicit\nplist (or, without one, what `current` is signed with now), plus each of `defaults` it does not\nset. A key the base sets, to `false` too, is kept as set: `allow-jit = false` in\n`DENEXT_ENTITLEMENTS` turns the JIT default off.",
+          "params": [
+            {
+              "name": "defaults",
+              "doc": "The keys to add (e.g. V8_ENTITLEMENTS)."
+            },
+            {
+              "name": "options",
+              "doc": "The explicit plist and the code to read the current entitlements from."
+            }
+          ],
+          "returns": "The path of a temporary plist (the caller removes it after signing).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MacosSigningEntitlementsOptions",
+          "slug": "MacosSigningEntitlementsOptions",
+          "kind": "interface",
+          "signature": "interface MacosSigningEntitlementsOptions",
+          "doc": "Options for macosSigningEntitlements.",
+          "docFull": "Options for {@linkcode macosSigningEntitlements}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "parseDesktopPackageArgs",
           "slug": "parseDesktopPackageArgs",
           "kind": "function",
@@ -17863,6 +17913,18 @@
             }
           ],
           "returns": "What changed.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "V8_ENTITLEMENTS",
+          "slug": "V8_ENTITLEMENTS",
+          "kind": "variable",
+          "signature": "V8_ENTITLEMENTS: Readonly<Record<string, boolean>>",
+          "doc": "The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.",
+          "docFull": "The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs\nits own release binary with these (`cli/entitlements.plist` in denoland/deno, applied by\n`tools/release/promote_to_release.ts`); its other two keys there,\n`allow-dyld-environment-variables` and `disable-executable-page-protection`, are left out: V8\nneeds neither, and both widen what can be injected into a signed app.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },

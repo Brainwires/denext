@@ -429,6 +429,125 @@ Deno.test("ensureDesktopRuntime re-signs laufey's Mach-Os once at install, then 
   }
 });
 
+/** A CEF-shaped laufey.app (versioned framework with libraries, helper apps) as tar entries. */
+function cefAppEntries(macho: Uint8Array) {
+  const app = "laufey/cef/build/Release/laufey.app/Contents";
+  const fw = `${app}/Frameworks/Chromium Embedded Framework.framework`;
+  const helper = (s: string) => ({
+    name: `${app}/Frameworks/laufey Helper${s}.app/Contents/MacOS/laufey Helper${s}`,
+    data: macho,
+    mode: 0o755,
+  });
+  return [
+    { name: LIB, data: "runtime" },
+    { name: `${app}/Info.plist`, data: "<plist/>" },
+    { name: `${app}/MacOS/laufey`, data: macho, mode: 0o755 },
+    { name: `${fw}/Versions/A/Chromium Embedded Framework`, data: macho },
+    { name: `${fw}/Versions/A/Libraries/libEGL.dylib`, data: macho },
+    { name: `${fw}/Versions/A/Libraries/libGLESv2.dylib`, data: macho },
+    { name: `${fw}/Versions/A/Resources/Info.plist`, data: "<plist/>" },
+    { name: `${fw}/Versions/Current`, type: "2", link: "A" },
+    {
+      name: `${fw}/Chromium Embedded Framework`,
+      type: "2",
+      link: "Versions/A/Chromium Embedded Framework",
+    },
+    helper(" (Renderer)"),
+    helper(" (GPU)"),
+    helper(""),
+  ];
+}
+
+/** `ensure` for a macOS target, re-using the fixture's artifact under that target's name. */
+function ensureMac(f: Fixture, target: string, capture: CaptureRunner) {
+  return ensure(f, {
+    target,
+    pin: { ...f.pin, targets: { [target]: f.pin.targets[TARGET] } },
+    harmonize: true,
+    capture,
+  });
+}
+
+type CaptureRunner = (cmd: string, args: string[]) => Promise<{ code: number; text: string }>;
+
+Deno.test("ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out before the re-sign", async () => {
+  // The pinned x86_64 CEF archive carries no signature at all (Apple's linker signs only arm64
+  // Mach-Os), and codesign refuses its main executable ("code object is not signed at all / In
+  // subcomponent: …laufey Helper (Renderer).app"). The install signs framework libraries →
+  // framework → helper apps → main executable; this fake codesign enforces the same refusal.
+  const macho = new Uint8Array([0xcf, 0xfa, 0xed, 0xfe, 1, 2, 3, 4]);
+  const archive = await tarGz(cefAppEntries(macho));
+  const signed = new Set<string>();
+  const order: string[] = [];
+  const rel = (p: string) => p.slice(p.indexOf("laufey.app/") + "laufey.app/".length);
+  const entries = (dir: string) => {
+    try {
+      return [...Deno.readDirSync(dir)].map((e) => join(dir, e.name));
+    } catch {
+      return [];
+    }
+  };
+  // What codesign checks inside `bundle` before signing it.
+  const nestedCode = (bundle: string): string[] =>
+    bundle.endsWith(".framework")
+      ? entries(join(bundle, "Versions", "A", "Libraries"))
+      : entries(join(bundle, "Frameworks"));
+  const capture: CaptureRunner = (cmd, args) => {
+    const path = args[args.length - 1];
+    if (cmd === "plutil") return Promise.resolve({ code: 0, text: "com.deno.desktop\n" });
+    if (args[0] === "-dv") {
+      return Promise.resolve(
+        signed.has(path)
+          ? { code: 0, text: "Identifier=x\nSignature=adhoc\n" }
+          : { code: 1, text: `${path}: code object is not signed at all\n` },
+      );
+    }
+    const main = "/MacOS/laufey";
+    const bundle = path.endsWith(main) ? path.slice(0, -main.length) : path;
+    const missing = nestedCode(bundle).filter((p) => !signed.has(p));
+    if (missing.length > 0) {
+      return Promise.resolve({
+        code: 1,
+        text: `code object is not signed at all\nIn subcomponent: ${missing[0]}`,
+      });
+    }
+    signed.add(path);
+    order.push(`${rel(path)} ${args.slice(0, -1).join(" ")}`);
+    return Promise.resolve({ code: 0, text: "" });
+  };
+  const f = await fixture(archive);
+  try {
+    await ensureMac(f, "x86_64-apple-darwin", capture);
+    const fw = "Contents/Frameworks/Chromium Embedded Framework.framework";
+    assertEquals(order, [
+      `${fw}/Versions/A/Libraries/libEGL.dylib --force --sign -`,
+      `${fw}/Versions/A/Libraries/libGLESv2.dylib --force --sign -`,
+      `${fw} --force --sign -`,
+      "Contents/Frameworks/laufey Helper (GPU).app --force --sign -",
+      "Contents/Frameworks/laufey Helper (Renderer).app --force --sign -",
+      "Contents/Frameworks/laufey Helper.app --force --sign -",
+      "Contents/MacOS/laufey --force --identifier com.deno.desktop --sign -",
+    ]);
+  } finally {
+    await f.close();
+  }
+  // Code that already carries a signature (the arm64 archive, linker-signed) is left alone.
+  const g = await fixture(archive);
+  try {
+    const calls: string[][] = [];
+    await ensureMac(g, "aarch64-apple-darwin", (cmd, args) => {
+      calls.push([cmd, ...args]);
+      return Promise.resolve({
+        code: 0,
+        text: cmd === "plutil" ? "com.deno.desktop\n" : "Identifier=com.deno.desktop\n",
+      });
+    });
+    assertEquals(calls.filter((c) => c[1] === "--force"), []);
+  } finally {
+    await g.close();
+  }
+});
+
 // ---------------------------------------------------------------------------------------------
 // resolveDesktopRuntimeEnv: the version gate and the overrides.
 

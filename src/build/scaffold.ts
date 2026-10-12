@@ -555,18 +555,9 @@ ${lines.join("\n")}
  */
 export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const appBase = opts.srcDir ? "src/app" : "app";
-  // Generated / build outputs to keep out of version control.
-  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
-  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
-  if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
-  if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
-  if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
-  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
-  const gitignore = ignore.join("\n") + "\n";
-
   const files: ScaffoldFile[] = [
     { path: "deno.json", content: denoJson(opts) },
-    { path: ".gitignore", content: gitignore },
+    { path: ".gitignore", content: scaffoldGitignore(opts, appBase) },
     { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
     {
@@ -587,28 +578,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
-  if (opts.desktop) {
-    files.push({ path: "desktop.ts", content: desktopEntry() });
-    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
-    // entry type-checks before the first export.
-    files.push({
-      path: DESKTOP_RUNTIME_CONFIG_FILE,
-      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
-    });
-    files.push({ path: "icons/README.md", content: desktopIcons() });
-    files.push({
-      path: "scripts/package-macos.ts",
-      content: MACOS_PACKAGE_SCRIPT,
-    });
-    files.push({
-      path: "scripts/package-linux.ts",
-      content: LINUX_PACKAGE_SCRIPT,
-    });
-    files.push({
-      path: "scripts/package-windows.ts",
-      content: WINDOWS_PACKAGE_SCRIPT,
-    });
-  }
+  if (opts.desktop) files.push(...desktopScaffoldFiles());
   if (opts.capacitor) {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
     files.push({ path: "package.json", content: packageJson() });
@@ -621,6 +591,34 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     );
   }
   return files;
+}
+
+/** The scaffold's `.gitignore`: generated / build outputs to keep out of version control. */
+function scaffoldGitignore(opts: ScaffoldOptions, appBase: string): string {
+  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
+  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
+  if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
+  if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
+  if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
+  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
+  return ignore.join("\n") + "\n";
+}
+
+/** A desktop scaffold's entry, its first runtime config, the icons note and packaging scripts. */
+function desktopScaffoldFiles(): ScaffoldFile[] {
+  return [
+    { path: "desktop.ts", content: desktopEntry() },
+    // The entry's first config slice (the sync step rewrites it from denext.config.ts), so the
+    // entry type-checks before the first export.
+    {
+      path: DESKTOP_RUNTIME_CONFIG_FILE,
+      content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
+    },
+    { path: "icons/README.md", content: desktopIcons() },
+    { path: "scripts/package-macos.ts", content: MACOS_PACKAGE_SCRIPT },
+    { path: "scripts/package-linux.ts", content: LINUX_PACKAGE_SCRIPT },
+    { path: "scripts/package-windows.ts", content: WINDOWS_PACKAGE_SCRIPT },
+  ];
 }
 
 /**
@@ -803,7 +801,11 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_CODESIGN_IDENTITY  "Developer ID Application: Name (TEAMID)". REQUIRED to
  *                             distribute. Omit → an ad-hoc signature (dev/local only;
  *                             Gatekeeper will block it on other Macs).
- *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional).
+ *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional). With an identity
+ *                             the main executable, which hosts V8, also gets allow-jit,
+ *                             allow-unsigned-executable-memory and disable-library-validation
+ *                             unless the plist sets them (to false, too), and the CEF Renderer /
+ *                             GPU / Plugin helpers get Chromium's own entitlements.
  *   DENEXT_PROVISIONING_PROFILE  a .provisionprofile to embed (overrides
  *                             \`desktop.macos.provisioningProfile\` in denext.config.ts).
  *   DENEXT_NOTARY_PROFILE     a \`xcrun notarytool store-credentials\` keychain profile.
@@ -860,6 +862,7 @@ if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
 }
 
 const {
+  cefHelperEntitlements,
   desktopAppName: appName,
   desktopDenoFlagArgs,
   desktopExportEnv,
@@ -872,8 +875,10 @@ const {
   desktopRun: run,
   desktopRuntimeEnv,
   desktopWithAppVersion,
+  macosSigningEntitlements,
   parseDesktopPackageArgs,
   syncDesktopAppConfig,
+  V8_ENTITLEMENTS,
   writeLaufeyLaunchConfig,
 } = await import("denext/desktop");
 
@@ -996,7 +1001,14 @@ async function mainExecutable(app: string): Promise<string> {
 }
 
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
- * (required for notarization). Without one: an ad-hoc signature (dev/local only). */
+ * (required for notarization). Without one: an ad-hoc signature (dev/local only) with neither,
+ * as deno desktop's own ad-hoc pass signs: the Hardened Runtime would deny V8 and the CEF
+ * helpers JIT memory, and only notarization (which needs an identity) requires it. It keeps what
+ * deno desktop's own ad-hoc pass set up: each Mach-O beside the main executable signs as the
+ * bundle's CFBundleIdentifier, and nested code (the CEF helper apps) keeps its entitlements.
+ * With an identity, the Hardened Runtime needs entitlements for JIT code: the main executable
+ * (V8) gets V8_ENTITLEMENTS merged into the explicit entitlements (or, without them, into the
+ * ad-hoc pass's), and each CEF Renderer / GPU / Plugin helper Chromium's set for it. */
 async function sign(
   app: string,
   identity: string | undefined,
@@ -1006,12 +1018,13 @@ async function sign(
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
+  const hardened = identity ? ["--options", "runtime"] : [];
   const mainExe = await mainExecutable(app);
+  const bundleId = await infoPlistString(app, "CFBundleIdentifier");
   // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
   if (identity && provisioningProfile) {
     // The profile was checked against this identifier: a bundle built with another one would
     // carry a profile (and App ID entitlement) for a different app, which AMFI refuses at launch.
-    const bundleId = await infoPlistString(app, "CFBundleIdentifier");
     if (bundleId !== profileIdentifier) {
       throw new Error(
         \`\${app} has the bundle identifier \${bundleId}, but the provisioning profile was \` +
@@ -1022,31 +1035,54 @@ async function sign(
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
-  for (const file of await machOFiles(app)) {
-    if (file === mainExe) continue;
+  const macosDir = \`\${app}/Contents/MacOS/\`;
+  const written: string[] = [];
+  // With an identity: \`defaults\` merged over the code's current (or the explicit) entitlements.
+  const entitlementArgs = async (
+    defaults: Record<string, boolean> | undefined,
+    current: string,
+    explicit?: string,
+  ): Promise<string[]> => {
+    if (!identity || !defaults) return ["--preserve-metadata=entitlements"];
+    const file = await macosSigningEntitlements(defaults, { explicit, current });
+    written.push(file);
+    return ["--entitlements", file];
+  };
+  try {
+    for (const file of await machOFiles(app)) {
+      if (file === mainExe) continue;
+      // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
+      // as its identifier, as it does the main executable; codesign would otherwise name it after
+      // the file. A helper app's executable signs its bundle, whose entitlements must survive.
+      const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
+      const ident = besideMain ? ["--identifier", bundleId] : [];
+      await run([
+        "codesign",
+        "--force",
+        ts,
+        ...hardened,
+        ...await entitlementArgs(cefHelperEntitlements(file), file),
+        ...ident,
+        "-s",
+        id,
+        file,
+      ]);
+    }
+    // Explicit entitlements replace the ad-hoc pass's; either way, with an identity, the main
+    // executable (V8) gets the JIT keys they do not set.
     await run([
       "codesign",
       "--force",
       ts,
-      "--options",
-      "runtime",
+      ...hardened,
+      ...await entitlementArgs(V8_ENTITLEMENTS, app, entitlements),
       "-s",
       id,
-      file,
+      app,
     ]);
+  } finally {
+    for (const file of written) await Deno.remove(file).catch(() => {});
   }
-  const ent = identity && entitlements ? ["--entitlements", entitlements] : [];
-  await run([
-    "codesign",
-    "--force",
-    ts,
-    "--options",
-    "runtime",
-    ...ent,
-    "-s",
-    id,
-    app,
-  ]);
   await run(["codesign", "--verify", "--deep", "--strict", app]);
 }
 
@@ -1221,6 +1257,20 @@ async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
 }
 
 /**
+ * The signing plan, printed before the build: \`deno desktop\` always seals the bundle it compiles,
+ * ad-hoc on a Mac when deno.json names no identity, so its own log says
+ * 'Codesigning bundle with identity "-"' even when DENEXT_CODESIGN_IDENTITY is set. That pass has no
+ * switch (the runtime needs a sealed bundle; the launch config written after it, and a lipo merge,
+ * break the seal anyway), so with an identity it is an ad-hoc pre-sign that sign() replaces.
+ */
+function signingPlanNote(identity: string | undefined): string | undefined {
+  if (!identity) return undefined;
+  return "Signing: deno desktop seals each bundle ad-hoc as it builds it (its " +
+    "'Codesigning bundle with identity \\"-\\"' line), an ad-hoc pre-sign; re-signing with " +
+    identity + " afterwards.";
+}
+
+/**
  * Sign, notarize and wrap each bundle in its installers; returns the installer paths. A
  * lipo-merged (universal) bundle always needs re-signing; for others we re-sign only when a real
  * identity is provided (deno desktop already applied ad-hoc).
@@ -1234,6 +1284,7 @@ async function finishArtifacts(
   const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
+      console.log(\`Re-signing \${app} with identity "\${s.identity ?? "-"}"\`);
       await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
@@ -1282,6 +1333,8 @@ async function main(): Promise<void> {
   // and the export's CLI restores it when it starts, which would undo a sync done before it.
   await syncDesktopAppConfig(import.meta.url);
   await Deno.mkdir("dist", { recursive: true });
+  const signingPlan = signingPlanNote(signing.identity);
+  if (signingPlan) console.log(signingPlan);
   const artifacts = await buildArtifacts(opts, name);
   const installers = await finishArtifacts(
     artifacts,
