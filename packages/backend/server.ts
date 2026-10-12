@@ -1,7 +1,7 @@
 /**
- * `@denext/backend/server` — the storage server API and the app's Postgres client (`db()`, scoped
- * by row-level security; `db.service()` bypasses it), for route handlers, Server Actions, Server
- * Components and tasks.
+ * `@denext/backend/server` — the storage server API, the app's Postgres client (`db()`, scoped
+ * by row-level security; `db.service()` bypasses it) and realtime on the server (`onTableChange`,
+ * `tableChanges`), for route handlers, Server Actions, Server Components and tasks.
  *
  * ```ts
  * // app/api/avatar/route.ts
@@ -26,6 +26,14 @@ export { storage } from "./src/storage.ts";
 export { db } from "./src/postgres.ts";
 export type { Db } from "./src/postgres.ts";
 export type { DbIdentity, DbOptions, DbUser, RlsRole } from "./src/rls.ts";
+export { onTableChange, RealtimeUnsupportedError, tableChanges } from "./src/realtime.ts";
+export type { TableChangeEvent, TableChangesOptions } from "./src/realtime.ts";
+export type {
+  TableChange,
+  TableChangesFrame,
+  TableEvent,
+  TableFilter,
+} from "./src/realtime-shared.ts";
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";

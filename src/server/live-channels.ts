@@ -119,7 +119,10 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     const set = index.get(sub.channelId)?.get(sub.key);
     if (!set) return;
     if (sub.entry) set.delete(sub.entry as { conn: C; subId: string }); // O(1), no scan
-    if (set.size === 0) index.get(sub.channelId)!.delete(sub.key);
+    if (set.size === 0) {
+      index.get(sub.channelId)!.delete(sub.key);
+      keyLifecycle(sub.channelId, sub.key, "onIdle");
+    }
   };
   const remove = (conn: C, subId: string): void => {
     const sub = conn.channelSubs.get(subId);
@@ -256,7 +259,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       conn.channelSubs.set(subId, sub);
       const entry = { conn, subId };
       sub.entry = entry;
-      indexFor(channelId, key).add(entry);
+      const subscribers = indexFor(channelId, key);
+      subscribers.add(entry);
+      if (subscribers.size === 1) keyLifecycle(channelId, key, "onActive");
       // Acknowledge the now-live subscription. Unlike a data subscription (whose first `data`
       // frame implies registration), a channel has no initial value, so this is the client's only
       // signal that a subsequent publish will reach it — sent as a control frame, not a per-sub
@@ -272,6 +277,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       if (flushTimer !== null) clearTimeout(flushTimer);
       flushTimer = null;
       pendingEvents.clear();
+      for (const [channelId, byKey] of index) {
+        for (const key of byKey.keys()) keyLifecycle(channelId, key, "onIdle");
+      }
       index.clear();
     },
     deliver(ev) {
@@ -294,6 +302,21 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       }
     },
   };
+}
+
+/**
+ * Tell a channel that a key gained its first (`onActive`) or lost its last (`onIdle`) local
+ * subscriber. The hook serves the channel, not whichever connection's frame triggered it, so it
+ * runs in the root context; a throw is logged, never propagated into the hub.
+ */
+function keyLifecycle(channelId: string, key: string, hook: "onActive" | "onIdle"): void {
+  const fn = getChannel(channelId)?.[hook];
+  if (typeof fn !== "function") return;
+  try {
+    inRootContext(() => fn(key));
+  } catch (err) {
+    console.error(`denext channels: ${hook} on ${channelId} threw`, err);
+  }
 }
 
 /** The `channel-subscribe` frame's fields, bounded; `null` when malformed (silently dropped). */

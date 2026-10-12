@@ -51,8 +51,25 @@ export interface SqlClient {
    * nested transaction needs it.
    */
   savepoint?<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T>;
+  /**
+   * Subscribe `fn` to a Postgres NOTIFY channel (`LISTEN`) on a connection of the client's own,
+   * re-listening after a lost connection; `onlisten` runs once subscribed and again after each
+   * reconnect (notifications sent while it was down are lost). Optional: `Deno.SQL` and
+   * {@linkcode fromPostgresJs} have it; realtime features need it.
+   */
+  listen?(
+    channel: string,
+    fn: (payload: string) => void,
+    onlisten?: () => void,
+  ): Promise<SqlListener>;
   /** Close the client's connections. */
   close(options?: { timeout?: number }): Promise<void>;
+}
+
+/** A subscription made with {@linkcode SqlClient.listen}. */
+export interface SqlListener {
+  /** Stop delivering to this callback (`UNLISTEN` once the channel has no callback left). */
+  unlisten(): Promise<void>;
 }
 
 /** The `code` a Postgres feature's error carries when no client is available. */
@@ -123,6 +140,12 @@ export interface PostgresJsLike {
   begin(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
   /** A savepoint (on a transaction's client). */
   savepoint?(fn: (tx: PostgresJsLike) => unknown): Promise<unknown>;
+  /** LISTEN on a channel (on the pool's client). */
+  listen?(
+    channel: string,
+    fn: (payload: string) => void,
+    onlisten?: () => void,
+  ): Promise<{ unlisten(): Promise<unknown> }>;
   /** Close the pool (absent on a transaction's client). */
   end?(options?: { timeout?: number }): Promise<void>;
 }
@@ -146,6 +169,17 @@ export function fromPostgresJs(pg: PostgresJsLike): SqlClient {
     const savepoint = pg.savepoint.bind(pg);
     client.savepoint = <T>(fn: (tx: SqlClient) => T | Promise<T>) =>
       savepoint((tx) => fn(fromPostgresJs(tx))) as Promise<T>;
+  }
+  if (pg.listen) {
+    const listen = pg.listen.bind(pg);
+    client.listen = async (channel, fn, onlisten) => {
+      const listener = await listen(channel, fn, onlisten);
+      return {
+        async unlisten() {
+          await listener.unlisten();
+        },
+      };
+    };
   }
   client.close = async (options) => {
     await pg.end?.(options);

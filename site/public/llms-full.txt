@@ -659,6 +659,12 @@ tables by migration on first use. With `@denext/backend`, `backend({ postgres: {
 (the request's user in `request.jwt.claims`, so policies use `auth.uid()` / `auth.jwt()`) or `anon`
 (signed out, or outside a request), transaction-locally; `db({ as: { id } })` acts for a user in a
 task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant … to authenticated`.
+Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
+installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter? })` from
+`@denext/backend/client` keeps rows live, each change re-read AS the subscriber under RLS (a
+delete only to subscribers who could see the row); `onTableChange(table, fn)` /
+`tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
+`table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
@@ -1774,6 +1780,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
 - `sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore` — The default TaskHistoryStore: a SQLite file (.denext/tasks.db when denext installs it), on Deno's built-in node:sqlite.
 - `interface SqliteTaskHistoryStoreOptions` — Options for sqliteTaskHistoryStore.
+- `interface SqlListener` — A subscription made with SqlClient.listen.
 - `interface SqlQuery<T>` — A query that may also run as a simple-protocol query (several statements, no parameters).
 - `type SqlRow = Record<string, unknown>` — One row, keyed by column name.
 - `type SqlValue = null | number | bigint | string | Uint8Array` — A value bindable as a SQLite statement parameter.

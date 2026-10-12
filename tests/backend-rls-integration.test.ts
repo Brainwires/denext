@@ -31,6 +31,7 @@ import type { AuthConfig } from "../src/server/auth/types.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { db } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
+import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const SQL = builtinSql();
@@ -65,46 +66,6 @@ function inRequest<T>(cookie: string | undefined, fn: () => T): T {
 
 const A = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000a";
 const B = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000b";
-
-/** A throwaway database and a non-superuser app role that owns it; `drop()` removes both. */
-async function environment(
-  grant = true,
-): Promise<{ app: SqlClient; admin: SqlClient; drop(): Promise<void> }> {
-  const admin = new SQL!(URL_);
-  const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
-  const role = `dnx_app_${suffix}`;
-  const database = `dnx_rls_${suffix}`;
-  const password = crypto.randomUUID();
-  await admin.unsafe(`CREATE ROLE ${role} LOGIN CREATEROLE PASSWORD '${password}'`);
-  await admin.unsafe(`CREATE DATABASE ${database} OWNER ${role}`);
-  if (grant) {
-    // On a server where anon / authenticated already exist (an earlier run, another app), a new
-    // role may not grant them to itself: that is the administrator's step (rlsSetupSql).
-    const [existing] = await admin`select count(*)::int as n from pg_roles
-      where rolname in ('anon', 'authenticated')`;
-    if ((existing as { n: number }).n === 2) {
-      await admin.unsafe(`GRANT anon, authenticated TO ${role}`);
-    }
-  }
-  const url = new URL(URL_!);
-  url.username = role;
-  url.password = password;
-  url.pathname = `/${database}`;
-  const app = new SQL!(url.toString());
-  return {
-    app,
-    admin,
-    async drop() {
-      await app.close();
-      await admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-      // The role was granted anon / authenticated (and holds ADMIN on them, as their creator):
-      // DROP OWNED removes those grants with everything else it owns.
-      await admin.unsafe(`DROP OWNED BY ${role}`);
-      await admin.unsafe(`DROP ROLE ${role}`);
-      await admin.close();
-    },
-  };
-}
 
 async function install(sql: SqlClient, plugins: DenextConfig["plugins"] = []): Promise<void> {
   resetPlugins();

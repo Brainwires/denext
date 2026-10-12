@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`@denext/backend`: realtime from the database.** `backend({ postgres, realtime: realtime({ tables:
+  { notes: { events?, key? } } }) })` opts tables in: migration `backend_realtime_0001` installs a
+  trigger function, and one migration per table an AFTER … FOR EACH ROW trigger, that
+  `pg_notify('denext_realtime', …)` with `{ table, op, key, old_key?, ts }` — keys only, never row
+  data. One listening connection per server instance (`SqlClient.listen`, optional; `Deno.SQL` has
+  it and `fromPostgresJs` maps postgres.js's) coalesces a burst within 16 ms; each subscriber's
+  rows are re-read under their own row-level security, one query per identity per burst (a
+  500-row transaction for two users: one flush, two re-reads). `useTableChanges(table, { initial,
+  filter, key, onChange, onResync })` from `@denext/backend/client` keeps a row list live over the
+  Live socket; a subscription key is bound to one identity, a delete reaches only subscribers who
+  could see the row (tracked keys, seeded at subscribe), and a lost frame or reconnect marks it
+  `stale`. On the server, `onTableChange(table, fn)` (keys, service context) and
+  `tableChanges(table, { as, filter, onChange })` (RLS-scoped); `revalidate: true` calls
+  `revalidateTag("table:<name>")` per burst. Without `listen` it throws
+  `RealtimeUnsupportedError` (`code: "unsupported"`). Guide:
+  [Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
+- **Channel lifecycle hooks** (`denext/server`): `createChannel({ onActive, onIdle })` is told when
+  a key gains its first or loses its last subscriber on this instance — where a channel releases
+  per-key state. `SqlClient` gains an optional `listen(channel, fn, onlisten)` (`SqlListener`).
+
 ## [3.4.13] - 2026-10-12
 
 ### Added

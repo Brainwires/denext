@@ -11838,6 +11838,18 @@
           "denextOnly": true
         },
         {
+          "name": "SqlListener",
+          "slug": "SqlListener",
+          "kind": "interface",
+          "signature": "interface SqlListener",
+          "doc": "A subscription made with SqlClient.listen.",
+          "docFull": "A subscription made with {@linkcode SqlClient.listen}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SqlQuery",
           "slug": "SqlQuery",
           "kind": "interface",

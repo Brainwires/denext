@@ -473,6 +473,7 @@ export type {
   PostgresConnectionOptions,
   PostgresJsLike,
   SqlClient,
+  SqlListener,
   SqlQuery,
   SqlRow,
 } from "./postgres.ts";

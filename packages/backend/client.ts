@@ -1,6 +1,7 @@
 /**
- * `@denext/backend/client` — browser helpers for the storage plugin: upload a file with
- * progress (multipart automatically for large files on S3) and get a URL to show one.
+ * `@denext/backend/client` — browser helpers: upload a file with progress (multipart
+ * automatically for large files on S3), get a URL to show one, and keep a realtime table's rows
+ * live with `useTableChanges`.
  *
  * ```tsx
  * "use client";
@@ -15,7 +16,9 @@
  * ```
  *
  * Both call the plugin's `POST /_denext/storage/sign` with the page's cookies, so the bucket's
- * `authorize` sees the signed-in user. This module imports no server code.
+ * `authorize` sees the signed-in user. `useTableChanges` rides denext's Live socket; every row it
+ * receives was re-read under this viewer's row-level security. This module imports no server
+ * code.
  *
  * @module
  */
@@ -23,6 +26,18 @@
 import { STORAGE_PREFIX, type StorageTransform } from "./src/shared.ts";
 
 export type { StorageTransform } from "./src/shared.ts";
+export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
+export type {
+  TableChangesError,
+  TableChangesState,
+  UseTableChangesOptions,
+} from "./src/table-changes-client.ts";
+export type {
+  TableChange,
+  TableChangesFrame,
+  TableEvent,
+  TableFilter,
+} from "./src/realtime-shared.ts";
 
 /** Upload progress, in bytes. */
 export interface UploadProgress {

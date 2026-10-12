@@ -64,3 +64,38 @@ Deno.test("channel hub: dropping one connection de-indexes without scanning the 
   hub.dispose();
   resetChannels();
 });
+
+Deno.test("channel hub: onActive fires for a key's first local subscriber, onIdle when its last leaves", async () => {
+  resetChannels();
+  const events: string[] = [];
+  createChannel<{ n: number }>({
+    id: "life",
+    authorize: () => true,
+    onActive: (key) => events.push(`active:${key}`),
+    onIdle: (key) => {
+      events.push(`idle:${key}`);
+      throw new Error("a throwing hook is logged, not propagated");
+    },
+  });
+  const { hub, conn } = fakeHub();
+  const [a, b] = [conn(1), conn(2)];
+  const errors: unknown[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  try {
+    await hub.subscribe(a, { subId: "s", channelId: "life", key: "k" });
+    await hub.subscribe(b, { subId: "s", channelId: "life", key: "k" });
+    await hub.subscribe(a, { subId: "t", channelId: "life", key: "other" });
+    assertEquals(events, ["active:k", "active:other"]);
+    hub.unsubscribe(a, "s");
+    assertEquals(events.length, 2, "b still holds k");
+    hub.drop(b);
+    assertEquals(events.slice(2), ["idle:k"]);
+    assertEquals(errors.length, 1);
+    hub.dispose(); // the remaining key goes idle with the hub
+    assertEquals(events.slice(3), ["idle:other"]);
+  } finally {
+    console.error = original;
+    resetChannels();
+  }
+});

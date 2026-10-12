@@ -26,7 +26,8 @@
       "factory": "backend",
       "configKeys": [
         "storage",
-        "postgres"
+        "postgres",
+        "realtime"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -188,6 +189,59 @@
                 }
               }
             }
+          },
+          "realtime": {
+            "description": "Realtime from the database: tables whose inserts, updates and deletes reach `useTableChanges` subscribers (each re-read under that subscriber's row-level security) and `onTableChange` hooks. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "tables": {
+                "description": "The tables to send changes from, by name: `{ notes: { events: [\"insert\"], key: \"id\" } }`.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "description": "The changes to send (default all three: `[\"insert\", \"update\", \"delete\"]`).",
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "insert",
+                          "update",
+                          "delete"
+                        ]
+                      }
+                    },
+                    "key": {
+                      "description": "The key column a change is identified by (default `\"id\"`).",
+                      "type": "string"
+                    },
+                    "schema": {
+                      "description": "The table's schema (default: the connection's search path).",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "revalidate": {
+                "description": "Also `revalidateTag(\"table:<name>\")` once per burst of changes, so `<Live>`, `useLive`, `useApi({ tags })` and `defineSubscription({ tags })` watchers of that tag are pushed (default `false`).",
+                "type": "boolean"
+              },
+              "migrate": {
+                "description": "Install the triggers by migration (recorded in `backend_migrations`) the first time realtime is used (default `true`). `false` when a database administrator applies realtimeSetupSql instead.",
+                "type": "boolean"
+              },
+              "maxSubscribers": {
+                "description": "Subscriptions held at once on one server instance (default 10 000).",
+                "type": "number"
+              },
+              "maxTrackedKeys": {
+                "description": "Keys tracked per subscription, so a delete reaches only subscribers who could see the row (default 10 000); see the docs for what happens past it.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "tables"
+            ]
           }
         }
       }
