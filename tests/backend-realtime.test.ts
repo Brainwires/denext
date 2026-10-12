@@ -30,6 +30,7 @@ import {
   type TableChangesFrame,
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
+import { RLS_SETUP } from "../packages/backend/src/rls.ts";
 import {
   installRealtime,
   parseNotification,
@@ -670,7 +671,7 @@ Deno.test("realtime: re-reads compare keys and filters in the column's type, und
     // In its own transaction: the RLS setup, then the timeout, then the re-read.
     assertEquals(statements.slice(reread - 3, reread), [
       "BEGIN",
-      "select set_config('role', $1, true), set_config('request.jwt.claims', $2, true)",
+      RLS_SETUP,
       "select set_config('statement_timeout', $1, true)",
     ]);
     assertEquals(parameters[reread - 1], ["1234"]);

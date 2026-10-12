@@ -8862,6 +8862,23 @@
           "denextOnly": true
         },
         {
+          "name": "nativeBearerToken",
+          "slug": "nativeBearerToken",
+          "kind": "function",
+          "signature": "nativeBearerToken(request: Request | undefined): string | undefined",
+          "doc": "The native access token an Authorization header carries: the token for a Bearer nat_… header, undefined when the header is absent or carries something else (an API token, Basic auth) — so cookie sessions keep working beside bearer API tokens.",
+          "docFull": "The native access token an `Authorization` header carries: the token for a\n`Bearer nat_…` header, `undefined` when the header is absent or carries something else (an\nAPI token, Basic auth) — so cookie sessions keep working beside bearer API tokens.\n\nIt is the parser `auth()` itself uses, so a handler that exempts native-app requests from a\ncookie check (CSRF) exempts exactly the requests `auth()` authenticates by the token, never\none whose session comes from the cookie.",
+          "params": [
+            {
+              "name": "request",
+              "doc": "The request, if any."
+            }
+          ],
+          "returns": "The nat_… token, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "NativeGrantRecord",
           "slug": "NativeGrantRecord",
           "kind": "interface",
