@@ -308,9 +308,9 @@ export async function POST(request: Request): Promise<Response> {
 
 Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
 act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
-`db()` reads who is asking at each query, from the request that runs it (once per request), not
+`db()` reads who is asking for each query, from the request that makes it (once per request), not
 when the client was made — so a module-level `const sql = db()` is fine: it serves each visitor
-as themself, and is `anon` when a query runs outside any request. `db({ as })` is fixed to that
+as themself, and is `anon` for a query made outside any request. `db({ as })` is fixed to that
 identity wherever it runs.
 
 **`db.service()` is dangerous on purpose.** It is the app's database user with every policy

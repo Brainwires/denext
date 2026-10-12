@@ -121,9 +121,9 @@ async function sessionScope(session: AuthSession, rls: RlsOptions): Promise<RlsS
 const requestScopes = new WeakMap<object, Promise<RlsScope>>();
 
 /**
- * The identity of the request current right now — read at each query, never when the client was
- * made, so a `db()` client kept at module scope always acts as the visitor whose request runs
- * the query, and as `anon` outside any request (fail closed). Memoized per request context; a
+ * The identity of the request current right now — read for each query as it is made, never when
+ * the client was made, so a `db()` client kept at module scope always acts as the visitor whose
+ * request makes the query, and as `anon` outside any request (fail closed). Memoized per request context; a
  * failed read is not remembered.
  */
 function currentScope(rls: RlsOptions): Promise<RlsScope> {
@@ -157,7 +157,7 @@ function identityOf(
 export interface Db {
   /**
    * The app's Postgres client, scoped: every query runs as `authenticated` with the user of the
-   * request current when the QUERY runs in `request.jwt.claims` (or as `anon`), so the tables'
+   * request current when the QUERY is made in `request.jwt.claims` (or as `anon`), so the tables'
    * RLS policies decide what it sees — a client kept at module scope is fine. Outside a request
    * it is `anon` unless `as` fixes an identity.
    */
@@ -184,7 +184,7 @@ export interface Db {
  * await db.service()`delete from notes where created_at < now() - interval '1 year'`;
  * ```
  *
- * Without `as`, who a query acts as is read when the query runs, from the request current at
+ * Without `as`, who a query acts as is read when the query is made, from the request current at
  * that moment — so `const sql = db()` at module scope serves every visitor as themself, and is
  * `anon` outside a request. `db({ as })` is fixed to that identity wherever it runs.
  *
@@ -202,18 +202,18 @@ export const db: Db = Object.assign(
   (options: DbOptions = {}): SqlClient => {
     const { sql, rls } = installed();
     if (options.as === "service") return sql;
-    // An explicit identity is fixed when the client is made; without one, each query reads the
-    // request current when it runs.
+    // An explicit identity is fixed when the client is made; without one, each query takes the
+    // request current when the query is made (its session read once per request).
     const fixed = options.as === undefined ? undefined : identityOf(options.as, rls);
     // Settled by the first query; a client never queried must not leave a rejection unhandled.
     fixed?.catch(() => {});
     const ready = rls.migrate === false ? Promise.resolve() : undefined;
-    return scopedClient(
-      sql,
-      () =>
-        Promise.all([ready ?? ensureRlsMigrated(sql), fixed ?? currentScope(rls)])
-          .then(([, scope]) => scope),
-    );
+    return scopedClient(sql, () => {
+      const identity = fixed ?? currentScope(rls);
+      identity.catch(() => {});
+      return () =>
+        Promise.all([ready ?? ensureRlsMigrated(sql), identity]).then(([, scope]) => scope);
+    });
   },
   {
     service(): SqlClient {
@@ -244,7 +244,7 @@ export function resolveScope(as?: Exclude<DbIdentity, "service">): Promise<RlsSc
 export function scopedFor(scope: RlsScope): SqlClient {
   const { sql, rls } = installed();
   const ready = rls.migrate === false ? Promise.resolve() : undefined;
-  return scopedClient(sql, () => (ready ?? ensureRlsMigrated(sql)).then(() => scope));
+  return scopedClient(sql, () => () => (ready ?? ensureRlsMigrated(sql)).then(() => scope));
 }
 
 /**

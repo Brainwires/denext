@@ -463,35 +463,45 @@ function isTemplate(value: unknown): value is TemplateStringsArray {
  * `db.service()` for those, knowingly.
  *
  * @param base The connecting role's client.
- * @param scope Resolves the role and claims (and anything that must happen first).
+ * @param scopeOf Called synchronously when a query is MADE (the template call, `unsafe`,
+ *   `begin`) — so it sees the request that made it; returns what resolves that query's role and
+ *   claims (and anything that must happen first) when the query runs.
  * @returns The scoped client.
  */
-export function scopedClient(base: SqlClient, scope: () => Promise<RlsScope>): SqlClient {
+export function scopedClient(
+  base: SqlClient,
+  scopeOf: () => () => Promise<RlsScope>,
+): SqlClient {
   const inTransaction = <T>(work: (tx: SqlClient) => PromiseLike<T> | T, options?: string) =>
-    scope().then((resolved) => {
+    scopeOf()().then((resolved) => {
       const body = (tx: SqlClient) => inScope(tx, resolved, work);
       return options === undefined
         ? base.begin(body)
         : (base.begin as unknown as (o: string, f: typeof body) => Promise<T>)(options, body);
     });
-  const oneQuery = <T>(query: (tx: SqlClient) => PromiseLike<T[]>) =>
-    scope().then((resolved) => scopedQuery(base, resolved, query));
+  const oneQuery = <T>(
+    scope: () => Promise<RlsScope>,
+    query: (tx: SqlClient) => PromiseLike<T[]>,
+  ) => scope().then((resolved) => scopedQuery(base, resolved, query));
   const client = ((first: unknown, ...rest: unknown[]) => {
     // `sql(object)` / `sql("name")` build a value (a helper or an identifier); nothing runs.
     if (!isTemplate(first)) {
       return (base as unknown as (...a: unknown[]) => unknown)(first, ...rest);
     }
-    return lazyQuery(() => oneQuery((tx) => tx(first, ...rest)));
+    const scope = scopeOf();
+    return lazyQuery(() => oneQuery(scope, (tx) => tx(first, ...rest)));
   }) as SqlClient;
-  client.unsafe = <T>(text: string, params?: unknown[]) =>
-    lazyQuery<T>(
-      () => oneQuery((tx) => tx.unsafe<T>(text, params)),
+  client.unsafe = <T>(text: string, params?: unknown[]) => {
+    const scope = scopeOf();
+    return lazyQuery<T>(
+      () => oneQuery(scope, (tx) => tx.unsafe<T>(text, params)),
       () =>
-        oneQuery((tx) => {
+        oneQuery(scope, (tx) => {
           const query = tx.unsafe<T>(text, params);
           return query.simple ? query.simple() : query;
         }),
     );
+  };
   client.begin = (<T>(a: unknown, b?: unknown) => {
     const options = typeof a === "string" ? a : undefined;
     const fn = (typeof a === "function" ? a : b) as (tx: SqlClient) => T | Promise<T>;

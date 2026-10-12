@@ -37,7 +37,7 @@ and this project adheres to
   re-authorization. Re-subscribing to the same key under the same subscription id no longer takes
   the key through `onIdle` / `onActive`.
 - **`@denext/backend`: `db()` reads the identity at each query.** Without `as`, who a `db()` client
-  acts as is resolved when a query runs, from the request current at that moment (once per
+  acts as is resolved for each query, from the request current when the query is made (once per
   request), not when the client was made — so a module-level `const sql = db()` serves every
   visitor as themself and is `anon` outside a request. `db({ as })` stays fixed.
 - **`@denext/backend`: storage outside a request needs a service handle.** With no request there is

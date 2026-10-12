@@ -451,6 +451,9 @@ Deno.test("a db() client kept across requests acts as the request running each q
     const inB = await runWithContext(b, () => whoAmI(kept));
     assertEquals([inB.role, inB.claims.sub], ["authenticated", "user-b"]);
     assertEquals(await whoAmI(kept), { role: "anon", claims: { role: "anon" } }, "fails closed");
+    // The identity is the request's that MADE the query, even when it is awaited later.
+    const made = runWithContext(b, () => kept.unsafe<{ role: string; claims: string }>(WHO));
+    assertEquals(JSON.parse((await made)[0].claims).sub, "user-b");
     const moduleScope = db();
     assertEquals((await runWithContext(b, () => whoAmI(moduleScope))).claims.sub, "user-b");
     // An explicit identity stays fixed wherever it runs.

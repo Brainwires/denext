@@ -15,7 +15,7 @@
   `503` `PGRST003` with `Retry-After`), `statementTimeout` defaults to 5000 ms, and
   `exactCount` (default `"authenticated"`) refuses an anonymous `Prefer: count=exact`; the CSRF
   exemption uses `auth()`'s own bearer parser (`nativeBearerToken`). `db()` without `as` resolves
-  the identity at each query from the current request (a module-level client is fine; `anon`
+  the identity for each query from the request that makes it (a module-level client is fine; `anon`
   outside a request). The RLS setup statement blanks the legacy `request.jwt.claim.*` settings;
   `sub`, `role` and `email` are stripped from custom claims. Storage outside a request needs
   `{ service: true }` (a public bucket's downloads excepted). S3 presigned GETs carry
