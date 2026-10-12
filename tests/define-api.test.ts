@@ -14,6 +14,7 @@ import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
 import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { unauthorized } from "../src/runtime/error-boundary.ts";
 
 /** A minimal Standard Schema: an object whose listed keys must be strings; extra keys are STRIPPED. */
@@ -279,6 +280,31 @@ Deno.test("rateLimit: an untrusted loopback/private peer (a shared proxy) is not
   const viaProxy = () => fromPeer("10.0.0.2", { "x-forwarded-for": "203.0.113.4" });
   assertEquals((await trusted(viaProxy(), ctx())).status, 200);
   assertEquals((await rejects(trusted(viaProxy(), ctx()))).status, 429);
+});
+
+Deno.test("rateLimit: unset, it inherits the APP's trustForwardedHeaders; its own setting wins", async () => {
+  const store = inMemoryRateLimitStore();
+  const inherit = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const own = createApi()
+    .use(rateLimit({ max: 1, windowMs: 60_000, store, trustForwardedHeaders: false }))
+    .define({}, () => "ok");
+  // Behind the app's trusted proxy (`trustForwardedHeaders` / DENEXT_TRUST_PROXY=1).
+  const call = (handler: typeof inherit, xff: string, peer = "10.0.0.2") => {
+    const request = fromPeer(peer, { "x-forwarded-for": xff });
+    return runWithContext(
+      createRequestContext(request, undefined, { trustForwardedHeaders: true }),
+      () => handler(request, ctx()),
+    );
+  };
+  assertEquals((await call(inherit, "203.0.113.4")).status, 200);
+  assertEquals((await rejects(call(inherit, "203.0.113.4"))).status, 429, "the hop is the client");
+  assertEquals((await call(inherit, "203.0.113.5")).status, 200, "another forwarded client");
+  // An explicit `false` overrides the app: the public socket peer is the bucket again.
+  assertEquals((await call(own, "1.1.1.1", "198.51.100.20")).status, 200);
+  assertEquals((await rejects(call(own, "2.2.2.2", "198.51.100.20"))).status, 429);
 });
 
 Deno.test("rateLimit: a public peer is limited, an IPv6 one per /64", async () => {

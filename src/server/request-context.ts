@@ -665,6 +665,21 @@ export function currentContext(): RequestContext | undefined {
   return storage.getStore();
 }
 
+/**
+ * Whether a forwarded header (`x-forwarded-for`) may be believed for the current request: `own`
+ * when the caller sets one (a middleware's or `denextAuth`'s own `trustForwardedHeaders`), else
+ * the app-level {@linkcode AppConfig.trustForwardedHeaders} / `DENEXT_TRUST_PROXY=1` the request
+ * context carries (the setting {@linkcode clientIp}, {@linkcode clientIpForLimits} and Live use),
+ * else `false` (outside a request). The one decision point, so the per-address limiters and
+ * `clientIp()` agree on who the client is unless a caller deliberately overrides it.
+ *
+ * @param own The caller's own setting, when it has one.
+ * @returns The effective trust decision.
+ */
+export function trustsForwardedHeaders(own?: boolean): boolean {
+  return own ?? currentContext()?.trustForwardedHeaders ?? false;
+}
+
 // Bridge for client-safe modules (e.g. the `react` compat shim's request-scoped
 // `cache`) to reach the current request context WITHOUT statically importing this
 // server module (which would pull `node:async_hooks` into a browser/compat bundle).

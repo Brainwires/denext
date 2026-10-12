@@ -66,8 +66,8 @@ const LIMITS: Record<AuthRouteLimit, {
  * budget the answer is a generic `429` with `Retry-After`; hostile input can't make it
  * throw, since the key is derived from the client IP alone.
  *
- * The gate is **skipped** for a request that arrived through an undeclared reverse proxy
- * ({@link proxiedWithoutTrust}): there every client looks like the proxy, so one bucket
+ * The gate is **skipped** for a request from a loopback/private peer with no trusted forwarded
+ * hop, such as an undeclared reverse proxy ({@link proxiedWithoutTrust}): there every client looks like the proxy, so one bucket
  * would be shared app-wide and the budget would be an outage rather than a defence.
  */
 async function guardLimit(

@@ -517,7 +517,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.14 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.14 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -535,7 +535,7 @@ Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop
 `ready()`, `onShutdown`); `import.meta.main` is false. A child of itself (Electron's
 `spawn(process.execPath, [script, "mcp-bridge"])`): `denextSidecar.spawnSelf(args)` (or
 `childCommand(args)` → `{ command, args, env, stdio }` with `"ipc"`) re-runs the app's executable
-headless on the same module (`denextSidecar.child` is true; needs `permissions.run`). `app.sidecar(name)` (`status`, `onStatus`,
+headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
 --node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars

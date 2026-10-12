@@ -57,11 +57,10 @@ Each line: what to set → where it is documented. Config keys go in
 - `trustForwardedHeaders: true` (env `DENEXT_TRUST_PROXY=1`) — only when clients
   **cannot** reach denext directly; it makes `X-Forwarded-Proto` /
   `X-Forwarded-Host` trusted for the origin and HSTS. Ignored when
-  `canonicalOrigin` is set. The rate limiters key on the socket peer unless told
-  the same thing separately — `rateLimit({
-  trustForwardedHeaders: true })` and
-  `denextAuth({ trustForwardedHeaders: true })` — and then use the **last**
-  `x-forwarded-for` hop, the one your proxy appended. →
+  `canonicalOrigin` is set. The rate limiters (`rateLimit()`, `denextAuth`'s) and
+  `clientIp()` follow it too, keying on the **last** `x-forwarded-for` hop, the
+  one your proxy appended; a limiter's own `trustForwardedHeaders` overrides the
+  app for that limiter. →
   [same section](/docs/deploy#6-tell-denext-about-your-proxy-origin--forwarded-headers)
 - A concurrency ceiling and TLS **at the edge** (nginx `limit_conn`, Caddy, your
   platform) — the in-process `maxConcurrency` complements it, it does not
@@ -121,8 +120,8 @@ Each line: what to set → where it is documented. Config keys go in
   stores are **per process**; pass a shared `store` behind replicas.
   `rateLimit()`'s default key skips a request whose address is a loopback or
   private socket peer with no trusted forwarded hop (a proxy every visitor
-  shares) and warns once: behind your proxy, pass `trustForwardedHeaders: true`
-  or a `key`. An IPv6 client counts as its `/64`. →
+  shares) and warns once: behind your proxy, set the app's
+  `trustForwardedHeaders: true` (or `DENEXT_TRUST_PROXY=1`), or pass a `key`. An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
 
 **Headers and policy**

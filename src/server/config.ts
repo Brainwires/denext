@@ -1663,10 +1663,10 @@ export interface DenextConfig {
    * Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the
    * request origin (absolute URLs, the Server Action origin check, HSTS), and
    * `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the
-   * rate limiters (`denextAuth` inherits it unless it sets its own). Enable ONLY when clients
-   * cannot reach denext directly — a client that can spoofs them. The origin part is ignored
-   * when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on
-   * (config > env > `false`).
+   * rate limiters (`denextAuth` and `rateLimit()` inherit it unless they set their own). Enable
+   * ONLY when clients cannot reach denext directly — a client that can spoofs them. The origin
+   * part is ignored when {@link DenextConfig.canonicalOrigin} is set. Unset,
+   * `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).
    */
   trustForwardedHeaders?: boolean;
   /**

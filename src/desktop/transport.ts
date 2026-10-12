@@ -173,17 +173,28 @@ export function resolveDesktopTrust(
 /**
  * The first denext Deno Desktop runtime that publishes its WebSocket relay with a per-launch token
  * ({@linkcode DESKTOP_WS_URL_ENV}) and accepts the full-app update manifests denext publishes
- * (`expiresAt` + `sequence`); denext needs it or later.
+ * (`expiresAt` + `sequence`): the one release a running app can tell apart (by the variable).
  */
 export const DESKTOP_RELAY_TOKEN_RUNTIME = "2.9.7-denext.9";
 
 /**
+ * The oldest denext Deno Desktop runtime denext supports: the one whose forks of the app's own
+ * executable (a sidecar's `spawnSelf`) get a stdout of their own (the runtime's launch messages
+ * go to stderr) and, authorized by the runtime, need no `--allow-run`. A running app detects
+ * only a runtime older than {@linkcode DESKTOP_RELAY_TOKEN_RUNTIME} ({@linkcode
+ * desktopRuntimeSkewWarning}); the releases between are not told apart, so repackaging with the
+ * pinned runtime is the fix for any of them.
+ */
+export const DESKTOP_MINIMUM_RUNTIME = "2.9.7-denext.14";
+
+/**
  * The startup warning for a memory-world app under a runtime older than {@linkcode
- * DESKTOP_RELAY_TOKEN_RUNTIME}: such a runtime has the memory transport (and, from denext.7, the
- * relay marking, so the gates keep working) but publishes no {@linkcode DESKTOP_WS_URL_ENV}. Then
- * the page's WebSockets have nowhere to go and the runtime refuses denext's update manifests. Only
- * the absence of the variable is a version signal; any other world, or a published value, is
- * `undefined`. Pure.
+ * DESKTOP_RELAY_TOKEN_RUNTIME} (so older than {@linkcode DESKTOP_MINIMUM_RUNTIME} too): such a
+ * runtime has the memory transport (and, from denext.7, the relay marking, so the gates keep
+ * working) but publishes no {@linkcode DESKTOP_WS_URL_ENV}. Then the page's WebSockets have
+ * nowhere to go, the runtime refuses denext's update manifests and a sidecar's `spawnSelf` children
+ * need `permissions.run`. Only the absence of the variable is a version signal; any other world, or
+ * a published value, is `undefined`. Pure.
  *
  * @param trust The decided world ({@linkcode resolveDesktopTrust}).
  * @param publishedWsUrl The `DENO_DESKTOP_WS_URL` value, if any.
@@ -196,10 +207,12 @@ export function desktopRuntimeSkewWarning(
   if (trust.kind !== "memory" || (publishedWsUrl !== undefined && publishedWsUrl !== "")) {
     return undefined;
   }
-  return `this Deno Desktop runtime is older than ${DESKTOP_RELAY_TOKEN_RUNTIME} (it publishes ` +
-    `no ${DESKTOP_WS_URL_ENV}), so the page's WebSockets (Live, desktopWebSocketUrl) fail and ` +
-    "full-app updates are refused. Repackage the app with the runtime denext pins (unset " +
-    "DENORT_DESKTOP_BIN, LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR).";
+  return `this Deno Desktop runtime is older than ${DESKTOP_MINIMUM_RUNTIME}, the oldest denext ` +
+    `supports (it publishes no ${DESKTOP_WS_URL_ENV}, which came in ` +
+    `${DESKTOP_RELAY_TOKEN_RUNTIME}), so the page's WebSockets (Live, desktopWebSocketUrl) fail, ` +
+    "full-app updates are refused and a sidecar's spawnSelf() children need permissions.run. " +
+    "Repackage the app with the runtime denext pins (unset DENORT_DESKTOP_BIN, LAUFEY_DEV_DIR " +
+    "and DENEXT_DESKTOP_RUNTIME_DIR).";
 }
 
 /**

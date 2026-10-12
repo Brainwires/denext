@@ -1391,8 +1391,10 @@ and bucketed by **/64**, so a client cannot walk its own prefix for a fresh budg
 Two behaviours worth knowing:
 
 - **An undeclared proxy disables the per-IP budgets rather than sharing one.** When a
-  request arrives from a private or loopback peer carrying `x-forwarded-for` while
-  `trustForwardedHeaders` is off, every visitor looks like the proxy — so the sign-in-start
+  request arrives from a loopback, private, link-local or unique-local peer and no trusted
+  `x-forwarded-for` hop names the client (the limit-address rule `rateLimit()` and
+  `clientIpForLimits()` follow; with or without the header, and in local development too),
+  every visitor looks like the proxy — so the sign-in-start
   and session-read budgets are skipped for it and every IP-wide bucket is dropped, with one
   console warning naming the fix, instead of turning the 21st sign-in site-wide into a
   fifteen-minute outage. The per-subject keys keep working: the credentials limiter's (it

@@ -16,7 +16,7 @@ import { ipBucket, limitAddrOf, remoteAddrOf } from "./remote-addr.ts";
 import type { CorsConfig } from "./config.ts";
 import { CORS_POLICY, resolveCors } from "./cors.ts";
 import { verifyOrigin } from "./origin-check.ts";
-import { cookies, currentContext } from "./request-context.ts";
+import { cookies, currentContext, trustsForwardedHeaders } from "./request-context.ts";
 import { randomToken } from "./auth/oauth.ts";
 import { constantTimeEqualHex } from "./auth/hash.ts";
 import { getCookies } from "@std/http/cookie";
@@ -78,7 +78,11 @@ export interface ApiRateLimitOptions {
   key?: (input: ApiMiddlewareInput<object>) => string;
   /** Where counts live (default: a bounded in-memory store — per process; use a shared store behind replicas). */
   store?: RateLimitStore;
-  /** Behind a trusted proxy: key on the LAST `x-forwarded-for` hop instead of the socket peer. */
+  /**
+   * Whether to key on the LAST `x-forwarded-for` hop instead of the socket peer. Default: the
+   * app's own `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1` (what `clientIp()` and
+   * `clientIpForLimits()` follow); set it to override the app for this limiter.
+   */
   trustForwardedHeaders?: boolean;
   /** The 429's message (default `"Too Many Requests"`). */
   message?: string;
@@ -88,8 +92,9 @@ export interface ApiRateLimitOptions {
  * Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429
  * `rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood
  * never reaches a schema or the handler. The client identity is the socket peer, or the last
- * `x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it);
- * an IPv6 address counts against its /64.
+ * `x-forwarded-for` hop only when the proxy is trusted (a forged header can't dodge it): the
+ * limiter's own `trustForwardedHeaders` when set, else the app's (`trustForwardedHeaders` /
+ * `DENEXT_TRUST_PROXY=1`, read per request). An IPv6 address counts against its /64.
  *
  * The default key is skipped — the request is not limited — when the client address is a
  * loopback, private, link-local or unique-local socket peer and no trusted forwarded hop names
@@ -102,9 +107,10 @@ export interface ApiRateLimitOptions {
  */
 export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
   const store = options.store ?? inMemoryRateLimitStore();
-  const trust = options.trustForwardedHeaders === true;
   return async (input) => {
-    const key = options.key ? options.key(input) : defaultKey(input, trust);
+    const key = options.key
+      ? options.key(input)
+      : defaultKey(input, trustsForwardedHeaders(options.trustForwardedHeaders));
     if (key === null) return;
     const window = await store.increment(key, options.windowMs);
     if (window.count <= options.max) return;
@@ -148,9 +154,9 @@ function warnProxyPeerOnce(peer: string): void {
   console.warn(
     `denext: API requests arrive from a loopback/private address (${peer}) — a reverse proxy, ` +
       "or local development — so rateLimit()'s per-address buckets are off for them (every " +
-      "visitor would share one). Behind a proxy that sets x-forwarded-for, pass " +
-      "`trustForwardedHeaders: true` to rateLimit() to key each client's address, or give it a " +
-      "`key` (a session's user id).",
+      "visitor would share one). Behind a proxy that sets x-forwarded-for, set the app's " +
+      "`trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1) to key each client's address, " +
+      "or give rateLimit() a `key` (a session's user id).",
   );
 }
 

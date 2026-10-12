@@ -536,3 +536,21 @@ Deno.test("credentials: a concurrent burst can't overrun the budget — the righ
   assertEquals(statuses.filter((s) => s === 401).length, 2, "only the budget's worth is evaluated");
   assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 429);
 });
+
+Deno.test("per-IP budgets follow the limit-address rule: a local peer without a forwarded hop is skipped too", async () => {
+  const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
+  // A loopback/private peer that sends no x-forwarded-for (a proxy that doesn't set it, or local
+  // development) is no address to limit on either: one bucket would be every client's.
+  for (const peer of ["127.0.0.1", "10.0.0.9", "::1"]) {
+    assertEquals(await signinStatuses(config, 3, peer), [303, 303, 303], peer);
+  }
+  // Trusted but no hop: still the shared proxy's address, still skipped.
+  const trusted = signinConfig({
+    trustForwardedHeaders: true,
+    rateLimit: { signin: { max: 1, windowMs: 60_000 } },
+  });
+  assertEquals(await signinStatuses(trusted, 3, "10.0.0.9"), [303, 303, 303]);
+  // A public peer, and no peer at all (`unknown`), keep the budget.
+  assertEquals(await signinStatuses(config, 2, "198.51.100.77"), [303, 429]);
+  assertEquals(await signinStatuses(config, 2), [303, 429]);
+});

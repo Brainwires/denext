@@ -1167,7 +1167,7 @@ async function loadDesktopPreload(outDir: string, devProxy: boolean): Promise<st
 
 /**
  * Print, once at startup, what is worth knowing about the desktop world: the trust decision's own
- * warning, a refused world, and a runtime older than the denext.9 contract ({@linkcode
+ * warning, a refused world, and a runtime older than the one denext requires ({@linkcode
  * desktopRuntimeSkewWarning}: no relay URL published in the memory world).
  */
 function reportDesktopWorld(decision: DesktopTrustDecision, publishedWsUrl: string | undefined) {

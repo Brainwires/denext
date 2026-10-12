@@ -521,7 +521,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.14 and needs at least 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.14 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -539,7 +539,7 @@ Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop
 `ready()`, `onShutdown`); `import.meta.main` is false. A child of itself (Electron's
 `spawn(process.execPath, [script, "mcp-bridge"])`): `denextSidecar.spawnSelf(args)` (or
 `childCommand(args)` → `{ command, args, env, stdio }` with `"ipc"`) re-runs the app's executable
-headless on the same module (`denextSidecar.child` is true; needs `permissions.run`). `app.sidecar(name)` (`status`, `onStatus`,
+headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
 --node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
@@ -1661,7 +1661,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PushSenderConfig` — Options for createPushSender.
 - `interface PushTarget` — Where a push goes: an ios device token (the hex APNs token registerForPush returns on iOS) is sent through APNs, an android one (an FCM registration token) through FCM.
 - `type QueryRecord = Record<string, string | string[]>` — The query string as a record: repeated keys become arrays.
-- `rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>` — Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it); an IPv6 address counts against its /64.
+- `rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>` — Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when the proxy is trusted (a forged header can't dodge it): the limiter's own trustForwardedHeaders when set, else the app's (trustForwardedHeaders / DENEXT_TRUST_PROXY=1, read per request). An IPv6 address counts against its /64.
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
 - `interface RateLimitWindow` — One key's open failure window.

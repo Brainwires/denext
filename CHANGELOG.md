@@ -31,6 +31,28 @@ and this project adheres to
   it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
   on stock Deno. `denext create` scaffolds a `test` task through `denext test`.
 
+### Changed
+
+- **`rateLimit()` follows the app's `trustForwardedHeaders`.** Without its own
+  `trustForwardedHeaders`, the API middleware now keys on the last `x-forwarded-for` hop whenever
+  the app trusts its proxy (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, read per request),
+  as `clientIp()`, `clientIpForLimits()` and Live do; it used to ignore the header unless the
+  limiter was told separately. An explicit `trustForwardedHeaders` on the limiter still wins.
+- **The `denextAuth` per-IP budgets follow the same limit-address rule.** They are skipped for any
+  loopback, private, link-local or unique-local socket peer with no trusted forwarded hop, as
+  `rateLimit()` skips its default key, not only for one that sends `x-forwarded-for`: a proxy that
+  doesn't set the header no longer puts every client in one sign-in-start or session-read bucket.
+  The credentials limiter's per-identifier key still applies there.
+- **denext requires Deno Desktop runtime 2.9.7-denext.14** (was 2.9.7-denext.9). An older runtime
+  starts a sidecar's `spawnSelf` children with the runtime's launch messages on their stdout. The
+  startup warning for a runtime that publishes no `DENO_DESKTOP_WS_URL` now names denext.14 as the
+  oldest supported.
+- **`spawnSelf()` needs no `permissions.run` under denext's pinned runtime.** The runtime
+  authorizes a fork of its own executable that has an IPC channel, so a module sidecar no longer
+  grants `run: ["*"]` for its children. Under the stock runtime and `deno run`, `spawnSelf` still
+  checks `run` over the executable and says what to grant. Docs:
+  [Deno Desktop › Sidecars](/docs/desktop#desktop-sidecars).
+
 ### Fixed
 
 - The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
