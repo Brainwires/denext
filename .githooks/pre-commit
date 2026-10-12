@@ -74,4 +74,10 @@ else
   echo "pre-commit: no coverage/coverage-final.json — fallow will ESTIMATE coverage for CRAP." >&2
   echo "pre-commit: run 'deno task coverage:fallow' first if the gate blocks on a CRAP finding." >&2
 fi
+# Fallow keeps a base-tree cache per audited base commit in the temp dir and never removes it
+# (about 120 MB each; hundreds pile up across commits and worktrees). Drop the ones idle for
+# two hours or more — a running audit touches its own, so it is never removed under it.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'fallow-audit-base-cache-*' -mmin +120 \
+  -exec rm -rf {} + 2>/dev/null || true
+
 $FALLOW audit --quiet --explain --gate-marker git --no-css $COV

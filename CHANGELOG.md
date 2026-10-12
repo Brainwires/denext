@@ -8,6 +8,62 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.16] - 2026-10-12
+
+### Added
+
+- **`clientIpForLimits({ bucket: true })`** answers the address's limit bucket instead of the
+  address: an IPv4 address as it is, an IPv6 one normalised to its `/64` prefix
+  (`2001:db8:1:2::/64`), the key the framework's own per-address limits use. Without the option
+  it answers the address, as before.
+
+### Changed
+
+- **denext pins Deno Desktop runtime 2.9.7-denext.14** (deno `5c7842ee`, laufey `09ad1b6`, API
+  47), a maintenance release. A child the app starts from its own executable (a module sidecar's
+  `spawnSelf`, `child_process.fork()`) gets a stdout of its own: the runtime prints its launch
+  messages (`Runtime loaded successfully from: …`, `Runtime started`) on stderr, so `spawnSelf` no
+  longer strips them, and a spawn of your own from `childCommand` starts clean too. Such a child
+  never applies or rolls back a staged full-app update (only the app's own launch does), and a fork
+  the runtime authorized (an IPC channel and its per-launch worker token) needs no `--allow-run`
+  for the executable's path. A dynamic `import()` of a module not loaded before puts the
+  importer's `AsyncLocalStorage` / `AsyncContext` back once it is evaluated: the next `Deno.serve`
+  request no longer sees the previous request's store. On Windows a passkey request whose window
+  closes at once now frees the one-ceremony slot. Still needs at least denext.9. Docs:
+  [Deno Desktop runtime › Headless workers and forks of the app](/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
+
+### Fixed
+
+- **`@denext/backend` realtime: a `timestamptz` key matches across `TimeZone` settings.**
+  `to_jsonb()` formats a `timestamptz` in the session's `TimeZone`, so a write from a session in
+  one zone notified `2026-01-01T22:04:05-05:00` while a subscriber's re-read in another spelled
+  the same key `2026-01-02T03:04:05+00:00`: the change was dropped, and a seeded key never matched
+  its delete. Migration `backend_realtime_0002` replaces the trigger function so that a key column
+  whose catalog type is `timestamptz` is sent in UTC (`2026-01-02T03:04:05`), and the re-read and
+  seed queries spell such a key the same way (`to_jsonb(k AT TIME ZONE 'UTC') #>> '{}'`). Other key
+  types are unchanged. With `migrate: false`, re-run `realtimeSetupSql()`.
+
+### Security
+
+- **`rateLimit()` no longer turns into one site-wide bucket behind an undeclared proxy.** Its
+  default key was the client address even when that was a loopback, private, link-local or
+  unique-local socket peer with no trusted forwarded hop — a reverse proxy every visitor shares —
+  so the `max`th request across the whole site rate-limited everyone. The default key now follows
+  `clientIpForLimits()`'s rule: such a request is not limited (a loopback request in local
+  development included), and the server warns once, naming the address and
+  `rateLimit({ trustForwardedHeaders: true })` (or a custom `key`). A custom `key` still applies;
+  a public peer, or a trusted proxy's last hop, is limited as before — and an IPv6
+  address now counts against its `/64`, so rotating within the allocation (or re-spelling the
+  address) no longer opens a fresh bucket.
+- **Per-address limits no longer lump every IPv4 client of a dual-stack listener together.** An
+  IPv4-mapped address (`::ffff:198.51.100.7`, how a server listening on `::` reports an IPv4
+  client) was bucketed by its `/64`, which every IPv4 client shares, so the auth limiters and
+  `live.limits.maxConnectionsPerIp` treated all of them as one client. Such an address now counts
+  as the IPv4 address it carries.
+- **`@denext/backend` realtime: the signed-out quota is per IPv6 `/64`.** It keyed the raw
+  address, so an IPv6 client could rotate through its `/64` for a fresh quota per connection. It
+  now keys `clientIpForLimits({ bucket: true })`.
+
 ## [3.4.15] - 2026-10-12
 
 ### Added
@@ -13415,7 +13471,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.15...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.16...development
+[3.4.16]: https://jsr.io/@denext/denext@3.4.16
 [3.4.15]: https://jsr.io/@denext/denext@3.4.15
 [3.4.14]: https://jsr.io/@denext/denext@3.4.14
 [3.4.13]: https://jsr.io/@denext/denext@3.4.13

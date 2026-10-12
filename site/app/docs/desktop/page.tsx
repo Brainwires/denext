@@ -2727,11 +2727,9 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           (<code>spawnSelf</code> throws the reason when the app may not run it).
         </li>
         <li>
-          The runtime&apos;s launcher prints two lines on stdout before any JavaScript runs (
-          <code>Runtime loaded successfully from: …</code>, <code>Runtime started</code>);{" "}
-          <code>spawnSelf</code>{" "}
-          removes them, so a line protocol starts clean. A spawn of your own from{" "}
-          <code>childCommand</code> sees them.
+          The child&apos;s stdout is the module&apos;s alone: denext&apos;s pinned runtime prints
+          its launch messages on stderr, so a line protocol (MCP, ACP) starts clean, from{" "}
+          <code>spawnSelf</code> or a spawn of your own from <code>childCommand</code>.
         </li>
         <li>
           It works in <code>denext desktop run</code> / <code>dev</code>{" "}

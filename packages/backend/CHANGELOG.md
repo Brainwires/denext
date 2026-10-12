@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Realtime: `timestamptz` keys match across `TimeZone` settings.** `to_jsonb()` formats a
+  `timestamptz` in the session's `TimeZone`, so a write from a session in one zone and a
+  subscriber's re-read in another spelled the same key differently: the change was dropped, and a
+  seeded key never matched its delete. Migration `backend_realtime_0002` replaces the trigger
+  function so that a key column whose catalog type is `timestamptz` is sent in UTC, and the re-read
+  and seed queries spell such a key the same way (`to_jsonb(k AT TIME ZONE 'UTC') #>> '{}'`). Other
+  key types are unchanged. With `migrate: false`, re-run `realtimeSetupSql()`.
+- **Realtime: the signed-out quota is per IPv6 `/64` (security).** It keyed the raw client
+  address, so an IPv6 client could rotate through its `/64` for a fresh quota per connection. It
+  now keys `clientIpForLimits({ bucket: true })` (an IPv4-mapped address counts as its IPv4
+  address). On a denext without that option the raw address is keyed, as before.
+
+## 0.2.0 - 2026-10-12
+
+First release on JSR (0.1.0 was tagged but never published). Requires `@denext/denext` 3.4.15 or
+later.
+
 - **Realtime: signed-out quota per client address.** A signed-out subscriber's
   `maxSubscriptionsPerIdentity` and seed budget now apply per client address
   (`clientIpForLimits()` in the Live connection's context), not per Live connection, so more

@@ -31,11 +31,14 @@ import {
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { RLS_SETUP } from "../packages/backend/src/rls.ts";
+import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
 import {
   installRealtime,
   parseNotification,
   realtimeEngine,
+  rereadQuery,
   REVALIDATE_OWNER_SQL,
+  seedQuery,
   splitFrame,
   toFrames,
 } from "../packages/backend/src/realtime.ts";
@@ -612,6 +615,23 @@ Deno.test("realtime: signed out, the quota is per client address — across that
   }
 });
 
+Deno.test("realtime: signed out over IPv6, the quota is per /64 — rotating within it buys none", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 2 });
+  try {
+    // One client's /64 allocation: any host half, and any spelling of the prefix, is one quota.
+    const inPrefix = ["2001:db8:1:2::a", "2001:db8:1:2:ffff::1", "2001:0DB8:0001:0002:0:0:0:b"];
+    const [c1, c2, c3] = inPrefix.map((ip) => env.hub.conn("", ip));
+    assert((await env.hub.subscribe(c1, "notes", { subId: "1" })).ok);
+    assert((await env.hub.subscribe(c2, "notes", { subId: "2" })).ok);
+    assertEquals((await env.hub.subscribe(c3, "notes", { subId: "3" })).ok, false);
+    assertEquals(c3.errors, ["deny"]);
+    // The neighbouring /64 is another client.
+    assert((await env.hub.subscribe(env.hub.conn("", "2001:db8:1:3::a"), "notes")).ok);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: signed out behind an untrusted proxy-looking address, the quota is per connection", async () => {
   const env = await setUp({ maxSubscriptionsPerIdentity: 1 });
   try {
@@ -830,29 +850,35 @@ Deno.test("realtime(): options are validated; backend() needs postgres for it", 
   assertEquals(realtime(options), options);
 });
 
-Deno.test("realtimeMigrations: one trigger function, then one trigger per table named by its SQL", () => {
+Deno.test("realtimeMigrations: the trigger function (then its UTC-key replacement), then one trigger per table named by its SQL", () => {
   const migrations = realtimeMigrations({
     tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
   });
-  assertEquals(migrations.length, 3);
-  assertEquals(migrations[0].name, "backend_realtime_0001");
-  assert(migrations[0].sql.includes("pg_notify('denext_realtime', body)"));
+  assertEquals(migrations.length, 4);
+  assertEquals(migrations.slice(0, 2).map((m) => m.name), [
+    "backend_realtime_0001",
+    "backend_realtime_0002",
+  ]);
+  for (const fn of migrations.slice(0, 2)) {
+    assert(fn.sql.startsWith("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
+    assert(fn.sql.includes("pg_notify('denext_realtime', body)"));
+    assert(fn.sql.includes("octet_length(body) > 7900"), "an oversized key never fails the write");
+    assert(!/to_jsonb\(NEW\)\s*[,)]/.test(fn.sql), "keys only, never the row");
+  }
+  // 0002 spells a timestamptz key in UTC, the column's type read from the catalog.
+  assert(migrations[1].sql.includes("'pg_catalog.timestamptz'::pg_catalog.regtype"));
+  assert(migrations[1].sql.includes("new_key::timestamptz AT TIME ZONE 'UTC'"));
+  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[2].name));
   assert(
-    migrations[0].sql.includes("octet_length(body) > 7900"),
-    "an oversized key never fails the write",
-  );
-  assert(!/to_jsonb\(NEW\)\s*[,)]/.test(migrations[0].sql), "keys only, never the row");
-  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[1].name));
-  assert(
-    migrations[1].sql.includes(
+    migrations[2].sql.includes(
       `CREATE TRIGGER denext_realtime AFTER INSERT OR UPDATE OR DELETE ON "notes"`,
     ),
   );
-  assert(migrations[2].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
-  assert(migrations[2].sql.includes("denext_realtime_notify('items', 'sku')"));
+  assert(migrations[3].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
+  assert(migrations[3].sql.includes("denext_realtime_notify('items', 'sku')"));
   // Another event set is another migration name (it replaces the trigger).
   const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } } });
-  assert(changed[1].name !== migrations[1].name);
+  assert(changed[2].name !== migrations[2].name);
   const sql = realtimeSetupSql({ tables: { notes: {} } });
   assert(sql.startsWith("-- @denext/backend realtime"));
   assert(sql.includes("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
@@ -951,4 +977,26 @@ Deno.test("realtime frames: split by size, truncate an oversized row, halve on r
     seq: 0,
     resync: true,
   }]);
+});
+
+Deno.test("realtime: a timestamptz key is spelled in UTC by the re-read and the seed; other types as JSON", () => {
+  const { tables } = resolveRealtime({ tables: { stamps: { key: "at" } } });
+  const table = tables.get("stamps")!;
+  const tz = new Map([["at", "timestamp with time zone"]]);
+  const utc = `to_jsonb(t."at" AT TIME ZONE 'UTC') #>> '{}' as k`;
+  assert(
+    rereadQuery(table, undefined, ["2026-01-02T01:04:05.5"], tz).text.startsWith(`select ${utc}, `),
+  );
+  assertEquals(seedQuery(table, undefined, 10, tz).text, `select ${utc} from "stamps" t limit $1`);
+  // The index-served match is unchanged: the column against keys cast to its own type.
+  assert(
+    rereadQuery(table, undefined, [], tz).text.includes(
+      `t."at" = any(array(select jsonb_array_elements_text($1::jsonb)::timestamp with time zone))`,
+    ),
+  );
+  const plain = new Map([["at", "timestamp without time zone"]]);
+  assertEquals(
+    seedQuery(table, undefined, 10, plain).text,
+    `select to_jsonb(t."at") #>> '{}' as k from "stamps" t limit $1`,
+  );
 });

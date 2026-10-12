@@ -464,7 +464,9 @@ policies or filter. Rows keep arrival order; sort them when you render.
    table (`backend_realtime_t_<table>_<hash>`): an `AFTER INSERT OR UPDATE OR DELETE … FOR EACH ROW`
    trigger that sends `pg_notify('denext_realtime', '{"table","op","key","old_key"?,"ts"}')`. A
    NOTIFY payload is capped at 8000 bytes, and a row would leak past the policies, so only the key
-   travels; a key too long to send becomes a "re-read" signal instead of failing the write. Changing
+   travels; a key too long to send becomes a "re-read" signal instead of failing the write. A
+   `timestamptz` key travels in UTC (`backend_realtime_0002` replaces the function to do so), so
+   sessions with different `TimeZone` settings agree on it. Changing
    a table's `events` or `key` installs a new migration that replaces its trigger; a table removed
    from the options keeps its trigger until you `drop trigger denext_realtime on <table>`.
 2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
@@ -499,7 +501,8 @@ signed-out session stops receiving. A table needs `grant select … to authentic
 if signed-out visitors may watch it) for its rows to be readable at all.
 
 **Limits.** Each identity — a signed-in user across all their connections, or the signed-out
-visitors at one client address (`clientIpForLimits()`: one Live connection when no address is
+visitors at one client address (`clientIpForLimits({ bucket: true })`, an IPv6 address counting
+as its `/64`: one Live connection when no address is
 known, or when it is a loopback/private socket peer — a reverse proxy every visitor shares; set
 `trustForwardedHeaders` behind one to key on each visitor's address) — may hold
 `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
@@ -651,7 +654,8 @@ them, so `rateLimit` from `denext/server` can guard them there:
 // middleware.ts
 import { apiErrorResponse, isApiError, next, rateLimit } from "denext/server";
 
-const limitRest = rateLimit({ max: 300, windowMs: 60_000 }); // per client IP, method and path
+// Per client address (an IPv6 /64), method and path; off for an untrusted loopback/private peer.
+const limitRest = rateLimit({ max: 300, windowMs: 60_000 });
 
 export async function middleware(request: Request) {
   if (new URL(request.url).pathname.startsWith("/rest/v1/")) {

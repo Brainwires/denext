@@ -118,7 +118,11 @@ Each line: what to set → where it is documented. Config keys go in
 - Rate limiting — `rateLimit({ max, windowMs })` from `denext/server` on a
   `createApi()` chain (429 + `Retry-After` before validation runs), the auth
   flows' built-in limiters, and a coarse per-IP limit at the edge. The default
-  stores are **per process**; pass a shared `store` behind replicas. →
+  stores are **per process**; pass a shared `store` behind replicas.
+  `rateLimit()`'s default key skips a request whose address is a loopback or
+  private socket peer with no trusted forwarded hop (a proxy every visitor
+  shares) and warns once: behind your proxy, pass `trustForwardedHeaders: true`
+  or a `key`. An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
 
 **Headers and policy**

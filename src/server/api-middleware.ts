@@ -11,7 +11,8 @@ import { type ApiMiddleware, type ApiMiddlewareInput, tagMiddlewareDocs } from "
 import { ApiError } from "./api-error.ts";
 import { hasRole, updateAuthSession } from "./auth/mod.ts";
 import type { AuthSession } from "./auth/types.ts";
-import { inMemoryRateLimitStore, type RateLimitStore, resolveClientIp } from "./auth/rate-limit.ts";
+import { inMemoryRateLimitStore, type RateLimitStore } from "./auth/rate-limit.ts";
+import { ipBucket, limitAddrOf, remoteAddrOf } from "./remote-addr.ts";
 import type { CorsConfig } from "./config.ts";
 import { CORS_POLICY, resolveCors } from "./cors.ts";
 import { verifyOrigin } from "./origin-check.ts";
@@ -87,16 +88,24 @@ export interface ApiRateLimitOptions {
  * Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429
  * `rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood
  * never reaches a schema or the handler. The client identity is the socket peer, or the last
- * `x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it).
+ * `x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it);
+ * an IPv6 address counts against its /64.
+ *
+ * The default key is skipped — the request is not limited — when the client address is a
+ * loopback, private, link-local or unique-local socket peer and no trusted forwarded hop names
+ * the client (`clientIpForLimits()`'s rule): that peer is most likely a reverse proxy every
+ * visitor shares, so one bucket would rate-limit the whole site. A warning says so once per
+ * process. A custom `key` is always applied.
  *
  * @param options Limit, window, key, store.
  * @returns A middleware (no context extension).
  */
 export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
   const store = options.store ?? inMemoryRateLimitStore();
-  const keyOptions = { trustForwardedHeaders: options.trustForwardedHeaders };
+  const trust = options.trustForwardedHeaders === true;
   return async (input) => {
-    const key = options.key?.(input) ?? defaultKey(input, keyOptions);
+    const key = options.key ? options.key(input) : defaultKey(input, trust);
+    if (key === null) return;
     const window = await store.increment(key, options.windowMs);
     if (window.count <= options.max) return;
     const retryAfter = Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000));
@@ -108,12 +117,41 @@ export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
   };
 }
 
-function defaultKey(
-  input: ApiMiddlewareInput<object>,
-  keyOptions: { trustForwardedHeaders?: boolean },
-): string {
-  const ip = resolveClientIp(input.request, keyOptions);
-  return `${ip}|${input.method} ${new URL(input.request.url).pathname}`;
+/**
+ * The default bucket: the client's limit address ({@link limitAddrOf}, IPv6 bucketed by /64) +
+ * method + pathname. `null` when that address is an untrusted loopback/private peer (the limit is
+ * skipped); `"unknown"` stands in when no peer was recorded at all (a handler called directly).
+ */
+function defaultKey(input: ApiMiddlewareInput<object>, trust: boolean): string | null {
+  const request = input.request;
+  const limitIp = limitAddrOf(request, trust);
+  const peer = remoteAddrOf(request);
+  if (limitIp === undefined && peer !== undefined) {
+    warnProxyPeerOnce(peer);
+    return null;
+  }
+  const ip = limitIp === undefined ? "unknown" : ipBucket(limitIp);
+  return `${ip}|${input.method} ${new URL(request.url).pathname}`;
+}
+
+/** Whether {@link warnProxyPeerOnce} has logged (once per process). */
+let warnedProxyPeer = false;
+
+/**
+ * Tell the operator once that `rateLimit()`'s per-address buckets are off: requests arrive from a
+ * loopback/private socket peer (a reverse proxy — or local development) and the proxy is not
+ * trusted.
+ */
+function warnProxyPeerOnce(peer: string): void {
+  if (warnedProxyPeer) return;
+  warnedProxyPeer = true;
+  console.warn(
+    `denext: API requests arrive from a loopback/private address (${peer}) — a reverse proxy, ` +
+      "or local development — so rateLimit()'s per-address buckets are off for them (every " +
+      "visitor would share one). Behind a proxy that sets x-forwarded-for, pass " +
+      "`trustForwardedHeaders: true` to rateLimit() to key each client's address, or give it a " +
+      "`key` (a session's user id).",
+  );
 }
 
 // ── cors() ───────────────────────────────────────────────────────────────────

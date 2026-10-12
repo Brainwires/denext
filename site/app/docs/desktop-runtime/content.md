@@ -128,6 +128,8 @@ ours is open yet.
 | [Chromium's sandbox on Linux (CEF)](#chromiums-sandbox-on-linux-cef)                         | laufey, Deno, denext | planned                                                                      |
 | [Clean exits and the Linux session](#clean-exits-and-the-linux-session)                      | laufey, Deno runtime | planned                                                                      |
 | [No network requests from the CEF backend](#no-network-requests-from-the-cef-backend)        | laufey               | planned                                                                      |
+| [Headless workers and forks of the app](#headless-workers-and-forks-of-the-app)              | laufey, Deno runtime | planned                                                                      |
+| [Async context across a first-time import](#async-context-across-a-first-time-import)        | Deno core            | planned                                                                      |
 | [Signed full-app self-updates](#signed-full-app-self-updates)                                | Deno runtime, denext | builds on deno#36421; ours planned                                           |
 | [Reliability fixes](#reliability-fixes)                                                      | laufey               | planned                                                                      |
 | [Build fixes](#build-fixes)                                                                  | laufey               | [laufey#85](https://github.com/littledivy/laufey/pull/85)                    |
@@ -400,7 +402,7 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 
 ### The secure store on macOS
 
-- **What:** `Deno.desktop.secureStore` on macOS (runtime `2.9.7-denext.13`): a generic password per
+- **What:** `Deno.desktop.secureStore` on macOS (from `2.9.7-denext.13`): a generic password per
   (service, account) that the app's own process writes through Security.framework. With a
   provisioning profile that grants a keychain access group it goes to the data-protection
   keychain, in the app's access group; otherwise to the login keychain with an access list whose
@@ -589,6 +591,40 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Layer:** laufey.
 - **Upstream:** planned.
 
+### Headless workers and forks of the app
+
+- **What:** a child the running app starts from its own executable (a module sidecar's
+  `spawnSelf`, `child_process.fork()`, `spawn(process.execPath, …)` with an IPC channel) runs as a
+  headless worker, and from `2.9.7-denext.14`:
+  - its stdout is its own: the runtime loader's launch messages (`Runtime loaded successfully
+    from: …`, `Runtime started`) go to stderr on every launch, so a line protocol (MCP, ACP, a
+    forked worker's output) starts with the child's first byte;
+  - it never applies or rolls back a pending full-app update: only the app's own launch does, so a
+    child started while an update is staged runs the installed version and leaves the update for
+    the app's next launch;
+  - a fork of the executable that the runtime authorized (an IPC channel and the per-launch worker
+    token it hands its own forks) needs no `--allow-run` for the executable's path, which isn't
+    known when the app's permissions are baked. The `LD_*` / `DYLD_*` check still applies; any other
+    program, or a spawn without an IPC channel, is checked as before.
+- **Why:** every child's stdout began with two lines its program never wrote (denext stripped them
+  in `spawnSelf`; a spawn of the app's own did not); a child started while an update was staged
+  could swap the app's runtime under the running app, or roll back an update whose first launch had
+  not confirmed yet; and an app that forked itself had to grant `run: ["*"]`.
+- **Layer:** laufey, Deno runtime.
+- **Upstream:** planned.
+
+### Async context across a first-time import
+
+- **What:** a dynamic `import()` of a module not loaded before puts the importer's async context
+  (`AsyncLocalStorage`, `AsyncContext`) back once the module is evaluated (from
+  `2.9.7-denext.14`). The module's top-level code still runs in the importer's context, as in Node.
+- **Why:** the importer's context stayed the isolate's ambient one, so the next task the runtime
+  started on its own inherited it: the next `Deno.serve` request saw the previous request's
+  `als.getStore()`, and the test runner's next test saw the last test's store. Only a first-time
+  import took that path (plain, top-level `await`, JSON, Wasm); a cached one did not.
+- **Layer:** Deno core (`deno_core`'s module map).
+- **Upstream:** planned.
+
 ### Signed full-app self-updates
 
 - **What:** `Deno.desktop.updater` replaces the whole signed app (a macOS `.app`, a Windows or
@@ -676,7 +712,8 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 | `2.9.7-denext.10` | Linux, probed rather than guessed: `Deno.desktop.platformFeatures()` (async) reports the session type, a tray host (followed live, with a `platformfeatureschanged` event), the Secret Service and its lock state, KWallet, the notification server and the portal versions. CEF's cookie store no longer hangs on a keyring no one can unlock: a profile with no OS-key cookies starts with `--password-store=basic`, one that has them waits for the key and is never switched (Chromium would delete them). The Chromium sandbox for CEF on macOS and Linux (user namespaces, else a setuid-root `chrome-sandbox` from a `.deb` / `.rpm`, else off with a warning). Wayland clipboard, global-shortcut, client-side-decoration sizing and exit fixes. WebKitGTK streamed `fetch` bodies reach the page as each write arrives (WebKit bug 322545). `.deb` / `.rpm` install the icon under the app id, refresh the desktop databases and depend on `secret-tool` only when the app runs it. laufey `611abcd` (API 45).                                            |
 | `2.9.7-denext.11` | Chromium's sandbox for CEF on Windows, behind CEF's bootstrap (`<App>.exe` is the bootstrap, `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime; see [the Windows CEF layout](#the-windows-cef-layout)). Linux notifications through the xdg-desktop-portal: D-Bus activation, so a click starts an app that quit, systemd transient user timers that post a scheduled notification while the app is closed, and launcher badges. The runtime never rewrites the process's argv in place (a D-Bus-activated app crashed), and `Deno.args` leaves out the runtime's own switches. The CEF host makes no network requests of its own (no network time, component updater, account or search-engine traffic, and on Linux no Hunspell dictionary downloads). FFI libraries load from paths relative to the app, the X11 clipboard takes large (INCR) transfers, and the webview `.deb`'s dependencies, the AppImage icon and a tray created late are fixed. laufey `00f2128` (API 45).                                                                      |
 | `2.9.7-denext.12` | Title bar preferences (`Deno.desktop.titleBarPreferences()`, followed live). The secure store in the runtime on Linux (`Deno.desktop.secureStore`: the Secret Service through libsecret, with the reason it can't answer). Linux file dialogs through xdg-desktop-portal's FileChooser, GTK's chooser where the portal has none (`platformFeatures().fileChooser`). The CEF sandbox mode on Linux as platform facts (`sandbox`, `sandboxReason`) and `requireSandbox` (exit 78 instead of running unsandboxed). `Deno.exit()` ends the app through the backend on every OS (storage is flushed); `SIGTERM` / `SIGINT` / `SIGHUP` quit a Linux CEF app cleanly; `sessionType` follows the display that is there; KDE's service cache is rebuilt after a scheme registration; WebKitGTK uses shared-memory frames on X11; the KWallet daemon matches Chromium's. Notification clicks are signed per install (`laufey-notification-key`) and size-capped; macOS CEF cookies report `cookieEncryption: "basic"` (Chromium's mock keychain). laufey `4f6f00f` (API 47). |
-| `2.9.7-denext.13` | A maintenance release (bug and security fixes). The secure store in the runtime on macOS (`Deno.desktop.secureStore`: the Keychain, written by the app's own process; a team-signed app ignores items another program planted or replaced). On Linux, `SIGTERM` / `SIGINT` / `SIGHUP` quit the WebView backend cleanly too, a quit cancels open GTK dialogs, a signal ends an app whose UI thread is stuck, and every `exit()` parks the UI thread before any exit handler runs (a WebKitGTK crash at exit on X11); the secure store follows the Secret Service to a new owner; a headless runtime launch is no longer cut off after 10 seconds, and the update helper waits for the install's processes (AppImage included). laufey `6974b61` (API 47). The current pin.                                                                                                                                                                                                                                                                                          |
+| `2.9.7-denext.13` | A maintenance release (bug and security fixes). The secure store in the runtime on macOS (`Deno.desktop.secureStore`: the Keychain, written by the app's own process; a team-signed app ignores items another program planted or replaced). On Linux, `SIGTERM` / `SIGINT` / `SIGHUP` quit the WebView backend cleanly too, a quit cancels open GTK dialogs, a signal ends an app whose UI thread is stuck, and every `exit()` parks the UI thread before any exit handler runs (a WebKitGTK crash at exit on X11); the secure store follows the Secret Service to a new owner; a headless runtime launch is no longer cut off after 10 seconds, and the update helper waits for the install's processes (AppImage included). laufey `6974b61` (API 47).                                                                                                                                                                                                                                                                                                           |
+| `2.9.7-denext.14` | A maintenance release (bug fixes). A child the app starts from its own executable (a sidecar's `spawnSelf`, `child_process.fork()`) has a stdout of its own (the runtime loader's launch messages go to stderr), never applies or rolls back a staged full-app update, and, as a fork the runtime authorized, needs no `--allow-run` for the executable's path. A first-time dynamic `import()` puts the importer's async context (`AsyncLocalStorage`) back, so the next `Deno.serve` request doesn't inherit it. On Windows a passkey request whose window closes at once frees the ceremony slot. laufey `09ad1b6` (API 47). The current pin.                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 denext needs `2.9.7-denext.9`: under an older runtime the page gets no relay URL (its WebSockets
 fail), the runtime refuses the update manifests denext publishes (it doesn't know `expiresAt` and

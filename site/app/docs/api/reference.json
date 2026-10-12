@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.15",
+          "signature": "VERSION: 3.4.16",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5822,11 +5822,16 @@
           "name": "clientIpForLimits",
           "slug": "clientIpForLimits",
           "kind": "function",
-          "signature": "clientIpForLimits(): string | undefined",
-          "doc": "The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them.",
-          "docFull": "The client address to key a **per-address limit** on (a quota, a connection cap):\n{@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,\nprivate, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy\nwithout {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor\narrives from the proxy's address, so limiting on it would make one limit site-wide; key the\nlimit on something else (a session, a connection) instead. A directly connected public peer and\na trusted proxy's hop are returned as {@linkcode clientIp} returns them.\n\nThrows outside a request context and makes the render dynamic, exactly like\n{@linkcode clientIp}.",
-          "params": [],
-          "returns": "The address to limit on, or undefined when per-address limits should not apply.",
+          "signature": "clientIpForLimits(options?: object): string | undefined",
+          "doc": "The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them — or, with { bucket: true }, as their limit bucket (an IPv6 address's /64), which is what a limit should key on.",
+          "docFull": "The client address to key a **per-address limit** on (a quota, a connection cap):\n{@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,\nprivate, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy\nwithout {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor\narrives from the proxy's address, so limiting on it would make one limit site-wide; key the\nlimit on something else (a session, a connection) instead. A directly connected public peer and\na trusted proxy's hop are returned as {@linkcode clientIp} returns them — or, with\n`{ bucket: true }`, as their limit bucket (an IPv6 address's `/64`), which is what a limit\nshould key on.\n\nThrows outside a request context and makes the render dynamic, exactly like\n{@linkcode clientIp}.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "bucket: true answers the address's **limit bucket** instead of the address: an IPv4 address as it is, an IPv6 one normalised and collapsed to its /64 prefix (2001:db8:1:2::/64) — the allocation one client controls, so rotating within it does not mint a fresh budget, and every spelling of one address shares one. Default false."
+            }
+          ],
+          "returns": "The address (or bucket) to limit on, or undefined when per-address limits should not apply.",
           "examples": [],
           "denextOnly": true
         },
@@ -10008,8 +10013,8 @@
           "slug": "rateLimit",
           "kind": "function",
           "signature": "rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>",
-          "doc": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it).",
-          "docFull": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429\n`rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood\nnever reaches a schema or the handler. The client identity is the socket peer, or the last\n`x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it).",
+          "doc": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it); an IPv6 address counts against its /64.",
+          "docFull": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429\n`rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood\nnever reaches a schema or the handler. The client identity is the socket peer, or the last\n`x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it);\nan IPv6 address counts against its /64.\n\nThe default key is skipped — the request is not limited — when the client address is a\nloopback, private, link-local or unique-local socket peer and no trusted forwarded hop names\nthe client (`clientIpForLimits()`'s rule): that peer is most likely a reverse proxy every\nvisitor shares, so one bucket would rate-limit the whole site. A warning says so once per\nprocess. A custom `key` is always applied.",
           "params": [
             {
               "name": "options",

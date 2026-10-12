@@ -1,6 +1,6 @@
 // A module sidecar's children (src/desktop/sidecar-child.ts): the argv / environment contract on
 // every OS (the command a sidecar builds, how the child recognizes itself), the shared helpers
-// (`childCommand`, `spawnSelf`, the runtime start-up lines stripped from a child's stdout), and a
+// (`childCommand`, `spawnSelf`, a child's stdout passed through untouched), and a
 // real module sidecar, in a worker, that starts a child of itself which echoes its stdin to stdout
 // and exits with a code (the Deno CLI path; the packaged-app path is
 // tests/desktop-sidecar-packaged-macos.test.ts).
@@ -62,7 +62,6 @@ Deno.test("sidecarChildBase: a compiled app re-runs its own executable as `run <
         args: ["run", entry],
         env: { [SIDECAR_CHILD_ENV]: "server" },
         argcEnv: SIDECAR_CHILD_ARGC_ENV,
-        banner: true,
       },
     );
   }
@@ -92,7 +91,6 @@ Deno.test("sidecarChildBase: the Deno CLI gets the app's unscoped permissions; n
       args: ["run", "--allow-read", "--allow-net", "/p/desktop.ts"],
       env: { [SIDECAR_CHILD_ENV]: "server" },
       argcEnv: SIDECAR_CHILD_ARGC_ENV,
-      banner: false,
     },
   );
   const none = sidecarChildBase({ name: "server", execPath: "/deno", standalone: false });
@@ -117,7 +115,6 @@ Deno.test("parentChildBase: this process's executable and entry", () => {
   assert("command" in base);
   assertEquals(base.command, Deno.execPath());
   assertEquals(base.args.at(-1), fromFileUrl(import.meta.url));
-  assertEquals(base.banner, false);
   assert("error" in parentChildBase("server", undefined));
   assert("error" in parentChildBase("server", "https://example.com/desktop.ts"));
 });
@@ -229,7 +226,6 @@ Deno.test("readSidecarChildLaunch: reads this process and removes the markers", 
 
 /** The helpers module, as the worker wrapper and a child load it. */
 interface Helpers {
-  bannerLength(s: string): number;
   childHelpers(base: SidecarChildBase): {
     childCommand(args?: unknown): { command: string; args: string[]; env: Record<string, string> };
     spawnSelf(args?: string[], options?: Record<string, unknown>): ChildLike;
@@ -252,7 +248,6 @@ Deno.test("childCommand: the base, then the child's arguments and their count", 
     args: ["run", "C:\\Temp\\desktop.ts"],
     env: { [SIDECAR_CHILD_ENV]: "server" },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
-    banner: true,
   });
   assertEquals(childCommand(["mcp-bridge", 3 as unknown as string]), {
     command: "C:\\Program Files\\My App\\My App.exe",
@@ -267,24 +262,7 @@ Deno.test("childCommand: the base, then the child's arguments and their count", 
   assertThrows(() => broken.spawnSelf([]), Error, "no entry");
 });
 
-Deno.test("bannerLength: the runtime's start-up lines, whole, partial or absent", () => {
-  const line1 = "Runtime loaded successfully from: /App.app/Contents/MacOS/libruntime.dylib\n";
-  assertEquals(helpers.bannerLength(""), -1);
-  assertEquals(helpers.bannerLength("Runtime lo"), -1);
-  assertEquals(helpers.bannerLength("Runtime loaded successfully from: /App"), -1);
-  assertEquals(helpers.bannerLength(line1), -1);
-  assertEquals(helpers.bannerLength(line1 + "Runtime sta"), -1);
-  assertEquals(helpers.bannerLength(line1 + "Runtime started\n{}"), line1.length + 16);
-  const crlf = "Runtime loaded successfully from: C:\\App\\runtime.dll\r\n";
-  assertEquals(helpers.bannerLength(crlf + "Runtime started\r\n{}"), crlf.length + 17);
-  // Only the first line (a runtime that prints one), then the child's own output.
-  assertEquals(helpers.bannerLength(line1 + "{}\n"), line1.length);
-  // The child's own output from the first byte.
-  assertEquals(helpers.bannerLength("{"), 0);
-  assertEquals(helpers.bannerLength("Runtime error\n"), 0);
-});
-
-/** A fake child program: the given start-up output, then its stdin echoed, then exit 3. */
+/** A fake child program: the given leading output, then its stdin echoed, then exit 3. */
 const FAKE_CHILD = `
 const out = (s) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 for (const part of JSON.parse(Deno.env.get("FAKE_PREFIX"))) { out(part); await new Promise((r) => setTimeout(r, 20)); }
@@ -298,7 +276,6 @@ Deno.exit(3);
 async function spawnFake(
   dir: string,
   prefix: string[],
-  banner: boolean,
 ): Promise<{ code: number | null; out: string }> {
   const script = join(dir, "child.mjs");
   await Deno.writeTextFile(script, FAKE_CHILD);
@@ -308,7 +285,6 @@ async function spawnFake(
     args: ["run", "-A", script],
     env: { [SIDECAR_CHILD_ENV]: "server" },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
-    banner,
   });
   const child = spawnSelf(["a", "b"], {
     env: { ...Deno.env.toObject(), FAKE_PREFIX: JSON.stringify(prefix), DENO_DESKTOP_WS_URL: "x" },
@@ -321,7 +297,7 @@ async function spawnFake(
   return { code, out };
 }
 
-Deno.test("spawnSelf: the child's stdout without the runtime's start-up lines; IPC, marker, argc", async () => {
+Deno.test("spawnSelf: the child's stdout as it wrote it; IPC, marker, argc", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-child-" });
   try {
     const echoed = JSON.stringify({
@@ -331,28 +307,11 @@ Deno.test("spawnSelf: the child's stdout without the runtime's start-up lines; I
       argc: "2",
       leaked: null, // the runtime's own variables never reach a child
     }) + "\n";
-    // The two lines, split across writes as a pipe may deliver them.
-    const split = await spawnFake(dir, [
-      "Runtime lo",
-      "aded successfully from: /App/libruntime.dylib\nRunt",
-      "ime started\n",
-    ], true);
-    assertEquals(split, { code: 3, out: echoed });
-    // Windows line ends.
-    assertEquals(
-      await spawnFake(dir, [
-        "Runtime loaded successfully from: C:\\App\\runtime.dll\r\nRuntime started\r\n",
-      ], true),
-      { code: 3, out: echoed },
-    );
-    // No start-up lines (another runtime): nothing is taken from the child's output.
-    assertEquals(await spawnFake(dir, ["Runtime error: kept\n"], true), {
-      code: 3,
-      out: "Runtime error: kept\n" + echoed,
-    });
-    // The Deno CLI prints none, and the output is not touched.
-    const cli = await spawnFake(dir, ["Runtime started\n"], false);
-    assertEquals(cli, { code: 3, out: "Runtime started\n" + echoed });
+    assertEquals(await spawnFake(dir, []), { code: 3, out: echoed });
+    // Nothing is taken from the child's output, even lines that look like a runtime's (denext's
+    // pinned runtime prints its launch messages on stderr).
+    const prefix = "Runtime loaded successfully from: /App/libruntime.dylib\nRuntime started\n";
+    assertEquals(await spawnFake(dir, [prefix]), { code: 3, out: prefix + echoed });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -366,7 +325,7 @@ const { sidecarChildHelpersUrl } = await import(${
   });
 const { childHelpers } = await import(sidecarChildHelpersUrl());
 try {
-  childHelpers({ name: "server", command: Deno.execPath(), args: ["run", "x.ts"], env: {}, argcEnv: "N", banner: false }).spawnSelf([]);
+  childHelpers({ name: "server", command: Deno.execPath(), args: ["run", "x.ts"], env: {}, argcEnv: "N" }).spawnSelf([]);
   console.log("spawned");
 } catch (err) {
   console.log(err.message);

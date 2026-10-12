@@ -5,7 +5,8 @@
 // answers its `ready: { http }` probe, is reachable from the page through `spa.proxy`
 // (`proxy: true`) with the per-launch secret it shares with the page (`expose`), starts a child of
 // the app running its own module headless (`denextSidecar.spawnSelf`: stdin echoed to a stdout free
-// of the runtime's start-up lines, its exit code, the unpacked package loaded in the child too), and
+// of the runtime's launch messages, which go to stderr, its exit code, the unpacked package loaded in
+// the child too), and
 // is gone (its port closed) once the page quits the app.
 //
 // The page reports through the app's own `onRequest` (`/_probe/report`, printed on stdout) and then
@@ -307,7 +308,8 @@ Deno.test({
         body: { greet: "hi from puredep", ext: "external data", tokenMatches: true, port },
       });
       // A child of the app ran the bundled module headless: argv, stdin echoed on a stdout free of
-      // the runtime's start-up lines, the external package from the unpacked folder, exit code 7.
+      // the runtime's launch messages (stderr, untouched by denext), the external package from the
+      // unpacked folder, exit code 7.
       assertEquals(report.child, {
         status: 200,
         body: {

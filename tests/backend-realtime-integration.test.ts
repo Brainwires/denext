@@ -3,7 +3,8 @@
 // Live channel hub, driven without a socket) gets the rows its own row-level-security policies
 // return — two users, a visibility change on update, deletes, a 500-row transaction coalesced, the
 // listener reconnecting after `pg_terminate_backend`, and notifications handled in the root
-// context, a timestamp key read back as the notification spells it — and that the re-read and seed
+// context, a timestamp key read back as the notification spells it, a timestamptz key matched
+// across a writer and a reader in different TimeZones — and that the re-read and seed
 // queries are index scans on an integer, a uuid and a timestamp key (EXPLAIN). The app connects as a non-superuser role that owns its database.
 //
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`), with a superuser URL:
@@ -215,6 +216,56 @@ Deno.test({
 
       // A delete of the seeded row: sent, since the seeded key matches the notification's.
       await db.service()`delete from stamps where at = '2026-01-02 03:04:05'`;
+      await until(() => ca.frames.length === 2, 5_000, "the delete");
+      assertEquals(ca.frames[1].changes, [{ op: "delete", key: "2026-01-02T03:04:05" }]);
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+/** Rows keyed by a `timestamptz`: `to_jsonb` spells it with the session TimeZone's offset. */
+const INSTANTS = `
+  create table instants (at timestamptz primary key, body text not null);
+  grant select on instants to authenticated;
+`;
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: a timestamptz key matches across writer and reader TimeZones${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      // The app's own sessions (the re-reads and seeds) run in UTC…
+      await env.admin.unsafe(`alter database ${env.database} set timezone = 'UTC'`);
+      hub = await install(env.app, { instants: { key: "at" } }, INSTANTS);
+      // …while the writer's session is in New York: its to_jsonb spells the instant at -05:00.
+      const write = (statement: string) =>
+        db.service().begin(async (tx) => {
+          await tx.unsafe("set local timezone = 'America/New_York'");
+          await tx.unsafe(statement);
+        });
+      await write(`insert into instants values ('2026-01-02 03:04:05+00', 'seeded')`);
+      await settle(150); // its notification (if heard at all) lands before anyone subscribes
+      const ca = hub.conn(await cookieFor(A));
+      assert((await hub.subscribe(ca, "instants")).ok);
+
+      await write(`insert into instants values ('2026-01-02 03:04:06.5+00', 'new')`);
+      await until(() => ca.frames.length === 1, 5_000, "the insert");
+      // The row itself is read in the reader's session: its timestamptz at +00:00.
+      assertEquals(changesOf(ca), [{
+        op: "insert",
+        key: "2026-01-02T03:04:06.5",
+        row: { at: "2026-01-02T03:04:06.5+00:00", body: "new" },
+      }]);
+
+      // The seeded row, deleted from New York: its key matches the one the seed tracked.
+      await write(`delete from instants where at = '2026-01-02 03:04:05+00'`);
       await until(() => ca.frames.length === 2, 5_000, "the delete");
       assertEquals(ca.frames[1].changes, [{ op: "delete", key: "2026-01-02T03:04:05" }]);
     } finally {
@@ -520,11 +571,12 @@ Deno.test({
       }).tables;
       for (const [table, [type]] of Object.entries(keys)) {
         const name = `k_${table}`;
-        // What the trigger puts in a notification: `to_jsonb(row) ->> key`.
+        // What the trigger puts in a notification: `to_jsonb(row) ->> key` (a timestamptz in UTC).
+        const value = type === "timestamptz" ? `t.k at time zone 'UTC'` : "t.k";
         const trigger = (await env.app.unsafe<{ k: string }>(
-          `select to_jsonb(t) ->> 'k' as k from ${name} t order by t.k`,
+          `select to_jsonb(${value}) #>> '{}' as k from ${name} t order by t.k`,
         )).map((row) => row.k);
-        const types = new Map([["k", type]]);
+        const types = new Map([["k", type === "timestamptz" ? "timestamp with time zone" : type]]);
         const seeded = (await env.app.unsafe<{ k: string }>(
           ...spread(seedQuery(tables.get(name)!, undefined, 100, types)),
         )).map((row) => row.k).sort();

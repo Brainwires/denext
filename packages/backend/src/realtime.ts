@@ -973,10 +973,15 @@ function equals(column: string, param: string, types: Map<string, string>): stri
  * re-read row and a seeded key match the notification's key in every type — `t."key"::text`
  * differs for a timestamp (`2026-01-02 03:04:05` against JSON's `2026-01-02T03:04:05`). The
  * column alone goes through JSON (`#>> '{}'` unwraps it to the same text), not the whole row, so
- * a seed over many rows does not build a document per row.
+ * a seed over many rows does not build a document per row. A `timestamptz` key is spelled in UTC
+ * (`k AT TIME ZONE 'UTC'`), as the trigger spells it, so the reading session's `TimeZone` does not
+ * matter.
  */
-function keyText(column: string): string {
-  return `to_jsonb(t."${column}") #>> '{}'`;
+function keyText(column: string, type: string | undefined): string {
+  const value = type === "timestamp with time zone"
+    ? `t."${column}" AT TIME ZONE 'UTC'`
+    : `t."${column}"`;
+  return `to_jsonb(${value}) #>> '{}'`;
 }
 
 /**
@@ -995,7 +1000,7 @@ export function rereadQuery(
   const match = type
     ? `t."${table.key}" = any(array(select jsonb_array_elements_text($1::jsonb)::${type}))`
     : `t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
-  let text = `select ${keyText(table.key)} as k, to_jsonb(t)::text as r ` +
+  let text = `select ${keyText(table.key, type)} as k, to_jsonb(t)::text as r ` +
     `from ${table.qualified} t where ${match}`;
   if (filter) {
     params.push(filter.value);
@@ -1012,7 +1017,7 @@ export function seedQuery(
   types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [limit];
-  let text = `select ${keyText(table.key)} as k from ${table.qualified} t`;
+  let text = `select ${keyText(table.key, types.get(table.key))} as k from ${table.qualified} t`;
   if (filter) {
     params.push(filter.value);
     text += ` where ${equals(filter.column, "$2", types)}`;
@@ -1156,12 +1161,14 @@ export function realtimeEngine(): RealtimeEngine {
 
 /**
  * The signed-out subscriber's client address to key its quota on — `clientIpForLimits()` in the
- * Live connection's context (a public socket peer, or the trusted proxy's hop) — or `undefined`
- * when it is not known, or is an untrusted loopback/private peer (a proxy every visitor shares).
+ * Live connection's context (a public socket peer, or the trusted proxy's hop), as its limit
+ * bucket (an IPv6 address's /64, so rotating within it does not mint a fresh quota) — or
+ * `undefined` when it is not known, or is an untrusted loopback/private peer (a proxy every
+ * visitor shares).
  */
 function subscriberAddress(): string | undefined {
   try {
-    return clientIpForLimits();
+    return clientIpForLimits({ bucket: true });
   } catch {
     return undefined; // outside a request context: no address to key on
   }

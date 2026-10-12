@@ -14,7 +14,7 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { clientAddrOf, limitAddrOf } from "./remote-addr.ts";
+import { clientAddrOf, ipBucket, limitAddrOf } from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -537,17 +537,25 @@ export function clientIp(): string | undefined {
  * without {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor
  * arrives from the proxy's address, so limiting on it would make one limit site-wide; key the
  * limit on something else (a session, a connection) instead. A directly connected public peer and
- * a trusted proxy's hop are returned as {@linkcode clientIp} returns them.
+ * a trusted proxy's hop are returned as {@linkcode clientIp} returns them — or, with
+ * `{ bucket: true }`, as their limit bucket (an IPv6 address's `/64`), which is what a limit
+ * should key on.
  *
  * Throws outside a request context and makes the render dynamic, exactly like
  * {@linkcode clientIp}.
  *
- * @returns The address to limit on, or `undefined` when per-address limits should not apply.
+ * @param options `bucket: true` answers the address's **limit bucket** instead of the address: an
+ *   IPv4 address as it is, an IPv6 one normalised and collapsed to its `/64` prefix
+ *   (`2001:db8:1:2::/64`) — the allocation one client controls, so rotating within it does not
+ *   mint a fresh budget, and every spelling of one address shares one. Default `false`.
+ * @returns The address (or bucket) to limit on, or `undefined` when per-address limits should not
+ *   apply.
  * @throws Outside a request context.
  */
-export function clientIpForLimits(): string | undefined {
+export function clientIpForLimits(options: { bucket?: boolean } = {}): string | undefined {
   const ctx = clientAddressContext("clientIpForLimits");
-  return ctx && limitAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+  const ip = ctx && limitAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+  return ip !== undefined && options.bucket ? ipBucket(ip) : ip;
 }
 
 /**

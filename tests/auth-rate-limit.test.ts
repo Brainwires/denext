@@ -283,6 +283,11 @@ Deno.test("clientIpBucket: every spelling of one IPv6 address shares ONE /64 buc
   assert(at("2001:db8:1:3::1") !== prefix, "a different /64 is a different client");
   // IPv4 is untouched.
   assertEquals(at("203.0.113.9"), "203.0.113.9");
+  // An IPv4-mapped address (a dual-stack listener's IPv4 client) is its IPv4 address — not the
+  // one ::ffff:0:0/64 every IPv4 visitor would share.
+  assertEquals(at("::ffff:203.0.113.9"), "203.0.113.9");
+  assertEquals(at("::ffff:cb00:7109"), "203.0.113.9");
+  assert(at("::ffff:198.51.100.7") !== at("::ffff:203.0.113.9"), "two IPv4 clients, two buckets");
   assertEquals(at("not-an-ip"), "not-an-ip", "an unparseable value passes through");
 });
 

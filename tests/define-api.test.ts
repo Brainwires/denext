@@ -13,6 +13,7 @@ import type { ApiModule } from "../src/server/types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
 import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import { unauthorized } from "../src/runtime/error-boundary.ts";
 
 /** A minimal Standard Schema: an object whose listed keys must be strings; extra keys are STRIPPED. */
@@ -231,6 +232,68 @@ Deno.test("rateLimit: with trustForwardedHeaders the LAST x-forwarded-for hop is
   assertEquals(err.status, 429);
   // A different last hop is a different client.
   assertEquals((await GET(req("evil, 8.8.8.8"), ctx())).status, 200);
+});
+
+/** A request whose recorded socket peer is `peer` (as denext's server loop records it). */
+function fromPeer(peer: string, headers?: Record<string, string>): Request {
+  const request = new Request("http://localhost/api/x", { headers });
+  setRemoteAddr(request, { transport: "tcp", hostname: peer, port: 1 });
+  return request;
+}
+
+Deno.test("rateLimit: an untrusted loopback/private peer (a shared proxy) is not limited — and is warned about once", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (message: string) => void warnings.push(message);
+  try {
+    // Every visitor behind a reverse proxy without trust arrives from its address: one bucket
+    // would rate-limit the whole site, so the default key skips it.
+    for (const proxy of ["127.0.0.1", "10.0.0.2", "::1", "::ffff:192.168.1.1", "fd00::5"]) {
+      for (let i = 0; i < 3; i++) {
+        assertEquals(
+          (await GET(fromPeer(proxy, { "x-forwarded-for": "9.9.9.9" }), ctx())).status,
+          200,
+        );
+      }
+    }
+  } finally {
+    console.warn = original;
+  }
+  assertEquals(warnings.length, 1, "warned once per process");
+  assertStringIncludes(warnings[0], "trustForwardedHeaders: true");
+  // A custom key still applies there.
+  const keyed = createApi()
+    .use(rateLimit({ max: 1, windowMs: 60_000, store, key: () => "user-1" }))
+    .define({}, () => "ok");
+  assertEquals((await keyed(fromPeer("127.0.0.1"), ctx())).status, 200);
+  assertEquals((await rejects(keyed(fromPeer("127.0.0.1"), ctx()))).status, 429);
+  // Trusted, the proxy's last hop is the client again.
+  const trusted = createApi()
+    .use(rateLimit({ max: 1, windowMs: 60_000, store, trustForwardedHeaders: true }))
+    .define({}, () => "ok");
+  const viaProxy = () => fromPeer("10.0.0.2", { "x-forwarded-for": "203.0.113.4" });
+  assertEquals((await trusted(viaProxy(), ctx())).status, 200);
+  assertEquals((await rejects(trusted(viaProxy(), ctx()))).status, 429);
+});
+
+Deno.test("rateLimit: a public peer is limited, an IPv6 one per /64", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  assertEquals((await GET(fromPeer("198.51.100.7"), ctx())).status, 200);
+  assertEquals((await rejects(GET(fromPeer("198.51.100.7"), ctx()))).status, 429);
+  // Rotating the host half of a /64 (or re-spelling it) does not open a fresh bucket.
+  assertEquals((await GET(fromPeer("2001:db8:1:2::a"), ctx())).status, 200);
+  assertEquals((await rejects(GET(fromPeer("2001:db8:1:2:ffff::1"), ctx()))).status, 429);
+  assertEquals((await rejects(GET(fromPeer("2001:0DB8:1:2::b"), ctx()))).status, 429);
+  assertEquals((await GET(fromPeer("2001:db8:1:3::a"), ctx())).status, 200, "another /64");
 });
 
 // --- through handleApi: the redacted-500 path for DEFINED routes -----------------
