@@ -1,0 +1,34 @@
+{
+  "name": "@denext/backend",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./server": "./server.ts",
+    "./client": "./client.ts"
+  },
+  "imports": {
+    "@denext/denext": "jsr:@denext/denext@^3.4.12",
+    "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "backend",
+      "optionsType": "BackendOptions",
+      "configKeys": ["storage"]
+    }
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "server.ts",
+      "client.ts",
+      "src/",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
+  }
+}

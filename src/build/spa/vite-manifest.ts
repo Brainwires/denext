@@ -1,7 +1,7 @@
 // SPA mode: `spa.viteManifest` — a Vite-shaped `.vite/manifest.json` over the export's
 // content-hashed client files.
 //
-// A server written for a Vite build (T3 Code's `apps/server` is one) reads
+// A server written for a Vite build reads
 // `<static root>/.vite/manifest.json` to learn which files are content-hashed and so safe to
 // serve as `immutable`: it collects every entry's `file`, `css` and `assets`. Vite keys its
 // manifest by source path; a denext export knows output files, not the source each came from,
@@ -9,7 +9,7 @@
 // name carries a content hash are listed: the entry (`index.js`) and stylesheet (`index.css`)
 // keep their names across builds, so listing them would let such a server cache a stale entry
 // for a year. With `spa.assetsDir: "assets"` the files are `assets/<name>-<HASH>.<ext>`, the
-// paths such a server expects (T3 Code's admits `^assets/.+-[\w-]{8}\.[^/]+$`).
+// paths such a server expects (one real server admits `^assets/.+-[\w-]{8}\.[^/]+$`).
 
 import { walk } from "@std/fs";
 import { join, relative, SEPARATOR } from "@std/path";

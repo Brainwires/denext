@@ -196,8 +196,8 @@ function stickyTranslate(overlap: number, offset: KeyboardStickyViewProps["offse
  * A `<div>` that rides on top of the on-screen keyboard: while the keyboard covers the page it
  * moves up by the covered height (a compositor-only `translateY`), and back down when the
  * keyboard hides. Place it at the bottom of the screen yourself (`position: fixed` /
- * `sticky`, `bottom: 0`); the view only adds the transform. This is the composer of a chat
- * screen: see the chat-composer recipe on /docs/mobile.
+ * `sticky`, `bottom: 0`); the view only adds the transform. This is a text field docked above
+ * the keyboard: see the text-field recipe on /docs/mobile.
  *
  * Like {@linkcode KeyboardAvoidingView} it follows only the part of the keyboard that covers the
  * page, so once the WebView has resized around the keyboard it stays put (the resize already
@@ -211,10 +211,10 @@ function stickyTranslate(overlap: number, offset: KeyboardStickyViewProps["offse
  * "use client";
  * import { KeyboardStickyView } from "denext/mobile";
  *
- * export function Composer() {
+ * export function InputBar() {
  *   return (
  *     <KeyboardStickyView style={{ position: "fixed", left: 0, right: 0, bottom: 0 }}>
- *       <textarea placeholder="Message" />
+ *       <textarea placeholder="Add a note" />
  *     </KeyboardStickyView>
  *   );
  * }

@@ -514,7 +514,7 @@ More: [/docs/auth](/docs/auth).
 
 **Stack:** react-native-web FlatList (any) · **Kind:** fix
 
-**The problem.** With react-native-web, an `inverted` FlatList (the usual chat layout) scrolls in the opposite direction to the mouse wheel and reverses text selection.
+**The problem.** With react-native-web, an `inverted` FlatList (the usual layout for a list of messages) scrolls in the opposite direction to the mouse wheel and reverses text selection.
 
 **Why it happens.** react-native-web implements `inverted` with a `scaleY(-1)` transform, which flips the scroll and selection direction along with the layout.
 

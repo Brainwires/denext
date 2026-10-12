@@ -15,10 +15,10 @@ denext equivalent; this page is about the decision.
 ## The short answer
 
 **denext is the better fit** for iOS-first or web-first apps whose screens are documents, forms,
-dashboards, chat, content or developer tools: B2B and internal apps, productivity apps, and
+dashboards, messaging, content or developer tools: B2B and internal apps, productivity apps, and
 "our web app, in the stores". It fits best when the web version matters too, and when rich
-text, code, markdown or a terminal would otherwise need native modules. T3 Code, the app
-denext's mobile work is measured against, is that kind of app.
+text, code, markdown or a terminal would otherwise need native modules. The large real-world app
+denext's mobile work is measured against is that kind of app.
 
 **React Native is the better fit** for Android-first audiences and low-end phones, gesture- and
 animation-driven consumer apps, apps that must feel native at 120 Hz or adopt iOS 26's native
@@ -29,8 +29,8 @@ work in the background. The [list below](#choose-react-native-if) says why for e
 
 ### Startup, memory and size (one app, an Android emulator)
 
-T3 Code's Capacitor build against its React Native / Expo build, opening the same 200-message
-thread: release APKs, an API 35 x86_64 emulator (Pixel 6 profile, host GPU, WebView 124), two
+A large real-world app's Capacitor build against its React Native / Expo build, opening the
+same 200-row screen: release APKs, an API 35 x86_64 emulator (Pixel 6 profile, host GPU, WebView 124), two
 runs of 5 interleaved cold starts and 10 flings per app, on 2026-09-25.
 
 |                                                 | Capacitor (denext) | React Native / Expo |
@@ -181,7 +181,7 @@ in the [Expo APIs](/docs/react-native#expo-apis) and
 - a backend that sends through Expo's push service, onto APNs / FCM directly
   (`createPushSender`).
 
-**What a real migration needed:** T3 Code's React Native app builds in React Native mode with
+**What a real migration needed:** a large real-world React Native app builds in React Native mode with
 all 41 of its routes rendering; it kept app-written stubs for its non-Expo native modules
 (Nitro, its native terminal, markdown and diff views, `@expo/ui`) and for two modules its
 Metro config generates.

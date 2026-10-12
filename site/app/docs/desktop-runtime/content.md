@@ -21,10 +21,10 @@ its notifications and its auto-updater, has to run on denext without a rewrite a
 bundling a browser engine.
 
 Stock Deno Desktop 2.9.7 is a good foundation for that, and it couldn't carry a real app the
-whole way. The app that forced the issue was [T3 Code](https://github.com/pingdotgg/t3code): its
-desktop build signs in to T3 Connect through Clerk, and the sign-in never worked. Clerk checks the
+whole way. The app that forced the issue was a large real-world app whose
+desktop build signs in through Clerk, and the sign-in never worked. Clerk checks the
 page's `Origin`, Deno Desktop served the page from `http://127.0.0.1:<random port>`, and Clerk's
-Frontend API answered `origin_invalid`. With a custom-scheme origin (`t3code://app`) it accepted
+Frontend API answered `origin_invalid`. With a custom-scheme origin (`myapp://app`) it accepted
 the same request, from the server and from the page. Looking further, stock Deno Desktop 2.9.7
 also:
 
@@ -145,7 +145,7 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   streams, and cross-origin requests carry `Origin: myapp://app`.
 - **Why:** the loopback origin changes every launch, so web storage was wiped each time
   (deno#35444), and Clerk's Frontend API answers `origin_invalid` for it while it accepts
-  `t3code://app`. Two hardening fixes ride along: an absolute-form request target over TCP can't
+  `myapp://app`. Two hardening fixes ride along: an absolute-form request target over TCP can't
   claim an `http+memory:` URL (400), and the relay times out a request head that never arrives.
   denext's bridge trusts a request only when `Deno.serve` reports the memory transport, never from
   the URL. The runtime marks what its relay forwards (`x-deno-desktop-relay`, stripped from client

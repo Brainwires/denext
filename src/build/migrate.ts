@@ -677,7 +677,7 @@ async function packageExports(dir: string): Promise<Record<string, string>> {
  * resolve `@std/path`, `ws`, … Only the ones denext's own runtime source imports: the root
  * import map also serves the workspace packages and the tests (`effect@^3` for
  * `@denext/effect`, `jsqr` for a test), and mapping those into the app would shadow the app's
- * own versions (T3 Code runs Effect 4).
+ * own versions (an app may run Effect 4).
  */
 async function frameworkDepsOf(
   abs: string,
@@ -2531,7 +2531,7 @@ function spaDesktopSource(): string {
  */
 /**
  * The desktop bundle name from the SPA title: parentheticals and characters a bundle/Dock
- * name shouldn't carry are dropped (`"T3 Code (Alpha)"` → `"T3 Code"`); falls back to `app`.
+ * name shouldn't carry are dropped (`"My App (Alpha)"` → `"My App"`); falls back to `app`.
  */
 export function desktopAppName(title: string): string {
   const name = title.replace(/\([^)]*\)/g, "").replace(/[^A-Za-z0-9 ._-]/g, "").replace(/\s+/g, " ")

@@ -17,6 +17,7 @@ import { toFileUrl } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "./app.ts";
 import type { ModuleLoader } from "./types.ts";
 import { serveWithPortFallback } from "./serve-utils.ts";
+import { inRootContext } from "./root-context.ts";
 
 export { createApp } from "./app.ts";
 export type { AppConfig, FlightBoundaryState, RequestHandler, RequestLogInfo } from "./app.ts";
@@ -51,7 +52,7 @@ export { collapseHeadTags } from "../jsx/render-to-string.ts";
 export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
-export { serveStatic } from "./static.ts";
+export { parseRange, serveStatic } from "./static.ts";
 export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
@@ -456,7 +457,13 @@ export type {
 // Dynamic OG images: render JSX to a PNG (next/og-style ImageResponse).
 export { ImageResponse, type ImageResponseOptions } from "./image-response.ts";
 // Self-hosted image optimization endpoint (backs <Image loader={denextImageLoader}>).
-export { type ImageOptimizeOptions, optimizeImage } from "./image-optimizer.ts";
+export {
+  type ImageOptimizeOptions,
+  type ImageTransform,
+  optimizeImage,
+  transformImageBytes,
+  type TransformImageOptions,
+} from "./image-optimizer.ts";
 export {
   safeFetch,
   SafeFetchError,
@@ -635,10 +642,14 @@ export type {
   SitemapModule,
 } from "./metadata-files.ts";
 
-/** Default module loader: dynamic import by absolute file path. */
+/**
+ * Default module loader: dynamic import by absolute file path. A module is shared by every
+ * request, so it is loaded outside the request that first asks for it: its top-level code, and
+ * anything that code schedules, never runs as that request.
+ */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
   const url = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
-  return import(url);
+  return inRootContext(() => import(url));
 };
 
 /** Options for {@linkcode serve}: app configuration plus HTTP listen settings. */

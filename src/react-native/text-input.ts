@@ -6,7 +6,7 @@
  *   the input gets those as its base style; an app's own `outline*` style or Tailwind class
  *   still applies on top.
  * - A wrapping placeholder: React Native lays the placeholder out on one line, so a long one in
- *   a `multiline` input that is a line tall (a chat composer) does not wrap onto a clipped second
+ *   a `multiline` input that is a line tall (a text field docked above the keyboard) does not wrap onto a clipped second
  *   line; it is cut with an ellipsis (`white-space: nowrap; text-overflow: ellipsis`).
  *
  * React Native mode's build wraps react-native-web's `TextInput` with

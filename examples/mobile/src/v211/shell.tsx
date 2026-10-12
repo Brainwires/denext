@@ -1,5 +1,5 @@
 // The frame of every 2.11 demo screen: a back button, the title, what the tester should do,
-// then the demo. `fill` gives the body the rest of the viewport (lists, chat, navigation).
+// then the demo. `fill` gives the body the rest of the viewport (lists, the keyboard demo, navigation).
 import type { ReactNode } from "denext";
 import { navigate } from "../ui.tsx";
 

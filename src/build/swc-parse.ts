@@ -6,6 +6,7 @@
 
 import { extname } from "@std/path";
 import { type Ctx, encoder, MARKER, type Node } from "./swc-ast.ts";
+import { inRootContext } from "../server/root-context.ts";
 
 type SwcModule = typeof import("@denext/swc");
 let swc: Promise<SwcModule> | null = null;
@@ -32,10 +33,13 @@ export async function parseModuleForPath(
   path: string,
   source: string,
 ): Promise<{ ctx: Ctx; body: Node[] } | null> {
-  swc ??= import("@denext/swc").then(async (mod) => {
-    await mod.default();
-    return mod;
-  });
+  // Shared wasm init, memoized: created outside the request that first needs it.
+  swc ??= inRootContext(() =>
+    import("@denext/swc").then(async (mod) => {
+      await mod.default();
+      return mod;
+    })
+  );
   const mod = await swc;
   let ast: Node;
   try {

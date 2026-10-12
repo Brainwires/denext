@@ -24,6 +24,7 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
+import { inRootContext } from "../server/root-context.ts";
 import { configAnchorsResolution } from "./module-config.ts";
 import { recordSelfWrite, writeManagedFile } from "./self-writes.ts";
 import { appConfigBackupPath, guardRestore, isInjectedCssShimEntry } from "./css-config-guard.ts";
@@ -64,7 +65,8 @@ export function isStyleFile(path: string): boolean {
 // to the file and along the nearest `node_modules` (so `@import "pkg/..."` resolves).
 let sassMod: Promise<typeof import("sass")> | null = null;
 function sassCompiler(): Promise<typeof import("sass")> {
-  if (!sassMod) sassMod = import("sass");
+  // Shared and memoized: loaded outside the request that first needs it.
+  if (!sassMod) sassMod = inRootContext(() => import("sass"));
   return sassMod;
 }
 
@@ -99,11 +101,12 @@ async function compileSass(file: string): Promise<string> {
 let lightningReady: Promise<typeof import("@denext/lightningcss")> | null = null;
 function lightning(): Promise<typeof import("@denext/lightningcss")> {
   if (!lightningReady) {
-    lightningReady = (async () => {
+    // Shared wasm init, memoized: created outside the request that first needs it.
+    lightningReady = inRootContext(async () => {
       const mod = await import("@denext/lightningcss");
       await mod.default();
       return mod;
-    })();
+    });
   }
   return lightningReady;
 }

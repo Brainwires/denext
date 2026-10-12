@@ -1,7 +1,7 @@
 /**
  * `VirtualList` — denext's virtualized list component: renders only the rows near the
  * viewport of a list of any size (1M–10M rows), measuring rows as they render (no size
- * estimates required), keeping the visible rows still when content above changes, with chat
+ * estimates required), keeping the visible rows still when content above changes, with bottom
  * anchoring, sticky rows, grids, exact `scrollToIndex`, find-in-page, keyboard navigation,
  * viewability, scroll restoration and React Native's scroll events. Built with `h()`
  * (framework source carries no JSX).
@@ -246,9 +246,10 @@ function findStubs<T>(ctl: VirtualController<T>, props: VirtualListProps<T>): VN
  * scroll offset during a fling. Past the browser's element-height limit the scroll space is
  * scaled, and `scrollToIndex` still lands exactly.
  *
- * **Chat:** `anchor="end"` starts at the bottom, bottom-aligns short content, stays pinned
- * while at the bottom (appends, a streaming last message, the keyboard opening with
- * `keyboardInset`), and `onStartReached` loads history without a jump. **Sections:**
+ * **Bottom-anchored lists** (messages, logs, feeds): `anchor="end"` starts at the bottom,
+ * bottom-aligns short content, stays pinned while at the bottom (appends, a streaming last row,
+ * the keyboard opening with `keyboardInset`), and `onStartReached` loads history without a
+ * jump. **Sections:**
  * `stickyIndices` (the real row sticks, so it stays focusable; the next header pushes it up).
  * **Grids:** `numColumns` + `gap`. **Accessibility:** `role="list"` / `"listitem"` with
  * `aria-setsize` / `aria-posinset`, Arrow / Page / Home / End (and optional typeahead)
@@ -267,20 +268,20 @@ function findStubs<T>(ctl: VirtualController<T>, props: VirtualListProps<T>): VN
  * {@linkcode VirtualListHandle}.
  * @returns The list element.
  *
- * @example A chat thread
+ * @example A bottom-anchored list
  * ```tsx
  * "use client";
  * import { VirtualList } from "denext";
  *
- * export function Thread({ messages, loadOlder }) {
+ * export function Feed({ entries, loadOlder }) {
  *   return (
  *     <VirtualList
  *       style={{ height: "100%" }}
- *       data={messages}
- *       keyExtractor={(m) => m.id}
+ *       data={entries}
+ *       keyExtractor={(e) => e.id}
  *       anchor="end"
  *       onStartReached={loadOlder}
- *       renderItem={(m) => <Message message={m} />}
+ *       renderItem={(e) => <Entry entry={e} />}
  *     />
  *   );
  * }

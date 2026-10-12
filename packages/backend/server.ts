@@ -1,0 +1,43 @@
+/**
+ * `@denext/backend/server` — the storage server API, for route handlers, Server Actions,
+ * Server Components and tasks.
+ *
+ * ```ts
+ * // app/api/avatar/route.ts
+ * import { storage } from "@denext/backend/server";
+ *
+ * export async function POST(request: Request): Promise<Response> {
+ *   const avatars = storage.bucket("avatars"); // authorize() runs with this request's session
+ *   const upload = await avatars.createSignedUploadUrl("u1/me.png", { contentType: "image/png" });
+ *   return Response.json(upload);
+ * }
+ * ```
+ *
+ * Every operation enforces the bucket's rules. Inside a request, the bucket's `authorize` runs
+ * with that request's session (`auth()` under `denextAuth`); outside one (a task, a script) the
+ * call is trusted. `storage.bucket(name, { service: true })` skips `authorize` inside a request
+ * too, for the server acting on its own behalf.
+ *
+ * @module
+ */
+
+export { storage } from "./src/storage.ts";
+export { isStorageError, StorageError } from "./src/errors.ts";
+export type { StorageErrorCode } from "./src/errors.ts";
+export type { StorageTransform } from "./src/shared.ts";
+export type {
+  BucketAccessOptions,
+  ListedObject,
+  ListOptions,
+  ListResult,
+  MultipartUpload,
+  ObjectInfo,
+  SignedUpload,
+  SignedUploadOptions,
+  SignedUrlOptions,
+  Storage,
+  StorageBucket,
+  StoredObject,
+  UploadBody,
+  UploadOptions,
+} from "./src/types.ts";

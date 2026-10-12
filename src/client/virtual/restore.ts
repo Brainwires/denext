@@ -24,7 +24,7 @@ export interface RestoreSnapshot {
   readonly gap: number;
   /** Measured sizes of rows around the anchor: `[key, px]`. */
   readonly sizes: readonly (readonly [string, number])[];
-  /** Whether the view was at the end (a chat list re-pins). */
+  /** Whether the view was at the end (a bottom-anchored list re-pins). */
   readonly atEnd: boolean;
   /**
    * An automatic (dev) snapshot's stamp: when it was saved (epoch ms) and by which document.

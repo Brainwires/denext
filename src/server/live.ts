@@ -48,6 +48,7 @@ import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
 import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
+import { inRootContext } from "./root-context.ts";
 import {
   LIVE_REF_ID,
   type LiveBoundarySub,
@@ -778,7 +779,9 @@ function invalidateTags(tags: readonly string[]): void {
 function onTagInvalidated(tags: readonly string[]): void {
   for (const t of tags) pendingTags.add(t);
   if (flushTimer !== null) return;
-  flushTimer = setTimeout(flush, COALESCE_MS);
+  // The flush re-renders every connection, each in its own context: start its timer outside
+  // the invalidating request's context.
+  flushTimer = inRootContext(() => setTimeout(flush, COALESCE_MS));
 }
 
 const pendingTags = new Set<string>();

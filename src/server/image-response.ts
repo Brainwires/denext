@@ -27,6 +27,7 @@
 // resolves at SSR runtime; on the client it is never reached.
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { detachedFromRequest } from "../runtime/root-context-bridge.ts";
 
 // The subset of `@denext/og` denext calls. Typed here so the lazy runtime import
 // doesn't need the package on the static graph for `deno check`.
@@ -129,8 +130,9 @@ export function ImageResponse(
         }
         // @denext/og is denext's own first-party codec, so it is always resolvable —
         // no peer-codec guard needed (mirrors the @denext/photon/@denext/avif loads).
-        const { ImageResponse: OgImageResponse } = await import(
-          "@denext/og"
+        // Loaded outside the request: the renderer is shared by every request.
+        const { ImageResponse: OgImageResponse } = await detachedFromRequest(() =>
+          import("@denext/og")
         ) as unknown as OgModule;
         const res = new OgImageResponse(el, renderOpts);
         controller.enqueue(new Uint8Array(await res.arrayBuffer()));

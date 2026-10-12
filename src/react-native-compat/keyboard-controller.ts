@@ -34,7 +34,7 @@
  * import { KeyboardProvider, KeyboardStickyView } from "react-native-keyboard-controller";
  * import { h } from "denext/jsx-runtime";
  *
- * h(KeyboardProvider, null, h(KeyboardStickyView, { offset: { opened: 0 } }, "composer"));
+ * h(KeyboardProvider, null, h(KeyboardStickyView, { offset: { opened: 0 } }, "field"));
  * ```
  *
  * @module
@@ -1238,7 +1238,7 @@ export interface KeyboardChatScrollViewProps {
 }
 
 /**
- * A chat scroll view: while the keyboard covers the page it gets that much room after its
+ * A bottom-anchored scroll view: while the keyboard covers the page it gets that much room after its
  * content, and the content moves up with the keyboard as `keyboardLiftBehavior` says
  * (`denext/mobile`'s keyboard lift). The native-only props (`blankSpace`,
  * `extraContentPadding`, `applyWorkaroundForContentInsetHitTestBug`, the inset compensations)

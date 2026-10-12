@@ -141,9 +141,9 @@ function screenMatchContext(): Context<ScreenMatch | null> {
  * ```tsx
  * "use client";
  * import { useScreenMatch } from "denext/navigation";
- * export function Thread() {
- *   const id = useScreenMatch()?.params.threadId;
- *   return <h1>Thread {id}</h1>;
+ * export function Project() {
+ *   const id = useScreenMatch()?.params.projectId;
+ *   return <h1>Project {id}</h1>;
  * }
  * ```
  */
@@ -467,11 +467,11 @@ function currentRoute(rt: HistoryRt, loc: HistoryLocation): RouteContent | null 
  *
  * const history = tanstackHistory(router);
  * const screens = [
- *   { path: "/", render: () => <ThreadList />, options: { title: "Threads" } },
- *   { path: "/$threadId", render: (m) => <Thread id={m.params.threadId} /> },
+ *   { path: "/", render: () => <ProjectList />, options: { title: "Projects" } },
+ *   { path: "/$projectId", render: (m) => <Project id={m.params.projectId} /> },
  *   {
- *     path: "/$threadId/diff",
- *     render: (m) => <Diff id={m.params.threadId} />,
+ *     path: "/$projectId/settings",
+ *     render: (m) => <ProjectSettings id={m.params.projectId} />,
  *     options: { presentation: "formSheet", sheetAllowedDetents: ["medium", "large"] },
  *   },
  * ];

@@ -89,9 +89,20 @@ function resolvedStorePath(): string {
   return storePath ?? join(Deno.cwd(), ".denext", "content-data.json");
 }
 
+type RootBridge = { __denextInRootContext?: <R>(fn: () => R) => R };
+
+/**
+ * Run shared work (a memoized read, a module load) outside the request that first triggers it,
+ * through the root async context denext's server installs; directly when there is none.
+ */
+function detached<T>(fn: () => T): T {
+  const run = (globalThis as RootBridge).__denextInRootContext;
+  return run ? run(fn) : fn();
+}
+
 /** Read + parse the built store once, deriving each entry's `slug`. Missing store → empty. */
 function loadStore(): Promise<Record<string, CollectionEntry[]>> {
-  return cache ??= (async () => {
+  return cache ??= detached(async () => {
     try {
       const raw = JSON.parse(await Deno.readTextFile(resolvedStorePath())) as Record<
         string,
@@ -112,7 +123,7 @@ function loadStore(): Promise<Record<string, CollectionEntry[]>> {
     } catch {
       return {};
     }
-  })();
+  });
 }
 
 /**
@@ -185,7 +196,9 @@ async function mdxComponent(
   const collection = await collectionOf(entry);
   const file = join(dirname(resolvedStorePath()), "content", collection, `${entry.id}.js`);
   const url = `${toFileUrl(file).href}?v=${entry.v ?? "0"}`;
-  const mod = await import(url) as { default?: (props: Record<string, unknown>) => unknown };
+  const mod = await detached(() => import(url)) as {
+    default?: (props: Record<string, unknown>) => unknown;
+  };
   if (typeof mod.default !== "function") {
     throw new Error(`content: ${file} has no default MDX component export`);
   }

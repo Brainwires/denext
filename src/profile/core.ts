@@ -96,7 +96,7 @@ async function stopAndMeasure(
  * interaction that keeps growing after GC retained something it shouldn't. With 2+
  * iterations the leak baseline is the heap after the first one (`warmBytes`): that run
  * loads what the interaction needs once (route chunks, compiled code, data caches), which
- * a post-load baseline flagged as a leak (T3 Code's thread switch: "+24 MB retained",
+ * a post-load baseline flagged as a leak (a large real-world app's screen switch: "+24 MB retained",
  * all of it first-visit state that a repeated rotation holds flat).
  */
 export async function captureInteraction(

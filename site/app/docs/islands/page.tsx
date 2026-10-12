@@ -219,7 +219,7 @@ export default function Chart() { /* … */ }
         {`import Mermaid from "./Mermaid.tsx";
 import { DiffPanel } from "./DiffPanel.tsx";
 
-export function Thread({ diagram, diff }) {
+export function Review({ diagram, diff }) {
   return (
     <>
       <Mermaid client:visible source={diagram} />

@@ -17,7 +17,7 @@ export interface InputAccessoryViewProps {
   readonly children?: VNodeChildren;
   /**
    * The id text inputs name in `inputAccessoryViewID`. With one, the bar shows only while a
-   * text field is being edited; without one, it is always shown (a sticky composer).
+   * text field is being edited; without one, it is always shown (a text field docked to the bottom).
    */
   readonly nativeID?: string;
   /** The bar's style. */
@@ -82,7 +82,7 @@ const DOCK = { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1000 } a
  * With a `nativeID` the bar is shown only while a text field is being edited, as React Native
  * shows it only for the inputs whose `inputAccessoryViewID` names it (a web view cannot tell
  * which input names which bar, so any text field shows it); without one it is always shown,
- * React Native's sticky-composer use.
+ * React Native's docked-text-field use.
  *
  * @param View react-native-web's `View` (React Native mode passes it in).
  * @returns The component.

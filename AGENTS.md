@@ -98,7 +98,7 @@ A SPA can paint and take typing before its bundle runs: `spa.shell: { component:
 "./src/AppShell.tsx", props?, bootScript?, platforms?, readyOn?, maxHoldMs? }` server-renders that
 pure component (same markup and classes as the app's first screen; `AppShell.desktop.tsx` etc. per
 target) into `#root` at build/export/dev, replacing `spa.loading`. Mark fields
-`data-denext-shell-key="composer"`; the app renders off-screen and swaps in on its first settled
+`data-denext-shell-key="draft"`; the app renders off-screen and swaps in on its first settled
 commit (or `shellReady()` from `denext` with `readyOn: "shellReady"`), and a keyed
 `<input>`/`<textarea>` gets the typed text, caret and focus; an editor takes it with
 `useShellHandoff(key)` / `consumeShellHandoff(key)`.
@@ -432,8 +432,8 @@ only the app's own modules take a variant; keep a plain file so type checking re
 Docs: https://denext.dev/docs/platform-files
 
 **A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
-10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
-`onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
+10M rows, exact `scrollToIndex`, `anchor="end"` for bottom-anchored lists, sticky headers,
+grids, `onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
 `denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. `lists: "denext"` (config)
 makes every `@legendapp/list/react` import a LegendList built on `VirtualList`. Swipe actions:
 `<SwipeableRow leading={[…]} trailing={[{ label, tone, onPress }]}>` from `denext` (transform-only,
@@ -624,6 +624,15 @@ suggests them).
 `requireNativeModule` loads off-device and throws only when called. Native-only SDKs
 (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
 https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-native
+
+**File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
+s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
+authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
+head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
+session and its absence denies (`{ service: true }` skips it). Browser: `uploadFile(bucket, file,
+{ onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
+chars). Docs: https://denext.dev/docs/backend
 
 **A database (zero-npm, server-only module):**
 

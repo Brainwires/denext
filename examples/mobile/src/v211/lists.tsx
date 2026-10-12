@@ -1,4 +1,4 @@
-// Lists: 100,000 fixed-height rows with a jump, 10,000 variable-height chat rows, and sticky
+// Lists: 100,000 fixed-height rows with a jump, 10,000 variable-height message rows, and sticky
 // section headers, all on VirtualList.
 import {
   type Ref,
@@ -88,7 +88,7 @@ export function StickyList({ listRef }: { listRef?: Ref<VirtualListHandle> }) {
 
 type ListTab = "big" | "chat" | "sticky";
 
-const LIST_TABS: [ListTab, string][] = [["big", "100k"], ["chat", "Chat 10k"], [
+const LIST_TABS: [ListTab, string][] = [["big", "100k"], ["chat", "Variable 10k"], [
   "sticky",
   "Sticky",
 ]];
@@ -114,7 +114,7 @@ export function ListsScreen() {
     <Screen
       fill
       title="Lists"
-      todo="100k: fling hard several times: momentum never stops or stutters mid-fling, no blank rows. 'Jump to 77,777' puts 'Row 77,777' at the top edge. Chat 10k: variable heights; fling both ways, no jumps or overlaps. Sticky: each 'Section X' header sticks at the top until the next one pushes it off."
+      todo="100k: fling hard several times: momentum never stops or stutters mid-fling, no blank rows. 'Jump to 77,777' puts 'Row 77,777' at the top edge. Variable 10k: variable heights; fling both ways, no jumps or overlaps. Sticky: each 'Section X' header sticks at the top until the next one pushes it off."
     >
       <div class="row btn-row pad-x" data-selftest="lists-header">
         {LIST_TABS.map(([name, label]) => (

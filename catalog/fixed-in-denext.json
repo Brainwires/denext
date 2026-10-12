@@ -113,7 +113,7 @@
       "title": "Inverted FlatList on the web scrolls the wrong way",
       "group": "react-native",
       "kind": "fix",
-      "problem": "With react-native-web, an `inverted` FlatList (the usual chat layout) scrolls in the opposite direction to the mouse wheel and reverses text selection.",
+      "problem": "With react-native-web, an `inverted` FlatList (the usual layout for a list of messages) scrolls in the opposite direction to the mouse wheel and reverses text selection.",
       "errorText": [],
       "affects": { "stack": "react-native-web FlatList", "versions": "any" },
       "cause": "react-native-web implements `inverted` with a `scaleY(-1)` transform, which flips the scroll and selection direction along with the layout.",

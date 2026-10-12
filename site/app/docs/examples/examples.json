@@ -72,6 +72,20 @@
       "runFrom": "example"
     },
     {
+      "name": "backend-storage",
+      "title": "examples/backend-storage",
+      "blurb": "@denext/backend storage in one app: an image gallery in a public bucket (thumbnails resized on download through denext's image pipeline) and a private documents bucket whose links are signed and…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/backend-storage",
+      "tags": [
+        "plugin:backend",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev          # http://localhost:3000 — files land in ./.storage",
+      "runFrom": "example"
+    },
+    {
       "name": "cache-components",
       "title": "Cache Components (use cache + PPR)",
       "blurb": "A minimal demo of Next.js 16 Cache Components on denext, a stable opt-in enabled by top-level cacheComponents: true in denext.config.ts (Next.js's experimental: { cacheComponents: true } spelling…",

@@ -2,7 +2,7 @@
  * Height prediction for text rows without the DOM (`VirtualList`'s `estimateText`): wrap the
  * row's text greedily with canvas `measureText` word widths at the list's width, then
  * `lines × lineHeight + padding`. A close estimate before a row renders keeps the scrollbar
- * and `scrollToIndex` targets steady on huge lists of chat messages. Where no canvas exists
+ * and `scrollToIndex` targets steady on huge lists of text-heavy rows. Where no canvas exists
  * (SSR, tests) an average-glyph-width approximation is used, so the estimate is still
  * deterministic.
  *

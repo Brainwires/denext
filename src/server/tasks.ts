@@ -8,6 +8,7 @@
 // this module — which user task files import `defineTask` from — stays lean.
 
 import { cronError, type CronExpr, cronMatches, parseCron, toDenoCron } from "../runtime/cron.ts";
+import { detachedFromRequest } from "../runtime/root-context-bridge.ts";
 
 /** Context passed to a task's handler. */
 export interface TaskContext {
@@ -509,7 +510,10 @@ export function scheduleTasks(entries: ScheduledEntry[]): () => void {
         cron(
           denoCronName(e.task, e.cron),
           toDenoCron(e.cron),
-          () => runTask(e.task, undefined, { trigger: "schedule" }).catch(onScheduledError(e.task)),
+          // A scheduled run belongs to no request, whatever context the runtime fires it in.
+          () =>
+            detachedFromRequest(() => runTask(e.task, undefined, { trigger: "schedule" }))
+              .catch(onScheduledError(e.task)),
         );
       } catch (err) {
         console.error(`denext: Deno.cron rejected schedule for "${e.task}":`, err);
@@ -549,7 +553,9 @@ function startUserlandScheduler(entries: ScheduledEntry[]): () => void {
         if (!cronMatches(p.expr, now)) continue;
         if (p.running) continue; // overlap guard: a still-in-flight run is not started again
         p.running = true;
-        void runTask(p.task, undefined, { trigger: "schedule", signal: controller.signal })
+        void detachedFromRequest(() =>
+          runTask(p.task, undefined, { trigger: "schedule", signal: controller.signal })
+        )
           .catch(onScheduledError(p.task))
           .finally(() => {
             p.running = false;

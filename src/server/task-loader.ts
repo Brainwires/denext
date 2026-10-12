@@ -15,6 +15,7 @@ import {
   setTaskRecorder,
 } from "./tasks.ts";
 import { TASK_HISTORY_DB, taskHistoryRecorder } from "./task-history.ts";
+import { inRootContext } from "./root-context.ts";
 
 /**
  * Discover `tasks/**` under `tasksDir`, import each module, and register the task it
@@ -40,7 +41,8 @@ export async function discoverTasks(tasksDir: string): Promise<string[]> {
     const name = rel.replace(/\.(tsx?|jsx?|mjs)$/, "").replace(/[/\\]/g, "/");
     let mod: Record<string, unknown>;
     try {
-      mod = await import(toFileUrl(entry.path).href);
+      // A task module belongs to no request, even when the first run is triggered by one.
+      mod = await inRootContext(() => import(toFileUrl(entry.path).href));
     } catch (err) {
       console.error(`denext: failed to load task "${name}":`, err);
       continue;

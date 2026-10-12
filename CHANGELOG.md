@@ -8,6 +8,45 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.12] - 2026-10-12
+
+### Added
+
+- **`@denext/backend` 0.1.0: storage.** A new first-party plugin, `backend({ storage })`: buckets
+  declared in `denext.config.ts` with `public`, `maxBytes`, a `mime` allow-list (a declared raster
+  image is sniffed from its first bytes) and `authorize({ session, op, key, bucket, request })`,
+  which runs for every operation made inside a request with the `denextAuth` session and denies
+  when absent. Drivers: `s3()` for AWS S3, Cloudflare R2 and MinIO (SigV4 on `crypto.subtle`, no
+  SDK; presigned PUT/GET, multipart upload, ListObjectsV2 paging) and `fs({ dir })` for development
+  and self-hosting (HMAC-signed, expiring URLs served at `/_denext/storage/`, `Range` downloads).
+  `storage.bucket(name)` from `@denext/backend/server` signs uploads and downloads, uploads,
+  downloads, heads, lists and removes; `uploadFile` (progress, multipart above a threshold) and
+  `getFileUrl` from `@denext/backend/client` drive it from the browser through
+  `POST /_denext/storage/sign`, which applies the `csrf()` rule and validates its body. Downloads
+  can resize images (`transform: { width, height, quality, format }`). Guide:
+  [Backend](https://denext.dev/docs/backend); example: `examples/backend-storage`.
+- **`transformImageBytes(bytes, transform, { images, cacheKey })`** (`denext/server`): the
+  `/_denext/image` pipeline for image bytes the caller already holds — the same codecs, SVG and
+  decompression-bomb refusal, concurrency gate and output cache, with `width` / `height` bounded to
+  `images.deviceSizes ∪ images.imageSizes`, the image fitted inside the box and never enlarged.
+- **`parseRange(header, size)`** (`denext/server`): the single-range `Range` header parser the
+  static file server uses, for handlers that serve bytes themselves (`undefined` = serve it all,
+  `null` = 416).
+
+### Fixed
+
+- **Security: a request's context could leak into later code after a lazily loaded module.** The
+  first `import()` of a module made during a request (an image codec on the first
+  `/_denext/image` or storage transform, a route module, a wasm tool in dev) left that request's
+  async context active afterwards: the next request the server dispatched, a scheduled task or a
+  timer the module started could see `currentContext()` return the finished request, so a
+  `cookies()` / `auth()` read or a storage `authorize` check could run with another user's
+  session. Shared loaders (route and island modules, the image, OG, Sass, Lightning CSS, SWC and
+  MDX tools, the cache store, task and instrumentation modules, content collections' store and
+  MDX modules) now load outside the request, every request and scheduled run starts with no
+  request context, and shared timers (Live and channel flushes, ISR background regeneration)
+  start outside the request that triggered them.
+
 ## [3.4.11] - 2026-10-12
 
 ### Fixed
@@ -13131,7 +13170,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.11...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.12...development
+[3.4.12]: https://jsr.io/@denext/denext@3.4.12
 [3.4.11]: https://jsr.io/@denext/denext@3.4.11
 [3.4.10]: https://jsr.io/@denext/denext@3.4.10
 [3.4.9]: https://jsr.io/@denext/denext@3.4.9

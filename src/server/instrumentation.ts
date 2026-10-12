@@ -12,6 +12,7 @@
 
 import { toFileUrl } from "@std/path";
 import type { RequestLogInfo } from "./app-config.ts";
+import { inRootContext } from "./root-context.ts";
 
 /**
  * Context passed to {@linkcode OnRequestError} describing where the error
@@ -88,7 +89,8 @@ export interface Instrumentation {
 export async function loadInstrumentation(path: string | null): Promise<Instrumentation> {
   if (!path) return {};
   try {
-    const mod = await import(toFileUrl(path).href) as
+    // Process-wide hooks (an exporter's timers included) must not start inside a request.
+    const mod = await inRootContext(() => import(toFileUrl(path).href)) as
       & Instrumentation
       & { default?: Instrumentation };
     return {

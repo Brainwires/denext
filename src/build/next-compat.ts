@@ -83,6 +83,7 @@ import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
 import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
+import { inRootContext } from "../server/root-context.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -1488,7 +1489,8 @@ async function emitAsset(
 // @mdx-js/mdx is loaded lazily so an app without any `.mdx`/`.md` never pays for it.
 let mdxCompile: Promise<typeof import("@mdx-js/mdx")["compile"]> | null = null;
 function mdxCompiler(): Promise<typeof import("@mdx-js/mdx")["compile"]> {
-  if (!mdxCompile) mdxCompile = import("@mdx-js/mdx").then((m) => m.compile);
+  // Shared and memoized: loaded outside the request that first needs it.
+  if (!mdxCompile) mdxCompile = inRootContext(() => import("@mdx-js/mdx").then((m) => m.compile));
   return mdxCompile;
 }
 
@@ -1934,13 +1936,13 @@ async function resolveInPackageDirBrowser(
 }
 
 /**
- * Resolve a bare `spec` (`effect`, `effect/Array`, `@t3tools/shared/devProxy`) to a
+ * Resolve a bare `spec` (`effect`, `effect/Array`, `@acme/shared/devProxy`) to a
  * concrete file by walking up `node_modules` from `fromDir` — the standard node
  * algorithm, which handles both hoisted deps (`apps/web/node_modules/<pkg>`) and
  * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
  * Honors the package's `exports` map (else `module`/`main`/`index`). Also resolves Node's
  * **package self-reference**: a module inside a package importing its OWN package by name
- * (`@t3tools/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
+ * (`@acme/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
  * through that package's `exports` — pnpm links a workspace package into its consumers'
  * `node_modules`, never into its own, so the walk alone can't find it.
  * `platformExtensions` are probed ahead of the default extensions for a package subpath.

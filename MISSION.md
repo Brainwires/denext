@@ -35,8 +35,8 @@ Four pillars, in order:
    and component libraries run as they are: Radix, Base UI, shadcn/ui, TanStack Router, recharts,
    react-hook-form, lucide, next-intl and the rest. Real codebases prove it: the shadcn/ui site,
    the Next.js App Router playground and the Epic Stack (the last two re-migrated nightly in CI),
-   and T3 Code's web and desktop app. `denext migrate` brings an existing app across in one pass
-   with its source intact. **No new ecosystem has to be built for denext to succeed**; the one
+   and a large real-world app on the web and the desktop. `denext migrate` brings an existing
+   app across in one pass with its source intact. **No new ecosystem has to be built for denext to succeed**; the one
    developers already have is the ecosystem. Compatibility is honest: we never claim 100% parity,
    and the gaps are listed in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and
    [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).

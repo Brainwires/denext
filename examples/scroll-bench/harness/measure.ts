@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run -A
 /**
  * measure.ts — the scroll benchmark on Android: the denext app (Capacitor WebView) vs the
- * React Native twin, on the SAME emulator with the SAME recipe. Derived from the T3 Code
- * Capacitor-vs-RN harness (same cold-start / PSS / SurfaceFlinger / gfxinfo method); the
- * T3-specific pairing and thread commands are dropped, `matrix` is new.
+ * React Native twin, on the SAME emulator with the SAME recipe. Derived from an earlier
+ * Capacitor-vs-RN harness for a large real-world app (same cold-start / PSS / SurfaceFlinger /
+ * gfxinfo method); that app's pairing and navigation commands are dropped, `matrix` is new.
  *
  *   deno run -A harness/measure.ts doctor                  # adb, device, WebView, root, APKs
  *   deno run -A harness/measure.ts install [--apks <dir>]  # install both APKs (+ grant perms)
@@ -21,7 +21,7 @@
  *   --apks <dir>        where scroll-bench-{denext,rn}-release.apk are (default: harness/)
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────
- * METHOD (see also the T3 harness notes; the same caveats apply)
+ * METHOD (the earlier harness's caveats apply too)
  * ─────────────────────────────────────────────────────────────────────────────────────────
  * Per cell: force-stop both apps, clear logcat, print a `SCROLLBENCH_HARNESS launch-<id>`
  *   line with `log`, then `am start -W -a VIEW -d <scheme>://run?list=…&kind=…&n=… <pkg>`

@@ -7,6 +7,8 @@ import { awaitable } from "../runtime/async-props.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { RenderScope } from "../runtime/render-scope.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+// Side effect first: snapshot the root async context at startup, before any request runs.
+import "./root-context.ts";
 import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
@@ -608,6 +610,21 @@ export async function runDeferred(ctx: RequestContext): Promise<void> {
 /** Run `fn` with `ctx` as the ambient request context. */
 export function runWithContext<T>(ctx: RequestContext, fn: () => T): T {
   return storage.run(ctx, fn);
+}
+
+/**
+ * Run `fn` with NO ambient request context (other `AsyncLocalStorage` scopes, such as a
+ * tracer's, are kept). A request's entry point uses it: after a module's first `import()`,
+ * Deno can hand the importing request's context to the next request the server dispatches,
+ * so every request starts by clearing it rather than trusting the runtime to have done so.
+ *
+ * @param fn The work to run outside any request.
+ * @returns What `fn` returns.
+ */
+export function withoutRequestContext<T>(fn: () => T): T {
+  // `run(undefined)` rather than `exit()`: Deno 2.9.6's `exit()` restores the outer store after the
+  // first `await` inside `fn`, so an async request would resume in the stale request again.
+  return storage.run(undefined as unknown as RequestContext, fn);
 }
 
 /** The current request context, or undefined if none is active. */

@@ -13,6 +13,7 @@
 import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
 import { createGate, GateOverloadError } from "./gate.ts";
+import { inRootContext } from "./root-context.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
 
@@ -507,7 +508,10 @@ async function encodeOutput(
     // Lazy runtime import, kept off the static module graph (see the header note).
     // @denext/avif is denext's own first-party codec, so it is always resolvable —
     // no peer-codec guard needed (mirrors the @denext/photon load below).
-    const { encode: encodeAvif } = await import("@denext/avif") as unknown as AvifModule;
+    // Loaded outside the request: a codec is shared by every request (src/server/root-context.ts).
+    const { encode: encodeAvif } = await inRootContext(() =>
+      import("@denext/avif")
+    ) as unknown as AvifModule;
     const raw = resized.get_raw_pixels(); // RGBA, width*height*4
     const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
     // @denext/avif honors `quality` (0..100, higher = better) directly.
@@ -667,12 +671,40 @@ async function loadAndEncode(
 ): Promise<Uint8Array | Response> {
   const bytes = await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
+  return await decodeResizeEncode(
+    bytes,
+    (sw, sh) => ({
+      width,
+      height: Math.max(1, Math.round(width * (sh / sw))),
+    }),
+    format,
+    quality,
+  );
+}
+
+/** The output size for a decoded source of `sw` × `sh` pixels. */
+type TargetSize = (sw: number, sh: number) => { width: number; height: number };
+
+/**
+ * The shared decode → resize → encode core: refuses an SVG and a decompression bomb (from the
+ * header dimensions before decoding, and again after), then resizes to `target`'s size and
+ * encodes to `format`.
+ */
+async function decodeResizeEncode(
+  bytes: Uint8Array,
+  target: TargetSize,
+  format: string,
+  quality: number,
+): Promise<Uint8Array | Response> {
   if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
   const probed = probeImageDimensions(bytes);
   if (probed && exceedsSourceLimits(probed.width, probed.height)) {
     return new Response("image too large", { status: 413 });
   }
-  const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
+  // Loaded outside the request: the codec is shared by every request (src/server/root-context.ts).
+  const { PhotonImage, resize, SamplingFilter } = await inRootContext(() =>
+    import("@denext/photon")
+  );
   let img: PhotonImageT | undefined;
   let resized: PhotonImageT | undefined;
   try {
@@ -680,11 +712,131 @@ async function loadAndEncode(
     const sw = img.get_width();
     const sh = img.get_height();
     if (exceedsSourceLimits(sw, sh)) return new Response("image too large", { status: 413 });
-    const height = Math.max(1, Math.round(width * (sh / sw)));
+    const { width, height } = target(sw, sh);
     resized = resize(img, width, height, SamplingFilter.Lanczos3);
     return await encodeOutput(resized, width, height, format, quality);
   } finally {
     img?.free();
     resized?.free();
   }
+}
+
+/** A resize + re-encode of in-memory image bytes, for {@linkcode transformImageBytes}. */
+export interface ImageTransform {
+  /** Target width in pixels: one of `images.deviceSizes ∪ images.imageSizes`. */
+  width?: number;
+  /** Target height in pixels: one of `images.deviceSizes ∪ images.imageSizes`. */
+  height?: number;
+  /** Encoder quality, coerced to the nearest of `images.qualities` (default `[75]`). */
+  quality?: number;
+  /** Output format: `"webp"` (the default), or `"avif"` when `images.formats` lists `image/avif`. */
+  format?: "webp" | "avif";
+}
+
+/** Options for {@linkcode transformImageBytes}. */
+export interface TransformImageOptions {
+  /** The app's `images` config: the allowed sizes, qualities and formats. */
+  images?: ImagesConfig;
+  /**
+   * A stable identity for the source bytes (for example `bucket/key@etag`). Given, encoded
+   * output is kept in the optimizer's byte-bounded server-side cache under it and the
+   * transform, so a repeat request skips the decode; omitted, nothing is cached.
+   */
+  cacheKey?: string;
+}
+
+/**
+ * Resize and re-encode image bytes the caller already holds — the `/_denext/image` pipeline
+ * (the same codecs, decompression-bomb and SVG refusal, concurrency gate and output cache) for
+ * a source that is not a URL, such as an object in storage. The size is bounded like the
+ * endpoint's: `width` and `height` must each be one of `images.deviceSizes ∪ images.imageSizes`,
+ * so a caller cannot ask for an unbounded number of distinct encodes. With both, the image is
+ * fitted inside the box (aspect ratio kept); it is never enlarged past the source.
+ *
+ * @param bytes The source image (PNG, JPEG, GIF or WebP).
+ * @param transform The target size, quality and format.
+ * @param options The app's `images` config and an optional cache identity.
+ * @param gate Concurrency gate (defaults to the shared optimizer gate; injectable for tests).
+ * @returns `200` with the encoded image and its `content-type`, or the error response
+ *   (`400` bad transform or unsupported source, `413` too large, `503` busy).
+ */
+export async function transformImageBytes(
+  bytes: Uint8Array,
+  transform: ImageTransform,
+  options: TransformImageOptions = {},
+  gate: () => Promise<() => void> = optimizeGate,
+): Promise<Response> {
+  const parsed = parseTransform(transform, options.images);
+  if (parsed instanceof Response) return parsed;
+  const { width, height, quality, format } = parsed;
+  const headers = { "content-type": format };
+  const cacheKey = options.cacheKey === undefined
+    ? undefined
+    : `transform|${options.cacheKey}|${width}|${height}|${quality}|${format}`;
+  const cached = cacheKey === undefined ? undefined : cacheGet(cacheKey);
+  if (cached) return new Response(cached as BodyInit, { headers });
+  const release = await acquireGate(gate);
+  if (release instanceof Response) return release;
+  try {
+    const out = await decodeResizeEncode(bytes, fitInside(width, height), format, quality);
+    if (out instanceof Response) return out;
+    if (cacheKey !== undefined) cacheSet(cacheKey, out);
+    return new Response(out as BodyInit, { headers });
+  } catch (err) {
+    console.error("denext: image transform failed", err);
+    return new Response("image transform failed", { status: 400 });
+  } finally {
+    release();
+  }
+}
+
+interface ParsedTransform {
+  width: number;
+  height: number;
+  quality: number;
+  format: string;
+}
+
+/** Validate a transform against the `images` allowlists (`0` = the dimension is unset). */
+function parseTransform(t: ImageTransform, images?: ImagesConfig): ParsedTransform | Response {
+  const sizeError = checkTransformSize(t, images);
+  if (sizeError) return sizeError;
+  const format = transformFormat(t.format, images);
+  if (format instanceof Response) return format;
+  const quality = coerceQuality(t.quality ?? 75, images?.qualities ?? DEFAULT_QUALITIES);
+  return { width: t.width ?? 0, height: t.height ?? 0, quality, format };
+}
+
+/** A 400 when neither dimension is set or one is outside `deviceSizes ∪ imageSizes`. */
+function checkTransformSize(t: ImageTransform, images?: ImagesConfig): Response | null {
+  if (t.width === undefined && t.height === undefined) {
+    return new Response("a transform needs a width or a height", { status: 400 });
+  }
+  const allowed = new Set([
+    ...(images?.deviceSizes ?? DEFAULT_DEVICE_SIZES),
+    ...(images?.imageSizes ?? DEFAULT_IMAGE_SIZES),
+  ]);
+  const bad = [t.width, t.height].find((dim) => dim !== undefined && !allowed.has(dim));
+  return bad === undefined ? null : new Response(`size ${bad} is not allowed`, { status: 400 });
+}
+
+/** The output MIME type for a transform's `format`, or a 400 for one that is not available. */
+function transformFormat(format: string | undefined, images?: ImagesConfig): string | Response {
+  if (format === undefined || format === "webp") return "image/webp";
+  if (format !== "avif") return new Response("format must be webp or avif", { status: 400 });
+  return (images?.formats ?? DEFAULT_FORMATS).includes("image/avif")
+    ? "image/avif"
+    : new Response("avif output is not enabled (images.formats)", { status: 400 });
+}
+
+/** Fit inside `width` × `height` (either may be `0` = unconstrained), never enlarging. */
+function fitInside(width: number, height: number): TargetSize {
+  return (sw, sh) => {
+    const scales = [width ? width / sw : Infinity, height ? height / sh : Infinity, 1];
+    const scale = Math.min(...scales);
+    return {
+      width: Math.max(1, Math.round(sw * scale)),
+      height: Math.max(1, Math.round(sh * scale)),
+    };
+  };
 }

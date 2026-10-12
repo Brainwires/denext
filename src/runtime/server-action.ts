@@ -1,5 +1,6 @@
 // Server Actions — call a server function from the client over an RPC endpoint.
 import { djb2 } from "./djb2.ts";
+import { detachedFromRequest } from "./root-context-bridge.ts";
 import { isChannel, registerChannelIfLoaded } from "./channel-brand.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 //
@@ -189,7 +190,7 @@ export async function tagServerModules(
   const results = await Promise.allSettled(
     [...servers].map(async ([moduleId, ref]) => {
       if (taggedServers.has(key(moduleId))) return;
-      const mod = load ? await load(ref.url) : await import(ref.url);
+      const mod = load ? await load(ref.url) : await detachedFromRequest(() => import(ref.url));
       tagServerExports(mod as Record<string, unknown>, moduleId, scope);
       // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass load the current one.

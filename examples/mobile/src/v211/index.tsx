@@ -20,7 +20,7 @@ import { OrientationScreen, PrivacyScreen, SafeAreaScreen } from "./system.tsx";
 
 /** The home list, in the order a tester walks it. */
 const LIST: [path: string, label: string][] = [
-  ["/v211/keyboard", "1. Keyboard (chat + form)"],
+  ["/v211/keyboard", "1. Keyboard (list + form)"],
   ["/v211/safe-area", "2. Safe area & system bars"],
   ["/v211/dialogs", "3. Dialogs"],
   ["/v211/refresh", "4. Pull-to-refresh"],
@@ -31,7 +31,7 @@ const LIST: [path: string, label: string][] = [
   ["/v211/orientation", "9. Orientation"],
   ["/v211/privacy", "10. Privacy screen"],
   ["/v211/store", "11–13. Tracking · Review · Media library"],
-  ["/v211/lists", "14. Lists (100k, chat 10k, sticky)"],
+  ["/v211/lists", "14. Lists (100k, variable 10k, sticky)"],
   ["/v211/navigation", "15. Navigation (stack, tabs, sheet)"],
   ["/v211/native-ui", "16. Native look (menus, SF Symbols, theme)"],
   ["/selftest", "Run the automatic self-test"],

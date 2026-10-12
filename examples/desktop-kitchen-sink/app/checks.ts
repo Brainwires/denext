@@ -1438,9 +1438,9 @@ const appChecks: Check[] = [
       await setBadge(null);
       await bounce();
       eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
-      await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
+      await setQuickActions([{ id: "kitchen-chat", title: "New note" }]);
       const applied = await raw("app").setDockMenu({
-        menu: [{ id: "kitchen-chat", label: "New chat" }],
+        menu: [{ id: "kitchen-chat", label: "New note" }],
       });
       eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
       await setQuickActions([]);

@@ -34,13 +34,14 @@ export default function Mobile() {
         </a>{" "}
         exercises, push, deep links, auth sessions, the share extension, a configurable widget, a
         Live Activity (including one started by a push-to-start push) and a signed over-the-air
-        update. The 2.11 surface ran on an iPhone 16e on 2026-09-27: the keyboard (a chat composer
-        and a form), system bars following the theme, the system and in-page dialogs,
-        pull-to-refresh, permissions and opening Settings, local notifications (actions and tap
-        routing), geolocation, orientation lock, the privacy screen, the tracking prompt, the review
-        sheet, saving to Photos, <code>VirtualList</code> (an exact <code>scrollToIndex</code>{" "}
-        on 100,000 rows, flings without blank frames, a chat list, sticky headers) and the stack,
-        tabs and sheet of{" "}
+        update. The 2.11 surface ran on an iPhone 16e on 2026-09-27: the keyboard (a text field
+        docked above it and a form), system bars following the theme, the system and in-page
+        dialogs, pull-to-refresh, permissions and opening Settings, local notifications (actions and
+        tap routing), geolocation, orientation lock, the privacy screen, the tracking prompt, the
+        review sheet, saving to Photos, <code>VirtualList</code> (an exact{" "}
+        <code>scrollToIndex</code>{" "}
+        on 100,000 rows, flings without blank frames, a bottom-anchored list, sticky headers) and
+        the stack, tabs and sheet of{" "}
         <a href="/docs/navigation-native">native-feel navigation</a>. On 2026-09-28{" "}
         <a href="https://github.com/Brainwires/denext/tree/main/examples/native-views">
           <code>examples/native-views</code>
@@ -389,8 +390,8 @@ export function Shell({ children }: { children: VNodeChildren }) {
           plus 200 ms; with <code>resize: "none"</code>{" "}
           it stays the keyboard&apos;s height. Elsewhere it is what the visual viewport lost. Pass
           it as <code>VirtualList</code>&apos;s <code>keyboardInset</code>{" "}
-          and a chat keeps its last message above the keyboard the whole way, with no jump when the
-          resize lands.
+          and a list pinned to its end keeps its last row above the keyboard the whole way, with no
+          jump when the resize lands.
         </li>
         <li>
           <code>installMomentumSafeScroll()</code> / <code>useMomentumSafeScroll()</code>{" "}
@@ -702,7 +703,7 @@ denext mobile add haptics share network secure-store`}
         the page. Where the WebView resizes itself around the keyboard (always on Android, and on
         iOS with the plugin&apos;s default{" "}
         <code>resize: "native"</code>) that is zero and they leave layout alone, so nothing is
-        lifted twice. For a composer that moves in step with the iOS keyboard, set{" "}
+        lifted twice. For a text field that moves in step with the iOS keyboard, set{" "}
         <code>resize: "none"</code>{" "}
         (the keyboard then covers the page, and the views follow its will-show events with its own
         duration):
@@ -724,29 +725,29 @@ plugins: { Keyboard: { resize: "none" } },`}
         mounted, nothing scrolls on the keyboard&apos;s behalf.
       </p>
       <p>
-        <strong>Recipe: a chat composer.</strong>{" "}
-        The message list fills the screen and scrolls; the composer sits on the keyboard.
+        <strong>Recipe: a text field that rides the keyboard.</strong>{" "}
+        The list fills the screen and scrolls; the text field sits on the keyboard.
       </p>
       <Code lang="tsx">
         {`"use client";
 import { KeyboardStickyView, useKeyboard, useSafeAreaInsets } from "denext/mobile";
 
-export function Chat({ messages }: { messages: { id: string; text: string }[] }) {
+export function Notes({ notes }: { notes: { id: string; text: string }[] }) {
   const { visible } = useKeyboard();
   const { bottom } = useSafeAreaInsets();
-  const composer = 56; // px
+  const field = 56; // px
   return (
     <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
-      {/* column-reverse keeps the list anchored at the newest message */}
+      {/* column-reverse keeps the list anchored at the newest entry */}
       <ol style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column-reverse",
-                   paddingBottom: composer + (visible ? 0 : bottom) }}>
-        {[...messages].reverse().map((m) => <li key={m.id}>{m.text}</li>)}
+                   paddingBottom: field + (visible ? 0 : bottom) }}>
+        {[...notes].reverse().map((n) => <li key={n.id}>{n.text}</li>)}
       </ol>
       <KeyboardStickyView
-        style={{ position: "fixed", left: 0, right: 0, bottom: 0, height: composer,
+        style={{ position: "fixed", left: 0, right: 0, bottom: 0, height: field,
                  paddingBottom: visible ? 0 : bottom }}
       >
-        <textarea enterKeyHint="send" placeholder="Message" />
+        <textarea enterKeyHint="done" placeholder="Add a note" />
       </KeyboardStickyView>
     </div>
   );
@@ -757,8 +758,9 @@ export function Chat({ messages }: { messages: { id: string; text: string }[] })
         here; for long histories use <code>VirtualList</code> with <code>anchor="end"</code> and
         {" "}
         <code>keyboardInset={"{useKeyboardInset()}"}</code>{" "}
-        (<a href="/docs/lists#chat">Lists &amp; scrolling</a>). The iMessage-style swipe-down that
-        drags the keyboard away is not available to a WebView&apos;s inner scrollers.
+        (<a href="/docs/lists#bottom-anchored-lists">Lists &amp; scrolling</a>). The iMessage-style
+        swipe-down that drags the keyboard away is not available to a WebView&apos;s inner
+        scrollers.
       </p>
 
       <h3 id="android-back">Android back and predictive back</h3>
@@ -3738,8 +3740,8 @@ npx @sentry/cli sourcemaps upload \\
         <li>
           <strong>Long lists.</strong> Use <code>VirtualList</code> from <code>denext</code>{" "}
           (<a href="/docs/lists">Lists &amp; scrolling</a>): it never writes the scroll offset
-          during a fling, keeps a chat pinned above the keyboard, and has a <code>progressive</code>
-          {" "}
+          during a fling, keeps a list pinned to its end above the keyboard, and has a{" "}
+          <code>progressive</code>{" "}
           mode for heavy rows. Third-party virtualized lists (LegendList, react-virtuoso, TanStack
           Virtual) work too: on iOS WebKit denext keeps the momentum fling alive while such a list
           corrects its scroll offset (<a href="#the-denextmobile-runtime">
@@ -3748,8 +3750,8 @@ npx @sentry/cli sourcemaps upload \\
         </li>
         <li>
           <strong>iOS.</strong>{" "}
-          WKWebView holds up well for the app the mobile work is measured against (T3 Code). No
-          side-by-side iOS numbers are published.
+          WKWebView holds up well for the large real-world app the mobile work is measured against.
+          No side-by-side iOS numbers are published.
         </li>
         <li>
           <strong>Android.</strong>{" "}

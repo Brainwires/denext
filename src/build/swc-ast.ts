@@ -10,6 +10,7 @@
 
 import { ensureDir } from "@std/fs";
 import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { inRootContext } from "../server/root-context.ts";
 
 // deno-lint-ignore no-explicit-any -- swc's AST is an untyped node graph.
 export type Node = any;
@@ -29,10 +30,13 @@ const swcParsers = new Map<boolean, Promise<(src: string) => Promise<Node>>>();
 export function swcParse(decorators = false): Promise<(src: string) => Promise<Node>> {
   let parser = swcParsers.get(decorators);
   if (!parser) {
-    swcModule ??= import("@denext/swc").then(async (mod) => {
-      await mod.default(); // initialize the wasm module
-      return mod;
-    });
+    // Shared wasm init, memoized: created outside the request that first needs it.
+    swcModule ??= inRootContext(() =>
+      import("@denext/swc").then(async (mod) => {
+        await mod.default(); // initialize the wasm module
+        return mod;
+      })
+    );
     parser = swcModule.then((mod) => (src: string) =>
       mod.parse(src, { syntax: "typescript", tsx: true, decorators, target: "es2022" }) as Promise<
         Node

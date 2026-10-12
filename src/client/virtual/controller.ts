@@ -1304,9 +1304,9 @@ export class VirtualController<T> {
 
   /**
    * Re-read the metrics after a layout when the last read could not see the tail (see
-   * {@linkcode #tailObscured}), and lay out again if they changed. Without it a chat opened at
+   * {@linkcode #tailObscured}), and lay out again if they changed. Without it a list opened at
    * the end over rows larger than their estimate pins the last row, not the footer, to the
-   * bottom: the footer (a composer inset, say) stays hidden until something else re-reads.
+   * bottom: the footer (a docked text field's inset, say) stays hidden until something else re-reads.
    */
   #rereadObscuredTail(): void {
     if (this.#tailObscured && this.#readMetrics()) this.#applyLayout();

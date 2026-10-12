@@ -12,7 +12,7 @@ import {
   type RequestHandler,
   type RequestLogInfo,
 } from "./app-config.ts";
-import { createRequestContext, runWithContext } from "./request-context.ts";
+import { createRequestContext, runWithContext, withoutRequestContext } from "./request-context.ts";
 import { installFetchCache } from "./cache.ts";
 import { installApiDispatcher } from "./api-dispatcher.ts";
 import { setBasePath } from "../client/navigation.ts";
@@ -80,7 +80,12 @@ export function createApp(config: AppConfig): RequestHandler {
       if (inFlight >= maxConcurrency) return Promise.resolve(shedRequest(config, originalRequest));
       inFlight++;
     }
-    return dispatch(app, originalRequest, isBackgroundRegen, counted ? () => inFlight-- : null);
+    // Start from no request context: after a module's first `import()` Deno can hand the importing
+    // request's context to the next request it dispatches, and this request's own wrappers (its
+    // timeout, `onRequest` log, compression) run outside `runWithContext` below.
+    return withoutRequestContext(() =>
+      dispatch(app, originalRequest, isBackgroundRegen, counted ? () => inFlight-- : null)
+    );
   };
   app.handle = handle;
   return handle;

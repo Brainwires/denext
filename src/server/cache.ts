@@ -15,6 +15,7 @@
 
 import { type CacheLifeProfile, type CacheScope, cacheScopeStorage } from "./cache-scope.ts";
 import { currentContext } from "./request-context.ts";
+import { inRootContext } from "./root-context.ts";
 import { raceAbort } from "./abort.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
@@ -394,7 +395,7 @@ export async function chooseCacheStore(
   // --allow-write or an ephemeral/read-only FS surfaces here.
   const path = config?.path ?? DEFAULT_SQLITE_PATH;
   try {
-    const { sqliteCacheStore } = await import("./sqlite-cache.ts");
+    const { sqliteCacheStore } = await inRootContext(() => import("./sqlite-cache.ts"));
     const store = sqliteCacheStore({
       path,
       maxDataEntries: config?.maxDataEntries,

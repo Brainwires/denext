@@ -13,7 +13,7 @@
 //   const { data } = useChannel(orderEvents, `user:${userId}`);
 //
 // `<Live>` / `useLive` / `useSubscription` are PULL-recompute on tag invalidation; a channel is
-// the push half: arbitrary emits (progress, chat, presence-adjacent events) with no recompute.
+// the push half: arbitrary emits (progress, messages, presence-adjacent events) with no recompute.
 // Semantics, stated once: at-most-once; latest-wins per (connection, subscription) under
 // back-pressure and within a publisher burst; no history or replay on reconnect (use SSR
 // `initial` for the cold start); `seq` orders frames from ONE instance only. Delivery reaches
