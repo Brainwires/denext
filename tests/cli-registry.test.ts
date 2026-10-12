@@ -17,6 +17,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "commands",
     "completions",
     "create",
+    "db-admin", // hidden: denext ui's Database child
     "desktop",
     "dev",
     "doctor",

@@ -14,10 +14,10 @@ import type { VNode } from "../jsx/types.ts";
 import { readDevInfo } from "../mcp/dev-client.ts";
 import {
   jsonResponse,
+  navFor,
   panelResponder,
   UI_CRON_PREVIEW_PATH,
   UI_EVENTS_PATH,
-  UI_NAV_SECTIONS,
   type UiContext,
   type UiHandler,
   type UiRoute,
@@ -43,6 +43,7 @@ import { devPanel } from "./features/dev.ts";
 import { tasksPanel } from "./features/tasks.ts";
 import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
+import { DATABASE_PATHS, databasePanel } from "./features/database.ts";
 
 /** One feature panel: its HTML path, the methods it answers, and its module's handler. */
 interface FeatureRoute {
@@ -75,6 +76,9 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/tasks", methods: ["GET"], handle: tasksPanel },
   { path: "/setup", methods: ["GET", "POST"], handle: setupPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
+  // The Database section: one handler for its pages (tables, rows, policies, migrations,
+  // storage, users), each a path of its own.
+  ...DATABASE_PATHS.map(({ path, methods }) => ({ path, methods, handle: databasePanel })),
 ];
 
 /** A static same-origin asset route (`text/css`, `text/javascript`). */
@@ -128,6 +132,7 @@ const CARD_LEAD: Record<string, string> = {
   "/tasks": "Run the scripts your deno.json declares, streaming their output.",
   "/setup": "Check what this project needs to run, and write the missing pieces.",
   "/commands": "Run this project's own denext verbs.",
+  "/database": "Browse and edit the Postgres tables, policies, migrations, storage and auth users.",
 };
 
 /** What the overview says under `--offline`. */
@@ -155,9 +160,9 @@ function Card({ item }: { readonly item: NavItem }): VNode {
  *
  * @returns The cards, in navigation order.
  */
-function overviewCards(): NavItem[] {
+function overviewCards(ctx: UiContext): NavItem[] {
   const out: NavItem[] = [];
-  for (const section of UI_NAV_SECTIONS) {
+  for (const section of navFor(ctx)) {
     if (section.label !== undefined) {
       out.push({ href: "/config", label: section.label });
       continue;
@@ -241,7 +246,7 @@ function StatusBlock({ status }: { readonly status: ProjectStatus }): VNode {
 function Overview(
   { ctx, status }: { readonly ctx: UiContext; readonly status: ProjectStatus },
 ): VNode {
-  const cards = overviewCards().map((item) => h(Card, { key: item.href, item }));
+  const cards = overviewCards(ctx).map((item) => h(Card, { key: item.href, item }));
   return h(
     Panel,
     { title: "Project" },

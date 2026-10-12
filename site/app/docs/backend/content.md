@@ -512,6 +512,14 @@ Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 `TRUNCATE` sends nothing. For very high write volumes, logical replication is planned; LISTEN/NOTIFY
 serializes on commit.
 
+## Browse it in `denext ui`
+
+[`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
+and their rows (paged, editable, each write previewed as the exact SQL first), row-level security
+policies — with an "as user" preview of what a user id sees under them — migrations, the storage
+buckets and their objects, and denext auth's users. It runs on loopback with the rest of the UI,
+and honours `--read-only`.
+
 ## More services
 
 Storage, Postgres, row-level security and realtime from the database are the services in

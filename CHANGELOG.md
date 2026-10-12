@@ -29,6 +29,20 @@ and this project adheres to
 - **Channel lifecycle hooks** (`denext/server`): `createChannel({ onActive, onIdle })` is told when
   a key gains its first or loses its last subscriber on this instance — where a channel releases
   per-key state. `SqlClient` gains an optional `listen(channel, fn, onlisten)` (`SqlListener`).
+- **`denext ui`: a Database section** for a project that uses Postgres (`DATABASE_URL` is
+  `postgres://`, or the config declares `postgres:`). Tables (row estimates, columns, keys,
+  indexes, foreign keys); rows — 50 a page, keyset-paged on the primary key, sort, `column = value`
+  filter, view, edit a value, insert, delete; row-level security policies, with an "as user"
+  preview (`anon`, or a user id under the claims `db({ as: user })` sends) beside the clearly
+  labelled service role; migrations (status, apply); `backend({ storage })` buckets and objects
+  (download as an `octet-stream` attachment, delete); denext auth's users (sessions, MFA,
+  passkeys; revoke sessions, delete). Every write is previewed as the exact SQL and its parameters
+  first and works with JavaScript disabled; enabling RLS writes a migration rather than altering
+  the table. The UI still runs no project code: each page asks a hidden `denext db-admin` child,
+  which uses the project's own client and storage driver; every query runs in its own transaction
+  with a statement timeout (reads `READ ONLY`), identifiers come only from `pg_catalog`, values
+  are parameters, passwords are masked, and `--read-only` refuses every write in the server and
+  again in the child. Guide: [Project UI › Database](https://denext.dev/docs/ui#database).
 
 ## [3.4.13] - 2026-10-12
 

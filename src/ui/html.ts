@@ -61,6 +61,12 @@ export interface UiContext {
    * built the context by hand.
    */
   readonly signal?: AbortSignal;
+  /**
+   * The project uses Postgres (`DATABASE_URL` is `postgres://`, or the config declares
+   * `postgres:`), so the Database section is in the navigation. Read from the project's files,
+   * never by running its code; absent (hidden) when a caller built the context by hand.
+   */
+  readonly database?: boolean;
 }
 
 /** A feature route handler. */
@@ -87,6 +93,9 @@ export const UI_TITLE_HEADER = "x-ui-title";
  * navigates to, and it answers a bare block rather than a `<section id="panel">`.
  */
 export const UI_CRON_PREVIEW_PATH = "/_ui/cron-preview";
+
+/** The Database section's entry in the navigation. */
+export const DATABASE_NAV_HREF = "/database";
 
 /**
  * The UI's navigation, in order.
@@ -117,10 +126,27 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
       { href: "/desktop", label: "Desktop" },
       { href: "/dev", label: "Dev" },
       { href: "/tasks", label: "Tasks" },
+      { href: DATABASE_NAV_HREF, label: "Database" },
       { href: "/commands", label: "Commands" },
     ],
   },
 ];
+
+/**
+ * The navigation as one request sees it: the Database entry only for a project that uses
+ * Postgres ({@linkcode UiContext.database}), so a project without a database is not offered a
+ * page that can only say so.
+ *
+ * @param ctx The request.
+ * @returns The sections.
+ */
+export function navFor(ctx: Pick<UiContext, "database">): readonly NavSection[] {
+  if (ctx.database === true) return UI_NAV_SECTIONS;
+  return UI_NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => item.href !== DATABASE_NAV_HREF),
+  }));
+}
 
 /** Every navigation destination, flattened — the sections' items in order. */
 export const UI_NAV: readonly NavItem[] = UI_NAV_SECTIONS.flatMap((section) => section.items);
@@ -218,7 +244,7 @@ export function panelResponder(
     return htmlResponse(
       renderPage(layout, {
         title: viewTitle ?? title,
-        nav: UI_NAV_SECTIONS,
+        nav: navFor(ctx),
         body,
         csrf: ctx.csrf,
         active,

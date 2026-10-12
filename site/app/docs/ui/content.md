@@ -167,6 +167,7 @@ flag can sandbox is refused:
 | `deno task` (the Tasks page)                     | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
 | The Dev page's "Start denext dev"                | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
 | Plugin add and remove                            | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
+| The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection                                                        |
 
 `--cached-only` is there because the net permission does not govern Deno's module loader: a
 child denied net would still download an uncached import. A refused control renders disabled
@@ -689,6 +690,69 @@ signalled nor cleaned up. Stopping asks the server to drain first and kills the 
 if it will not — and "gone" means the origin no longer answers as _that_ server; on Windows, which
 has no such signal, it is a hard kill and says so.
 
+## Database
+
+`/database` is shown in the navigation when the project uses Postgres: `DATABASE_URL` is a
+`postgres://` URL (in the environment, `.env` or `.env.local`), or the config declares
+`postgres:` — `backend({ postgres })` from [`@denext/backend`](/docs/backend). Its tabs:
+
+| Tab        | What it shows                                                                                                                                      | Writes                                                              |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys | —                                                                   |
+| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                               | Edit a value, insert a row, delete a row                            |
+| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                | "Enable RLS" writes a migration — it does not alter the table       |
+| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                   | Apply the pending ones                                              |
+| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                      | Delete an object                                                    |
+| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys                                                   | Revoke a user's sessions; delete a user and every row keyed by them |
+
+**Where the work happens.** The UI process never opens the database: it would need the
+project's config, and the UI never runs project code. Each page writes one JSON request to a
+`denext db-admin` child (a hidden verb), which loads the project — its `.env`, its plugins, so
+`backend({ postgres })`'s client (including a `sql` client the app passes on stock Deno) and the
+storage driver are the app's own — answers, and exits. Without either a Postgres client or a
+configured database the page says why, rather than failing.
+
+**Every query** runs in a transaction of its own that first sets `statement_timeout` (5 s;
+60 s for applying migrations) and `lock_timeout` with `SET LOCAL`, and a read is `READ ONLY`.
+A page holds 50 rows; paging is keyset — the rows after the previous page's last one, on the
+primary key (after the sort column, NULLs last), never `OFFSET`. Values are shown as Postgres
+prints them (`::text`), cut at 200 characters in the list and 64 KB in the row view; a longer
+value is not offered for editing.
+
+**Who it reads as.** Rows are read as the connecting role — labelled **service role**: it is
+the role `db.service()` uses, and row-level security does not apply to it. The "Read as"
+control previews what someone else would see instead: `anon`, or a user by id (and optionally
+email), with the role and `request.jwt.claims` that `db({ as: user })` sends, so `auth.uid()`
+policies decide which rows come back. Writes always run as the service role.
+
+**Every write is two steps**, and both work with JavaScript disabled. The first post builds
+the statement and shows it — the exact SQL and each `$n` parameter — with a form carrying the
+same fields; the second runs that statement (rebuilt from the same fields), answers `303`, and
+the page it lands on says what happened. An update or delete must touch exactly one row or
+nothing changes. Identifiers are never taken from a request: the table is looked up in
+`pg_catalog`, and only a schema, table or column found there is quoted into SQL; every value is a
+parameter cast to its column's type (`$1::integer`), so what is typed into a cell is a value
+however it is spelled. Generated columns and `GENERATED ALWAYS` identity columns are never
+written; a view, or a table without a primary key, is shown read-only.
+
+**Enabling row-level security** writes `migrations/<stamp>_enable_rls_<schema>_<table>.sql`
+through the same planner as `denext generate migration` (adding `tasks/migrate.ts` when the
+project has none): an `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and a commented example policy.
+Add the policies the table needs — with RLS on and none, only its owner sees its rows — then
+apply it from Migrations.
+
+**Revoking sessions** deletes the user's rows in the session store (`auth_sessions`) and marks
+their native-app sessions revoked. A stateless cookie session is not stored anywhere, so it can
+be neither counted nor revoked here; it ends when it expires.
+
+**Safety.** `--read-only` refuses every write in the server before any child runs — the
+preview included — and the child refuses writes on its own as well. Every post carries the
+CSRF token, like every other form. The connection is shown with its password masked
+(`postgres://app:•••@db:5432/app`), and so is any URL an error message mentions. A downloaded
+object is always served as an `application/octet-stream` attachment with `nosniff`, whatever
+type it was stored with, so a stored HTML or SVG file can never run on the UI's origin.
+`--offline` refuses the section (`503`).
+
 ## Cron
 
 `/config/cron` is the Configuration section's Cron page: every cron schedule this project
@@ -952,23 +1016,24 @@ announces: a validation failure, an error.
 Every feature path has an `/api/*` twin served by the _same handler_ with JSON output, so
 the browser and a machine client exercise identical code:
 
-| Path               | Methods               | JSON twin              |
-| ------------------ | --------------------- | ---------------------- |
-| `/`                | `GET` `HEAD`          | `/api/overview`        |
-| `/config`          | `GET` `POST`          | `/api/config`          |
-| `/config/<view>`   | `GET` `POST`          | `/api/config/<view>`   |
-| `/config/next`     | `GET`                 | `/api/config/next`     |
-| `/config/cron`     | `GET` `POST`          | `/api/config/cron`     |
-| `/plugins`         | `GET` `POST` `DELETE` | `/api/plugins`         |
-| `/plugins/options` | `GET` `POST`          | `/api/plugins/options` |
-| `/generate`        | `GET` `POST`          | `/api/generate`        |
-| `/docker`          | `GET` `POST`          | `/api/docker`          |
-| `/desktop`         | `GET`                 | `/api/desktop`         |
-| `/setup`           | `GET` `POST`          | `/api/setup`           |
-| `/dev`             | `GET` `POST`          | `/api/dev`             |
-| `/tasks`           | `GET`                 | `/api/tasks`           |
-| `/commands`        | `GET` `POST`          | `/api/commands`        |
-| `/tasks/run`       | `POST`                | `/api/tasks/run` (SSE) |
+| Path               | Methods                 | JSON twin              |
+| ------------------ | ----------------------- | ---------------------- |
+| `/`                | `GET` `HEAD`            | `/api/overview`        |
+| `/config`          | `GET` `POST`            | `/api/config`          |
+| `/config/<view>`   | `GET` `POST`            | `/api/config/<view>`   |
+| `/config/next`     | `GET`                   | `/api/config/next`     |
+| `/config/cron`     | `GET` `POST`            | `/api/config/cron`     |
+| `/plugins`         | `GET` `POST` `DELETE`   | `/api/plugins`         |
+| `/plugins/options` | `GET` `POST`            | `/api/plugins/options` |
+| `/generate`        | `GET` `POST`            | `/api/generate`        |
+| `/docker`          | `GET` `POST`            | `/api/docker`          |
+| `/desktop`         | `GET`                   | `/api/desktop`         |
+| `/setup`           | `GET` `POST`            | `/api/setup`           |
+| `/dev`             | `GET` `POST`            | `/api/dev`             |
+| `/tasks`           | `GET`                   | `/api/tasks`           |
+| `/commands`        | `GET` `POST`            | `/api/commands`        |
+| `/database/…`      | `GET` (`POST` to write) | `/api/database/…`      |
+| `/tasks/run`       | `POST`                  | `/api/tasks/run` (SSE) |
 
 Every answer carries `ok`. Beyond that the payload is the panel's own — a JSON twin
 describes what its panel does, it does not flatten every panel into one shape:
@@ -986,6 +1051,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                     |
 | `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                               |
 | `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                  |
+| `/api/database/…`      | the child's reply: `{ ok, tables }`, `{ ok, rows, next?, statement }`, …              | `{ ok, statement, applied, affected? }` — `applied: false` for the preview                       |
 
 So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that
 splice a file answer: `/api/config`, `/api/plugins`, `/api/plugins/options`, and a compose
@@ -1000,6 +1066,10 @@ plugin call the options writer cannot own, or a command argument the run refused
 unexpected error, `502` a JSR lookup that failed, `503` JSR discovery unavailable — answers
 `{ ok: false, reason }`, with the offending `field` and the would-be `diff` where there is
 one.
+
+The Database twins answer the child's own failure, `{ ok: false, code, reason }`, with a status
+per `code`: `400` `bad_request`, `403` `read_only`, `404` `not_found`, `409` `not_configured`
+(no database), `501` `unsupported` (no Postgres client on this Deno), `502` `query_failed`.
 
 ```sh
 denext ui --no-open --json --port 0

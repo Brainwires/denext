@@ -526,6 +526,10 @@ form.op { display: inline-block; margin: var(--space-1) var(--space-2) var(--spa
 /* Zebra before hover: equal specificity (0,2,2), so source order is what keeps hover winning. */
 .table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--muted) 45%, transparent); }
 .table tbody tr:hover { background: var(--muted); }
+/* A table wider than the panel (a row browser) scrolls on its own instead of widening the page. */
+.table-scroll { overflow-x: auto; max-width: 100%; }
+.table-scroll .table { width: auto; min-width: 100%; }
+.table-scroll td { max-width: 32ch; overflow-wrap: anywhere; }
 .row { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
 .row.top { align-items: flex-start; }
 .row .grow { flex: 1; }

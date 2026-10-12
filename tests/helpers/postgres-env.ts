@@ -13,6 +13,8 @@ export interface PostgresEnvironment {
   admin: SqlClient;
   /** The database's name. */
   database: string;
+  /** The app role's connection URL (what an app's `DATABASE_URL` would be). */
+  url: string;
   /** Drop the database and the role, and close both clients. */
   drop(): Promise<void>;
 }
@@ -55,6 +57,7 @@ export async function postgresEnvironment(
     app,
     admin,
     database,
+    url: url.toString(),
     async drop() {
       await app.close();
       await admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
