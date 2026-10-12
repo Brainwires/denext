@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-12
+
+First release on JSR (0.1.0 was tagged but never published). Requires `@denext/denext` 3.4.15 or
+later.
+
 - **Realtime: signed-out quota per client address.** A signed-out subscriber's
   `maxSubscriptionsPerIdentity` and seed budget now apply per client address
   (`clientIpForLimits()` in the Live connection's context), not per Live connection, so more
