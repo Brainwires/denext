@@ -17,7 +17,8 @@
 // update that moves a row out of its policies or filter — is sent only for a tracked key.
 //
 // Subscriptions are bounded per identity (`maxSubscriptionsPerIdentity`: a signed-in user, or the
-// signed-out visitors at one client address — one Live connection when the address is unknown)
+// signed-out visitors at one client address — one Live connection when the address is unknown
+// or an untrusted proxy-looking peer)
 // as well as per instance, and so are the subscribe-time seed queries
 // (a few at once, and a refilling budget per identity). An unsubscribed key is forgotten at once;
 // one whose connection closed is kept for a reconnect, but only while there is room — at a cap,
@@ -37,7 +38,7 @@
 // so when the owner stops or dies the next instance to see a burst takes it over.
 
 import {
-  clientIp,
+  clientIpForLimits,
   createChannel,
   migratePostgres,
   type Migration,
@@ -112,7 +113,7 @@ interface Audience {
   identity: string;
   /**
    * Whose quota it counts against: the identity, or `anon:<client address>` for a signed-out
-   * Live subscriber (`anon:<peer id>` when the address is unknown); empty for a server-side
+   * Live subscriber (`anon:<peer id>` when there is no address to limit on); empty for a server-side
    * subscription (not counted).
    */
   owner: string;
@@ -970,10 +971,12 @@ function equals(column: string, param: string, types: Map<string, string>): stri
 /**
  * The key column of `t` as text, spelled as the trigger spells it (`to_jsonb(row) ->> key`), so a
  * re-read row and a seeded key match the notification's key in every type — `t."key"::text`
- * differs for a timestamp (`2026-01-02 03:04:05` against JSON's `2026-01-02T03:04:05`).
+ * differs for a timestamp (`2026-01-02 03:04:05` against JSON's `2026-01-02T03:04:05`). The
+ * column alone goes through JSON (`#>> '{}'` unwraps it to the same text), not the whole row, so
+ * a seed over many rows does not build a document per row.
  */
 function keyText(column: string): string {
-  return `to_jsonb(t) ->> '${column}'`;
+  return `to_jsonb(t."${column}") #>> '{}'`;
 }
 
 /**
@@ -1152,12 +1155,13 @@ export function realtimeEngine(): RealtimeEngine {
 }
 
 /**
- * The signed-out subscriber's client address — `clientIp()` in the Live connection's context (the
- * socket peer, or the trusted proxy's hop) — or `undefined` when it is not known.
+ * The signed-out subscriber's client address to key its quota on — `clientIpForLimits()` in the
+ * Live connection's context (a public socket peer, or the trusted proxy's hop) — or `undefined`
+ * when it is not known, or is an untrusted loopback/private peer (a proxy every visitor shares).
  */
 function subscriberAddress(): string | undefined {
   try {
-    return clientIp();
+    return clientIpForLimits();
   } catch {
     return undefined; // outside a request context: no address to key on
   }

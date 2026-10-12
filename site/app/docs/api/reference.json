@@ -5819,6 +5819,18 @@
           "denextOnly": true
         },
         {
+          "name": "clientIpForLimits",
+          "slug": "clientIpForLimits",
+          "kind": "function",
+          "signature": "clientIpForLimits(): string | undefined",
+          "doc": "The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them.",
+          "docFull": "The client address to key a **per-address limit** on (a quota, a connection cap):\n{@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,\nprivate, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy\nwithout {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor\narrives from the proxy's address, so limiting on it would make one limit site-wide; key the\nlimit on something else (a session, a connection) instead. A directly connected public peer and\na trusted proxy's hop are returned as {@linkcode clientIp} returns them.\n\nThrows outside a request context and makes the render dynamic, exactly like\n{@linkcode clientIp}.",
+          "params": [],
+          "returns": "The address to limit on, or undefined when per-address limits should not apply.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "collapseHeadTags",
           "slug": "collapseHeadTags",
           "kind": "function",

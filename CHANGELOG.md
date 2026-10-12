@@ -50,6 +50,10 @@ and this project adheres to
   `Prefer: count=exact` is refused with `400`; `"all"` / `"never"`).
 - **`nativeBearerToken(request)`** is exported from `denext/server`: the `Authorization: Bearer
   nat_…` parser `auth()` uses, for handlers that exempt native-app requests from a cookie check.
+- **`clientIpForLimits()`** is exported from `denext/server`: the address to key a per-address
+  limit on — `clientIp()`, or `undefined` when that is an untrusted loopback, private, link-local
+  or unique-local socket peer (a reverse proxy every visitor shares, so a limit on it would be
+  site-wide).
 
 ### Fixed
 
@@ -63,8 +67,9 @@ and this project adheres to
   seed queries returned the key as `t."key"::text` while the trigger's notification spells it
   `to_jsonb(row) ->> 'key'`; for a `timestamp` key the two differ (`2026-01-02 03:04:05` against
   `2026-01-02T03:04:05`), so a re-read row matched no notification and a seeded key matched no
-  delete. Both queries now return the key the way the trigger does; the comparison stays in the
-  column's own type, so the key index still serves it.
+  delete. Both queries now return the key the way the trigger does (`to_jsonb(t."key") #>> '{}'`,
+  the same text without building a JSON document per row); the comparison stays in the column's
+  own type, so the key index still serves it.
 
 ### Security
 
@@ -74,12 +79,20 @@ and this project adheres to
   `@denext/backend` does.
 - **Live connections are capped per client address.** `live.limits.maxConnectionsPerIp` (default
   64) refuses, with 429 before upgrading, a handshake from an address that already holds that many
-  sockets — the address `clientIp()` answers (an IPv6 address counts as its /64), so behind a proxy
-  set `trustForwardedHeaders`. One client could otherwise take every one of `maxConnections`.
+  sockets — the address `clientIp()` answers (an IPv6 address counts as its /64). One client could
+  otherwise take every one of `maxConnections`. The cap is off for a connection whose address is
+  an untrusted loopback, private, link-local or unique-local socket peer (`127.0.0.0/8`, `10/8`,
+  `172.16/12`, `192.168/16`, `169.254/16`, `::1`, `fc00::/7`, `fe80::/10`, and their IPv4-mapped
+  forms): behind a reverse proxy without `trustForwardedHeaders` every visitor arrives from the
+  proxy's address, so the cap would be site-wide. Such connections still count against
+  `maxConnections`, and the server warns once that per-address limits are off until
+  `trustForwardedHeaders` (or `DENEXT_TRUST_PROXY=1`) is set; the first 429 from the cap is logged
+  once too, naming the address and the option.
 - **`@denext/backend` realtime: signed-out subscribers share one quota per address.** A signed-out
   subscriber's `maxSubscriptionsPerIdentity` and seed budget were per Live connection, so opening
-  more sockets bought more of both. They are now per client address (`anon:<address>`), falling back
-  to the connection when the address is unknown.
+  more sockets bought more of both. They are now per client address (`anon:<address>`, from
+  `clientIpForLimits()`), falling back to the connection when the address is unknown or an
+  untrusted proxy-looking peer.
 - **`@denext/backend` realtime: one client can no longer fill an instance's subscriptions.** Each
   subscribe with a fresh key created a subscription (and ran a seed query of up to
   `maxTrackedKeys` keys) that was kept 15 s after its subscriber left, against one instance-wide cap

@@ -14,7 +14,7 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { clientAddrOf } from "./remote-addr.ts";
+import { clientAddrOf, limitAddrOf } from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -526,13 +526,42 @@ export function connection(): Promise<void> {
  * @throws Outside a request context.
  */
 export function clientIp(): string | undefined {
-  const ctx = requireContext("clientIp");
-  assertNotInCacheScope("clientIp");
-  assertNotDynamicError(ctx, "clientIp");
+  const ctx = clientAddressContext("clientIp");
+  return ctx && clientAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+}
+
+/**
+ * The client address to key a **per-address limit** on (a quota, a connection cap):
+ * {@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,
+ * private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy
+ * without {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor
+ * arrives from the proxy's address, so limiting on it would make one limit site-wide; key the
+ * limit on something else (a session, a connection) instead. A directly connected public peer and
+ * a trusted proxy's hop are returned as {@linkcode clientIp} returns them.
+ *
+ * Throws outside a request context and makes the render dynamic, exactly like
+ * {@linkcode clientIp}.
+ *
+ * @returns The address to limit on, or `undefined` when per-address limits should not apply.
+ * @throws Outside a request context.
+ */
+export function clientIpForLimits(): string | undefined {
+  const ctx = clientAddressContext("clientIpForLimits");
+  return ctx && limitAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+}
+
+/**
+ * The checks a client-address read shares with `headers()` (a per-request, dynamic read): the
+ * context, or `undefined` under `force-static`.
+ */
+function clientAddressContext(api: string): RequestContext | undefined {
+  const ctx = requireContext(api);
+  assertNotInCacheScope(api);
+  assertNotDynamicError(ctx, api);
   if (isForceStatic(ctx)) return undefined;
-  if (shouldPostpone()) postponeDynamic("clientIp");
-  ctx.usedDynamicApi = true; // the client IP is per-request
-  return clientAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+  if (shouldPostpone()) postponeDynamic(api);
+  ctx.usedDynamicApi = true; // the client address is per-request
+  return ctx;
 }
 
 /**

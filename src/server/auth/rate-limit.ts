@@ -33,7 +33,7 @@
  * @module
  */
 
-import { clientAddrOf, remoteAddrOf } from "../remote-addr.ts";
+import { clientAddrOf, isLocalAddress, parseIPv6Groups, remoteAddrOf } from "../remote-addr.ts";
 import { currentContext } from "../request-context.ts";
 
 /** One key's open failure window. */
@@ -307,45 +307,6 @@ export function ipBucket(ip: string): string {
   if (!groups) return trimmed.toLowerCase();
   // The /64 prefix: the four high hextets, hex, with the host half zeroed.
   return `${groups.slice(0, 4).map((g) => g.toString(16)).join(":")}::/64`;
-}
-
-/**
- * Parse an IPv6 literal into its eight 16-bit hextets, or `null` when it is not one.
- * Expands `::`, accepts a trailing embedded IPv4 (`::ffff:1.2.3.4`) and strips a zone id
- * (`%eth0`) — so every spelling of one address decodes to the same groups.
- */
-function parseIPv6Groups(input: string): number[] | null {
-  const s = input.toLowerCase().split("%")[0];
-  const halves = s.split("::");
-  if (halves.length > 2) return null;
-  const head = parseHextets(halves[0]);
-  const tail = halves.length === 2 ? parseHextets(halves[1]) : [];
-  if (head === null || tail === null) return null;
-  if (halves.length === 1) return head.length === 8 ? head : null;
-  const fill = 8 - head.length - tail.length;
-  return fill < 0 ? null : [...head, ...new Array<number>(fill).fill(0), ...tail];
-}
-
-/** One `:`-separated run of hextets (a trailing dotted IPv4 counts as two), or `null`. */
-function parseHextets(part: string): number[] | null {
-  if (part === "") return [];
-  const tokens = part.split(":");
-  const groups: number[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (!token.includes(".")) {
-      if (!/^[0-9a-f]{1,4}$/.test(token)) return null;
-      groups.push(parseInt(token, 16));
-      continue;
-    }
-    if (i !== tokens.length - 1) return null; // an embedded IPv4 may only trail
-    const octets = token.split(".").map(Number);
-    if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-      return null;
-    }
-    groups.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
-  }
-  return groups;
 }
 
 /**
@@ -689,31 +650,6 @@ export async function settleAttempt(limiter: RateLimiter | null, keys: AttemptKe
 /** Warn about an undeclared proxy at most once per process. */
 let warnedUntrustedProxy = false;
 
-/** Whether a dotted IPv4 is loopback or RFC 1918 private. */
-function isLocalIPv4(ip: string): boolean {
-  const [p, q] = ip.split(".").map(Number);
-  return p === 127 || p === 10 || (p === 172 && q >= 16 && q <= 31) || (p === 192 && q === 168);
-}
-
-/**
- * Whether an address is a loopback/private peer — i.e. plausibly a reverse proxy on the
- * same host or network rather than a real client. An IPv4-mapped IPv6 peer
- * (`::ffff:10.0.0.1`) is judged on the IPv4 it carries, so a mapped PUBLIC address is not
- * mistaken for a local one.
- */
-function isLocalPeer(addr: string): boolean {
-  const trimmed = addr.trim().replace(/^\[|\]$/g, "");
-  if (!trimmed.includes(":")) return isLocalIPv4(trimmed);
-  const g = parseIPv6Groups(trimmed);
-  if (!g) return false;
-  const topZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
-  if (topZero && g[5] === 0 && g[6] === 0 && g[7] === 1) return true; // ::1
-  if (topZero && (g[5] === 0xffff || g[5] === 0)) {
-    return isLocalIPv4(`${(g[6] >> 8) & 255}.${g[6] & 255}.${(g[7] >> 8) & 255}.${g[7] & 255}`);
-  }
-  return (g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80; // fc00::/7, fe80::/10
-}
-
 /**
  * Whether this request reached denext through a **reverse proxy the app has not declared**
  * — the socket peer is a private/loopback address and the request carries
@@ -733,7 +669,7 @@ export function proxiedWithoutTrust(request: Request, config: RateLimitConfig): 
   if (authTrustsProxy(config)) return false;
   if (!request.headers.get("x-forwarded-for")) return false;
   const peer = remoteAddrOf(request);
-  if (!peer || !isLocalPeer(peer)) return false;
+  if (!peer || !isLocalAddress(peer)) return false;
   if (!warnedUntrustedProxy) {
     warnedUntrustedProxy = true;
     console.warn(

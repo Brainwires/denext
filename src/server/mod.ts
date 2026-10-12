@@ -347,6 +347,7 @@ export type {
 export {
   after,
   clientIp,
+  clientIpForLimits,
   connection,
   cookies,
   draftMode,

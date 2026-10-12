@@ -485,6 +485,61 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    `realtime on a real Postgres: seeds and re-reads spell every key type as the trigger does${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    try {
+      // One table per key type, with the values whose text forms differ most.
+      const keys: Record<string, [string, string]> = {
+        int: ["integer", "(-2147483648), (0), (42)"],
+        big: ["bigint", "(9007199254740993), (-1)"],
+        uid: [
+          "uuid",
+          "('0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000a'), ('00000000-0000-0000-0000-000000000000')",
+        ],
+        txt: ["text", `('plain'), ('it''s "quoted"'), ('ünï ☃'), ('back\\slash'), ('')`],
+        num: ["numeric", "(1.50), (-0.000), (1e20), (3.14159265358979323846)"],
+        ts: [
+          "timestamp",
+          "('2026-01-02 03:04:05.5'), ('2026-01-02 00:00:00'), ('1999-12-31 23:59:59.999999')",
+        ],
+        tz: ["timestamptz", "('2026-01-02 03:04:05.5+02')"],
+      };
+      for (const [table, [type, values]] of Object.entries(keys)) {
+        await env.app.unsafe(
+          `create table k_${table} (k ${type} primary key); insert into k_${table} values ${values};`,
+        ).simple!();
+      }
+      const tables = resolveRealtime({
+        tables: Object.fromEntries(Object.keys(keys).map((t) => [`k_${t}`, { key: "k" }])),
+      }).tables;
+      for (const [table, [type]] of Object.entries(keys)) {
+        const name = `k_${table}`;
+        // What the trigger puts in a notification: `to_jsonb(row) ->> key`.
+        const trigger = (await env.app.unsafe<{ k: string }>(
+          `select to_jsonb(t) ->> 'k' as k from ${name} t order by t.k`,
+        )).map((row) => row.k);
+        const types = new Map([["k", type]]);
+        const seeded = (await env.app.unsafe<{ k: string }>(
+          ...spread(seedQuery(tables.get(name)!, undefined, 100, types)),
+        )).map((row) => row.k).sort();
+        assertEquals(seeded, [...trigger].sort(), `${type}: the seed spells keys as the trigger`);
+        const reread = (await env.app.unsafe<{ k: string }>(
+          ...spread(rereadQuery(tables.get(name)!, undefined, trigger, types)),
+        )).map((row) => row.k).sort();
+        assertEquals(reread, [...trigger].sort(), `${type}: a re-read finds and spells every key`);
+      }
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
 /** Whether a plan reads `index` (an index scan, index-only scan or bitmap index scan). */
 function usesIndex(text: string, index: string): boolean {
   return new RegExp(`(Index (Only )?Scan using|Bitmap Index Scan on) ${index}\\b`).test(text);

@@ -48,7 +48,7 @@ import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
 import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
-import { clientAddrOf, setClientAddr } from "./remote-addr.ts";
+import { clientAddrOf, limitAddrOf, setClientAddr } from "./remote-addr.ts";
 import { ipBucket } from "./auth/rate-limit.ts";
 import { inRootContext } from "./root-context.ts";
 import {
@@ -103,6 +103,11 @@ interface Conn {
    * synthetic request the connection runs so `clientIp()` works in its hooks and re-renders.
    */
   ip?: string;
+  /**
+   * The address its per-address cap counts it against ({@link limitAddrOf} of the upgrade):
+   * `undefined` when the peer looked like an untrusted proxy (the cap is off for it).
+   */
+  limitIp?: string;
   boundaries: LiveBoundarySub[];
   /** Live-data subscriptions ({@link useLive}), keyed by client sub id. */
   dataSubs: Map<string, DataSub>;
@@ -339,14 +344,14 @@ function withConnContext<T>(conn: Conn, fn: () => T | Promise<T>): Promise<T> {
  */
 function connRequest(
   url: string,
-  conn: { cookie: string; ip?: string },
+  conn: { cookie: string; ip?: string; limitIp?: string },
   init: { method?: string; headers?: Record<string, string>; signal?: AbortSignal } = {},
 ): Request {
   const request = new Request(url, {
     ...init,
     headers: { ...init.headers, ...(conn.cookie ? { cookie: conn.cookie } : {}) },
   });
-  setClientAddr(request, conn.ip);
+  setClientAddr(request, conn.ip, conn.limitIp);
   return request;
 }
 
@@ -450,9 +455,13 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   // The client address, as `clientIp()` answers it in this request (the trusted proxy's last
   // hop, else the socket peer) — carried into every hook and re-render of the connection.
   const ip = clientAddrOf(request, trustForwardedHeaders);
+  // The address the per-address cap keys on: none when the peer is a loopback/private address
+  // and the proxy is not trusted — every visitor would share it, so the cap would be site-wide.
+  const limitIp = limitAddrOf(request, trustForwardedHeaders);
+  if (ip !== undefined && limitIp === undefined) warnProxyPeerOnce(ip);
   // Total and per-address connection caps (DoS guard): refuse before upgrading rather than
   // accept and immediately close, so a flood can't churn upgrades.
-  const full = connectionsFull(ip);
+  const full = connectionsFull(limitIp);
   if (full) return full;
   // Capture the identity-bearing headers BEFORE upgrading — `Deno.upgradeWebSocket`
   // consumes the request, after which reading its headers throws "Request closed".
@@ -461,12 +470,12 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }, ip))) {
+  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }, { ip, limitIp }))) {
     return new Response("forbidden", { status: 403 });
   }
   // Re-check the caps after the (async) authorization: concurrent handshakes all passed the
   // first check while none had attached yet.
-  const stillFull = connectionsFull(ip);
+  const stillFull = connectionsFull(limitIp);
   if (stillFull) return stillFull;
   let upgrade: { socket: WebSocket; response: Response };
   try {
@@ -474,31 +483,70 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   } catch {
     return new Response("upgrade failed", { status: 400 });
   }
-  attachConnection(upgrade.socket, { peerId, origin, cookie, ip });
+  attachConnection(upgrade.socket, { peerId, origin, cookie, ip, limitIp });
   return upgrade.response;
 }
 
 /**
- * The refusal when the hub is at `maxConnections`, or `ip` at `maxConnectionsPerIp`; `null` when
- * there is room. A connection with no known address counts only against the total.
+ * The refusal when the hub is at `maxConnections`, or `limitIp` at `maxConnectionsPerIp`; `null`
+ * when there is room. A connection with no address to limit on counts only against the total.
  */
-function connectionsFull(ip: string | undefined): Response | null {
+function connectionsFull(limitIp: string | undefined): Response | null {
   if (connections.size >= limits.maxConnections) {
     return new Response("too many connections", { status: 503 });
   }
-  if (ip !== undefined && (connectionsPerIp.get(ipBucket(ip)) ?? 0) >= limits.maxConnectionsPerIp) {
-    return new Response("too many connections from this address", { status: 429 });
-  }
-  return null;
+  if (limitIp === undefined) return null;
+  const bucket = ipBucket(limitIp);
+  if ((connectionsPerIp.get(bucket) ?? 0) < limits.maxConnectionsPerIp) return null;
+  warnPerIpRefusalOnce(bucket);
+  return new Response("too many connections from this address", { status: 429 });
+}
+
+/** Whether the proxy-peer / per-address refusal warnings have been logged (once per process). */
+const warned = { proxyPeer: false, perIpRefusal: false };
+
+/**
+ * Tell the operator once that per-address limits are off: connections arrive from a
+ * loopback/private socket peer (a reverse proxy — or local development) and the proxy is not
+ * trusted.
+ */
+function warnProxyPeerOnce(peer: string): void {
+  if (warned.proxyPeer) return;
+  warned.proxyPeer = true;
+  console.warn(
+    `denext: Live connections arrive from a loopback/private address (${peer}) — a reverse ` +
+      "proxy, or local development — so per-address limits (live.limits.maxConnectionsPerIp, " +
+      "@denext/backend realtime's signed-out quota) are off for them. Behind a proxy that sets " +
+      "x-forwarded-for, set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1) to key them " +
+      "on each client's address.",
+  );
+}
+
+/** Tell the operator once that the per-address cap refused a handshake, and how to adjust it. */
+function warnPerIpRefusalOnce(bucket: string): void {
+  if (warned.perIpRefusal) return;
+  warned.perIpRefusal = true;
+  console.warn(
+    `denext: refused a Live connection from ${bucket}: it already holds ` +
+      `${limits.maxConnectionsPerIp} (live.limits.maxConnectionsPerIp). If many visitors ` +
+      "legitimately share that address (a NAT, a proxy), raise the limit; behind your own " +
+      "proxy set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1).",
+  );
+}
+
+/** Forget the once-per-process warnings (tests). */
+export function resetLiveWarningsForTesting(): void {
+  warned.proxyPeer = false;
+  warned.perIpRefusal = false;
 }
 
 /** Run the app's `authorize` hook under the viewer's own session; a throw is a refusal. */
 async function connectionAuthorized(
   ctx: LiveConnectionContext,
-  ip: string | undefined,
+  addr: { ip?: string; limitIp?: string },
 ): Promise<boolean> {
   if (!policy.authorize) return true;
-  const req = connRequest(ctx.origin, { cookie: ctx.cookie, ip });
+  const req = connRequest(ctx.origin, { cookie: ctx.cookie, ...addr });
   try {
     return await Promise.resolve(
       runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
@@ -511,7 +559,7 @@ async function connectionAuthorized(
 /** Register the upgraded socket as a live connection and wire its message/close handlers. */
 function attachConnection(
   socket: WebSocket,
-  identity: { peerId: string; origin: string; cookie: string; ip?: string },
+  identity: { peerId: string; origin: string; cookie: string; ip?: string; limitIp?: string },
 ): void {
   const conn: Conn = {
     socket,
@@ -550,8 +598,8 @@ function attachConnection(
     } catch { /* already closing */ }
   };
   connections.add(conn);
-  if (conn.ip !== undefined) {
-    const bucket = ipBucket(conn.ip);
+  if (conn.limitIp !== undefined) {
+    const bucket = ipBucket(conn.limitIp);
     connectionsPerIp.set(bucket, (connectionsPerIp.get(bucket) ?? 0) + 1);
   }
 }
@@ -559,8 +607,8 @@ function attachConnection(
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
 function dropConnection(conn: Conn): void {
   // `onerror` and `onclose` both drop: count the address down once.
-  if (connections.delete(conn) && conn.ip !== undefined) {
-    const bucket = ipBucket(conn.ip);
+  if (connections.delete(conn) && conn.limitIp !== undefined) {
+    const bucket = ipBucket(conn.limitIp);
     const left = (connectionsPerIp.get(bucket) ?? 1) - 1;
     if (left > 0) connectionsPerIp.set(bucket, left);
     else connectionsPerIp.delete(bucket);

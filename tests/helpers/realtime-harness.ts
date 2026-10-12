@@ -7,7 +7,7 @@
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
 import { watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
-import { setClientAddr } from "../../src/server/remote-addr.ts";
+import { isLocalAddress, setClientAddr } from "../../src/server/remote-addr.ts";
 import { credentials } from "../../src/server/auth/providers.ts";
 import { issueAuthSession } from "../../src/server/auth/session.ts";
 import type { AuthConfig } from "../../src/server/auth/types.ts";
@@ -90,7 +90,10 @@ export function realtimeHarness(): Harness {
     withConnContext: (conn, fn) => {
       const headers: HeadersInit = conn.cookie ? { cookie: conn.cookie } : {};
       const request = new Request(`${ORIGIN}/`, { headers });
-      setClientAddr(request, conn.ip); // as the Live hub records the upgrade's client address
+      // As the Live hub records an (untrusted) socket peer: a loopback/private one is the
+      // connection's address, but not one to key per-address limits on.
+      const limitIp = conn.ip !== undefined && !isLocalAddress(conn.ip) ? conn.ip : undefined;
+      setClientAddr(request, conn.ip, limitIp);
       return Promise.resolve(runWithContext(createRequestContext(request), fn));
     },
     connContext: (conn) => ({ origin: ORIGIN, url: "", cookie: conn.cookie, peerId: conn.peerId }),

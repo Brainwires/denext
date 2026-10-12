@@ -216,8 +216,12 @@ export default {
         {" "}
         <code>limits.maxConnectionsPerIp</code>{" "}
         (default 64; an IPv6 address counts as its /64) refuses a handshake from an address that
-        already holds that many sockets with 429 — behind a proxy, set{" "}
-        <code>trustForwardedHeaders</code>, or every visitor shares the proxy&#39;s address.
+        already holds that many sockets with 429. A connection from a loopback, private, link-local
+        or unique-local socket peer is not counted per address (only against{" "}
+        <code>maxConnections</code>) unless the proxy is trusted: behind a reverse proxy every
+        visitor arrives from the proxy&#39;s address, so the cap would be site-wide. The server
+        warns once when that happens — set <code>trustForwardedHeaders</code> (or{" "}
+        <code>DENEXT_TRUST_PROXY=1</code>) behind a proxy to cap each visitor&#39;s own address.
       </p>
       <p>
         Or, instead of a <code>canSubscribe</code>{" "}

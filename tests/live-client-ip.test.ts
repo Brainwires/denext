@@ -2,16 +2,23 @@
 // context — channel `authorize`, a subscription's resolver, the connection `authorize` hook — so
 // `clientIp()` answers there what it answered in the upgrade request (the socket peer, or the
 // trusted proxy's last `x-forwarded-for` hop). And `live.limits.maxConnectionsPerIp` caps the
-// connections one address (an IPv6 /64) may hold.
+// connections one address (an IPv6 /64) may hold — unless that address is an untrusted
+// loopback/private socket peer (a reverse proxy every visitor shares), where the cap is off and
+// `clientIpForLimits()` answers `undefined`.
 
-import { assertEquals } from "@std/assert";
-import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
+import { assert, assertEquals } from "@std/assert";
+import {
+  handleLiveUpgrade,
+  installLiveHub,
+  resetLiveWarningsForTesting,
+  uninstallLiveHub,
+} from "../src/server/live.ts";
 import type { LiveConfig } from "../src/server/config.ts";
 import { createChannel, resetChannels } from "../src/runtime/channel.ts";
 import { defineSubscription } from "../src/runtime/define-subscription.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
-import { clientIp } from "../src/server/request-context.ts";
-import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { clientIp, clientIpForLimits } from "../src/server/request-context.ts";
+import { isLocalAddress, limitAddrOf, setRemoteAddr } from "../src/server/remote-addr.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -147,37 +154,62 @@ Deno.test("live clientIp: a subscription's resolver runs with the connection's a
 });
 
 /** An upgrade request from `addr` (not through a server: the upgrade itself then fails, 400). */
-function upgradeFrom(addr: string): Request {
-  const req = new Request("http://app.test/_denext/live", { headers: { upgrade: "websocket" } });
+function upgradeFrom(addr: string, headers: Record<string, string> = {}): Request {
+  const req = new Request("http://app.test/_denext/live", {
+    headers: { upgrade: "websocket", ...headers },
+  });
   setRemoteAddr(req, { transport: "tcp", hostname: addr, port: 1 });
   return req;
 }
 
-/** Open a socket and resolve once it is open. */
-function open(port: number): Promise<WebSocket> {
+/** Open a socket (with extra handshake headers) and resolve once it is open. */
+function open(port: number, headers?: Record<string, string>): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/_denext/live`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/_denext/live`, { headers } as Any);
     ws.onopen = () => resolve(ws);
     ws.onerror = () => reject(new Error("socket error"));
   });
 }
 
+/** Run `fn` with `console.warn` captured; resolves with what it logged. */
+async function capturingWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
 Deno.test("live maxConnectionsPerIp: one address's connections are capped; others, and a freed slot, get in", async () => {
-  const { server, port } = startHub({ limits: { maxConnectionsPerIp: 2 } });
+  // The server records every connection as 198.51.100.7 (a directly connected public client).
+  const { server, port } = startHub({ limits: { maxConnectionsPerIp: 2 } }, false, "198.51.100.7");
+  resetLiveWarningsForTesting();
   try {
     const sockets = [await open(port), await open(port)];
-    // A third from 127.0.0.1 is refused before upgrading; another address is not.
-    assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1"))).status, 429);
+    // A third from the address is refused before upgrading — with one warning naming the address
+    // and the option, however many refusals follow; another address is not refused.
+    const warnings = await capturingWarnings(async () => {
+      assertEquals((await handleLiveUpgrade(upgradeFrom("198.51.100.7"))).status, 429);
+      assertEquals((await handleLiveUpgrade(upgradeFrom("198.51.100.7"))).status, 429);
+    });
+    assertEquals(warnings.length, 1, warnings.join("\n"));
+    assert(warnings[0].includes("198.51.100.7") && warnings[0].includes("maxConnectionsPerIp"));
     assertEquals((await handleLiveUpgrade(upgradeFrom("192.0.2.4"))).status, 400, "not capped");
     // Closing one frees its slot (once the server has seen the close).
     const closed = sockets.pop()!;
     closed.close();
     const deadline = Date.now() + WS_TIMEOUT_MS;
     let status = 429;
-    while (status === 429 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      status = (await handleLiveUpgrade(upgradeFrom("127.0.0.1"))).status;
-    }
+    await capturingWarnings(async () => {
+      while (status === 429 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        status = (await handleLiveUpgrade(upgradeFrom("198.51.100.7"))).status;
+      }
+    });
     assertEquals(status, 400, "the freed slot admits the address again");
     for (const ws of sockets) ws.close();
   } finally {
@@ -201,4 +233,133 @@ Deno.test("live maxConnectionsPerIp: an IPv6 /64 counts as one address", async (
     uninstallLiveHub();
     await server.shutdown();
   }
+});
+
+Deno.test("live maxConnectionsPerIp: an untrusted loopback/private peer is not capped per address — the total still applies — and warns once", async () => {
+  // Behind a reverse proxy without trustForwardedHeaders every visitor arrives from the proxy's
+  // address (here the real socket peer, 127.0.0.1): one per-address cap would be site-wide.
+  const { server, port } = startHub({ limits: { maxConnectionsPerIp: 1, maxConnections: 3 } });
+  resetLiveWarningsForTesting();
+  const sockets: WebSocket[] = [];
+  try {
+    const warnings = await capturingWarnings(async () => {
+      sockets.push(await open(port), await open(port));
+      for (const proxy of ["10.0.0.2", "172.20.1.1", "192.168.1.1", "169.254.0.1", "::1"]) {
+        assertEquals((await handleLiveUpgrade(upgradeFrom(proxy))).status, 400, proxy);
+      }
+      for (const proxy of ["fd12::1", "fe80::1", "::ffff:10.0.0.2", "::ffff:127.0.0.1"]) {
+        assertEquals((await handleLiveUpgrade(upgradeFrom(proxy))).status, 400, proxy);
+      }
+      sockets.push(await open(port));
+      // The total cap still counts them.
+      assertEquals((await handleLiveUpgrade(upgradeFrom("10.0.0.2"))).status, 503);
+    });
+    assertEquals(warnings.length, 1, warnings.join("\n"));
+    assert(warnings[0].includes("127.0.0.1"), warnings[0]);
+    assert(warnings[0].includes("trustForwardedHeaders"), warnings[0]);
+    assert(warnings[0].includes("DENEXT_TRUST_PROXY=1"), warnings[0]);
+  } finally {
+    for (const ws of sockets) ws.close();
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("live maxConnectionsPerIp: a trusted proxy's hop is capped even when private; without a hop its peer is not", async () => {
+  const { server, port } = startHub({ limits: { maxConnectionsPerIp: 1 } }, true);
+  resetLiveWarningsForTesting();
+  const hop = { "x-forwarded-for": "198.51.100.1, 10.9.8.7" };
+  try {
+    const ws = await open(port, hop);
+    await capturingWarnings(async () => {
+      assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1", hop))).status, 429);
+      // No forwarded hop: the address is the (loopback) socket peer — not capped.
+      assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1"))).status, 400);
+    });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("live clientIpForLimits: a hook sees the address to limit on — none for a proxy-looking peer", async () => {
+  resetChannels();
+  const seen: [string | undefined, string | undefined][] = [];
+  createChannel<number>({
+    id: "ip#limits",
+    authorize: () => {
+      seen.push([clientIp(), clientIpForLimits()]);
+      return true;
+    },
+  });
+  const sub = { type: "channel-subscribe", subId: "s1", channelId: "ip#limits", key: "k" };
+  const cases: [string | undefined, boolean, Record<string, string> | undefined][] = [
+    ["198.51.100.7", false, undefined], // a public peer
+    [undefined, false, undefined], // the real 127.0.0.1 peer, untrusted
+    [undefined, true, { "x-forwarded-for": "10.9.8.7" }], // a trusted proxy's private hop
+  ];
+  try {
+    for (const [peer, trusted, headers] of cases) {
+      const { server, port } = startHub({}, trusted, peer);
+      resetLiveWarningsForTesting();
+      try {
+        await capturingWarnings(async () => {
+          assertEquals((await exchange(port, sub, headers)).type, "channel-ready");
+        });
+      } finally {
+        uninstallLiveHub();
+        await server.shutdown();
+      }
+    }
+    assertEquals(seen, [
+      ["198.51.100.7", "198.51.100.7"],
+      ["127.0.0.1", undefined],
+      ["10.9.8.7", "10.9.8.7"],
+    ]);
+  } finally {
+    resetChannels();
+  }
+});
+
+Deno.test("isLocalAddress / limitAddrOf: loopback, private, link-local and ULA peers (and their mapped forms) are local", () => {
+  const local = [
+    "127.0.0.1",
+    "127.255.0.9",
+    "10.0.0.1",
+    "172.16.0.1",
+    "172.31.255.255",
+    "192.168.0.1",
+    "169.254.1.1",
+    "::1",
+    "[::1]",
+    "0:0:0:0:0:0:0:1",
+    "fc00::1",
+    "fdff::1",
+    "fe80::1",
+    "fe80::1%en0",
+    "febf::1",
+    "::ffff:10.0.0.1",
+    "::ffff:7f00:1",
+  ];
+  const remote = [
+    "198.51.100.7",
+    "172.15.0.1",
+    "172.32.0.1",
+    "169.253.0.1",
+    "11.0.0.1",
+    "2001:db8::1",
+    "fec0::1",
+    "::ffff:198.51.100.7",
+  ];
+  for (const addr of local) assert(isLocalAddress(addr), addr);
+  for (const addr of remote) assert(!isLocalAddress(addr), addr);
+  for (const addr of [...local, ...remote]) {
+    const expected = local.includes(addr) ? undefined : addr;
+    assertEquals(limitAddrOf(upgradeFrom(addr), false), expected, addr);
+    assertEquals(limitAddrOf(upgradeFrom(addr), true), expected, `${addr}, no hop`);
+  }
+  const forwarded = upgradeFrom("127.0.0.1", { "x-forwarded-for": "10.0.0.1" });
+  assertEquals(limitAddrOf(forwarded, true), "10.0.0.1", "a trusted hop, even private");
+  assertEquals(limitAddrOf(forwarded, false), undefined, "an untrusted header is ignored");
 });

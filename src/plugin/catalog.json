@@ -252,7 +252,7 @@
                 "type": "number"
               },
               "maxSubscriptionsPerIdentity": {
-                "description": "Subscriptions one identity may hold on one server instance (default 64): a signed-in user across all their connections, or the signed-out visitors at one client address (`clientIp()`: set `trustForwardedHeaders` behind a proxy; one Live connection when the address is unknown). It also bounds the distinct filters (re-read groups) an identity adds to a burst. Server-side `tableChanges` subscriptions are not counted.",
+                "description": "Subscriptions one identity may hold on one server instance (default 64): a signed-in user across all their connections, or the signed-out visitors at one client address (`clientIpForLimits()`: one Live connection when the address is unknown or an untrusted loopback/private peer — set `trustForwardedHeaders` behind a proxy). It also bounds the distinct filters (re-read groups) an identity adds to a burst. Server-side `tableChanges` subscriptions are not counted.",
                 "type": "number"
               },
               "queryTimeoutMs": {

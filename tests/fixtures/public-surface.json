@@ -902,6 +902,7 @@
     "cachedFetch:function",
     "cappedBody:function",
     "clientIp:function",
+    "clientIpForLimits:function",
     "collapseHeadTags:function",
     "compareSpecificity:function",
     "composeMiddleware:function",
