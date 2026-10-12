@@ -1402,6 +1402,12 @@ Two behaviours worth knowing:
   budget's user.
   Setting `canonicalOrigin` while neither `denextAuth` nor the app decided
   `trustForwardedHeaders` warns once, on the first auth request, for the same reason.
+  Two app settings change that rule for every per-address limit, auth's included:
+  `rateLimitHeader` (a header such as `cf-connecting-ip` that your proxy sets to the client
+  address — the model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`) keys the budgets on that
+  address whenever a request carries one, and `rateLimitLocalAddresses: true` counts a
+  loopback/private peer by its own address instead of skipping it. See
+  [Deploy › Per-address limits](/docs/deploy#per-address-limits-behind-a-proxy).
 - **The default store never evicts a key mid-lockout.** Past `maxKeys` it drops expired
   windows and quiet keys (in one pass, down to 90% of the cap), never one that is actually
   locked out — otherwise flooding fresh keys would clear a lockout. When every tracked key

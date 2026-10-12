@@ -299,7 +299,11 @@ Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (t
 peer; a dynamic read like `headers()`), `requestId()` (the log / `x-request-id` correlation id —
 an inbound one is reused only behind a trusted proxy) and `requestSignal()` (the disconnect /
 timeout `AbortSignal` to thread into `fetch()`; `undefined` inside `use cache`). `denextAuth`
-inherits the app's `trustForwardedHeaders` unless it sets its own.
+inherits the app's `trustForwardedHeaders` unless it sets its own. Per-address limits
+(`rateLimit()`, auth's per-IP budgets, `live.limits.maxConnectionsPerIp`, `clientIpForLimits()`)
+skip a loopback/private peer with no trusted hop; `rateLimitHeader: "cf-connecting-ip"` keys them on
+the address a proxy writes there (Supabase's `GOTRUE_RATE_LIMIT_HEADER`; a request without it falls
+back, never unlimited) and `rateLimitLocalAddresses: true` counts such a peer as itself.
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 

@@ -29,12 +29,15 @@
  * `x-forwarded-for` hop ({@linkcode proxiedWithoutTrust}, the limit-address rule of
  * `rateLimit()` and `clientIpForLimits()`) — behind such a proxy every user would otherwise
  * share one bucket, which turns the limiter into an app-wide outage rather than a defence.
+ * The app's `rateLimitHeader` / `rateLimitLocalAddresses` (the per-address limit policy every
+ * limiter shares) change both: the header's address keys every per-IP budget whenever a request
+ * carries one, and a local peer is counted by its own address instead of skipped.
  *
  * @module
  */
 
 import { clientAddrOf, ipBucket, limitAddrOf, remoteAddrOf } from "../remote-addr.ts";
-import { trustsForwardedHeaders } from "../request-context.ts";
+import { currentLimitPolicy, trustsForwardedHeaders } from "../request-context.ts";
 
 /** One key's open failure window. */
 
@@ -277,11 +280,15 @@ export interface RateLimitKeyOptions {
 /**
  * The client IP: the socket peer denext's server loop recorded; behind a trusted proxy the
  * last `x-forwarded-for` hop (the one the proxy appended). Never the first hop — that is
- * whatever the client sent — so a per-request forged header can't dodge the limiter.
- * `"unknown"` only when neither is available (an embedder calling the handler directly).
+ * whatever the client sent — so a per-request forged header can't dodge the limiter. When the
+ * app names a `rateLimitHeader`, the address in it comes first (the limit address,
+ * {@linkcode limitAddrOf}, which otherwise equals the client address whenever it is defined).
+ * `"unknown"` only when none is available (an embedder calling the handler directly).
  */
 function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
-  return clientAddrOf(request, options.trustForwardedHeaders === true) ?? "unknown";
+  const trust = options.trustForwardedHeaders === true;
+  return limitAddrOf(request, trust, currentLimitPolicy()) ?? clientAddrOf(request, trust) ??
+    "unknown";
 }
 
 /**
@@ -646,7 +653,10 @@ let warnedUntrustedProxy = false;
  */
 export function proxiedWithoutTrust(request: Request, config: RateLimitConfig): boolean {
   const peer = remoteAddrOf(request);
-  if (peer === undefined || limitAddrOf(request, authTrustsProxy(config)) !== undefined) {
+  if (
+    peer === undefined ||
+    limitAddrOf(request, authTrustsProxy(config), currentLimitPolicy()) !== undefined
+  ) {
     return false;
   }
   if (!warnedUntrustedProxy) {
@@ -656,7 +666,9 @@ export function proxiedWithoutTrust(request: Request, config: RateLimitConfig): 
         "proxy or local development, with no trusted `x-forwarded-for` hop, so every client " +
         "would share ONE per-IP rate-limit bucket: the per-IP budgets are off for them. Behind " +
         "a proxy that overwrites the header, set `trustForwardedHeaders: true` (the app's, or " +
-        "denextAuth's own) or `DENEXT_TRUST_PROXY=1`, or give " +
+        "denextAuth's own) or `DENEXT_TRUST_PROXY=1`; behind one that sets a client-address " +
+        "header, name it in the app's `rateLimitHeader`; to limit these peers by their own " +
+        "address, set `rateLimitLocalAddresses: true`; or give " +
         "`rateLimit.keyGenerator`/`rateLimit.signin` a key that suits your proxy.",
     );
   }

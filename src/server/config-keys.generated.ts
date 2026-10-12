@@ -39,6 +39,8 @@ export const CONFIG_KEYS = [
   "actionMaxBodyBytes",
   "canonicalOrigin",
   "trustForwardedHeaders",
+  "rateLimitHeader",
+  "rateLimitLocalAddresses",
   "allowedDevOrigins",
   "requestTimeout",
   "maxConcurrency",

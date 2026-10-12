@@ -322,6 +322,48 @@ Deno.test("rateLimit: a public peer is limited, an IPv6 one per /64", async () =
   assertEquals((await GET(fromPeer("2001:db8:1:3::a"), ctx())).status, 200, "another /64");
 });
 
+Deno.test("rateLimit: the app's rateLimitHeader keys each named client behind a loopback proxy (IPv6 per /64, mapped as IPv4)", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const call = (client: string) => {
+    const request = fromPeer("127.0.0.1", { "fly-client-ip": client });
+    return runWithContext(
+      createRequestContext(request, undefined, { limitPolicy: { header: "fly-client-ip" } }),
+      () => GET(request, ctx()),
+    );
+  };
+  assertEquals((await call("203.0.113.4")).status, 200);
+  assertEquals((await rejects(call("203.0.113.4"))).status, 429, "one client's own bucket");
+  assertEquals((await call("203.0.113.5")).status, 200, "another client behind the same proxy");
+  assertEquals((await call("2001:db8:1:2::a")).status, 200);
+  assertEquals((await rejects(call("2001:db8:1:2:ffff::1"))).status, 429, "the same /64");
+  assertEquals((await call("::ffff:198.51.100.30")).status, 200);
+  assertEquals((await rejects(call("198.51.100.30"))).status, 429, "mapped = its IPv4");
+});
+
+Deno.test("rateLimit: the app's rateLimitLocalAddresses limits a loopback/private peer by its own address", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const call = (peer: string) => {
+    const request = fromPeer(peer);
+    return runWithContext(
+      createRequestContext(request, undefined, { limitPolicy: { localAddresses: true } }),
+      () => GET(request, ctx()),
+    );
+  };
+  assertEquals((await call("10.0.0.2")).status, 200);
+  assertEquals((await rejects(call("10.0.0.2"))).status, 429);
+  assertEquals((await call("10.0.0.3")).status, 200, "another LAN client");
+  assertEquals((await call("::1")).status, 200);
+  assertEquals((await rejects(call("0:0:0:0:0:0:0:1"))).status, 429, "one loopback, any spelling");
+});
+
 // --- through handleApi: the redacted-500 path for DEFINED routes -----------------
 
 function viaHandleApi(mod: ApiModule, request: Request): Promise<Response> {

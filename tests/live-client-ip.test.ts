@@ -23,7 +23,14 @@ import {
   createRequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { isLocalAddress, limitAddrOf, setRemoteAddr } from "../src/server/remote-addr.ts";
+import {
+  isLocalAddress,
+  limitAddrOf,
+  type LimitAddrPolicy,
+  resetLimitHeaderWarningForTesting,
+  resolveLimitPolicy,
+  setRemoteAddr,
+} from "../src/server/remote-addr.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -38,12 +45,14 @@ function startHub(
   config: LiveConfig,
   trustForwardedHeaders = false,
   peer?: string,
+  limitPolicy?: LimitAddrPolicy,
 ): { server: Deno.HttpServer; port: number } {
   installLiveHub({
     appHandler: () => Promise.resolve(new Response(null, { status: 404 })),
     originAllowed: () => true,
     config,
     trustForwardedHeaders,
+    limitPolicy,
   });
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req, info) => {
     setRemoteAddr(req, peer ? { transport: "tcp", hostname: peer, port: 1 } : info.remoteAddr);
@@ -382,4 +391,129 @@ Deno.test("clientIpForLimits({ bucket: true }): an IPv6 address's /64, IPv4 as i
   assertEquals(read(at("2001:0DB8:1:2:ffff:0:0:1"), { bucket: true }), "2001:db8:1:2::/64");
   assertEquals(read(at("198.51.100.7"), { bucket: true }), "198.51.100.7");
   assertEquals(read(at("::1"), { bucket: true }), undefined, "an untrusted local peer: none");
+});
+
+// --- rateLimitHeader / rateLimitLocalAddresses (Supabase Auth's GOTRUE_RATE_LIMIT_HEADER model) ---
+
+const CF = { header: "cf-connecting-ip" } satisfies LimitAddrPolicy;
+
+Deno.test("resolveLimitPolicy: the header trimmed and lower-cased, an empty one none; the switch only when true", () => {
+  assertEquals(resolveLimitPolicy({}), {});
+  assertEquals(resolveLimitPolicy({ rateLimitHeader: " CF-Connecting-IP " }), CF);
+  assertEquals(resolveLimitPolicy({ rateLimitHeader: "  ", rateLimitLocalAddresses: false }), {});
+  assertEquals(resolveLimitPolicy({ rateLimitLocalAddresses: true }), { localAddresses: true });
+});
+
+Deno.test("limitAddrOf + rateLimitHeader: the header's last IP value is the limit address — local or not, over any hop", () => {
+  const via = (peer: string, value: string, extra: Record<string, string> = {}) =>
+    upgradeFrom(peer, { "cf-connecting-ip": value, ...extra });
+  // Behind a loopback proxy (untrusted) the named header is the client — even a private client.
+  assertEquals(limitAddrOf(via("127.0.0.1", "198.51.100.7"), false, CF), "198.51.100.7");
+  assertEquals(limitAddrOf(via("127.0.0.1", "10.1.2.3"), false, CF), "10.1.2.3");
+  // A proxy that appends: only its own (last) value counts, a client-sent first one does not.
+  assertEquals(limitAddrOf(via("::1", "6.6.6.6, 203.0.113.9"), false, CF), "203.0.113.9");
+  // IPv6, bracketed or not; the header outranks a trusted x-forwarded-for hop.
+  const v6 = via("10.0.0.2", "[2001:db8:1:2::a]", { "x-forwarded-for": "192.0.2.1" });
+  assertEquals(limitAddrOf(v6, true, CF), "2001:db8:1:2::a");
+  // Header names match case-insensitively (the Headers API), and the policy name is lower-case.
+  assertEquals(
+    limitAddrOf(upgradeFrom("::1", { "CF-Connecting-IP": "192.0.2.8" }), false, CF),
+    "192.0.2.8",
+  );
+});
+
+Deno.test("limitAddrOf + rateLimitHeader: a request without an IP in it falls back to the peer / hop rule — warned once", async () => {
+  resetLimitHeaderWarningForTesting();
+  const warnings = await capturingWarnings(() => {
+    // Missing: a public peer (a client that bypassed the proxy) is limited by its own address…
+    assertEquals(limitAddrOf(upgradeFrom("198.51.100.7"), false, CF), "198.51.100.7");
+    // …a trusted hop is used as without the option…
+    const hop = upgradeFrom("10.0.0.2", { "x-forwarded-for": "192.0.2.1" });
+    assertEquals(limitAddrOf(hop, true, CF), "192.0.2.1");
+    // …and a local peer is still skipped (never a site-wide bucket) unless local limits are on.
+    assertEquals(limitAddrOf(upgradeFrom("127.0.0.1"), false, CF), undefined);
+    const both = { ...CF, localAddresses: true };
+    assertEquals(limitAddrOf(upgradeFrom("127.0.0.1"), false, both), "127.0.0.1");
+    // Not an IP address (empty, a hostname, a port suffix, junk): the same fallback.
+    for (const junk of [" , ", "unknown", "198.51.100.7:443", "999.1.1.1", "2001:db8::g"]) {
+      const request = upgradeFrom("198.51.100.9", { "cf-connecting-ip": junk });
+      assertEquals(limitAddrOf(request, false, CF), "198.51.100.9", junk);
+    }
+    return Promise.resolve();
+  });
+  assertEquals(warnings.length, 1, warnings.join("\n"));
+  assert(warnings[0].includes("cf-connecting-ip") && warnings[0].includes("rateLimitHeader"));
+  resetLimitHeaderWarningForTesting();
+});
+
+Deno.test("limitAddrOf + rateLimitLocalAddresses: a loopback/private peer counts as itself; a trusted hop still wins", () => {
+  const local = { localAddresses: true };
+  for (
+    const peer of ["127.0.0.1", "10.0.0.2", "192.168.1.1", "::1", "fd12::1", "::ffff:10.0.0.2"]
+  ) {
+    assertEquals(limitAddrOf(upgradeFrom(peer), false, local), peer, peer);
+  }
+  assertEquals(limitAddrOf(upgradeFrom("198.51.100.7"), false, local), "198.51.100.7");
+  const hop = upgradeFrom("10.0.0.2", { "x-forwarded-for": "192.0.2.1" });
+  assertEquals(limitAddrOf(hop, true, local), "192.0.2.1");
+  assertEquals(limitAddrOf(hop, false, local), "10.0.0.2", "an untrusted header is still ignored");
+});
+
+Deno.test("clientIpForLimits + rateLimitHeader: IPv6 bucketed by /64 and IPv4-mapped as its IPv4; clientIp() unchanged", () => {
+  const read = (value: string, options?: { bucket?: boolean }) => {
+    const request = upgradeFrom("127.0.0.1", { "cf-connecting-ip": value });
+    const ctx = createRequestContext(request, undefined, { limitPolicy: CF });
+    return runWithContext(ctx, () => [clientIp(), clientIpForLimits(options)]);
+  };
+  assertEquals(read("2001:db8:1:2::a", { bucket: true }), ["127.0.0.1", "2001:db8:1:2::/64"]);
+  assertEquals(read("2001:0DB8:1:2:ffff::1", { bucket: true })[1], "2001:db8:1:2::/64");
+  assertEquals(read("::ffff:198.51.100.7", { bucket: true })[1], "198.51.100.7");
+  assertEquals(read("::ffff:c633:6407", { bucket: true })[1], "198.51.100.7");
+  assertEquals(read("198.51.100.7"), ["127.0.0.1", "198.51.100.7"], "clientIp() keeps the peer");
+  // The local-addresses switch, through the context.
+  const peer = upgradeFrom("10.0.0.2");
+  const ctx = createRequestContext(peer, undefined, { limitPolicy: { localAddresses: true } });
+  assertEquals(runWithContext(ctx, () => clientIpForLimits()), "10.0.0.2");
+});
+
+Deno.test("live maxConnectionsPerIp + rateLimitHeader: behind a loopback proxy each named client is capped on its own", async () => {
+  const { server, port } = startHub({ limits: { maxConnectionsPerIp: 1 } }, false, undefined, CF);
+  resetLiveWarningsForTesting();
+  const a = { "cf-connecting-ip": "198.51.100.7" };
+  try {
+    const ws = await open(port, a);
+    await capturingWarnings(async () => {
+      assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1", a))).status, 429);
+      // Another client (an IPv6 one, keyed by its /64) gets in.
+      const b = { "cf-connecting-ip": "2001:db8:1:2::a" };
+      assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1", b))).status, 400);
+    });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("live maxConnectionsPerIp + rateLimitLocalAddresses: the loopback peer itself is capped, with no proxy warning", async () => {
+  const local = { localAddresses: true };
+  const { server, port } = startHub(
+    { limits: { maxConnectionsPerIp: 1 } },
+    false,
+    undefined,
+    local,
+  );
+  resetLiveWarningsForTesting();
+  try {
+    const ws = await open(port);
+    const warnings = await capturingWarnings(async () => {
+      assertEquals((await handleLiveUpgrade(upgradeFrom("127.0.0.1"))).status, 429);
+      assertEquals((await handleLiveUpgrade(upgradeFrom("10.0.0.2"))).status, 400, "another peer");
+    });
+    assertEquals(warnings.filter((w) => w.includes("loopback/private")), []);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
 });

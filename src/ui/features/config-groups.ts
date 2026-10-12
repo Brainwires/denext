@@ -67,6 +67,9 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "actionMaxBodyBytes",
     "canonicalOrigin",
     "trustForwardedHeaders",
+    // Which address the per-address limits key on behind a proxy (or on a LAN).
+    "rateLimitHeader",
+    "rateLimitLocalAddresses",
     // Response compression: a proxy that compresses in front of the server turns it off.
     "compress",
     // Shared-cache headers on ISR pages: what a CDN in front may cache.

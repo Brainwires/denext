@@ -9,6 +9,7 @@ import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "..
 import { withBuildDirLock } from "../project-locks.ts";
 import { resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
+import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import {
   type HeaderRule,
   type RedirectRule,
@@ -136,6 +137,7 @@ export function createDevApp(st: DevState): RequestHandler {
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
+    limitPolicy: resolveLimitPolicy(appConfig),
   });
   return appHandler;
 }

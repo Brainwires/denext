@@ -74,24 +74,117 @@ export function clientAddrOf(request: Request, trustForwardedHeaders: boolean): 
 }
 
 /**
- * The address to key a **per-address limit** on (a connection cap, a signed-out quota): the client
- * address {@link clientAddrOf} answers — unless that is the socket peer (no trusted forwarded hop)
- * and the peer is a loopback, private, link-local or unique-local address
- * ({@link isLocalAddress}). Such a peer is most likely a reverse proxy the app does not trust, so
- * every visitor would share its address and its limit; the limit is skipped instead
- * (`undefined`). A directly connected public peer, and a trusted proxy's hop, keep it.
+ * How per-address limits pick their address beyond proxy trust — the app's
+ * `rateLimitHeader` / `rateLimitLocalAddresses` (or `DENEXT_RATE_LIMIT_HEADER` /
+ * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`), resolved once by {@link resolveLimitPolicy}.
+ */
+export interface LimitAddrPolicy {
+  /**
+   * A lower-cased header a fronting proxy sets to the client address (`cf-connecting-ip`,
+   * `fly-client-ip`, `x-real-ip`), keyed on in preference to everything else. Absent: none.
+   */
+  header?: string;
+  /** Count a loopback/private socket peer by its own address instead of skipping the limit. */
+  localAddresses?: boolean;
+}
+
+/**
+ * The {@link LimitAddrPolicy} for the app's settings: the header trimmed and lower-cased (an empty
+ * one is none), the local-addresses switch as a boolean.
+ *
+ * @param settings The app's `rateLimitHeader` / `rateLimitLocalAddresses`.
+ * @returns The policy {@link limitAddrOf} takes.
+ */
+export function resolveLimitPolicy(
+  settings: { rateLimitHeader?: string; rateLimitLocalAddresses?: boolean },
+): LimitAddrPolicy {
+  const header = settings.rateLimitHeader?.trim().toLowerCase();
+  return {
+    ...(header ? { header } : {}),
+    ...(settings.rateLimitLocalAddresses === true ? { localAddresses: true } : {}),
+  };
+}
+
+/**
+ * The address to key a **per-address limit** on (a connection cap, a signed-out quota):
+ *
+ * 1. the value of {@link LimitAddrPolicy.header} when the app names one and the request carries
+ *    an IP address in it (its LAST comma-separated value — the one the nearest proxy wrote), counted
+ *    as it is, loopback/private or not (the operator vouched for the header);
+ * 2. else the client address {@link clientAddrOf} answers — unless that is the socket peer (no
+ *    trusted forwarded hop) and the peer is a loopback, private, link-local or unique-local address
+ *    ({@link isLocalAddress}) while {@link LimitAddrPolicy.localAddresses} is off. Such a peer is
+ *    most likely a reverse proxy the app does not trust, so every visitor would share its address
+ *    and its limit; the limit is skipped instead (`undefined`).
+ *
+ * A request without the named header (or with a value that is not an IP address) falls back to
+ * step 2 — never to "no limit" — and a warning says so once per process: such a request did not
+ * come through the proxy that sets it, so its own socket peer is the best client identity.
  *
  * @param request The incoming request (or a Live connection's synthetic one).
  * @param trustForwardedHeaders Whether the app trusts its fronting proxy.
+ * @param policy The app's header / local-address settings (default: neither).
  * @returns The address to limit on, or `undefined` when per-address limits do not apply.
  */
-export function limitAddrOf(request: Request, trustForwardedHeaders: boolean): string | undefined {
+export function limitAddrOf(
+  request: Request,
+  trustForwardedHeaders: boolean,
+  policy: LimitAddrPolicy = {},
+): string | undefined {
   const resolved = limitAddrs.get(request);
   if (resolved !== undefined) return resolved ?? undefined;
+  if (policy.header) {
+    const named = headerAddr(request, policy.header);
+    if (named) return named;
+    warnMissingLimitHeaderOnce(policy.header);
+  }
   const hop = trustForwardedHeaders ? lastForwardedHop(request) : undefined;
   if (hop) return hop;
   const peer = remoteAddrOf(request);
-  return peer === undefined || isLocalAddress(peer) ? undefined : peer;
+  if (peer === undefined) return undefined;
+  return policy.localAddresses || !isLocalAddress(peer) ? peer : undefined;
+}
+
+/**
+ * The IP address in `header` of `request`: its last non-empty comma-separated value (a proxy that
+ * appends rather than overwrites puts its own last; anything before it came from the client),
+ * unbracketed — or `undefined` when the header is absent or that value is not an IPv4 / IPv6
+ * literal.
+ */
+function headerAddr(request: Request, header: string): string | undefined {
+  const last = request.headers.get(header)?.split(",").map((v) => v.trim()).filter(Boolean).at(-1);
+  const addr = last?.replace(/^\[|\]$/g, "");
+  return addr !== undefined && isIpLiteral(addr) ? addr : undefined;
+}
+
+/** Whether `addr` is a dotted IPv4 address or an IPv6 literal (optionally with a zone id). */
+function isIpLiteral(addr: string): boolean {
+  if (addr.includes(":")) return parseIPv6Groups(addr) !== null;
+  const octets = addr.split(".");
+  return octets.length === 4 && octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255);
+}
+
+/** Whether {@link warnMissingLimitHeaderOnce} has logged (once per process). */
+let warnedMissingLimitHeader = false;
+
+/**
+ * Tell the operator once that a request lacked the configured limit header (or carried no IP
+ * address in it), so its limits fell back to the socket peer / trusted hop.
+ */
+function warnMissingLimitHeaderOnce(header: string): void {
+  if (warnedMissingLimitHeader) return;
+  warnedMissingLimitHeader = true;
+  console.warn(
+    `denext: a request carried no client address in \`${header}\` (rateLimitHeader / ` +
+      "DENEXT_RATE_LIMIT_HEADER), so its per-address limits key on the socket peer (or the " +
+      "trusted x-forwarded-for hop) instead. Expected only for a request that bypassed the proxy " +
+      "that sets it; if every request lacks it, the proxy does not set that header.",
+  );
+}
+
+/** Forget the once-per-process missing-header warning (tests). */
+export function resetLimitHeaderWarningForTesting(): void {
+  warnedMissingLimitHeader = false;
 }
 
 /** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */

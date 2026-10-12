@@ -29,6 +29,7 @@ import {
 } from "../../server/instrumentation.ts";
 import { bootScheduledTasks } from "../../server/task-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
+import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -170,7 +171,7 @@ export async function createProdApp(
   );
   const appHandler = createApp(appConfig);
   if (flightRoutes.size > 0) {
-    installProdLiveHub(paths, appHandler, appConfig.trustForwardedHeaders);
+    installProdLiveHub(paths, appHandler, appConfig);
   }
   return appHandler;
 }
@@ -257,7 +258,7 @@ function prodAppConfig(
 function installProdLiveHub(
   paths: ProjectPaths,
   appHandler: (request: Request) => Promise<Response>,
-  trustForwardedHeaders: boolean | undefined,
+  appConfig: AppConfig,
 ): void {
   // Strict same-origin for the Live handshake; a Deno Desktop window's own
   // `desktop.app.origin` (exactly) counts as same-origin.
@@ -266,6 +267,7 @@ function installProdLiveHub(
     appHandler,
     originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
     config: resolveLive(paths.config),
-    trustForwardedHeaders,
+    trustForwardedHeaders: appConfig.trustForwardedHeaders,
+    limitPolicy: resolveLimitPolicy(appConfig),
   });
 }

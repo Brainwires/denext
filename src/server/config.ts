@@ -1670,6 +1670,39 @@ export interface DenextConfig {
    */
   trustForwardedHeaders?: boolean;
   /**
+   * A request header the fronting proxy sets to the client address — `"cf-connecting-ip"`
+   * (Cloudflare), `"fly-client-ip"` (Fly.io), `"x-real-ip"` (nginx) — that every **per-address
+   * limit** keys on: `rateLimit()`, `denextAuth`'s per-IP budgets,
+   * `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and
+   * `clientIpForLimits()`. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`, for denext. When a request
+   * carries an IP address in it (its last comma-separated value), that address is the limit key,
+   * IPv6 bucketed by /64 and an IPv4-mapped address as its IPv4 — a loopback/private one too.
+   *
+   * A request **without** it (or with a value that is not an IP address) did not come through
+   * the proxy that sets it, so it falls back to the rule without this option (the trusted
+   * `x-forwarded-for` hop, else the socket peer) and one warning is logged — where Supabase Auth
+   * applies no limit at all to it, which would let anyone who reaches the server directly skip
+   * every limit by leaving the header out.
+   *
+   * It only names the LIMIT address: `clientIp()` still follows `trustForwardedHeaders`. Set it
+   * ONLY when clients cannot reach denext except through a proxy that overwrites the header —
+   * a client that can reach it directly picks its own bucket. Unset, the
+   * `DENEXT_RATE_LIMIT_HEADER` env var is read at boot (config > env > none).
+   */
+  rateLimitHeader?: string;
+  /**
+   * Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets,
+   * `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota,
+   * `clientIpForLimits()`) to a loopback, private, link-local or unique-local socket peer too,
+   * counted by its own address. Default `false`: such a peer is usually a reverse proxy every
+   * visitor shares, so its limit would be site-wide, and the limits are skipped for it with a
+   * warning. Turn it on where those peers are real clients — a LAN or VPN deployment, a
+   * container network with no proxy in front. A trusted forwarded hop or a
+   * {@link DenextConfig.rateLimitHeader} address still takes precedence. Unset,
+   * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1` turns it on (config > env > `false`).
+   */
+  rateLimitLocalAddresses?: boolean;
+  /**
    * `denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the
    * bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is
    * an origin (`"http://192.168.1.5:3000"`) or a bare host (`"192.168.1.5"`, `"mac.local"`,
@@ -2284,10 +2317,12 @@ export function resolveCacheComponents(
 
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
- * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
+ * config's `canonicalOrigin`, `trustForwardedHeaders`, `rateLimitHeader`,
+ * `rateLimitLocalAddresses`, `requestTimeout`, `maxConcurrency`, `slotBackstop`,
+ * `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
  * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
- * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
+ * `DENEXT_TRUST_PROXY=1`, `DENEXT_RATE_LIMIT_HEADER`, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`,
+ * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
  * env is set by an operator, not type-checked like the config. Plus the normalized
@@ -2298,6 +2333,10 @@ export interface ServerOptions {
   canonicalOrigin?: string;
   /** Whether `X-Forwarded-*` headers are trusted. */
   trustForwardedHeaders?: boolean;
+  /** The header naming the client address for per-address limits. */
+  rateLimitHeader?: string;
+  /** Whether per-address limits count a loopback/private peer by its own address. */
+  rateLimitLocalAddresses?: boolean;
   /** The per-request deadline (ms; `0` = none). */
   requestTimeout?: number;
   /** The in-process concurrency ceiling. */
@@ -2344,6 +2383,26 @@ function envOrigin(name: string): string | undefined {
 }
 
 /**
+ * An HTTP header-name env value (`DENEXT_RATE_LIMIT_HEADER`), lower-cased, or `undefined` + a
+ * warning when it is not a header name.
+ */
+function envHeaderName(name: string): string | undefined {
+  const raw = envValue(name)?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  if (isHeaderName(raw)) return raw.toLowerCase();
+  console.warn(`denext: ignoring ${name}="${raw}" — expected a header name like cf-connecting-ip`);
+  return undefined;
+}
+
+/**
+ * Whether `value` is an HTTP header name (an RFC 9110 token), the shape `rateLimitHeader`
+ * accepts.
+ */
+export function isHeaderName(value: string): boolean {
+  return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value);
+}
+
+/**
  * Whether `value` is exactly an http(s) origin — scheme + host (+ port), no path, query,
  * hash or credentials — the shape `canonicalOrigin` accepts.
  */
@@ -2364,6 +2423,9 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
   return {
     canonicalOrigin: config?.canonicalOrigin ?? envOrigin("DENEXT_CANONICAL_ORIGIN"),
     trustForwardedHeaders: config?.trustForwardedHeaders ?? envFlag("DENEXT_TRUST_PROXY"),
+    rateLimitHeader: config?.rateLimitHeader ?? envHeaderName("DENEXT_RATE_LIMIT_HEADER"),
+    rateLimitLocalAddresses: config?.rateLimitLocalAddresses ??
+      envFlag("DENEXT_RATE_LIMIT_LOCAL_ADDRESSES"),
     requestTimeout: config?.requestTimeout ?? envInteger("DENEXT_REQUEST_TIMEOUT_MS", 0),
     maxConcurrency: config?.maxConcurrency ?? envInteger("DENEXT_MAX_CONCURRENCY", 1),
     slotBackstop: config?.slotBackstop,

@@ -199,6 +199,22 @@ itself (it reads neither the config keys nor the env vars for them).
   for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` inherits
   it unless it sets its own). Only when clients **cannot** reach denext
   directly. The origin part is ignored when `canonicalOrigin` is set.
+- **`rateLimitHeader`** — `string` (env `DENEXT_RATE_LIMIT_HEADER`; default
+  none). A header your proxy sets to the client address (`"cf-connecting-ip"`,
+  `"fly-client-ip"`, `"x-real-ip"`) that every per-address limit keys on —
+  `rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`,
+  `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`; not
+  `clientIp()`. The model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. A
+  request whose header holds no IP address falls back to the rule without it
+  (one warning) rather than going unlimited. Only when clients **cannot** reach
+  denext except through that proxy, and it overwrites the header. Not an HTTP
+  header name → fails validation at boot.
+- **`rateLimitLocalAddresses`** — `boolean` (env
+  `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`; default `false`). Apply those
+  per-address limits to a loopback, private, link-local or unique-local socket
+  peer too, counted by its own address, instead of skipping them as a likely
+  shared proxy. For LAN, VPN or container-network deployments with no proxy in
+  front.
 - **`requestTimeout`** — `number` ms (env `DENEXT_REQUEST_TIMEOUT_MS`; default
   `30000`, `0` disables). A request running past it is aborted and answered
   `503`; the per-request `AbortSignal` fires so cooperative work cancels.

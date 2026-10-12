@@ -16,7 +16,12 @@ import { ipBucket, limitAddrOf, remoteAddrOf } from "./remote-addr.ts";
 import type { CorsConfig } from "./config.ts";
 import { CORS_POLICY, resolveCors } from "./cors.ts";
 import { verifyOrigin } from "./origin-check.ts";
-import { cookies, currentContext, trustsForwardedHeaders } from "./request-context.ts";
+import {
+  cookies,
+  currentContext,
+  currentLimitPolicy,
+  trustsForwardedHeaders,
+} from "./request-context.ts";
 import { randomToken } from "./auth/oauth.ts";
 import { constantTimeEqualHex } from "./auth/hash.ts";
 import { getCookies } from "@std/http/cookie";
@@ -100,7 +105,10 @@ export interface ApiRateLimitOptions {
  * loopback, private, link-local or unique-local socket peer and no trusted forwarded hop names
  * the client (`clientIpForLimits()`'s rule): that peer is most likely a reverse proxy every
  * visitor shares, so one bucket would rate-limit the whole site. A warning says so once per
- * process. A custom `key` is always applied.
+ * process. The app's `rateLimitLocalAddresses` counts such a peer by its own address instead,
+ * and its `rateLimitHeader` (e.g. `cf-connecting-ip`) keys on the address the proxy names there
+ * whenever a request carries one — both app-wide, whatever this limiter's own
+ * `trustForwardedHeaders`. A custom `key` is always applied.
  *
  * @param options Limit, window, key, store.
  * @returns A middleware (no context extension).
@@ -130,7 +138,7 @@ export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
  */
 function defaultKey(input: ApiMiddlewareInput<object>, trust: boolean): string | null {
   const request = input.request;
-  const limitIp = limitAddrOf(request, trust);
+  const limitIp = limitAddrOf(request, trust, currentLimitPolicy());
   const peer = remoteAddrOf(request);
   if (limitIp === undefined && peer !== undefined) {
     warnProxyPeerOnce(peer);
@@ -155,8 +163,10 @@ function warnProxyPeerOnce(peer: string): void {
     `denext: API requests arrive from a loopback/private address (${peer}) — a reverse proxy, ` +
       "or local development — so rateLimit()'s per-address buckets are off for them (every " +
       "visitor would share one). Behind a proxy that sets x-forwarded-for, set the app's " +
-      "`trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1) to key each client's address, " +
-      "or give rateLimit() a `key` (a session's user id).",
+      "`trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1) to key each client's address; " +
+      "behind one that sets a client-address header, name it in `rateLimitHeader`; to limit " +
+      "these peers by their own address, set `rateLimitLocalAddresses: true`; or give " +
+      "rateLimit() a `key` (a session's user id).",
   );
 }
 

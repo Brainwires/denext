@@ -7,7 +7,12 @@
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
 import { watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
-import { isLocalAddress, setClientAddr } from "../../src/server/remote-addr.ts";
+import {
+  limitAddrOf,
+  type LimitAddrPolicy,
+  setClientAddr,
+  setRemoteAddr,
+} from "../../src/server/remote-addr.ts";
 import { credentials } from "../../src/server/auth/providers.ts";
 import { issueAuthSession } from "../../src/server/auth/session.ts";
 import type { AuthConfig } from "../../src/server/auth/types.ts";
@@ -44,6 +49,8 @@ export interface TestConn extends ChannelConn {
   cookie: string;
   /** The connection's client address (what `clientIp()` answers in its hooks), if known. */
   ip?: string;
+  /** The address its per-address limits key on (`limitAddrOf` of its upgrade), if any. */
+  limitIp?: string;
   /** Every `channel` frame's value, in order. */
   frames: TableChangesFrame[];
   /** Every refusal / error code. */
@@ -54,8 +61,16 @@ export interface TestConn extends ChannelConn {
 
 /** The hub and its helpers. */
 export interface Harness {
-  /** Open a connection as the viewer with this cookie (from this client address, if given). */
-  conn(cookie?: string, ip?: string): TestConn;
+  /**
+   * Open a connection as the viewer with this cookie (from this client address, if given). As the
+   * Live hub resolves it, the upgrade's `headers` and the app's limit `policy` pick the address
+   * its per-address limits key on (no trusted proxy).
+   */
+  conn(
+    cookie?: string,
+    ip?: string,
+    upgrade?: { headers?: Record<string, string>; policy?: LimitAddrPolicy },
+  ): TestConn;
   /** Subscribe; resolves with the key and whether it was acknowledged. */
   subscribe(
     conn: TestConn,
@@ -90,10 +105,9 @@ export function realtimeHarness(): Harness {
     withConnContext: (conn, fn) => {
       const headers: HeadersInit = conn.cookie ? { cookie: conn.cookie } : {};
       const request = new Request(`${ORIGIN}/`, { headers });
-      // As the Live hub records an (untrusted) socket peer: a loopback/private one is the
-      // connection's address, but not one to key per-address limits on.
-      const limitIp = conn.ip !== undefined && !isLocalAddress(conn.ip) ? conn.ip : undefined;
-      setClientAddr(request, conn.ip, limitIp);
+      // As the Live hub records an (untrusted) socket peer: by default a loopback/private one is
+      // the connection's address, but not one to key per-address limits on.
+      setClientAddr(request, conn.ip, conn.limitIp);
       return Promise.resolve(runWithContext(createRequestContext(request), fn));
     },
     connContext: (conn) => ({ origin: ORIGIN, url: "", cookie: conn.cookie, peerId: conn.peerId }),
@@ -105,8 +119,11 @@ export function realtimeHarness(): Harness {
   const { current, stop } = watchChannelTransport(() => {});
   const unsubscribe = current.subscribe((ev) => hub.deliver(ev));
   return {
-    conn(cookie = "", ip) {
+    conn(cookie = "", ip, upgrade = {}) {
+      const handshake = new Request(`${ORIGIN}/_denext/live`, { headers: upgrade.headers });
+      if (ip !== undefined) setRemoteAddr(handshake, { transport: "tcp", hostname: ip, port: 1 });
       return {
+        limitIp: limitAddrOf(handshake, false, upgrade.policy),
         socket: {} as WebSocket,
         channelSubs: new Map(),
         peerId: `peer-${++peers}`,

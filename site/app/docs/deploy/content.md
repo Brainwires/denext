@@ -326,6 +326,42 @@ A client can spoof `Host`, so for a fixed public origin set `canonicalOrigin` �
 it overrides the header and is the robust choice for canonical and `og:image`
 URLs.
 
+### Per-address limits behind a proxy
+
+Every per-address limit — `rateLimit()`'s default key, `denextAuth`'s per-IP
+budgets, `live.limits.maxConnectionsPerIp` and `@denext/backend` realtime's
+signed-out quota — keys on the address `clientIpForLimits()` answers: the
+trusted proxy's last `x-forwarded-for` hop, else the socket peer. A loopback or
+private socket peer with no trusted hop is skipped (one warning), because behind
+an undeclared proxy every visitor shares that address and its limit would be
+site-wide. Two settings, modelled on Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`,
+change that:
+
+- **`rateLimitHeader: "cf-connecting-ip"`** (env `DENEXT_RATE_LIMIT_HEADER`) —
+  key the limits on the client address your proxy writes into that header
+  (`fly-client-ip` on Fly.io, `x-real-ip` from nginx's
+  `proxy_set_header X-Real-IP $remote_addr`). Its last comma-separated value is
+  used, an IPv6 address counts as its `/64` and an IPv4-mapped one as its IPv4;
+  a private address there is counted too. A request **without** an IP address in
+  it did not come through that proxy, so it falls back to the rule above with one
+  warning — Supabase Auth applies no limit to such a request, which would let a
+  client that reaches the server directly skip every limit by leaving the header
+  out. The header names the limit key only: `clientIp()` still follows
+  `trustForwardedHeaders`. Set it only when clients cannot reach denext except
+  through a proxy that **overwrites** the header.
+- **`rateLimitLocalAddresses: true`** (env `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`)
+  — count a loopback/private socket peer by its own address instead of skipping
+  it: a LAN, VPN or container-network deployment where those peers are the real
+  clients.
+
+```ts
+// denext.config.ts — behind Cloudflare
+export default {
+  canonicalOrigin: "https://example.com",
+  rateLimitHeader: "cf-connecting-ip",
+} satisfies DenextConfig;
+```
+
 ## 7. Cookies are secure by default
 
 `cookies().set()` defaults to **`httpOnly` + `SameSite=Lax` + `Secure`** (Secure

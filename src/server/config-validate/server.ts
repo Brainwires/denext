@@ -1,7 +1,7 @@
 // The request-serving parts of denext.config: routing, images, security headers (CSP, HSTS,
 // CORS, app links), the production-server knobs, the API batch, caches and task history.
 
-import { type DenextConfig, isOrigin } from "../config.ts";
+import { type DenextConfig, isHeaderName, isOrigin } from "../config.ts";
 import { resolveCors } from "../cors.ts";
 import { ROUTE_CSP_KEYS } from "../segment-config.ts";
 import { validateAppLinks } from "../app-links.ts";
@@ -147,7 +147,25 @@ function validateCdnCacheHeaders(cdn: unknown, fail: Fail): void {
 }
 
 /**
- * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
+ * `rateLimitHeader` (an HTTP header name) and `rateLimitLocalAddresses` (a boolean): a malformed
+ * header name could never match a request, silently leaving every limit on the fallback address.
+ */
+function validateRateLimitAddress(config: DenextConfig, fail: Fail): void {
+  const { rateLimitHeader, rateLimitLocalAddresses } = config;
+  if (
+    rateLimitHeader !== undefined &&
+    (typeof rateLimitHeader !== "string" || !isHeaderName(rateLimitHeader))
+  ) {
+    fail("rateLimitHeader", 'must be an HTTP header name (e.g. "cf-connecting-ip")');
+  }
+  if (rateLimitLocalAddresses !== undefined && typeof rateLimitLocalAddresses !== "boolean") {
+    fail("rateLimitLocalAddresses", "must be a boolean");
+  }
+}
+
+/**
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `rateLimitHeader`,
+ * `rateLimitLocalAddresses`, `compress`,
  * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
  * a bare origin, booleans, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
  * otherwise silently 403 every Server Action (the origin check compares against it).
@@ -166,6 +184,7 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
+  validateRateLimitAddress(config, fail);
   validateCdnCacheHeaders(config.cdnCacheHeaders, fail);
   validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {

@@ -1063,6 +1063,14 @@
       "description": "Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the request origin (absolute URLs, the Server Action origin check, HSTS), and `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` and `rateLimit()` inherit it unless they set their own). Enable ONLY when clients cannot reach denext directly — a client that can spoofs them. The origin part is ignored when DenextConfig.canonicalOrigin is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).",
       "type": "boolean"
     },
+    "rateLimitHeader": {
+      "description": "A request header the fronting proxy sets to the client address — `\"cf-connecting-ip\"` (Cloudflare), `\"fly-client-ip\"` (Fly.io), `\"x-real-ip\"` (nginx) — that every **per-address limit** keys on: `rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`, for denext. When a request carries an IP address in it (its last comma-separated value), that address is the limit key, IPv6 bucketed by /64 and an IPv4-mapped address as its IPv4 — a loopback/private one too.",
+      "type": "string"
+    },
+    "rateLimitLocalAddresses": {
+      "description": "Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota, `clientIpForLimits()`) to a loopback, private, link-local or unique-local socket peer too, counted by its own address. Default `false`: such a peer is usually a reverse proxy every visitor shares, so its limit would be site-wide, and the limits are skipped for it with a warning. Turn it on where those peers are real clients — a LAN or VPN deployment, a container network with no proxy in front. A trusted forwarded hop or a DenextConfig.rateLimitHeader address still takes precedence. Unset, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1` turns it on (config > env > `false`).",
+      "type": "boolean"
+    },
     "allowedDevOrigins": {
       "description": "`denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is an origin (`\"http://192.168.1.5:3000\"`) or a bare host (`\"192.168.1.5\"`, `\"mac.local\"`, `\"mac.local:3000\"`); matching is on the hostname. Wildcards are not supported: list each host. Mirrors Next.js's `allowedDevOrigins`. An entry may also be a Deno Desktop app's custom-scheme origin (`\"myapp://app\"`, validated as `desktop.app.origin` is), which admits a request whose `Origin` is exactly that value — for a backend project that a separate desktop app talks to. The project's own `desktop.app.origin` is admitted without listing it.",
       "type": "array",

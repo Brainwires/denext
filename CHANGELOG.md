@@ -30,6 +30,19 @@ and this project adheres to
 - `denext doctor` reports the toolchain (pinned version, cached and verified, whether the run is on
   it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
   on stock Deno. `denext create` scaffolds a `test` task through `denext test`.
+- **`rateLimitHeader` and `rateLimitLocalAddresses`: choose the address per-address limits key
+  on.** Modelled on Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. `rateLimitHeader` (env
+  `DENEXT_RATE_LIMIT_HEADER`) names a header the fronting proxy sets to the client address
+  (`cf-connecting-ip`, `fly-client-ip`, `x-real-ip`); when a request carries an IP address there
+  (its last comma-separated value), `rateLimit()`, `denextAuth`'s per-IP budgets,
+  `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and
+  `clientIpForLimits()` key on it, loopback/private or not, IPv6 per `/64` and IPv4-mapped as its
+  IPv4. A request without it falls back to the trusted hop / socket peer with one warning, where
+  Supabase Auth applies no limit: a client that reaches the server directly cannot skip every
+  limit by leaving the header out. `clientIp()` is unchanged. `rateLimitLocalAddresses: true` (env
+  `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) applies the same limits to a loopback, private, link-local
+  or unique-local socket peer, counted by its own address, instead of skipping it. Both default to
+  today's behaviour and are validated at boot.
 
 ### Changed
 

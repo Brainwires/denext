@@ -133,6 +133,7 @@ export async function runSubRequest(
   // The child's `x-request-id` is the parent's id + a suffix, set by denext itself — honor it.
   const child = createRequestContext(request, request.signal, {
     trustForwardedHeaders: parentCtx.trustForwardedHeaders,
+    limitPolicy: parentCtx.limitPolicy,
     trustRequestId: true,
   });
   child.subRequestDepth = depth;
