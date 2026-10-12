@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.4.11] - 2026-10-12
+
 ### Fixed
 
 - **`denext desktop package` on macOS no longer reads as signing with `-` when
@@ -13129,7 +13131,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.10...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.11...development
+[3.4.11]: https://jsr.io/@denext/denext@3.4.11
 [3.4.10]: https://jsr.io/@denext/denext@3.4.10
 [3.4.9]: https://jsr.io/@denext/denext@3.4.9
 [3.4.8]: https://jsr.io/@denext/denext@3.4.8
