@@ -119,6 +119,9 @@ Each is documented as a manual recipe today (the
   served by `denext openapi types`).
 - **CLI distribution:** publish the Homebrew / Scoop / winget manifests each release generates
   to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
+- **`@denext/backend` auto-REST:** PostgREST-style endpoints generated from the schema
+  (`?select=&col=eq.x&order=`), scoped by row-level security, with the typed client generated into
+  `.denext/api.ts`. A database type generator alongside it.
 
 ## `denext ui` and DevTools
 
