@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **denext pins Deno Desktop runtime 2.9.7-denext.14** (deno `5c7842ee`, laufey `09ad1b6`, API
+  47), a maintenance release. A child the app starts from its own executable (a module sidecar's
+  `spawnSelf`, `child_process.fork()`) gets a stdout of its own: the runtime prints its launch
+  messages (`Runtime loaded successfully from: …`, `Runtime started`) on stderr, so `spawnSelf` no
+  longer strips them, and a spawn of your own from `childCommand` starts clean too. Such a child
+  never applies or rolls back a staged full-app update (only the app's own launch does), and a fork
+  the runtime authorized (an IPC channel and its per-launch worker token) needs no `--allow-run`
+  for the executable's path. A dynamic `import()` of a module not loaded before puts the
+  importer's `AsyncLocalStorage` / `AsyncContext` back once it is evaluated: the next `Deno.serve`
+  request no longer sees the previous request's store. On Windows a passkey request whose window
+  closes at once now frees the one-ceremony slot. Still needs at least denext.9. Docs:
+  [Deno Desktop runtime › Headless workers and forks of the app](/docs/desktop-runtime#headless-workers-and-forks-of-the-app).
+
 ## [3.4.15] - 2026-10-12
 
 ### Added

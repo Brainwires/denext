@@ -23,9 +23,8 @@
  *   ends with the module's exit code once its work is done.
  *
  * The child has the app's permissions (the same executable, the same baked flags), nothing more,
- * and opens no listener of its own. The runtime's launcher prints two lines on stdout before any
- * JavaScript runs (`Runtime loaded successfully from: …`, `Runtime started`); `spawnSelf` removes
- * them from the child's stdout, so a line protocol (MCP, ACP) starts clean.
+ * and opens no listener of its own. Its stdout is the module's alone (denext's pinned runtime prints
+ * its launch messages on stderr), so a line protocol (MCP, ACP) starts clean.
  *
  * Runtime-only (imported by `runDesktop` and the sidecar host, never a client bundle).
  *
@@ -43,7 +42,7 @@ import { prepareSidecarModules } from "./sidecar-modules.ts";
 
 /**
  * What a sidecar needs to start children of the app: the command and its leading arguments, the
- * variables that mark the child, and whether to strip the runtime's start-up lines from its stdout.
+ * variables that mark the child.
  * `{ error }` when the app cannot start one (the reason, thrown by `childCommand`).
  */
 export type SidecarChildBase =
@@ -58,8 +57,6 @@ export type SidecarChildBase =
     readonly env: Readonly<Record<string, string>>;
     /** The variable the child's argument count goes in. */
     readonly argcEnv: string;
-    /** Whether the child's stdout starts with the desktop runtime's start-up lines. */
-    readonly banner: boolean;
   }
   | {
     /** Why no child can be started. */
@@ -102,7 +99,6 @@ export function sidecarChildBase(options: SidecarChildBaseOptions): SidecarChild
     args: ["run", ...flags, options.entryPath],
     env: { [SIDECAR_CHILD_ENV]: options.name },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
-    banner: options.standalone,
   };
 }
 
@@ -258,48 +254,11 @@ export function readSidecarChildLaunch(
  * - `childHelpers(base)` → `{ childCommand(args), spawnSelf(args, options) }` over a
  *   {@linkcode SidecarChildBase};
  * - `installRequireBase(requireBase, modulesPath)`: a bundled backend's `require()` and every
- *   lookup resolve from its unpacked packages too;
- * - `bannerLength(text)`: how much of a child's first stdout bytes is the runtime's start-up lines.
+ *   lookup resolve from its unpacked packages too.
  */
 const SIDECAR_CHILD_HELPERS = `import { spawn } from "node:child_process";
 import Module, { createRequire } from "node:module";
-import { PassThrough } from "node:stream";
-import { Buffer } from "node:buffer";
 import process from "node:process";
-const LINE1 = "Runtime loaded successfully from: ";
-const LINE2 = "Runtime started";
-export function bannerLength(s) {
-  if (s.length <= LINE1.length) return LINE1.startsWith(s) ? -1 : 0;
-  if (!s.startsWith(LINE1)) return 0;
-  const nl = s.indexOf("\\n");
-  if (nl < 0) return s.length > 16384 ? 0 : -1;
-  const rest = s.slice(nl + 1);
-  for (const end of ["\\n", "\\r\\n"]) {
-    if (rest.startsWith(LINE2 + end)) return nl + 1 + LINE2.length + end.length;
-  }
-  return (LINE2 + "\\n").startsWith(rest) || (LINE2 + "\\r\\n").startsWith(rest) ? -1 : nl + 1;
-}
-function withoutBanner(child) {
-  const src = child.stdout;
-  if (!src) return;
-  const out = new PassThrough();
-  let head = Buffer.alloc(0);
-  const onData = (chunk) => {
-    head = Buffer.concat([head, Buffer.from(chunk)]);
-    const n = bannerLength(head.toString("latin1"));
-    if (n < 0) return;
-    src.off("data", onData);
-    src.off("end", onEnd);
-    if (head.length > n) out.write(head.subarray(n));
-    src.pipe(out);
-  };
-  const onEnd = () => out.end(head);
-  src.on("data", onData);
-  src.on("end", onEnd);
-  src.on("error", (e) => out.destroy(e));
-  child.stdout = out;
-  if (Array.isArray(child.stdio)) child.stdio[1] = out;
-}
 const runtimeVariable = (k) =>
   k === "DENO_SERVE_ADDRESS" || k.startsWith("DENO_DESKTOP_") || k === "DENO_INTERNAL_CHILD_ENTRYPOINT";
 function stdioWithIpc(stdio) {
@@ -339,7 +298,6 @@ export function childHelpers(base) {
       env: { ...env, ...cmd.env },
       stdio: stdioWithIpc(options.stdio),
     });
-    if (base.banner) withoutBanner(child);
     return child;
   };
   return { childCommand, spawnSelf };
