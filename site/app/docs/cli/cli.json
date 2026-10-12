@@ -66,8 +66,9 @@
     },
     {
       "name": "audit",
-      "summary": "Audit dependencies + prove the runtime is zero-npm",
+      "summary": "Audit dependencies + prove the runtime is zero-npm, then run deno audit",
       "usage": "denext audit [dir] [options]",
+      "description": "denext's checks (dependency inventory, zero-npm runtime proof, permissions; --sbom),\nthen Deno's `deno audit` for known vulnerabilities, with its flags below forwarded\n(and anything after `--`). Non-zero when either fails. Deno's audit alone:\n`denext deno audit`.",
       "flags": [
         {
           "name": "sbom",
@@ -78,6 +79,59 @@
           "name": "strict",
           "type": "boolean",
           "description": "Exit non-zero if runtime source imports npm"
+        },
+        {
+          "name": "skip-deno-audit",
+          "type": "boolean",
+          "description": "Run denext's checks only"
+        },
+        {
+          "name": "level",
+          "type": "string",
+          "valueName": "<severity>",
+          "description": "deno audit: only advisories at or above this severity"
+        },
+        {
+          "name": "ignore-unfixable",
+          "type": "boolean",
+          "description": "deno audit: skip advisories with no fix"
+        },
+        {
+          "name": "ignore-registry-errors",
+          "type": "boolean",
+          "description": "deno audit: exit 0 when the advisory service errors"
+        },
+        {
+          "name": "socket",
+          "type": "boolean",
+          "description": "deno audit: also check socket.dev"
+        },
+        {
+          "name": "fix",
+          "type": "boolean",
+          "description": "deno audit: upgrade packages to fix advisories"
+        },
+        {
+          "name": "ignore",
+          "type": "string",
+          "valueName": "<cve,…>",
+          "description": "deno audit: ignore these CVE IDs"
+        },
+        {
+          "name": "lock",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "deno audit: the lockfile to check"
+        },
+        {
+          "name": "no-lock",
+          "type": "boolean",
+          "description": "deno audit: don't discover the lockfile"
+        },
+        {
+          "name": "frozen-lockfile",
+          "type": "boolean",
+          "description": "deno audit: error when the lockfile is out of date"
         }
       ],
       "positionals": [
@@ -157,6 +211,7 @@
       "name": "completions",
       "summary": "Print a shell completion script (bash|zsh|fish)",
       "usage": "denext completions <shell>",
+      "description": "Completes denext's verbs, the project's own and the Deno verbs denext forwards.\nDeno's own completion script (`deno completions`): `denext deno completions <shell>`.",
       "flags": [],
       "positionals": [
         {
@@ -171,6 +226,7 @@
       "name": "create",
       "summary": "Scaffold a new app",
       "usage": "denext create <dir> [options]",
+      "description": "Scaffolds a denext app. Deno's `deno create` (a project from a template):\n`denext deno create`.",
       "flags": [
         {
           "name": "tailwind",
@@ -258,7 +314,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export, build into a temp dir and open the window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n  denext desktop add sidecar --name api --entry server/main.mjs --node-modules server/node_modules\n                                         Run a backend next to the window (desktop.sidecars)\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)\n  denext desktop publish-update --resign Re-sign the published manifest before it expires\n  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n                                         Secret Service and portals, each with a fix (--json)",
+      "description": "  denext desktop run                     Export, build into a temp dir and open the window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n  denext desktop add sidecar --name api --entry server/main.mjs --node-modules server/node_modules\n                                         Run a backend next to the window (desktop.sidecars)\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)\n  denext desktop publish-update --resign Re-sign the published manifest before it expires\n  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n                                         Secret Service and portals, each with a fix (--json)\n  Deno's own `deno desktop` (compile a script into a desktop app): `denext deno desktop`.",
       "flags": [
         {
           "name": "entry",
@@ -588,16 +644,16 @@
       "aliases": [
         "g"
       ],
-      "summary": "Scaffold a route, boundary, component, API route, action, middleware, task, test, Docker setup, migration, seed or CI workflow",
+      "summary": "Scaffold a route, boundary, component, API route, action, middleware, job, test, Docker setup, migration, seed or CI workflow",
       "usage": "denext generate <kind> [name] [dir]",
-      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate task cleanup      # tasks/cleanup.ts (defineTask)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ tasks/migrate.ts)\n  denext generate seed              # tasks/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
+      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
       "flags": [],
       "positionals": [
         {
           "name": "kind",
           "required": true,
           "variadic": false,
-          "description": "page | route | layout | loading | error | not-found | component | api | action | middleware | task | test | docker | migration | seed | ci"
+          "description": "page | route | layout | loading | error | not-found | component | api | action | middleware | job | test | docker | migration | seed | ci"
         },
         {
           "name": "name",
@@ -615,15 +671,16 @@
     },
     {
       "name": "info",
-      "summary": "Print environment + project facts",
-      "usage": "denext info [dir]",
+      "summary": "Print environment + project facts; with a module, Deno's info",
+      "usage": "denext info [target] [-- <deno args>]",
+      "description": "  denext info [dir]              denext, Deno and platform versions + the project's\n                                 config, mode and app dir (--json)\n  denext info <module|file|URL>  Deno's `deno info` for that module (its flags pass through)\nDeno's cache locations (`deno info` with no argument): `denext deno info`.",
       "flags": [],
       "positionals": [
         {
-          "name": "dir",
+          "name": "target",
           "required": false,
           "variadic": false,
-          "description": "Project directory (default: .)"
+          "description": "Project directory (default: .), or a module for Deno"
         }
       ]
     },
@@ -631,6 +688,7 @@
       "name": "init",
       "summary": "Scaffold into the current directory",
       "usage": "denext init [dir] [options]",
+      "description": "Scaffolds a denext app into an existing directory. Deno's `deno init`:\n`denext deno init`.",
       "flags": [
         {
           "name": "tailwind",
@@ -696,6 +754,49 @@
           "required": false,
           "variadic": false,
           "description": "Existing directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "job",
+      "summary": "Run a background job by name, or list them (--list)",
+      "usage": "denext job [name] [options]",
+      "description": "denext job <name> [--payload '<json>']\ndenext job --list [--json]\ndenext job --history [--read-only] [--json]\ndenext job --clear-history [--json]",
+      "flags": [
+        {
+          "name": "list",
+          "alias": "l",
+          "type": "boolean",
+          "description": "List the app's jobs and exit"
+        },
+        {
+          "name": "history",
+          "type": "boolean",
+          "description": "Print the run history (jobs.history) through its configured store"
+        },
+        {
+          "name": "clear-history",
+          "type": "boolean",
+          "description": "Delete every recorded run through the configured history store"
+        },
+        {
+          "name": "read-only",
+          "type": "boolean",
+          "description": "With --history: read without changing anything; refuses --clear-history"
+        },
+        {
+          "name": "payload",
+          "type": "string",
+          "valueName": "<json>",
+          "description": "JSON passed to the job's ctx.payload"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "name",
+          "required": false,
+          "variadic": false,
+          "description": "Job name (its path under jobs/, e.g. cleanup)"
         }
       ]
     },
@@ -1465,44 +1566,22 @@
     },
     {
       "name": "task",
-      "summary": "Run a background task by name, or list them (--list)",
-      "usage": "denext task [name] [options]",
-      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]\ndenext task --history [--read-only] [--json]\ndenext task --clear-history [--json]",
-      "flags": [
-        {
-          "name": "list",
-          "alias": "l",
-          "type": "boolean",
-          "description": "List the app's tasks and exit"
-        },
-        {
-          "name": "history",
-          "type": "boolean",
-          "description": "Print the run history (tasks.history) through its configured store"
-        },
-        {
-          "name": "clear-history",
-          "type": "boolean",
-          "description": "Delete every recorded run through the configured history store"
-        },
-        {
-          "name": "read-only",
-          "type": "boolean",
-          "description": "With --history: read without changing anything; refuses --clear-history"
-        },
-        {
-          "name": "payload",
-          "type": "string",
-          "valueName": "<json>",
-          "description": "JSON passed to the task's ctx.payload"
-        }
-      ],
+      "summary": "Run a deno.json / package.json task on denext's Deno (deno task)",
+      "usage": "denext task [name] [args...] [-- <deno args>]",
+      "description": "Runs `deno task` on denext's Deno toolchain, every argument verbatim:\n  denext task                   List the project's tasks\n  denext task check             Run the `check` task\n  denext task test --filter x   Extra arguments go to the task\nEvery `deno` the task runs — its own `deno …` steps and any a script it starts spawns — is\nthe same Deno. Background and scheduled jobs (jobs/) are `denext job`.",
+      "flags": [],
       "positionals": [
         {
           "name": "name",
           "required": false,
           "variadic": false,
-          "description": "Task name (its path under tasks/, e.g. cleanup)"
+          "description": "The task (default: list them)"
+        },
+        {
+          "name": "args",
+          "required": false,
+          "variadic": true,
+          "description": "Arguments for the task"
         }
       ]
     },
@@ -1609,7 +1688,7 @@
       "name": "upgrade",
       "summary": "Bump denext, its CLI tasks and the first-party @denext/* packages together",
       "usage": "denext upgrade [dir] [options]",
-      "description": "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\nrun the CLI) and moves them to the newest versions that work together: the newest denext\nevery pinned first-party package has a compatible version for (each package's own\n@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\nNothing moves backwards; each pin keeps its ^ / ~ / exact operator. A package that imports\nno denext stays within its own caret range unless --allow-major. Workspace members'\ndeno.json files move with the root. A JSR request that fails is an error, never read as\nincompatible. --to picks the denext version (an older one needs --allow-downgrade);\n--dry-run prints the plan; --check exits 1 when anything is out of date.",
+      "description": "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\nrun the CLI) and moves them to the newest versions that work together: the newest denext\nevery pinned first-party package has a compatible version for (each package's own\n@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\nNothing moves backwards; each pin keeps its ^ / ~ / exact operator. A package that imports\nno denext stays within its own caret range unless --allow-major. Workspace members'\ndeno.json files move with the root. A JSR request that fails is an error, never read as\nincompatible. --to picks the denext version (an older one needs --allow-downgrade);\n--dry-run prints the plan; --check exits 1 when anything is out of date.\nUpgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
       "flags": [
         {
           "name": "dry-run",
@@ -1650,6 +1729,136 @@
   ],
   "projectCommands": {
     "enumerable": true,
-    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here. `denext --help` lists only the built-in verbs — it never imports the project — and inside a denext project it ends with \"Project verbs: run `denext commands` (they are also in shell completions).\" `denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). A built-in verb always wins a name collision."
-  }
+    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here. `denext --help` lists only the built-in verbs — it never imports the project — and inside a denext project it ends with \"Project verbs: run `denext commands` (they are also in shell completions).\" `denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). A built-in verb always wins a name collision, and a project verb wins over a Deno verb (with a one-line notice; `denext deno <verb>` reaches Deno's)."
+  },
+  "denoVerbs": [
+    {
+      "name": "run",
+      "summary": "Run a JavaScript or TypeScript program, or a task"
+    },
+    {
+      "name": "watch",
+      "summary": "Run a JavaScript or TypeScript program, watching for file changes and hot-replacing modules"
+    },
+    {
+      "name": "serve",
+      "summary": "Run a server"
+    },
+    {
+      "name": "eval",
+      "summary": "Evaluate a script from the command line"
+    },
+    {
+      "name": "cache",
+      "summary": "Cache the dependencies"
+    },
+    {
+      "name": "doc",
+      "summary": "Generate and show documentation for a module or built-ins"
+    },
+    {
+      "name": "bench",
+      "summary": "Run benchmarks"
+    },
+    {
+      "name": "compile",
+      "summary": "Compile the script into a self contained executable"
+    },
+    {
+      "name": "coverage",
+      "summary": "Print coverage reports"
+    },
+    {
+      "name": "repl",
+      "summary": "Start an interactive Read-Eval-Print Loop (REPL) for Deno"
+    },
+    {
+      "name": "install",
+      "summary": "Installs dependencies either in the local project or globally to a bin directory"
+    },
+    {
+      "name": "uninstall",
+      "summary": "Uninstalls a dependency or an executable script in the installation root's bin directory"
+    },
+    {
+      "name": "types",
+      "summary": "Print runtime TypeScript declarations"
+    },
+    {
+      "name": "jupyter",
+      "summary": "Deno kernel for Jupyter notebooks"
+    },
+    {
+      "name": "publish",
+      "summary": "Publish the current working directory's package or workspace"
+    },
+    {
+      "name": "outdated",
+      "summary": "Find outdated dependencies"
+    },
+    {
+      "name": "deploy",
+      "summary": "Deploy to Deno Deploy"
+    },
+    {
+      "name": "sandbox",
+      "summary": "Run in sandbox mode"
+    },
+    {
+      "name": "clean",
+      "summary": "Remove the cache directory"
+    },
+    {
+      "name": "list",
+      "summary": "List the dependencies declared in deno.json / package.json"
+    },
+    {
+      "name": "link",
+      "summary": "Link a local JSR package into the current project for development"
+    },
+    {
+      "name": "unlink",
+      "summary": "Remove a linked local package from the current project"
+    },
+    {
+      "name": "approve-scripts",
+      "summary": "Approve npm lifecycle scripts"
+    },
+    {
+      "name": "lsp",
+      "summary": "Start the language server"
+    },
+    {
+      "name": "vendor",
+      "summary": "`deno vendor` was removed in Deno 2."
+    },
+    {
+      "name": "bundle",
+      "summary": "Output a single JavaScript file with all dependencies"
+    },
+    {
+      "name": "why",
+      "summary": "Show why a package is installed"
+    },
+    {
+      "name": "transpile",
+      "summary": "Transpile TypeScript/JSX/TSX files to JavaScript"
+    },
+    {
+      "name": "bump-version",
+      "summary": "Update version in the configuration file"
+    },
+    {
+      "name": "ci",
+      "summary": "Install dependencies from a lockfile in a frozen state"
+    },
+    {
+      "name": "pack",
+      "summary": "Create a tarball of the package"
+    },
+    {
+      "name": "x",
+      "summary": "Execute a binary from npm or jsr, like npx"
+    }
+  ]
 }

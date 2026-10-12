@@ -128,7 +128,7 @@ const PILLARS: Pillar[] = [
       {
         title: "Auth, data and jobs",
         body:
-          "denextAuth with OAuth presets, passwords, magic links, TOTP and roles; Deno's built-in SQLite, KV, Postgres, Drizzle and Prisma; storage, row-level security and realtime from your tables with @denext/backend; use cache; cron tasks; typed content collections.",
+          "denextAuth with OAuth presets, passwords, magic links, TOTP and roles; Deno's built-in SQLite, KV, Postgres, Drizzle and Prisma; storage, row-level security and realtime from your tables with @denext/backend; use cache; cron jobs; typed content collections.",
       },
       {
         title: "Secure by default",

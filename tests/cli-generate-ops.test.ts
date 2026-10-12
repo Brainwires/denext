@@ -1,6 +1,6 @@
 // `denext generate migration | seed | ci` (src/build/generate-ops.ts): what each writes, the
 // flavor detection, and — because a scaffold that does not run is worse than none — the
-// generated migrate and seed tasks executed against a real `node:sqlite` file.
+// generated migrate and seed jobs executed against a real `node:sqlite` file.
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
@@ -22,8 +22,8 @@ async function project(files: Record<string, string> = {}): Promise<string> {
   return dir;
 }
 
-/** Import a generated task file with `denext/server` pointed at this checkout. */
-async function runGeneratedTask(path: string, payload?: unknown): Promise<unknown> {
+/** Import a generated job file with `denext/server` pointed at this checkout. */
+async function runGeneratedJob(path: string, payload?: unknown): Promise<unknown> {
   const text = await Deno.readTextFile(path);
   const runnable = path.replace(/\.ts$/, ".run.ts");
   await Deno.writeTextFile(runnable, text.replace('"denext/server"', JSON.stringify(SERVER_MOD)));
@@ -54,13 +54,13 @@ Deno.test("slugName: a file-safe migration name", () => {
   assertEquals(slugName("../x"), "x");
 });
 
-Deno.test("generate migration: a timestamped SQL file and, the first time, tasks/migrate.ts", async () => {
+Deno.test("generate migration: a timestamped SQL file and, the first time, jobs/migrate.ts", async () => {
   const dir = await project();
   try {
     const first = await generateArtifact(dir, "migration", "add users");
     assertEquals(first.written.length, 2);
     assertMatch(first.written[0], /migrations[\\/]\d{14}_add_users\.sql$/);
-    assertEquals(first.written[1], join(dir, "tasks", "migrate.ts"));
+    assertEquals(first.written[1], join(dir, "jobs", "migrate.ts"));
     const plan = await migrationPlan(dir, "add posts", new Date("2026-10-07T09:30:05Z"));
     assertEquals(plan.map((f) => f.path), [
       join(dir, "migrations", "20261007093005_add_posts.sql"),
@@ -84,18 +84,18 @@ Deno.test("generate migration: a Prisma or Drizzle project is pointed at its own
   }
 });
 
-Deno.test("the generated migrate and seed tasks run on node:sqlite, once each migration", async () => {
+Deno.test("the generated migrate and seed jobs run on node:sqlite, once each migration", async () => {
   const dir = await project();
   const before = Deno.env.get("DB_PATH");
   Deno.env.set("DB_PATH", join(dir, "app.db"));
   try {
     await generateArtifact(dir, "migration", "create example");
     await generateArtifact(dir, "seed", "");
-    const migrate = join(dir, "tasks", "migrate.ts");
-    assertMatch(String(await runGeneratedTask(migrate)), /^applied \d{14}_create_example\.sql$/);
-    assertEquals(await runGeneratedTask(migrate), "up to date", "a migration runs once");
-    assertEquals(await runGeneratedTask(join(dir, "tasks", "seed.ts")), "seeded");
-    assertEquals(await runGeneratedTask(join(dir, "tasks", "seed.ts")), "seeded", "idempotent");
+    const migrate = join(dir, "jobs", "migrate.ts");
+    assertMatch(String(await runGeneratedJob(migrate)), /^applied \d{14}_create_example\.sql$/);
+    assertEquals(await runGeneratedJob(migrate), "up to date", "a migration runs once");
+    assertEquals(await runGeneratedJob(join(dir, "jobs", "seed.ts")), "seeded");
+    assertEquals(await runGeneratedJob(join(dir, "jobs", "seed.ts")), "seeded", "idempotent");
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(join(dir, "app.db"));
     try {
@@ -106,7 +106,7 @@ Deno.test("the generated migrate and seed tasks run on node:sqlite, once each mi
     }
     // A failing migration rolls back and names itself.
     await Deno.writeTextFile(join(dir, "migrations", "99999999999999_bad.sql"), "NOT SQL;");
-    await assertRejects(() => runGeneratedTask(migrate), Error, "99999999999999_bad.sql");
+    await assertRejects(() => runGeneratedJob(migrate), Error, "99999999999999_bad.sql");
   } finally {
     if (before === undefined) Deno.env.delete("DB_PATH");
     else Deno.env.set("DB_PATH", before);
@@ -114,7 +114,7 @@ Deno.test("the generated migrate and seed tasks run on node:sqlite, once each mi
   }
 });
 
-Deno.test("the generated migrate task: a file with its own transaction, and a name with # ? %", async () => {
+Deno.test("the generated migrate job: a file with its own transaction, and a name with # ? %", async () => {
   const dir = await project();
   const before = Deno.env.get("DB_PATH");
   Deno.env.set("DB_PATH", join(dir, "app.db"));
@@ -132,8 +132,8 @@ Deno.test("the generated migrate task: a file with its own transaction, and a na
       join(dir, "migrations", "20990101000001_odd#name?50%.sql"),
       "CREATE TABLE odd (x INTEGER);\n",
     );
-    const migrate = join(dir, "tasks", "migrate.ts");
-    const applied = String(await runGeneratedTask(migrate));
+    const migrate = join(dir, "jobs", "migrate.ts");
+    const applied = String(await runGeneratedJob(migrate));
     assert(applied.includes("20990101000000_own_tx.sql"), applied);
     assert(applied.includes("20990101000001_odd#name?50%.sql"), applied);
     const { DatabaseSync } = await import("node:sqlite");
@@ -177,7 +177,7 @@ Deno.test("generate seed: Prisma flavor detected or forced; an unknown flavor th
   const dir = await project({ "prisma/schema.prisma": "datasource db {}" });
   try {
     await generateArtifact(dir, "seed", "");
-    const seed = await Deno.readTextFile(join(dir, "tasks", "seed.ts"));
+    const seed = await Deno.readTextFile(join(dir, "jobs", "seed.ts"));
     assert(seed.includes('from "@prisma/client"'), seed);
     const forced = await generateArtifact(dir, "seed", "sqlite", { dryRun: true, force: true });
     assert(forced.preview?.[0].contents.includes('from "node:sqlite"'));
@@ -267,7 +267,7 @@ Deno.test("generate migration: a Postgres project gets Postgres SQL", async () =
   });
 });
 
-Deno.test("the generated migrate task runs on Postgres when DATABASE_URL says so", async () => {
+Deno.test("the generated migrate job runs on Postgres when DATABASE_URL says so", async () => {
   const dir = await project();
   const sql = fakeSqlClient();
   const deno = Deno as unknown as { SQL?: unknown };
@@ -289,20 +289,20 @@ Deno.test("the generated migrate task runs on Postgres when DATABASE_URL says so
           "CREATE TABLE ex (id INTEGER);",
         );
       }
-      const migrate = join(dir, "tasks", "migrate.ts");
+      const migrate = join(dir, "jobs", "migrate.ts");
       assertMatch(
-        String(await runGeneratedTask(migrate, { status: true })),
+        String(await runGeneratedJob(migrate, { status: true })),
         /^pending {2}\d{14}_create_example\.sql$/,
       );
       assertMatch(
-        String(await runGeneratedTask(migrate, { dryRun: true })),
+        String(await runGeneratedJob(migrate, { dryRun: true })),
         /^would apply \d{14}_create/,
       );
-      assertMatch(String(await runGeneratedTask(migrate)), /^applied \d{14}_create_example\.sql$/);
-      assertEquals(await runGeneratedTask(migrate), "up to date");
-      assertEquals(await runGeneratedTask(migrate, { dryRun: true }), "up to date");
+      assertMatch(String(await runGeneratedJob(migrate)), /^applied \d{14}_create_example\.sql$/);
+      assertEquals(await runGeneratedJob(migrate), "up to date");
+      assertEquals(await runGeneratedJob(migrate, { dryRun: true }), "up to date");
       assertMatch(
-        String(await runGeneratedTask(migrate, { status: true })),
+        String(await runGeneratedJob(migrate, { status: true })),
         /^applied {2}\d{14}_create/,
       );
       assertEquals(urls[0], "postgres://u@h/app");
@@ -315,17 +315,17 @@ Deno.test("the generated migrate task runs on Postgres when DATABASE_URL says so
   }
 });
 
-Deno.test("the generated migrate task on node:sqlite: dryRun and status apply nothing", async () => {
+Deno.test("the generated migrate job on node:sqlite: dryRun and status apply nothing", async () => {
   const dir = await project();
   try {
     await withEnv({ DATABASE_URL: undefined, DB_PATH: join(dir, "app.db") }, async () => {
       await generateArtifact(dir, "migration", "create example");
-      const migrate = join(dir, "tasks", "migrate.ts");
-      assertMatch(String(await runGeneratedTask(migrate, { dryRun: true })), /^would apply /);
-      assertMatch(String(await runGeneratedTask(migrate, { status: true })), /^pending {2}/);
-      assertMatch(String(await runGeneratedTask(migrate)), /^applied /);
-      assertEquals(await runGeneratedTask(migrate, { dryRun: true }), "up to date");
-      assertMatch(String(await runGeneratedTask(migrate, { status: true })), /^applied {2}/);
+      const migrate = join(dir, "jobs", "migrate.ts");
+      assertMatch(String(await runGeneratedJob(migrate, { dryRun: true })), /^would apply /);
+      assertMatch(String(await runGeneratedJob(migrate, { status: true })), /^pending {2}/);
+      assertMatch(String(await runGeneratedJob(migrate)), /^applied /);
+      assertEquals(await runGeneratedJob(migrate, { dryRun: true }), "up to date");
+      assertMatch(String(await runGeneratedJob(migrate, { status: true })), /^applied {2}/);
     });
   } finally {
     await Deno.remove(dir, { recursive: true });

@@ -26,10 +26,12 @@ const ROOT = fromFileUrl(new URL("..", import.meta.url));
 Deno.test("runsProjectCode: the serve/build/test verbs, desktop + mobile build actions, project verbs", () => {
   const reg = buildRegistry();
   const on = (name: string, action?: string) => runsProjectCode(reg.get(name)!, action);
-  for (const name of ["dev", "build", "export", "start", "test", "check", "task", "doctor"]) {
+  for (const name of ["dev", "build", "export", "start", "test", "check", "job", "doctor"]) {
     assert(on(name), `${name} runs project code`);
   }
   assert(on("analyze") && on("profile"));
+  // `task` is Deno's now: it runs `deno task` on the toolchain itself, never a CLI re-exec.
+  assert(!on("task"), "task forwards to deno task");
   for (const action of [undefined, "run", "dev", "build", "package"]) {
     assert(on("desktop", action), `desktop ${action ?? "(default run)"}`);
   }

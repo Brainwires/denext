@@ -24,9 +24,9 @@ import {
   validateCacheAndEnv,
   validateImageAllowlists,
   validateImageNumerics,
+  validateJobs,
   validateRouting,
   validateSecurity,
-  validateTasks,
 } from "./config-validate/server.ts";
 import {
   validateMode,
@@ -38,7 +38,12 @@ import {
   validateSpaViteManifest,
 } from "./config-validate/spa.ts";
 
-export { didYouMean, KNOWN_CONFIG_KEYS, warnUnknownConfigKeys } from "./config-validate/keys.ts";
+export {
+  didYouMean,
+  KNOWN_CONFIG_KEYS,
+  validateRemovedConfigKeys,
+  warnUnknownConfigKeys,
+} from "./config-validate/keys.ts";
 export { normalizeSpaAssetsDir } from "./config-validate/spa.ts";
 export { devOriginError } from "./config-validate/dev-origins.ts";
 
@@ -71,7 +76,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateImageNumerics(config.images, fail);
   validateSecurity(config, fail);
   validateCacheAndEnv(config, fail);
-  validateTasks(config.tasks, fail);
+  validateJobs(config.jobs, fail);
   validateCommands(config.commands, fail);
   validateNestedRequired(config, fail);
 }

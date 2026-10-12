@@ -18,15 +18,16 @@ There is nothing to install and nothing to configure. Install Deno and denext as
 
 The commands that execute your project's code switch to the toolchain on their own:
 
-| Command                                                                                                       | On the toolchain |
-| ------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `dev`, `build`, `export`, `start`                                                                             | yes              |
-| `test`, `check`, `task`                                                                                       | yes              |
-| `analyze`, `profile`, `doctor`                                                                                | yes              |
-| `desktop run \| dev \| build \| package`                                                                      | yes              |
-| `mobile dev \| build`                                                                                         | yes              |
-| a project's own verbs (`denext.config.ts` `commands`, plugins)                                                | yes              |
-| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no               |
+| Command                                                                                                       | On the toolchain                 |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `dev`, `build`, `export`, `start`                                                                             | yes                              |
+| `test`, `check`, `job`                                                                                        | yes                              |
+| `analyze`, `profile`, `doctor`                                                                                | yes                              |
+| `desktop run \| dev \| build \| package`                                                                      | yes                              |
+| `mobile dev \| build`                                                                                         | yes                              |
+| a project's own verbs (`denext.config.ts` `commands`, plugins)                                                | yes                              |
+| `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)                                        | yes (stock when it can't be had) |
+| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no                               |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
@@ -76,11 +77,17 @@ fail when the toolchain can't be had, since running it is all they do.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
-## `deno task` and tests
+## `denext task`, `deno task` and tests
 
-`deno task` runs the `deno` inside a task's command on the Deno that started it. Under stock Deno,
-a task written as `"test": "deno test -A"` therefore runs stock `deno test`, without the
-toolchain's Vitest/Jest compatibility or `Deno.SQL`. Two ways to keep a task on the toolchain:
+`denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
+it every `deno` is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and
+the task's `PATH` starts with the toolchain binary as `deno`, so a shell script, `bash -c` or a Node
+tool the task starts that spawns `deno` gets it too (a binary named otherwise, such as a
+`DENEXT_DENO=<path>` override, gets a `deno` link in the toolchain cache).
+
+A plain `deno task` runs the `deno` inside a task's command on the Deno that started it — stock
+Deno, without the toolchain's Vitest/Jest compatibility or `Deno.SQL`. Run tasks through denext
+instead, or write the step itself as a denext verb:
 
 ```jsonc
 {
@@ -93,9 +100,19 @@ toolchain's Vitest/Jest compatibility or `Deno.SQL`. Two ways to keep a task on 
 }
 ```
 
-`denext deno task <name>` runs a whole task on the toolchain, `deno` steps included. denext never
-rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that call
-`deno test` directly so you can change them.
+denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
+call `deno test` directly so you can change them, or run them with `denext task`.
+
+## Every other Deno command
+
+A verb denext does not define itself is Deno's, run on the toolchain exactly as
+`denext deno <verb>` would — `denext compile`, `denext run`, `denext x`, `denext bench`,
+`denext serve`, … — with the arguments verbatim and the exit code and signals passed back. Unlike
+`denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
+toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
+`denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
+project's own verbs (a project verb that shadows a Deno verb prints one line saying so), then
+Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
 
 ## Commands
 
@@ -106,6 +123,7 @@ denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
 denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
+denext <deno verb> <args…>     # the same for any verb denext doesn't define (stock fallback)
 ```
 
 `link` is the only command that puts the toolchain on your `PATH`, and only after you add the line

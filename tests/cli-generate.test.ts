@@ -158,7 +158,7 @@ Deno.test("loading/error/not-found land under app/ (root when no path given)", a
   }
 });
 
-Deno.test("middleware lands beside app/; task lands under tasks/", async () => {
+Deno.test("middleware lands beside app/; job lands under jobs/", async () => {
   const rootDir = await project();
   try {
     assertEquals((await generateArtifact(rootDir, "middleware", "")).written, [
@@ -167,11 +167,11 @@ Deno.test("middleware lands beside app/; task lands under tasks/", async () => {
     const mw = await Deno.readTextFile(join(rootDir, "middleware.ts"));
     assert(mw.includes("export function middleware(") && mw.includes("config"), mw);
 
-    assertEquals((await generateArtifact(rootDir, "task", "cleanup")).written, [
-      join(rootDir, "tasks/cleanup.ts"),
+    assertEquals((await generateArtifact(rootDir, "job", "cleanup")).written, [
+      join(rootDir, "jobs/cleanup.ts"),
     ]);
-    const task = await Deno.readTextFile(join(rootDir, "tasks/cleanup.ts"));
-    assert(task.includes("defineTask(") && task.includes("denext task cleanup"), task);
+    const job = await Deno.readTextFile(join(rootDir, "jobs/cleanup.ts"));
+    assert(job.includes("defineJob(") && job.includes("denext job cleanup"), job);
   } finally {
     await Deno.remove(rootDir, { recursive: true });
   }

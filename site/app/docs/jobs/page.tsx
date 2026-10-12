@@ -1,22 +1,22 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
 export const metadata = {
-  title: "Scheduled & background tasks",
+  title: "Scheduled & background jobs",
   description:
-    "Define a task once and run it on a cron schedule or on demand — Deno.cron on Deno Deploy, a dependency-free minute-tick scheduler elsewhere. UTC, no overlap, no startup fire. No npm cron dependency.",
+    "Define a job once and run it on a cron schedule or on demand — Deno.cron on Deno Deploy, a dependency-free minute-tick scheduler elsewhere. UTC, no overlap, no startup fire. No npm cron dependency.",
 };
 
-export default function Tasks() {
+export default function Jobs() {
   return (
     <DocsShell
-      active="tasks"
-      title="Scheduled & background tasks"
-      lead="Put a task in tasks/<name>.ts, give it a cron schedule, and denext runs it — on Deno.cron where the platform manages it, on a dependency-free minute-tick scheduler everywhere else. Or trigger it on demand from app code or the CLI. No npm cron library."
+      active="jobs"
+      title="Scheduled & background jobs"
+      lead="Put a job in jobs/<name>.ts, give it a cron schedule, and denext runs it — on Deno.cron where the platform manages it, on a dependency-free minute-tick scheduler everywhere else. Or trigger it on demand from app code or the CLI. No npm cron library."
     >
       <h2>The idea</h2>
       <p>
-        A task is a named unit of server work — purge expired sessions, send a digest, warm a cache.
-        Define it with <code>defineTask</code> in a <code>tasks/&lt;name&gt;.ts</code>{" "}
+        A job is a named unit of server work — purge expired sessions, send a digest, warm a cache.
+        Define it with <code>defineJob</code> in a <code>jobs/&lt;name&gt;.ts</code>{" "}
         file; denext discovers it at boot and runs it on a cron schedule and/or on demand. When the
         runtime exposes <code>Deno.cron</code> (Deno Deploy, or a self-host started with{" "}
         <code>--unstable-cron</code>) denext uses the platform's <em>managed</em>{" "}
@@ -24,13 +24,13 @@ export default function Tasks() {
         5-field Vixie-cron matcher. No npm cron dependency, on either path.
       </p>
 
-      <h2>Define a task</h2>
+      <h2>Define a job</h2>
       <Code lang="ts">
-        {`// tasks/cleanup.ts
-import { defineTask } from "denext/server";
+        {`// jobs/cleanup.ts
+import { defineJob } from "denext/server";
 
-export default defineTask({
-  description: "purge expired sessions", // shown by \`denext task --list\`
+export default defineJob({
+  description: "purge expired sessions", // shown by \`denext job --list\`
   schedule: "0 3 * * *",                 // optional — or schedule it in denext.config.ts
   handler: async ({ payload, trigger, signal }) => {
     await db.exec("DELETE FROM sessions WHERE expires_at < now()");
@@ -38,26 +38,25 @@ export default defineTask({
 });`}
       </Code>
       <p>
-        The handler receives a <code>TaskContext</code>: the task <code>name</code>, the{" "}
+        The handler receives a <code>JobContext</code>: the job <code>name</code>, the{" "}
         <code>payload</code> from an on-demand run, how it was triggered (<code>"schedule"</code> or
         {" "}
         <code>"manual"</code>), and an <code>AbortSignal</code>{" "}
-        that fires on server shutdown (best-effort drain), for a <code>runTask()</code>{" "}
+        that fires on server shutdown (best-effort drain), for a <code>runJob()</code>{" "}
         call that passed no signal of its own too. A malformed cron expression in{" "}
-        <code>defineTask</code>{" "}
+        <code>defineJob</code>{" "}
         throws early, so a bad schedule is caught at import, never silently ignored.
       </p>
 
-      <h2>Schedule tasks</h2>
+      <h2>Schedule jobs</h2>
       <p>
-        A task can carry its own <code>schedule</code>, and/or you can map schedules to tasks in
-        {" "}
-        <code>denext.config.ts</code> — the value is one task name or an array:
+        A job can carry its own <code>schedule</code>, and/or you can map schedules to jobs in{" "}
+        <code>denext.config.ts</code> — the value is one job name or an array:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
 export default {
-  scheduledTasks: {
+  scheduledJobs: {
     "0 3 * * *": "cleanup",              // 03:00 UTC daily
     "0 0 * * 1": ["digest", "warm-cache"], // Mondays at 00:00 UTC
   },
@@ -69,7 +68,7 @@ export default {
         and userland paths (so a schedule fires at the same instant on every platform). Like{" "}
         <code>Deno.cron</code>, a schedule <strong>never fires on startup</strong> and{" "}
         <strong>never overlaps</strong>{" "}
-        a still-running instance of the same task — a run that overruns its interval is skipped, not
+        a still-running instance of the same job — a run that overruns its interval is skipped, not
         stacked.
       </Callout>
 
@@ -117,10 +116,10 @@ export default {
 
       <h2 id="retries">Retries</h2>
       <Code lang="ts">
-        {`// tasks/sync.ts
-import { defineTask } from "denext/server";
+        {`// jobs/sync.ts
+import { defineJob } from "denext/server";
 
-export default defineTask({
+export default defineJob({
   schedule: "*/15 * * * *",
   retry: { attempts: 3, backoff: { delayMs: 2_000 } }, // 2 s, 4 s, 8 s
   handler: async ({ attempt, signal }) => {
@@ -130,7 +129,7 @@ export default defineTask({
       </Code>
       <p>
         A failed run is retried up to <code>attempts</code>{" "}
-        more times, and the run settles with the last attempt's outcome: <code>runTask</code>{" "}
+        more times, and the run settles with the last attempt's outcome: <code>runJob</code>{" "}
         resolves with the first success or rejects with the last error. <code>backoff</code>{" "}
         is a fixed delay in ms (<code>backoff: 500</code>) or{" "}
         <code>{"{ strategy, delayMs, maxDelayMs }"}</code>; the default is exponential from 1 s,
@@ -145,24 +144,24 @@ export default defineTask({
       <h2 id="run-history">Run history</h2>
       <p>
         Off by default: denext records nothing and writes no file until you ask. With{" "}
-        <code>tasks: {"{ history: true }"}</code> in <code>denext.config.ts</code>{" "}
-        every run is recorded — the scheduler's, <code>runTask</code> from app code, and{" "}
-        <code>denext task &lt;name&gt;</code>{" "}
-        from the command line — and the Project UI's Cron page shows each task's last result, its
+        <code>jobs: {"{ history: true }"}</code> in <code>denext.config.ts</code>{" "}
+        every run is recorded — the scheduler's, <code>runJob</code> from app code, and{" "}
+        <code>denext job &lt;name&gt;</code>{" "}
+        from the command line — and the Project UI's Cron page shows each job's last result, its
         duration, and its successes and failures over the last seven days.
       </p>
       <Code lang="ts">
         {`// denext.config.ts
 export default {
-  tasks: {
-    history: true,       // record every run to .denext/tasks.db
-    historyMaxRuns: 500, // runs kept per task (default 500); 14 days either way
+  jobs: {
+    history: true,       // record every run to .denext/jobs.db
+    historyMaxRuns: 500, // runs kept per job (default 500); 14 days either way
   },
 } satisfies import("denext/server").DenextConfig;`}
       </Code>
       <ul>
         <li>
-          <strong>Where:</strong> <code>.denext/tasks.db</code>{" "}
+          <strong>Where:</strong> <code>.denext/jobs.db</code>{" "}
           (a SQLite file through Deno's built-in <code>node:sqlite</code>, with its{" "}
           <code>-wal</code>/<code>-shm</code>{" "}
           siblings), created owner-only (<code>0600</code>) on the first recorded run. The recorder
@@ -171,16 +170,16 @@ export default {
         </li>
         <li>
           <strong>What is recorded:</strong>{" "}
-          the task, trigger, start time, duration and status, plus the run's output in{" "}
+          the job, trigger, start time, duration and status, plus the run's output in{" "}
           <strong>plain text</strong>: the tail of a string the handler returned (up to 2 KB) and,
-          for a failure, the error's message and the head of its stack (2 KB). A task that would
+          for a failure, the error's message and the head of its stack (2 KB). A job that would
           return a token, a DSN or another secret should return nothing instead.
         </li>
         <li>
-          <strong>Retention:</strong> 14 days, and <code>tasks.historyMaxRuns</code>{" "}
-          per task (default 500; per task, so a minute-cron task cannot evict a daily task's
-          history). Both are applied on the <em>first</em>{" "}
-          recorded run of every process and then amortised, so a one-shot <code>denext task</code>
+          <strong>Retention:</strong> 14 days, and <code>jobs.historyMaxRuns</code>{" "}
+          per job (default 500; per job, so a minute-cron job cannot evict a daily job's history).
+          Both are applied on the <em>first</em>{" "}
+          recorded run of every process and then amortised, so a one-shot <code>denext job</code>
           {" "}
           from system cron prunes as well.
         </li>
@@ -204,32 +203,32 @@ export default {
 
       <h3 id="history-store">Where history is kept</h3>
       <p>
-        The SQLite file is the default store. <code>tasks: {"{ history: { store } }"}</code>{" "}
-        takes any <code>TaskHistoryStore</code> instead — <code>postgresTaskHistoryStore</code>{" "}
+        The SQLite file is the default store. <code>jobs: {"{ history: { store } }"}</code>{" "}
+        takes any <code>JobHistoryStore</code> instead — <code>postgresJobHistoryStore</code>{" "}
         keeps every run in one Postgres table, so all replicas of the app record into, and read
         from, the same history:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
-import { postgresTaskHistoryStore } from "denext/server";
+import { postgresJobHistoryStore } from "denext/server";
 
 export default {
-  tasks: {
+  jobs: {
     history: {
-      store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL"), maxRuns: 500 }),
+      store: postgresJobHistoryStore({ url: Deno.env.get("DATABASE_URL"), maxRuns: 500 }),
     },
   },
 } satisfies import("denext/server").DenextConfig;`}
       </Code>
       <ul>
         <li>
-          <strong>Postgres:</strong> the table <code>task_runs</code>{" "}
-          is created by a migration on first use (recorded in <code>task_history_migrations</code>;
+          <strong>Postgres:</strong> the table <code>job_runs</code>{" "}
+          is created by a migration on first use (recorded in <code>job_history_migrations</code>;
           {" "}
           <code>migrate: false</code> when your deploy creates it, <code>schema</code>{" "}
           to keep it out of the search path). It runs on the Postgres client built into denext's
           Deno runtime, or on any client you pass as <code>sql</code> (see{" "}
-          <a href="/docs/database#postgres">Postgres</a>). Retention and the per-task cap match the
+          <a href="/docs/database#postgres">Postgres</a>). Retention and the per-job cap match the
           file store, and so does the rule that a run is never failed or delayed: a write that fails
           drops its row, and three failures in a row stop the store trying until the process
           restarts.
@@ -239,18 +238,18 @@ export default {
           (called on the tail of every completed run and never awaited — it must not throw, and a
           promise it returns must not reject), <code>read({"{ windowDays, recentLimit }"})</code>,
           {" "}
-          <code>listRuns(task, {"{ limit }"})</code>,{" "}
-          <code>prune({"{ maxRuns, retainDays }"})</code> and <code>clear()</code>;{" "}
-          <code>close()</code> is optional. The readers never throw: an unreadable store answers
+          <code>listRuns(job, {"{ limit }"})</code>, <code>prune({"{ maxRuns, retainDays }"})</code>
           {" "}
+          and <code>clear()</code>; <code>close()</code>{" "}
+          is optional. The readers never throw: an unreadable store answers{" "}
           <code>{"{ available: false, reason }"}</code>. Each run is one record: its start time, its
           duration, and whether it finished (<code>ok</code>) or threw (the error in{" "}
-          <code>detail</code>), with the attempt number for a task that retries.
+          <code>detail</code>), with the attempt number for a job that retries.
         </li>
         <li>
-          <strong>Reading it:</strong> <code>denext task --history [--json]</code>{" "}
+          <strong>Reading it:</strong> <code>denext job --history [--json]</code>{" "}
           prints the last seven days through the configured store, and{" "}
-          <code>denext task --clear-history</code>{" "}
+          <code>denext job --clear-history</code>{" "}
           deletes every run. A read changes nothing (the Postgres store sends no DDL to answer one);
           {" "}
           <code>--read-only</code>{" "}
@@ -264,49 +263,57 @@ export default {
           <strong>Lifetime:</strong>{" "}
           denext closes the default store when the server stops. A store you pass is yours: the
           server never closes it (a dev re-boot reuses it), and a one-shot{" "}
-          <code>denext task &lt;name&gt;</code>{" "}
+          <code>denext job &lt;name&gt;</code>{" "}
           waits for its write and closes it as the process ends.
         </li>
       </ul>
 
       <h2>Run on demand</h2>
       <p>
-        Trigger a task yourself from a route handler or a Server Action with{" "}
-        <code>runTask</code>, which returns the handler's result:
+        Trigger a job yourself from a route handler or a Server Action with{" "}
+        <code>runJob</code>, which returns the handler's result:
       </p>
       <Code lang="ts">
-        {`import { runTask } from "denext/server";
+        {`import { runJob } from "denext/server";
 
 // e.g. inside a route handler or an action
-await runTask("cleanup");
-const result = await runTask("report", { month: "2026-01" }); // typed payload → ctx.payload`}
+await runJob("cleanup");
+const result = await runJob("report", { month: "2026-01" }); // typed payload → ctx.payload`}
       </Code>
       <p>
         Or from the CLI:
       </p>
       <Code lang="bash">
-        {`denext task cleanup                    # run it once, now
-denext task report --payload '{"month":"2026-01"}'
-denext task --list                    # every task + its description
-denext task --history                 # recent runs, through the configured history store`}
+        {`denext job cleanup                    # run it once, now
+denext job report --payload '{"month":"2026-01"}'
+denext job --list                    # every job + its description
+denext job --history                 # recent runs, through the configured history store`}
       </Code>
+      <Callout>
+        <code>denext job</code> runs these modules. <code>denext task</code> is Deno's: it runs a
+        {" "}
+        <code>deno.json</code> / <code>package.json</code> task on denext's Deno toolchain (see{" "}
+        <a href="/docs/cli#deno-verbs">the CLI reference</a>). Before denext 4.0 jobs were called
+        tasks; a config that still sets <code>tasks</code> or <code>scheduledTasks</code>{" "}
+        fails to load and names the new key.
+      </Callout>
 
-      <h2>Registering a task programmatically</h2>
+      <h2>Registering a job programmatically</h2>
       <p>
-        The <code>tasks/</code>{" "}
-        directory is the convention, but you can register a task by hand (useful in a plugin or a
-        test) with <code>registerTask</code>; <code>getTask</code>, <code>taskNames</code>, and{" "}
-        <code>isTask</code> round out the API. All are exported from <code>denext/server</code>.
+        The <code>jobs/</code>{" "}
+        directory is the convention, but you can register a job by hand (useful in a plugin or a
+        test) with <code>registerJob</code>; <code>getJob</code>, <code>jobNames</code>, and{" "}
+        <code>isJob</code> round out the API. All are exported from <code>denext/server</code>.
       </p>
       <Code lang="ts">
-        {`import { defineTask, registerTask } from "denext/server";
+        {`import { defineJob, registerJob } from "denext/server";
 
-registerTask("cleanup", defineTask({ handler: () => {/* … */} }));`}
+registerJob("cleanup", defineJob({ handler: () => {/* … */} }));`}
       </Code>
 
       <Callout kind="note">
-        A scheduled run that throws is logged and never crashes the process; an unknown task name or
-        a malformed schedule entry is skipped at boot with an error. An app that defines no tasks
+        A scheduled run that throws is logged and never crashes the process; an unknown job name or
+        a malformed schedule entry is skipped at boot with an error. An app that defines no jobs
         pays nothing — the scheduler isn't started.
       </Callout>
     </DocsShell>

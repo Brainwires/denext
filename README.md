@@ -212,9 +212,9 @@ stores for auth, sessions, rate limits, the cache and task history, and SQL migr
 browses the database. → [Backend](https://denext.dev/docs/backend) ·
 [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
 
-**Background work.** `defineTask` in `tasks/<name>.ts`, scheduled with cron expressions
-(`Deno.cron` where the platform has it), run on demand with `runTask()` or `denext task`, with
-run history. → [Tasks](https://denext.dev/docs/tasks)
+**Background work.** `defineJob` in `jobs/<name>.ts`, scheduled with cron expressions
+(`Deno.cron` where the platform has it), run on demand with `runJob()` or `denext job`, with
+run history. → [Jobs](https://denext.dev/docs/jobs)
 
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
@@ -363,7 +363,7 @@ in the [API reference](https://denext.dev/docs/api); every config key in
 **Build** — [Typed API](https://denext.dev/docs/typed-api) ·
 [Server Actions](https://denext.dev/docs/server-actions) · [Live](https://denext.dev/docs/live) ·
 [Auth](https://denext.dev/docs/auth) · [Databases](https://denext.dev/docs/database) ·
-[Backend](https://denext.dev/docs/backend) · [Tasks](https://denext.dev/docs/tasks) · [Content collections](https://denext.dev/docs/content-collections)
+[Backend](https://denext.dev/docs/backend) · [Jobs](https://denext.dev/docs/jobs) · [Content collections](https://denext.dev/docs/content-collections)
 · [Testing](https://denext.dev/docs/testing)
 
 **Ship** — [Deployment](https://denext.dev/docs/deploy) · [Desktop apps](https://denext.dev/docs/desktop)

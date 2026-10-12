@@ -791,7 +791,7 @@ Deno.test("scaffoldFiles: fallow writes the gate, its tasks and the agent guide"
   assertStringIncludes(hook.content, "task fallow:audit $BASE $COV");
   // fallow.toml declares denext's path-loaded conventions as entry points.
   const toml = files.find((f) => f.path === "fallow.toml")!.content;
-  for (const e of ["**/app/**/page.tsx", "denext.config.ts", "middleware.ts", "tasks/*.ts"]) {
+  for (const e of ["**/app/**/page.tsx", "denext.config.ts", "middleware.ts", "jobs/*.ts"]) {
     assertStringIncludes(toml, `"${e}"`);
   }
   assertStringIncludes(toml, '".denext/**"');

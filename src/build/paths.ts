@@ -4,7 +4,11 @@ import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { type DenextConfig, featureFlags } from "../server/config.ts";
-import { validateDenextConfig, warnUnknownConfigKeys } from "../server/config-validate.ts";
+import {
+  validateDenextConfig,
+  validateRemovedConfigKeys,
+  warnUnknownConfigKeys,
+} from "../server/config-validate.ts";
 import { CONFIG_KEYS } from "../server/config-keys.generated.ts";
 
 // Re-export so build-side importers keep resolving the validator from `paths.ts`.
@@ -154,6 +158,14 @@ function mergeConfigModule(mod: ConfigModule, base: DenextConfig = {}): DenextCo
   return config as DenextConfig;
 }
 
+/** Fail on a renamed top-level key (`tasks` → `jobs`) in the default export or a named export. */
+function rejectRenamedKeys(name: string, ...configs: object[]): void {
+  const fail = (field: string, msg: string): never => {
+    throw new Error(`invalid ${name}: \`${field}\` ${msg}`);
+  };
+  for (const config of configs) validateRemovedConfigKeys(config, fail);
+}
+
 /**
  * Import one config file. Unknown keys on a plain `export default {…}` object are warned
  * (the field whitelist silently drops them otherwise; `defineConfig` warns at its call
@@ -169,6 +181,7 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
     if (base !== undefined && (typeof base !== "object" || base === null)) {
       throw new Error("the default export must be a config object (or a function returning one)");
     }
+    rejectRenamedKeys(name, mod, base ?? {});
     const config = mergeConfigModule(mod, base ?? {});
     if (base) warnUnknownConfigKeys(base, name);
     validateDenextConfig(config, name);

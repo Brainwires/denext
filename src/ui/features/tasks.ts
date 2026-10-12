@@ -8,8 +8,8 @@
 // declare, passes it as an argv element rather than through a shell, and ties the child to the
 // stream so a closed page takes the task with it. This page only lists what that route will run.
 //
-// NOT to be confused with the Cron page's tasks. These are `deno.json` scripts; those are
-// `tasks/<name>.ts` modules registered with `defineTask` and run on a schedule.
+// NOT to be confused with the Cron page's jobs. These are `deno.json` scripts; those are
+// `jobs/<name>.ts` modules registered with `defineJob` and run on a schedule (`denext job`).
 //
 // Everything works with JavaScript disabled: each button is a real `<form method="post">`.
 

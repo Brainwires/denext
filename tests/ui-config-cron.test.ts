@@ -11,7 +11,7 @@ import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { cronPanel, nextRuns, setCronDiscoveryBudget } from "../src/ui/features/config-cron.ts";
-import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
+import { jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 
@@ -41,10 +41,10 @@ async function denextImports(): Promise<Record<string, string>> {
   );
 }
 
-/** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
+/** A project with a denext config, a jobs/ directory, and an app — enough for discovery. */
 async function project(
   config: string,
-  tasks: Record<string, string> = {},
+  jobs: Record<string, string> = {},
 ): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_cron_" });
   await Deno.writeTextFile(
@@ -54,18 +54,18 @@ async function project(
   await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
   await Deno.mkdir(join(dir, "app"), { recursive: true });
   await Deno.writeTextFile(join(dir, "app/page.tsx"), "export default () => null;\n");
-  for (const [name, body] of Object.entries(tasks)) {
-    await Deno.mkdir(join(dir, "tasks"), { recursive: true });
-    await Deno.writeTextFile(join(dir, `tasks/${name}.ts`), body);
+  for (const [name, body] of Object.entries(jobs)) {
+    await Deno.mkdir(join(dir, "jobs"), { recursive: true });
+    await Deno.writeTextFile(join(dir, `jobs/${name}.ts`), body);
   }
   return dir;
 }
 
-/** A `defineTask` module, optionally declaring its own schedule. */
-function task(extra = ""): string {
-  const server = new URL("../src/server/tasks.ts", import.meta.url).href;
-  return `import { defineTask } from "${server}";\n` +
-    `export default defineTask({ handler: () => {}, ${extra} });\n`;
+/** A `defineJob` module, optionally declaring its own schedule. */
+function job(extra = ""): string {
+  const server = new URL("../src/server/jobs.ts", import.meta.url).href;
+  return `import { defineJob } from "${server}";\n` +
+    `export default defineJob({ handler: () => {}, ${extra} });\n`;
 }
 
 /** One request against the panel, with the kernel's context already assembled. */
@@ -88,7 +88,7 @@ async function call(
   for (const [name, value] of init.pairs ?? []) form?.append(name, value);
   for (const [cron, name] of init.rows ?? []) {
     form?.append("cron", cron);
-    form?.append("task", name);
+    form?.append("job", name);
   }
   for (const [key, value] of Object.entries(init.form ?? {})) form?.set(key, value);
   const ctx: UiContext = {
@@ -138,7 +138,7 @@ function edited(
 }
 
 Deno.test("a child's JSON document survives the noise Deno writes around it", () => {
-  const doc = '{\n  "tasks": [],\n  "denoCron": false\n}';
+  const doc = '{\n  "jobs": [],\n  "denoCron": false\n}';
   assertEquals(parseJsonDocument<{ denoCron: boolean }>(doc)?.denoCron, false);
   // Deno's own lines before and after the document are dropped.
   const noisy = `Download https://jsr.io/@denext/denext/meta.json\n${doc}\nWarning something`;
@@ -177,18 +177,18 @@ Deno.test("a sparse schedule still resolves, and a malformed one yields nothing"
 
 // ── the editor ───────────────────────────────────────────────────────────────
 //
-// These spawn one real discovery child each (`denext task --list --json`), which is what makes
+// These spawn one real discovery child each (`denext job --list --json`), which is what makes
 // the panel honest about which schedules exist — so they cost about a second apiece.
 
 const CONFIG = `export default {
   // this comment must survive every write
   basePath: "/app",
-  scheduledTasks: { "0 3 * * *": "cleanup" },
+  scheduledJobs: { "0 3 * * *": "cleanup" },
 };
 `;
 
 Deno.test("the editor renders one row per schedule, not a raw key/value map", async () => {
-  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  const dir = await project(CONFIG, { cleanup: job(), digest: job() });
   try {
     const body = await (await call(dir)).text();
     // Two rows: the one the config declares, plus the blank one that adds another.
@@ -204,7 +204,7 @@ Deno.test("the editor renders one row per schedule, not a raw key/value map", as
 });
 
 Deno.test("an edit previews a diff, writes nothing, then confirms exactly that", async () => {
-  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  const dir = await project(CONFIG, { cleanup: job(), digest: job() });
   const file = join(dir, "denext.config.ts");
   try {
     const base = stampIn(await (await call(dir)).text());
@@ -238,20 +238,20 @@ Deno.test("an edit previews a diff, writes nothing, then confirms exactly that",
 
 /** Two config schedules, so removing one is a change rather than "remove every schedule". */
 const TWO_ROWS = `export default {
-  scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": "digest" },
+  scheduledJobs: { "0 3 * * *": "cleanup", "0 0 * * 1": "digest" },
 };
 `;
 
 Deno.test("what a browser posts for the untouched editor is not refused", async () => {
-  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  const dir = await project(TWO_ROWS, { cleanup: job(), digest: job() });
   try {
     const page = await (await call(dir)).text();
     assert(!page.includes("denext ui: "), "the listing finished — no discovery notice");
     const body = browserBody(page);
-    // The add row's task picker starts BLANK. Without a blank option the browser posts the
-    // first task's name beside an empty expression, and every save — an edit to another row, a
+    // The add row's job picker starts BLANK. Without a blank option the browser posts the
+    // first job's name beside an empty expression, and every save — an edit to another row, a
     // ticked remove — was refused as "cleanup has no cron expression".
-    const posted = body.filter(([n]) => n === "task").map(([, v]) => v);
+    const posted = body.filter(([n]) => n === "job").map(([, v]) => v);
     assertEquals(posted, ["cleanup", "digest", ""]);
     assertEquals(body.filter(([n]) => n === "cron").map(([, v]) => v), [
       "0 3 * * *",
@@ -270,7 +270,7 @@ Deno.test("what a browser posts for the untouched editor is not refused", async 
 });
 
 Deno.test("editing one row's expression in the browser previews exactly that change", async () => {
-  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  const dir = await project(TWO_ROWS, { cleanup: job(), digest: job() });
   try {
     const body = browserBody(await (await call(dir)).text());
     const res = await call(dir, { pairs: edited(body, "cron", 0, "0 5 * * *") });
@@ -289,7 +289,7 @@ Deno.test("editing one row's expression in the browser previews exactly that cha
 });
 
 Deno.test("ticking remove on a row in the browser previews its removal", async () => {
-  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  const dir = await project(TWO_ROWS, { cleanup: job(), digest: job() });
   try {
     const page = await (await call(dir)).text();
     assertStringIncludes(page, 'name="drop.0"');
@@ -305,7 +305,7 @@ Deno.test("ticking remove on a row in the browser previews its removal", async (
 });
 
 Deno.test("a hand edit to the config shows up on the very next render, cache or no cache", async () => {
-  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  const dir = await project(CONFIG, { cleanup: job(), digest: job() });
   const file = join(dir, "denext.config.ts");
   try {
     // The first render fills the 5-second listing cache with ONE config row.
@@ -333,13 +333,13 @@ Deno.test("a hand edit to the config shows up on the very next render, cache or 
 });
 
 Deno.test("when the listing child fails, the page says why, not just that it did", async () => {
-  const dir = await project("export default { redirects: 5 };\n", { cleanup: task() });
+  const dir = await project("export default { redirects: 5 };\n", { cleanup: job() });
   try {
     const res = await call(dir);
     const page = await res.text();
     // The child printed "invalid denext.config.ts: `redirects` must be a function …" and exited;
     // "printed no listing" hid that behind the symptom.
-    assertStringIncludes(page, "denext task --list failed:");
+    assertStringIncludes(page, "denext job --list failed:");
     assertStringIncludes(page, "`redirects` must be a function");
     assert(!page.includes("printed no listing"), "the cause replaces the symptom");
     // And the JSON twin carries the same reason.
@@ -351,7 +351,7 @@ Deno.test("when the listing child fails, the page says why, not just that it did
 });
 
 Deno.test("a schedule that could never fire is refused, not saved", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const base = stampIn(await (await call(dir)).text());
     const bad = await call(dir, {
@@ -361,13 +361,13 @@ Deno.test("a schedule that could never fire is refused, not saved", async () => 
     assertEquals(bad.status, 422);
     assertStringIncludes(await bad.text(), "out of range");
 
-    // The scheduler skips a schedule naming a task it cannot find; writing one is no service.
+    // The scheduler skips a schedule naming a job it cannot find; writing one is no service.
     const missing = await call(dir, {
       rows: [["0 3 * * *", "nope"]],
       form: { _base: base, intent: "save" },
     });
     assertEquals(missing.status, 422);
-    assertStringIncludes(await missing.text(), "no task named");
+    assertStringIncludes(await missing.text(), "no job named");
     assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), CONFIG);
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -375,7 +375,7 @@ Deno.test("a schedule that could never fire is refused, not saved", async () => 
 });
 
 Deno.test("silence never deletes: only the button that says so removes every schedule", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   const file = join(dir, "denext.config.ts");
   try {
     const base = stampIn(await (await call(dir)).text());
@@ -391,7 +391,7 @@ Deno.test("silence never deletes: only the button that says so removes every sch
     assertEquals(cleared.status, 303);
     await cleared.body?.cancel();
     const after = await Deno.readTextFile(file);
-    assert(!after.includes("scheduledTasks"), "the key is removed, not left as `{}`");
+    assert(!after.includes("scheduledJobs"), "the key is removed, not left as `{}`");
     assertStringIncludes(after, 'basePath: "/app"', "every other key is untouched");
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -399,7 +399,7 @@ Deno.test("silence never deletes: only the button that says so removes every sch
 });
 
 Deno.test("a write against a file that moved underneath the form is a 409", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   const file = join(dir, "denext.config.ts");
   try {
     const base = stampIn(await (await call(dir)).text());
@@ -417,7 +417,7 @@ Deno.test("a write against a file that moved underneath the form is a 409", asyn
 });
 
 Deno.test("a browser form without _base is refused as stale, for both writers; the JSON twin may omit it", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   const file = join(dir, "denext.config.ts");
   try {
     // Every form the page renders carries the stamp, so a post without one was not built from
@@ -453,17 +453,17 @@ Deno.test("a browser form without _base is refused as stale, for both writers; t
 });
 
 Deno.test("the editor's rows are labelled, and the add row says it is one", async () => {
-  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  const dir = await project(TWO_ROWS, { cleanup: job(), digest: job() });
   try {
     const page = await (await call(dir)).text();
     // Each control's accessible name says which row it is and what it holds.
     assertStringIncludes(page, 'aria-label="Schedule 1 expression (UTC)"');
-    assertStringIncludes(page, 'aria-label="Schedule 1 task"');
+    assertStringIncludes(page, 'aria-label="Schedule 1 job"');
     assertStringIncludes(page, 'aria-label="Remove schedule 1"');
-    assertStringIncludes(page, 'aria-label="Schedule 2 task"');
+    assertStringIncludes(page, 'aria-label="Schedule 2 job"');
     // And a sighted reader gets a caption per control, not three bare boxes.
     assertStringIncludes(page, 'for="cron-0-expr">Expression (UTC)<');
-    assertStringIncludes(page, 'for="cron-0-task">Task<');
+    assertStringIncludes(page, 'for="cron-0-job">Job<');
     // The blank row is visibly the add row: a heading, a placeholder that is a shape rather than
     // a value, and no remove box for a schedule that does not exist yet.
     assertStringIncludes(page, "<strong>New schedule</strong>");
@@ -478,7 +478,7 @@ Deno.test("the editor's rows are labelled, and the add row says it is one", asyn
 });
 
 Deno.test("--read-only refuses the write before anything is computed", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const refused = await call(dir, {
       rows: [["0 5 * * *", "cleanup"]],
@@ -496,12 +496,12 @@ Deno.test("--read-only refuses the write before anything is computed", async () 
 
 /** A config that turns run history on. */
 const HISTORY_ON = `export default {
-  tasks: { history: true },
+  jobs: { history: true },
 };
 `;
 
 Deno.test("history off says so, and offers the switch rather than an empty table", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const body = await (await call(dir)).text();
     assertStringIncludes(body, "Run history is off");
@@ -515,7 +515,7 @@ Deno.test("history off says so, and offers the switch rather than an empty table
 });
 
 Deno.test("history on with nothing recorded does not look like history off", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const dir = await project(HISTORY_ON, { cleanup: job() });
   try {
     const body = await (await call(dir)).text();
     // The whole reason `enabled` and `available` are separate fields.
@@ -531,7 +531,7 @@ Deno.test("history on with nothing recorded does not look like history off", asy
 });
 
 Deno.test("enabling history previews a diff, writes nothing, then writes exactly that", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   const file = join(dir, "denext.config.ts");
   try {
     const base = stampIn(await (await call(dir)).text());
@@ -552,7 +552,7 @@ Deno.test("enabling history previews a diff, writes nothing, then writes exactly
     assertStringIncludes(landed, "next time the app starts");
 
     const after = await Deno.readTextFile(file);
-    assertStringIncludes(after, "tasks: { history: true }");
+    assertStringIncludes(after, "jobs: { history: true }");
     // The key is created in a config that never had it, and everything else survives.
     assertStringIncludes(after, "// this comment must survive every write");
     assertStringIncludes(after, 'basePath: "/app"');
@@ -562,7 +562,7 @@ Deno.test("enabling history previews a diff, writes nothing, then writes exactly
 });
 
 Deno.test("the JSON twin keeps 'enabled' and 'available' apart", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const off = await (await call(dir, { json: true })).json();
     assertEquals(off.history.enabled, false);
@@ -575,7 +575,7 @@ Deno.test("the JSON twin keeps 'enabled' and 'available' apart", async () => {
 });
 
 Deno.test("the history toggle is refused read-only, and when the file moved underneath", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   const file = join(dir, "denext.config.ts");
   try {
     const refused = await call(dir, {
@@ -604,8 +604,8 @@ Deno.test("the history toggle is refused read-only, and when the file moved unde
 
 /** Seed a couple of recorded runs into a project's history. */
 function seedHistory(dir: string): string {
-  const path = join(dir, ".denext", "tasks.db");
-  const store = taskHistoryRecorder({ path });
+  const path = join(dir, ".denext", "jobs.db");
+  const store = jobHistoryRecorder({ path });
   const now = Date.now();
   store.record({ name: "cleanup", trigger: "schedule", startedAt: now, durationMs: 5, ok: true });
   store.record({ name: "cleanup", trigger: "manual", startedAt: now, durationMs: 9, ok: false });
@@ -614,7 +614,7 @@ function seedHistory(dir: string): string {
 }
 
 Deno.test("clearing history takes two steps, and the second one can actually be reached", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const dir = await project(HISTORY_ON, { cleanup: job() });
   const path = seedHistory(dir);
   try {
     const first = await call(dir, { form: { intent: "clear-history" } });
@@ -624,7 +624,7 @@ Deno.test("clearing history takes two steps, and the second one can actually be 
     // The regression this guards: the first step must render a form that CARRIES the confirm.
     // Saying "press again" while posting the same body is an unusable button and a false promise.
     assertStringIncludes(asked, 'name="confirm" value="1"');
-    assertEquals(readTaskHistory({ path }).recent.length, 2, "step one deletes nothing");
+    assertEquals(readJobHistory({ path }).recent.length, 2, "step one deletes nothing");
 
     const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
     assertEquals(second.status, 303);
@@ -632,7 +632,7 @@ Deno.test("clearing history takes two steps, and the second one can actually be 
     await second.body?.cancel();
 
     // A DELETE, not an unlink — the app may hold this file open.
-    const after = readTaskHistory({ path });
+    const after = readJobHistory({ path });
     assertEquals(after.available, true, "the database is still there");
     assertEquals(after.recent, []);
 
@@ -644,7 +644,7 @@ Deno.test("clearing history takes two steps, and the second one can actually be 
 });
 
 Deno.test("clearing history is refused read-only, and the runs survive", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const dir = await project(HISTORY_ON, { cleanup: job() });
   const path = seedHistory(dir);
   try {
     const refused = await call(dir, {
@@ -652,7 +652,7 @@ Deno.test("clearing history is refused read-only, and the runs survive", async (
       readOnly: true,
     });
     assertEquals(refused.status, 403);
-    assertEquals(readTaskHistory({ path }).recent.length, 2, "nothing was deleted");
+    assertEquals(readJobHistory({ path }).recent.length, 2, "nothing was deleted");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -662,11 +662,11 @@ Deno.test(
   "a history database symlinked out of the project is neither read nor cleared",
   { ignore: !FILE_SYMLINKS }, // a FILE symlink: needs the Windows symlink privilege
   async () => {
-    const dir = await project(HISTORY_ON, { cleanup: task() });
-    // The real database lives OUTSIDE the project; the project's `.denext/tasks.db` points at it.
+    const dir = await project(HISTORY_ON, { cleanup: job() });
+    // The real database lives OUTSIDE the project; the project's `.denext/jobs.db` points at it.
     const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
-    const target = join(outside, "tasks.db");
-    const store = taskHistoryRecorder({ path: target });
+    const target = join(outside, "jobs.db");
+    const store = jobHistoryRecorder({ path: target });
     store.record({
       name: "cleanup",
       trigger: "manual",
@@ -676,7 +676,7 @@ Deno.test(
     });
     store.close();
     await Deno.mkdir(join(dir, ".denext"));
-    await Deno.symlink(target, join(dir, ".denext", "tasks.db"));
+    await Deno.symlink(target, join(dir, ".denext", "jobs.db"));
     try {
       const page = await (await call(dir)).text();
       assertStringIncludes(page, "resolves outside the project");
@@ -695,7 +695,7 @@ Deno.test(
         assertEquals(res.status, 403, JSON.stringify(form));
         assertStringIncludes(await res.text(), "resolves outside the project");
       }
-      assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
+      assertEquals(readJobHistory({ path: target }).recent.length, 1, "the outside rows survive");
     } finally {
       await Deno.remove(dir, { recursive: true });
       await Deno.remove(outside, { recursive: true });
@@ -704,10 +704,10 @@ Deno.test(
 );
 
 Deno.test("a history database whose .denext is itself a symlink out of the project is refused too", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const dir = await project(HISTORY_ON, { cleanup: job() });
   const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
-  const target = join(outside, "tasks.db");
-  const store = taskHistoryRecorder({ path: target });
+  const target = join(outside, "jobs.db");
+  const store = jobHistoryRecorder({ path: target });
   store.record({
     name: "cleanup",
     trigger: "manual",
@@ -721,7 +721,7 @@ Deno.test("a history database whose .denext is itself a symlink out of the proje
     assertStringIncludes(await (await call(dir)).text(), "resolves outside the project");
     const res = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
     assertEquals(res.status, 403);
-    assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
+    assertEquals(readJobHistory({ path: target }).recent.length, 1, "the outside rows survive");
   } finally {
     await Deno.remove(join(dir, ".denext"));
     await Deno.remove(dir, { recursive: true });
@@ -732,10 +732,10 @@ Deno.test("a history database whose .denext is itself a symlink out of the proje
 Deno.test("a schedule row says what the expression means, in English", async () => {
   const dir = await project(
     `export default {
-  scheduledTasks: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup" },
+  scheduledJobs: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup" },
 };
 `,
-    { cleanup: task() },
+    { cleanup: job() },
   );
   try {
     const body = await (await call(dir)).text();
@@ -747,18 +747,18 @@ Deno.test("a schedule row says what the expression means, in English", async () 
   }
 });
 
-Deno.test("last result is a task's fact, shown on every row that schedules it", async () => {
+Deno.test("last result is a job's fact, shown on every row that schedules it", async () => {
   const dir = await project(
     `export default {
-  tasks: { history: true },
-  scheduledTasks: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup", "0 0 * * *": "digest" },
+  jobs: { history: true },
+  scheduledJobs: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup", "0 0 * * *": "digest" },
 };
 `,
-    { cleanup: task(), digest: task() },
+    { cleanup: job(), digest: job() },
   );
   try {
     // Only cleanup has run, and its most recent run failed. digest has never run.
-    const store = taskHistoryRecorder({ path: join(dir, ".denext", "tasks.db") });
+    const store = jobHistoryRecorder({ path: join(dir, ".denext", "jobs.db") });
     const now = Date.now();
     store.record({
       name: "cleanup",
@@ -787,14 +787,14 @@ Deno.test("last result is a task's fact, shown on every row that schedules it", 
     // Never having run is not a failure, and must not read as one.
     const digestRow = rows.find((r) => r.includes(">digest<"))!;
     assertStringIncludes(digestRow, "not yet");
-    assert(!digestRow.includes(">failed<"), "a task that never ran has not failed");
+    assert(!digestRow.includes(">failed<"), "a job that never ran has not failed");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
 Deno.test("with history off there is no result column to mislead anyone", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const body = await (await call(dir)).text();
     const table = body.slice(body.indexOf("<table"), body.indexOf("</table>") + 8);
@@ -806,7 +806,7 @@ Deno.test("with history off there is no result column to mislead anyone", async 
 });
 
 Deno.test("the builder composes a schedule, and the expression is still what gets written", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     const plain = await (await call(dir)).text();
     // A GET form, so it works with scripting off — and the add row starts empty until a shape
@@ -835,7 +835,7 @@ Deno.test("the builder composes a schedule, and the expression is still what get
 });
 
 Deno.test("only the builder's own vocabulary can reach the expression field", async () => {
-  const dir = await project(CONFIG, { cleanup: task() });
+  const dir = await project(CONFIG, { cleanup: job() });
   try {
     // Nothing is copied out of the query: the expression is COMPOSED from a closed set of
     // shapes, so what lands in the field is only ever digits, spaces and asterisks.
@@ -862,10 +862,10 @@ Deno.test("only the builder's own vocabulary can reach the expression field", as
 Deno.test("the editor row explains a valid expression and refuses a broken one", async () => {
   const dir = await project(
     `export default {
-  scheduledTasks: { "0 8 * * 1": "cleanup" },
+  scheduledJobs: { "0 8 * * 1": "cleanup" },
 };
 `,
-    { cleanup: task() },
+    { cleanup: job() },
   );
   try {
     const body = await (await call(dir)).text();
@@ -886,10 +886,10 @@ Deno.test("the editor row explains a valid expression and refuses a broken one",
   }
 });
 
-Deno.test("the history table shows each task's retries", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
-  const path = join(dir, ".denext", "tasks.db");
-  const store = taskHistoryRecorder({ path });
+Deno.test("the history table shows each job's retries", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: job() });
+  const path = join(dir, ".denext", "jobs.db");
+  const store = jobHistoryRecorder({ path });
   const now = Date.now();
   const base = { name: "cleanup", trigger: "schedule" as const, durationMs: 5 };
   store.record({ ...base, startedAt: now - 2, ok: false, attempt: 1, willRetry: true });
@@ -908,8 +908,8 @@ Deno.test("the history table shows each task's retries", async () => {
 
 Deno.test("a test project resolves denext/server through its own import map", async () => {
   // What a child resolving with the project's deno.json (not the framework's) sees.
-  const dir = await project(`import { sqliteTaskHistoryStore } from "denext/server";
-export default { tasks: { history: { store: sqliteTaskHistoryStore({ path: ":memory:" }) } } };
+  const dir = await project(`import { sqliteJobHistoryStore } from "denext/server";
+export default { jobs: { history: { store: sqliteJobHistoryStore({ path: ":memory:" }) } } };
 `);
   try {
     const { stdout } = await new Deno.Command(Deno.execPath(), {
@@ -929,16 +929,16 @@ export default { tasks: { history: { store: sqliteTaskHistoryStore({ path: ":mem
 });
 
 Deno.test("an app's own history store is read and cleared through it, never opened here", async () => {
-  // The store is project code (a call in denext.config.ts), so the panel asks `denext task
+  // The store is project code (a call in denext.config.ts), so the panel asks `denext job
   // --history` / `--clear-history` children; here the store is a SQLite file of the app's choosing.
-  const config = `import { sqliteTaskHistoryStore } from "denext/server";
+  const config = `import { sqliteJobHistoryStore } from "denext/server";
 export default {
-  tasks: { history: { store: sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname }) } },
+  jobs: { history: { store: sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname }) } },
 };
 `;
-  const dir = await project(config, { cleanup: task() });
+  const dir = await project(config, { cleanup: job() });
   const path = join(dir, "custom.db");
-  const store = taskHistoryRecorder({ path });
+  const store = jobHistoryRecorder({ path });
   const now = Date.now();
   store.record({ name: "cleanup", trigger: "schedule", startedAt: now, durationMs: 5, ok: true });
   store.record({ name: "cleanup", trigger: "manual", startedAt: now, durationMs: 9, ok: false });
@@ -949,19 +949,19 @@ export default {
     assertEquals(twin.history.available, true, twin.history.reason);
     assertEquals(twin.history.recent.length, 2);
     const body = await (await call(dir)).text();
-    assertStringIncludes(body, "tasks.history.store");
+    assertStringIncludes(body, "jobs.history.store");
     assert(!body.includes("Disable run history"), "a store set in code is not a toggle");
     const first = await call(dir, { form: { intent: "clear-history" } });
     assertEquals(first.status, 409);
     await first.body?.cancel();
-    assertEquals(readTaskHistory({ path }).recent.length, 2, "step one deletes nothing");
+    assertEquals(readJobHistory({ path }).recent.length, 2, "step one deletes nothing");
     const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
     assertEquals(second.status, 303);
     await second.body?.cancel();
-    assertEquals(readTaskHistory({ path }).recent, [], "cleared through the store");
+    assertEquals(readJobHistory({ path }).recent, [], "cleared through the store");
     let defaultDb = true;
     try {
-      await Deno.stat(join(dir, ".denext", "tasks.db"));
+      await Deno.stat(join(dir, ".denext", "jobs.db"));
     } catch {
       defaultDb = false;
     }
@@ -972,19 +972,19 @@ export default {
 });
 
 Deno.test("--read-only reaches an app's own store: its history child reads with readOnly", async () => {
-  const config = `import { sqliteTaskHistoryStore } from "denext/server";
-const inner = sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+  const config = `import { sqliteJobHistoryStore } from "denext/server";
+const inner = sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
 const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
-export default { tasks: { history: { store: {
+export default { jobs: { history: { store: {
   record: (run) => inner.record(run),
   read: (options) => { note(JSON.stringify(options ?? {})); return inner.read(options); },
-  listRuns: (task, options) => inner.listRuns(task, options),
+  listRuns: (job, options) => inner.listRuns(job, options),
   prune: (options) => inner.prune(options),
   clear: () => inner.clear(),
   close: () => inner.close(),
 } } } };
 `;
-  const dir = await project(config, { cleanup: task() });
+  const dir = await project(config, { cleanup: job() });
   try {
     await (await call(dir, { readOnly: true })).body?.cancel();
     await (await call(dir)).body?.cancel();

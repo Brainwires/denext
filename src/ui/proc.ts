@@ -51,7 +51,7 @@ const OFFLINE_FLAGS: readonly string[] = ["--deny-net", "--cached-only"];
 /**
  * What closes the grandchild gap for a child that only READS the project: `--deny-run` takes
  * precedence over `-A`, so a `denext.config.ts` (or a plugin `setup()`) evaluated inside
- * `denext commands --json` or `denext task --list --json` cannot reach the network through a
+ * `denext commands --json` or `denext job --list --json` cannot reach the network through a
  * `curl` of its own. Those verbs never spawn anything themselves, so nothing legitimate is lost.
  */
 const DENY_RUN: readonly string[] = ["--deny-run"];

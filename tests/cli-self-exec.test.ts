@@ -369,7 +369,7 @@ Deno.test("the verbs a binary defers are exactly the module-loading ones", () =>
   // those are, so a verb that starts loading a project's modules has to declare it here too.
   const verbs = buildRegistry().list();
   const deferred = verbs.filter((c) => c.loadsModules).map((c) => c.name).sort();
-  for (const name of ["dev", "build", "export", "start", "task", "doctor", "analyze", "profile"]) {
+  for (const name of ["dev", "build", "export", "start", "job", "doctor", "analyze", "profile"]) {
     assert(deferred.includes(name), `${name} loads the project's modules`);
   }
   for (const name of ["ui", "create", "init", "completions", "commands", "mcp", "fmt", "lint"]) {

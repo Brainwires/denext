@@ -6,6 +6,7 @@
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { denoPathEnv } from "../deno-path.ts";
 import {
   denoToolchainStatus,
   ensureDenoToolchain,
@@ -34,19 +35,43 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
 }
 
 /**
- * Run the toolchain's `deno` with `args` verbatim in the current directory and exit with its
- * code. Unlike the automatic switch, a toolchain that can't be had is an error here (exit 1).
+ * The binary a forwarded Deno verb runs on — the automatic switch's choice: denext's toolchain,
+ * a `DENEXT_DENO=<path>` binary, or stock Deno (after the choice's one warning) whenever the
+ * toolchain can't be had. Never fails.
+ */
+async function forwardedBinary(): Promise<{ deno: string; marker: string }> {
+  const choice = await resolveDenoToolchain();
+  if (choice.warning) console.error(choice.warning);
+  return choice.kind === "toolchain"
+    ? { deno: choice.deno, marker: choice.version }
+    : { deno: denoExecutable(), marker: "" };
+}
+
+/**
+ * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
+ * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
+ * main.ts`) and `denext task`. The child's PATH starts with that same binary as `deno`
+ * ({@linkcode denoPathEnv}), so a `deno` a task's script or tool spawns runs on it too.
+ *
+ * `denext deno` asks for the toolchain by name, so a toolchain that can't be had is an error
+ * there (exit 1). A forwarded verb takes the automatic switch's choice instead, stock fallback
+ * included ({@linkcode forwardedBinary}): `denext compile` works wherever `deno compile` does.
  * Never returns.
  *
- * @param args Everything after `denext deno`.
+ * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
+ * @param forwarded Whether a Deno verb is being forwarded (stock fallback) rather than `denext deno`.
  */
-export async function runDenoPassthrough(args: string[], cwd = Deno.cwd()): Promise<never> {
-  const { deno, marker } = await toolchainBinary();
+export async function runDenoPassthrough(
+  args: string[],
+  cwd = Deno.cwd(),
+  forwarded = false,
+): Promise<never> {
+  const { deno, marker } = forwarded ? await forwardedBinary() : await toolchainBinary();
   return await spawnDenoAndExit(
     args,
     cwd,
-    marker ? { [TOOLCHAIN_ACTIVE_ENV]: marker } : undefined,
+    { ...await denoPathEnv(deno), ...(marker ? { [TOOLCHAIN_ACTIVE_ENV]: marker } : {}) },
     deno,
   );
 }

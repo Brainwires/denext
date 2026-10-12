@@ -423,31 +423,31 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
 
 ## Tasks
 
-- **`scheduledTasks`** — `Record<string, string | string[]>`. Cron expression →
-  the task name(s) it runs, merged with each task's own `schedule:`. Five-field
+- **`scheduledJobs`** — `Record<string, string | string[]>`. Cron expression →
+  the job name(s) it runs, merged with each job's own `schedule:`. Five-field
   Vixie cron in **UTC**, weekdays POSIX (`0–6`, `0` = Sunday); denext translates
   the weekday field into names for `Deno.cron`, which numbers days differently.
   A malformed expression or an unknown task is skipped at boot with an error.
-  See [Scheduled tasks](/docs/tasks#cron-syntax).
-- **`tasks`** — `TasksConfig`. Run history. `history: true` records every run —
-  scheduled, `runTask`, and `denext task <name>` — to `.denext/tasks.db`
+  See [Scheduled jobs](/docs/jobs#cron-syntax).
+- **`jobs`** — `JobsConfig`. Run history. `history: true` records every run —
+  scheduled, `runJob`, and `denext job <name>` — to `.denext/jobs.db`
   (created `0600`; each row keeps a returned string's tail and a failure's
   message/stack in plain text, up to 2 KB). Off unless set, and never able to
   fail or delay a run. `historyMaxRuns` (whole number ≥ 1, default `500`) is the
-  runs kept **per task**; rows older than 14 days go regardless. The object form
-  `history: { store }` records to any `TaskHistoryStore` instead (e.g.
-  `postgresTaskHistoryStore({ url })`, shared by every replica), and
+  runs kept **per job**; rows older than 14 days go regardless. The object form
+  `history: { store }` records to any `JobHistoryStore` instead (e.g.
+  `postgresJobHistoryStore({ url })`, shared by every replica), and
   `history: { maxRuns }` caps the default store. See
-  [Run history](/docs/tasks#run-history) and the Project UI's
+  [Run history](/docs/jobs#run-history) and the Project UI's
   [Cron page](/docs/ui#cron), which owns both keys in the editor.
 
 ```ts
 export default {
-  scheduledTasks: {
+  scheduledJobs: {
     "0 3 * * *": "cleanup",
     "0 0 * * 1": ["digest", "warm-cache"],
   },
-  tasks: { history: true, historyMaxRuns: 200 },
+  jobs: { history: true, historyMaxRuns: 200 },
 } satisfies DenextConfig;
 ```
 
@@ -596,7 +596,7 @@ can't drift.
 It describes the shape, not just the names: array `items` (so `redirects`,
 `rewrites`, `headers`, `images.remotePatterns` carry their rule schema),
 `additionalProperties` for a `Record` / index signature (the value schema of
-`scheduledTasks`, `features`), `anyOf` for a union of mappable members and a
+`scheduledJobs`, `features`), `anyOf` for a union of mappable members and a
 single `enum` for a union of literals, and `minimum` / `maximum` from explicit
 `@minimum` / `@maximum` tags where `config-validate.ts` enforces that exact
 bound. Two `x-denext` markers tell a form renderer what a plain array or object

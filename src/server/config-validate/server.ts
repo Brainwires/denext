@@ -266,25 +266,25 @@ export function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** The `TaskHistoryStore` methods a `tasks.history.store` must have. */
+/** The `JobHistoryStore` methods a `jobs.history.store` must have. */
 const HISTORY_STORE_METHODS = ["record", "read", "listRuns", "prune", "clear"] as const;
 
 /**
- * `tasks.historyMaxRuns` / `tasks.history.maxRuns` are finite whole numbers >= 1; `tasks.history`
- * is a boolean or `{ store?, maxRuns? }`, and a `store` has every `TaskHistoryStore` method.
+ * `jobs.historyMaxRuns` / `jobs.history.maxRuns` are finite whole numbers >= 1; `jobs.history`
+ * is a boolean or `{ store?, maxRuns? }`, and a `store` has every `JobHistoryStore` method.
  */
-export function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
-  if (tasks?.historyMaxRuns !== undefined) {
-    num(fail, "tasks.historyMaxRuns", tasks.historyMaxRuns, { int: true, min: 1 });
+export function validateJobs(jobs: DenextConfig["jobs"], fail: Fail): void {
+  if (jobs?.historyMaxRuns !== undefined) {
+    num(fail, "jobs.historyMaxRuns", jobs.historyMaxRuns, { int: true, min: 1 });
   }
-  const history: unknown = tasks?.history;
+  const history: unknown = jobs?.history;
   if (history === undefined || typeof history === "boolean") return;
   if (history === null || typeof history !== "object" || Array.isArray(history)) {
-    fail("tasks.history", "must be a boolean or { store?, maxRuns? }");
+    fail("jobs.history", "must be a boolean or { store?, maxRuns? }");
     return;
   }
   const { store, maxRuns } = history as { store?: unknown; maxRuns?: unknown };
-  if (maxRuns !== undefined) num(fail, "tasks.history.maxRuns", maxRuns, { int: true, min: 1 });
+  if (maxRuns !== undefined) num(fail, "jobs.history.maxRuns", maxRuns, { int: true, min: 1 });
   if (store === undefined) return;
   const missing = store !== null && typeof store === "object"
     ? HISTORY_STORE_METHODS.filter((m) =>
@@ -292,6 +292,6 @@ export function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
     )
     : HISTORY_STORE_METHODS;
   if (missing.length > 0) {
-    fail("tasks.history.store", `must be a TaskHistoryStore (missing ${missing.join(", ")})`);
+    fail("jobs.history.store", `must be a JobHistoryStore (missing ${missing.join(", ")})`);
   }
 }

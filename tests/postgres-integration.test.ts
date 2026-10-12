@@ -19,8 +19,8 @@ import { builtinSql, fromPostgresJs, type SqlClient } from "../src/server/postgr
 import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
 import { migratePostgres, postgresMigrationStatus } from "../src/server/postgres-migrate.ts";
 import { type Fresh, postgresSuites } from "./helpers/postgres-suites.ts";
-import { postgresTaskHistoryStore } from "../src/server/postgres-task-history.ts";
-import { taskHistorySuite } from "./helpers/task-history-suite.ts";
+import { postgresJobHistoryStore } from "../src/server/postgres-job-history.ts";
+import { jobHistorySuite } from "./helpers/job-history-suite.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const POSTGRES_JS = Deno.env.get("DENEXT_TEST_POSTGRES_JS") === "1";
@@ -81,15 +81,15 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
   });
 
   Deno.test({
-    name: `TaskHistoryStore contract on a real server via ${driver}${label}`,
+    name: `JobHistoryStore contract on a real server via ${driver}${label}`,
     ignore: reason !== undefined,
     async fn(t) {
       const sql = await connect(driver);
       const { fresh, drop } = schemas(sql);
       try {
-        await taskHistorySuite(t, async () => {
+        await jobHistorySuite(t, async () => {
           const { schema } = await fresh();
-          const store = postgresTaskHistoryStore({ sql, schema, maxRuns: 1000 });
+          const store = postgresJobHistoryStore({ sql, schema, maxRuns: 1000 });
           return { store, dispose: async () => await store.close?.() };
         });
       } finally {

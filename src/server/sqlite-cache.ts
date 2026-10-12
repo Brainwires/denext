@@ -80,7 +80,7 @@ interface PageRow {
 /**
  * Open node:sqlite at `path`, wrapped in the {@linkcode SqliteDb} these stores drive.
  *
- * Shared with the task-history store rather than copied: a second verbatim wrapper around the
+ * Shared with the job-history store rather than copied: a second verbatim wrapper around the
  * same handle is how two database layers quietly drift apart.
  *
  * @param path The database file, or `:memory:`.

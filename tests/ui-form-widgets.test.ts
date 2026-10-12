@@ -97,6 +97,8 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "commands[].run",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
     "i18n.messages",
+    // A job-history store: an object of methods, as opaque as `cache.store`.
+    "jobs.history.store",
     // The Live authorization callbacks.
     "live.authorize",
     "live.canJoinRoom",
@@ -113,8 +115,6 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "plugins[].setup",
     // The shell component's props: `Record<string, unknown>`, values opaque as `i18n.messages`'.
     "spa.shell.props",
-    // A task-history store: an object of methods, as opaque as `cache.store`.
-    "tasks.history.store",
   ]);
 });
 
@@ -131,8 +131,8 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     redirects: "list-of-forms",
     rewrites: "list-of-forms",
     headers: "list-of-forms",
-    scheduledTasks: "map",
-    tasks: "group",
+    scheduledJobs: "map",
+    jobs: "group",
     images: "group",
     tailwind: "group",
     mdx: "group",
@@ -262,7 +262,7 @@ Deno.test("every union field gets a discriminator picker with readable branch la
   assertEquals(labels("spa", "csp"), ["strict", "off", "object"]);
   assertEquals(labels("cache", "store"), ["sqlite", "memory", "object"]);
   assertEquals(labels("hsts"), ["object", "false"]);
-  assertEquals(labels("scheduledTasks", MAP_SEGMENT), ["string", "array"]);
+  assertEquals(labels("scheduledJobs", MAP_SEGMENT), ["string", "array"]);
 });
 
 Deno.test("a union branch is a widget of its own, rendered at the union's path", () => {
@@ -279,12 +279,12 @@ Deno.test("a union branch is a widget of its own, rendered at the union's path",
 });
 
 Deno.test("records become key/value maps, opaque ones stay read-only", () => {
-  assertEquals(kindAt("scheduledTasks"), "map");
+  assertEquals(kindAt("scheduledJobs"), "map");
   assertEquals(kindAt("features"), "map");
   assertEquals(kindAt("spa", "env"), "map");
   assertEquals(specAt("spa", "env").items?.kind, "text");
   assertEquals(specAt("features").items?.kind, "toggle");
-  assertEquals(specAt("scheduledTasks").items?.kind, "union");
+  assertEquals(specAt("scheduledJobs").items?.kind, "union");
   // A map carries no marker; with opaque values (`Record<string, unknown>`) it stays read-only.
   assertEquals(resolveAt(SCHEMA, ["i18n", "messages"])["x-denext"], undefined);
   assertEquals(kindAt("i18n", "messages"), "code");

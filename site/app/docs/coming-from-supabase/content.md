@@ -59,8 +59,8 @@ export default {
 | Edge Functions                                      | Route handlers (`app/api/<name>/route.ts`) and validated `defineApi` handlers; Server Actions for form mutations. [Typed API](/docs/typed-api)                                                                                      |
 | `supabase.functions.invoke()`, generated types      | `createApiClient()` / `useApi()`, typed from your route handlers. [Typed API](/docs/typed-api)                                                                                                                                      |
 | Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                                                              |
-| `pg_cron`, scheduled functions                      | `defineTask` in `tasks/` with a cron `schedule`. [Scheduled tasks](/docs/tasks)                                                                                                                                                     |
-| `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext task migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                                                        |
+| `pg_cron`, scheduled functions                      | `defineJob` in `jobs/` with a cron `schedule`. [Scheduled jobs](/docs/jobs)                                                                                                                                                         |
+| `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext job migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                                                         |
 | Studio (table editor, policies, storage, users)     | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                                                             |
 | Vault, project secrets                              | Environment variables (`Deno.env.get`), `.env` in development. [Environment](/docs/environment)                                                                                                                                     |
 
@@ -106,7 +106,7 @@ caller; denext skips those and lists them in a startup warning, and you name one
 (`rest.exactCount`). Without auto-REST, a query exists only where your server code wrote it, and
 the browser gets what a route handler, Server Action or Server Component chose to return. Every
 interpolated value is a bound parameter. `db()` reads who is asking at each query, so a
-module-level client is fine; outside a request (a task, a script) it runs as `anon`; act for a
+module-level client is fine; outside a request (a job, a script) it runs as `anon`; act for a
 user with `db({ as: { id: userId } })`, or as the server with `db.service()`.
 
 ### Signing in
@@ -165,7 +165,7 @@ const url = await storage.bucket("invoices").createSignedUrl(path, { expiresIn: 
 ```
 
 A bucket's rules are a function in `denext.config.ts` rather than SQL policies on
-`storage.objects`. Outside a request (a task, a script) there is no session to pass it, so code
+`storage.objects`. Outside a request (a job, a script) there is no session to pass it, so code
 there uses `storage.bucket("invoices", { service: true })` — the counterpart of Supabase's
 service-role key. The Supabase pattern of one folder per user becomes:
 
@@ -284,7 +284,7 @@ claims are set.
    foreign key that references `auth.users` (point it at `auth_users(id)` once auth's tables
    exist, step 5).
 4. **Restore** `schema.sql` then `data.sql` with `psql`. From here on, new schema changes are
-   `denext generate migration <name>` + `denext task migrate`.
+   `denext generate migration <name>` + `denext job migrate`.
 5. **Apply denext's own migrations.** They run on first use: auth's `auth_*` tables when
    `backendAuthAdapter()` first runs (recorded in `auth_migrations`), the RLS setup and realtime
    triggers when the backend first needs them (recorded in `backend_migrations`). Pass

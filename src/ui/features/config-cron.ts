@@ -1,19 +1,19 @@
-// `/config/cron` — the project's scheduled tasks: what is registered, when each next fires, and
+// `/config/cron` — the project's scheduled jobs: what is registered, when each next fires, and
 // an editor for the half that lives in config.
 //
 // A schedule comes from one of two places, and only one of them is editable here:
-//   * `denext.config.ts`'s `scheduledTasks` — DATA, spliced by the same comment-preserving
+//   * `denext.config.ts`'s `scheduledJobs` — DATA, spliced by the same comment-preserving
 //     writer `/config` uses, through the same diff-then-confirm and the same `_base` stale check.
-//   * a task file's own `schedule:` inside `defineTask({ … })` — CODE. Shown, never written:
+//   * a job file's own `schedule:` inside `defineJob({ … })` — CODE. Shown, never written:
 //     rewriting a TypeScript call expression is exactly what the config editor refuses to do.
 //
-// Discovery is ONE `deno` subprocess (`denext task --list --json`), never this process: listing
-// tasks means importing the project's task modules, which is project code. The child returns the
+// Discovery is ONE `deno` subprocess (`denext job --list --json`), never this process: listing
+// jobs means importing the project's job modules, which is project code. The child returns the
 // merged schedule `collectSchedules` computes — the same function the scheduler calls at boot —
 // so this page shows what will really fire rather than re-deriving the merge and drifting.
 //
-// Honesty about what will NOT fire is the point of the page: `scheduleTasks` silently skips an
-// entry whose cron is malformed or whose task is not defined (an error at boot, nothing more).
+// Honesty about what will NOT fire is the point of the page: `scheduleJobs` silently skips an
+// entry whose cron is malformed or whose job is not defined (an error at boot, nothing more).
 // Both are surfaced here as warnings against the row, because a schedule that looks live and
 // never runs is worse than no schedule at all.
 
@@ -57,12 +57,12 @@ import { parseJsonDocument } from "../child-json.ts";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import {
-  sqliteTaskHistoryStore,
-  TASK_HISTORY_DB,
-  type TaskHistory,
-  type TaskHistoryCleared,
-  type TaskHistoryRow,
-} from "../../server/task-history.ts";
+  JOB_HISTORY_DB,
+  type JobHistory,
+  type JobHistoryCleared,
+  type JobHistoryRow,
+  sqliteJobHistoryStore,
+} from "../../server/job-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
 import {
   readContained,
@@ -74,7 +74,7 @@ import {
 import { confirmed, postedField } from "./plugins.ts";
 
 /** Where the feature is documented. */
-const DOCS = "https://denext.dev/docs/tasks";
+const DOCS = "https://denext.dev/docs/jobs";
 
 /**
  * Why a form built against an older file is refused. Spelled once so the rendered refusal and the
@@ -113,7 +113,7 @@ const DEFAULT_PARTS: CronParts = {
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** The config key this panel edits. */
-const KEY = "scheduledTasks";
+const KEY = "scheduledJobs";
 
 /** What a project with no denext config gets created for it, so a first schedule can be written. */
 const EMPTY_CONFIG = "export default {\n};\n";
@@ -135,12 +135,12 @@ const INTENT_FIELD = "intent";
 /** Save whatever rows were posted (the ordinary submit). */
 const INTENT_SAVE = "save";
 
-/** Remove `scheduledTasks` outright — only ever from the button that says so. */
+/** Remove `scheduledJobs` outright — only ever from the button that says so. */
 const INTENT_CLEAR = "clear";
 
-/** Turn `tasks.history` on or off. A different key and a different value type from the
+/** Turn `jobs.history` on or off. A different key and a different value type from the
  * schedules above, so it takes its own path through `submit` rather than through
- * `proposed()`, whose Proposal is a `scheduledTasks` map. */
+ * `proposed()`, whose Proposal is a `scheduledJobs` map. */
 const INTENT_HISTORY = "history";
 
 /** Delete every recorded run. Touches no config: only rows go. */
@@ -161,23 +161,23 @@ const LIST_TTL_MS = 5000;
 /** How far ahead {@linkcode nextRuns} looks before reporting that nothing fires. */
 const HORIZON_MINUTES = 366 * 24 * 60;
 
-/** One task, as `denext task --list --json` describes it. */
-interface TaskInfo {
+/** One job, as `denext job --list --json` describes it. */
+interface JobInfo {
   readonly name: string;
   readonly description?: string;
-  /** The cron expression(s) the task file itself declares. */
+  /** The cron expression(s) the job file itself declares. */
   readonly schedule?: readonly string[];
 }
 
-/** One (cron, task) pairing the scheduler will register. */
+/** One (cron, job) pairing the scheduler will register. */
 interface ScheduledEntry {
   readonly cron: string;
-  readonly task: string;
+  readonly job: string;
 }
 
 /** The document the discovery child prints. */
-interface TaskListing {
-  readonly tasks?: readonly TaskInfo[];
+interface JobListing {
+  readonly jobs?: readonly JobInfo[];
   readonly schedules?: readonly ScheduledEntry[];
   readonly configScheduled?: Record<string, string | string[]>;
   readonly denoCron?: boolean;
@@ -185,23 +185,23 @@ interface TaskListing {
   readonly historyStore?: "default" | "custom";
 }
 
-/** What one request knows about this project's tasks. */
+/** What one request knows about this project's jobs. */
 interface CronState {
-  readonly tasks: readonly TaskInfo[];
+  readonly jobs: readonly JobInfo[];
   readonly schedules: readonly ScheduledEntry[];
   readonly configScheduled: Record<string, string | string[]>;
   /** Whether the runtime schedules through `Deno.cron` rather than the userland tick. */
   readonly denoCron: boolean;
   /**
-   * Whether `tasks.history` is on, as the discovery child RESOLVED it. This panel cannot evaluate
+   * Whether `jobs.history` is on, as the discovery child RESOLVED it. This panel cannot evaluate
    * `denext.config.ts` — it reads the source as text — so the answer comes from the same loader
    * the server uses rather than from parsing a boolean out of TypeScript.
    */
   readonly history: boolean;
   /**
-   * Whose store keeps the history: the default `.denext/tasks.db`, which this process reads
-   * through `sqliteTaskHistoryStore`, or the app's own (`tasks: { history: { store } }`) — project
-   * code, so it is read and cleared through `denext task --history` / `--clear-history` children.
+   * Whose store keeps the history: the default `.denext/jobs.db`, which this process reads
+   * through `sqliteJobHistoryStore`, or the app's own (`jobs: { history: { store } }`) — project
+   * code, so it is read and cleared through `denext job --history` / `--clear-history` children.
    */
   readonly historyStore: "default" | "custom";
   /** Why the listing is empty or incomplete, when it is. */
@@ -213,7 +213,7 @@ interface CronState {
   /** The SHA-256 of that source — the `_base` stamp every form carries. */
   readonly base: string;
   /**
-   * The run-history database, contained in the project — or `null` when `.denext/tasks.db` (or
+   * The run-history database, contained in the project — or `null` when `.denext/jobs.db` (or
    * `.denext` itself) is a symlink resolving outside it, in which case the panel neither reads
    * nor clears it. See {@linkcode historyPath}.
    */
@@ -222,7 +222,7 @@ interface CronState {
    * The history, read once per request through the store — `null` when history is off, or when
    * the default database resolves outside the project (see {@linkcode historyPath}).
    */
-  readonly historyRead: TaskHistory | null;
+  readonly historyRead: JobHistory | null;
 }
 
 /** The denext config as this panel reads it: its name, its bytes, and its stamp. */
@@ -235,7 +235,7 @@ interface ConfigFile {
 /**
  * Read the project's denext config.
  *
- * Deliberately NOT cached alongside the task listing: the listing is a subprocess result worth
+ * Deliberately NOT cached alongside the job listing: the listing is a subprocess result worth
  * reusing for a few seconds, but the source and its stamp decide whether a write is refused as
  * stale. A cached stamp would make that check a formality.
  */
@@ -247,25 +247,25 @@ async function readConfigFile(dir: string): Promise<ConfigFile> {
   return { configName: CONFIG_FILES[0], source: "", base: await stampOf("") };
 }
 
-/** The config's schedules as editable rows: an array value becomes one row per task. */
+/** The config's schedules as editable rows: an array value becomes one row per job. */
 function configRows(
   configScheduled: Record<string, string | string[]>,
-): Array<{ cron: string; task: string }> {
-  const rows: Array<{ cron: string; task: string }> = [];
+): Array<{ cron: string; job: string }> {
+  const rows: Array<{ cron: string; job: string }> = [];
   for (const [cron, value] of Object.entries(configScheduled)) {
-    for (const task of Array.isArray(value) ? value : [value]) rows.push({ cron, task });
+    for (const job of Array.isArray(value) ? value : [value]) rows.push({ cron, job });
   }
   return rows;
 }
 
-/** Rows back into the config's shape: one task stays a string, several become an array. */
-function toScheduledTasks(
-  rows: readonly { cron: string; task: string }[],
+/** Rows back into the config's shape: one job stays a string, several become an array. */
+function toScheduledJobs(
+  rows: readonly { cron: string; job: string }[],
 ): Record<string, string | string[]> {
   const out: Record<string, string[]> = {};
-  for (const { cron, task } of rows) {
+  for (const { cron, job } of rows) {
     const list = out[cron] ??= [];
-    if (!list.includes(task)) list.push(task);
+    if (!list.includes(job)) list.push(job);
   }
   return Object.fromEntries(
     Object.entries(out).map(([cron, list]) => [cron, list.length === 1 ? list[0] : list]),
@@ -295,8 +295,8 @@ export function setCronDiscoveryBudget(ms: number): number {
 }
 
 /** The child's listing, or `null` when it printed nothing parsable. */
-function parseTaskListing(output: string): TaskListing | null {
-  return parseJsonDocument<TaskListing>(output);
+function parseJobListing(output: string): JobListing | null {
+  return parseJsonDocument<JobListing>(output);
 }
 
 /** Terminal colour and cursor sequences, which a child's error line may carry. */
@@ -331,7 +331,7 @@ type Listing = Omit<CronState, "configName" | "source" | "base" | "historyDb" | 
 /** An empty listing carrying the reason discovery produced nothing. */
 function empty(error?: string): Listing {
   return {
-    tasks: [],
+    jobs: [],
     schedules: [],
     configScheduled: {},
     denoCron: false,
@@ -342,7 +342,7 @@ function empty(error?: string): Listing {
 }
 
 /**
- * Spawn `denext task --list --json` and read the listing back. Never rejects. Under `offline`
+ * Spawn `denext job --list --json` and read the listing back. Never rejects. Under `offline`
  * the child also gets `--deny-run`: it evaluates the project's config, and a config that spawns
  * would otherwise reach the network through a grandchild `--deny-net` never sees.
  */
@@ -350,7 +350,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
   const lines: string[] = [];
   const argv = [
     ...cliInvocation({ offline, dir, denyRun: true }),
-    "task",
+    "job",
     "--list",
     "--json",
     "--cwd",
@@ -363,17 +363,17 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
       signal: AbortSignal.timeout(discoveryBudgetMs),
     });
   } catch {
-    return empty("the task listing did not finish — tasks and schedules are not shown");
+    return empty("the job listing did not finish — jobs and schedules are not shown");
   }
-  const listing = parseTaskListing(lines.join("\n"));
+  const listing = parseJobListing(lines.join("\n"));
   if (!listing) {
     const why = lastMeaningful(lines);
     return empty(
-      why === null ? "denext task --list printed no listing" : `denext task --list failed: ${why}`,
+      why === null ? "denext job --list printed no listing" : `denext job --list failed: ${why}`,
     );
   }
   return {
-    tasks: listing.tasks ?? [],
+    jobs: listing.jobs ?? [],
     schedules: listing.schedules ?? [],
     configScheduled: listing.configScheduled ?? {},
     denoCron: listing.denoCron === true,
@@ -383,7 +383,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
 }
 
 /**
- * This project's tasks and schedules. Overlapping requests share one child, and a successful
+ * This project's jobs and schedules. Overlapping requests share one child, and a successful
  * listing is reused briefly; a failure is never cached.
  *
  * The config is read FIRST, because the listing is only reusable for the file it was computed
@@ -466,7 +466,7 @@ const HISTORY_WINDOW_DAYS = 7;
  * already reads.
  *
  * Joined through the same containment gate as that source (`uiSafeJoin`): a `.denext` or a
- * `tasks.db` symlinked out of the project is not opened — not for the read, and not for the
+ * `jobs.db` symlinked out of the project is not opened — not for the read, and not for the
  * `DELETE` behind Clear history — because a database is opened by path, and node:sqlite
  * follows the link.
  *
@@ -475,26 +475,26 @@ const HISTORY_WINDOW_DAYS = 7;
  */
 async function historyPath(dir: string): Promise<string | null> {
   try {
-    return await uiSafeJoin(dir, join(".denext", TASK_HISTORY_DB));
+    return await uiSafeJoin(dir, join(".denext", JOB_HISTORY_DB));
   } catch {
     return null;
   }
 }
 
 /** What the panel says about a history database it will not open. */
-const HISTORY_ESCAPED = `.denext/${TASK_HISTORY_DB} resolves outside the project — the UI does ` +
+const HISTORY_ESCAPED = `.denext/${JOB_HISTORY_DB} resolves outside the project — the UI does ` +
   "not follow it";
 
-/** How long a `denext task --history` / `--clear-history` child may take. */
+/** How long a `denext job --history` / `--clear-history` child may take. */
 const HISTORY_CHILD_BUDGET_MS = 15_000;
 
 /** A read that produced nothing, saying why. */
-function unavailable(reason: string): TaskHistory {
-  return { available: false, reason, windowDays: HISTORY_WINDOW_DAYS, tasks: [], recent: [] };
+function unavailable(reason: string): JobHistory {
+  return { available: false, reason, windowDays: HISTORY_WINDOW_DAYS, jobs: [], recent: [] };
 }
 
 /**
- * Run `denext task --history --json` (or `--clear-history`) in the project — a custom store is
+ * Run `denext job --history --json` (or `--clear-history`) in the project — a custom store is
  * project code, which never runs in this process — and return the document it printed, or the
  * reason it printed none. Same invocation rules as discovery (`--deny-run`, offline flags).
  */
@@ -507,7 +507,7 @@ async function historyChild(
   const lines: string[] = [];
   const argv = [
     ...cliInvocation({ offline, dir, denyRun: true }),
-    "task",
+    "job",
     flag,
     ...(readOnly ? ["--read-only"] : []),
     "--json",
@@ -521,14 +521,12 @@ async function historyChild(
       signal: AbortSignal.timeout(HISTORY_CHILD_BUDGET_MS),
     });
   } catch {
-    return `denext task ${flag} did not finish`;
+    return `denext job ${flag} did not finish`;
   }
   const doc = parseJsonDocument<Record<string, unknown>>(lines.join("\n"));
   if (doc && typeof doc === "object") return doc;
   const why = lastMeaningful(lines);
-  return why === null
-    ? `denext task ${flag} printed nothing`
-    : `denext task ${flag} failed: ${why}`;
+  return why === null ? `denext job ${flag} printed nothing` : `denext job ${flag} failed: ${why}`;
 }
 
 /**
@@ -545,7 +543,7 @@ async function readHistory(
   where: { dir: string; offline: boolean; readOnly: boolean },
   listing: Listing,
   historyDb: string | null,
-): Promise<TaskHistory | null> {
+): Promise<JobHistory | null> {
   // Off: there is nothing to read, and opening the file would be the UI creating state the app
   // never asked for.
   if (!listing.history) return null;
@@ -556,18 +554,18 @@ async function readHistory(
       available: doc.available === true,
       ...(typeof doc.reason === "string" ? { reason: doc.reason } : {}),
       windowDays: typeof doc.windowDays === "number" ? doc.windowDays : HISTORY_WINDOW_DAYS,
-      tasks: Array.isArray(doc.tasks) ? doc.tasks as TaskHistory["tasks"] : [],
-      recent: Array.isArray(doc.recent) ? doc.recent as TaskHistory["recent"] : [],
+      jobs: Array.isArray(doc.jobs) ? doc.jobs as JobHistory["jobs"] : [],
+      recent: Array.isArray(doc.recent) ? doc.recent as JobHistory["recent"] : [],
     };
   }
   if (historyDb === null) return null;
-  return await sqliteTaskHistoryStore({ path: historyDb }).read({
+  return await sqliteJobHistoryStore({ path: historyDb }).read({
     windowDays: HISTORY_WINDOW_DAYS,
   });
 }
 
 /** Clear the history through its store: in-process for the default file, a child otherwise. */
-async function clearHistory(ctx: UiContext, state: CronState): Promise<TaskHistoryCleared> {
+async function clearHistory(ctx: UiContext, state: CronState): Promise<JobHistoryCleared> {
   if (state.historyStore === "custom") {
     const doc = await historyChild(ctx.dir, ctx.offline === true, "--clear-history");
     if (typeof doc === "string") return { cleared: false, reason: doc };
@@ -576,7 +574,7 @@ async function clearHistory(ctx: UiContext, state: CronState): Promise<TaskHisto
       : { cleared: false, reason: typeof doc.reason === "string" ? doc.reason : "not cleared" };
   }
   if (state.historyDb === null) return { cleared: false, reason: HISTORY_ESCAPED };
-  return await sqliteTaskHistoryStore({ path: state.historyDb }).clear();
+  return await sqliteJobHistoryStore({ path: state.historyDb }).clear();
 }
 
 /**
@@ -601,7 +599,7 @@ function historyPayload(state: CronState): Record<string, unknown> {
     available: read.available,
     ...(read.reason === undefined ? {} : { reason: read.reason }),
     windowDays: read.windowDays,
-    tasks: read.tasks,
+    jobs: read.jobs,
     recent: read.recent,
   };
 }
@@ -634,7 +632,7 @@ function History(
         : `Enabled, but the history could not be read: ${read.reason ?? "unknown reason"}.`,
     );
   }
-  if (read.tasks.length === 0) {
+  if (read.jobs.length === 0) {
     return h("p", { class: "lead" }, `No runs in the last ${read.windowDays} days.`);
   }
   return h(
@@ -647,7 +645,7 @@ function History(
       ? h(
         Note,
         null,
-        "History is kept by the store your denext config passes as tasks.history.store.",
+        "History is kept by the store your denext config passes as jobs.history.store.",
       )
       : h(HistoryToggle, { ctx, state, on: false }),
     h(OpForm, {
@@ -661,15 +659,15 @@ function History(
   );
 }
 
-/** The table of per-task standing. */
-function HistoryTable({ read }: { readonly read: TaskHistory }): VNode {
+/** The table of per-job standing. */
+function HistoryTable({ read }: { readonly read: JobHistory }): VNode {
   return h(Table, {
-    head: ["Task", "Last run (UTC)", "Last result", "Succeeded", "Failed", "Retries"],
-    rows: read.tasks.map((row) =>
+    head: ["Job", "Last run (UTC)", "Last result", "Succeeded", "Failed", "Retries"],
+    rows: read.jobs.map((row) =>
       h(
         "tr",
-        { key: row.task },
-        h("td", null, h(Mono, null, row.task)),
+        { key: row.job },
+        h("td", null, h(Mono, null, row.job)),
         h("td", null, atUtc(row.lastRunAt)),
         h(
           "td",
@@ -695,10 +693,10 @@ function HistoryOff(
     h(
       "p",
       { class: "lead" },
-      "Run history is off, so nothing records what these tasks did. Turning it on writes ",
-      h(Mono, null, "tasks: { history: true }"),
+      "Run history is off, so nothing records what these jobs did. Turning it on writes ",
+      h(Mono, null, "jobs: { history: true }"),
       " to your denext config and records every run — scheduled and manual — to ",
-      h(Mono, null, ".denext/tasks.db"),
+      h(Mono, null, ".denext/jobs.db"),
       ". It takes effect the next time the app starts.",
     ),
     h(HistoryToggle, { ctx, state, on: true }),
@@ -727,20 +725,20 @@ function HistoryToggle(
 }
 
 /** Why the scheduler will skip this entry, or null when it will register it. */
-function skipReason(entry: ScheduledEntry, tasks: readonly TaskInfo[]): string | null {
+function skipReason(entry: ScheduledEntry, jobs: readonly JobInfo[]): string | null {
   const bad = cronError(entry.cron);
   if (bad !== null) return bad;
-  if (!tasks.some((task) => task.name === entry.task)) {
-    return `no task named "${entry.task}" — this schedule is skipped at startup`;
+  if (!jobs.some((job) => job.name === entry.job)) {
+    return `no job named "${entry.job}" — this schedule is skipped at startup`;
   }
   return null;
 }
 
-/** Whether a cron expression came from the config (editable) rather than a task file (code). */
+/** Whether a cron expression came from the config (editable) rather than a job file (code). */
 function fromConfig(entry: ScheduledEntry, configScheduled: Record<string, string | string[]>) {
   const named = configScheduled[entry.cron];
   if (named === undefined) return false;
-  return Array.isArray(named) ? named.includes(entry.task) : named === entry.task;
+  return Array.isArray(named) ? named.includes(entry.job) : named === entry.job;
 }
 
 // ── the views ────────────────────────────────────────────────────────────────
@@ -750,10 +748,10 @@ function ScheduleRow(
   { entry, state, standing }: {
     readonly entry: ScheduledEntry;
     readonly state: CronState;
-    readonly standing: Map<string, TaskHistoryRow> | null;
+    readonly standing: Map<string, JobHistoryRow> | null;
   },
 ): VNode {
-  const skip = skipReason(entry, state.tasks);
+  const skip = skipReason(entry, state.jobs);
   const editable = fromConfig(entry, state.configScheduled);
   const upcoming = skip === null ? nextRuns(entry.cron, 2) : [];
   const said = describeCron(entry.cron);
@@ -766,7 +764,7 @@ function ScheduleRow(
       h(Mono, null, entry.cron),
       said === null ? null : h("div", { class: "lead flush-sm" }, said),
     ),
-    h("td", null, h(Mono, null, entry.task)),
+    h("td", null, h(Mono, null, entry.job)),
     h(
       "td",
       null,
@@ -783,18 +781,18 @@ function ScheduleRow(
         ? "no run in the next year"
         : upcoming.join(", "),
     ),
-    standing === null ? null : h(LastResult, { row: standing.get(entry.task) }),
+    standing === null ? null : h(LastResult, { row: standing.get(entry.job) }),
   );
 }
 
 /**
- * One task's last result. Absent history is not a failure — it means the task has not run inside
+ * One job's last result. Absent history is not a failure — it means the job has not run inside
  * the window, which is a different thing from having failed, and the cell says so.
  *
- * @param props `row`: that task's standing, when it has one.
+ * @param props `row`: that job's standing, when it has one.
  * @returns The cell.
  */
-function LastResult({ row }: { readonly row: TaskHistoryRow | undefined }): VNode {
+function LastResult({ row }: { readonly row: JobHistoryRow | undefined }): VNode {
   if (row === undefined) return h("td", null, h("span", { class: "lead" }, "not yet"));
   return h(
     "td",
@@ -805,27 +803,27 @@ function LastResult({ row }: { readonly row: TaskHistoryRow | undefined }): VNod
 }
 
 /**
- * Each task's last result, keyed by task name — or `null` when there is no history to show.
+ * Each job's last result, keyed by job name — or `null` when there is no history to show.
  *
  * Read once here and handed down. A row that fetched its own would open the database once per
- * schedule, and the answer is per TASK anyway: a task scheduled under two expressions has one
+ * schedule, and the answer is per JOB anyway: a job scheduled under two expressions has one
  * history, shown twice.
  *
  * @param state The panel state.
  * @returns The lookup, or `null` when history is off or unreadable.
  */
-function standingOf(state: CronState): Map<string, TaskHistoryRow> | null {
+function standingOf(state: CronState): Map<string, JobHistoryRow> | null {
   if (!state.history) return null;
   const read = state.historyRead;
   if (read === null || !read.available) return null;
-  return new Map(read.tasks.map((row) => [row.task, row]));
+  return new Map(read.jobs.map((row) => [row.job, row]));
 }
 
 /** The schedule table, or an empty state that names the next action. */
 function Schedules(
   { state, standing }: {
     readonly state: CronState;
-    readonly standing: Map<string, TaskHistoryRow> | null;
+    readonly standing: Map<string, JobHistoryRow> | null;
   },
 ): VNode {
   if (state.schedules.length === 0) {
@@ -833,52 +831,50 @@ function Schedules(
       "p",
       { class: "lead" },
       "Nothing is scheduled. Add a ",
-      h(Mono, null, "scheduledTasks"),
-      " entry below, or give a task its own ",
+      h(Mono, null, "scheduledJobs"),
+      " entry below, or give a job its own ",
       h(Mono, null, "schedule"),
       " in its ",
-      h(Mono, null, "tasks/"),
+      h(Mono, null, "jobs/"),
       " file.",
     );
   }
-  const head = ["When (UTC)", "Task", "Source", "Next runs"];
+  const head = ["When (UTC)", "Job", "Source", "Next runs"];
   return h(Table, {
     head: standing === null ? head : [...head, "Last result"],
     rows: state.schedules.map((entry) =>
-      h(ScheduleRow, { key: `${entry.task} ${entry.cron}`, entry, state, standing })
+      h(ScheduleRow, { key: `${entry.job} ${entry.cron}`, entry, state, standing })
     ),
   });
 }
 
-/** Every discovered task, with the schedules its own file declares. */
-function Tasks({ state }: { readonly state: CronState }): VNode {
-  if (state.tasks.length === 0) {
+/** Every discovered job, with the schedules its own file declares. */
+function Jobs({ state }: { readonly state: CronState }): VNode {
+  if (state.jobs.length === 0) {
     return h(
       "p",
       { class: "lead" },
-      "No tasks found. Add ",
-      h(Mono, null, "tasks/<name>.ts"),
+      "No jobs found. Add ",
+      h(Mono, null, "jobs/<name>.ts"),
       " exporting ",
-      h(Mono, null, "defineTask({ … })"),
+      h(Mono, null, "defineJob({ … })"),
       " — or scaffold one with ",
-      h(Mono, null, "denext generate task <name>"),
+      h(Mono, null, "denext generate job <name>"),
       ".",
     );
   }
   return h(Table, {
-    head: ["Task", "Description", "Its own schedule"],
-    rows: state.tasks.map((task) =>
+    head: ["Job", "Description", "Its own schedule"],
+    rows: state.jobs.map((job) =>
       h(
         "tr",
-        { key: task.name },
-        h("td", null, h(Mono, null, task.name)),
-        h("td", null, task.description ?? ""),
+        { key: job.name },
+        h("td", null, h(Mono, null, job.name)),
+        h("td", null, job.description ?? ""),
         h(
           "td",
           null,
-          (task.schedule ?? []).length === 0
-            ? "—"
-            : h(Mono, null, (task.schedule ?? []).join(", ")),
+          (job.schedule ?? []).length === 0 ? "—" : h(Mono, null, (job.schedule ?? []).join(", ")),
         ),
       )
     ),
@@ -921,19 +917,19 @@ function CronPanel(
       "p",
       { class: "lead" },
       "The cron schedules this project registers at server startup — from ",
-      h(Mono, null, "scheduledTasks"),
-      " in your denext config, and from each task's own ",
+      h(Mono, null, "scheduledJobs"),
+      " in your denext config, and from each job's own ",
       h(Mono, null, "schedule"),
       ". Times are UTC, which is what both schedulers use. ",
-      h("a", { href: DOCS }, "Scheduled tasks ↗"),
+      h("a", { href: DOCS }, "Scheduled jobs ↗"),
     ),
     state.error === undefined ? null : h(Note, { role: "alert" }, `denext ui: ${state.error}`),
     notice ?? null,
     h(SchedulerNote, { state }),
     h("h2", null, "Schedule"),
     h(Schedules, { state, standing: standingOf(state) }),
-    h("h2", null, "Scheduled tasks"),
-    h(Tasks, { state }),
+    h("h2", null, "Scheduled jobs"),
+    h(Jobs, { state }),
     state.error === undefined ? h("h2", null, "Run history") : null,
     state.error === undefined ? h(History, { ctx, state }) : null,
     // A pending change replaces the editor with its diff: reviewing and editing at once would
@@ -1110,29 +1106,29 @@ function ScheduleBuilder({ parts }: { readonly parts: CronParts }): VNode {
   );
 }
 
-/** A task picker, or a plain text field when discovery found no tasks to pick from. */
-function TaskField(
+/** A job picker, or a plain text field when discovery found no jobs to pick from. */
+function JobField(
   { id, value, names, label }: {
     readonly id: string;
     readonly value: string;
     readonly names: readonly string[];
-    /** The accessible name — which row this is, and that it is the task. */
+    /** The accessible name — which row this is, and that it is the job. */
     readonly label: string;
   },
 ): VNode {
   if (names.length === 0) {
-    return h(Input, { id, name: "task", value, ariaLabel: label });
+    return h(Input, { id, name: "job", value, ariaLabel: label });
   }
-  // The current value is offered even when it names no task, so an entry that already points at
-  // a missing task is editable rather than silently rewritten to something else on save.
+  // The current value is offered even when it names no job, so an entry that already points at
+  // a missing job is editable rather than silently rewritten to something else on save.
   const options = names.includes(value) || value === "" ? names : [value, ...names];
   return h(
     "select",
-    { id, name: "task", "aria-label": label },
+    { id, name: "job", "aria-label": label },
     // The add row starts on a blank choice. A `<select>` always posts SOMETHING — with no blank
-    // option a browser posts the first task's name for the untouched add row, and every save
-    // was then refused as "<task> has no cron expression", whichever row was actually edited.
-    value === "" ? h("option", { value: "", selected: true }, "— choose a task —") : null,
+    // option a browser posts the first job's name for the untouched add row, and every save
+    // was then refused as "<job> has no cron expression", whichever row was actually edited.
+    value === "" ? h("option", { value: "", selected: true }, "— choose a job —") : null,
     options.map((name) => h("option", { key: name, value: name, selected: name === value }, name)),
   );
 }
@@ -1145,17 +1141,17 @@ function TaskField(
 const EXPR_PLACEHOLDER = "m h dom mon dow";
 
 /**
- * One editable row: the expression, the task it runs, and — for a schedule the file has — a
- * checkbox that drops it. Each control carries a visible caption (`Expression (UTC)`, `Task`),
+ * One editable row: the expression, the job it runs, and — for a schedule the file has — a
+ * checkbox that drops it. Each control carries a visible caption (`Expression (UTC)`, `Job`),
  * and its accessible name says which row it belongs to, so a screen reader hears "Schedule 2
- * task" rather than three unlabelled fields per row. The add row has no remove box: there is
+ * job" rather than three unlabelled fields per row. The add row has no remove box: there is
  * nothing to remove, and a checkbox there read as if the blank row were already a schedule.
  */
 function ScheduleFields(
-  { index, cron, task, names, adding }: {
+  { index, cron, job, names, adding }: {
     readonly index: number;
     readonly cron: string;
-    readonly task: string;
+    readonly job: string;
     readonly names: readonly string[];
     /** The blank row that adds a schedule, rather than one the config declares. */
     readonly adding?: boolean;
@@ -1184,9 +1180,9 @@ function ScheduleFields(
       ),
       h(
         "label",
-        { class: "builder-field", for: `${id}-task` },
-        "Task",
-        h(TaskField, { id: `${id}-task`, value: task, names, label: `${which} task` }),
+        { class: "builder-field", for: `${id}-job` },
+        "Job",
+        h(JobField, { id: `${id}-job`, value: job, names, label: `${which} job` }),
       ),
       adding ? null : h(
         "label",
@@ -1259,13 +1255,13 @@ export const cronPreviewPanel: UiHandler = (_request, ctx) => {
  * another. The whole map is rebuilt from what is posted, so editing an expression in place is an
  * edit rather than an add-and-orphan.
  *
- * A task's own `schedule` is not here — it lives in a `defineTask({ … })` call, and the UI does
+ * A job's own `schedule` is not here — it lives in a `defineJob({ … })` call, and the UI does
  * not rewrite code. Those rows are in the table above, marked `in code`.
  */
 function ScheduleEditor(
   { ctx, state }: { readonly ctx: UiContext; readonly state: CronState },
 ): VNode {
-  const names = state.tasks.map((task) => task.name);
+  const names = state.jobs.map((job) => job.name);
   const rows = configRows(state.configScheduled);
   const draft = draftExpression(ctx);
   return h(
@@ -1286,10 +1282,10 @@ function ScheduleEditor(
       h(Hidden, { name: BASE_FIELD, value: state.base }),
       rows.map((row, index) =>
         h(ScheduleFields, {
-          key: `${row.cron}:${row.task}:${index}`,
+          key: `${row.cron}:${row.job}:${index}`,
           index,
           cron: row.cron,
-          task: row.task,
+          job: row.job,
           names,
         })
       ),
@@ -1297,7 +1293,7 @@ function ScheduleEditor(
         key: "new",
         index: rows.length,
         cron: draft,
-        task: "",
+        job: "",
         names,
         adding: true,
       }),
@@ -1365,11 +1361,11 @@ const panelResponse = panelResponder("Cron", "/config/cron");
 /** The machine view (the `/api/config/cron` payload). */
 function payload(state: CronState): Record<string, unknown> {
   return {
-    tasks: state.tasks,
+    jobs: state.jobs,
     schedules: state.schedules.map((entry) => ({
       ...entry,
-      source: fromConfig(entry, state.configScheduled) ? "config" : "task",
-      skipped: skipReason(entry, state.tasks),
+      source: fromConfig(entry, state.configScheduled) ? "config" : "job",
+      skipped: skipReason(entry, state.jobs),
       next: nextRuns(entry.cron, 2),
     })),
     configScheduled: state.configScheduled,
@@ -1380,8 +1376,8 @@ function payload(state: CronState): Record<string, unknown> {
 }
 
 /**
- * Serve the cron panel: the registered schedule, the discovered tasks, and a form that adds a
- * `scheduledTasks` entry through the config writer's ordinary diff-then-confirm.
+ * Serve the cron panel: the registered schedule, the discovered jobs, and a form that adds a
+ * `scheduledJobs` entry through the config writer's ordinary diff-then-confirm.
  *
  * @param _request The incoming request.
  * @param ctx The kernel's request context.
@@ -1412,7 +1408,7 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
       `Saved ${state.configName}.`,
       toggled === null ? null : ` Run history is ${toggled === "on" ? "on" : "off"} from the ` +
         "next time the app starts — the recorder is installed at server boot, and the dev " +
-        "server does not re-run task boot on reload.",
+        "server does not re-run job boot on reload.",
     )
     : undefined;
   return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, notice })));
@@ -1461,7 +1457,7 @@ function staleBase(ctx: UiContext, state: CronState): Response | null {
  * The confirmed write itself: atomic, contained, and refused when the file moved underneath it.
  *
  * Returns `null` on success so each caller keeps its own answer — the schedules report
- * `scheduledTasks`, the toggle reports `history` and redirects elsewhere. Only the failure
+ * `scheduledJobs`, the toggle reports `history` and redirects elsewhere. Only the failure
  * modes, and the cache clear they both need, live here.
  *
  * @param ctx The request context.
@@ -1534,36 +1530,36 @@ function readAll(ctx: UiContext, name: string): string[] {
 }
 
 /**
- * The rows a submit proposes: the parallel `cron`/`task` fields, minus the ones ticked for
+ * The rows a submit proposes: the parallel `cron`/`job` fields, minus the ones ticked for
  * removal and the blank one the add row posts when it is left alone.
  */
-function postedRows(ctx: UiContext): Array<{ cron: string; task: string }> {
+function postedRows(ctx: UiContext): Array<{ cron: string; job: string }> {
   const crons = readAll(ctx, "cron");
-  const tasks = readAll(ctx, "task");
-  const rows: Array<{ cron: string; task: string }> = [];
+  const jobs = readAll(ctx, "job");
+  const rows: Array<{ cron: string; job: string }> = [];
   for (let i = 0; i < crons.length; i++) {
     if (postedField(ctx, `drop.${i}`) === "on") continue;
     const cron = (crons[i] ?? "").trim();
-    const task = (tasks[i] ?? "").trim();
-    if (cron === "" && task === "") continue; // the untouched add row
-    rows.push({ cron, task });
+    const job = (jobs[i] ?? "").trim();
+    if (cron === "" && job === "") continue; // the untouched add row
+    rows.push({ cron, job });
   }
   return rows;
 }
 
 /** The first thing wrong with the proposed rows, or null when every one is writable. */
 function rowProblem(
-  rows: readonly { cron: string; task: string }[],
+  rows: readonly { cron: string; job: string }[],
   names: readonly string[],
 ): string | null {
-  for (const { cron, task } of rows) {
-    if (cron === "") return `"${task}" has no cron expression`;
+  for (const { cron, job } of rows) {
+    if (cron === "") return `"${job}" has no cron expression`;
     const bad = cronError(cron);
     if (bad !== null) return bad;
-    if (task === "") return `"${cron}" names no task`;
+    if (job === "") return `"${cron}" names no job`;
     // An unknown name is refused rather than written: the scheduler would skip it at boot, and
     // writing a schedule that can never fire is not a service to anyone.
-    if (names.length > 0 && !names.includes(task)) return `no task named "${task}"`;
+    if (names.length > 0 && !names.includes(job)) return `no job named "${job}"`;
   }
   return null;
 }
@@ -1603,10 +1599,10 @@ function carriedValue(carried: string): Proposal {
   }
 }
 
-/** The value the editor's rows propose, validated against the tasks that exist. */
+/** The value the editor's rows propose, validated against the jobs that exist. */
 function rowValue(ctx: UiContext, state: CronState): Proposal {
   const rows = postedRows(ctx);
-  const problem = rowProblem(rows, state.tasks.map((task) => task.name));
+  const problem = rowProblem(rows, state.jobs.map((job) => job.name));
   if (problem !== null) return { no: { reason: problem, status: 422 } };
   // An empty form is not a request to delete everything: a dropped field or a stale tab would
   // otherwise wipe the key. Removing them all is its own button.
@@ -1619,7 +1615,7 @@ function rowValue(ctx: UiContext, state: CronState): Proposal {
       },
     };
   }
-  return { value: toScheduledTasks(rows) };
+  return { value: toScheduledJobs(rows) };
 }
 
 /** What this POST proposes to write: its stamp checked, its intent named, its value read. */
@@ -1647,7 +1643,7 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   const invalid = validationProblem(value, state.configName);
   if (invalid !== null) return refuse(ctx, state, invalid, 422);
 
-  // An empty map means "no schedules": remove the key rather than leave `scheduledTasks: {}`.
+  // An empty map means "no schedules": remove the key rather than leave `scheduledJobs: {}`.
   const from = state.source === "" ? EMPTY_CONFIG : state.source;
   const edit = Object.keys(value).length === 0
     ? await deleteConfigValue(from, [KEY])
@@ -1655,7 +1651,7 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   if (!edit.ok) return refuse(ctx, state, edit.reason, 422);
 
   if (ctx.json && !confirmed(ctx)) {
-    return jsonResponse({ ok: true, applied: false, diff: edit.diff, scheduledTasks: value });
+    return jsonResponse({ ok: true, applied: false, diff: edit.diff, scheduledJobs: value });
   }
   const review = previewOr(ctx, state, edit.diff, {
     [VALUE_FIELD]: JSON.stringify(value),
@@ -1666,15 +1662,15 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   const refused = await applyWrite(ctx, state, edit.source);
   if (refused) return refused;
   if (ctx.json) {
-    return jsonResponse({ ok: true, applied: true, diff: edit.diff, scheduledTasks: value });
+    return jsonResponse({ ok: true, applied: true, diff: edit.diff, scheduledJobs: value });
   }
   return new Response(null, { status: 303, headers: { location: "/config/cron?saved=1" } });
 }
 
 /**
- * Turn `tasks.history` on or off: the same diff-then-confirm the schedules use, for one boolean.
+ * Turn `jobs.history` on or off: the same diff-then-confirm the schedules use, for one boolean.
  *
- * It does not go through `proposed()` — that resolver's value is a `scheduledTasks` map, and a
+ * It does not go through `proposed()` — that resolver's value is a `scheduledJobs` map, and a
  * boolean at a nested path is a different write. What it does share is everything that makes the
  * write safe: the `_base` stale check, a diff you confirm before anything lands, `writeFileAtomic`
  * and the `409` when the file moved underneath.
@@ -1715,7 +1711,7 @@ async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Res
   // History may be off while an older file is still there: clearing it is still offered.
   const read = state.historyRead ??
     (state.historyStore === "default" && state.historyDb !== null
-      ? await sqliteTaskHistoryStore({ path: state.historyDb }).read({
+      ? await sqliteJobHistoryStore({ path: state.historyDb }).read({
         windowDays: HISTORY_WINDOW_DAYS,
       })
       : null);
@@ -1725,7 +1721,7 @@ async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Res
     if (read === null) return refuse(ctx, state, "run history is off", 409);
     // The window total, not `recent.length`: the feed is capped at 20, so a project with
     // hundreds of runs would otherwise be told "at least 20", which is true but useless.
-    const count = read.tasks.reduce((n, row) => n + row.successes + row.failures, 0);
+    const count = read.jobs.reduce((n, row) => n + row.successes + row.failures, 0);
     const body = h(ConfirmClear, { ctx, count, windowDays: read.windowDays });
     return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body })), 409);
   }
@@ -1746,7 +1742,7 @@ async function submitHistory(ctx: UiContext, state: CronState): Promise<Response
   }
   const on = wanted === "on";
   const from = state.source === "" ? EMPTY_CONFIG : state.source;
-  const edit = await setConfigValue(from, ["tasks", "history"], on);
+  const edit = await setConfigValue(from, ["jobs", "history"], on);
   if (!edit.ok) return refuse(ctx, state, edit.reason, 422);
 
   if (ctx.json && !confirmed(ctx)) {

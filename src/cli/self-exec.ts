@@ -313,7 +313,7 @@ const TOOLCHAIN_VERBS: ReadonlySet<string> = new Set([
   "start",
   "test",
   "check",
-  "task",
+  "job",
   "analyze",
   "profile",
   "doctor",
@@ -327,7 +327,7 @@ const TOOLCHAIN_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /**
  * Whether a verb runs the project's code — and so runs on denext's Deno toolchain: the serve and
- * build verbs, `test` / `check` / `task`, `analyze` / `profile` / `doctor`, `desktop
+ * build verbs, `test` / `check` / `job`, `analyze` / `profile` / `doctor`, `desktop
  * run|dev|build|package`, `mobile dev|build`, and every verb a project or plugin contributes.
  * Help, `--version`, scaffolding, dependency edits, `toolchain`, `upgrade` and `create` stay on
  * the Deno that started the CLI.

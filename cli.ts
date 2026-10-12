@@ -45,11 +45,13 @@ import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
 import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
-import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
+import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 import { readCommandCache } from "./src/cli/command-cache.ts";
 import { acquireProjectLocks } from "./src/build/project-locks.ts";
+import { denoForwardFor, verbatimFrom } from "./src/cli/deno-forward.ts";
+import { DENO_VERBS, forwardedDenoVerbs, isDenoVerb, shadowNotice } from "./src/cli/deno-verbs.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -470,17 +472,50 @@ async function hasDenextConfig(dir: string): Promise<boolean> {
   return false;
 }
 
+/** Whether a token asks for help (`--help` / `-h`). */
+function isHelpToken(token: string): boolean {
+  return token === "--help" || token === "-h";
+}
+
+/** Every Deno verb name — offered as a did-you-mean for an unknown verb (`denext compil`). */
+const DENO_VERB_NAMES: readonly string[] = DENO_VERBS.map((verb) => verb.name);
+
+/**
+ * The Deno invocation for an argv denext hands to Deno before parsing: `denext deno …` (every
+ * token verbatim — global flags such as `--config` and `--json` included, which the parser would
+ * otherwise claim) and `denext task …` (Deno's `task`; a task's arguments are its own). `denext
+ * --help task` still prints denext's description of it. Null for everything else.
+ */
+function denoBeforeParse(
+  argv: string[],
+): { args: string[]; cwd: string; forwarded: boolean } | null {
+  if (argv[0] === "deno") return { args: argv.slice(1), cwd: Deno.cwd(), forwarded: false };
+  const at = verbIndex(argv);
+  if (at < 0 || argv[at] !== "task" || argv.slice(0, at).some(isHelpToken)) return null;
+  return { ...verbatimFrom(argv, at), forwarded: true };
+}
+
+/**
+ * Parse the argv with denext's precedence: a built-in verb, else one the project contributes
+ * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
+ * runs on denext's Deno exactly as `denext deno <args…>` would (and never returns).
+ */
+async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> {
+  let outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
+  if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  await loadPluginCommands(registry, cwdFromArgs(Deno.args));
+  outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
+  if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  const forward = denoForwardFor(Deno.args, outcome.unknownVerb);
+  if (forward) return await runDenoPassthrough(forward.args, forward.cwd, true);
+  return outcome;
+}
+
 async function main(): Promise<void> {
-  // `denext deno …` hands every token to deno verbatim — global flags (`--config`, `--json`)
-  // included, which the parser would otherwise claim.
-  if (Deno.args[0] === "deno") return await runDenoPassthrough(Deno.args.slice(1));
+  const early = denoBeforeParse(Deno.args);
+  if (early) return await runDenoPassthrough(early.args, early.cwd, early.forwarded);
   const registry = buildRegistry();
-  let outcome = registry.parse(Deno.args);
-  // An unknown verb may be one the project contributes — load them and retry.
-  if (outcome.kind === "error" && outcome.message.startsWith("unknown command")) {
-    await loadPluginCommands(registry, cwdFromArgs(Deno.args));
-    outcome = registry.parse(Deno.args);
-  }
+  const outcome = await resolveOutcome(registry);
   // Completions enumerate the whole verb set, so they load project verbs up front — under a
   // time budget, since a plugin's `setup` is arbitrary user code (the verb then exits, so a
   // handle that `setup` leaked cannot keep the shell waiting).
@@ -495,6 +530,10 @@ async function main(): Promise<void> {
   }
   if (await toolchainGate(outcome.command, outcome.ctx)) return;
   if (await moduleGate(outcome.command, outcome.ctx)) return;
+  // Said once, by the process that runs the verb (after any re-exec).
+  if ((outcome.command.source ?? "core") !== "core" && isDenoVerb(outcome.command.name)) {
+    console.error(shadowNotice(outcome.command.name));
+  }
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).
   const lockRequest = outcome.command.locks?.(outcome.ctx);
@@ -517,7 +556,11 @@ function printOutcome(
   } else if (outcome.kind === "help") {
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)
-      : registry.formatHelp(VERSION, project?.verbs ?? []);
+      : registry.formatHelp(
+        VERSION,
+        project?.verbs ?? [],
+        forwardedDenoVerbs((name) => registry.get(name) !== undefined).map((verb) => verb.name),
+      );
     console.log(project && !outcome.command ? `${help}\n\n${project.note}` : help);
   } else {
     console.error(

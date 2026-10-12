@@ -190,7 +190,8 @@ export const upgradeCommand: CommandSpec = {
     "no denext stays within its own caret range unless --allow-major. Workspace members'\n" +
     "deno.json files move with the root. A JSR request that fails is an error, never read as\n" +
     "incompatible. --to picks the denext version (an older one needs --allow-downgrade);\n" +
-    "--dry-run prints the plan; --check exits 1 when anything is out of date.",
+    "--dry-run prints the plan; --check exits 1 when anything is out of date.\n" +
+    "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
     { name: "dry-run", type: "boolean", help: "Print the plan without writing deno.json" },

@@ -330,7 +330,7 @@ holder exits).
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
-next fires, an editor with a shape builder, and run history when `tasks.history` is on),
+next fires, an editor with a shape builder, and run history when `jobs.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
@@ -670,35 +670,35 @@ Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS 
 statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
 `@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
-`tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
-Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
+`jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
+Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
 `generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
 routes.
 
-**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
-`denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
-or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
+**A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
+`denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
+or `denext job <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
 tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
 weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
-`tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
-14 days); the Cron page of `denext ui` shows it. `tasks: { history: { store } }` takes any
-`TaskHistoryStore` — `postgresTaskHistoryStore({ url })` shares one history across replicas.
-`defineTask({ retry: { attempts, backoff } })`
+`jobs: { history: true }` records every run to `.denext/jobs.db` (`historyMaxRuns` per job,
+14 days); the Cron page of `denext ui` shows it. `jobs: { history: { store } }` takes any
+`JobHistoryStore` — `postgresJobHistoryStore({ url })` shares one history across replicas.
+`defineJob({ retry: { attempts, backoff } })`
 re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
 
 ```ts
-// tasks/cleanup.ts
-import { defineTask } from "denext/server";
-export default defineTask({
+// jobs/cleanup.ts
+import { defineJob } from "denext/server";
+export default defineJob({
   description: "purge expired sessions",
-  schedule: "0 3 * * *", // optional; or list it in config.scheduledTasks
+  schedule: "0 3 * * *", // optional; or list it in config.scheduledJobs
   handler: async ({ payload }) => {
     await db.exec("DELETE FROM sessions WHERE expires_at < now()");
   },
 });
-// denext.config.ts → scheduledTasks: { "0 0 * * 1": ["digest", "warm-cache"] }
-// anywhere on the server: import { runTask } from "denext/server"; await runTask("cleanup");
+// denext.config.ts → scheduledJobs: { "0 0 * * 1": ["digest", "warm-cache"] }
+// anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
 
 **A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
@@ -835,13 +835,21 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `task`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
   opts out, `DENEXT_DENO=<path>` uses a given binary, and any failure falls back to stock Deno with
-  one warning. A bare `deno test` inside a `deno task` runs stock Deno: write the task as
-  `denext test` (or `denext deno test`). `denext toolchain install|status|path|link|unlink`.
+  one warning. `denext task <name>` is Deno's `deno task` on the toolchain, and every
+  `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
+  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`.
+- **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
+  exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
+  bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
+  built-in verbs, then the project's own (`commands:` / plugins; shadowing a Deno verb prints one
+  notice), then Deno's. `task` is Deno's; background work is `denext job`. `info <module>` is
+  Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
   (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is

@@ -1,21 +1,21 @@
 /**
- * A {@linkcode TaskHistoryStore} on Postgres: task run history shared by every replica, so
+ * A {@linkcode JobHistoryStore} on Postgres: job run history shared by every replica, so
  * `denext ui`'s Cron page (and your own `read()` / `listRuns()`) see the runs of the whole fleet
  * rather than one instance's file.
  *
  * ```ts
  * // denext.config.ts
- * import { postgresTaskHistoryStore } from "denext/server";
+ * import { postgresJobHistoryStore } from "denext/server";
  * export default {
- *   tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } },
+ *   jobs: { history: { store: postgresJobHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } },
  * };
  * ```
  *
- * Runs live in `task_runs`, created by a migration (recorded in `task_history_migrations`) on
+ * Runs live in `job_runs`, created by a migration (recorded in `job_history_migrations`) on
  * the first write — never by a read: `read()` and `listRuns()` send no DDL, and answer "no history
  * recorded yet" while the table does not exist (so `denext ui --read-only` changes nothing). Like the SQLite store, recording can never fail or delay a run: `record` starts the
  * insert and returns, a failed insert drops its row, and after three failures in a row the store
- * stops trying for the life of the process. Retention matches the default store: a per-task cap
+ * stops trying for the life of the process. Retention matches the default store: a per-job cap
  * (500 by default) and a 14-day window, applied on the first insert of a process and then every
  * 200 inserts at most every ten minutes.
  *
@@ -33,19 +33,19 @@ import {
 import { migratePostgres, type Migration } from "./postgres-migrate.ts";
 import { inRootContext } from "./root-context.ts";
 import type {
-  TaskHistory,
-  TaskHistoryCleared,
-  TaskHistoryPruneOptions,
-  TaskHistoryReadOptions,
-  TaskHistoryRow,
-  TaskHistoryRun,
-  TaskHistoryStore,
-} from "./task-history.ts";
-import type { TaskRunRecord } from "./tasks.ts";
+  JobHistory,
+  JobHistoryCleared,
+  JobHistoryPruneOptions,
+  JobHistoryReadOptions,
+  JobHistoryRow,
+  JobHistoryRun,
+  JobHistoryStore,
+} from "./job-history.ts";
+import type { JobRunRecord } from "./jobs.ts";
 
-/** Options for {@linkcode postgresTaskHistoryStore}. */
-export interface PostgresTaskHistoryStoreOptions extends PostgresConnectionOptions {
-  /** Runs kept per task before the oldest are dropped (default 500). */
+/** Options for {@linkcode postgresJobHistoryStore}. */
+export interface PostgresJobHistoryStoreOptions extends PostgresConnectionOptions {
+  /** Runs kept per job before the oldest are dropped (default 500). */
   maxRuns?: number;
   /** Apply the table's migration on first use (default `true`). */
   migrate?: boolean;
@@ -57,7 +57,7 @@ const DEFAULT_RECENT = 20;
 const FAILURE_LATCH = 3;
 const PRUNE_EVERY = 200;
 const PRUNE_INTERVAL_MS = 600_000;
-const FEATURE = "postgresTaskHistoryStore";
+const FEATURE = "postgresJobHistoryStore";
 /** What a read says before the first run created the table — the SQLite store's words. */
 const NOTHING_YET = "no history recorded yet";
 /** SQLSTATEs for a table (or its schema) that does not exist yet. */
@@ -66,14 +66,14 @@ const MISSING = new Set(["42P01", "3F000"]);
 /** The schema, as migrations. `p` qualifies a table. Integers, not booleans: `SUM(ok)` reads. */
 function historyMigrations(p: string): Migration[] {
   return [{
-    name: "0001_task_runs",
+    name: "0001_job_runs",
     sql: `
-CREATE TABLE IF NOT EXISTS ${p}task_runs (
-  id TEXT PRIMARY KEY, task TEXT NOT NULL, trigger TEXT NOT NULL, started_at BIGINT NOT NULL,
+CREATE TABLE IF NOT EXISTS ${p}job_runs (
+  id TEXT PRIMARY KEY, job TEXT NOT NULL, trigger TEXT NOT NULL, started_at BIGINT NOT NULL,
   duration_ms BIGINT NOT NULL, ok INTEGER NOT NULL, detail TEXT,
   attempt INTEGER NOT NULL DEFAULT 1, will_retry INTEGER NOT NULL DEFAULT 0);
-CREATE INDEX IF NOT EXISTS task_runs_task_started ON ${p}task_runs (task, started_at DESC);
-CREATE INDEX IF NOT EXISTS task_runs_started ON ${p}task_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS job_runs_job_started ON ${p}job_runs (job, started_at DESC);
+CREATE INDEX IF NOT EXISTS job_runs_started ON ${p}job_runs (started_at DESC);
 `,
   }];
 }
@@ -87,10 +87,10 @@ function reasonOf(error: unknown): string {
 const num = (value: unknown): number =>
   value === true ? 1 : value === false ? 0 : toNumber(value) ?? 0;
 
-/** A row of `task_runs` as a feed entry. */
-function toRun(row: Record<string, unknown>): TaskHistoryRun {
+/** A row of `job_runs` as a feed entry. */
+function toRun(row: Record<string, unknown>): JobHistoryRun {
   return {
-    task: String(row.task),
+    job: String(row.job),
     trigger: String(row.trigger),
     startedAt: num(row.started_at),
     durationMs: num(row.duration_ms),
@@ -101,13 +101,13 @@ function toRun(row: Record<string, unknown>): TaskHistoryRun {
   };
 }
 
-/** The {@link TaskHistoryStore} behind {@linkcode postgresTaskHistoryStore}. */
-class PostgresTaskHistory implements TaskHistoryStore {
+/** The {@link JobHistoryStore} behind {@linkcode postgresJobHistoryStore}. */
+class PostgresJobHistory implements JobHistoryStore {
   readonly #sql: SqlClient;
   readonly #owned: boolean;
   readonly #t: string;
   readonly #maxRuns: number;
-  readonly #options: PostgresTaskHistoryStoreOptions;
+  readonly #options: PostgresJobHistoryStoreOptions;
   readonly #pending = new Set<Promise<void>>();
   #migrated: Promise<unknown> | undefined;
   #disabled = false;
@@ -117,12 +117,12 @@ class PostgresTaskHistory implements TaskHistoryStore {
   #lastPrune = 0;
   #prunedOnce = false;
 
-  constructor(options: PostgresTaskHistoryStoreOptions) {
+  constructor(options: PostgresJobHistoryStoreOptions) {
     const prefix = schemaPrefix(options.schema, FEATURE);
     const { sql, owned } = resolveConnection(options, FEATURE);
     this.#sql = sql;
     this.#owned = owned;
-    this.#t = `${prefix}task_runs`;
+    this.#t = `${prefix}job_runs`;
     this.#maxRuns = options.maxRuns ?? DEFAULT_MAX_RUNS;
     this.#options = options;
   }
@@ -135,7 +135,7 @@ class PostgresTaskHistory implements TaskHistoryStore {
       this.#migrated ??= inRootContext(() =>
         migratePostgres(this.#sql, {
           migrations: historyMigrations(schemaPrefix(this.#options.schema, FEATURE)),
-          table: "task_history_migrations",
+          table: "job_history_migrations",
           schema: this.#options.schema,
         })
       ).catch((error) => {
@@ -158,9 +158,9 @@ class PostgresTaskHistory implements TaskHistoryStore {
     return this.#sql;
   }
 
-  record(run: TaskRunRecord): Promise<void> {
+  record(run: JobRunRecord): Promise<void> {
     if (this.#disabled || this.#closed) return Promise.resolve();
-    // Started in the root context: `runTask` may be called from a request, and the insert (or
+    // Started in the root context: `runJob` may be called from a request, and the insert (or
     // the pool connection it opens) must not carry that request along. Never rejects.
     const write: Promise<void> = inRootContext(() => this.#insert(run)).then(
       () => {
@@ -175,10 +175,10 @@ class PostgresTaskHistory implements TaskHistoryStore {
     return write;
   }
 
-  async #insert(run: TaskRunRecord): Promise<void> {
+  async #insert(run: JobRunRecord): Promise<void> {
     const db = await this.#db();
     await db.unsafe(
-      `INSERT INTO ${this.#t} (id, task, trigger, started_at, duration_ms, ok, detail, attempt, ` +
+      `INSERT INTO ${this.#t} (id, job, trigger, started_at, duration_ms, ok, detail, attempt, ` +
         "will_retry) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
       [
         crypto.randomUUID(),
@@ -194,7 +194,7 @@ class PostgresTaskHistory implements TaskHistoryStore {
     );
     this.#sincePrune += 1;
     const now = Date.now();
-    // The first insert of a process prunes (a one-shot `denext task` writes one row per
+    // The first insert of a process prunes (a one-shot `denext job` writes one row per
     // process), then the amortized cadence — the same rule as the SQLite store.
     if (!this.#prunedOnce) {
       this.#prunedOnce = true;
@@ -210,35 +210,35 @@ class PostgresTaskHistory implements TaskHistoryStore {
     await db.unsafe(`DELETE FROM ${this.#t} WHERE started_at < $1`, [
       Date.now() - retainDays * 86_400_000,
     ]);
-    // Per task, so a noisy task never evicts a quiet one's history.
+    // Per job, so a noisy job never evicts a quiet one's history.
     await db.unsafe(
       `DELETE FROM ${this.#t} WHERE id IN (SELECT id FROM (SELECT id, row_number() OVER ` +
-        `(PARTITION BY task ORDER BY started_at DESC, id DESC) AS rn FROM ${this.#t}) ranked ` +
+        `(PARTITION BY job ORDER BY started_at DESC, id DESC) AS rn FROM ${this.#t}) ranked ` +
         "WHERE rn > $1)",
       [maxRuns],
     );
   }
 
-  async read(options: TaskHistoryReadOptions = {}): Promise<TaskHistory> {
+  async read(options: JobHistoryReadOptions = {}): Promise<JobHistory> {
     const windowDays = options.windowDays ?? 7;
-    const empty = { windowDays, tasks: [], recent: [] };
+    const empty = { windowDays, jobs: [], recent: [] };
     try {
       const db = await this.#reader();
       const since = Date.now() - windowDays * 86_400_000;
       const t = this.#t;
       const rows = await db.unsafe(
-        "SELECT task, " +
-          `(SELECT ok FROM ${t} r2 WHERE r2.task = r1.task ORDER BY started_at DESC, id DESC LIMIT 1) AS last_ok, ` +
+        "SELECT job, " +
+          `(SELECT ok FROM ${t} r2 WHERE r2.job = r1.job ORDER BY started_at DESC, id DESC LIMIT 1) AS last_ok, ` +
           "MAX(started_at) AS last_run_at, " +
-          `(SELECT duration_ms FROM ${t} r3 WHERE r3.task = r1.task ORDER BY started_at DESC, id DESC LIMIT 1) AS last_duration_ms, ` +
+          `(SELECT duration_ms FROM ${t} r3 WHERE r3.job = r1.job ORDER BY started_at DESC, id DESC LIMIT 1) AS last_duration_ms, ` +
           "SUM(ok) AS successes, " +
           "SUM(CASE WHEN ok = 0 AND will_retry = 0 THEN 1 ELSE 0 END) AS failures, " +
           "SUM(CASE WHEN attempt > 1 THEN 1 ELSE 0 END) AS retries " +
-          `FROM ${t} r1 WHERE started_at >= $1 GROUP BY task ORDER BY last_run_at DESC`,
+          `FROM ${t} r1 WHERE started_at >= $1 GROUP BY job ORDER BY last_run_at DESC`,
         [since],
       );
-      const tasks: TaskHistoryRow[] = rows.map((row) => ({
-        task: String(row.task),
+      const jobs: JobHistoryRow[] = rows.map((row) => ({
+        job: String(row.job),
         lastOk: num(row.last_ok) === 1,
         lastRunAt: num(row.last_run_at),
         lastDurationMs: num(row.last_duration_ms),
@@ -247,11 +247,11 @@ class PostgresTaskHistory implements TaskHistoryStore {
         retries: num(row.retries),
       }));
       const recent = (await db.unsafe(
-        `SELECT task, trigger, started_at, duration_ms, ok, detail, attempt, will_retry FROM ${t} ` +
+        `SELECT job, trigger, started_at, duration_ms, ok, detail, attempt, will_retry FROM ${t} ` +
           "ORDER BY started_at DESC, id DESC LIMIT $1",
         [Math.max(0, Math.trunc(options.recentLimit ?? DEFAULT_RECENT))],
       )).map(toRun);
-      return { available: true, windowDays, tasks, recent };
+      return { available: true, windowDays, jobs, recent };
     } catch (error) {
       const reason = MISSING.has(sqlState(error) ?? "") ? NOTHING_YET : reasonOf(error);
       return { available: false, reason, ...empty };
@@ -259,15 +259,15 @@ class PostgresTaskHistory implements TaskHistoryStore {
   }
 
   async listRuns(
-    task: string,
+    job: string,
     options: { readonly limit?: number } = {},
-  ): Promise<TaskHistoryRun[]> {
+  ): Promise<JobHistoryRun[]> {
     try {
       const db = await this.#reader();
       const rows = await db.unsafe(
-        `SELECT task, trigger, started_at, duration_ms, ok, detail, attempt, will_retry FROM ${this.#t} ` +
-          "WHERE task = $1 ORDER BY started_at DESC, id DESC LIMIT $2",
-        [task, Math.max(0, Math.trunc(options.limit ?? DEFAULT_RECENT))],
+        `SELECT job, trigger, started_at, duration_ms, ok, detail, attempt, will_retry FROM ${this.#t} ` +
+          "WHERE job = $1 ORDER BY started_at DESC, id DESC LIMIT $2",
+        [job, Math.max(0, Math.trunc(options.limit ?? DEFAULT_RECENT))],
       );
       return rows.map(toRun);
     } catch {
@@ -275,14 +275,14 @@ class PostgresTaskHistory implements TaskHistoryStore {
     }
   }
 
-  async prune(options: TaskHistoryPruneOptions = {}): Promise<void> {
+  async prune(options: JobHistoryPruneOptions = {}): Promise<void> {
     try {
       const db = await this.#db();
       await this.#prune(db, options.maxRuns ?? this.#maxRuns, options.retainDays ?? RETAIN_DAYS);
     } catch { /* nothing pruned this time */ }
   }
 
-  async clear(): Promise<TaskHistoryCleared> {
+  async clear(): Promise<JobHistoryCleared> {
     try {
       const db = await this.#db();
       await db.unsafe(`DELETE FROM ${this.#t}`);
@@ -302,16 +302,16 @@ class PostgresTaskHistory implements TaskHistoryStore {
 }
 
 /**
- * Task run history on Postgres — pass it as `tasks: { history: { store } }`.
+ * Job run history on Postgres — pass it as `jobs: { history: { store } }`.
  *
- * @param options A client (`sql`) or a `postgres://` URL, an optional schema, the per-task cap
+ * @param options A client (`sql`) or a `postgres://` URL, an optional schema, the per-job cap
  *   and `migrate: false` when the table is created out of band.
  * @returns The store. Nothing connects until the first run is recorded (or history is read).
  * @throws {TypeError} When neither (or both) of `sql` and `url` is given.
  * @throws {PostgresUnsupportedError} For a `url` on a Deno without `Deno.SQL`.
  */
-export function postgresTaskHistoryStore(
-  options: PostgresTaskHistoryStoreOptions,
-): TaskHistoryStore {
-  return new PostgresTaskHistory(options);
+export function postgresJobHistoryStore(
+  options: PostgresJobHistoryStoreOptions,
+): JobHistoryStore {
+  return new PostgresJobHistory(options);
 }

@@ -263,7 +263,7 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         <a href="https://docs.fallow.tools">fallow</a>, the dead-code, duplication and complexity
         gate denext itself is built under. It writes a <code>fallow.toml</code>{" "}
         that declares denext's path-loaded files (routes, <code>denext.config.ts</code>,{" "}
-        <code>middleware.ts</code>, <code>tasks/*.ts</code>, …) as entry points, a{" "}
+        <code>middleware.ts</code>, <code>jobs/*.ts</code>, …) as entry points, a{" "}
         <code>.githooks/pre-commit</code> gate, the coverage converter, and an{" "}
         <code>AGENTS.md</code>{" "}
         telling coding agents to run the gate before committing. fallow runs from npm through Deno

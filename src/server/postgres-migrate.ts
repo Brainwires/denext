@@ -12,7 +12,7 @@
  *
  * `denext generate migration <name>` writes `migrations/<stamp>_<name>.sql` and a
  * `tasks/migrate.ts` that calls this when `DATABASE_URL` is a `postgres://` URL
- * (`denext task migrate`). denext's own Postgres stores (the auth adapter, the cache store)
+ * (`denext job migrate`). denext's own Postgres stores (the auth adapter, the cache store)
  * create their tables through the same runner, each with a tracking table of its own.
  *
  * @module

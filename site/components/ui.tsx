@@ -42,7 +42,7 @@ export const NAV: {
       { slug: "uploads", label: "File uploads" },
       { slug: "backend", label: "Backend" },
       { slug: "error-handling", label: "Error handling" },
-      { slug: "tasks", label: "Scheduled tasks" },
+      { slug: "jobs", label: "Scheduled jobs" },
       { slug: "live", label: "Live components" },
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },

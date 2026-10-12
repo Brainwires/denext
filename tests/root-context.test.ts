@@ -11,7 +11,7 @@
 //   Deno.test("b", () => console.log(als.getStore())); // "REQ"
 //
 // denext loads shared modules in the root context (src/server/root-context.ts) and starts every
-// request and scheduled task outside any request. Each "loads inside a request" test below is
+// request and scheduled job outside any request. Each "loads inside a request" test below is
 // followed by a test asserting the runner's next task sees no request context: the leak shows
 // up only in the NEXT runtime-started task, not in the test that triggered it.
 
@@ -32,7 +32,7 @@ import { tagClientModules } from "../src/runtime/client-reference.ts";
 import { createApp } from "../src/server/app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { serveWithPortFallback } from "../src/server/serve-utils.ts";
-import { clearTasks, defineTask, registerTask, scheduleTasks } from "../src/server/tasks.ts";
+import { clearJobs, defineJob, registerJob, scheduleJobs } from "../src/server/jobs.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
 const dir = await Deno.makeTempDir({ prefix: "dnx-root-ctx-" });
@@ -188,17 +188,17 @@ Deno.test("root context: a server's next request never sees the request that loa
   }
 });
 
-Deno.test("root context: a scheduled task runs outside the context the runtime fires it in", async () => {
-  clearTasks();
+Deno.test("root context: a scheduled job runs outside the context the runtime fires it in", async () => {
+  clearJobs();
   let saw: unknown = "unset";
-  registerTask("root-ctx-job", defineTask({ handler: () => void (saw = currentContext()) }));
+  registerJob("root-ctx-job", defineJob({ handler: () => void (saw = currentContext()) }));
   const fired: Array<() => unknown> = [];
   const denoAny = Deno as { cron?: unknown };
   const had = "cron" in denoAny;
   const prev = denoAny.cron;
   denoAny.cron = (_n: string, _s: string, handler: () => unknown) => void fired.push(handler);
   try {
-    scheduleTasks([{ cron: "0 3 * * *", task: "root-ctx-job" }]);
+    scheduleJobs([{ cron: "0 3 * * *", job: "root-ctx-job" }]);
   } finally {
     if (had) denoAny.cron = prev;
     else delete denoAny.cron;
@@ -207,7 +207,7 @@ Deno.test("root context: a scheduled task runs outside the context the runtime f
     await inRequest("/stale", async () => await fired[0]());
     assertEquals(saw, undefined);
   } finally {
-    clearTasks();
+    clearJobs();
   }
 });
 

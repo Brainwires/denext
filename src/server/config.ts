@@ -6,7 +6,7 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
-import type { TaskHistoryStore } from "./task-history.ts";
+import type { JobHistoryStore } from "./job-history.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
@@ -528,10 +528,10 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
-/** Scheduled/background task behaviour ({@link DenextConfig.tasks}). */
-export interface TasksConfig {
+/** Scheduled/background job behaviour ({@link DenextConfig.jobs}). */
+export interface JobsConfig {
   /**
-   * Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s
+   * Record every job run — scheduled and on demand — to `.denext/jobs.db`, so `denext ui`'s
    * Cron panel can show last status, success/failure counts and a recent-run feed.
    *
    * Off unless set: denext writes no run history unasked. Once on, recording can never fail or
@@ -539,41 +539,41 @@ export interface TasksConfig {
    *
    * Each row keeps the run's output in plain text: the tail of a string the handler returned
    * (up to 2 KB) and, for a failure, the error's message and stack. A task that returns a token,
-   * a DSN or another secret should return nothing instead. The file is `tasks.db` (with its
+   * a DSN or another secret should return nothing instead. The file is `jobs.db` (with its
    * `-wal`/`-shm` siblings) inside the build output directory, `.denext/` by default, created
    * owner-only (mode 0600) where the platform has file modes.
    *
    * The object form picks where the history is kept: `{ store }` takes any
-   * {@link TaskHistoryStore} — `postgresTaskHistoryStore({ url })` shares one history across
+   * {@link JobHistoryStore} — `postgresJobHistoryStore({ url })` shares one history across
    * every replica — and `{ maxRuns }` sets the default store's cap. `{}` is the same as `true`.
    *
    * ```ts
-   * tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } }
+   * jobs: { history: { store: postgresJobHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } }
    * ```
    */
-  history?: boolean | TaskHistoryConfig;
+  history?: boolean | JobHistoryConfig;
   /**
-   * Runs kept per task before the oldest are dropped (default 500).
+   * Runs kept per job before the oldest are dropped (default 500).
    *
-   * Per task rather than overall, so a task running every minute cannot evict a daily task's
+   * Per job rather than overall, so a job running every minute cannot evict a daily job's
    * history. A task running more often than roughly every 20 minutes fills this inside a week,
-   * so raise it for such a task if its counts should cover the whole window.
+   * so raise it for such a job if its counts should cover the whole window.
    *
    * @minimum 1
    */
   historyMaxRuns?: number;
 }
 
-/** The object form of {@link TasksConfig.history}. */
-export interface TaskHistoryConfig {
+/** The object form of {@link JobsConfig.history}. */
+export interface JobHistoryConfig {
   /**
-   * Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is
-   * the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does,
+   * Where runs are recorded. Default: the SQLite file `.denext/jobs.db`. A store passed here is
+   * the app's: denext never closes it on a dev re-boot (only a one-shot `denext job` run does,
    * as its process ends).
    */
-  store?: TaskHistoryStore;
+  store?: JobHistoryStore;
   /**
-   * Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob).
+   * Runs kept per job by the default store (default 500; `historyMaxRuns` is the same knob).
    * A `store` takes its own cap.
    *
    * @minimum 1
@@ -1506,24 +1506,24 @@ export interface DenextConfig {
   /** Declarative response headers, evaluated once at startup. */
   headers?: () => HeaderRule[] | Promise<HeaderRule[]>;
   /**
-   * Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s)
-   * to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server
+   * Cron schedules for background jobs: a map of a 5-field cron expression to the job name(s)
+   * to run on it (a job is `jobs/<name>.ts` exporting `defineJob(...)`). Registered at server
    * startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a
    * dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.
    *
    * ```ts
-   * scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] }
+   * scheduledJobs: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] }
    * ```
    */
-  scheduledTasks?: Record<string, string | string[]>;
+  scheduledJobs?: Record<string, string | string[]>;
   /**
-   * Scheduled/background task behaviour. Currently run history, which is off unless asked for.
+   * Scheduled/background job behaviour. Currently run history, which is off unless asked for.
    *
    * ```ts
-   * tasks: { history: true }
+   * jobs: { history: true }
    * ```
    */
-  tasks?: TasksConfig;
+  jobs?: JobsConfig;
   /**
    * Image-optimization config. Remote sources are refused by default (local-only,
    * SSRF-safe); allowlist hosts here to enable optimizing remote images.

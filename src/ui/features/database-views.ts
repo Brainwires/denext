@@ -809,7 +809,7 @@ export function MigrationsView(
       ", tracked in ",
       h(Mono, null, "_migrations"),
       " — what ",
-      h(Mono, null, "denext task migrate"),
+      h(Mono, null, "denext job migrate"),
       " applies. Write one from Generate (migration).",
     ),
     reply.migrations.length

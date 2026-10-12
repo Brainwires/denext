@@ -49,7 +49,7 @@ function openNodeSqlite(path: string): SqliteDb {
 /** Create the table + indexes (idempotent) and set the usual WAL pragmas. */
 function initSchema(d: SqliteDb): void {
   try {
-    // busy_timeout first: a second writer (a seed script, `denext task`) waits instead of
+    // busy_timeout first: a second writer (a seed script, `denext job`) waits instead of
     // failing at once with "database is locked", even when WAL is refused.
     d.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }

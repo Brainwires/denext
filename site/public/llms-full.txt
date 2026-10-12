@@ -334,7 +334,7 @@ holder exits).
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
-next fires, an editor with a shape builder, and run history when `tasks.history` is on),
+next fires, an editor with a shape builder, and run history when `jobs.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
@@ -674,35 +674,35 @@ Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS 
 statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
 `@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
-`tasks/migrate.ts` that applies pending ones on `node:sqlite` (`denext task migrate`; a Prisma or
-Drizzle project is pointed at its own tool); `generate seed` an idempotent `tasks/seed.ts`;
+`jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
+Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
 `generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
 routes.
 
-**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
-`denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
-or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
+**A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
+`denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
+or `denext job <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
 tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
 weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
-`tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
-14 days); the Cron page of `denext ui` shows it. `tasks: { history: { store } }` takes any
-`TaskHistoryStore` — `postgresTaskHistoryStore({ url })` shares one history across replicas.
-`defineTask({ retry: { attempts, backoff } })`
+`jobs: { history: true }` records every run to `.denext/jobs.db` (`historyMaxRuns` per job,
+14 days); the Cron page of `denext ui` shows it. `jobs: { history: { store } }` takes any
+`JobHistoryStore` — `postgresJobHistoryStore({ url })` shares one history across replicas.
+`defineJob({ retry: { attempts, backoff } })`
 re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
 
 ```ts
-// tasks/cleanup.ts
-import { defineTask } from "denext/server";
-export default defineTask({
+// jobs/cleanup.ts
+import { defineJob } from "denext/server";
+export default defineJob({
   description: "purge expired sessions",
-  schedule: "0 3 * * *", // optional; or list it in config.scheduledTasks
+  schedule: "0 3 * * *", // optional; or list it in config.scheduledJobs
   handler: async ({ payload }) => {
     await db.exec("DELETE FROM sessions WHERE expires_at < now()");
   },
 });
-// denext.config.ts → scheduledTasks: { "0 0 * * 1": ["digest", "warm-cache"] }
-// anywhere on the server: import { runTask } from "denext/server"; await runTask("cleanup");
+// denext.config.ts → scheduledJobs: { "0 0 * * 1": ["digest", "warm-cache"] }
+// anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
 
 **A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
@@ -839,13 +839,21 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `task`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
   opts out, `DENEXT_DENO=<path>` uses a given binary, and any failure falls back to stock Deno with
-  one warning. A bare `deno test` inside a `deno task` runs stock Deno: write the task as
-  `denext test` (or `denext deno test`). `denext toolchain install|status|path|link|unlink`.
+  one warning. `denext task <name>` is Deno's `deno task` on the toolchain, and every
+  `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
+  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`.
+- **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
+  exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
+  bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
+  built-in verbs, then the project's own (`commands:` / plugins; shadowing a Deno verb prints one
+  notice), then Deno's. `task` is Deno's; background work is `denext job`. `info <module>` is
+  Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
   (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
@@ -1390,8 +1398,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
 - `defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
+- `defineJob<R>(def: JobDefinition<R>): Job<R>` — Define a scheduled/background job. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a jobs/<name>.ts file, or register it programmatically with registerJob.
 - `defineSubscription<Out, In>(config: SubscriptionConfig<In, Out>): SubscriptionRef<In, Out>` — Define a typed, validated live query. Export it from a "use server" module (or give it an id) and subscribe from the client with useSubscription.
-- `defineTask<R>(def: TaskDefinition<R>): Task<R>` — Define a scheduled/background task. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a tasks/<name>.ts file, or register it programmatically with registerTask.
 - `deletePasskey(config: AuthConfig, input: object): Promise<boolean>` — Remove one of a user's passkeys. Gate it yourself (a recent sign-in, as DELETE {basePath}/passkeys/:id requires): a stolen session must not strip a user's factors.
 - `denextAuth(config: AuthConfig): DenextPlugin` — Create the denext auth plugin. Add it to plugins in denext.config.ts; it auto-mounts the /auth/* endpoints and makes auth available.
 - `interface DenextCommand` — A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.
@@ -1465,8 +1473,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `generateTotpSecret(bytes?: number): string` — Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
+- `getJob(name: string): Job | undefined` — The registered job for name, or undefined.
 - `getSession<T>(options: SessionOptions): Promise<Session<T>>` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
-- `getTask(name: string): Task | undefined` — The registered task for name, or undefined.
 - `github(options: OAuthClientOptions): OAuthProvider` — GitHub (OAuth 2.0). Reads the profile from the /user API.
 - `gitlab(options: GitLabOptions): OAuthProvider` — GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified id_token.
 - `interface GitLabOptions` — Options for gitlab.
@@ -1513,6 +1521,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isChannel(value: unknown): value is Channel` — Is value a server-side channel object?
 - `isControlSignal(value: unknown): boolean` — True for any denext control-flow signal (notFound/forbidden/unauthorized/ redirect) that error boundaries must re-throw rather than catch.
 - `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden() (or Next's own).
+- `isJob(value: unknown): value is Job` — True if value came from defineJob.
 - `interface IslandPayload` — A deferred-hydration island: its tree-path id, strategy, and own Flight tree.
 - `isNotFound(value: unknown): value is NotFoundError` — True if value is a NotFoundError raised by notFound(), or (on the server) Next.js's own not-found error (digest NEXT_HTTP_ERROR_FALLBACK;404) thrown by a library built for Next.
 - `isPostgresUrl(url: string | undefined): boolean` — Whether a URL names a Postgres database (postgres:// / postgresql://).
@@ -1522,8 +1531,24 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `issueApiToken(config: AuthConfig, options: IssueApiTokenOptions): Promise<IssuedApiToken>` — Mint a bearer API token for a user and store its hash.
 - `interface IssueApiTokenOptions` — What issueApiToken is asked for.
 - `interface IssuedApiToken` — What issueApiToken returns: the plaintext (once) plus the stored record.
-- `isTask(value: unknown): value is Task` — True if value came from defineTask.
 - `isUnauthorized(value: unknown): value is UnauthorizedError` — True if value is an UnauthorizedError raised by unauthorized() (or Next's own).
+- `interface Job<R>` — A job descriptor. Returned by defineJob; the shape a jobs/ file default-exports.
+- `type JobBackoff = number | object` — How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default "exponential": delayMs, then twice that, … capped at maxDelayMs).
+- `interface JobContext` — Context passed to a job's handler.
+- `interface JobDefinition<R>` — A job definition passed to defineJob.
+- `interface JobHistory` — What a read returns — including why there is nothing, which is itself an answer.
+- `interface JobHistoryCleared` — What clearing the history did, or why it could not.
+- `interface JobHistoryConfig` — The object form of JobsConfig.history.
+- `interface JobHistoryOptions` — Options for jobHistoryRecorder and readJobHistory.
+- `interface JobHistoryPruneOptions` — Options for JobHistoryStore.prune.
+- `interface JobHistoryReadOptions` — Options for JobHistoryStore.read.
+- `interface JobHistoryRow` — One job's standing, as the panel shows it.
+- `interface JobHistoryRun` — One run in the recent feed.
+- `interface JobHistoryStore` — Where job run history is kept — the seam behind jobs: { history }.
+- `jobNames(): string[]` — Every registered job name, sorted.
+- `interface JobRetry` — A job's retry policy (JobDefinition.retry).
+- `interface JobRunRecord` — One completed run, as the recorder receives it.
+- `interface JobsConfig` — Scheduled/background job behaviour (DenextConfig.jobs).
 - `json<T>(data: T, init?: ResponseInit): TypedResponse<T>` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient. The body goes through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the response carries x-denext-wire: 1 only when a tag was needed (a plain-JSON body is byte-identical to Response.json).
 - `type JsonLd = object` — A JSON-LD structured-data object (schema.org), serialized to a <script type="application/ld+json"> in the document head. A lightweight structural type: @context/@type are hinted, any other schema.org field is allowed. Provide one object or an array of them via Metadata.jsonLd.
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
@@ -1643,6 +1668,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PostgresCacheStoreOptions` — Options for postgresCacheStore.
 - `postgresClient(url?: string, feature?: string): SqlClient` — A Postgres client on the runtime's built-in Deno.SQL — the zero-dependency path.
 - `interface PostgresConnectionOptions` — Options shared by every denext Postgres store: a client, or a URL to open one.
+- `postgresJobHistoryStore(options: PostgresJobHistoryStoreOptions): JobHistoryStore` — Job run history on Postgres — pass it as jobs: { history: { store } }.
+- `interface PostgresJobHistoryStoreOptions` — Options for postgresJobHistoryStore.
 - `interface PostgresJsLike` — The shape of an npm postgres (postgres.js) client that fromPostgresJs reads.
 - `interface PostgresMigrateOptions` — Options for migratePostgres and postgresMigrationStatus.
 - `postgresMigrationStatus(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrationStatus>` — Which migrations are applied, which are pending, and which applied ones are no longer known. Read-only: it creates nothing, not even the tracking table.
@@ -1650,8 +1677,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PostgresRateLimitStoreOptions` — Options for postgresRateLimitStore.
 - `postgresSessionStore(options: PostgresSessionStoreOptions): SessionStore` — A durable, shared SessionStore on Postgres.
 - `interface PostgresSessionStoreOptions` — Options for postgresSessionStore.
-- `postgresTaskHistoryStore(options: PostgresTaskHistoryStoreOptions): TaskHistoryStore` — Task run history on Postgres — pass it as tasks: { history: { store } }.
-- `interface PostgresTaskHistoryStoreOptions` — Options for postgresTaskHistoryStore.
 - `class PostgresUnsupportedError` — Why a Postgres feature could not run: no Deno.SQL and no client was passed.
 - `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
@@ -1679,7 +1704,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
-- `registerTask(name: string, task: Task): void` — Register (or replace) a task by name — used by the tasks/ loader and by app code.
+- `registerJob(name: string, job: Job): void` — Register (or replace) a job by name — used by the jobs/ loader and by app code.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
 - `renderDocument(opts: DocumentOptions): string` — Render a complete HTML document string: <!DOCTYPE> + <html> with the head content (metadata/viewport/styles), the hydration root wrapping bodyHtml, and the body scripts. The non-streaming counterpart to streamPprDocument.
 - `interface RenderedPage` — The result of rendering a page: its HTML fragment, resolved metadata, and status.
@@ -1737,7 +1762,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type RouteParams = Record<string, string | string[]>` — Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join("/") for the path form).
 - `interface RouteRegistry` — The manifest + loader a request can reflect over (see RequestContext.routes).
 - `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
-- `runTask(name: string, payload?: unknown, opts?: object): Promise<unknown>` — Run a task by name and return its handler's result. Throws if no such task is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.
+- `runJob(name: string, payload?: unknown, opts?: object): Promise<unknown>` — Run a job by name and return its handler's result. Throws if no such job is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.
 - `safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<Response>` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
 - `class SafeFetchError` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
 - `type SafeFetchErrorCode = unsupported-protocol | host-not-allowed | blocked-address | dns | network | bad-response | too-many-redirects` — Error codes surfaced by safeFetch.
@@ -1795,10 +1820,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
 - `interface SqliteCacheStoreOptions` — Options for sqliteCacheStore.
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
+- `sqliteJobHistoryStore(options: SqliteJobHistoryStoreOptions): JobHistoryStore` — The default JobHistoryStore: a SQLite file (.denext/jobs.db when denext installs it), on Deno's built-in node:sqlite.
+- `interface SqliteJobHistoryStoreOptions` — Options for sqliteJobHistoryStore.
 - `sqliteSessionStore(options?: SqliteSessionStoreOptions): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
 - `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
-- `sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore` — The default TaskHistoryStore: a SQLite file (.denext/tasks.db when denext installs it), on Deno's built-in node:sqlite.
-- `interface SqliteTaskHistoryStoreOptions` — Options for sqliteTaskHistoryStore.
 - `interface SqlListener` — A subscription made with SqlClient.listen.
 - `interface SqlQuery<T>` — A query that may also run as a simple-protocol query (several statements, no parameters).
 - `type SqlRow = Record<string, unknown>` — One row, keyed by column name.
@@ -1815,23 +1840,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SubscriptionRunContext` — What a subscription's authorize / resolve receive besides the parsed input.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
-- `interface Task<R>` — A task descriptor. Returned by defineTask; the shape a tasks/ file default-exports.
-- `type TaskBackoff = number | object` — How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default "exponential": delayMs, then twice that, … capped at maxDelayMs).
-- `interface TaskContext` — Context passed to a task's handler.
-- `interface TaskDefinition<R>` — A task definition passed to defineTask.
-- `interface TaskHistory` — What a read returns — including why there is nothing, which is itself an answer.
-- `interface TaskHistoryCleared` — What clearing the history did, or why it could not.
-- `interface TaskHistoryConfig` — The object form of TasksConfig.history.
-- `interface TaskHistoryOptions` — Options for taskHistoryRecorder and readTaskHistory.
-- `interface TaskHistoryPruneOptions` — Options for TaskHistoryStore.prune.
-- `interface TaskHistoryReadOptions` — Options for TaskHistoryStore.read.
-- `interface TaskHistoryRow` — One task's standing, as the panel shows it.
-- `interface TaskHistoryRun` — One run in the recent feed.
-- `interface TaskHistoryStore` — Where task run history is kept — the seam behind tasks: { history }.
-- `taskNames(): string[]` — Every registered task name, sorted.
-- `interface TaskRetry` — A task's retry policy (TaskDefinition.retry).
-- `interface TaskRunRecord` — One completed run, as the recorder receives it.
-- `interface TasksConfig` — Scheduled/background task behaviour (DenextConfig.tasks).
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `totpAuthUri(options: TotpAuthUriOptions): string` — Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).
@@ -2869,6 +2877,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ProjectVerb` — One verb a project contributes, as CommandRegistry.formatHelp lists it.
 - `suggest(input: string, candidates: typeOperator): string | undefined` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.
 - `VERB_NAME: RegExp` — A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.
+- `verbIndex(argv: typeOperator): number` — Index of the first bare token in argv — the verb — or -1 when there is none. The separate value of a valued global flag (--cwd <dir>) is skipped, not taken as the verb.
 
 ### `denext/expo/apple-authentication`
 

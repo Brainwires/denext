@@ -109,8 +109,69 @@ export async function spawnDenoAndExit(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const { code } = await child.status;
+  const { code } = await relayingSignals(child);
   Deno.exit(code);
+}
+
+/** The signals {@linkcode relayingSignals} relays to the child as themselves. */
+const RELAYED: readonly Deno.Signal[] = Deno.build.os === "windows" ? [] : ["SIGTERM", "SIGHUP"];
+
+/**
+ * The terminal's interrupt keys (Ctrl-C, Ctrl-Break) reach the whole foreground process group —
+ * the child included — on their own. The parent only has to survive them, so the child decides
+ * what an interrupt means (a REPL clears its line; a server drains).
+ */
+const TERMINAL: readonly Deno.Signal[] = Deno.build.os === "windows"
+  ? ["SIGINT", "SIGBREAK"]
+  : ["SIGINT"];
+
+/**
+ * Await `child`, passing signals through: a `kill <pid>` (SIGTERM / SIGHUP) sent to this process
+ * is relayed to the child as the same signal, and a terminal interrupt is left to the child. The
+ * child's status comes back as Deno reports it — on Unix a child killed by a signal has
+ * `code` 128 + its number, which is what the caller exits with, as a shell would.
+ */
+async function relayingSignals(child: Deno.ChildProcess): Promise<Deno.CommandStatus> {
+  const relays = RELAYED.map((sig) =>
+    [sig, () => {
+      try {
+        child.kill(sig);
+      } catch { /* already exited */ }
+    }] as const
+  );
+  const swallow = () => {};
+  const listen = (on: boolean) => {
+    for (const [sig, fn] of [...relays, ...TERMINAL.map((sig) => [sig, swallow] as const)]) {
+      try {
+        if (on) Deno.addSignalListener(sig, fn);
+        else Deno.removeSignalListener(sig, fn);
+      } catch { /* unsupported here */ }
+    }
+  };
+  listen(true);
+  try {
+    return await child.status;
+  } finally {
+    listen(false);
+  }
+}
+
+/**
+ * The global flags denext parsed that a forwarding verb hands back to Deno, which has them too:
+ * `--config <path>` and `--quiet` always, and `--json` for a Deno subcommand that takes it
+ * (`lint`, `info`). `--cwd` is applied as the child's directory instead, and `--verbose` is
+ * denext's alone.
+ *
+ * @param ctx The parsed invocation.
+ * @param options `json`: whether the Deno subcommand accepts `--json`.
+ * @returns The flags, in a stable order.
+ */
+export function denoGlobalArgs(ctx: CommandContext, options: { json?: boolean } = {}): string[] {
+  const args: string[] = [];
+  if (ctx.global.config) args.push("--config", ctx.global.config);
+  if (ctx.global.quiet) args.push("--quiet");
+  if (options.json && ctx.global.json) args.push("--json");
+  return args;
 }
 
 /** cwd for a verb whose positionals are forwarded args (not a project dir). */

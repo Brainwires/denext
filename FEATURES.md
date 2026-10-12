@@ -253,9 +253,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
-- **Scheduled / background tasks** (`tasks/<name>.ts` → `defineTask({ handler })`):
-  run on a cron schedule (`scheduledTasks` in `denext.config.ts`, or a per-task
-  `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
+- **Scheduled / background jobs** (`jobs/<name>.ts` → `defineJob({ handler })`):
+  run on a cron schedule (`scheduledJobs` in `denext.config.ts`, or a per-job
+  `schedule`) and/or on demand (`runJob(name)` from app code, `denext job <name>`
   from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
   (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
   otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
@@ -269,7 +269,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers, and Postgres
   first-party — `postgresClient` on `Deno.SQL` (or `fromPostgresJs` on stock Deno), Postgres
-  auth / session / rate-limit / cache / task-history stores and `migratePostgres` (see
+  auth / session / rate-limit / cache / job-history stores and `migratePostgres` (see
   [Backend](#backend-opt-in-plugin-denextbackend)). See
   [the database guide](https://denext.dev/docs/database), [`examples/notes`](./examples/notes) (SQLite,
   single process), and [`examples/postgres-load`](./examples/postgres-load) (a
@@ -334,7 +334,7 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `mime`, and `authorize({ session, op, key })`, run with the request's session (no `authorize`
   denies). Server API from `@denext/backend/server`: `storage.bucket(name)` →
   `createSignedUploadUrl` / `createSignedUrl` / `upload` / `download` / `head` / `list` /
-  `remove` (`{ service: true }` skips `authorize` in a task). The browser uploads to the store
+  `remove` (`{ service: true }` skips `authorize` in a job). The browser uploads to the store
   directly with presigned URLs — `uploadFile(bucket, file, { onProgress })` and `getFileUrl`
   from `@denext/backend/client`, **multipart** on S3 above `multipartThreshold` — and the
   server checks size, type and first bytes at completion. **Image transforms** on download
@@ -349,19 +349,19 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   shape. The Postgres stores take `{ sql | url, schema? }` and create their tables by migration
   on first use: `postgresAuthAdapter` (denext auth's users, accounts, credentials, tokens and
   factors), `postgresSessionStore`, `postgresRateLimitStore`, `postgresCacheStore` and
-  `postgresTaskHistoryStore` (one task-run history across replicas). `migratePostgres` /
+  `postgresJobHistoryStore` (one job-run history across replicas). `migratePostgres` /
   `postgresMigrationStatus` apply `migrations/*.sql` in order, each in its own transaction under
-  an advisory lock (`denext generate migration <name>` + `denext task migrate`). With the plugin,
+  an advisory lock (`denext generate migration <name>` + `denext job migrate`). With the plugin,
   `backend({ postgres: {} })` (reads `DATABASE_URL`) opens one client for the app and
   `backendAuthAdapter()` puts auth's tables on it. — `src/server/postgres.ts`,
-  `postgres-migrate.ts`, `postgres-cache.ts`, `postgres-task-history.ts`,
+  `postgres-migrate.ts`, `postgres-cache.ts`, `postgres-job-history.ts`,
   `src/server/auth/postgres-*.ts`.
 - **Supabase-compatible row-level security** ⚑ — `db()` from `@denext/backend/server` runs every
   query as the request's user: `authenticated` with the session's claims in `request.jwt.claims`
   (the keys of a Supabase access token), or `anon` when signed out or outside a request, set
   transaction-locally — so policies written for Supabase (`auth.uid()`, `auth.jwt()`,
   `auth.role()`, `auth.email()`) run unchanged. The identity is bound when the query is made.
-  `db({ as: { id } })` acts for a user in a task; `db.service()` is the unscoped connection
+  `db({ as: { id } })` acts for a user in a job; `db.service()` is the unscoped connection
   (maintenance only). The roles and `auth.*` functions come from the plugin's first migration,
   or from an administrator running `rlsSetupSql(role)`. — `packages/backend/src/rls.ts`,
   `postgres.ts`.

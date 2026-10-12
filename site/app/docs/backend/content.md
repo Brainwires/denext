@@ -65,7 +65,7 @@ no auth.
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
-request's session. Outside any request (a [task](/docs/tasks), a script, module load) there is no
+request's session. Outside any request (a [job](/docs/jobs), a script, module load) there is no
 session to authorize, so a plain handle is refused (`forbidden`; a public bucket's downloads stay
 open): code that acts as the server takes a service handle, there or inside a request (a webhook,
 an admin action). `storage.bucket("invoices", { service: true })` skips `authorize`; the size cap,
@@ -258,7 +258,7 @@ and `db()` throws an error with `code: "unsupported"` that says so. Pass a clien
 
 `backendAuthAdapter({ schema?, migrate? })` is `postgresAuthAdapter` on that client (see
 [Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first
-use. Your own tables come from `denext generate migration <name>` and `denext task migrate`
+use. Your own tables come from `denext generate migration <name>` and `denext job migrate`
 ([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)).
 
 ## Row-level security
@@ -306,7 +306,7 @@ export async function POST(request: Request): Promise<Response> {
 | `db({ as: "anon" })`                                                   | `anon`                                   | `null`        |
 | `db.service()` / `db({ as: "service" })`                               | the app's own database user — **no RLS** | `null`        |
 
-Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
+Outside a request (a [job](/docs/jobs), a script) nobody is signed in, so `db()` is `anon` there:
 act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
 `db()` reads who is asking for each query, from the request that makes it (once per request), not
 when the client was made — so a module-level `const sql = db()` is fine: it serves each visitor
@@ -746,4 +746,4 @@ and honours `--read-only`.
 
 Storage, Postgres, row-level security, realtime from the database and auto-REST are the services in
 `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
-[tasks](/docs/tasks) are already part of denext itself.
+[jobs](/docs/jobs) are already part of denext itself.

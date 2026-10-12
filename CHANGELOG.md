@@ -8,8 +8,49 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking (4.0)
+
+- **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
+  `package.json` task on denext's Deno toolchain, every argument verbatim. Inside it every `deno`
+  is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and the child's
+  `PATH` starts with that binary as `deno` (a link in the toolchain cache when it is named
+  otherwise), so a script or tool the task starts gets it too.
+- **Background and scheduled tasks are now jobs**, end to end, with no aliases: `denext job <name>
+  | --list | --history | --clear-history`; the `tasks/` directory is `jobs/`; `defineTask` →
+  `defineJob`, `runTask` → `runJob`, `registerTask` / `getTask` / `isTask` / `taskNames` →
+  `registerJob` / `getJob` / `isJob` / `jobNames`; the types `Task`, `TaskContext`,
+  `TaskDefinition`, `TaskRetry`, `TaskBackoff`, `TaskRunRecord`, `TasksConfig`,
+  `TaskHistoryConfig` and `TaskHistory*` → `Job…`; `sqliteTaskHistoryStore` /
+  `postgresTaskHistoryStore` → `sqliteJobHistoryStore` / `postgresJobHistoryStore`; config
+  `scheduledTasks` → `scheduledJobs` and `tasks: { history, historyMaxRuns }` → `jobs: { … }`;
+  the history file `.denext/tasks.db` → `.denext/jobs.db` (and the Postgres store's `task_runs`
+  table → `job_runs`, a run's `task` field → `job`, and `denext job --list --json`'s `tasks` → `jobs`); `denext generate task` → `denext generate
+  job`, and `generate migration` / `generate seed` write `jobs/migrate.ts` / `jobs/seed.ts`. A
+  config that still sets `tasks` or `scheduledTasks` fails to load, naming the new key. The docs
+  page moved to [/docs/jobs](https://denext.dev/docs/jobs).
+- **`denext info <module>`** is Deno's `deno info` (its flags pass through); `denext info [dir]`
+  keeps printing denext's environment and project facts. Deno's cache info: `denext deno info`.
+- **`denext audit` also runs `deno audit`** (Deno's audit flags — `--level`, `--ignore`,
+  `--ignore-unfixable`, `--socket`, `--fix`, `--lock`, … — forwarded) and exits non-zero when
+  either half fails. `--skip-deno-audit` runs denext's checks only.
+- A forwarding verb (`test`, `lint`, `fmt`, `check`, `add`, `remove`, `update`) keeps a literal
+  `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
+  arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global
+  flags.
+
 ### Added
 
+- **Every Deno verb through `denext`.** A verb denext doesn't define runs on denext's Deno
+  toolchain exactly like `denext deno <verb>` — `denext compile …`, `denext run …`, `denext x …`,
+  `denext bench …` — arguments verbatim, exit code and signals passed through, stock Deno when no
+  toolchain can be had. `denext main.ts` (a script extension, a URL or `jsr:` / `npm:` specifier,
+  or an existing file written as a path) is `deno run`. Precedence: denext's built-in verbs, then
+  the project's own (`commands:`, plugin `addCommand`; one stderr notice when one shadows a Deno
+  verb, naming `denext deno <verb>`), then Deno's. An unknown verb still gets a did-you-mean, now
+  over denext, project and Deno verbs. `denext --help`, shell completions and the
+  [CLI reference](https://denext.dev/docs/cli#deno-verbs) list the forwarded verbs; the list is the
+  pinned Deno's, checked against its `--help` by a test. `upgrade`, `desktop`, `create`, `init` and
+  `completions` keep denext's meaning and say how to reach Deno's.
 - **denext's Deno toolchain.** The verbs that run project code (`dev`, `build`, `export`, `start`,
   `test`, `check`, `task`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
   `mobile dev|build`, and a project's own verbs) now re-run themselves on denext's pinned Deno build

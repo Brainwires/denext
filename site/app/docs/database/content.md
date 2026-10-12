@@ -253,7 +253,7 @@ CI. Prisma's `postgres` adapter works as plain networked-driver usage.
 
 denext ships no migration tool and does not need one: a migration is server code
 that runs before the app takes traffic, and the framework already has a place
-for server code you run on demand — a [task](/docs/tasks) — and a place for a
+for server code you run on demand — a [job](/docs/jobs) — and a place for a
 project-local CLI verb — `commands` in `denext.config.ts`. The three recipes
 below are ordered by how much machinery they bring; the first one is verified
 here and is enough for most SQLite apps.
@@ -262,28 +262,28 @@ here and is enough for most SQLite apps.
 
 `migrations/NNN_name.sql`, applied in filename order, each inside a transaction
 (a file with its own `BEGIN;` … `COMMIT;` runs as written, since SQLite can't nest
-transactions), each recorded once in a `_migrations` table. The runner is a task, so it is
-`denext task migrate` from a shell or a deploy step and `runTask("migrate")`
+transactions), each recorded once in a `_migrations` table. The runner is a job, so it is
+`denext job migrate` from a shell or a deploy step and `runJob("migrate")`
 from app code.
 
 **`denext generate migration <name>` writes it for you:** the next
 `migrations/<UTC timestamp>_<name>.sql` (timestamps sort in creation order and
 never collide between branches the way `NNN` does) and, the first time,
-`tasks/migrate.ts` — the runner below. `denext generate seed` writes
-`tasks/seed.ts`, an idempotent `INSERT OR IGNORE` seed for `denext task seed`
+`jobs/migrate.ts` — the runner below. `denext generate seed` writes
+`jobs/seed.ts`, an idempotent `INSERT OR IGNORE` seed for `denext job seed`
 (a `PrismaClient` upsert in a Prisma project). In a Prisma or Drizzle project
 `generate migration` points at `prisma migrate dev` / `drizzle-kit generate`
 instead, since those own the migration history. The runner by hand:
 
 ```ts
-// tasks/migrate.ts — apply migrations/NNN_name.sql in order, once each, on node:sqlite.
+// jobs/migrate.ts — apply migrations/NNN_name.sql in order, once each, on node:sqlite.
 import { DatabaseSync } from "node:sqlite";
-import { defineTask } from "denext/server";
+import { defineJob } from "denext/server";
 
 const DB_PATH = Deno.env.get("DB_PATH") ?? "app.db";
 const DIR = new URL("../migrations/", import.meta.url);
 
-export default defineTask({
+export default defineJob({
   description: "apply pending migrations/*.sql",
   handler: () => {
     const db = new DatabaseSync(DB_PATH);
@@ -336,15 +336,15 @@ CREATE TABLE notes (
 ```
 
 ```sh
-denext task migrate          # applied 2 migration(s): 001_notes.sql, 002_notes_body.sql
-denext task migrate          # applied 0 migration(s): none
-denext task --list           # migrate  —  apply pending migrations/*.sql
+denext job migrate          # applied 2 migration(s): 001_notes.sql, 002_notes_body.sql
+denext job migrate          # applied 0 migration(s): none
+denext job --list           # migrate  —  apply pending migrations/*.sql
 ```
 
 Verified against this runner: a second run is a no-op, a file with a syntax
 error is rolled back as a unit (the tables it created before the bad statement
-are gone) and the run exits `1`, and the task's returned line lands in the run
-history when `tasks: { history: true }` is on. Use it from a deploy step
+are gone) and the run exits `1`, and the job's returned line lands in the run
+history when `jobs: { history: true }` is on. Use it from a deploy step
 (`deno run -A jsr:@denext/denext@^3/cli task migrate` before `start`), a
 Kubernetes init container or a `preStart` hook — and keep the schema step out of
 the app's boot so a bad migration fails the deploy, not the first request. The
@@ -356,7 +356,7 @@ migrations are deliberately absent: write a new forward file.
 
 `denext generate migration <name>` writes Postgres SQL when the project uses Postgres
 (`DATABASE_URL` is a `postgres://` URL in the environment, `.env` or `.env.local`, or the denext
-config has a `postgres:` key), and the `tasks/migrate.ts` it writes picks the database when it
+config has a `postgres:` key), and the `jobs/migrate.ts` it writes picks the database when it
 runs: Postgres when `DATABASE_URL` is a `postgres://` URL, else `node:sqlite`. On Postgres it
 calls `migratePostgres`:
 
@@ -368,9 +368,9 @@ calls `migratePostgres`:
 - a failing file rolls back alone and stops the run, naming itself.
 
 ```sh
-denext task migrate                              # apply what is pending
-denext task migrate --payload '{"dryRun":true}'  # list what would run, run nothing
-denext task migrate --payload '{"status":true}'  # applied / pending / changed / unknown
+denext job migrate                              # apply what is pending
+denext job migrate --payload '{"dryRun":true}'  # list what would run, run nothing
+denext job migrate --payload '{"status":true}'  # applied / pending / changed / unknown
 ```
 
 The same calls work from your own code: `migratePostgres(sql, { dir, dryRun })` and
@@ -390,16 +390,16 @@ added to `package.json`, `deno install`):
 `deno run -A npm:drizzle-kit generate` diffs `lib/schema.ts` against the last
 snapshot and writes `drizzle/0000_….sql` + `drizzle/meta/` — pure codegen, no
 database. `migrate()` from `drizzle-orm/better-sqlite3/migrator` then applies
-the folder at boot or from a task, recording in `__drizzle_migrations`:
+the folder at boot or from a job, recording in `__drizzle_migrations`:
 
 ```ts
-// tasks/migrate.ts
+// jobs/migrate.ts
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { defineTask } from "denext/server";
+import { defineJob } from "denext/server";
 
-export default defineTask({
+export default defineJob({
   description: "apply drizzle/ migrations",
   handler: () => {
     const sqlite = new Database(Deno.env.get("DB_PATH") ?? "app.db");
@@ -439,7 +439,7 @@ dev` / `migrate deploy`** use the same CLI and the same schema
 engine, so they are expected to work the same way, but they are **not exercised
 in denext's CI**; treat a first run as something to check on a copy of the
 database. Either way the command runs the Prisma CLI, not your app, so it
-belongs in the deploy step, not in a task (the generated client is what the app
+belongs in the deploy step, not in a job (the generated client is what the app
 imports).
 
 ### Seeding
@@ -464,10 +464,10 @@ export default {
 ```
 
 `denext seed --reset` gets the same flag parsing, `--help` and did-you-mean as a
-built-in verb; `denext commands` lists it. A task (`tasks/seed.ts`,
-`denext task
+built-in verb; `denext commands` lists it. A job (`jobs/seed.ts`,
+`denext job
 seed --payload '{"reset":true}'`) is the other home, and the right
-one when app code should be able to call it (`runTask("seed")` from a test
+one when app code should be able to call it (`runJob("seed")` from a test
 setup, say). Keep seeds **idempotent** — `INSERT OR IGNORE`, or a check on an
 empty table as `examples/drizzle` does at boot — so a second run on a shared
 database is harmless.
@@ -476,7 +476,7 @@ database is harmless.
 
 Deploy has no persistent local disk, so a SQLite file — and the `_migrations`
 table in it — does not survive an isolate. Migrate a **hosted** database from
-your deploy pipeline (`denext task migrate` in the workflow, against the
+your deploy pipeline (`denext job migrate` in the workflow, against the
 production DSN) rather than from the running app; the same applies to any
 platform whose containers start from a clean image without a mounted volume. See
 [Deployment targets](/docs/deployment-targets).
@@ -491,6 +491,6 @@ platform whose containers start from a clean image without a mounted volume. See
 - Do **mutations in Server Actions** so forms degrade gracefully without
   JavaScript.
 - Run migrations from a startup `db.exec(...)` (as in `examples/notes`) for a
-  schema that only ever grows, or from a task once it needs ordering and a
+  schema that only ever grows, or from a job once it needs ordering and a
   record of what ran — see [Migrations & seeding](#migrations--seeding). denext
   doesn't prescribe a migration tool.

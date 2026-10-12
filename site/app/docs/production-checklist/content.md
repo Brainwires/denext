@@ -79,7 +79,7 @@ Each line: what to set → where it is documented. Config keys go in
 **Permissions and files**
 
 - `--allow-write=.denext` on the start command — the durable `node:sqlite` cache
-  lives at `.denext/cache.db` and task history at `.denext/tasks.db`. Without
+  lives at `.denext/cache.db` and job history at `.denext/jobs.db`. Without
   the grant the cache **silently falls back to memory** (one warning line at
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
   `deno task start` already grants it. →
@@ -87,7 +87,7 @@ Each line: what to set → where it is documented. Config keys go in
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use
-  `VACUUM INTO` from a task. The cache is disposable; the others are not. →
+  `VACUUM INTO` from a job. The cache is disposable; the others are not. →
   [Databases](/docs/database)
 - Deno Deploy has **no persistent disk**: the cache is per-isolate memory, task
   history is a fragment that resets, and a SQLite file does not survive. Inject
@@ -219,7 +219,7 @@ import type { DenextConfig } from "denext/server";
 export default {
   canonicalOrigin: "https://example.com",
   maxConcurrency: 100,
-  tasks: { history: true },
+  jobs: { history: true },
 } satisfies DenextConfig;
 ```
 

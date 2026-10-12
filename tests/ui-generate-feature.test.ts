@@ -284,12 +284,12 @@ Deno.test("the JSON twin accepts a JSON body as well as a form", async () => {
         [UI_CSRF_HEADER]: h.csrf,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ kind: "task", name: "cleanup", op: "preview" }),
+      body: JSON.stringify({ kind: "job", name: "cleanup", op: "preview" }),
     });
     const payload = await res.json();
     assertEquals(payload.ok, true);
-    assertEquals(payload.preview[0].path, "tasks/cleanup.ts");
-    assertStringIncludes(payload.preview[0].contents, "defineTask");
+    assertEquals(payload.preview[0].path, "jobs/cleanup.ts");
+    assertStringIncludes(payload.preview[0].contents, "defineJob");
   } finally {
     await stop(h);
   }

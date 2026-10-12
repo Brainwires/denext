@@ -424,8 +424,8 @@
         "wrapper": "function"
       }
     },
-    "scheduledTasks": {
-      "description": "Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s) to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.",
+    "scheduledJobs": {
+      "description": "Cron schedules for background jobs: a map of a 5-field cron expression to the job name(s) to run on it (a job is `jobs/<name>.ts` exporting `defineJob(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.",
       "type": "object",
       "additionalProperties": {
         "anyOf": [
@@ -441,12 +441,12 @@
         ]
       }
     },
-    "tasks": {
-      "description": "Scheduled/background task behaviour. Currently run history, which is off unless asked for.",
+    "jobs": {
+      "description": "Scheduled/background job behaviour. Currently run history, which is off unless asked for.",
       "type": "object",
       "properties": {
         "history": {
-          "description": "Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
+          "description": "Record every job run — scheduled and on demand — to `.denext/jobs.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
           "anyOf": [
             {
               "type": "boolean"
@@ -455,10 +455,10 @@
               "type": "object",
               "properties": {
                 "store": {
-                  "description": "Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does, as its process ends)."
+                  "description": "Where runs are recorded. Default: the SQLite file `.denext/jobs.db`. A store passed here is the app's: denext never closes it on a dev re-boot (only a one-shot `denext job` run does, as its process ends)."
                 },
                 "maxRuns": {
-                  "description": "Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob). A `store` takes its own cap.",
+                  "description": "Runs kept per job by the default store (default 500; `historyMaxRuns` is the same knob). A `store` takes its own cap.",
                   "type": "number",
                   "minimum": 1
                 }
@@ -467,7 +467,7 @@
           ]
         },
         "historyMaxRuns": {
-          "description": "Runs kept per task before the oldest are dropped (default 500).",
+          "description": "Runs kept per job before the oldest are dropped (default 500).",
           "type": "number",
           "minimum": 1
         }

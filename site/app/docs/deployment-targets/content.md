@@ -149,7 +149,7 @@ terminationGracePeriodSeconds: 30
   sleep of a few seconds lets the endpoint slice stop routing to the pod before
   the drain starts.
 - **Replicas.** Two pods are two nodes: shared cache/session/rate-limit stores,
-  one task runner (a `CronJob` running `denext task <name>` is the
+  one job runner (a `CronJob` running `denext job <name>` is the
   Kubernetes-native choice), and a Live transport if you use channels — the
   whole [multi-instance](/docs/multi-instance) page applies.
 

@@ -1,7 +1,7 @@
-// `denext task <name>` and run history.
+// `denext job <name>` and run history.
 //
 // This verb never boots the scheduler, so without installing the recorder itself a manual run
-// would record nothing while the identical task on a schedule recorded fine — false exactly where
+// would record nothing while the identical job on a schedule recorded fine — false exactly where
 // someone would look first. That asymmetry is what these tests exist to prevent.
 //
 // The verb is driven in-process with `console` and `Deno.exit` stubbed, as
@@ -11,19 +11,19 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import type { CommandContext } from "../src/cli/command.ts";
-import { taskCommand } from "../src/cli/commands/task.ts";
-import { clearTasks } from "../src/server/tasks.ts";
-import { readTaskHistory } from "../src/server/task-history.ts";
+import { jobCommand } from "../src/cli/commands/job.ts";
+import { clearJobs } from "../src/server/jobs.ts";
+import { readJobHistory } from "../src/server/job-history.ts";
 
-/** A project with one task, and whatever config the test needs. */
+/** A project with one job, and whatever config the test needs. */
 async function project(config: string | null): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_cli_history_" });
   await Deno.writeTextFile(join(dir, "deno.json"), "{}");
-  await Deno.mkdir(join(dir, "tasks"), { recursive: true });
-  const server = new URL("../src/server/tasks.ts", import.meta.url).href;
+  await Deno.mkdir(join(dir, "jobs"), { recursive: true });
+  const server = new URL("../src/server/jobs.ts", import.meta.url).href;
   await Deno.writeTextFile(
-    join(dir, "tasks/cleanup.ts"),
-    `import { defineTask } from "${server}";\nexport default defineTask({ handler: () => "swept" });\n`,
+    join(dir, "jobs/cleanup.ts"),
+    `import { defineJob } from "${server}";\nexport default defineJob({ handler: () => "swept" });\n`,
   );
   if (config !== null) await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
   return dir;
@@ -42,7 +42,7 @@ async function invoke(dir: string, over: Partial<CommandContext> = {}): Promise<
     throw new Error("__exit__");
   }) as typeof Deno.exit;
   try {
-    await taskCommand.run({
+    await jobCommand.run({
       positionals: [],
       flags: {},
       global: { cwd: dir, json: false, verbose: false, quiet: false } as CommandContext["global"],
@@ -60,14 +60,14 @@ async function invoke(dir: string, over: Partial<CommandContext> = {}): Promise<
 }
 
 Deno.test("a manual CLI run is recorded, exactly like a scheduled one", async () => {
-  clearTasks();
-  const dir = await project("export default { tasks: { history: true } };\n");
+  clearJobs();
+  const dir = await project("export default { jobs: { history: true } };\n");
   try {
     assertEquals(await invoke(dir, { positionals: ["cleanup"] }), []);
-    const history = readTaskHistory({ path: join(dir, ".denext", "tasks.db") });
+    const history = readJobHistory({ path: join(dir, ".denext", "jobs.db") });
     assert(history.available, history.reason ?? "");
     assertEquals(history.recent.length, 1);
-    assertEquals(history.recent[0].task, "cleanup");
+    assertEquals(history.recent[0].job, "cleanup");
     assertEquals(history.recent[0].ok, true);
     // The trigger is what distinguishes it from the scheduler's own runs.
     assertEquals(history.recent[0].trigger, "manual");
@@ -76,14 +76,14 @@ Deno.test("a manual CLI run is recorded, exactly like a scheduled one", async ()
   }
 });
 
-Deno.test("with history off, running a task from the CLI writes nothing", async () => {
-  clearTasks();
+Deno.test("with history off, running a job from the CLI writes nothing", async () => {
+  clearJobs();
   const dir = await project(null);
   try {
     assertEquals(await invoke(dir, { positionals: ["cleanup"] }), []);
     let present = true;
     try {
-      await Deno.stat(join(dir, ".denext", "tasks.db"));
+      await Deno.stat(join(dir, ".denext", "jobs.db"));
     } catch {
       present = false;
     }
@@ -94,13 +94,13 @@ Deno.test("with history off, running a task from the CLI writes nothing", async 
 });
 
 Deno.test("--list --json reports whether history is on, resolved rather than guessed", async () => {
-  clearTasks();
-  const dir = await project("export default { tasks: { history: true } };\n");
+  clearJobs();
+  const dir = await project("export default { jobs: { history: true } };\n");
   const printed: string[] = [];
   const log = console.log;
   console.log = (...args: unknown[]) => void printed.push(args.map(String).join(" "));
   try {
-    await taskCommand.run({
+    await jobCommand.run({
       positionals: [],
       flags: { list: true },
       global: { cwd: dir, json: true, verbose: false, quiet: false } as CommandContext["global"],
@@ -109,7 +109,7 @@ Deno.test("--list --json reports whether history is on, resolved rather than gue
     // `denext ui` cannot evaluate denext.config.ts, so it reads this instead of parsing source.
     const doc = JSON.parse(printed.join("\n"));
     assertEquals(doc.history, true);
-    assertEquals(doc.tasks.map((t: { name: string }) => t.name), ["cleanup"]);
+    assertEquals(doc.jobs.map((t: { name: string }) => t.name), ["cleanup"]);
   } finally {
     console.log = log;
     await Deno.remove(dir, { recursive: true });
@@ -122,7 +122,7 @@ async function invokeJson(dir: string, flags: Record<string, unknown>): Promise<
   const log = console.log;
   console.log = (...args: unknown[]) => void printed.push(args.map(String).join(" "));
   try {
-    await taskCommand.run({
+    await jobCommand.run({
       positionals: [],
       flags,
       global: { cwd: dir, json: true, verbose: false, quiet: false } as CommandContext["global"],
@@ -136,34 +136,34 @@ async function invokeJson(dir: string, flags: Record<string, unknown>): Promise<
 
 /** A config whose history goes to the app's own store (a SQLite file of its choosing). */
 function customStoreConfig(): string {
-  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
-  return `import { sqliteTaskHistoryStore } from "${history}";\n` +
-    "export default { tasks: { history: { store: sqliteTaskHistoryStore({ path: " +
+  const history = new URL("../src/server/job-history.ts", import.meta.url).href;
+  return `import { sqliteJobHistoryStore } from "${history}";\n` +
+    "export default { jobs: { history: { store: sqliteJobHistoryStore({ path: " +
     "new URL('./custom.db', import.meta.url).pathname }) } } };\n";
 }
 
 Deno.test("a custom store: runs land in it; --history and --clear-history go through it", async () => {
-  clearTasks();
+  clearJobs();
   const dir = await project(customStoreConfig());
   try {
     const listing = await invokeJson(dir, { list: true }) as Record<string, unknown>;
     assertEquals([listing.history, listing.historyStore], [true, "custom"]);
-    clearTasks();
+    clearJobs();
     assertEquals(await invoke(dir, { positionals: ["cleanup"] }), []);
-    let tasksDb = true;
+    let jobsDb = true;
     try {
-      await Deno.stat(join(dir, ".denext", "tasks.db"));
+      await Deno.stat(join(dir, ".denext", "jobs.db"));
     } catch {
-      tasksDb = false;
+      jobsDb = false;
     }
-    assert(!tasksDb, "the default file is not written when a store is configured");
+    assert(!jobsDb, "the default file is not written when a store is configured");
     const read = await invokeJson(dir, { history: true }) as {
       enabled: boolean;
       available: boolean;
-      recent: { task: string; trigger: string }[];
+      recent: { job: string; trigger: string }[];
     };
     assertEquals([read.enabled, read.available], [true, true]);
-    assertEquals(read.recent.map((r) => [r.task, r.trigger]), [["cleanup", "manual"]]);
+    assertEquals(read.recent.map((r) => [r.job, r.trigger]), [["cleanup", "manual"]]);
     assertEquals(await invokeJson(dir, { "clear-history": true }), {
       enabled: true,
       cleared: true,
@@ -176,16 +176,16 @@ Deno.test("a custom store: runs land in it; --history and --clear-history go thr
 });
 
 Deno.test("--read-only: --history tells the store, --clear-history is refused before it", async () => {
-  clearTasks();
-  const history = new URL("../src/server/task-history.ts", import.meta.url).href;
+  clearJobs();
+  const history = new URL("../src/server/job-history.ts", import.meta.url).href;
   // A store of the app's own that writes down how it was read, and what it was asked to clear.
-  const dir = await project(`import { sqliteTaskHistoryStore } from "${history}";
-const inner = sqliteTaskHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
+  const dir = await project(`import { sqliteJobHistoryStore } from "${history}";
+const inner = sqliteJobHistoryStore({ path: new URL("./custom.db", import.meta.url).pathname });
 const note = (line) => Deno.writeTextFileSync(new URL("./calls.log", import.meta.url), line + "\\n", { append: true });
-export default { tasks: { history: { store: {
+export default { jobs: { history: { store: {
   record: (run) => inner.record(run),
   read: (options) => { note("read " + JSON.stringify(options)); return inner.read(options); },
-  listRuns: (task, options) => inner.listRuns(task, options),
+  listRuns: (job, options) => inner.listRuns(job, options),
   prune: (options) => inner.prune(options),
   clear: () => { note("clear"); return inner.clear(); },
   close: () => inner.close(),
@@ -211,7 +211,7 @@ export default { tasks: { history: { store: {
 });
 
 Deno.test("--history with history off is an answer, and the default store says default", async () => {
-  clearTasks();
+  clearJobs();
   const dir = await project(null);
   try {
     assertEquals(await invokeJson(dir, { history: true }), {

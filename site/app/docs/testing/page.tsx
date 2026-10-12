@@ -157,17 +157,17 @@ assertEquals(bad, { ok: false, error: "bad", fieldErrors: { title: "Title is req
         (render the form, <code>submit</code> it), which is also the progressive-enhancement proof.
       </p>
 
-      <h2 id="tasks">Running a task</h2>
+      <h2 id="jobs">Running a job</h2>
       <p>
         <code>createTestApp</code> does not scan{" "}
-        <code>tasks/</code>; register the module you want and run it. <code>runTask</code>{" "}
+        <code>jobs/</code>; register the module you want and run it. <code>runJob</code>{" "}
         returns the handler's value.
       </p>
       <Code lang="ts">
-        {`import { registerTask, runTask } from "denext/server";
+        {`import { registerJob, runJob } from "denext/server";
 
-registerTask("cleanup", (await import("../tasks/cleanup.ts")).default);
-assertEquals(await runTask("cleanup", { dry: true }), "cleaned 0 rows (dry run)");`}
+registerJob("cleanup", (await import("../jobs/cleanup.ts")).default);
+assertEquals(await runJob("cleanup", { dry: true }), "cleaned 0 rows (dry run)");`}
       </Code>
 
       <h2 id="environment">Environment and a throwaway database</h2>

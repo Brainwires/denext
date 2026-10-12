@@ -27,7 +27,7 @@ import {
   runRegister,
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
-import { bootScheduledTasks } from "../../server/task-loader.ts";
+import { bootScheduledJobs } from "../../server/job-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
@@ -177,13 +177,13 @@ export async function createProdApp(
 }
 
 /**
- * The process-lifetime services the server boots with: the scheduled tasks, the durable default
+ * The process-lifetime services the server boots with: the scheduled jobs, the durable default
  * cache store and the stale-page sweep. Returns the denext.config redirect/rewrite/header rules.
  */
 async function bootProdServices(paths: ProjectPaths, info: BuildInfo): Promise<ResolvedRules> {
-  // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
+  // Discover jobs/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined, paths.outDir);
+  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, paths.outDir);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
