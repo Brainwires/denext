@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-12
+
 ### Fixed
 
 - **Security: the store read and an entry's MDX module load outside the request that first needs
