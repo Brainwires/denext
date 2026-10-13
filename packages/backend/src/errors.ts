@@ -15,6 +15,8 @@ export type StorageErrorCode =
   | "expired"
   | "bad_signature"
   | "conflict"
+  | "duplicate"
+  | "not_empty"
   | "not_configured"
   | "unsupported"
   | "driver_error";
@@ -32,6 +34,8 @@ const STATUS: Record<StorageErrorCode, number> = {
   expired: 403,
   bad_signature: 403,
   conflict: 409,
+  duplicate: 409,
+  not_empty: 409,
   not_configured: 500,
   unsupported: 501,
   driver_error: 502,

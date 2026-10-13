@@ -154,16 +154,19 @@ Deno.test("client: an AbortSignal cancels an in-flight upload", async () => {
   const app = await backendApp({ buckets: { docs: { authorize: () => true } } });
   try {
     const controller = new AbortController();
+    // Abort once the bytes are in flight (the PUT's first progress event), however long signing took.
+    const started = Promise.withResolvers<void>();
     const pending = withBrowser(
       app.handler,
       () =>
         uploadFile("docs", new Blob(["abc"]), {
           signal: controller.signal,
           endpoint: "/_denext/storage/",
+          onProgress: () => started.resolve(),
         }),
       { fail: "hang" },
     );
-    await new Promise((r) => setTimeout(r, 20));
+    await started.promise;
     controller.abort();
     const err = await assertRejects(() => pending);
     assertEquals((err as DOMException).name, "AbortError");

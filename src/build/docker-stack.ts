@@ -191,12 +191,20 @@ export const STACK_ENV: readonly StackEnvVar[] = [
   },
   {
     name: "S3_ENDPOINT",
-    about: "The S3 endpoint the app signs requests and presigned URLs for. Browsers upload " +
-      "and download through those URLs, so in production make it a public HTTPS hostname " +
-      "routed to the minio service (reachable from the app container too).",
+    about: "The S3 endpoint the app's own requests go to (inside the compose network).",
     example: "http://minio:9000",
     required: false,
     app: false,
+    when: (o) => o.storage === true,
+  },
+  {
+    name: "S3_PUBLIC_ENDPOINT",
+    about: "The S3 endpoint BROWSERS reach the store at: presigned upload and download URLs " +
+      "are signed for this host. In production a public HTTPS hostname routed to the minio " +
+      "service; empty, browser URLs use S3_ENDPOINT (unreachable outside the containers).",
+    example: "http://localhost:9000",
+    required: false,
+    app: true,
     when: (o) => o.storage === true,
   },
 ];

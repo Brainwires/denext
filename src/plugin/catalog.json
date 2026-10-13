@@ -91,6 +91,9 @@
                       },
                       "abortMultipart": {
                         "description": "Abandon a multipart upload and free its parts."
+                      },
+                      "uploadPart": {
+                        "description": "Upload one part from the server (resumable uploads); returns its ETag. Optional: without it, the part is sent to presignPart's URL."
                       }
                     },
                     "required": [
@@ -101,6 +104,9 @@
                       "completeMultipart",
                       "abortMultipart"
                     ]
+                  },
+                  "copy": {
+                    "description": "Copy an object inside the store (S3 `CopyObject`), keeping its content type. Optional: without it, a copy streams the object back in through `get` and `put`."
                   }
                 },
                 "required": [
@@ -159,6 +165,37 @@
               },
               "partSize": {
                 "description": "Multipart part size in bytes (default 16 MiB, at least 5 MiB).",
+                "type": "number"
+              },
+              "authorize": {
+                "description": "The rule for buckets created at runtime (`storage.createBucket`, supabase-js `createBucket`) and for declared buckets without an `authorize` of their own. Absent, those buckets are open only to the service role (and to downloads, when public)."
+              },
+              "rls": {
+                "description": "Authorize with SQL row-level security on `storage.objects` / `storage.buckets`, as Supabase does: every operation runs its statement as the request's role (`anon` / `authenticated`, `auth.uid()` in your policies), so the policies decide; a bucket's `authorize`, when it has one, must allow it too. Needs `postgres`. Default `false` (the TypeScript rules decide).",
+                "type": "boolean"
+              },
+              "api": {
+                "description": "The Supabase-compatible Storage API (what `supabase.storage` from `@supabase/supabase-js` talks to, and TUS resumable uploads): served under `/storage/v1` by default; a path to move it, or `false` to turn it off.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "basePath": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "metadataPath": {
+                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.",
+                "type": "string"
+              },
+              "maxTransformDimension": {
+                "description": "The largest width or height the API's image render routes produce (default 2500).",
                 "type": "number"
               }
             },

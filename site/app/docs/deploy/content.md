@@ -121,10 +121,13 @@ out of the image — keep it out of git too (the generator warns when `.gitignor
 (the build already downloaded it; a layer puts it first on `PATH`), because
 `@denext/backend`'s Postgres client is `Deno.SQL`, which stock Deno does not have.
 
-**Object storage from the browser.** Uploads and downloads use presigned URLs signed for
-`S3_ENDPOINT` (default `http://minio:9000`, which only the containers can resolve). For browser
-uploads in production, set `S3_ENDPOINT` to a public HTTPS hostname that routes to the `minio`
-service and that the app container can reach as well. MinIO no longer publishes pullable
+**Object storage from the browser.** The app talks to the store at `S3_ENDPOINT` (default
+`http://minio:9000`, which only the containers can resolve), and signs every URL it hands a
+browser — presigned uploads, downloads, multipart parts — for `S3_PUBLIC_ENDPOINT` instead
+(`s3({ publicEndpoint })`; SigV4 signs the host, so the URL must be signed for the name the
+browser uses). Set it to a public HTTPS hostname routed to the `minio` service in production, or
+`http://localhost:9000` with the dev overlay, which publishes MinIO's port. Left empty, browser URLs
+point at `S3_ENDPOINT`. MinIO no longer publishes pullable
 images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
 `MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 

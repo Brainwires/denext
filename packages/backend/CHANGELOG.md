@@ -72,6 +72,14 @@
   `old: "full"`) and `{ op: "truncate" }`.
 - **`broadcast(topic, event, payload)`** from `@denext/backend/server` publishes to every
   `supabase.channel(topic)` subscriber on every instance.
+- **Supabase Storage parity.** `/storage/v1` serves Supabase's Storage API (supabase-js
+  `supabase.storage` unchanged: buckets at runtime, uploads with upsert / cache control / metadata,
+  list, info, exists, move, copy, bulk remove, signed URLs and uploads, public URLs, `render/image`
+  transforms with `resize`), TUS resumable uploads at `/storage/v1/upload/resumable`, object and
+  bucket metadata in Supabase's `storage` schema on Postgres (or `node:sqlite` without it), and
+  `storage: { rls: true }` to authorize with SQL policies on `storage.objects` / `storage.buckets`.
+  The server API gains `info`, `exists`, `copy`, `move`, `listFolder`, `createSignedUrls`,
+  `getPublicUrl` and bucket management; `authorize` receives the request's `identity`.
 
 ## 0.3.0 - 2026-10-13
 

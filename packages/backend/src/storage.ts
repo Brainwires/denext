@@ -2,21 +2,13 @@
 // sign route and the plugin's object handler. It normalizes keys, enforces the bucket's rules
 // (authorize, size cap, allow-list, sniffing) and mints the plugin's signed URLs.
 
-import { auth } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
 import { normalizeKey, normalizePrefix } from "./keys.ts";
+import { checkSniffed, dispositionFor, essence, SNIFF_BYTES } from "./mime.ts";
 import {
-  checkSniffed,
-  dispositionFor,
-  essence,
-  mimeAllowed,
-  SNIFF_BYTES,
-  sniffMime,
-} from "./mime.ts";
-import {
-  bucketOf,
   clampExpiry,
   MIN_PART_SIZE,
+  resolveBucket,
   type ResolvedBucket,
   runtime,
   secretsOf,
@@ -24,28 +16,59 @@ import {
 } from "./runtime.ts";
 import { objectPath, type StorageTransform, writeTransform } from "./shared.ts";
 import { nowSeconds, openGrant, sealGrant, signPayload, type UploadGrant } from "./signing.ts";
-import { limit, peek, readAll, toStream } from "./streams.ts";
+import { readAll, toStream } from "./streams.ts";
+import {
+  actorFor,
+  authorizeOp,
+  type Caller,
+  capFor,
+  checkContentType,
+  copyObject,
+  createBucket,
+  deleteBucket,
+  emptyBucket,
+  getBucket,
+  listBuckets,
+  listEntries,
+  metadataOf,
+  moveObject,
+  putObject,
+  readableRow,
+  recordObject,
+  removeObjects,
+  serverCaller,
+  SERVICE_CALLER,
+  updateBucket,
+} from "./storage-ops.ts";
+import type { BucketRow, ObjectRow } from "./storage-meta.ts";
 import type {
   BucketAccessOptions,
+  BucketInfo,
+  FolderEntry,
+  FolderListOptions,
   ListOptions,
   ListResult,
   MultipartUpload,
+  ObjectDetails,
   ObjectInfo,
   SignedUpload,
   SignedUploadOptions,
   SignedUrlOptions,
   Storage,
   StorageBucket,
-  StorageOp,
   StoredObject,
   UploadBody,
   UploadOptions,
 } from "./types.ts";
 
+export { storeChecked } from "./storage-ops.ts";
+
 /** Default lifetime of a signed upload URL (seconds). */
 const UPLOAD_EXPIRY = 900;
 /** Default lifetime of a signed download URL (seconds). */
 const DOWNLOAD_EXPIRY = 3600;
+/** `Cache-Control` recorded for a client upload. */
+const DEFAULT_CACHE = "max-age=3600";
 /** S3's part-count ceiling. */
 const MAX_PARTS = 10_000;
 /**
@@ -53,81 +76,6 @@ const MAX_PARTS = 10_000;
  * PUT that STARTED before the expiry, so a large upload can finish after it.
  */
 const COMPLETE_GRACE = 3600;
-
-type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
-
-/**
- * The request being served, or `null` outside any request (a job, a script, module load).
- *
- * @returns The current request.
- */
-function currentRequest(): Request | null {
-  return (globalThis as ContextBridge).__denextCurrentRequestContext?.()?.request ?? null;
-}
-
-/**
- * Enforce `authorize` for one operation. A service handle is never checked; a public bucket's
- * downloads are open; inside a request `authorize` must return `true` (absent → denied). Outside
- * any request (a job, a script, module load) there is no session to authorize, so the operation
- * is refused: such code uses `storage.bucket(name, { service: true })`, knowingly.
- *
- * @param bucket The bucket's rules.
- * @param op The operation.
- * @param key The key (or prefix).
- * @param service Whether this is a service handle.
- * @throws {StorageError} `forbidden`.
- */
-async function authorizeOp(
-  bucket: ResolvedBucket,
-  op: StorageOp,
-  key: string,
-  service = false,
-): Promise<void> {
-  if (service) return;
-  if (op === "download" && bucket.public) return;
-  const request = currentRequest();
-  if (!request) {
-    throw new StorageError(
-      "forbidden",
-      `${op} on ${bucket.name}/${key} outside a request has no session to authorize: ` +
-        `use storage.bucket(${JSON.stringify(bucket.name)}, { service: true }) in a job or script`,
-    );
-  }
-  const allowed = bucket.authorize
-    ? await bucket.authorize({ session: await auth(), op, key, bucket: bucket.name, request })
-    : false;
-  if (allowed !== true) {
-    throw new StorageError("forbidden", `${op} is not allowed on ${bucket.name}/${key}`);
-  }
-}
-
-/**
- * Check a declared content type against the bucket's allow-list.
- *
- * @param bucket The bucket's rules.
- * @param contentType The declared type.
- * @returns The type's essence.
- */
-function checkContentType(bucket: ResolvedBucket, contentType: string): string {
-  const type = typeof contentType === "string" ? essence(contentType) : "";
-  if (!type) throw new StorageError("bad_request", "a valid content type is required");
-  if (!mimeAllowed(type, bucket.mime)) {
-    throw new StorageError("mime_not_allowed", `${type} is not allowed in ${bucket.name}`);
-  }
-  return type;
-}
-
-/** The size cap for one upload: the bucket's, tightened by the caller's. */
-function capFor(bucket: ResolvedBucket, maxBytes?: number, size?: number): number {
-  const cap = Math.min(bucket.maxBytes, maxBytes ?? Infinity);
-  if (size !== undefined) {
-    if (!Number.isSafeInteger(size) || size < 0) {
-      throw new StorageError("bad_request", "size must be a non-negative integer");
-    }
-    if (size > cap) throw new StorageError("too_large", `${size} bytes exceeds ${cap}`);
-  }
-  return cap;
-}
 
 /** The canonical string a download URL signs. */
 export function downloadPayload(
@@ -154,45 +102,13 @@ export function uploadPayload(
 }
 
 /**
- * Store a body after checking its content: sniff the head against the declared type, then
- * stream it through the size cap (and the exact size, when declared) into the driver.
- *
- * @param rt The runtime.
- * @param bucket The bucket.
- * @param key The normalized key.
- * @param stream The body.
- * @param contentType The declared type (essence), or `undefined` to sniff one.
- * @param max The size cap.
- * @param size The exact size, if declared.
- * @returns The stored object's info.
- */
-export async function storeChecked(
-  rt: StorageRuntime,
-  bucket: ResolvedBucket,
-  key: string,
-  stream: ReadableStream<Uint8Array>,
-  contentType: string | undefined,
-  max: number,
-  size?: number,
-): Promise<ObjectInfo> {
-  const peeked = await peek(stream, SNIFF_BYTES);
-  const type = contentType ??
-    checkContentType(bucket, sniffMime(peeked.head) ?? "application/octet-stream");
-  checkSniffed(type, peeked.head, bucket.mime);
-  return await rt.driver.put(bucket.name, key, limit(peeked.stream, max, size), {
-    contentType: type,
-    size,
-  });
-}
-
-/**
  * A signed upload URL for `key` (after `authorize`).
  *
  * @param rt The runtime.
  * @param bucket The bucket.
  * @param key The requested key.
  * @param options Content type, lifetime, size.
- * @param service Skip `authorize`.
+ * @param caller Who is asking.
  * @returns The upload.
  */
 async function signedUpload(
@@ -200,10 +116,10 @@ async function signedUpload(
   bucket: ResolvedBucket,
   key: string,
   options: SignedUploadOptions,
-  service: boolean,
+  caller: Caller,
 ): Promise<SignedUpload> {
   const k = normalizeKey(key);
-  await authorizeOp(bucket, "upload", k, service);
+  const owner = await checkUpload(rt, bucket, k, caller);
   const contentType = checkContentType(bucket, options.contentType);
   const max = capFor(bucket, options.maxBytes, options.size);
   const expiresIn = clampExpiry(options.expiresIn, UPLOAD_EXPIRY);
@@ -223,6 +139,7 @@ async function signedUpload(
     max,
     exp: exp + COMPLETE_GRACE,
     n: options.size,
+    o: owner,
   };
   return {
     key: k,
@@ -232,6 +149,35 @@ async function signedUpload(
     token: await sealGrant(grant, secrets),
     expiresAt: exp,
   };
+}
+
+/**
+ * Authorize a client upload now (it completes later, with only the token): the TypeScript rule,
+ * and under SQL-RLS a dry run of the upsert under the caller's policies.
+ *
+ * @returns The owner to record.
+ */
+async function checkUpload(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  key: string,
+  caller: Caller,
+): Promise<string | null> {
+  await authorizeOp(rt, bucket, "upload", key, caller);
+  const owner = caller.service || !caller.request ? null : (await caller.identity()).userId ?? null;
+  await rt.meta.checkWrite(
+    {
+      bucket_id: bucket.name,
+      name: key,
+      owner_id: owner,
+      version: crypto.randomUUID(),
+      metadata: null,
+      user_metadata: null,
+    },
+    true,
+    await actorFor(rt, caller),
+  );
+  return owner;
 }
 
 async function localUploadUrl(
@@ -267,13 +213,14 @@ export async function planUpload(
   size: number,
 ): Promise<{ upload: SignedUpload } | { multipart: MultipartUpload }> {
   const rt = runtime();
-  const bucket = bucketOf(rt, bucketName);
+  const bucket = await resolveBucket(rt, bucketName);
+  const caller = serverCaller(false);
   const direct = rt.driver.direct;
   if (!direct || size <= rt.multipartThreshold) {
-    return { upload: await signedUpload(rt, bucket, key, { contentType, size }, false) };
+    return { upload: await signedUpload(rt, bucket, key, { contentType, size }, caller) };
   }
   const k = normalizeKey(key);
-  await authorizeOp(bucket, "upload", k);
+  const owner = await checkUpload(rt, bucket, k, caller);
   const type = checkContentType(bucket, contentType);
   const max = capFor(bucket, undefined, size);
   const secrets = secretsOf(rt);
@@ -295,6 +242,7 @@ export async function planUpload(
     n: size,
     max,
     u: uploadId,
+    o: owner,
     exp: exp + COMPLETE_GRACE,
   };
   return {
@@ -320,7 +268,7 @@ export interface CompletedPart {
 export async function completeUpload(token: unknown, parts?: CompletedPart[]): Promise<ObjectInfo> {
   const rt = runtime();
   const grant = await openGrant(token, secretsOf(rt));
-  const bucket = bucketOf(rt, grant.b);
+  const bucket = await resolveBucket(rt, grant.b);
   if (grant.u) {
     if (!parts?.length) throw new StorageError("bad_request", "parts are required");
     await rt.driver.direct!.completeMultipart(grant.b, grant.k, grant.u, checkParts(parts));
@@ -334,6 +282,9 @@ export async function completeUpload(token: unknown, parts?: CompletedPart[]): P
     await rt.driver.remove(grant.b, grant.k);
     throw err;
   }
+  const row = { upsert: true, owner: grant.o ?? null };
+  const meta = metadataOf(info, DEFAULT_CACHE);
+  await recordObject(rt, grant.b, grant.k, crypto.randomUUID(), row, meta);
   return info;
 }
 
@@ -381,10 +332,10 @@ async function signedUrl(
   bucket: ResolvedBucket,
   key: string,
   options: SignedUrlOptions,
-  service: boolean,
+  caller: Caller,
 ): Promise<string> {
   const k = normalizeKey(key);
-  await authorizeOp(bucket, "download", k, service);
+  await readableRow(rt, bucket, k, caller);
   const params = new URLSearchParams();
   const path = objectPath(rt.basePath, bucket.name, k);
   if (bucket.public) {
@@ -432,77 +383,232 @@ export async function presignedDownload(
   });
 }
 
-/** Run `fn` over `items`, at most `width` at a time. */
-async function eachLimited<T>(items: T[], width: number, fn: (item: T) => Promise<void>) {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) await fn(items[next++]);
+/** An object row as the server API returns it. */
+function detailsOf(row: ObjectRow): ObjectDetails {
+  return {
+    id: row.id,
+    bucket: row.bucket_id,
+    key: row.name,
+    size: row.metadata?.size ?? 0,
+    contentType: row.metadata?.mimetype ?? "application/octet-stream",
+    cacheControl: row.metadata?.cacheControl ?? DEFAULT_CACHE,
+    etag: (row.metadata?.eTag ?? "").replace(/^"|"$/g, ""),
+    metadata: row.user_metadata,
+    version: row.version,
+    owner: row.owner_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
-  await Promise.all(Array.from({ length: Math.min(width, items.length) }, worker));
+}
+
+/** A bucket row as the server API returns it. */
+function bucketInfoOf(rt: StorageRuntime, row: BucketRow): BucketInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    public: row.public,
+    fileSizeLimit: row.file_size_limit,
+    allowedMimeTypes: row.allowed_mime_types,
+    declared: rt.buckets.has(row.id),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 /** One bucket handle (the {@link StorageBucket} implementation). */
 function bucketHandle(name: string, service: boolean): StorageBucket {
-  const ctx = () => {
+  const ctx = async () => {
     const rt = runtime();
-    return { rt, bucket: bucketOf(rt, name) };
+    return { rt, bucket: await resolveBucket(rt, name), caller: serverCaller(service) };
   };
-  return {
+  const handle: StorageBucket = {
     name,
-    createSignedUploadUrl(key, options) {
-      const { rt, bucket } = ctx();
-      return signedUpload(rt, bucket, key, options, service);
+    async createSignedUploadUrl(key, options) {
+      const { rt, bucket, caller } = await ctx();
+      return await signedUpload(rt, bucket, key, options, caller);
     },
-    createSignedUrl(key, options = {}) {
-      const { rt, bucket } = ctx();
-      return signedUrl(rt, bucket, key, options, service);
+    async createSignedUrl(key, options = {}) {
+      const { rt, bucket, caller } = await ctx();
+      return await signedUrl(rt, bucket, key, options, caller);
+    },
+    async createSignedUrls(keys, options = {}) {
+      const { rt, bucket, caller } = await ctx();
+      return await Promise.all(keys.map(async (key) => {
+        try {
+          const k = normalizeKey(key);
+          const row = await readableRow(rt, bucket, k, caller);
+          if (!row && !(await rt.driver.head(bucket.name, k))) return null;
+          return await signedUrl(rt, bucket, k, options, caller);
+        } catch (err) {
+          if (err instanceof StorageError && ["not_found", "forbidden"].includes(err.code)) {
+            return null;
+          }
+          throw err;
+        }
+      }));
+    },
+    getPublicUrl(key, options = {}) {
+      const rt = runtime();
+      const params = new URLSearchParams();
+      writeTransform(params, options.transform);
+      const path = objectPath(rt.basePath, name, normalizeKey(key));
+      return params.size ? `${path}?${params}` : path;
     },
     async remove(keys) {
-      const { rt, bucket } = ctx();
+      const { rt, bucket, caller } = await ctx();
       const list = (Array.isArray(keys) ? keys : [keys]).map(normalizeKey);
-      for (const k of list) await authorizeOp(bucket, "delete", k, service);
-      await eachLimited(list, 8, (k) => rt.driver.remove(bucket.name, k));
+      await removeObjects(rt, bucket, list, caller);
     },
     async list(prefix = "", options: ListOptions = {}): Promise<ListResult> {
-      const { rt, bucket } = ctx();
+      const { rt, bucket, caller } = await ctx();
       const p = normalizePrefix(prefix);
-      await authorizeOp(bucket, "list", p, service);
+      await authorizeOp(rt, bucket, "list", p, caller);
       const limitN = Math.min(Math.max(Math.trunc(options.limit ?? 100), 1), 1000);
-      return await rt.driver.list(bucket.name, p, { limit: limitN, cursor: options.cursor });
+      const page = await rt.driver.list(bucket.name, p, { limit: limitN, cursor: options.cursor });
+      const actor = await actorFor(rt, caller);
+      if (actor.kind === "service" || bucket.public) return page;
+      // SQL-RLS: only the objects the policies let this caller see.
+      const visible = new Set<string>();
+      for (const object of page.objects) {
+        if (await rt.meta.getObject(bucket.name, object.key, actor)) visible.add(object.key);
+      }
+      return { ...page, objects: page.objects.filter((o) => visible.has(o.key)) };
+    },
+    async listFolder(prefix = "", options: FolderListOptions = {}): Promise<FolderEntry[]> {
+      const { rt, bucket, caller } = await ctx();
+      const trimmed = prefix.replace(/^\/+|\/+$/g, "");
+      const p = trimmed ? normalizePrefix(trimmed + "/") : "";
+      const entries = await listEntries(rt, bucket, {
+        prefix: p,
+        search: options.search ?? "",
+        limit: Math.min(Math.max(Math.trunc(options.limit ?? 100), 1), 1000),
+        offset: Math.max(Math.trunc(options.offset ?? 0), 0),
+        column: options.sortBy?.column ?? "name",
+        order: options.sortBy?.order === "desc" ? "desc" : "asc",
+      }, caller);
+      return entries.map((e) => ({
+        name: e.name,
+        id: e.id,
+        metadata: e.metadata
+          ? {
+            size: e.metadata.size,
+            mimetype: e.metadata.mimetype,
+            cacheControl: e.metadata.cacheControl,
+            eTag: e.metadata.eTag,
+            lastModified: e.metadata.lastModified,
+          }
+          : null,
+        createdAt: e.created_at,
+        updatedAt: e.updated_at,
+      }));
     },
     async head(key) {
-      const { rt, bucket } = ctx();
+      const { rt, bucket, caller } = await ctx();
       const k = normalizeKey(key);
-      await authorizeOp(bucket, "download", k, service);
+      await readableRow(rt, bucket, k, caller);
       return await rt.driver.head(bucket.name, k);
     },
-    async upload(key, body: UploadBody, options: UploadOptions = {}) {
-      const { rt, bucket } = ctx();
+    async info(key) {
+      const { rt, bucket, caller } = await ctx();
       const k = normalizeKey(key);
-      await authorizeOp(bucket, "upload", k, service);
-      const type = options.contentType === undefined
-        ? undefined
-        : checkContentType(bucket, options.contentType);
+      try {
+        const row = await readableRow(rt, bucket, k, caller);
+        return row?.metadata ? detailsOf(row) : null;
+      } catch (err) {
+        if (err instanceof StorageError && err.code === "not_found") return null;
+        throw err;
+      }
+    },
+    async exists(key) {
+      try {
+        return (await handle.head(key)) !== null;
+      } catch (err) {
+        if (err instanceof StorageError && err.code === "not_found") return false;
+        throw err;
+      }
+    },
+    async upload(key, body: UploadBody, options: UploadOptions = {}) {
+      const { rt, bucket, caller } = await ctx();
       const { stream, size } = toStream(body);
-      const max = capFor(bucket, undefined, size);
-      return await storeChecked(rt, bucket, k, stream, type, max, size);
+      const row = await putObject(rt, bucket, normalizeKey(key), stream, {
+        contentType: options.contentType,
+        cacheControl: options.cacheControl,
+        userMetadata: options.metadata ?? null,
+        upsert: options.upsert ?? true,
+        size,
+      }, caller);
+      return {
+        key: row.name,
+        size: row.metadata!.size,
+        contentType: row.metadata!.mimetype,
+        etag: row.metadata!.eTag.replace(/^"|"$/g, ""),
+        lastModified: new Date(row.metadata!.lastModified),
+      };
     },
     async download(key): Promise<StoredObject | null> {
-      const { rt, bucket } = ctx();
+      const { rt, bucket, caller } = await ctx();
       const k = normalizeKey(key);
-      await authorizeOp(bucket, "download", k, service);
+      await readableRow(rt, bucket, k, caller);
       return await rt.driver.get(bucket.name, k);
     },
+    async copy(from, to, options = {}) {
+      const { rt, caller } = await ctx();
+      const row = await copyObject(
+        rt,
+        {
+          from: { bucket: name, key: from },
+          to: { bucket: options.destinationBucket ?? name, key: to },
+        },
+        options.upsert === true,
+        caller,
+      );
+      return detailsOf(row);
+    },
+    async move(from, to, options = {}) {
+      const { rt, caller } = await ctx();
+      const row = await moveObject(rt, {
+        from: { bucket: name, key: from },
+        to: { bucket: options.destinationBucket ?? name, key: to },
+      }, caller);
+      return detailsOf(row);
+    },
   };
+  return handle;
+}
+
+/** The caller for a bucket administration call. */
+function adminCaller(options?: BucketAccessOptions): Caller {
+  return options?.service ? SERVICE_CALLER : serverCaller(false);
 }
 
 /**
  * The storage server API: `storage.bucket("avatars").createSignedUploadUrl(…)`. Every
  * operation enforces the bucket's rules; inside a request, `authorize` runs with that
- * request's session.
+ * request's session (and, under SQL-RLS, the policies with its role).
  */
 export const storage: Storage = {
   bucket(name: string, options: BucketAccessOptions = {}): StorageBucket {
     return bucketHandle(name, options.service === true);
+  },
+  async createBucket(name, settings = {}, options) {
+    await createBucket(runtime(), name, settings, adminCaller(options));
+  },
+  async getBucket(name, options) {
+    const rt = runtime();
+    return bucketInfoOf(rt, await getBucket(rt, name, adminCaller(options)));
+  },
+  async listBuckets(options) {
+    const rt = runtime();
+    const rows = await listBuckets(rt, { column: "name", order: "asc" }, adminCaller(options));
+    return rows.map((row) => bucketInfoOf(rt, row));
+  },
+  async updateBucket(name, settings, options) {
+    await updateBucket(runtime(), name, settings, adminCaller(options));
+  },
+  async deleteBucket(name, options) {
+    await deleteBucket(runtime(), name, adminCaller(options));
+  },
+  async emptyBucket(name, options) {
+    await emptyBucket(runtime(), name, adminCaller(options));
   },
 };

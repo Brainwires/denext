@@ -15,7 +15,6 @@ import {
   createApi,
   csrf,
   isApiError,
-  parseRange,
   readCappedBody,
   STALLED,
   TOO_LARGE,
@@ -23,10 +22,9 @@ import {
 } from "@denext/denext/server";
 import { bufferedRequest } from "@denext/denext/plugin-kit";
 import { isStorageError, StorageError } from "./errors.ts";
-import { normalizeKey } from "./keys.ts";
 import { dispositionFor, essence } from "./mime.ts";
 import {
-  bucketOf,
+  resolveBucket,
   type ResolvedBucket,
   runtime,
   secretsOf,
@@ -45,15 +43,18 @@ import {
   storeChecked,
   uploadPayload,
 } from "./storage.ts";
-import { readAll } from "./streams.ts";
-import type { ByteRange, ObjectInfo, StoredObject } from "./types.ts";
+import {
+  bucketAndKey,
+  objectHeaders,
+  objectResponse,
+  preflight,
+  transformedHeaders,
+  transformError,
+  transformSource,
+} from "./serve.ts";
 
 /** The sign route's body cap (a multipart completion lists up to 10 000 parts). */
 const SIGN_BODY_LIMIT = 1024 * 1024;
-/** The largest source an image transform reads into memory. */
-const TRANSFORM_SOURCE_LIMIT = 25 * 1024 * 1024;
-/** Raster types the image pipeline decodes. */
-const TRANSFORMABLE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 /** Map anything thrown to the JSON error envelope denext's typed API uses. */
 function errorResponse(err: unknown): Response {
@@ -156,24 +157,10 @@ async function runSignOp(body: SignRequest): Promise<unknown> {
 
 // ── /o/<bucket>/<key> ────────────────────────────────────────────────────────
 
-/** Split `<bucket>/<key…>` (percent-encoded) into a bucket and a normalized key. */
-function parseObjectPath(rest: string): { bucket: string; key: string } {
-  const slash = rest.indexOf("/");
-  if (slash <= 0) throw new StorageError("not_found", "no such object");
-  try {
-    const bucket = decodeURIComponent(rest.slice(0, slash));
-    const key = rest.slice(slash + 1).split("/").map(decodeURIComponent).join("/");
-    return { bucket, key: normalizeKey(key) };
-  } catch (err) {
-    if (isStorageError(err)) throw err;
-    throw new StorageError("invalid_key", "malformed object path");
-  }
-}
-
 async function objectRoute(request: Request, rest: string): Promise<Response> {
   const rt = runtime();
-  const { bucket: name, key } = parseObjectPath(rest);
-  const bucket = bucketOf(rt, name);
+  const { bucket: name, key } = bucketAndKey(rest);
+  const bucket = await resolveBucket(rt, name);
   const params = new URL(request.url).searchParams;
   switch (request.method) {
     case "GET":
@@ -231,23 +218,6 @@ async function download(
   return await serveObject(rt, bucket, key, cache, request);
 }
 
-/** Security and caching headers for an object served from the app's own origin. */
-function objectHeaders(info: ObjectInfo, cache: string): Headers {
-  const type = essence(info.contentType) || "application/octet-stream";
-  const headers = new Headers({
-    "content-type": info.contentType,
-    "cache-control": cache,
-    "accept-ranges": "bytes",
-    "x-content-type-options": "nosniff",
-    // An uploaded HTML or SVG file must never run script with the app's origin.
-    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-    "content-disposition": dispositionFor(type),
-  });
-  if (info.etag) headers.set("etag", `"${info.etag}"`);
-  if (info.lastModified) headers.set("last-modified", info.lastModified.toUTCString());
-  return headers;
-}
-
 async function serveObject(
   rt: StorageRuntime,
   bucket: ResolvedBucket,
@@ -257,34 +227,15 @@ async function serveObject(
 ): Promise<Response> {
   const info = await rt.driver.head(bucket.name, key);
   if (!info) throw new StorageError("not_found", "no such object");
-  const headers = objectHeaders(info, cache);
-  if (info.etag && request.headers.get("if-none-match") === `"${info.etag}"`) {
-    return new Response(null, { status: 304, headers });
-  }
-  const header = request.headers.get("range");
-  const range = header === null ? undefined : parseRange(header, info.size);
-  if (range === null) {
-    headers.set("content-range", `bytes */${info.size}`);
-    return new Response(null, { status: 416, headers });
-  }
-  const object = request.method === "HEAD" ? null : await rt.driver.get(bucket.name, key, range);
+  const type = essence(info.contentType) || "application/octet-stream";
+  const headers = objectHeaders(info, cache, dispositionFor(type));
+  const early = preflight(info, headers, request);
+  if (early instanceof Response) return early;
+  const object = request.method === "HEAD"
+    ? null
+    : await rt.driver.get(bucket.name, key, early.range);
   if (request.method !== "HEAD" && !object) throw new StorageError("not_found", "no such object");
-  return objectResponse(info, headers, range, object);
-}
-
-function objectResponse(
-  info: ObjectInfo,
-  headers: Headers,
-  range: ByteRange | undefined,
-  object: StoredObject | null,
-): Response {
-  if (range) {
-    headers.set("content-range", `bytes ${range.start}-${range.end}/${info.size}`);
-    headers.set("content-length", String(range.end - range.start + 1));
-    return new Response(object?.body ?? null, { status: 206, headers });
-  }
-  headers.set("content-length", String(info.size));
-  return new Response(object?.body ?? null, { status: 200, headers });
+  return objectResponse(info, headers, early.range, object?.body ?? null);
 }
 
 async function transformed(
@@ -297,28 +248,14 @@ async function transformed(
 ): Promise<Response> {
   const object = await rt.driver.get(bucket.name, key);
   if (!object) throw new StorageError("not_found", "no such object");
-  if (!TRANSFORMABLE.has(essence(object.contentType))) {
-    await object.body.cancel();
-    throw new StorageError("bad_request", "only PNG, JPEG, GIF and WebP images can be transformed");
-  }
-  if (object.size > TRANSFORM_SOURCE_LIMIT) {
-    await object.body.cancel();
-    throw new StorageError("too_large", "image too large to transform");
-  }
-  const bytes = await readAll(object.body, TRANSFORM_SOURCE_LIMIT);
+  const bytes = await transformSource(object);
   const out = await transformImageBytes(bytes, transform, {
     images: rt.images,
     cacheKey: `${bucket.name}/${key}@${object.etag ?? object.lastModified?.getTime() ?? ""}`,
   });
-  if (!out.ok) {
-    throw new StorageError(out.status === 413 ? "too_large" : "bad_request", await out.text());
-  }
-  const headers = objectHeaders(
-    { ...object, contentType: out.headers.get("content-type")! },
-    cache,
-  );
-  headers.delete("etag");
-  headers.delete("accept-ranges");
+  if (!out.ok) throw await transformError(out);
+  const type = out.headers.get("content-type")!;
+  const headers = transformedHeaders(object, out, cache, dispositionFor(essence(type)));
   return new Response(request.method === "HEAD" ? null : out.body, { headers });
 }
 

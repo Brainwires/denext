@@ -328,3 +328,56 @@ Deno.test({
     await a.close();
   }
 });
+
+Deno.test(
+  { name: "minio: publicEndpoint — browser URLs signed for another hostname of the store", ignore },
+  async () => {
+    await ensureBucket();
+    // The same MinIO under a second name: `localhost` for the browser, the IP for the server.
+    const internal = new URL(ENDPOINT!);
+    const publicUrl = new URL(ENDPOINT!);
+    publicUrl.hostname = internal.hostname === "localhost" ? "127.0.0.1" : "localhost";
+    const a = await backendApp({
+      driver: s3({
+        endpoint: internal.origin,
+        publicEndpoint: publicUrl.origin,
+        region: REGION,
+        bucket: BUCKET,
+        credentials: CREDENTIALS,
+      }),
+      buckets: { [RUN]: { mime: ["text/plain"], authorize: () => true } },
+    });
+    try {
+      const bucket = storage.bucket(RUN, { service: true });
+      const plan = await bucket.createSignedUploadUrl("public-host.txt", {
+        contentType: "text/plain",
+        size: 6,
+      });
+      assertEquals(new URL(plan.url).hostname, publicUrl.hostname);
+      // The signature covers Host: the same URL sent to the internal name is refused.
+      const wrongHost = new URL(plan.url);
+      wrongHost.hostname = internal.hostname;
+      const refused = await fetch(wrongHost, {
+        method: "PUT",
+        headers: plan.headers,
+        body: new TextEncoder().encode("public"),
+      });
+      assertEquals(refused.status, 403);
+      await refused.body?.cancel();
+      const put = await fetch(plan.url, {
+        method: "PUT",
+        headers: plan.headers,
+        body: new TextEncoder().encode("public"),
+      });
+      assertEquals(put.status, 200, await put.text());
+      const stored = await bucket.download("public-host.txt");
+      assertEquals(await new Response(stored!.body).text(), "public");
+      const url = await bucket.createSignedUrl("public-host.txt");
+      assertEquals(new URL(url).hostname, publicUrl.hostname);
+      assertEquals(await (await fetch(url)).text(), "public");
+      await bucket.remove("public-host.txt");
+    } finally {
+      await a.close();
+    }
+  },
+);

@@ -277,6 +277,10 @@ Deno.test("runtime: unconfigured storage, unknown buckets, missing secrets, expi
     basePath: "",
     multipartThreshold: 1,
     partSize: 1,
+    meta: {} as never,
+    rls: false,
+    apiBase: null,
+    maxTransformDimension: 2500,
   };
   assertEquals(code(() => bucketOf(rt, "b")), "unknown_bucket");
   assertEquals(code(() => bucketOf(rt, 1 as unknown as string)), "unknown_bucket");

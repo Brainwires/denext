@@ -58,6 +58,12 @@
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
+import { handleStorageApi } from "./src/storage-api.ts";
+import { postgresMetaStore } from "./src/storage-meta-pg.ts";
+import { sqliteMetaStore } from "./src/storage-meta-sqlite.ts";
+import type { BucketWrite, MetaStore } from "./src/storage-meta.ts";
+import { declaredBucketRows } from "./src/storage-ops.ts";
+import { resolve as resolvePath } from "@std/path";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MULTIPART_THRESHOLD,
@@ -65,6 +71,7 @@ import {
   installRuntime,
   MIN_PART_SIZE,
   type ResolvedBucket,
+  type StorageRuntime,
 } from "./src/runtime.ts";
 import { resolveSecrets, SECRET_ENV } from "./src/signing.ts";
 import type { StorageOptions } from "./src/types.ts";
@@ -87,6 +94,8 @@ import {
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
 export { rlsMigrations, rlsSetupSql } from "./src/rls.ts";
+export { storageMigrations } from "./src/storage-meta-pg.ts";
+export type { StorageIdentity, StorageRole } from "./src/storage-identity.ts";
 export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-sql.ts";
 export type {
   RealtimeOptions,
@@ -109,6 +118,7 @@ export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";
 export type {
   BucketConfig,
+  BucketSettings,
   ByteRange,
   DirectAccess,
   ListedObject,
@@ -171,7 +181,10 @@ function env(name: string): string | undefined {
 }
 
 /** Validate the bucket map and apply the defaults. */
-function resolveBuckets(buckets: StorageOptions["buckets"]): Map<string, ResolvedBucket> {
+function resolveBuckets(
+  buckets: StorageOptions["buckets"],
+  fallback: StorageOptions["authorize"],
+): Map<string, ResolvedBucket> {
   const out = new Map<string, ResolvedBucket>();
   for (const [name, config] of Object.entries(buckets ?? {})) {
     checkBucketName(name);
@@ -179,10 +192,44 @@ function resolveBuckets(buckets: StorageOptions["buckets"]): Map<string, Resolve
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
       throw new TypeError(`backend(): bucket ${name}: maxBytes must be a positive integer`);
     }
-    out.set(name, { ...config, name, maxBytes });
+    out.set(name, { ...config, name, maxBytes, authorize: config.authorize ?? fallback });
   }
-  if (out.size === 0) throw new TypeError("backend(): storage.buckets declares no bucket");
   return out;
+}
+
+/** The default sqlite metadata file (no Postgres), relative to the project root. */
+const METADATA_FILE = ".denext-storage.db";
+
+/** Where the Storage API is served, or `null` when it is off. */
+function storageApiBase(api: StorageOptions["api"]): string | null {
+  if (api === false) return null;
+  const base = (typeof api === "object" ? api.basePath : undefined) ?? "/storage/v1";
+  if (!/^\/[A-Za-z0-9._~\/-]*[^/]$/.test(base)) {
+    throw new TypeError("backend(): storage.api.basePath must be a path like /storage/v1");
+  }
+  return base;
+}
+
+/**
+ * The store, with the config-declared buckets seeded into it before its first use (once; a
+ * failure is retried by the next call).
+ */
+function seededStore(store: MetaStore, rows: BucketWrite[]): MetaStore {
+  let seeded: Promise<void> | undefined;
+  const seed = () =>
+    seeded ??= store.ready().then(() => store.syncBuckets(rows)).catch((err) => {
+      seeded = undefined;
+      throw err;
+    });
+  return new Proxy(store, {
+    get(target, key) {
+      const value = Reflect.get(target, key);
+      if (typeof value !== "function" || key === "close" || key === "ready") {
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (...args: unknown[]) => seed().then(() => value.apply(target, args));
+    },
+  });
 }
 
 /** Install the realtime engine and its channel; teardown (LIFO) stops it before the pool closes. */
@@ -250,32 +297,6 @@ function setupPostgres(
   if (rest) setupRest(ctx, rest);
 }
 
-/** Install the storage runtime and its request handler. */
-async function setupStorage(
-  ctx: PluginContext,
-  storageOptions: StorageOptions,
-  buckets: Map<string, ResolvedBucket>,
-): Promise<void> {
-  const dev = ctx.mode === "dev";
-  const secrets = resolveSecrets(storageOptions.secret, env, dev);
-  if (dev && storageOptions.secret === undefined && !env(SECRET_ENV)) {
-    console.warn(
-      `[@denext/backend] no ${SECRET_ENV}: signed storage URLs use a random dev secret and stop working on restart`,
-    );
-  }
-  await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
-  installRuntime({
-    driver: storageOptions.driver,
-    buckets,
-    secrets,
-    basePath: (ctx.config.basePath ?? "").replace(/\/$/, ""),
-    images: ctx.config.images,
-    multipartThreshold: storageOptions.multipartThreshold ?? DEFAULT_MULTIPART_THRESHOLD,
-    partSize: Math.max(storageOptions.partSize ?? DEFAULT_PART_SIZE, MIN_PART_SIZE),
-  });
-  ctx.addRequestHandler(handleStorageRequest);
-}
-
 /**
  * Create the backend plugin. Place it in your `denext.config.ts` `plugins`.
  *
@@ -287,7 +308,13 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   if (storageOptions && !storageOptions.driver) {
     throw new TypeError("backend(): storage.driver is required (s3({ … }) or fs({ dir }))");
   }
-  const buckets = storageOptions ? resolveBuckets(storageOptions.buckets) : undefined;
+  const buckets = storageOptions
+    ? resolveBuckets(storageOptions.buckets, storageOptions.authorize)
+    : undefined;
+  if (storageOptions?.rls && !options.postgres) {
+    throw new TypeError("backend(): storage.rls needs `postgres`");
+  }
+  const apiBase = storageOptions ? storageApiBase(storageOptions.api) : null;
   if (options.realtime) {
     if (!options.postgres) throw new TypeError("backend(): realtime needs `postgres`");
     resolveRealtime(options.realtime);
@@ -304,7 +331,51 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
         ctx.addCommand(createFunctionsCommand(functions));
         if (ctx.mode === "dev" || ctx.mode === "prod") await setupFunctions(ctx, functions);
       }
-      if (storageOptions && buckets) await setupStorage(ctx, storageOptions, buckets);
+      if (storageOptions && buckets) {
+        await setupStorage(ctx, storageOptions, buckets, apiBase, options.postgres !== undefined);
+      }
     },
   };
+}
+
+/** Install storage: the secret, the driver, the metadata store, the runtime and its handlers. */
+async function setupStorage(
+  ctx: PluginContext,
+  storageOptions: StorageOptions,
+  buckets: Map<string, ResolvedBucket>,
+  apiBase: string | null,
+  postgres: boolean,
+): Promise<void> {
+  const dev = ctx.mode === "dev";
+  const secrets = resolveSecrets(storageOptions.secret, env, dev);
+  if (dev && storageOptions.secret === undefined && !env(SECRET_ENV)) {
+    console.warn(
+      `[@denext/backend] no ${SECRET_ENV}: signed storage URLs use a random dev secret and stop working on restart`,
+    );
+  }
+  await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
+  const meta = seededStore(
+    postgres ? postgresMetaStore() : sqliteMetaStore(
+      resolvePath(ctx.projectRoot, storageOptions.metadataPath ?? METADATA_FILE),
+    ),
+    declaredBucketRows(buckets),
+  );
+  ctx.addTeardown(() => meta.close?.());
+  const rt: StorageRuntime = {
+    driver: storageOptions.driver,
+    buckets,
+    secrets,
+    basePath: (ctx.config.basePath ?? "").replace(/\/$/, ""),
+    images: ctx.config.images,
+    multipartThreshold: storageOptions.multipartThreshold ?? DEFAULT_MULTIPART_THRESHOLD,
+    partSize: Math.max(storageOptions.partSize ?? DEFAULT_PART_SIZE, MIN_PART_SIZE),
+    meta,
+    rls: storageOptions.rls === true,
+    authorize: storageOptions.authorize,
+    apiBase,
+    maxTransformDimension: storageOptions.maxTransformDimension ?? 2500,
+  };
+  installRuntime(rt);
+  ctx.addRequestHandler(handleStorageRequest);
+  if (apiBase) ctx.addRequestHandler((request) => handleStorageApi(rt, request));
 }

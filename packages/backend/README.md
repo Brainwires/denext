@@ -1,9 +1,11 @@
 # @denext/backend
 
 **Backend services inside your [denext](https://denext.dev) app**, as one opt-in plugin: no hosted
-service, nothing to run beside it. It ships **storage** — buckets with per-bucket rules, signed
-upload and download URLs, multipart uploads, image transforms on download and access checks tied to
-the request's session — on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm;
+service, nothing to run beside it. It ships **storage** — buckets declared in config or created at
+runtime, per-bucket rules in TypeScript or SQL row-level security, signed upload and download URLs,
+multipart and TUS resumable uploads, image transforms, and Supabase's Storage API at
+`/storage/v1` (so `supabase.storage` from `@supabase/supabase-js` works unchanged) — on S3 (AWS,
+Cloudflare R2, MinIO) or the local filesystem, with zero npm;
 and **Postgres** — one client for your server code (`db()`) and for denext auth
 (`backendAuthAdapter()`).
 
@@ -133,5 +135,9 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 - **Uploads go through `POST /_denext/storage/sign`**, which refuses cross-site requests that carry
   cookies (denext's `csrf()` rule) and validates its body.
 - Objects served from the app's origin carry `nosniff` and a sandboxing CSP.
+- **The Storage API (`/storage/v1`) and TUS uploads** enforce the same rules: the secret key
+  (`backend({ supabase })`'s) is the only way to the service role; with `storage: { rls: true }` every
+  operation runs as the request's role so the policies on `storage.objects` / `storage.buckets`
+  decide; the size cap, allow-list and sniffing apply to signed and resumable uploads too.
 
 Full guide: [denext.dev/docs/backend](https://denext.dev/docs/backend).

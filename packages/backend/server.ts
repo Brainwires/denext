@@ -53,12 +53,18 @@ export type {
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";
+export type { StorageIdentity, StorageRole } from "./src/storage-identity.ts";
 export type {
   BucketAccessOptions,
+  BucketInfo,
+  BucketSettings,
+  FolderEntry,
+  FolderListOptions,
   ListedObject,
   ListOptions,
   ListResult,
   MultipartUpload,
+  ObjectDetails,
   ObjectInfo,
   SignedUpload,
   SignedUploadOptions,
@@ -66,6 +72,7 @@ export type {
   Storage,
   StorageBucket,
   StoredObject,
+  TransferOptions,
   UploadBody,
   UploadOptions,
 } from "./src/types.ts";

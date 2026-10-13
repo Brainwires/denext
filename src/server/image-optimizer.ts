@@ -518,6 +518,8 @@ async function encodeOutput(
     const buf = await encodeAvif({ data, width, height }, { quality });
     return new Uint8Array(buf);
   }
+  if (format === "image/png") return resized.get_bytes();
+  if (format === "image/jpeg") return resized.get_bytes_jpeg(quality);
   // WebP baseline: @cf-wasm/photon's WebP encoder has no quality parameter.
   return resized.get_bytes_webp();
 }
@@ -682,8 +684,14 @@ async function loadAndEncode(
   );
 }
 
-/** The output size for a decoded source of `sw` × `sh` pixels. */
-type TargetSize = (sw: number, sh: number) => { width: number; height: number };
+/**
+ * The output size for a decoded source of `sw` × `sh` pixels; with `crop`, the resized image is
+ * then cut to that box (`cover`), centred.
+ */
+type TargetSize = (
+  sw: number,
+  sh: number,
+) => { width: number; height: number; crop?: { width: number; height: number } };
 
 /**
  * The shared decode → resize → encode core: refuses an SVG and a decompression bomb (from the
@@ -707,18 +715,43 @@ async function decodeResizeEncode(
   );
   let img: PhotonImageT | undefined;
   let resized: PhotonImageT | undefined;
+  let cropped: PhotonImageT | undefined;
   try {
     img = PhotonImage.new_from_byteslice(bytes);
     const sw = img.get_width();
     const sh = img.get_height();
     if (exceedsSourceLimits(sw, sh)) return new Response("image too large", { status: 413 });
-    const { width, height } = target(sw, sh);
-    resized = resize(img, width, height, SamplingFilter.Lanczos3);
-    return await encodeOutput(resized, width, height, format, quality);
+    const size = target(sw, sh);
+    resized = resize(img, size.width, size.height, SamplingFilter.Lanczos3);
+    if (!size.crop) return await encodeOutput(resized, size.width, size.height, format, quality);
+    cropped = new PhotonImage(
+      centreCrop(resized.get_raw_pixels(), size.width, size.height, size.crop),
+      size.crop.width,
+      size.crop.height,
+    );
+    return await encodeOutput(cropped, size.crop.width, size.crop.height, format, quality);
   } finally {
     img?.free();
     resized?.free();
+    cropped?.free();
   }
+}
+
+/** The centred `box` of an RGBA raster `width` pixels wide (`cover`'s crop). */
+function centreCrop(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  box: { width: number; height: number },
+): Uint8Array {
+  const x = Math.floor((width - box.width) / 2);
+  const y = Math.floor((height - box.height) / 2);
+  const out = new Uint8Array(box.width * box.height * 4);
+  for (let row = 0; row < box.height; row++) {
+    const from = ((y + row) * width + x) * 4;
+    out.set(rgba.subarray(from, from + box.width * 4), row * box.width * 4);
+  }
+  return out;
 }
 
 /** A resize + re-encode of in-memory image bytes, for {@linkcode transformImageBytes}. */
@@ -729,8 +762,17 @@ export interface ImageTransform {
   height?: number;
   /** Encoder quality, coerced to the nearest of `images.qualities` (default `[75]`). */
   quality?: number;
-  /** Output format: `"webp"` (the default), or `"avif"` when `images.formats` lists `image/avif`. */
-  format?: "webp" | "avif";
+  /**
+   * Output format: `"webp"` (the default), `"avif"` when `images.formats` lists `image/avif`, or
+   * `"origin"` to keep the source's own format (PNG, JPEG and WebP; a GIF becomes a PNG).
+   */
+  format?: "webp" | "avif" | "origin";
+  /**
+   * How a `width` × `height` box is filled when both are given: `"contain"` (the default) fits
+   * the image inside the box, `"cover"` fills the box and crops the overflow (centred), `"fill"`
+   * stretches the image to exactly the box. `contain` and `cover` never enlarge past the source.
+   */
+  resize?: "cover" | "contain" | "fill";
 }
 
 /** Options for {@linkcode transformImageBytes}. */
@@ -743,6 +785,12 @@ export interface TransformImageOptions {
    * transform, so a repeat request skips the decode; omitted, nothing is cached.
    */
   cacheKey?: string;
+  /**
+   * Accept any `width` and `height` from 1 to this many pixels, and any `quality` from 1 to
+   * 100, instead of the `images` allowlists — for a caller that bounds its transforms itself
+   * (storage's Supabase-compatible render routes use 2500). Omitted: the allowlists apply.
+   */
+  maxDimension?: number;
 }
 
 /**
@@ -766,19 +814,20 @@ export async function transformImageBytes(
   options: TransformImageOptions = {},
   gate: () => Promise<() => void> = optimizeGate,
 ): Promise<Response> {
-  const parsed = parseTransform(transform, options.images);
+  const parsed = parseTransform(transform, options.images, options.maxDimension);
   if (parsed instanceof Response) return parsed;
-  const { width, height, quality, format } = parsed;
+  const { width, height, quality, resize } = parsed;
+  const format = parsed.format === "origin" ? originFormat(bytes) : parsed.format;
   const headers = { "content-type": format };
   const cacheKey = options.cacheKey === undefined
     ? undefined
-    : `transform|${options.cacheKey}|${width}|${height}|${quality}|${format}`;
+    : `transform|${options.cacheKey}|${width}|${height}|${quality}|${format}|${resize}`;
   const cached = cacheKey === undefined ? undefined : cacheGet(cacheKey);
   if (cached) return new Response(cached as BodyInit, { headers });
   const release = await acquireGate(gate);
   if (release instanceof Response) return release;
   try {
-    const out = await decodeResizeEncode(bytes, fitInside(width, height), format, quality);
+    const out = await decodeResizeEncode(bytes, targetFor(resize, width, height), format, quality);
     if (out instanceof Response) return out;
     if (cacheKey !== undefined) cacheSet(cacheKey, out);
     return new Response(out as BodyInit, { headers });
@@ -794,23 +843,55 @@ interface ParsedTransform {
   width: number;
   height: number;
   quality: number;
+  /** A MIME type, or `"origin"` (the source's own). */
   format: string;
+  resize: "cover" | "contain" | "fill";
 }
+
+const RESIZE_MODES = new Set(["cover", "contain", "fill"]);
 
 /** Validate a transform against the `images` allowlists (`0` = the dimension is unset). */
-function parseTransform(t: ImageTransform, images?: ImagesConfig): ParsedTransform | Response {
-  const sizeError = checkTransformSize(t, images);
+function parseTransform(
+  t: ImageTransform,
+  images?: ImagesConfig,
+  maxDimension?: number,
+): ParsedTransform | Response {
+  const sizeError = checkTransformSize(t, images, maxDimension);
   if (sizeError) return sizeError;
-  const format = transformFormat(t.format, images);
+  const format = t.format === "origin" ? "origin" : transformFormat(t.format, images);
   if (format instanceof Response) return format;
-  const quality = coerceQuality(t.quality ?? 75, images?.qualities ?? DEFAULT_QUALITIES);
-  return { width: t.width ?? 0, height: t.height ?? 0, quality, format };
+  const resize = t.resize ?? "contain";
+  if (!RESIZE_MODES.has(resize)) {
+    return new Response("resize must be cover, contain or fill", { status: 400 });
+  }
+  const quality = maxDimension === undefined
+    ? coerceQuality(t.quality ?? 75, images?.qualities ?? DEFAULT_QUALITIES)
+    : t.quality ?? 80;
+  if (!Number.isInteger(quality) || quality < 1 || quality > 100) {
+    return new Response("quality must be an integer from 1 to 100", { status: 400 });
+  }
+  return { width: t.width ?? 0, height: t.height ?? 0, quality, format, resize };
 }
 
-/** A 400 when neither dimension is set or one is outside `deviceSizes ∪ imageSizes`. */
-function checkTransformSize(t: ImageTransform, images?: ImagesConfig): Response | null {
+/**
+ * A 400 when neither dimension is set, or one is outside `deviceSizes ∪ imageSizes` (or, with
+ * `maxDimension`, not an integer from 1 to it).
+ */
+function checkTransformSize(
+  t: ImageTransform,
+  images?: ImagesConfig,
+  maxDimension?: number,
+): Response | null {
   if (t.width === undefined && t.height === undefined) {
     return new Response("a transform needs a width or a height", { status: 400 });
+  }
+  if (maxDimension !== undefined) {
+    const bad = [t.width, t.height].find((dim) =>
+      dim !== undefined && (!Number.isInteger(dim) || dim < 1 || dim > maxDimension)
+    );
+    return bad === undefined
+      ? null
+      : new Response(`size ${bad} is not between 1 and ${maxDimension}`, { status: 400 });
   }
   const allowed = new Set([
     ...(images?.deviceSizes ?? DEFAULT_DEVICE_SIZES),
@@ -827,6 +908,34 @@ function transformFormat(format: string | undefined, images?: ImagesConfig): str
   return (images?.formats ?? DEFAULT_FORMATS).includes("image/avif")
     ? "image/avif"
     : new Response("avif output is not enabled (images.formats)", { status: 400 });
+}
+
+/** The encoder type that keeps a source's own format (a GIF, which Photon cannot write, → PNG). */
+function originFormat(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+  const riff = String.fromCharCode(...bytes.subarray(0, 4));
+  const webp = String.fromCharCode(...bytes.subarray(8, 12));
+  return riff === "RIFF" && webp === "WEBP" ? "image/webp" : "image/png";
+}
+
+/** The target size for a resize mode (`0` = that dimension is unset). */
+function targetFor(mode: ParsedTransform["resize"], width: number, height: number): TargetSize {
+  if (!width || !height || mode === "contain") return fitInside(width, height);
+  if (mode === "fill") return () => ({ width, height });
+  return coverBox(width, height);
+}
+
+/** Fill `width` × `height`, keeping the aspect ratio and cropping the overflow; never enlarging. */
+function coverBox(width: number, height: number): TargetSize {
+  return (sw, sh) => {
+    const scale = Math.min(Math.max(width / sw, height / sh), 1);
+    const rw = Math.max(1, Math.round(sw * scale));
+    const rh = Math.max(1, Math.round(sh * scale));
+    const crop = { width: Math.min(width, rw), height: Math.min(height, rh) };
+    return crop.width === rw && crop.height === rh
+      ? { width: rw, height: rh }
+      : { width: rw, height: rh, crop };
+  };
 }
 
 /** Fit inside `width` × `height` (either may be `0` = unconstrained), never enlarging. */

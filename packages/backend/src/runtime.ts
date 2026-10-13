@@ -5,7 +5,8 @@
 
 import type { ImagesConfig } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
-import type { BucketConfig, StorageDriver } from "./types.ts";
+import type { MetaStore } from "./storage-meta.ts";
+import type { BucketConfig, StorageAuthorizeContext, StorageDriver } from "./types.ts";
 
 /** Default per-bucket size cap: 50 MiB. */
 export const DEFAULT_MAX_BYTES = 50 * 1024 * 1024;
@@ -38,6 +39,16 @@ export interface StorageRuntime {
   images?: ImagesConfig;
   multipartThreshold: number;
   partSize: number;
+  /** The metadata store (buckets, objects, resumable uploads). */
+  meta: MetaStore;
+  /** SQL-RLS mode: the `storage` tables' policies decide (Postgres only). */
+  rls: boolean;
+  /** The rule for a bucket created at runtime (or declared without its own `authorize`). */
+  authorize?: (context: StorageAuthorizeContext) => boolean | Promise<boolean>;
+  /** Where the Supabase-compatible API is served (`/storage/v1`), or `null` when it is off. */
+  apiBase: string | null;
+  /** The largest width or height the API's render routes produce. */
+  maxTransformDimension: number;
 }
 
 const SLOT = Symbol.for("denext.backend.storage");
@@ -81,6 +92,59 @@ export function bucketOf(rt: StorageRuntime, name: string): ResolvedBucket {
   const bucket = typeof name === "string" ? rt.buckets.get(name) : undefined;
   if (!bucket) throw new StorageError("unknown_bucket", `unknown bucket ${JSON.stringify(name)}`);
   return bucket;
+}
+
+/** How long a runtime bucket's row is reused before it is read again (ms). */
+const BUCKET_TTL = 2000;
+const bucketCache = new WeakMap<
+  StorageRuntime,
+  Map<string, { at: number; bucket: ResolvedBucket | null }>
+>();
+
+/**
+ * A bucket's rules: a config-declared bucket, else a bucket created at runtime (its
+ * `storage.buckets` row, cached for a moment).
+ *
+ * @param rt The runtime.
+ * @param name The bucket name.
+ * @returns Its rules.
+ * @throws {StorageError} `unknown_bucket`.
+ */
+export async function resolveBucket(rt: StorageRuntime, name: string): Promise<ResolvedBucket> {
+  const declared = typeof name === "string" ? rt.buckets.get(name) : undefined;
+  if (declared) return declared;
+  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name)) {
+    throw new StorageError("unknown_bucket", `unknown bucket ${JSON.stringify(name)}`);
+  }
+  let cache = bucketCache.get(rt);
+  if (!cache) bucketCache.set(rt, cache = new Map());
+  const hit = cache.get(name);
+  let bucket = hit && Date.now() - hit.at < BUCKET_TTL ? hit.bucket : undefined;
+  if (bucket === undefined) {
+    const row = await rt.meta.getBucket(name, { kind: "service" });
+    bucket = row
+      ? {
+        name,
+        public: row.public,
+        maxBytes: row.file_size_limit ?? DEFAULT_MAX_BYTES,
+        mime: row.allowed_mime_types ?? undefined,
+        authorize: rt.authorize,
+      }
+      : null;
+    cache.set(name, { at: Date.now(), bucket });
+  }
+  if (!bucket) throw new StorageError("unknown_bucket", `unknown bucket ${JSON.stringify(name)}`);
+  return bucket;
+}
+
+/**
+ * Forget a cached runtime bucket (after this process changed or deleted it).
+ *
+ * @param rt The runtime.
+ * @param name The bucket name.
+ */
+export function forgetBucket(rt: StorageRuntime, name: string): void {
+  bucketCache.get(rt)?.delete(name);
 }
 
 /**

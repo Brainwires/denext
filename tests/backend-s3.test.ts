@@ -449,3 +449,102 @@ Deno.test("s3 storage: presigned GETs force attachment unless the stored type is
     await app.close();
   }
 });
+
+Deno.test("s3: publicEndpoint signs browser URLs for the public host; server calls keep endpoint", async () => {
+  const fake = new FakeS3();
+  const seen: string[] = [];
+  const app = await backendApp({
+    driver: s3({
+      endpoint: S3_ENDPOINT,
+      publicEndpoint: "https://files.example",
+      region: "us-east-1",
+      bucket: fake.bucket,
+      credentials: CREDENTIALS,
+      fetch: (input, init) => {
+        seen.push(new URL(input instanceof Request ? input.url : String(input)).origin);
+        return fake.fetch(input, init);
+      },
+    }),
+    buckets: { docs: { mime: ["text/plain"], authorize: () => true } },
+  });
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    const upload = await bucket.createSignedUploadUrl("a.txt", { contentType: "text/plain" });
+    const url = new URL(upload.url);
+    assertEquals(url.origin, "https://files.example");
+    assertStringIncludes(url.searchParams.get("X-Amz-SignedHeaders") ?? "", "host");
+    assertEquals(url.pathname.startsWith(`/${fake.bucket}/docs/a.txt`), true, "path style");
+    await bucket.upload("b.txt", "server side", { contentType: "text/plain" });
+    assertEquals(new Set(seen), new Set([S3_ENDPOINT]), "the server's own calls");
+    const download = new URL(await bucket.createSignedUrl("b.txt"));
+    assertEquals(download.origin, "https://files.example");
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("s3: TUS uploads become multipart parts, with a tail between short PATCHes", async () => {
+  const fake = new FakeS3();
+  const app = await backendApp({
+    driver: driver(fake),
+    buckets: {
+      docs: { mime: ["text/plain", "image/png"], authorize: () => true, maxBytes: 64 << 20 },
+    },
+  });
+  const base = "/storage/v1/upload/resumable";
+  const tus = { "tus-resumable": "1.0.0" };
+  const meta = (name: string, type: string) =>
+    `bucketName ${btoa("docs")},objectName ${btoa(name)},contentType ${btoa(type)}`;
+  const MiB = 1024 * 1024;
+  try {
+    const size = 6 * MiB + 10;
+    const bytes = new Uint8Array(size).fill(97);
+    const created = await app.call(base, {
+      method: "POST",
+      headers: {
+        ...tus,
+        "upload-length": String(size),
+        "upload-metadata": meta("big.txt", "text/plain"),
+      },
+    });
+    assertEquals(created.status, 201, await created.clone().text());
+    const url = created.headers.get("location")!;
+    const patch = async (from: number, to: number) => {
+      const res = await app.call(url, {
+        method: "PATCH",
+        headers: {
+          ...tus,
+          "upload-offset": String(from),
+          "content-type": "application/offset+octet-stream",
+        },
+        body: bytes.slice(from, to),
+      });
+      assertEquals(res.status, 204, await res.clone().text());
+      return Number(res.headers.get("upload-offset"));
+    };
+    // 1 MiB, then 2 MiB: both wait as the tail (under the 5 MiB part minimum)…
+    assertEquals(await patch(0, MiB), MiB);
+    assertEquals(await patch(MiB, 3 * MiB), 3 * MiB);
+    // …then 3 MiB makes a 6 MiB part, and the last 10 bytes the final part.
+    assertEquals(await patch(3 * MiB, 6 * MiB), 6 * MiB);
+    assertEquals(await patch(6 * MiB, size), size);
+    const info = await storage.bucket("docs", { service: true }).info("big.txt");
+    assertEquals(info?.size, size);
+    // A PNG that is not one is refused when the parts are assembled, and nothing is kept.
+    const fakePng = new TextEncoder().encode("not a png at all");
+    const png = await app.call(base, {
+      method: "POST",
+      headers: {
+        ...tus,
+        "upload-length": String(fakePng.length),
+        "upload-metadata": meta("x.png", "image/png"),
+        "content-type": "application/offset+octet-stream",
+      },
+      body: fakePng,
+    });
+    assertEquals(png.status, 415, await png.text());
+    assertEquals(await storage.bucket("docs", { service: true }).exists("x.png"), false);
+  } finally {
+    await app.close();
+  }
+});

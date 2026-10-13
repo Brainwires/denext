@@ -27,8 +27,9 @@ ignoreDependencies = [
   "@tanstack/router-plugin", # deno.json: npm:@tanstack/router-plugin — spa.tanstackRouter's route splitter (build-time)
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
+  "tus-js-client", # deno.json: npm:tus-js-client@4.3.1 — test-only: TUS resumable uploads in the storage parity suite
   "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
-  "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: tests/backend-rest-supabase-integration.test.ts
+  "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: the REST and Storage parity suites
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",

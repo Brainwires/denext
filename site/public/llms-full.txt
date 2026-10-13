@@ -638,11 +638,18 @@ https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
 authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
-`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
-head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
-session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
-Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
-chars). Docs: https://denext.dev/docs/backend
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload(key, body,
+{ upsert?, cacheControl?, metadata? }) / download / info / exists / copy / move / listFolder / list /
+remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` from
+`@denext/backend/server` — inside a request `authorize` (`{ session, identity, op, key }`) runs and its
+absence denies; outside a request only `{ service: true }` (which skips it) works. Browser:
+`uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. It also serves
+Supabase's Storage API at `/storage/v1` — stock `supabase.storage` (supabase-js v2) works unchanged,
+plus TUS uploads at `/storage/v1/upload/resumable`; with `backend({ supabase })` keys the secret key is the service
+role. Object/bucket rows live in Supabase's `storage.objects` / `storage.buckets` (Postgres) or a
+`node:sqlite` file; `storage: { rls: true }` authorizes with SQL policies on them
+(`storage.foldername(name)`, `auth.uid()`). Set `DENEXT_STORAGE_SECRET` (≥ 32 chars). Docs:
+https://denext.dev/docs/backend
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a

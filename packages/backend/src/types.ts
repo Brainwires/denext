@@ -3,6 +3,7 @@
 
 import type { AuthSession } from "@denext/denext/server";
 import type { StorageTransform } from "./shared.ts";
+import type { StorageIdentity } from "./storage-identity.ts";
 
 /** The operation an {@link BucketConfig.authorize} call is asked about. */
 export type StorageOp = "upload" | "download" | "delete" | "list";
@@ -11,6 +12,11 @@ export type StorageOp = "upload" | "download" | "delete" | "list";
 export interface StorageAuthorizeContext {
   /** The current request's session (`auth()` under `denextAuth`), or `null`. */
   session: AuthSession | null;
+  /**
+   * Who the request acts as — `anon`, `authenticated` (with `userId` and the claims a Supabase
+   * access token carries) or `service_role` (never seen here: the secret key skips `authorize`).
+   */
+  identity: StorageIdentity;
   /** The operation. */
   op: StorageOp;
   /** The object key (for `list`, the prefix). */
@@ -61,6 +67,32 @@ export interface StorageOptions {
   multipartThreshold?: number;
   /** Multipart part size in bytes (default 16 MiB, at least 5 MiB). */
   partSize?: number;
+  /**
+   * The rule for buckets created at runtime (`storage.createBucket`, supabase-js
+   * `createBucket`) and for declared buckets without an `authorize` of their own. Absent, those
+   * buckets are open only to the service role (and to downloads, when public).
+   */
+  authorize?: (context: StorageAuthorizeContext) => boolean | Promise<boolean>;
+  /**
+   * Authorize with SQL row-level security on `storage.objects` / `storage.buckets`, as Supabase
+   * does: every operation runs its statement as the request's role (`anon` / `authenticated`,
+   * `auth.uid()` in your policies), so the policies decide; a bucket's `authorize`, when it has
+   * one, must allow it too. Needs `postgres`. Default `false` (the TypeScript rules decide).
+   */
+  rls?: boolean;
+  /**
+   * The Supabase-compatible Storage API (what `supabase.storage` from `@supabase/supabase-js`
+   * talks to, and TUS resumable uploads): served under `/storage/v1` by default; a path to move
+   * it, or `false` to turn it off.
+   */
+  api?: boolean | { basePath?: string };
+  /**
+   * Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default
+   * `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.
+   */
+  metadataPath?: string;
+  /** The largest width or height the API's image render routes produce (default 2500). */
+  maxTransformDimension?: number;
 }
 
 /** What a stored object is. */
@@ -154,6 +186,11 @@ export interface StorageDriver {
   ): Promise<ListResult>;
   /** Direct-to-store URLs, when the store serves clients itself (S3). */
   readonly direct?: DirectAccess;
+  /**
+   * Copy an object inside the store (S3 `CopyObject`), keeping its content type. Optional: without
+   * it, a copy streams the object back in through `get` and `put`.
+   */
+  copy?(fromBucket: string, fromKey: string, toBucket: string, toKey: string): Promise<ObjectInfo>;
 }
 
 /** The parts of an S3-style store a browser talks to directly, through presigned URLs. */
@@ -193,6 +230,17 @@ export interface DirectAccess {
   ): Promise<void>;
   /** Abandon a multipart upload and free its parts. */
   abortMultipart(bucket: string, key: string, uploadId: string): Promise<void>;
+  /**
+   * Upload one part from the server (resumable uploads); returns its ETag. Optional: without it,
+   * the part is sent to {@link presignPart}'s URL.
+   */
+  uploadPart?(
+    bucket: string,
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    body: Uint8Array,
+  ): Promise<string>;
 }
 
 /** Options for {@link StorageBucket.createSignedUploadUrl}. */
@@ -249,6 +297,113 @@ export interface SignedUrlOptions {
 export interface UploadOptions {
   /** The content type (default: sniffed from the bytes, else `application/octet-stream`). */
   contentType?: string;
+  /** Replace an existing object (default `true`); `false` refuses a duplicate (`duplicate`). */
+  upsert?: boolean;
+  /** `Cache-Control` the object is served with (default `max-age=3600`). */
+  cacheControl?: string;
+  /** Free-form metadata kept with the object (Supabase's `user_metadata`). */
+  metadata?: Record<string, unknown>;
+}
+
+/** An object's stored facts (Supabase's `info()`). */
+export interface ObjectDetails {
+  /** The object's id. */
+  id: string;
+  /** The bucket. */
+  bucket: string;
+  /** The key. */
+  key: string;
+  /** Size in bytes. */
+  size: number;
+  /** Content type. */
+  contentType: string;
+  /** `Cache-Control` it is served with. */
+  cacheControl: string;
+  /** Its ETag. */
+  etag: string;
+  /** Free-form metadata (`user_metadata`), or `null`. */
+  metadata: Record<string, unknown> | null;
+  /** The version written last. */
+  version: string;
+  /** The owner (a user id), or `null`. */
+  owner: string | null;
+  /** When it was created (ISO 8601). */
+  createdAt: string;
+  /** When it was last written (ISO 8601). */
+  updatedAt: string;
+}
+
+/** One entry of {@link StorageBucket.listFolder}: a folder (`id: null`) or an object. */
+export interface FolderEntry {
+  /** The name below the prefix. */
+  name: string;
+  /** The object's id, or `null` for a folder. */
+  id: string | null;
+  /** Size, type and cache facts; `null` for a folder. */
+  metadata: {
+    size: number;
+    mimetype: string;
+    cacheControl: string;
+    eTag: string;
+    lastModified: string;
+  } | null;
+  /** When it was created (ISO 8601); `null` for a folder. */
+  createdAt: string | null;
+  /** When it was last written (ISO 8601); `null` for a folder. */
+  updatedAt: string | null;
+}
+
+/** Options for {@link StorageBucket.listFolder}. */
+export interface FolderListOptions {
+  /** Page size (default 100, at most 1000). */
+  limit?: number;
+  /** Entries to skip. */
+  offset?: number;
+  /** Only names (below the prefix) starting with this, case-insensitively. */
+  search?: string;
+  /** The column and direction (default `name`, `asc`); folders always come first. */
+  sortBy?: {
+    column?: "name" | "created_at" | "updated_at" | "last_accessed_at";
+    order?: "asc" | "desc";
+  };
+}
+
+/** Options for {@link StorageBucket.copy} and {@link StorageBucket.move}. */
+export interface TransferOptions {
+  /** Another bucket to copy or move into. */
+  destinationBucket?: string;
+  /** Copy only: replace an existing destination (default `false`). */
+  upsert?: boolean;
+}
+
+/** A bucket's settings ({@link Storage.createBucket}). */
+export interface BucketSettings {
+  /** Anyone may download (default `false`). */
+  public?: boolean;
+  /** Largest object, in bytes or as `"50MB"` (default 50 MiB). */
+  fileSizeLimit?: number | string | null;
+  /** Allowed content types (`image/*`, `application/pdf`); `null` for any. */
+  allowedMimeTypes?: string[] | null;
+}
+
+/** A bucket as {@link Storage.getBucket} returns it. */
+export interface BucketInfo {
+  /** The bucket's id (its name). */
+  id: string;
+  /** The bucket's name. */
+  name: string;
+  /** Anyone may download. */
+  public: boolean;
+  /** Bytes, or `null` for the default cap. */
+  fileSizeLimit: number | null;
+  /** Allowed content types, or `null` for any. */
+  allowedMimeTypes: string[] | null;
+  /** Declared in `denext.config.ts` (changed there, not at runtime). */
+  declared: boolean;
+  /** When it was created (ISO 8601). */
+  createdAt: string;
+  /** When its settings last changed (ISO 8601). */
+  updatedAt: string;
 }
 
 /** What a server-side {@link StorageBucket.upload} accepts. */
@@ -272,6 +427,20 @@ export interface StorageBucket {
   upload(key: string, body: UploadBody, options?: UploadOptions): Promise<ObjectInfo>;
   /** Read an object, or `null` (op `download`). */
   download(key: string): Promise<StoredObject | null>;
+  /** An object's stored facts, or `null` (op `download`). */
+  info(key: string): Promise<ObjectDetails | null>;
+  /** Whether an object exists (op `download`). */
+  exists(key: string): Promise<boolean>;
+  /** Download URLs for several keys at once (op `download`); `null` where one is not found. */
+  createSignedUrls(keys: string[], options?: SignedUrlOptions): Promise<(string | null)[]>;
+  /** The stable public URL of an object in a public bucket (no request is made). */
+  getPublicUrl(key: string, options?: { transform?: StorageTransform }): string;
+  /** Copy an object (op `download` on the source, `upload` on the destination). */
+  copy(from: string, to: string, options?: TransferOptions): Promise<ObjectDetails>;
+  /** Move an object (`download` + `delete` on the source, `upload` on the destination). */
+  move(from: string, to: string, options?: TransferOptions): Promise<ObjectDetails>;
+  /** One page of a folder, Supabase-style: subfolders first, then the objects in it (op `list`). */
+  listFolder(prefix?: string, options?: FolderListOptions): Promise<FolderEntry[]>;
 }
 
 /** Options for {@link Storage.bucket}. */
@@ -285,6 +454,29 @@ export interface BucketAccessOptions {
 
 /** The storage server API (`storage` from `@denext/backend/server`). */
 export interface Storage {
-  /** A bucket's operations. Throws `unknown_bucket` for a bucket not in the config. */
+  /**
+   * A bucket's operations: a bucket declared in the config or created at runtime (an unknown one
+   * fails its first call with `unknown_bucket`).
+   */
   bucket(name: string, options?: BucketAccessOptions): StorageBucket;
+  /** Create a bucket at runtime (the service role, or a `storage.buckets` policy under SQL-RLS). */
+  createBucket(
+    name: string,
+    settings?: BucketSettings,
+    options?: BucketAccessOptions,
+  ): Promise<void>;
+  /** A bucket's settings. */
+  getBucket(name: string, options?: BucketAccessOptions): Promise<BucketInfo>;
+  /** Every bucket (declared and runtime). */
+  listBuckets(options?: BucketAccessOptions): Promise<BucketInfo[]>;
+  /** Change a runtime bucket's settings. */
+  updateBucket(
+    name: string,
+    settings: BucketSettings,
+    options?: BucketAccessOptions,
+  ): Promise<void>;
+  /** Delete an empty runtime bucket (`not_empty` otherwise). */
+  deleteBucket(name: string, options?: BucketAccessOptions): Promise<void>;
+  /** Delete every object in a bucket. */
+  emptyBucket(name: string, options?: BucketAccessOptions): Promise<void>;
 }

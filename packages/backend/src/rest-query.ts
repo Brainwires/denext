@@ -29,9 +29,9 @@ import type {
 import {
   type Condition,
   type FieldRef,
-  type FilterValue,
   MAX_DEPTH,
   type OrderTerm,
+  type ParsedFilterValue,
   parseError,
   parseField,
   parseFilterValue,
@@ -383,7 +383,7 @@ const IS_VALUES: Record<string, string> = {
 };
 
 /** A comparison or pattern, maybe `(any)` / `(all)` of an array. */
-function comparison(sql: Sql, lhs: string, type: string, f: FilterValue): string {
+function comparison(sql: Sql, lhs: string, type: string, f: ParsedFilterValue): string {
   const valueType = TEXT_OPERATORS.has(f.op) ? "text" : type;
   const value = f.op === "like" || f.op === "ilike" ? f.value.replaceAll("*", "%") : f.value;
   if (f.modifier === undefined) {
@@ -397,14 +397,14 @@ function comparison(sql: Sql, lhs: string, type: string, f: FilterValue): string
 }
 
 /** A full-text match, with an optional text-search configuration. */
-function textSearch(sql: Sql, lhs: string, type: string, f: FilterValue): string {
+function textSearch(sql: Sql, lhs: string, type: string, f: ParsedFilterValue): string {
   const config = f.modifier === undefined ? "" : `${sql.params.bind("regconfig", f.modifier)}, `;
   const vector = type === "tsvector" ? lhs : `to_tsvector(${config}${lhs})`;
   return `${vector} @@ ${TEXT_SEARCH[f.op]}(${config}${sql.params.bind("text", f.value)})`;
 }
 
 /** A filter's condition on `lhs`. */
-function operatorSql(sql: Sql, lhs: string, type: string, f: FilterValue): string {
+function operatorSql(sql: Sql, lhs: string, type: string, f: ParsedFilterValue): string {
   if (f.op in COMPARISONS) return comparison(sql, lhs, type, f);
   if (f.op in TEXT_SEARCH) return textSearch(sql, lhs, type, f);
   if (f.modifier !== undefined) throw parseError(`${f.op} takes no (${f.modifier})`);

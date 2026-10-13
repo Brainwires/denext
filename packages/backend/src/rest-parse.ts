@@ -368,7 +368,7 @@ const OPERATOR_NAMES = new Set([
 ]);
 
 /** A filter's operator and value. */
-export interface FilterValue {
+export interface ParsedFilterValue {
   /** `not.` was given. */
   readonly negate: boolean;
   /** The operator. */
@@ -390,7 +390,7 @@ const FILTER = /^(not\.)?([a-z]+)(?:\(([A-Za-z_][A-Za-z0-9_]*)\))?\.([\s\S]*)$/;
  * @returns The operator and value.
  * @throws {RestError} For an unknown operator or modifier.
  */
-export function parseFilterValue(raw: string, key: string): FilterValue {
+export function parseFilterValue(raw: string, key: string): ParsedFilterValue {
   const match = FILTER.exec(raw);
   if (!match) throw parseError(`filter ${shown(key)} needs an operator: ${key}=eq.value`);
   const [, negate, op, modifier, value] = match;
@@ -414,7 +414,7 @@ export type Condition =
   | {
     readonly kind: "filter";
     readonly field: FieldRef;
-    readonly filter: FilterValue;
+    readonly filter: ParsedFilterValue;
   }
   | {
     readonly kind: "group";

@@ -40,6 +40,46 @@ and this project adheres to
   unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
   cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
   `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
+- **`@denext/backend` storage speaks Supabase's Storage API.** `backend({ storage })` serves
+  `/storage/v1`, so `supabase.storage` from `@supabase/supabase-js` v2 works unchanged: bucket
+  CRUD at runtime (`createBucket`, `getBucket`, `listBuckets` with search, sort and paging,
+  `updateBucket`, `emptyBucket`, `deleteBucket`), `upload` / `update` (raw bodies and forms,
+  `x-upsert`, `cache-control`, `metadata`), `download`, `info`, `exists`, `list` (folders first,
+  `search`, `sortBy`, `limit`, `offset`), bulk `remove`, `move` and `copy` (also across buckets),
+  `createSignedUrl(s)`, `createSignedUploadUrl` + `uploadToSignedUrl`, `getPublicUrl`, and
+  `render/image` transforms with `resize: cover | contain | fill`, any size up to
+  `maxTransformDimension` (2500), `quality` and `format: "origin"`. Errors are Storage's
+  `{ statusCode, error, message }`. Who a request is comes from the backend's shared identity
+  (`backend({ supabase })`): an access token is that user, the secret key the service role, a
+  denext session its user, anything else `anon`; a refused token is `400 InvalidJWT`. `storage.api: false` turns it off.
+- **TUS resumable uploads** at `/storage/v1/upload/resumable` (TUS 1.0.0: creation,
+  creation-with-upload, `PATCH`, `HEAD`, termination, expiration), for `tus-js-client` and Uppy:
+  S3 multipart underneath on the `s3()` driver, chunk objects on `fs()`; the size cap, allow-list
+  and content sniffing are checked at creation and again on the assembled object.
+- **Bucket and object metadata.** Every write keeps a row per object (size, type,
+  `Cache-Control`, ETag, owner, free-form `metadata`) and per bucket: Supabase's own
+  `storage.objects` / `storage.buckets` tables (with `storage.foldername()`, `filename()`,
+  `extension()`) on Postgres, created by the `backend_storage_0001` migration
+  (`storageMigrations()`), or a `node:sqlite` file (`storage.metadataPath`) without Postgres.
+  Declared buckets are written into the table at startup.
+- **SQL row-level security for storage.** `storage: { rls: true }` (with `postgres`) runs each
+  storage operation's statement on `storage.objects` / `storage.buckets` as the request's role
+  with its claims, so policies written for Supabase apply unchanged; a bucket's `authorize`, when
+  set, must allow it too. `storage.authorize` is the rule for runtime buckets and declared ones
+  without their own; `authorize` now also receives the request's `identity`.
+- **The storage server API grows to match:** `upload(key, body, { upsert, cacheControl,
+  metadata })`, `info`, `exists`, `copy`, `move`, `listFolder`, `createSignedUrls`,
+  `getPublicUrl`, and `storage.createBucket` / `getBucket` / `listBuckets` / `updateBucket` /
+  `deleteBucket` / `emptyBucket`. The `s3()` driver copies inside the store (`CopyObject`).
+- **`s3({ publicEndpoint })`** (or `S3_PUBLIC_ENDPOINT`): the host every URL handed to a browser
+  is signed for — presigned uploads, downloads, multipart parts — when it differs from the
+  `endpoint` the server calls (the Docker stack's `http://minio:9000`). `denext generate docker`
+  writes `S3_PUBLIC_ENDPOINT` into `.env.example` and the app's environment.
+- **`transformImageBytes` takes `resize`** (`cover` crops to the box, `contain` fits inside it,
+  `fill` stretches to it), `format: "origin"` (keep the source's PNG, JPEG or WebP) and a
+  `maxDimension` option that accepts any width, height and quality up to a bound instead of the
+  `images` allowlists.
+
 - **`denext generate docker` writes a self-hosted stack.** It reads the project and adds the
   services it needs to the compose file: Postgres 17 (for `@denext/backend` or a Postgres
   `DATABASE_URL`; `pgvector/pgvector:pg17` when a migration creates the `vector` extension), MinIO
@@ -120,6 +160,9 @@ and this project adheres to
   re-checks who is on the other end.
 
 ### Changed
+
+- **`@denext/backend`: `storage.buckets` may be empty** (buckets can be created at runtime), and an
+  upload refused for its size now says "The object exceeded the maximum allowed size".
 
 - **The generated Postgres service is Postgres 17 and publishes no port by default.** The
   commented example in a plain `docker-compose.yml` is `postgres:17-alpine`; a switched-on one

@@ -727,11 +727,11 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
       contentType: "application/octet-stream",
     });
     await bucket.upload("stream", new Blob(["streamed"]).stream(), { contentType: "text/plain" });
-    await assertRejects(() => bucket.upload("big", "x".repeat(1001)), StorageError, "exceeds");
+    await assertRejects(() => bucket.upload("big", "x".repeat(1001)), StorageError, "exceed");
     await assertRejects(
       () => bucket.upload("big", new Blob(["x".repeat(1001)]).stream()),
       StorageError,
-      "exceeds",
+      "exceed",
     );
     await assertRejects(
       () => bucket.upload("html", "<b>", { contentType: "text/html" }),
@@ -778,7 +778,7 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
     await assertRejects(
       () => bucket.createSignedUploadUrl("x", { contentType: "text/plain", maxBytes: 5, size: 6 }),
       StorageError,
-      "exceeds",
+      "exceed",
     );
   } finally {
     await app.close();
@@ -787,10 +787,17 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
 
 Deno.test("backend(): setup validates options; no storage → no handler; basePath and the dev secret", async () => {
   assertThrows(() => backend({ storage: { buckets: { a: {} } } as never }), TypeError, "driver");
+  // No declared bucket is fine: buckets can be created at runtime.
+  backend({ storage: { driver: fs({ dir: "x" }), buckets: {} } });
   assertThrows(
-    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {} } }),
+    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {}, rls: true } }),
     TypeError,
-    "no bucket",
+    "needs `postgres`",
+  );
+  assertThrows(
+    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {}, api: { basePath: "x" } } }),
+    TypeError,
+    "basePath",
   );
   assertThrows(
     () => backend({ storage: { driver: fs({ dir: "x" }), buckets: { Bad: {} } } }),

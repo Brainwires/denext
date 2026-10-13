@@ -12,9 +12,10 @@ where you run the app, against a Postgres you provide (any provider, or your own
 
 To be plain about it once: **denext is not a hosted service.** Parts of the supabase-js API
 already work against the app with `createClient(appUrl, publishableKey)` — the database
-(`from()`, `rpc()`), Realtime (`supabase.channel()`) and Edge Functions (`functions.invoke`) — and
-the rest are calls to rewrite, below. What carries over unchanged is the database: your tables, your SQL functions
-and your row-level security policies, which use the same roles and the same `auth.*` functions.
+(`from()`, `rpc()`), Storage (`supabase.storage`, policies on `storage.objects` included), Realtime
+(`supabase.channel()`) and Edge Functions (`functions.invoke`) — and the rest are calls to rewrite,
+below. What carries over unchanged is the database: your tables, your SQL functions and your
+row-level security policies, which use the same roles and the same `auth.*` functions.
 
 ```sh
 denext plugin add @denext/backend
@@ -53,8 +54,8 @@ export default {
 | Supabase Auth: MFA (TOTP), passkeys                 | TOTP with backup codes, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                                                                                                                                         |
 | `auth.users`, `auth.identities`                     | denext auth's `auth_*` tables on the same database via `backendAuthAdapter()`. [Auth › Postgres](/docs/auth#postgres)                                                                                                                                                                                                                          |
 | `supabase.auth.getUser()` on the server             | `await auth()` from `denext/server`.                                                                                                                                                                                                                                                                                                           |
-| Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem: `public` buckets, signed URLs, `transform`. [Storage](/docs/backend#storage)                                                                                                                                                                                                        |
-| Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                                                                                                                                                                |
+| Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem, serving Supabase's Storage API at `/storage/v1` (supabase-js unchanged, TUS resumable uploads too). [Storage](/docs/backend#supabase-storage-api)                                                                                                                                   |
+| Storage policies on `storage.objects`               | The same policies, with `storage: { rls: true }` — or a bucket's `authorize({ session, op, key })` in TypeScript. [SQL row-level security](/docs/backend#sql-row-level-security-for-storage)                                                                                                                                                   |
 | Realtime: Postgres changes                          | `supabase.channel().on("postgres_changes", …)` unchanged against the app's `/realtime/v1/websocket`; or `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server — each change re-read under the viewer's policies. [Realtime](/docs/backend#supabase-realtime-supabasechannel)                                 |
 | Realtime: broadcast, presence, private channels     | `supabase.channel()` unchanged — broadcast (`self`, `ack`, REST, `realtime.send()` / `realtime.broadcast_changes()` from SQL), presence across instances, private channels under your `realtime.messages` policies; `broadcast()` from server code. [Realtime](/docs/backend#supabase-realtime-supabasechannel)                                |
 | Edge Functions                                      | `backend({ functions })`: `functions/<name>/index.ts` served at `/functions/v1/<name>`, each in a worker of its own, `verify_jwt` on by default. Or route handlers. [Edge Functions](/docs/backend#edge-functions)                                                                                                                             |
@@ -145,10 +146,12 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 ### Storage: upload and signed URLs
 
 ```ts
-// Supabase
+// Supabase — and the same code against denext: the Storage API is served at /storage/v1
 await supabase.storage.from("avatars").upload(`${userId}/avatar.png`, file);
 const { data } = await supabase.storage.from("invoices").createSignedUrl(path, 60);
 ```
+
+Keep it as is, or use denext's own helpers:
 
 ```tsx
 // denext — in the browser (a "use client" component)
@@ -165,10 +168,13 @@ import { storage } from "@denext/backend/server";
 const url = await storage.bucket("invoices").createSignedUrl(path, { expiresIn: 60 });
 ```
 
-A bucket's rules are a function in `denext.config.ts` rather than SQL policies on
-`storage.objects`. Outside a request (a job, a script) there is no session to pass it, so code
-there uses `storage.bucket("invoices", { service: true })` — the counterpart of Supabase's
-service-role key. The Supabase pattern of one folder per user becomes:
+Your policies on `storage.objects` keep working with `storage: { rls: true }`: denext keeps
+Supabase's `storage` schema (`storage.foldername()` included) and runs each operation as the
+request's role. Or write a bucket's rules as a function in `denext.config.ts`. Outside a request
+(a job, a script) there is no session to pass it, so code there uses
+`storage.bucket("invoices", { service: true })` — the counterpart of Supabase's service-role key
+(over HTTP, the secret key from `backend({ supabase })`). The Supabase pattern of one folder per user, in
+TypeScript:
 
 ```ts
 buckets: {
@@ -414,10 +420,12 @@ aws s3 sync ./export/avatars s3://my-app/avatars
 ```
 
 On the `fs()` driver a bucket is a directory under `dir`, so `.storage/avatars/<key>`. Object keys
-keep their paths, so the stored keys in your tables stay valid. Then declare each bucket in
-`backend({ storage: { buckets } })` with an `authorize` that matches what its Supabase policies
-allowed, and set the store's CORS rules to allow your origin to `GET` and `PUT` and to expose
-`ETag`.
+keep their paths, so the stored keys in your tables stay valid. Listings, `info()` and the policies
+read the object rows in `storage.objects`: a database restored from a Supabase dump brings
+`storage.buckets` and `storage.objects` (and your policies on them) along, and denext uses those
+tables as they are. Then either keep the policies (`storage: { rls: true }`) or declare each bucket
+in `backend({ storage: { buckets } })` with an `authorize` that matches what they allowed, and set
+the store's CORS rules to allow your origin to `GET` and `PUT` and to expose `ETag`.
 
 ## Self-hosting
 
@@ -448,19 +456,16 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   computed fields / relationships are not served; a `PATCH` or `DELETE` needs a filter (as on
   Supabase, where `safeupdate` refuses one without), and `count: "exact"` is for signed-in users
   unless `rest.exactCount` allows it.
-- **supabase-js: the database, realtime and functions calls.** `from()`, `rpc()` and `schema()`
-  work against `/rest/v1`, `supabase.channel()` against `/realtime/v1` and `functions.invoke`
-  against `/functions/v1`, unchanged (point `createClient` at the app); the other calls have to be
-  rewritten, as above.
+- **supabase-js: the database, storage, realtime and functions calls.** `from()`, `rpc()` and
+  `schema()` work against `/rest/v1`, `supabase.storage` against `/storage/v1`,
+  `supabase.channel()` against `/realtime/v1` and `functions.invoke` against `/functions/v1`,
+  unchanged (point `createClient` at the app); the other calls have to be rewritten, as above.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
   are your Postgres provider's job.
 - **Auth gaps.** No phone or SMS sign-in, no anonymous sign-in, no SAML SSO (generic `oidc()`
   covers OIDC identity providers), and no built-in mailer — you supply `sendVerificationRequest`.
-- **Storage policies are TypeScript, not SQL.** A bucket's `authorize` function replaces policies
-  on `storage.objects`, and there is no `storage` schema to join against. Uploads are presigned
-  (multipart on S3), not TUS resumable uploads.
 - **Realtime is LISTEN/NOTIFY.** Notifications serialize on commit across the database, so very high
   write volumes are better served by logical replication (planned); a table's full old row
   (`old: "full"`) is carried only when it fits a notification (about 7.5 KB of JSON). Tables opt

@@ -1,7 +1,7 @@
 ---
 title: Backend
 slug: backend
-lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets with per-bucket rules, signed upload and download URLs, multipart uploads, image transforms on download and access checks tied to the request's session, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, realtime changes from your tables, and an optional REST API over them, with zero npm."
+lead: "@denext/backend puts backend services inside your app as one opt-in plugin: no hosted service, nothing to run beside it. It ships storage — buckets declared in config or created at runtime, per-bucket rules in TypeScript or SQL row-level security, signed upload and download URLs, multipart and TUS resumable uploads, image transforms, and Supabase's Storage API so supabase-js works unchanged, on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem — Postgres for your server code and for auth, scoped by row-level security, realtime changes from your tables, and an optional REST API over them, with zero npm."
 ---
 
 ```sh
@@ -57,11 +57,25 @@ A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 | `public`    | `false` | Downloads need no signature and no `authorize` call; their URLs are stable and cacheable. Uploads, deletes and listings still go through `authorize`.                                    |
 | `maxBytes`  | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                  |
 | `mime`      | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes. |
-| `authorize` | deny    | `({ session, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                          |
+| `authorize` | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                |
 
-`op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix).
-`session` is `auth()` from [`denextAuth`](/docs/auth) — `null` when signed out or when the app has
-no auth.
+`op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
+copy is `download` on the source and `upload` on the destination, a move adds `delete` on the
+source. `session` is `auth()` from [`denextAuth`](/docs/auth) — `null` when signed out or when the
+app has no auth. `identity` is who the request acts as: `{ role: "anon" | "authenticated", claims,
+userId? }`, the claims shaped like a Supabase access token's. A request that presents the secret
+key (the service role) skips `authorize`.
+
+Besides `driver` and `buckets`, `storage` takes:
+
+| Option                  | Default                 | What it does                                                                                                                                              |
+| ----------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorize`             | deny                    | The rule for buckets created at runtime, and for declared buckets without an `authorize` of their own.                                                    |
+| `rls`                   | `false`                 | Authorize with SQL policies on `storage.objects` / `storage.buckets`, as Supabase does ([below](#sql-row-level-security-for-storage)). Needs `postgres`.  |
+| `api`                   | `true`                  | The Supabase-compatible Storage API under `/storage/v1`; `{ basePath }` moves it, `false` turns it off.                                                   |
+| `metadataPath`          | `.denext-storage.db`    | Without `postgres`: the `node:sqlite` file holding bucket and object metadata (relative to the project root). With `postgres` it is the `storage` schema. |
+| `maxTransformDimension` | `2500`                  | The largest width or height the API's `render/image` routes produce.                                                                                      |
+| `secret`                | `DENEXT_STORAGE_SECRET` | The HMAC secret for signed URLs and tokens (below).                                                                                                       |
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
@@ -84,6 +98,11 @@ MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version 4 
 `avatars/u1/me.png`. Credentials default to `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
 `AWS_SESSION_TOKEN`; the endpoint defaults to AWS, or `AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL`.
 AWS is addressed virtual-host style, a custom `endpoint` path style; `pathStyle` overrides either.
+When browsers reach the store under another name than the server does (the Docker stack's
+`http://minio:9000` is only resolvable inside the containers), set `publicEndpoint` (or
+`S3_PUBLIC_ENDPOINT`): every URL handed to a browser — presigned uploads, downloads and multipart
+parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep
+`endpoint`.
 
 | Store         | Options                                                                             |
 | ------------- | ----------------------------------------------------------------------------------- |
@@ -125,6 +144,28 @@ export async function POST(request: Request): Promise<Response> {
 | `head(key)`                                                                 | The object's info, or `null`.                                                                                                                                |
 | `list(prefix?, { limit?, cursor? })`                                        | A page of `{ objects, cursor? }` in key order (at most 1000); pass `cursor` back for the next.                                                               |
 | `remove(keys)`                                                              | Delete one key or a list (a missing key is not an error).                                                                                                    |
+| `upload(key, body, { upsert?, cacheControl?, metadata? })`                  | `upsert: false` refuses an existing key (`duplicate`); `cacheControl` is served back; `metadata` is free-form JSON kept with the object.                     |
+| `info(key)` / `exists(key)`                                                 | The stored facts (`size`, `contentType`, `cacheControl`, `etag`, `metadata`, `owner`, timestamps), or `null`; whether the object exists.                     |
+| `copy(from, to, { destinationBucket?, upsert? })` / `move(from, to, …)`     | Copy or rename an object, within a bucket or into another (whose size cap and allow-list apply). A move never replaces an existing destination.              |
+| `listFolder(prefix?, { limit?, offset?, search?, sortBy? })`                | One level of a folder, Supabase-style: subfolders first (`id: null`), then the objects, sorted by `name`, `created_at`, `updated_at` or `last_accessed_at`.  |
+| `createSignedUrls(keys, options?)`                                          | Download URLs for many keys at once; `null` where a key is missing or not readable.                                                                          |
+| `getPublicUrl(key, { transform? })`                                         | The stable URL of an object in a public bucket (no request is made).                                                                                         |
+
+Buckets can also be managed at runtime, as the service (`{ service: true }`, or a request that
+presents the secret key) — or, with `rls: true`, as anyone the `storage.buckets` policies allow:
+
+```ts
+await storage.createBucket("exports", { fileSizeLimit: "20MB", allowedMimeTypes: ["text/csv"] }, {
+  service: true,
+});
+await storage.updateBucket("exports", { public: true }, { service: true }); // partial update
+await storage.emptyBucket("exports", { service: true });
+await storage.deleteBucket("exports", { service: true }); // refused while it holds objects
+const buckets = await storage.listBuckets({ service: true }); // declared ones too: `declared: true`
+```
+
+A declared bucket is changed in `denext.config.ts`, not at runtime; its settings are written into
+the bucket table at startup.
 
 Keys are `/`-separated paths with no empty, `.` or `..` segment, no control character or
 backslash, at most 1024 bytes; a key that is not already in that form is refused, never rewritten.
@@ -205,11 +246,122 @@ it.
 | `POST /_denext/storage/sign`                   | `{ op: "upload" \| "complete" \| "abort" \| "download", … }` from the client helpers. |
 | `GET`/`HEAD /_denext/storage/o/<bucket>/<key>` | Download: a public object, or a signed URL. `Range`, `If-None-Match` and transforms.  |
 | `PUT`/`POST /_denext/storage/o/<bucket>/<key>` | Upload through a signed URL (filesystem driver).                                      |
+| `/storage/v1/…`                                | The [Supabase Storage API](#supabase-storage-api) and [TUS](#resumable-uploads-tus).  |
 
 Objects served from your app's origin carry `X-Content-Type-Options: nosniff` and a sandboxing
 `Content-Security-Policy`, and anything but images, audio, video, PDF and plain text downloads as an
 attachment — an uploaded HTML or SVG file never runs script as your app. A public object on S3 is a
 redirect to a presigned URL that lives five minutes.
+
+### Metadata: buckets and objects
+
+Every upload, copy, move and delete also keeps a row per object — its size, type, `Cache-Control`,
+ETag, owner and free-form `metadata` — and a row per bucket. With `postgres` they are Supabase's own
+tables, `storage.objects` and `storage.buckets` (same columns, same unique index, row-level
+security enabled, `anon` / `authenticated` granted access), plus `storage.foldername(name)`,
+`storage.filename(name)` and `storage.extension(name)`, created by the `backend_storage_0001`
+migration on first use (`storageMigrations()` returns it for a DBA). A database restored from
+Supabase keeps its tables and gains any missing column. Without `postgres` the same rows live in a
+`node:sqlite` file (`storage.metadataPath`), which serves one server process: several replicas
+sharing storage need the Postgres store. Listings, `info()` and the bucket API read the rows; the
+bytes stay in the driver.
+
+### Supabase Storage API
+
+The plugin serves Supabase's Storage API under `/storage/v1`, so the `storage` client of
+`@supabase/supabase-js` v2 works unchanged against your app:
+
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient("https://my-app.example", publishableKey);
+await supabase.storage.from("avatars").upload(`${userId}/avatar.png`, file, { upsert: true });
+const { data } = await supabase.storage.from("invoices").createSignedUrl(path, 60);
+const { data: files } = await supabase.storage.from("avatars").list(userId, {
+  limit: 50,
+  sortBy: { column: "created_at", order: "desc" },
+});
+```
+
+Every call of the storage client is there: `createBucket`, `getBucket`, `listBuckets` (with
+`search`, sorting and paging), `updateBucket`, `emptyBucket`, `deleteBucket`; `upload` and `update`
+(raw bodies or `FormData`, `upsert`, `cacheControl`, `contentType`, `metadata`), `download` (with a
+`transform`), `info`, `exists`, `list` (folders first, `search`, `sortBy`, `limit`, `offset`),
+`remove` (many at once), `move` and `copy` (also into another bucket), `createSignedUrl` and
+`createSignedUrls` (with `download` and `transform`), `createSignedUploadUrl` +
+`uploadToSignedUrl`, and `getPublicUrl` (with `download` and `transform`). Errors come back as
+Storage's `{ statusCode, error, message }` (`409 Duplicate`, `413`, `415`, `403`, `404`).
+
+Who a request is comes from the backend's shared identity, with
+[`backend({ supabase })`](#supabase-keys-and-access-tokens) providing the keys: a user's access token
+(`Authorization: Bearer <jwt>`) is that user (`authenticated`); the secret key (`apikey` or bearer)
+is the service role, which skips `authorize` and policies; a signed-in denext session is that user;
+anything else (the publishable key, or nothing) is `anon`. A token or key that is presented and
+refused is an error — `400 InvalidJWT` for a bad or expired token, `401 Unauthorized` for an
+unknown key — never a silent `anon`. A write that carries the session cookie follows the
+[`csrf()`](/docs/typed-api) rule. The size cap, allow-list and content sniffing apply on every path,
+the service role and signed uploads included. Signed URLs and upload tokens are HMAC-signed with the
+storage secret and checked in constant time; a signed upload URL lives two hours.
+
+`render/image` transforms take Supabase's options: `width` and `height` (any size up to
+`maxTransformDimension`), `resize` (`cover`, the default, fills the box and crops the overflow;
+`contain` fits inside it; `fill` stretches to it), `quality` (1–100) and `format: "origin"` (keep
+the source's format; the default is WebP). They run through the same image pipeline, cache and
+decompression-bomb checks as the transforms above.
+
+Without supabase-js, `@denext/backend/client` calls the same API from the browser with the page's
+cookies: `listFiles(bucket, prefix, { limit, offset, search, sortBy })`, `getFileInfo`,
+`removeFiles(bucket, keys)`, `moveFile` and `copyFile` (`{ destinationBucket }`),
+`getSignedUrls(bucket, keys, { expiresIn })`, `getPublicUrl(bucket, key, { transform, download })`
+and `uploadResumable(bucket, key, file, { chunkSize, upsert, onProgress, signal })` — a TUS upload
+that retries a dropped chunk from the offset the server reports and terminates a cancelled one.
+A refused call throws `StorageApiClientError` (`code` is Storage's error name, `status` the HTTP
+status).
+
+### Resumable uploads (TUS)
+
+`/storage/v1/upload/resumable` speaks TUS 1.0.0 — creation, creation-with-upload, `PATCH`, `HEAD`,
+termination and expiration — so `tus-js-client` and Uppy upload large files in chunks and resume
+after a dropped connection:
+
+```ts
+import * as tus from "tus-js-client";
+
+const upload = new tus.Upload(file, {
+  endpoint: "/storage/v1/upload/resumable",
+  chunkSize: 6 * 1024 * 1024,
+  headers: { "x-upsert": "true" }, // the page's cookie session authorizes it
+  metadata: { bucketName: "videos", objectName: `${userId}/clip.mp4`, contentType: "video/mp4" },
+});
+upload.start();
+```
+
+An upload is authorized when it is created (`authorize`, or the policies) and bound to its creator;
+its size against the bucket's cap and its type against the allow-list are checked then, and the
+assembled object's size and first bytes again at the end. It expires 24 hours after creation
+(`Upload-Expires`). On S3 the bytes become parts of a multipart upload as they arrive (a remainder
+under S3's 5 MiB minimum waits as a tail object); on the filesystem each `PATCH` is a chunk,
+joined through the usual checks at the end. Progress lives in the metadata store, so any replica
+can take the next `PATCH`.
+
+### SQL row-level security for storage
+
+With `storage: { rls: true }` (and `postgres`), storage authorizes the way Supabase does: each
+operation runs its statement on `storage.objects` or `storage.buckets` as the request's role, with
+its claims in `request.jwt.claims`, so policies written for Supabase apply unchanged:
+
+```sql
+create policy "own folder: read" on storage.objects for select to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own folder: write" on storage.objects for insert to authenticated
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+```
+
+As on Supabase: an upload needs `insert`, an upsert `select`, `insert` and `update`, a download,
+`info`, a listing or a signed URL `select`, a remove `select` and `delete`, a move `update`, and
+creating a bucket `insert` on `storage.buckets`. A public bucket's downloads need no policy. A
+bucket's `authorize`, when it has one, must allow the operation too. With no policy nothing is
+allowed (row-level security denies by default); the service role bypasses the policies.
 
 ### Try it
 

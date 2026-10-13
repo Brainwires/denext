@@ -15,6 +15,10 @@
  * }
  * ```
  *
+ * `listFiles`, `getFileInfo`, `removeFiles`, `moveFile`, `copyFile`, `getSignedUrls`,
+ * `getPublicUrl` and `uploadResumable` (TUS, resumes after a dropped connection) call the
+ * Supabase-compatible Storage API (`/storage/v1`).
+ *
  * Both call the plugin's `POST /_denext/storage/sign` with the page's cookies, so the bucket's
  * `authorize` sees the signed-in user. `useTableChanges` rides denext's Live socket; every row it
  * receives was re-read under this viewer's row-level security. This module imports no server
@@ -26,6 +30,25 @@
 import { STORAGE_PREFIX, type StorageTransform } from "./src/shared.ts";
 
 export type { StorageTransform } from "./src/shared.ts";
+export {
+  copyFile,
+  getFileInfo,
+  getPublicUrl,
+  getSignedUrls,
+  listFiles,
+  moveFile,
+  removeFiles,
+  StorageApiClientError,
+  uploadResumable,
+} from "./src/storage-client.ts";
+export type {
+  FileEntry,
+  FileInfo,
+  FileMetadata,
+  ImageTransformOptions,
+  ResumableUploadOptions,
+  StorageApiOptions,
+} from "./src/storage-client.ts";
 export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
 export { from, restClient, RestClientError, rpc } from "./src/rest-client.ts";
 export type {
