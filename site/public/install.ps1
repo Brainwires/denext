@@ -4,13 +4,25 @@
 #
 # The binary is a CLI, not a second copy of the framework: inside a project it defers to the
 # denext version that project pins, so `denext build` builds exactly what `deno task build`
-# would. You do not need it - `deno run -A jsr:@denext/denext/cli <verb>` does the same thing.
+# would. It is all you need - Deno itself is not: after installing the binary the script runs
+# `denext toolchain install`, which downloads denext's own Deno build (SHA-256-verified) into
+# Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` ...).
+# When no `deno` is on your Path it also runs `denext toolchain link`, so `deno` is that toolchain
+# (%USERPROFILE%\.denext\bin\deno.cmd); an existing `deno` is never replaced or shadowed. Either
+# step failing (offline, say) is one warning, not a failed install: the binary downloads the
+# toolchain on first need instead.
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin\`); default: ~\.denext
 #   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
 #   DENEXT_NO_PATH   `1` leaves your user PATH alone (the script prints the line to add)
+#   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
+#                    downloads on the first command that needs it
+#   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your Path)
+#   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.zip` and
+#                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub - for
+#                    testing a build; the checksum is still required and checked
 #   GITHUB_TOKEN / GH_TOKEN  sent (as a Bearer header, to api.github.com only) for the latest-
 #                    version lookup, whose unauthenticated limit is 60 requests an hour per IP.
 #                    Without one, or when the API refuses, the version comes from the
@@ -60,6 +72,11 @@ function Install-Denext {
 
   if ($Uninstall) {
     Assert-SafeInstallRoot $root
+    # The `deno` link `toolchain link` made (only a link of its own; anything else is left).
+    $installed = Join-Path $bin 'denext.exe'
+    if (Test-Path -LiteralPath $installed -PathType Leaf) {
+      Invoke-Denext $installed @('toolchain', 'unlink') | Out-Null
+    }
     Remove-DenextPath $bin
     Uninstall-DenextFiles $root
     Write-Host "denext: removed denext from $root and its bin from your user Path"
@@ -75,7 +92,9 @@ function Install-Denext {
   }
 
   $version = $env:DENEXT_VERSION
-  if (-not $version) {
+  if (-not $version -and $env:DENEXT_ARTIFACTS) {
+    $version = 'local'
+  } elseif (-not $version) {
     # `releases/latest` is the newest NON-prerelease: an rc tag never becomes "latest".
     $version = Get-LatestTag $apiBase $webBase $repo
   }
@@ -85,9 +104,14 @@ function Install-Denext {
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("denext-install-" + [Guid]::NewGuid())
   New-Item -ItemType Directory -Path $tmp | Out-Null
   try {
-    Write-Host "denext: downloading $version for $target"
     $zip = Join-Path $tmp $asset
-    Invoke-WebRequest -UseBasicParsing "$downloadBase/$version/$asset" -OutFile $zip
+    if ($env:DENEXT_ARTIFACTS) {
+      Write-Host "denext: installing $asset from $($env:DENEXT_ARTIFACTS)"
+      Copy-Item -LiteralPath (Join-Path $env:DENEXT_ARTIFACTS $asset) -Destination $zip
+    } else {
+      Write-Host "denext: downloading $version for $target"
+      Invoke-WebRequest -UseBasicParsing "$downloadBase/$version/$asset" -OutFile $zip
+    }
 
     # A binary that will run with your permissions is never installed unverified. A missing
     # checksum is as fatal as a wrong one - whoever can swap the archive can drop the checksum
@@ -124,11 +148,42 @@ function Install-Denext {
     Write-Host "denext: added $bin to your user Path (open a new terminal to pick it up)"
   }
 
-  # The binary is only the CLI: dev, build, start and every verb that loads a project run them
-  # in a `deno` child, so without Deno those verbs cannot work.
-  if (-not (Get-Command deno -ErrorAction SilentlyContinue)) {
-    Write-Warning ('denext: `deno` is not on your Path. The binary needs it for every verb that ' +
-      'loads a project (dev, build, start, ...): irm https://deno.land/install.ps1 | iex')
+  Install-DenoToolchain $exe
+}
+
+# Install denext's Deno toolchain through the new binary, and - when this machine has no `deno` -
+# link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the toolchain
+# on the first command that needs it. An existing `deno` is never replaced: the link is made only
+# when Path has none, and `toolchain link` itself refuses to overwrite a file it did not create.
+function Install-DenoToolchain([string]$exe) {
+  if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
+  Write-Host "denext: installing denext's Deno toolchain"
+  if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
+    Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
+      'first command that needs it (or run `denext toolchain install`).')
+    return
+  }
+  $existing = Get-Command deno -ErrorAction SilentlyContinue
+  if ($existing) {
+    Write-Host "denext: keeping your deno ($($existing.Source)); denext runs its own toolchain anyway"
+    return
+  }
+  if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
+  if ((Invoke-Denext $exe @('toolchain', 'link')) -ne 0) {
+    Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
+  }
+}
+
+# Run the installed binary with $arguments, its output on the console; returns its exit code (1
+# when it cannot start). Windows PowerShell 5.1 turns a native command's stderr into error records,
+# which ErrorActionPreference 'Stop' would make fatal: a toolchain step must never fail the install.
+function Invoke-Denext([string]$exe, [string[]]$arguments) {
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $exe @arguments | Out-Host
+    return $LASTEXITCODE
+  } catch {
+    return 1
   }
 }
 
@@ -171,7 +226,11 @@ function Get-PublishedDigest([string]$base, [string]$asset, [string]$tmp) {
   foreach ($name in @('SHA256SUMS', "$asset.sha256")) {
     $file = Join-Path $tmp $name
     try {
-      Invoke-WebRequest -UseBasicParsing "$base/$name" -OutFile $file
+      if ($env:DENEXT_ARTIFACTS) {
+        Copy-Item -LiteralPath (Join-Path $env:DENEXT_ARTIFACTS $name) -Destination $file
+      } else {
+        Invoke-WebRequest -UseBasicParsing "$base/$name" -OutFile $file
+      }
     } catch {
       continue
     }

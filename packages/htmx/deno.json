@@ -1,13 +1,13 @@
 {
   "name": "@denext/htmx",
-  "version": "2.0.13",
+  "version": "2.1.0",
   "exports": {
     ".": "./mod.ts",
     "./types": "./types.ts",
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.0.0-rc.1",
+    "@denext/denext": "jsr:@denext/denext@^4.0.0-rc.2",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {

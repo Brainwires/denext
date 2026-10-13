@@ -254,6 +254,57 @@ Deno.test("install.ps1: a rate-limited API falls back to the releases/latest red
   }
 });
 
+Deno.test("install.ps1: the toolchain step never fails the install; DENEXT_NO_TOOLCHAIN skips it", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    // The stand-in binary cannot run `toolchain install`: one warning, and the install stands.
+    const root = join(dir, "home");
+    const run = await install(release, root);
+    assertEquals(run.code, 0, run.out);
+    assertStringIncludes(run.out, "installing denext's Deno toolchain");
+    assertStringIncludes(run.out, "could not be installed now");
+    assert(await exists(join(root, "bin", "denext.exe")));
+    const skipped = await install(release, join(dir, "other"), { DENEXT_NO_TOOLCHAIN: "1" });
+    assertEquals(skipped.code, 0, skipped.out);
+    assert(!skipped.out.includes("Deno toolchain"), skipped.out);
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: DENEXT_ARTIFACTS installs a local build, still checksum-verified", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const art = join(dir, "art");
+    await Deno.mkdir(art);
+    const zip = await releaseZip(art);
+    await Deno.writeTextFile(join(art, "SHA256SUMS"), `${await sha256(zip)}  ${ASSET}\n`);
+    const root = join(dir, "home");
+    const run = await install(release, root, { DENEXT_ARTIFACTS: art, DENEXT_NO_TOOLCHAIN: "1" });
+    assertEquals(run.code, 0, run.out);
+    assertStringIncludes(run.out, "checksum verified");
+    assertEquals(release.hits, [], "nothing is fetched");
+    assert(await exists(join(root, "bin", "denext.exe")));
+    await Deno.writeTextFile(join(art, "SHA256SUMS"), `${"0".repeat(64)}  ${ASSET}\n`);
+    const bad = await install(release, join(dir, "bad"), { DENEXT_ARTIFACTS: art });
+    assert(bad.code !== 0, bad.out);
+    assertStringIncludes(bad.out, "checksum verification FAILED");
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum names", async () => {
   const script = await Deno.readTextFile(SCRIPT);
   const workflow = await Deno.readTextFile(WORKFLOW);

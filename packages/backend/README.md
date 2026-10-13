@@ -39,7 +39,7 @@ export default {
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.2.0"` to `deno.json`'s `imports` and
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.3.0"` to `deno.json`'s `imports` and
 the plugin to `denext.config.ts` as above. Set `DENEXT_STORAGE_SECRET` (at least 32 characters):
 it signs the plugin's URLs and upload tokens.
 

@@ -20,11 +20,12 @@ import {
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
-  runsProjectCode,
+  toolchainApplies,
   toolchainConfigArgs,
 } from "./src/cli/self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
 import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
+import { denoPathEnv } from "./src/cli/deno-path.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import {
   buildAppCss,
@@ -141,7 +142,7 @@ function warnStandaloneCss(): void {
   console.error(
     "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
       'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
-      "run the CLI with `deno run -A jsr:@denext/denext/cli` instead of the binary.",
+      "run the CLI with `denext deno run -A jsr:@denext/denext/cli` instead of the binary.",
   );
 }
 
@@ -292,12 +293,13 @@ function gateDir(command: CommandSpec, ctx: CommandContext): string {
  * caller should stop.
  */
 function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
-  return maybeReexecToolchain(runsProjectCode(command, ctx.positionals[0]), {
+  const standalone = isStandaloneBinary();
+  return maybeReexecToolchain(toolchainApplies(command, ctx.positionals[0], standalone), {
     env: (name) => Deno.env.get(name),
     setEnv: (name, value) => Deno.env.set(name, value),
     denoVersion: Deno.version.deno,
     pinnedVersion: pinnedToolchainVersion(),
-    standalone: isStandaloneBinary,
+    standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
     spawn: async (deno, marker) =>
       spawnCliChild(
@@ -313,6 +315,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
+    pathEnv: (deno) => denoPathEnv(deno),
   });
 }
 

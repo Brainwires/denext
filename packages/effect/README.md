@@ -16,7 +16,7 @@ package depends on `npm:effect` as a peer. There is **no runtime to serve** — 
 // deno.json
 {
   "imports": {
-    "@denext/effect": "jsr:@denext/effect@^0.1.0",
+    "@denext/effect": "jsr:@denext/effect@^0.2.0",
     "effect": "npm:effect@^3.22.0"
   }
 }

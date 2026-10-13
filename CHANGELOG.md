@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.0.0-rc.2] - 2026-10-13
+
+### Changed
+
+- **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
+  release, hashes and attestations verified). The Vitest/Jest layer in `deno test` needs no
+  permission of its own (its config, `__mocks__` and automock reads take no `--allow-read` inside
+  the project, and it needs no `--allow-env`), `vi.mock` works under a path with `~` or a space,
+  and `deno coverage` maps the modules the layer transformed. Upstream Deno picks: `deno compile`
+  checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
+  the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
+
 ## [4.0.0-rc.1] - 2026-10-13
 
 ### Breaking (4.0)
@@ -13652,7 +13664,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.2...development
+[4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
 [3.4.16]: https://jsr.io/@denext/denext@3.4.16
 [3.4.15]: https://jsr.io/@denext/denext@3.4.15

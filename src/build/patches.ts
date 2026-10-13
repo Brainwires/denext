@@ -26,6 +26,7 @@
 import type { Plugin } from "esbuild";
 import { walk } from "@std/fs";
 import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
+import { denoExecutable } from "./deno-executable.ts";
 import { frameworkRootUrl, minDepAgeArgs, readFrameworkJson } from "./bundle.ts";
 import {
   applyFileDiff,
@@ -146,7 +147,7 @@ async function packageVersion(dir: string): Promise<string> {
 let denoDirPromise: Promise<string> | undefined;
 function denoDir(): Promise<string> {
   return denoDirPromise ??= (async () => {
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await new Deno.Command(denoExecutable(), {
       args: ["info", "--json"],
       stdout: "piped",
       stderr: "null",
@@ -163,7 +164,7 @@ async function npmPristineDir(pkg: string, version: string): Promise<string> {
   const dir = join(await denoDir(), "npm", "registry.npmjs.org", ...pkg.split("/"), version);
   if (await exists(join(dir, "package.json"))) return dir;
   const spec = `npm:${pkg}@${version}`;
-  const res = await new Deno.Command(Deno.execPath(), {
+  const res = await new Deno.Command(denoExecutable(), {
     args: ["cache", "--node-modules-dir=none", ...minDepAgeArgs(), spec],
     stdout: "null",
     stderr: "piped",

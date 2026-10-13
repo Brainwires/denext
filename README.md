@@ -84,34 +84,37 @@ export function CopyLink() {
 The same files become every target:
 
 ```sh
-deno task dev                 # the web app, with HMR, at http://localhost:3000
-deno task build && deno task start   # the production server (SSR, streaming, Server Actions)
-deno task export              # a static export for any host or CDN
-deno task desktop             # a native desktop window (Deno Desktop)
-deno task desktop:package     # a signed, distributable app (:linux and :windows tasks too)
-deno task mobile:sync && deno task mobile:ios   # the Capacitor project, open in Xcode
+denext task dev               # the web app, with HMR, at http://localhost:3000
+denext task build && denext task start   # the production server (SSR, streaming, Server Actions)
+denext task export            # a static export for any host or CDN
+denext task desktop           # a native desktop window (Deno Desktop)
+denext task desktop:package   # a signed, distributable app (:linux and :windows tasks too)
+denext task mobile:sync && denext task mobile:ios   # the Capacitor project, open in Xcode
 ```
 
 ## Quick start
 
-You need [Deno](https://deno.com) 2.9 or newer. Scaffold a project with the targets you want and
-run it:
-
-```sh
-deno run -A jsr:@denext/denext/cli create my-app --desktop --capacitor
-cd my-app
-deno task dev
-```
-
-`create` asks about Tailwind, a `src/` layout, the auto-memo compiler, the desktop target and the
-Capacitor target (pass the flags, or `--yes`, to skip the prompt). Or install the `denext` command
-once and use it everywhere:
+Install the `denext` command. It is all you need: it brings its own Deno (denext's toolchain,
+downloaded and checksum-verified by the installer), so the machine needs no Deno of its own.
 
 ```sh
 curl -fsSL https://denext.dev/install.sh | sh     # macOS and Linux; checksum-verified
 irm https://denext.dev/install.ps1 | iex          # Windows (PowerShell); checksum-verified
-deno install -A -g -n denext jsr:@denext/denext/cli   # any platform, through Deno
 ```
+
+Scaffold a project with the targets you want and run it:
+
+```sh
+denext create my-app --desktop --capacitor
+cd my-app
+denext task dev
+```
+
+`create` asks about Tailwind, a `src/` layout, the auto-memo compiler, the desktop target and the
+Capacitor target (pass the flags, or `--yes`, to skip the prompt). Already have
+[Deno](https://deno.com) 2.9 or newer? Then nothing needs installing:
+`deno run -A jsr:@denext/denext/cli create my-app` and `deno task dev` do the same, and
+`deno install -A -g -n denext jsr:@denext/denext/cli` puts the command on your PATH through Deno.
 
 Then [Getting started](https://denext.dev/docs/getting-started) or the
 [tutorial](https://denext.dev/docs/tutorial) take it from here. [`examples/`](./examples) holds a
@@ -314,10 +317,15 @@ tooling uses `esbuild` plus first-party Rust-to-wasm packages (`@denext/swc`,
 
 The binary is a CLI, not a second copy of the framework: inside a project every verb that loads
 the app re-execs the denext version the project pins, so `denext build` produces exactly what
-`deno task build` would. Four ways to get it:
+`deno task build` would. It needs no Deno installed: every verb that runs Deno (`denext task …`,
+`denext test`, `denext fmt`, the pinned-version re-exec) runs it on denext's own Deno toolchain,
+downloaded and SHA-256-verified on first need. Four ways to get it:
 
 1. `curl -fsSL https://denext.dev/install.sh | sh` — the released binary for macOS and Linux
-   (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). On Windows,
+   (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). The installer then
+   runs `denext toolchain install`, and — only when no `deno` is on your PATH — `denext
+   toolchain link`, so `deno` is that toolchain too (`DENEXT_NO_DENO_LINK=1` skips the link,
+   `DENEXT_NO_TOOLCHAIN=1` both; an existing `deno` is never replaced). On Windows,
    `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no admin
    (`%USERPROFILE%\.denext\bin`, added to your user `Path`; uninstall with
    `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`). Each release

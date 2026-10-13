@@ -10,6 +10,7 @@ import {
   maybeReexecToolchain,
   type ReexecToolchainDeps,
   runsProjectCode,
+  toolchainApplies,
 } from "../src/cli/self-exec.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 import {
@@ -156,15 +157,64 @@ Deno.test("maybeReexecToolchain: a stock choice continues in-process, after its 
 Deno.test("maybeReexecToolchain in a compiled binary: children get the toolchain, the user's DENO_BIN wins", async () => {
   const { d, seen, vars } = deps({ ...TOOLCHAIN, warning: "unverified" }, {
     standalone: () => true,
+    pathEnv: (deno) => Promise.resolve({ PATH: `/shim-for${deno}:/usr/bin` }),
   });
   assertEquals(await maybeReexecToolchain(true, d), false);
   assertEquals(vars.DENO_BIN, "/cache/deno");
   assertEquals(vars.DENEXT_TOOLCHAIN_ACTIVE, "2.9.7-denext.15");
+  assertEquals(vars.PATH, "/shim-for/cache/deno:/usr/bin", "every `deno` a child looks up");
   assertEquals(seen.spawned, [], "a binary cannot swap its own runtime");
   assertEquals(seen.warned, ["unverified"]);
   const own = deps(TOOLCHAIN, { standalone: () => true, vars: { DENO_BIN: "/my/deno" } });
-  await maybeReexecToolchain(true, own.d);
+  assertEquals(await maybeReexecToolchain(true, own.d), false);
   assertEquals(own.vars.DENO_BIN, "/my/deno");
+  assertEquals(own.seen.resolved, 0, "nothing downloaded when the user named a deno");
+  assertEquals(own.vars.PATH, undefined);
+});
+
+Deno.test("maybeReexecToolchain in a compiled binary: the marker or the pinned version never skip the hand-off", async () => {
+  // A binary's Deno.version is the runtime it was compiled with, never a `deno` it can spawn.
+  for (
+    const over of [
+      { denoVersion: "2.9.7-denext.15" },
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" } },
+    ]
+  ) {
+    const { d, vars } = deps(TOOLCHAIN, { standalone: () => true, ...over });
+    assertEquals(await maybeReexecToolchain(true, d), false);
+    assertEquals(vars.DENO_BIN, "/cache/deno");
+  }
+});
+
+Deno.test("maybeReexecToolchain in a compiled binary: a stock choice leaves the environment alone", async () => {
+  const { d, seen, vars } = deps({ kind: "stock", reason: "offline", warning: "offline" }, {
+    standalone: () => true,
+  });
+  assertEquals(await maybeReexecToolchain(true, d), false);
+  assertEquals([vars.DENO_BIN, vars.PATH, vars.DENEXT_TOOLCHAIN_ACTIVE], [
+    undefined,
+    undefined,
+    undefined,
+  ]);
+  assertEquals(seen.warned, ["offline"]);
+});
+
+Deno.test("toolchainApplies: a compiled binary hands the toolchain to every verb that may spawn deno", () => {
+  const reg = buildRegistry();
+  const binary = (name: string, action?: string) => toolchainApplies(reg.get(name)!, action, true);
+  for (const name of ["fmt", "lint", "add", "ui", "mcp", "create", "migrate", "generate", "dev"]) {
+    assert(binary(name), `${name} may spawn deno`);
+  }
+  assert(!binary("toolchain") && !binary("completions"), "deno-free verbs");
+  assert(toolchainApplies({ name: "toolchain", source: "project" }, undefined, true));
+  // Under `deno run` it is exactly runsProjectCode.
+  for (const name of ["fmt", "dev", "create", "toolchain", "desktop"]) {
+    assertEquals(
+      toolchainApplies(reg.get(name)!, undefined, false),
+      runsProjectCode(reg.get(name)!, undefined),
+      name,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------------------------

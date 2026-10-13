@@ -286,7 +286,7 @@ export async function maybeReexecPinned(
     deps.warn(
       `denext: this directory pins no denext, and a compiled binary cannot build an app in its ` +
         `own process.\n  Add denext to the project's deno.json imports (\`denext create\` does ` +
-        `this), or run the CLI as:\n    deno run -A jsr:@denext/denext@${version}/cli ` +
+        `this), or run the CLI as:\n    denext deno run -A jsr:@denext/denext@${version}/cli ` +
         `${args.join(" ")}`,
     );
     deps.exit(1);
@@ -341,6 +341,36 @@ export function runsProjectCode(
   const actions = TOOLCHAIN_ACTIONS[command.name];
   if (!actions) return false;
   return actions.has(action ?? (command.name === "desktop" ? "run" : ""));
+}
+
+/**
+ * The verbs a compiled binary runs without any Deno: `toolchain` manages the toolchain itself (its
+ * `status` must never download it) and `completions` only prints a script. Every other verb may
+ * spawn `deno` — a module verb's pinned-denext re-exec, `fmt` / `lint` / `add`, the UI's and MCP's
+ * children — so a binary hands those the toolchain up front.
+ */
+const DENO_FREE_VERBS: ReadonlySet<string> = new Set(["toolchain", "completions"]);
+
+/**
+ * Whether denext's Deno toolchain applies to a verb in THIS process: in a compiled binary, every
+ * verb that may spawn `deno` (a binary has no `deno` of its own: `Deno.execPath()` is denext
+ * itself, and the machine may have no Deno installed at all); under `deno run`, the verbs that run
+ * project code ({@linkcode runsProjectCode}), which re-exec onto it.
+ *
+ * @param command The verb's name and where it came from.
+ * @param action Its first positional (the `desktop` / `mobile` action).
+ * @param standalone Whether this process is a compiled binary.
+ * @returns Whether the toolchain gate applies.
+ */
+export function toolchainApplies(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+  action: string | undefined,
+  standalone: boolean,
+): boolean {
+  if (standalone) {
+    return (command.source ?? "core") !== "core" || !DENO_FREE_VERBS.has(command.name);
+  }
+  return runsProjectCode(command, action);
 }
 
 /**
@@ -420,13 +450,39 @@ export interface ReexecToolchainDeps {
   readonly exit: (code: number) => void;
   /** Say something on stderr. */
   readonly warn: (message: string) => void;
+  /**
+   * The environment that makes `deno` on a child's PATH the given binary (production:
+   * `denoPathEnv` from src/cli/deno-path.ts). A compiled binary adds it to its own environment,
+   * so every child it starts — and every `deno` a child looks up — runs the toolchain.
+   */
+  readonly pathEnv?: (deno: string) => Promise<Record<string, string>>;
+}
+
+/**
+ * A compiled binary's half of {@linkcode maybeReexecToolchain}: it cannot swap its own runtime, so
+ * it resolves the toolchain (downloading it on first need) and hands it to every child through its
+ * own environment — `DENO_BIN` (what `denoExecutable()` spawns), the toolchain marker, and a PATH
+ * whose `deno` is the toolchain (only `deno` lookups change). A `DENO_BIN` the user set wins and
+ * nothing is resolved. A stock choice changes nothing: `denoExecutable()` then finds a stock
+ * `deno`, or refuses with the fix when the machine has none.
+ */
+async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false> {
+  if (deps.env("DENO_BIN")) return false;
+  const choice = await deps.resolve();
+  if (choice.warning) deps.warn(choice.warning);
+  if (choice.kind === "stock") return false;
+  deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
+  deps.setEnv("DENO_BIN", choice.deno);
+  const path = (await deps.pathEnv?.(choice.deno))?.PATH;
+  if (path) deps.setEnv("PATH", path);
+  return false;
 }
 
 /**
  * Run a project-code verb on denext's Deno toolchain: under stock Deno, re-exec the same
  * invocation (argv, cwd, stdio, exit code, shutdown signals) under the pinned toolchain binary.
  * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
- * instead — `DENO_BIN` (unless the user set one) — and its pinned-denext re-exec runs on it.
+ * instead ({@linkcode handToolchainToChildren}) — and its pinned-denext re-exec runs on it.
  *
  * Loops are impossible: the child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>` and runs that
  * version, and a process whose Deno is that marker's version (or the pinned version, or a
@@ -445,17 +501,13 @@ export async function maybeReexecToolchain(
   deps: ReexecToolchainDeps,
 ): Promise<boolean> {
   if (!applies) return false;
+  if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
   if (marker && (marker === "path" || marker === deps.denoVersion)) return false;
   if (deps.pinnedVersion !== null && deps.denoVersion === deps.pinnedVersion) return false;
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
   if (choice.kind === "stock") return false;
-  if (deps.standalone()) {
-    deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
-    if (!deps.env("DENO_BIN")) deps.setEnv("DENO_BIN", choice.deno);
-    return false;
-  }
   deps.exit(await deps.spawn(choice.deno, choice.version));
   return true;
 }

@@ -6,6 +6,7 @@
 // first-class Tailwind support.
 
 import { join, resolve } from "@std/path";
+import { denoExecutable } from "./deno-executable.ts";
 import { ensureDir } from "@std/fs";
 import type { TailwindConfig } from "../server/config.ts";
 
@@ -236,7 +237,7 @@ async function compileTailwindV3(
       ...(opts.minify ? ["--minify"] : []),
       ...(postcss ? ["--postcss"] : []),
     ];
-    const { code, stderr } = await new Deno.Command(Deno.execPath(), {
+    const { code, stderr } = await new Deno.Command(denoExecutable(), {
       args,
       cwd,
       stdout: "piped",

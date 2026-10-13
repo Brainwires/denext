@@ -1,7 +1,7 @@
 ---
 title: "denext's Deno toolchain"
 slug: toolchain
-lead: You install stock Deno and denext, nothing else. The denext commands that run your project's code run it on denext's own Deno build, which adds Deno.SQL and Vitest/Jest compatibility to deno test. It downloads on first need, is pinned by version and SHA-256, and never replaces the deno on your PATH.
+lead: You install denext, nothing else — stock Deno is optional. The denext commands that run Deno run it on denext's own Deno build, which adds Deno.SQL and Vitest/Jest compatibility to deno test. It downloads on first need, is pinned by version and SHA-256, and never replaces a deno on your PATH.
 ---
 
 denext's Deno toolchain is the Deno CLI built from the public
@@ -12,7 +12,29 @@ Vitest/Jest compatibility in `deno test`. denext manages it the same way it mana
 version and SHA-256, downloads it the first time a command needs it, verifies it, and reuses the
 verified copy from then on.
 
-There is nothing to install and nothing to configure. Install Deno and denext as usual.
+There is nothing to install and nothing to configure. Install denext as usual; Deno itself is
+optional.
+
+## With no Deno installed
+
+The `denext` binary (from [the installer](/docs/getting-started#install-the-cli)) is enough on its
+own. A compiled binary has no `deno` of its own — its executable is denext — so before any verb
+that may run Deno it resolves the toolchain (downloading it on first need) and hands it to
+everything it starts: `DENO_BIN` names it, and `deno` on the children's PATH is it. That covers
+`denext task …`, `test`, `fmt`, `lint`, `check`, `add`, the project-pinned re-exec of `dev` /
+`build` / `start`, `create`, `migrate`, `generate`, `ui` and `mcp`; only `toolchain` and
+`completions` never run Deno. A task that calls `deno …` therefore works on a machine with no
+Deno.
+
+The installer runs `denext toolchain install` right after installing the binary, and — only when
+no `deno` is on your PATH — `denext toolchain link`, so `deno` is the toolchain for your editor,
+git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
+both steps). A `deno` you already have is never replaced.
+
+When the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a host with no build)
+the binary falls back to a stock `deno` — `DENO_BIN`, `~/.deno/bin/deno`, then `deno` on PATH —
+and with none of those it stops with one error that names the fix: run `denext toolchain install`
+once you are online, or install Deno.
 
 ## Which commands use it
 
@@ -27,7 +49,7 @@ The commands that execute your project's code switch to the toolchain on their o
 | `mobile dev \| build`                                                                                         | yes                              |
 | a project's own verbs (`denext.config.ts` `commands`, plugins)                                                | yes                              |
 | `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)                                        | yes (stock when it can't be had) |
-| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no                               |
+| help, `--version`, `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp`, `toolchain` | no (yes under the binary)        |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
@@ -116,9 +138,16 @@ instead, or write the step itself as a denext verb:
 }
 ```
 
-The Vitest/Jest layer reads environment variables (`FORCE_TTY` and the others Vitest reads), so
-a `deno test` without `-A` needs `--allow-env` too: `denext deno test --allow-env --allow-read
-…`. `denext test` runs `deno test -A` and needs nothing more.
+The Vitest/Jest layer needs no permission of its own (from `2.9.7-denext.16`): its reads of the
+project (the config, `__mocks__`, automock) and of the environment variables Vitest reads take no
+grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
+--allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
+
+Coverage of a suite with Vitest files: report the Vitest files' coverage on the toolchain
+(`denext deno coverage`), in a report of its own. The Vitest layer changes the code a module
+emits, and `deno coverage` under-reports a module whose profiles from a plain run and a Vitest run
+it merges; a stock Deno run's profile of a module the toolchain has since run reads as "Missing
+transpiled source".
 
 denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
 call `deno test` directly so you can change them, or run them with `denext task`.

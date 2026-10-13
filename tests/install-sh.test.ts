@@ -58,6 +58,14 @@ esac
 if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; fi
 `;
 
+/** The released `denext` stand-in (see {@linkcode Release.create}). */
+const DENEXT_STUB = `#!/bin/sh
+[ "$1" = "--version" ] && { echo "denext 9.9.9 (binary)"; exit 0; }
+echo "$*" >> "$DENEXT_STUB_LOG"
+[ "$1 $2" = "toolchain install" ] && [ -n "$STUB_TOOLCHAIN_FAIL" ] && exit 1
+exit 0
+`;
+
 /** A stub `uname` reporting `os` / `arch`. */
 const unameStub = (os: string, arch: string) =>
   `#!/bin/sh\ncase "$1" in -m) echo "${arch}" ;; *) echo "${os}" ;; esac\n`;
@@ -73,6 +81,8 @@ interface Run {
   headers: string[];
   /** Where a binary would land. */
   binary: string;
+  /** Every invocation of the installed `denext` other than `--version`, in order. */
+  calls: string[];
 }
 
 /** A local "release" the stub curl serves, and a run of the script against it. */
@@ -104,14 +114,12 @@ class Release {
       unameStub(opts.os ?? "Linux", opts.arch ?? "x86_64"),
       { mode: 0o755 },
     );
-    // The archive holds a `denext` that answers `--version` like the real binary.
+    // The archive holds a `denext` that answers `--version` like the real binary and records
+    // every other invocation (`toolchain install`, `toolchain link`) in $DENEXT_STUB_LOG;
+    // STUB_TOOLCHAIN_FAIL=1 makes `toolchain install` fail as an offline machine's would.
     const stage = join(r.dir, "stage");
     await Deno.mkdir(stage);
-    await Deno.writeTextFile(
-      join(stage, "denext"),
-      '#!/bin/sh\necho "denext 9.9.9 (binary)"\n',
-      { mode: 0o755 },
-    );
+    await Deno.writeTextFile(join(stage, "denext"), DENEXT_STUB, { mode: 0o755 });
     const tar = await new Deno.Command("tar", {
       args: ["czf", join(r.served, ASSET), "-C", stage, "denext"],
     }).output();
@@ -143,6 +151,7 @@ class Release {
   async run(env: Record<string, string> = {}, extraPath: string[] = []): Promise<Run> {
     await Deno.writeTextFile(this.log, "");
     await Deno.writeTextFile(`${this.log}.headers`, "");
+    await Deno.writeTextFile(`${this.log}.denext`, "");
     const out = await new Deno.Command("sh", {
       args: [SCRIPT],
       clearEnv: true,
@@ -152,6 +161,7 @@ class Release {
         TMPDIR: this.dir,
         STUB_DIR: this.served,
         STUB_LOG: this.log,
+        DENEXT_STUB_LOG: `${this.log}.denext`,
         DENEXT_INSTALL: this.install,
         ...env,
       },
@@ -164,6 +174,7 @@ class Release {
       urls: (await Deno.readTextFile(this.log)).split("\n").filter(Boolean),
       headers: (await Deno.readTextFile(`${this.log}.headers`)).split("\n").filter(Boolean),
       binary: join(this.install, "bin", "denext"),
+      calls: (await Deno.readTextFile(`${this.log}.denext`)).split("\n").filter(Boolean),
     };
   }
 
@@ -193,8 +204,9 @@ Deno.test("install.sh: a good checksum installs the binary", { ignore: NO_SH }, 
       `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}`,
       "https://github.com/Brainwires/denext/releases/download/v9.9.9/SHA256SUMS",
     ], "latest is resolved, the archive fetched, and the combined checksum file is enough");
-    // No `deno` on this PATH: a warning, not a failure — the binary's own verbs still work.
-    assertStringIncludes(run.stderr, "`deno` is not on your PATH");
+    // No `deno` on this PATH: the toolchain is installed and linked as `deno`.
+    assertEquals(run.calls, ["toolchain install", "toolchain link"]);
+    assertEquals(run.stderr, "");
   } finally {
     await r.remove();
   }
@@ -297,7 +309,9 @@ Deno.test(
   },
 );
 
-Deno.test("install.sh: with deno on PATH there is no warning", { ignore: NO_SH }, async () => {
+Deno.test("install.sh: an existing deno is kept — the toolchain installs, nothing is linked", {
+  ignore: NO_SH,
+}, async () => {
   const r = await Release.create();
   try {
     const withDeno = join(r.dir, "with-deno");
@@ -305,7 +319,74 @@ Deno.test("install.sh: with deno on PATH there is no warning", { ignore: NO_SH }
     await Deno.writeTextFile(join(withDeno, "deno"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const run = await r.run({}, [withDeno]);
     assertEquals(run.code, 0, run.stderr);
-    assert(!run.stderr.includes("not on your PATH"), run.stderr);
+    assertEquals(run.calls, ["toolchain install"], "never link over a deno the user has");
+    assertStringIncludes(run.stdout, `keeping your deno (${join(withDeno, "deno")})`);
+    assertEquals(run.stderr, "");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: DENEXT_NO_DENO_LINK / DENEXT_NO_TOOLCHAIN opt out of each step", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const noLink = await r.run({ DENEXT_NO_DENO_LINK: "1" });
+    assertEquals(noLink.code, 0, noLink.stderr);
+    assertEquals(noLink.calls, ["toolchain install"]);
+    const none = await r.run({ DENEXT_NO_TOOLCHAIN: "1" });
+    assertEquals(none.code, 0, none.stderr);
+    assertEquals(none.calls, []);
+    assert(await r.installed());
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a toolchain that cannot be installed is one warning, not a failure", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ STUB_TOOLCHAIN_FAIL: "1" });
+    assertEquals(run.code, 0, run.stderr);
+    assert(await r.installed());
+    assertEquals(run.calls, ["toolchain install"], "no link to a toolchain that is not there");
+    assertStringIncludes(run.stderr, "could not be installed now");
+    assertStringIncludes(run.stderr, "denext toolchain install");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: DENEXT_ARTIFACTS installs a local build, still checksum-verified", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ DENEXT_ARTIFACTS: r.served });
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.urls, [], "nothing is fetched");
+    assertStringIncludes(run.stdout, `installing ${ASSET} from ${r.served}`);
+    assertStringIncludes(run.stdout, "checksum verified");
+    assert(await r.installed());
+    // A wrong checksum is still refused, and a missing one still needs DENEXT_INSECURE=1.
+    await Deno.remove(r.install, { recursive: true });
+    await Deno.writeTextFile(join(r.served, "SHA256SUMS"), `${"f".repeat(64)}  ${ASSET}\n`);
+    const bad = await r.run({ DENEXT_ARTIFACTS: r.served });
+    assertEquals(bad.code, 1);
+    assertStringIncludes(bad.stderr, "checksum verification FAILED");
+    await Deno.remove(join(r.served, "SHA256SUMS"));
+    await Deno.remove(join(r.served, `${ASSET}.sha256`));
+    const missing = await r.run({ DENEXT_ARTIFACTS: r.served });
+    assertEquals(missing.code, 1);
+    assertStringIncludes(missing.stderr, "no checksum could be fetched");
+    assertEquals(await r.installed(), false);
+    // An archive that is not there fails clearly.
+    const empty = await r.run({ DENEXT_ARTIFACTS: join(r.dir, "nowhere") });
+    assertEquals(empty.code, 1);
+    assertStringIncludes(empty.stderr, `could not get ${ASSET}`);
   } finally {
     await r.remove();
   }
@@ -340,8 +421,9 @@ Deno.test("install.sh and publish.yml agree on the asset names", async () => {
   const script = await Deno.readTextFile(SCRIPT);
   const workflow = await Deno.readTextFile(WORKFLOW);
   assertStringIncludes(script, 'ASSET="denext-$TARGET.tar.gz"');
-  assertStringIncludes(script, '"$base/$ASSET.sha256"');
-  assertStringIncludes(script, '"$base/SHA256SUMS"');
+  assertStringIncludes(script, 'release_file "$ASSET.sha256"');
+  assertStringIncludes(script, "release_file SHA256SUMS");
+  assertStringIncludes(script, '"https://github.com/$REPO/releases/download/$VERSION/$1"');
   assertStringIncludes(workflow, 'name="denext-${{ matrix.target }}"');
   assertStringIncludes(workflow, 'archive="$name.tar.gz"');
   assertStringIncludes(workflow, '"$archive.sha256"');

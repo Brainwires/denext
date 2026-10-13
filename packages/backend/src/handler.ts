@@ -21,6 +21,7 @@ import {
   TOO_LARGE,
   transformImageBytes,
 } from "@denext/denext/server";
+import { bufferedRequest } from "@denext/denext/plugin-kit";
 import { isStorageError, StorageError } from "./errors.ts";
 import { normalizeKey } from "./keys.ts";
 import { dispositionFor, essence } from "./mime.ts";
@@ -108,12 +109,19 @@ async function signRoute(request: Request): Promise<Response> {
   const bytes = await readCappedBody(request, SIGN_BODY_LIMIT);
   if (bytes === TOO_LARGE) throw new StorageError("too_large", "request body too large");
   if (bytes === STALLED) throw new StorageError("bad_request", "request body stalled");
-  const buffered = new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: bytes as BodyInit,
+  return await signEndpoint(signRequestFrom(request, bytes), {
+    params: asyncProps<Record<string, string>>({}),
   });
-  return await signEndpoint(buffered, { params: asyncProps<Record<string, string>>({}) });
+}
+
+/**
+ * The sign request rebuilt around its buffered body. `bufferedRequest` keeps what a plain
+ * `new Request(...)` drops: the client address the server recorded on the original (so an api
+ * middleware that keys on the request, such as `rateLimit()`, sees the real client) and its abort
+ * signal.
+ */
+export function signRequestFrom(request: Request, bytes: Uint8Array): Request {
+  return bufferedRequest(request, bytes);
 }
 
 /** A generated key: a random id, keeping a short, safe extension from the file name. */

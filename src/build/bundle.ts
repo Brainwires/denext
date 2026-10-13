@@ -6,8 +6,10 @@
 // intact, which separate dynamic imports would break.
 
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
+import { denoExecutable } from "./deno-executable.ts";
+export { denoExecutable };
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
-import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 import {
@@ -116,39 +118,6 @@ function absolutizeAgainstUrl(
 export function frameworkRoot(): string {
   const url = frameworkRootUrl();
   return url.startsWith("file://") ? fromFileUrl(url) : url;
-}
-
-/**
- * Resolve the `deno` executable to shell out to for bundling.
- *
- * Under `deno run`, `Deno.execPath()` is the deno binary. But in a `deno
- * compile`d denext binary it is `denext` itself — running `denext bundle` would
- * just print help. Resolution order:
- *   1. `DENO_BIN` env var (explicit override)
- *   2. `Deno.execPath()` when it is actually `deno`
- *   3. the standard install location `~/.deno/bin/deno`
- *   4. `deno` on PATH (last resort)
- */
-export function denoExecutable(): string {
-  const fromEnv = Deno.env.get("DENO_BIN");
-  if (fromEnv) return fromEnv;
-
-  const exec = Deno.execPath();
-  const base = basename(exec).toLowerCase().replace(/\.exe$/, "");
-  if (base === "deno") return exec;
-
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE");
-  if (home) {
-    const bin = Deno.build.os === "windows" ? "deno.exe" : "deno";
-    const candidate = join(home, ".deno", "bin", bin);
-    try {
-      Deno.statSync(candidate);
-      return candidate;
-    } catch {
-      // not there; fall through
-    }
-  }
-  return "deno";
 }
 
 let bundleSupport: Promise<void> | undefined;

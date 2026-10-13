@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 - 2026-10-13
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## 0.3.1
 
 - **A static export publishes the document at its URL.** `denext export` now runs plugin build

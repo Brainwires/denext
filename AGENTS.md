@@ -15,8 +15,9 @@ emit correct denext instead of Next.js.
    aliased to denext, but new code should import `denext`).
 2. **No `package.json`, no `npm install`.** A denext project has a
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
-   `imports` map. Run it with `deno task dev` / `deno task build` /
-   `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
+   `imports` map. Run it with `denext task dev` / `denext task build` /
+   `denext task start` (the `denext` command brings its own Deno — no Deno install needed; with
+   Deno installed, `deno task dev` runs the same task). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
@@ -521,7 +522,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.15 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.16 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -843,6 +844,10 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   one warning. `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
   plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`.
+  The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
+  runs it on the toolchain (with no toolchain and no `deno` it refuses, naming
+  `denext toolchain install`), and the installer runs `toolchain install` (+ `toolchain link`
+  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it).
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's

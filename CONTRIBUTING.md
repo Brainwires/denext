@@ -65,12 +65,17 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   whenever another Deno version opens it, so a toolchain type-check would cost the next stock run
   its whole cache (~25 s for the suite) every time; add `--check` to type-check them locally. A Vitest file never goes
   in `tests/serial-tests.ts` (its pass is separate from the stock ones), and `vitest` needs no
-  import-map entry. **Coverage:** the pinned toolchain (`2.9.7-denext.15`) cannot map a module
-  the Vitest transform emitted (`deno coverage` reports "Missing transpiled source" and drops the
-  whole file from a report it is merged into), so `test:coverage` / `coverage:fallow` run stock
-  Deno without the Vitest files, and `scripts/test-run.ts` strips `--coverage` from their pass.
-  Once the pin carries the fork's coverage fix (runtime `denext.16`), run that pass with
-  `--coverage` into the same profile directory and `deno coverage` on the toolchain.
+  import-map entry. The pass runs with `--allow-read --allow-write` only (what the Vitest files
+  use; from `2.9.7-denext.16` the Vitest layer's own reads need no grant): a new file that needs
+  more adds it to `VITEST_GRANTS` in `scripts/test-run.ts`. **Coverage:** the Vitest files stay out of `test:coverage` / `coverage:fallow` (stock
+  Deno), and `scripts/test-run.ts` strips `--coverage` from their pass. The Vitest transform
+  changes the code a module emits; the pinned toolchain (`2.9.7-denext.16`) maps a Vitest run's
+  profile on its own, but `deno coverage` under-reports a module whose plain-run and Vitest-run
+  profiles it merges (`src/server/auth/rate-limit.ts`: 91.9% and 30.8% of lines alone, 38.9%
+  merged; `src/mobile/picked-web.ts`: 96.4% from the Vitest file alone, 10.7% merged), and a
+  stock run's profile of a module the toolchain has since run reads as "Missing transpiled
+  source". Merge them once the fork's `deno coverage` combines profiles of one module emitted two
+  ways.
   **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
   mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
   left out, see `scripts/test-stress.ts`) with the `tests/stress/timer-jitter.ts` preload, which

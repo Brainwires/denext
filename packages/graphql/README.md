@@ -25,7 +25,7 @@ covers SDL + resolvers.
 // deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.1.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.3.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4" // if you use Pothos

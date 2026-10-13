@@ -11,6 +11,7 @@
 // byonm child process — the output is exactly what fumadocs produces under `next build`.
 
 import { dirname, join, toFileUrl } from "@std/path";
+import { denoExecutable } from "./deno-executable.ts";
 import type * as esbuild from "esbuild";
 import { minDepAgeArgs } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
@@ -106,7 +107,7 @@ class FumadocsHost {
   #ensureChild(): void {
     if (this.#child) return;
     const { appDir, configName, loaderPath } = this.install;
-    const child = new Deno.Command(Deno.execPath(), {
+    const child = new Deno.Command(denoExecutable(), {
       args: [
         "run",
         "-A",

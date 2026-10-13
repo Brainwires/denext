@@ -19,8 +19,9 @@ export default function GettingStarted() {
     >
       <h2>Install the CLI</h2>
       <p>
-        Optional but recommended — it puts a <code>denext</code>{" "}
-        command in your PATH, so every example below is one word instead of a URL:
+        The <code>denext</code>{" "}
+        command is all you need — no Deno install: it brings its own Deno (denext's toolchain), and
+        every example below is one word instead of a URL:
       </p>
       <Code lang="sh">
         {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext (macOS, Linux)
@@ -29,16 +30,36 @@ irm https://denext.dev/install.ps1 | iex         # Windows PowerShell: %USERPROF
 deno install -A -g -n denext jsr:@denext/denext/cli`}
       </Code>
       <p>
+        After installing the binary, the installer runs <code>denext toolchain install</code>{" "}
+        — denext's own Deno build, downloaded into Deno's cache and SHA-256-verified — and, only
+        when no <code>deno</code> is on your PATH, <code>denext toolchain link</code>, so{" "}
+        <code>deno</code> runs that toolchain too (a link at{" "}
+        <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). It never replaces a{" "}
+        <code>deno</code> you have. <code>DENEXT_NO_DENO_LINK=1</code> skips the link and{" "}
+        <code>DENEXT_NO_TOOLCHAIN=1</code>{" "}
+        both steps; a failed download (offline) is one warning, and the binary fetches the toolchain
+        on the first command that needs it instead. Every verb that runs Deno —{" "}
+        <code>
+          denext task …
+        </code>, <code>denext test</code>, <code>denext fmt</code>,{" "}
+        <code>denext lint</code>, the project-pinned re-exec below — runs on that toolchain, and
+        {" "}
+        <code>denext task</code> puts it first on the task's PATH as{" "}
+        <code>deno</code>, so a task that calls <code>deno …</code>{" "}
+        works on a machine with no Deno installed.
+      </p>
+      <p>
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
         that project pins in <code>deno.json</code> (a <code>deno run</code>{" "}
-        child, so it needs a Deno), so it never silently swaps your app's framework version. Pin a
+        child on that toolchain), so it never silently swaps your app's framework version. Pin a
         version — <code>jsr:@denext/denext@^{RELEASE}</code>, as <code>denext create</code>{" "}
         writes — and that is what the binary defers to; an unversioned{" "}
         <code>jsr:@denext/denext</code>{" "}
         means "the latest published version", which is reproducible only until the next release.
-        Every command on this page also works with nothing installed — replace <code>denext</code>
+        With Deno 2.9+ installed, every command on this page also works without the binary — replace
         {" "}
-        with <code>deno run -A jsr:@denext/denext/cli</code>.
+        <code>denext</code> with <code>deno run -A jsr:@denext/denext/cli</code>, and{" "}
+        <code>denext task</code> with <code>deno task</code>.
       </p>
       <p>
         The installer downloads the release archive for your platform (<code>
@@ -77,7 +98,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
       <Code lang="sh">
         {`denext create my-app
 cd my-app
-deno task dev`}
+denext task dev`}
       </Code>
       <p>
         That writes a{" "}
@@ -104,9 +125,10 @@ deno task dev`}
       </Code>
       <p>
         The version in <code>imports</code> is the project's pin — what the <code>denext</code>{" "}
-        binary defers to — and the tasks name the same version, so <code>deno task build</code> and
+        binary defers to — and the tasks name the same version, so <code>denext task build</code>
         {" "}
-        <code>denext build</code> run the same framework. <code>denext create</code> writes both.
+        and <code>denext build</code> run the same framework. <code>denext create</code>{" "}
+        writes both.
       </p>
       <p>
         <code>denext upgrade</code> moves them together, with every first-party{" "}

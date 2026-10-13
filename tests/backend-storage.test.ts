@@ -16,7 +16,9 @@ import { backend, fs, StorageError } from "../packages/backend/mod.ts";
 import { storage } from "../packages/backend/server.ts";
 import { signPayload } from "../packages/backend/src/signing.ts";
 import { downloadPayload, uploadPayload } from "../packages/backend/src/storage.ts";
-import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { clientIp, createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { remoteAddrOf, setRemoteAddr } from "../src/server/remote-addr.ts";
+import { signRequestFrom } from "../packages/backend/src/handler.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
 import { credentials } from "../src/server/auth/providers.ts";
 import { issueAuthSession } from "../src/server/auth/session.ts";
@@ -834,4 +836,58 @@ Deno.test("backend(): setup validates options; no storage → no handler; basePa
   } finally {
     await prod.close();
   }
+});
+
+Deno.test("fs storage: the sign route keeps the client address (clientIp in authorize)", async () => {
+  const seen: Array<string | undefined> = [];
+  const app = await backendApp({
+    buckets: {
+      docs: {
+        ...docs,
+        authorize: () => {
+          seen.push(clientIp());
+          return true;
+        },
+      },
+    },
+  });
+  try {
+    const request = new Request(`${ORIGIN}/_denext/storage/sign`, {
+      method: "POST",
+      headers: { "content-type": "application/json", host: new URL(ORIGIN).host, origin: ORIGIN },
+      body: JSON.stringify({
+        op: "upload",
+        bucket: "docs",
+        key: "ip.txt",
+        contentType: "text/plain",
+        size: 1,
+      }),
+    });
+    setRemoteAddr(request, { transport: "tcp", hostname: "203.0.113.7", port: 50000 });
+    const res = await app.handler(request);
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+    assertEquals(seen, ["203.0.113.7"]);
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: the rebuilt sign request carries the client address and abort signal", async () => {
+  const abort = new AbortController();
+  const original = new Request(`${ORIGIN}/_denext/storage/sign`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+    signal: abort.signal,
+  });
+  setRemoteAddr(original, { transport: "tcp", hostname: "198.51.100.4", port: 4000 });
+  const bytes = new TextEncoder().encode('{"op":"abort"}');
+  const rebuilt = signRequestFrom(original, bytes);
+  assertEquals(remoteAddrOf(rebuilt), "198.51.100.4");
+  assertEquals(await rebuilt.text(), '{"op":"abort"}');
+  assertEquals(rebuilt.headers.get("content-type"), "application/json");
+  abort.abort();
+  assert(rebuilt.signal.aborted);
+  await original.body?.cancel();
 });
