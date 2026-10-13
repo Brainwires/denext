@@ -19,6 +19,7 @@ import {
   buildDelete,
   buildInsert,
   buildPlannedCount,
+  buildPut,
   buildRpc,
   buildRpcPlannedCount,
   buildSelect,
@@ -47,6 +48,13 @@ import {
 import { resolveRelationship } from "../packages/backend/src/rest-relations.ts";
 import { columnType, generateRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { csvFromJson, rowsFromCsv } from "../packages/backend/src/rest-format.ts";
+import {
+  inheritedForeignKeys,
+  inheritedKeys,
+  parseLineage,
+  viewsOver,
+} from "../packages/backend/src/rest-lineage.ts";
+import { openApiDocument } from "../packages/backend/src/rest-openapi.ts";
 import { statusForSqlState } from "../packages/backend/src/rest.ts";
 
 function col(name: string, castType: string, extra: Partial<RestColumn> = {}): RestColumn {
@@ -186,6 +194,44 @@ const pair: RestFunction = {
   returns: { kind: "composite", castType: "record", columns: [int("a"), col("b", "text")] },
 };
 
+const rowArg = (relation: string) => ({
+  ...intArg,
+  name: "",
+  castType: relation,
+  typeName: relation,
+  category: "C",
+  relation: { schema: "public", name: relation },
+});
+const fullTitle: RestFunction = {
+  schema: "public",
+  name: "full_title",
+  args: [rowArg("books")],
+  volatility: "s",
+  setOf: false,
+  returns: { kind: "scalar", castType: "text", column: col("", "text") },
+};
+const authorOf: RestFunction = {
+  schema: "public",
+  name: "author_of",
+  args: [rowArg("books")],
+  volatility: "s",
+  setOf: true,
+  rows: 1,
+  returns: {
+    kind: "composite",
+    castType: "authors",
+    columns: authors.columns,
+    table: { schema: "public", name: "authors" },
+  },
+};
+const booksOf: RestFunction = {
+  ...authorOf,
+  name: "books_of",
+  args: [rowArg("authors")],
+  rows: 1000,
+  returns: { ...booksBy.returns },
+};
+
 const relations = [
   notes,
   authors,
@@ -221,6 +267,9 @@ const catalog: RestCatalog = {
       ["touch", [touch]],
       ["series", [series]],
       ["pair", [pair]],
+      ["full_title", [fullTitle]],
+      ["author_of", [authorOf]],
+      ["books_of", [booksOf]],
     ]),
   ]]),
   enums: new Map([["public", new Map([["mood", ["ok", "sad"]]])]]),
@@ -400,7 +449,8 @@ Deno.test("aliases, casts and JSON paths in select, filter and order", () => {
   assertEquals(refusal(() => select(notes, "select=id::nosuch")).code, "42704");
   assertStringIncludes(select(notes, "select=id::text[]").text, `(t0."id")::text[]`);
   refusal(() => select(notes, "select=id::text;drop"));
-  refusal(() => select(notes, "select=id.sum()"));
+  refusal(() => select(notes, "select=id.median()"));
+  refusal(() => select(notes, "select=id::text.sum()::int::text"));
   refusal(() => select(notes, "select=meta->"));
 });
 
@@ -865,4 +915,185 @@ Deno.test("CSV: rows out with exact numbers and quoting; bodies in with NULL", (
   assertThrows(() => rowsFromCsv(""), RestError);
   assertThrows(() => rowsFromCsv('a\n"x'), RestError);
   assertThrows(() => rowsFromCsv("a,b\n1"), RestError);
+});
+
+Deno.test("computed fields and relationships: the row passed as the relation's type", () => {
+  const field = select(books, "select=title,full_title&full_title=like.*1979*&order=full_title");
+  assertStringIncludes(
+    field.text,
+    `"public"."full_title"(ROW(t0.*)::"public"."books") AS "full_title"`,
+  );
+  assertStringIncludes(field.text, `"public"."full_title"(ROW(t0.*)::"public"."books") LIKE`);
+  const toOne = select(books, "select=title,author_of(name)");
+  assertStringIncludes(toOne.text, `FROM "public"."author_of"(ROW(t0.*)::"public"."books") AS t1`);
+  assertStringIncludes(toOne.text, "row_to_json(_e)");
+  const toMany = select(authors, "select=books_of(title)");
+  assertStringIncludes(toMany.text, "json_agg(_e)");
+  assertEquals(refusal(() => select(books, "select=author_of!x(name)")).code, "PGRST200");
+  const written = buildInsert(books, plan(books, "select=title,full_title"), catalog, {
+    title: "x",
+  }, rows);
+  assertStringIncludes(written.text, "RETURNING t0.*");
+  const embedded = buildInsert(books, plan(books, "select=author_of(name)"), catalog, {
+    title: "x",
+  }, rows);
+  assertStringIncludes(embedded.text, "RETURNING t0.*");
+  assertEquals(refusal(() => select(authors, "select=full_title")).code, "42703");
+});
+
+Deno.test("order by a to-one embed; logic trees on embedded columns", () => {
+  const ordered = select(books, "select=title,authors(name)&order=authors(name).desc.nullslast,id");
+  assertStringIncludes(
+    ordered.text,
+    `ORDER BY (SELECT t3."name" FROM "public"."authors" AS t3 WHERE t3."id" = t0."author_id" LIMIT 1) DESC NULLS LAST, t0."id" ASC`,
+  );
+  assertEquals(refusal(() => select(authors, "select=books(id)&order=books(id)")).code, "PGRST118");
+  assertEquals(refusal(() => select(books, "order=authors(name)")).code, "PGRST108");
+  const either = select(books, "select=id,authors(name)&or=(id.eq.1,authors.name.eq.x)");
+  assertStringIncludes(
+    either.text,
+    `(t0."id" = $1::integer OR EXISTS (SELECT 1 FROM "public"."authors" AS t3 WHERE t3."id" = t0."author_id" AND t3."name" = $2::text))`,
+  );
+  const nested = select(
+    editors,
+    "select=books(authors(name))&or=(books.authors.name.eq.y,id.eq.2)",
+  );
+  assertStringIncludes(nested.text, `EXISTS (SELECT 1 FROM "public"."books" AS`);
+  assertStringIncludes(nested.text, `AND EXISTS (SELECT 1 FROM "public"."authors"`);
+  assertEquals(refusal(() => select(books, "or=(authors.name.eq.x)")).code, "PGRST108");
+  assertStringIncludes(select(notes, "or=(id.eq.1,id.in.(2,3))").text, "IN (");
+});
+
+Deno.test("aggregates: grouped by the other items, casts, counts, embeds as jsonb", () => {
+  const st = select(
+    books,
+    "select=author_id,total:count::integer.sum()::text,count(),id.avg(),authors(name)",
+    { ...page, count: true },
+  );
+  assertStringIncludes(st.text, `(sum((t0."count")::integer))::text AS "total"`);
+  assertStringIncludes(st.text, `count(*) AS "count"`);
+  assertStringIncludes(st.text, `avg(t0."id") AS "avg"`);
+  assertStringIncludes(st.text, `(l2.v)::jsonb AS "authors"`);
+  assertStringIncludes(st.text, "GROUP BY 1, 5");
+  assertStringIncludes(st.text, "(SELECT count(*) FROM (SELECT t0.");
+  assertStringIncludes(
+    select(books, "select=id.max(),count()::text").text,
+    `(count(*))::text AS "count"`,
+  );
+  assert(!select(books, "select=id.max()").text.includes("GROUP BY"));
+  refusal(() => select(books, "select=*,id.max()"));
+  refusal(() => select(books, "select=...authors(name),id.max()"));
+  assertStringIncludes(select(authors, "select=name,books(id.min())").text, "min(t1.");
+});
+
+Deno.test("PUT: the key filters, one complete row, the same key in the body", () => {
+  const put = (query: string, body: unknown, t = books) =>
+    buildPut(t, plan(t, query), catalog, body, none);
+  const full = { id: 1, author_id: 2, title: "t", count: 0 };
+  assertStringIncludes(
+    put("id=eq.1", full).text,
+    `ON CONFLICT ("id") DO UPDATE SET "author_id" = EXCLUDED."author_id"`,
+  );
+  assertStringIncludes(put("id=eq.1", [full]).text, "INSERT INTO");
+  for (
+    const query of [
+      "",
+      "title=eq.t",
+      "id=gt.1",
+      "id=not.eq.1",
+      "id=eq(any).{1}",
+      "id=eq.1&id=eq.1",
+      "or=(id.eq.1)",
+      "id->a=eq.1",
+    ]
+  ) {
+    const e = refusal(() => put(query, full));
+    assertEquals([e.status, e.code], [405, "PGRST105"], query);
+  }
+  assertEquals(refusal(() => put("id=eq.1", [full, full])).code, "PGRST102");
+  assertEquals(refusal(() => put("id=eq.1", { id: 1 })).code, "PGRST102");
+  assertEquals(refusal(() => put("id=eq.2", full)).code, "PGRST115");
+  assertEquals(refusal(() => put("id=eq.1", full, view)).code, "PGRST105");
+});
+
+Deno.test("views inherit foreign keys and keys through their column lineage", () => {
+  const action = `({QUERY :targetList ({TARGETENTRY :expr {VAR} :resno 1 :resname book_id ` +
+    `:ressortgroupref 0 :resorigtbl 10 :resorigcol 1 :resjunk false} {TARGETENTRY :expr {VAR} ` +
+    `:resno 2 :resname by\\ whom :ressortgroupref 0 :resorigtbl 10 :resorigcol 2 :resjunk ` +
+    `false} {TARGETENTRY :resno 3 :resname plus :ressortgroupref 0 :resorigtbl 0 :resorigcol 0 ` +
+    `:resjunk false} {TARGETENTRY :resno 4 :resname x :ressortgroupref 0 :resorigtbl 10 ` +
+    `:resorigcol 1 :resjunk true} {TARGETENTRY :resno 1 :resname book_id :ressortgroupref 0 ` +
+    `:resorigtbl 10 :resorigcol 1 :resjunk false})`;
+  const lineage = parseLineage(action);
+  assertEquals(lineage, [
+    { column: "book_id", oid: "10", attnum: 1 },
+    { column: "by whom", oid: "10", attnum: 2 },
+  ]);
+  const relations = new Map([
+    ["10", { schema: "public", name: "books", columns: new Map([[1, "id"], [2, "author_id"]]) }],
+    ["11", { schema: "public", name: "authors", columns: new Map([[1, "id"]]) }],
+    ["20", { schema: "public", name: "bv", columns: new Map([[1, "book_id"], [2, "by whom"]]) }],
+    ["21", { schema: "public", name: "bv2", columns: new Map([[1, "b"]]) }],
+    ["22", { schema: "public", name: "av", columns: new Map([[1, "aid"]]) }],
+  ]);
+  const overs = viewsOver(
+    new Map([
+      ["20", lineage],
+      ["21", [{ column: "b", oid: "20", attnum: 1 }]],
+      ["22", [{ column: "aid", oid: "11", attnum: 1 }]],
+      ["99", []],
+    ]),
+    relations,
+  );
+  assertEquals(overs.get("10")!.map((o) => o.view.name), ["bv", "bv2"]);
+  assertEquals([...overs.get("10")![1].columns], [["id", "b"]]);
+  const keys = inheritedForeignKeys([{
+    name: "fk",
+    oid: "10",
+    foreignOid: "11",
+    table: { schema: "public", name: "books" },
+    columns: ["author_id"],
+    foreignTable: { schema: "public", name: "authors" },
+    foreignColumns: ["id"],
+  }], overs);
+  assertEquals(
+    keys.map((k) => `${k.table.name}(${k.columns}) → ${k.foreignTable.name}(${k.foreignColumns})`),
+    [
+      "books(author_id) → authors(id)",
+      "books(author_id) → av(aid)",
+      "bv(by whom) → authors(id)",
+      "bv(by whom) → av(aid)",
+    ],
+  );
+  assertEquals(inheritedKeys([["id"], ["author_id", "id"]], overs.get("10")![1]), [["b"]]);
+});
+
+Deno.test("the OpenAPI document: definitions, table routes, function routes, privileges", () => {
+  const doc = openApiDocument(catalog, "public", new URL("https://x.test/rest/v1"), "/rest/v1");
+  assertEquals([doc.swagger, doc.host, doc.basePath, doc.schemes], ["2.0", "x.test", "/rest/v1", [
+    "https",
+  ]]);
+  const paths = doc.paths as Record<string, Record<string, unknown>>;
+  assertEquals(Object.keys(paths["/notes"]).sort(), ["delete", "get", "patch", "post"]);
+  assertEquals(Object.keys(paths["/v"]), ["get", "post", "delete", "patch"].slice(0, 4));
+  assertEquals(Object.keys(paths["/rpc/touch"]), ["post"], "a volatile function is POST only");
+  assertEquals(Object.keys(paths["/rpc/add"]).sort(), ["get", "post"]);
+  const defs = doc.definitions as Record<
+    string,
+    { properties: Record<string, Record<string, unknown>>; required?: string[] }
+  >;
+  assertEquals(defs.notes.properties.id.type, "integer");
+  assertEquals(defs.notes.properties.tags.type, "array");
+  assertEquals(defs.notes.properties.meta.type, undefined);
+  assertEquals(defs.notes.properties.done.type, "boolean");
+  assertEquals(defs.notes.properties.mood.enum, ["ok", "sad"]);
+  assertStringIncludes(String(defs.notes.properties.id.description), "Primary Key");
+  assertStringIncludes(
+    String(defs.books.properties.author_id.description),
+    "Foreign Key to `authors.id`",
+  );
+  assertEquals(defs.notes.required, ["owner", "body", "mood"]);
+  const api = openApiDocument(catalog, "api", new URL("http://x.test/"), "/rest/v1");
+  assertEquals(Object.keys(api.paths as object), ["/", "/things"]);
+  assertEquals((api.info as { title: string }).title, "api");
 });

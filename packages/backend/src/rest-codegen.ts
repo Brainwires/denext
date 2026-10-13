@@ -322,7 +322,9 @@ export async function writeRestTypes(
         CATALOG_WAIT_MS,
       );
     });
-    source = generateRestTypes(await Promise.race([catalog(), timeout]));
+    // The whole exposed schema, as `supabase gen types` writes it (the secret key's view).
+    const read = await Promise.race([catalog(), timeout]);
+    source = generateRestTypes(read.service ?? read);
   } catch (error) {
     const reason = (error as Error)?.message ?? String(error);
     const keep = await hasGenerated(path);

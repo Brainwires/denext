@@ -6,6 +6,16 @@
 // here and quoted (`quoteIdent`). The same entries drive the generated types (`rest-codegen.ts`).
 
 import type { SqlClient, SqlRow } from "@denext/denext/server";
+import {
+  type BaseForeignKey,
+  inheritedForeignKeys,
+  inheritedKeys,
+  type LineageEntry,
+  parseLineage,
+  type RelationInfo,
+  type ViewOver,
+  viewsOver,
+} from "./rest-lineage.ts";
 
 /** One column of an exposed table (or of a function's result). */
 export interface RestColumn {
@@ -47,6 +57,8 @@ export interface RestTable extends RestRelationName {
   readonly primaryKey: readonly string[];
   /** Every unique key (the primary key included), each as its columns. */
   readonly uniqueKeys?: readonly (readonly string[])[];
+  /** Its `pg_class` oid (views' column lineage is keyed by it). */
+  readonly oid?: string;
 }
 
 /** A foreign key between two exposed relations. */
@@ -77,6 +89,8 @@ export interface RestFunctionArg extends RestTypeFacts {
   readonly hasDefault: boolean;
   /** `VARIADIC`. */
   readonly variadic: boolean;
+  /** For a relation's row type: that relation (a computed field / relationship's argument). */
+  readonly relation?: RestRelationName;
 }
 
 /** What a function returns. */
@@ -106,6 +120,8 @@ export interface RestFunction extends RestRelationName {
   readonly setOf: boolean;
   /** What it returns. */
   readonly returns: RestFunctionResult;
+  /** The planner's `ROWS` estimate (`ROWS 1` makes a set-returning relationship to-one). */
+  readonly rows?: number;
 }
 
 /** A user-defined composite type (for codegen). */
@@ -135,6 +151,11 @@ export interface RestCatalog {
   readonly castTypes: ReadonlyMap<string, string>;
   /** PostGIS is installed (GeoJSON output). */
   readonly postgis: boolean;
+  /**
+   * What the secret key (`service_role`) sees: every relation and function of the exposed
+   * schemas, as PostgREST serves them to that role — absent on a catalog that is itself it.
+   */
+  readonly service?: RestCatalog;
 }
 
 /**
@@ -192,6 +213,7 @@ const RLS_ENFORCED = `CASE
 
 /** One row per column of every reachable relation in the schemas `$1`. */
 const COLUMNS_SQL = `SELECT n.nspname AS schema, c.relname AS "table", c.relkind::text AS kind,
+  c.oid::text AS oid, (${reachable("anon")} OR ${reachable("authenticated")})::text AS reachable,
   (${RLS_ENFORCED})::text AS rls, a.attname AS name,
   format_type(a.atttypid, NULL) AS cast_type,
   bt.typname AS type_name, bt.typcategory::text AS category,
@@ -209,11 +231,10 @@ JOIN pg_type bt ON bt.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.
 LEFT JOIN pg_type et ON et.oid = bt.typelem AND bt.typcategory = 'A'
 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 WHERE n.nspname IN (SELECT json_array_elements_text($1::json)) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND (${reachable("anon")} OR ${reachable("authenticated")})
 ORDER BY n.nspname, c.relname, a.attnum`;
 
-/** The unique keys (primary first) of the relations in the schemas `$1`. */
-const KEYS_SQL = `SELECT n.nspname AS schema, c.relname AS "table",
+/** The unique keys (primary first) of every user relation (a view's base table may be anywhere). */
+const KEYS_SQL = `SELECT n.nspname AS schema, c.relname AS "table", c.oid::text AS oid,
   i.indisprimary::text AS "primary",
   (SELECT json_agg(a.attname ORDER BY k.ord)
     FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
@@ -221,12 +242,14 @@ const KEYS_SQL = `SELECT n.nspname AS schema, c.relname AS "table",
 FROM pg_index i
 JOIN pg_class c ON c.oid = i.indrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname IN (SELECT json_array_elements_text($1::json)) AND i.indisunique AND i.indpred IS NULL
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
+  AND i.indisunique AND i.indpred IS NULL
   AND NOT (0 = ANY (i.indkey::int2[]))
 ORDER BY n.nspname, c.relname, i.indisprimary DESC, i.indexrelid`;
 
-/** The foreign keys between relations of the schemas `$1`. */
+/** Every user foreign key (views expose them through their column lineage). */
 const FOREIGN_KEYS_SQL = `SELECT k.conname AS name, n1.nspname AS schema, c1.relname AS "table",
+  k.conrelid::text AS oid, k.confrelid::text AS foreign_oid,
   n2.nspname AS foreign_schema, c2.relname AS foreign_table,
   (SELECT json_agg(a.attname ORDER BY x.ord)
     FROM unnest(k.conkey) WITH ORDINALITY AS x(attnum, ord)
@@ -240,7 +263,8 @@ JOIN pg_class c1 ON c1.oid = k.conrelid
 JOIN pg_namespace n1 ON n1.oid = c1.relnamespace
 JOIN pg_class c2 ON c2.oid = k.confrelid
 JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
-WHERE k.contype = 'f' AND n1.nspname IN (SELECT json_array_elements_text($1::json)) AND n2.nspname IN (SELECT json_array_elements_text($1::json))
+WHERE k.contype = 'f' AND n1.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n1.nspname NOT LIKE 'pg\\_%' 
 ORDER BY n1.nspname, c1.relname, k.conname`;
 
 /**
@@ -266,7 +290,9 @@ WHERE n.nspname NOT IN ('pg_toast', 'information_schema')
   AND n.nspname NOT LIKE 'pg_temp%' AND n.nspname NOT LIKE 'pg_toast_temp%'`;
 
 /** The attributes of every user relation's and composite type's row type. */
-const ATTRIBUTES_SQL = `SELECT a.attrelid::text AS relid, a.attname AS name,
+const ATTRIBUTES_SQL =
+  `SELECT a.attrelid::text AS relid, a.attname AS name, a.attnum::int AS attnum,
+  n.nspname AS schema, c.relname AS rel, c.relkind::text AS relkind,
   a.atttypid::text AS type_oid, (NOT a.attnotnull)::text AS nullable
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
@@ -275,8 +301,9 @@ WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('c', 'r', 'p', 'v', 
   AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
 ORDER BY a.attrelid, a.attnum`;
 
-/** The functions of the schemas `$1` that `anon` or `authenticated` may execute. */
-const FUNCTIONS_SQL = `SELECT n.nspname AS schema, p.proname AS name,
+/** The functions of the schemas `$1`, and whether `anon` or `authenticated` may execute each. */
+const FUNCTIONS_SQL = `SELECT n.nspname AS schema, p.proname AS name, p.prorows::float8 AS rows,
+  (${executable("anon")} OR ${executable("authenticated")})::text AS executable,
   p.provolatile::text AS volatility, p.proretset::text AS set_of,
   p.prorettype::text AS return_oid, p.pronargdefaults::int AS ndefaults,
   (SELECT json_agg(json_build_object(
@@ -291,8 +318,14 @@ JOIN pg_type rt ON rt.oid = p.prorettype
 WHERE n.nspname IN (SELECT json_array_elements_text($1::json)) AND p.prokind = 'f'
   AND rt.typname NOT IN ('trigger', 'event_trigger', 'internal', 'language_handler',
     'fdw_handler', 'index_am_handler', 'tsm_handler', 'table_am_handler')
-  AND (${executable("anon")} OR ${executable("authenticated")})
 ORDER BY n.nspname, p.proname, p.oid`;
+
+/** The `_RETURN` rule of every view and materialized view of the schemas `$1` (column lineage). */
+const VIEWS_SQL = `SELECT c.oid::text AS oid, r.ev_action::text AS action
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_rewrite r ON r.ev_class = c.oid AND r.rulename = '_RETURN'
+WHERE n.nspname IN (SELECT json_array_elements_text($1::json)) AND c.relkind IN ('v', 'm')`;
 
 /** Whether PostGIS is installed. */
 const POSTGIS_SQL =
@@ -381,7 +414,7 @@ function named(wanted: ReadonlySet<string>, schema: string, table: string): bool
 }
 
 /** The relations grouped from the column rows, by schema then name. */
-type Grouped = Map<string, Map<string, { kind: string; columns: RestColumn[] }>>;
+type Grouped = Map<string, Map<string, { kind: string; oid: string; columns: RestColumn[] }>>;
 
 /** Add `value` under `outer` → `inner` in a two-level map, returning the stored value. */
 function nested<V>(map: Map<string, Map<string, V>>, outer: string, inner: string, make: () => V) {
@@ -392,33 +425,45 @@ function nested<V>(map: Map<string, Map<string, V>>, outer: string, inner: strin
   return value;
 }
 
+/** Whether a reachable relation is served to `anon` / `authenticated` (and if not, why). */
+function served(row: SqlRow, wanted: ReadonlySet<string> | null): boolean {
+  return wanted ? named(wanted, String(row.schema), String(row.table)) : bool(row, "rls");
+}
+
 /**
- * Group the column rows by relation: those `tables` exposes (a list: exactly its names; `"*"`:
- * the RLS-enforcing ones), and — for `"*"` — the reachable relations it left out.
+ * Group the column rows by relation. For the RLS roles: the reachable relations `tables`
+ * exposes (a list: exactly its names; `"*"`: the RLS-enforcing ones), and — for `"*"` — the
+ * reachable relations it left out. For `"service"`: every relation of the schemas.
  */
 function groupColumns(
   rows: Iterable<SqlRow>,
-  tables: readonly string[] | "*",
+  tables: readonly string[] | "*" | "service",
 ): { grouped: Grouped; skipped: SkippedRelation[] } {
-  const wanted = tables === "*" ? null : new Set(tables);
+  const wanted = tables === "*" || tables === "service" ? null : new Set(tables);
   const grouped: Grouped = new Map();
   const skipped = new Map<string, SkippedRelation>();
   for (const row of rows) {
     const schema = String(row.schema);
     const table = String(row.table);
-    if (wanted ? !named(wanted, schema, table) : !bool(row, "rls")) {
-      if (!wanted) {
-        skipped.set(`${schema}.${table}`, {
-          schema,
-          name: table,
-          kind: kindOf(row),
-          reason: skipReason(String(row.kind)),
-        });
+    if (tables !== "service") {
+      if (!bool(row, "reachable")) continue;
+      if (!served(row, wanted)) {
+        if (!wanted) {
+          skipped.set(`${schema}.${table}`, {
+            schema,
+            name: table,
+            kind: kindOf(row),
+            reason: skipReason(String(row.kind)),
+          });
+        }
+        continue;
       }
-      continue;
     }
-    nested(grouped, schema, table, () => ({ kind: kindOf(row), columns: [] as RestColumn[] }))
-      .columns.push(columnOf(row));
+    nested(grouped, schema, table, () => ({
+      kind: kindOf(row),
+      oid: String(row.oid ?? ""),
+      columns: [] as RestColumn[],
+    })).columns.push(columnOf(row));
   }
   return { grouped, skipped: [...skipped.values()] };
 }
@@ -531,12 +576,19 @@ function functionOf(
   // `RETURNS record` without OUT columns needs a column list at the call site.
   if (returns.kind === "scalar" && returns.castType === "record") return undefined;
   const defaults = Number(row.ndefaults ?? 0);
-  const args = inputs.map((arg, i): RestFunctionArg => ({
-    name: arg.name,
-    ...(types.get(arg.oid)?.facts ?? UNKNOWN_TYPE),
-    hasDefault: i >= inputs.length - defaults,
-    variadic: arg.mode === "v",
-  }));
+  const args = inputs.map((arg, i): RestFunctionArg => {
+    const type = types.get(arg.oid);
+    const relation = type && type.relid !== "0" && type.relkind !== "c"
+      ? { relation: { schema: type.relSchema, name: type.relName } }
+      : {};
+    return {
+      name: arg.name,
+      ...(type?.facts ?? UNKNOWN_TYPE),
+      hasDefault: i >= inputs.length - defaults,
+      variadic: arg.mode === "v",
+      ...relation,
+    };
+  });
   const volatility = String(row.volatility);
   return {
     schema: String(row.schema),
@@ -545,6 +597,7 @@ function functionOf(
     volatility: volatility === "i" || volatility === "s" ? volatility : "v",
     setOf: bool(row, "set_of"),
     returns,
+    ...(row.rows === null || row.rows === undefined ? {} : { rows: Number(row.rows) }),
   };
 }
 
@@ -611,11 +664,17 @@ function compositesOf(
     .map((t) => ({ schema: t.schema, name: t.name, columns: attributes.get(t.relid) ?? [] }));
 }
 
-/** The key rows, by `schema.table`: the primary key and every unique key. */
-function keyMap(rows: Iterable<SqlRow>): Map<string, { primary: string[]; unique: string[][] }> {
-  const map = new Map<string, { primary: string[]; unique: string[][] }>();
+/** The unique keys of one relation: its primary key and every unique key. */
+interface Keys {
+  primary: string[];
+  unique: string[][];
+}
+
+/** The key rows, by relation oid. */
+function keyMap(rows: Iterable<SqlRow>): Map<string, Keys> {
+  const map = new Map<string, Keys>();
   for (const row of rows) {
-    const key = `${row.schema}.${row.table}`;
+    const key = String(row.oid);
     const entry = map.get(key) ?? { primary: [], unique: [] };
     map.set(key, entry);
     const columns = strings(row, "columns");
@@ -625,39 +684,83 @@ function keyMap(rows: Iterable<SqlRow>): Map<string, { primary: string[]; unique
   return map;
 }
 
-/** The foreign keys whose two ends are both exposed. */
-function foreignKeysOf(
-  rows: Iterable<SqlRow>,
+/** The base foreign keys, with their ends' oids. */
+function baseForeignKeys(rows: Iterable<SqlRow>): BaseForeignKey[] {
+  return [...rows].map((row) => ({
+    name: String(row.name),
+    oid: String(row.oid),
+    foreignOid: String(row.foreign_oid),
+    table: { schema: String(row.schema), name: String(row.table) },
+    columns: strings(row, "columns"),
+    foreignTable: { schema: String(row.foreign_schema), name: String(row.foreign_table) },
+    foreignColumns: strings(row, "foreign_columns"),
+  }));
+}
+
+/** The foreign keys (views' inherited ones included) whose two ends are both exposed. */
+function exposedForeignKeys(
+  keys: readonly RestForeignKey[],
   tables: Map<string, Map<string, RestTable>>,
 ): RestForeignKey[] {
   const exposed = (r: RestRelationName) => tables.get(r.schema)?.has(r.name) ?? false;
-  const list: RestForeignKey[] = [];
+  const seen = new Set<string>();
+  return keys.filter((fk) => {
+    if (!exposed(fk.table) || !exposed(fk.foreignTable)) return false;
+    const id = JSON.stringify([fk.name, fk.table, fk.columns, fk.foreignTable, fk.foreignColumns]);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/** Every user relation by oid: its name and its column names by attnum. */
+function relationMap(rows: Iterable<SqlRow>): Map<string, RelationInfo> {
+  const map = new Map<string, { schema: string; name: string; columns: Map<number, string> }>();
   for (const row of rows) {
-    const table = { schema: String(row.schema), name: String(row.table) };
-    const foreignTable = { schema: String(row.foreign_schema), name: String(row.foreign_table) };
-    if (!exposed(table) || !exposed(foreignTable)) continue;
-    list.push({
-      name: String(row.name),
-      table,
-      columns: strings(row, "columns"),
-      foreignTable,
-      foreignColumns: strings(row, "foreign_columns"),
-    });
+    const oid = String(row.relid);
+    const entry = map.get(oid) ??
+      { schema: String(row.schema), name: String(row.rel), columns: new Map<number, string>() };
+    map.set(oid, entry);
+    entry.columns.set(Number(row.attnum), String(row.name));
   }
-  return list;
+  return map;
+}
+
+/** A view's keys: its own (a materialized view's unique indexes), else its base tables'. */
+function viewKeys(
+  oid: string,
+  keys: Map<string, Keys>,
+  overs: ReadonlyMap<string, ViewOver[]>,
+): Keys | undefined {
+  const own = keys.get(oid);
+  if (own?.unique.length) return own;
+  const inherited: Keys = { primary: [], unique: [] };
+  for (const [baseOid, list] of overs) {
+    const base = keys.get(baseOid);
+    if (!base) continue;
+    for (const over of list.filter((o) => o.oid === oid)) {
+      inherited.unique.push(...inheritedKeys(base.unique, over));
+      const [primary] = inheritedKeys([base.primary], over);
+      if (primary?.length && !inherited.primary.length) inherited.primary = primary;
+    }
+  }
+  return inherited;
 }
 
 /** Build the relations from the grouped columns and the keys. */
 function tablesOf(
   grouped: Grouped,
-  keys: Map<string, { primary: string[]; unique: string[][] }>,
+  keys: Map<string, Keys>,
+  overs: ReadonlyMap<string, ViewOver[]>,
 ): Map<string, Map<string, RestTable>> {
   const tables = new Map<string, Map<string, RestTable>>();
   for (const [schema, relations] of grouped) {
     const inSchema = new Map<string, RestTable>();
     tables.set(schema, inSchema);
     for (const [name, entry] of relations) {
-      const key = keys.get(`${schema}.${name}`);
+      const key = entry.kind === "view" || entry.kind === "materialized view"
+        ? viewKeys(entry.oid, keys, overs)
+        : keys.get(entry.oid);
       inSchema.set(name, {
         schema,
         name,
@@ -665,17 +768,62 @@ function tablesOf(
         columns: entry.columns,
         primaryKey: key?.primary ?? [],
         uniqueKeys: key?.unique ?? [],
+        oid: entry.oid,
       });
     }
   }
   return tables;
 }
 
+/** The raw catalog rows, read once for both audiences. */
+interface CatalogRows {
+  columns: SqlRow[];
+  keys: SqlRow[];
+  foreignKeys: SqlRow[];
+  types: SqlRow[];
+  attributes: SqlRow[];
+  functions: SqlRow[];
+  views: SqlRow[];
+  postgis: boolean;
+}
+
+/** Read every catalog query. */
+async function readRows(sql: SqlClient, schemas: readonly string[]): Promise<CatalogRows> {
+  const json = JSON.stringify([...schemas]);
+  const all = (text: string, params: unknown[]) =>
+    sql.unsafe(text, params).then((rows) => [...rows]);
+  const columns = await all(COLUMNS_SQL, [json]);
+  const keys = await all(KEYS_SQL, []);
+  const foreignKeys = await all(FOREIGN_KEYS_SQL, []);
+  const types = await all(TYPES_SQL, []);
+  const attributes = await all(ATTRIBUTES_SQL, []);
+  const functions = await all(FUNCTIONS_SQL, [json]);
+  const views = await all(VIEWS_SQL, [json]);
+  const [postgis] = await all(POSTGIS_SQL, []);
+  return {
+    columns,
+    keys,
+    foreignKeys,
+    types,
+    attributes,
+    functions,
+    views,
+    postgis: postgis !== undefined && bool(postgis, "postgis"),
+  };
+}
+
+/** Each view's (by oid) traced columns. */
+function lineageOf(rows: readonly SqlRow[]): Map<string, LineageEntry[]> {
+  return new Map(rows.map((row) => [String(row.oid), parseLineage(String(row.action ?? ""))]));
+}
+
 /**
  * Read the catalog of `schemas`: the tables, views, materialized views and foreign tables the
  * `anon` or `authenticated` role holds a privilege on (`SELECT`, `INSERT`, `UPDATE` on any
- * column, or `DELETE`), the foreign keys between them, the functions those roles may execute,
- * and the enums and composite types.
+ * column, or `DELETE`), the foreign keys between them (views inherit their base tables' keys
+ * through their column lineage), the functions those roles may execute, and the enums and
+ * composite types. Its `service` member is the same for the secret key (`service_role`): every
+ * relation and function of the schemas.
  *
  * With `tables: "*"` only relations that enforce row-level security for the caller are kept —
  * tables with RLS enabled and `security_invoker` views; every other reachable relation is
@@ -696,30 +844,36 @@ export async function readRestCatalog(
   onSkipped?: (skipped: SkippedRelation[]) => void,
 ): Promise<RestCatalog> {
   const list = [...schemas];
-  const json = JSON.stringify(list);
-  const columnRows = await sql.unsafe(COLUMNS_SQL, [json]);
-  const keyRows = await sql.unsafe(KEYS_SQL, [json]);
-  const fkRows = await sql.unsafe(FOREIGN_KEYS_SQL, [json]);
-  const typeRows = await sql.unsafe(TYPES_SQL, []);
-  const attributeRows = await sql.unsafe(ATTRIBUTES_SQL, []);
-  const functionRows = await sql.unsafe(FUNCTIONS_SQL, [json]);
-  const [postgis] = await sql.unsafe(POSTGIS_SQL, []);
-  const { grouped, skipped } = groupColumns(columnRows, tables);
-  const relations = tablesOf(grouped, keyMap(keyRows));
-  const types = typeMap(typeRows);
-  const attributes = attributeMap(attributeRows, types);
-  const functions = [...functionRows]
-    .map((row) => functionOf(row, types, attributes))
-    .filter((fn): fn is RestFunction => fn !== undefined);
-  onSkipped?.(skipped);
-  return {
+  const rows = await readRows(sql, list);
+  const types = typeMap(rows.types);
+  const attributes = attributeMap(rows.attributes, types);
+  const keys = keyMap(rows.keys);
+  const overs = viewsOver(lineageOf(rows.views), relationMap(rows.attributes));
+  const foreignKeys = inheritedForeignKeys(baseForeignKeys(rows.foreignKeys), overs);
+  const functions = rows.functions
+    .map((row) => ({ fn: functionOf(row, types, attributes), executable: bool(row, "executable") }))
+    .filter((f): f is { fn: RestFunction; executable: boolean } => f.fn !== undefined);
+  const shared = {
     schemas: list,
-    tables: relations,
-    foreignKeys: foreignKeysOf(fkRows, relations),
-    functions: groupFunctions(functions),
     enums: enumsOf(types, list),
     compositeTypes: compositesOf(types, attributes, list),
     castTypes: castTypesOf(types, list),
-    postgis: postgis !== undefined && bool(postgis, "postgis"),
+    postgis: rows.postgis,
+  };
+  const build = (grouped: Grouped, fns: RestFunction[]): RestCatalog => {
+    const relations = tablesOf(grouped, keys, overs);
+    return {
+      ...shared,
+      tables: relations,
+      foreignKeys: exposedForeignKeys(foreignKeys, relations),
+      functions: groupFunctions(fns),
+    };
+  };
+  const { grouped, skipped } = groupColumns(rows.columns, tables);
+  const service = build(groupColumns(rows.columns, "service").grouped, functions.map((f) => f.fn));
+  onSkipped?.(skipped);
+  return {
+    ...build(grouped, functions.filter((f) => f.executable).map((f) => f.fn)),
+    service,
   };
 }

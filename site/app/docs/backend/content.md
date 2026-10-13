@@ -996,16 +996,16 @@ routes. Pass the generated `Database` type to `createClient<Database>()` for typ
 **Who a request is.** The routes use the backend's shared request identity: with
 `backend({ supabase })` they read supabase-js's `apikey` and `Authorization: Bearer` headers — a
 user's access token runs as `authenticated` with its claims, the publishable key as `anon`, and the
-secret key as `service_role`, which bypasses row-level security (it still reaches only the
-relations and functions the catalog serves). Without a token, the denext session (the auth cookie,
+secret key as `service_role`, which bypasses row-level security and — as in PostgREST — sees every
+relation and function of the exposed schemas, granted or not (still only by catalog name). Without a token, the denext session (the auth cookie,
 or a native app's `nat_…` token) decides, then `anon`. A token or key that is presented and refused
 is a `401` before any statement — `PGRST303` for an expired token, `PGRST301` otherwise — with
 `WWW-Authenticate: Bearer error="invalid_token"`.
 
 ### Routes
 
-`GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`; `GET`, `HEAD` and `POST` on
-`/rest/v1/rpc/<function>`:
+`GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` on `/rest/v1/<table>`; `GET`, `HEAD` and
+`POST` on `/rest/v1/rpc/<function>`; and `GET /rest/v1`, the OpenAPI description:
 
 | Request                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1031,6 +1031,13 @@ is a `401` before any statement — `PGRST303` for an expired token, `PGRST301` 
 | `/rpc/fn` (`POST` a JSON object, or `GET` with `?arg=v`)    | Call a function the roles may EXECUTE, by its arguments' names (overloads too). A function of one unnamed `json` / `jsonb` argument (or any one json argument with `Prefer: params=single-object`) takes the whole body.                                                                                                                                                    |
 | `/rpc/fn?select=…&col=gt.1&order=…`                         | A set-returning function's rows are filtered, ordered, paged, counted and embedded like a table's; a scalar comes back as its JSON value, `void` as `204`. `GET` runs read-only, so a function that writes needs `POST`.                                                                                                                                                    |
 | `Accept-Profile: api` / `Content-Profile: api`              | Another schema of `rest.schemas` (supabase-js's `.schema("api")`); one that is not exposed is a `406`.                                                                                                                                                                                                                                                                      |
+| `select=*,full_name`, `select=*,author_of(*)`               | Computed fields and relationships: a function in the table's schema whose one argument is the table's row — returning a value (a field, filterable and orderable), or rows of another relation (an embed: `SETOF t ROWS 1` or a single row is to-one). A computed relationship of the same name wins over a foreign key.                                                    |
+| `book_view?select=*,authors(*)`                             | Views embed too: a view inherits its base tables' foreign keys and unique keys through its column lineage (plain column references, followed through views over views), so it embeds from, into and through views.                                                                                                                                                          |
+| `order=author(name).desc`                                   | Order by a column of a to-one embed (`PGRST118` for a to-many one).                                                                                                                                                                                                                                                                                                         |
+| `or=(year.gt.2000,authors.name.eq.Ann)`                     | A logic tree may test an embedded resource's column: the parent row matches when a related row does (`PGRST108` when the embed is not in `select`).                                                                                                                                                                                                                         |
+| `select=author_id,total:price.sum(),count()`                | Aggregates — `sum`, `avg`, `min`, `max`, `count`, with casts before and after (`price::int.sum()::text`) — grouped by the other selected columns and embeds. Off by default (`aggregates: true`; `PGRST123` otherwise): one reads every matching row.                                                                                                                       |
+| `PUT` with one complete row, plus `pk=eq.v` filters         | A single-row upsert: the filters must be exactly the primary key (`PGRST105`, `405`), the body every writable column (`PGRST102`), and the body's key the URL's (`PGRST115`). `200` with the row, or `204`.                                                                                                                                                                 |
+| `GET /rest/v1`                                              | PostgREST's OpenAPI (Swagger 2.0) document for the schema `Accept-Profile` picks, listing only what the requester can use (the secret key sees everything). `/rest/v1/` redirects there. It is separate from `@denext/openapi`'s document, which describes route handlers.                                                                                                  |
 | `Accept: application/vnd.pgrst.plan`                        | The execution plan (`+json` / `+text`, `options=analyze\|verbose\|…`), only with `explain: true`; analyzed statements are rolled back.                                                                                                                                                                                                                                      |
 
 **What is safe.** A schema, table, column, function, argument or type name is never taken from
@@ -1124,7 +1131,8 @@ naming a table is your decision that its grants are the policy.
 ### Generated types
 
 At `denext dev` startup and `denext build`, the plugin writes `.denext/rest.ts` from the live
-catalog in the shape `supabase gen types typescript` writes: `Database`, with each exposed
+catalog in the shape `supabase gen types typescript` writes (every relation and function of the
+exposed schemas, as the secret key sees them): `Database`, with each exposed
 schema's `Tables` (`Row`, `Insert` — columns with a default, or nullable, optional; generated
 columns left out — `Update` and `Relationships`), `Views`, `Functions` (`Args` and `Returns`,
 overloads as a union), `Enums` and `CompositeTypes`, plus the `Tables<>`, `TablesInsert<>`,
@@ -1137,23 +1145,24 @@ the plugin says so, keeps an earlier generated file, or writes a stub under whic
 
 ### Options
 
-| Option             | Default                       | What it does                                                                                                                                                                          |
-| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemas`          | `["public"]`                  | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                     |
-| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route). |
-| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                        |
-| `maxRows`          | 1000                          | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                    |
-| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                                             |
-| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                                                  |
-| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                 |
-| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                     |
-| `explain`          | `false`                       | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                   |
+| Option             | Default                       | What it does                                                                                                                                                                                     |
+| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schemas`          | `["public"]`                  | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                |
+| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).            |
+| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                   |
+| `maxRows`          | 1000                          | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                               |
+| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                                                        |
+| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                                                             |
+| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                            |
+| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                |
+| `explain`          | `false`                       | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                              |
+| `aggregates`       | `false`                       | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost. |
 
-Not offered (yet): embedding through a view (views have no foreign keys of their own, so embed
-from or into the underlying tables), ordering by an embedded column (`order=author(name)`),
-filtering the top level on an embedded column inside `or=`, `PUT` single-row upserts, aggregate
-functions (`sum()`, `avg()`, …) and computed fields / relationships. The routes are not listed in
-the `@denext/openapi` document.
+Two features are off until you turn them on, because each can cost a lot or reveal a lot:
+aggregates (`aggregates: true`) and execution plans (`explain: true`). Everything else on this page
+is always on. A view inherits a relationship only through plain column references: a column
+computed by an expression has no origin, so a key that needs it is not inherited. The routes are
+described by `GET /rest/v1`, not by the `@denext/openapi` document.
 
 ## Edge Functions
 

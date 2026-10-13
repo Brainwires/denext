@@ -15,6 +15,7 @@
 import {
   type RestCatalog,
   type RestForeignKey,
+  type RestFunction,
   type RestRelationName,
   type RestTable,
   tableIn,
@@ -23,8 +24,11 @@ import { RestError } from "./rest-parse.ts";
 
 /** A resolved relationship from a parent relation to an embedded one. */
 export interface Relationship {
-  /** `m2o` (many-to-one), `o2m` (one-to-many, or one-to-one), `m2m` (through a junction). */
-  readonly kind: "m2o" | "o2m" | "m2m";
+  /**
+   * `m2o` (many-to-one), `o2m` (one-to-many, or one-to-one), `m2m` (through a junction), or
+   * `computed` (a function taking the parent's row and returning rows of the target).
+   */
+  readonly kind: "m2o" | "o2m" | "m2m" | "computed";
   /** It yields at most one row (an object, not an array). */
   readonly toOne: boolean;
   /** The foreign key's (or the junction's) name. */
@@ -41,6 +45,8 @@ export interface Relationship {
     /** `[junction column, parent column]`. */
     readonly toParent: readonly (readonly [string, string])[];
   };
+  /** For `computed`: the function, and the parent relation its argument is the row of. */
+  readonly computed?: { readonly fn: RestFunction; readonly parent: RestRelationName };
 }
 
 /** Same relation. */
@@ -95,7 +101,40 @@ function candidates(catalog: RestCatalog, parent: RestRelationName, name: string
       });
     }
   }
-  return [...found, ...manyToMany(catalog, parent, name)];
+  return [
+    ...found,
+    ...manyToMany(catalog, parent, name),
+    ...computedRelationships(catalog, parent, name),
+  ];
+}
+
+/**
+ * Computed relationships (PostgREST's): a function named `name` in the parent's schema whose
+ * one argument is the parent's row and which returns rows of an exposed relation — one row
+ * (`RETURNS t`, or `SETOF t ROWS 1`) is to-one, a set is to-many.
+ */
+function computedRelationships(
+  catalog: RestCatalog,
+  parent: RestRelationName,
+  name: string,
+): Relationship[] {
+  const found: Relationship[] = [];
+  for (const fn of catalog.functions.get(parent.schema)?.get(name) ?? []) {
+    const arg = fn.args[0];
+    const returned = fn.returns.table;
+    if (fn.args.length !== 1 || !arg.relation || !same(arg.relation, parent) || !returned) continue;
+    const target = tableIn(catalog, returned.schema, returned.name);
+    if (!target) continue;
+    found.push({
+      kind: "computed",
+      toOne: !fn.setOf || fn.rows === 1,
+      name: fn.name,
+      target,
+      pairs: [],
+      computed: { fn, parent },
+    });
+  }
+  return found;
 }
 
 /** The many-to-many candidates: junctions with keys to `parent` and to a relation `name`. */
@@ -141,6 +180,7 @@ function isJunctionPair(
 /** Whether a `!hint` selects the relationship. */
 function hinted(rel: Relationship, hint: string, catalog: RestCatalog): boolean {
   if (rel.name === hint) return true;
+  if (rel.kind === "computed") return false;
   if (rel.kind === "m2m") {
     const j = rel.junction!.table;
     return catalog.foreignKeys.some((fk) => same(fk.table, j) && fk.name === hint);
@@ -164,6 +204,7 @@ function selfReference(found: Relationship[]): Relationship[] {
 /** PostgREST's cardinality word for a relationship. */
 function cardinality(rel: Relationship): string {
   if (rel.kind === "m2m") return "many-to-many";
+  if (rel.kind === "computed") return rel.toOne ? "many-to-one" : "one-to-many";
   if (rel.kind === "m2o") return "many-to-one";
   return rel.toOne ? "one-to-one" : "one-to-many";
 }
@@ -187,6 +228,10 @@ export function resolveRelationship(
   let found = candidates(catalog, parent, name);
   if (hint !== undefined) found = found.filter((rel) => hinted(rel, hint, catalog));
   found = selfReference(found);
+  // A computed relationship of the same name overrides the detected ones, as in PostgREST.
+  if (found.some((rel) => rel.kind === "computed")) {
+    found = found.filter((rel) => rel.kind === "computed");
+  }
   if (found.length === 1) return found[0];
   const label = hint === undefined ? name : `${name}!${hint}`;
   if (found.length === 0) {

@@ -706,7 +706,8 @@ Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS 
 `security_invoker` views; others only when named in `rest.tables`) and the functions anon /
 authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>` and
 `/rest/v1/rpc/<fn>` — embeds through foreign keys (`select=*,author:users(name),tags!inner(*)`),
-`or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, counts, CSV,
+`or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, `PUT`, counts, CSV,
+views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), OpenAPI at `GET /rest/v1`,
 `Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS. The stock
 `@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
 `from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the

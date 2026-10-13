@@ -1665,6 +1665,22 @@ Deno.test("realtime identity with installed Supabase keys: tokens and API keys v
     assertEquals(await apiKeyRefusal(null), "No API key found in request");
     assert(await apiKeyRefusal("sb_publishable_nope"));
     assertEquals(await apiKeyRefusal("not-a-key"), "Invalid API key");
+    // An upgrade without a valid apikey is refused before the socket opens.
+    const r = rig();
+    try {
+      for (const query of ["", "&apikey=sb_publishable_nope"]) {
+        const refused = await upgradeSocket(
+          r.hub,
+          new Request(`${ORIGIN}/realtime/v1/websocket?vsn=1.0.0${query}`, {
+            headers: { upgrade: "websocket" },
+          }),
+        );
+        assertEquals(refused.status, 401, query);
+        assert((await refused.json()).error);
+      }
+    } finally {
+      await r.hub.stop();
+    }
   } finally {
     installSupabaseKeys(undefined);
   }

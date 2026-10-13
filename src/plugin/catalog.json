@@ -414,6 +414,10 @@
               "explain": {
                 "description": "Answer `Accept: application/vnd.pgrst.plan` with the statement's execution plan (default `false`: a 406). Plans reveal table sizes and indexes; turn this on in development only.",
                 "type": "boolean"
+              },
+              "aggregates": {
+                "description": "Allow aggregate functions in `select=` (`amount.sum()`, `count()`, … grouped by the other selected columns) — PostgREST's `db-aggregates-enabled` (default `false`: a 400). An aggregate reads every matching row whatever `limit` says, so a caller could make the database scan a whole table; turn it on when the tables are small or the statement timeout bounds the cost.",
+                "type": "boolean"
               }
             }
           },

@@ -66,6 +66,8 @@ const COLUMN_ROWS: SqlRow[] = [
   schema: "public",
   table: "notes",
   kind: "r",
+  oid: "1001",
+  reachable: "true",
   rls: "true",
   name,
   cast_type: cast,
@@ -79,7 +81,7 @@ const COLUMN_ROWS: SqlRow[] = [
   read_only: readOnly,
 }));
 const KEY_ROWS: SqlRow[] = [
-  { schema: "public", table: "notes", primary: "true", columns: '["id"]' },
+  { schema: "public", table: "notes", oid: "1001", primary: "true", columns: '["id"]' },
 ];
 
 /** The functions the fake's catalog lists (none unless a test sets them). */
@@ -98,6 +100,7 @@ function catalogAnswer(text: string, columns: () => SqlRow[]): SqlRow[] | undefi
   if (text.includes("FROM pg_attribute a")) return ATTRIBUTE_ROWS;
   if (text.includes("FROM pg_proc")) return FUNCTION_ROWS;
   if (text.includes("pg_extension")) return [{ postgis: "false" }];
+  if (text.includes("JOIN pg_rewrite")) return [];
   return undefined;
 }
 
@@ -322,8 +325,11 @@ Deno.test("errors use the PostgREST envelope; unknown tables 404, other paths pa
     const other = await app.call("/rest/v2/notes");
     assertEquals(other.status, 404);
     assert(!(await other.text()).includes("PGRST"));
-    const put = await app.call("/rest/v1/notes", { method: "PUT" });
-    assertEquals([put.status, put.headers.get("allow")], [405, "GET, HEAD, POST, PATCH, DELETE"]);
+    const options = await app.call("/rest/v1/notes", { method: "OPTIONS" });
+    assertEquals([options.status, options.headers.get("allow")], [
+      405,
+      "GET, HEAD, POST, PUT, PATCH, DELETE",
+    ]);
     assertEquals(app.seen.length, 0, "nothing reached the database");
   } finally {
     tearDown();
@@ -536,6 +542,7 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     maxConcurrent: undefined,
     exactCount: "authenticated",
     explain: false,
+    aggregates: false,
   });
   assertEquals(resolveRest({ schemas: ["a", "b", "a"], schema: "c" }).schemas, ["a", "b"]);
   const bad: RestOptions[] = [
@@ -571,7 +578,7 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
 });
 
 Deno.test("readRestCatalog groups columns and keys, and honours a table list", async () => {
-  const rows = [...COLUMN_ROWS, { ...COLUMN_ROWS[0], table: "views_only", kind: "v" }];
+  const rows = [...COLUMN_ROWS, { ...COLUMN_ROWS[0], table: "views_only", kind: "v", oid: "1002" }];
   const sql = {
     unsafe: (text: string, params: unknown[]) => {
       if (params.length) assertEquals(params, ['["public"]']);
@@ -996,6 +1003,7 @@ function functionRow(
   return {
     schema: "public",
     name,
+    executable: "true",
     volatility: "s",
     set_of: "false",
     return_oid: returnOid,
@@ -1555,6 +1563,69 @@ Deno.test("Supabase keys and access tokens: the shared identity, 401s, CSRF, exa
     await cookieWrite.body?.cancel();
   } finally {
     installSupabaseKeys(undefined);
+    tearDown();
+  }
+});
+
+Deno.test("aggregates are off by default; PUT; the OpenAPI root; the secret key's catalog", async () => {
+  const g = await generateSupabaseKeys();
+  const keys = await resolveSupabaseKeys({
+    publishableKey: g.publishableKey,
+    secretKey: g.secretKey,
+    signingKeys: g.signingKey,
+  });
+  installSupabaseKeys(keys);
+  const hidden = relation("hidden", "r", false).map((row) => ({
+    ...row,
+    oid: "1003",
+    reachable: "false",
+  }));
+  let app = await restApp(
+    () => [{ body: '[{"id":1}]', n: "1" }],
+    {},
+    () => [...COLUMN_ROWS, ...hidden],
+  );
+  try {
+    const refused = await app.call("/rest/v1/notes?select=id.sum()");
+    assertEquals([refused.status, (await refused.json()).code], [400, "PGRST123"]);
+    const put = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "PUT",
+      headers: { prefer: "return=representation" },
+      body: JSON.stringify({ id: 1, owner: "o", body: "b" }),
+    });
+    assertEquals([put.status, await put.text()], [200, '[{"id":1}]']);
+    assertStringIncludes(app.seen.at(-1)!.text, `ON CONFLICT ("id") DO UPDATE SET`);
+    const minimal = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "PUT",
+      body: JSON.stringify({ id: 1, owner: "o", body: "b" }),
+    });
+    assertEquals(minimal.status, 204);
+    const root = await app.call("/rest/v1", { headers: { accept: "application/openapi+json" } });
+    const doc = await root.json();
+    assertEquals([root.status, doc.swagger, Object.keys(doc.paths)], [200, "2.0", ["/", "/notes"]]);
+    const head = await app.call("/rest/v1", { method: "HEAD" });
+    assertEquals([head.status, await head.text()], [200, ""]);
+    const post = await app.call("/rest/v1", { method: "POST", body: "{}" });
+    assertEquals([post.status, post.headers.get("allow")], [405, "GET, HEAD"]);
+    await post.body?.cancel();
+    const anonHidden = await app.call("/rest/v1/hidden", { headers: { apikey: g.publishableKey } });
+    assertEquals(anonHidden.status, 404);
+    await anonHidden.body?.cancel();
+    const service = await app.call("/rest/v1/hidden", { headers: { apikey: g.secretKey } });
+    assertEquals(service.status, 200, "the secret key sees every relation of the schema");
+    await service.body?.cancel();
+    const serviceDoc = await app.call("/rest/v1", { headers: { apikey: g.secretKey } });
+    assertEquals(Object.keys((await serviceDoc.json()).paths), ["/", "/hidden", "/notes"]);
+  } finally {
+    installSupabaseKeys(undefined);
+    tearDown();
+  }
+  app = await restApp(() => [{ body: '[{"sum":3}]', n: "1" }], { aggregates: true });
+  try {
+    const allowed = await app.call("/rest/v1/notes?select=id.sum()");
+    assertEquals([allowed.status, await allowed.json()], [200, [{ sum: 3 }]]);
+    assertStringIncludes(app.seen.at(-1)!.text, `sum(t0."id") AS "sum"`);
+  } finally {
     tearDown();
   }
 });

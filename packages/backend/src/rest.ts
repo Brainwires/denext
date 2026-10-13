@@ -43,6 +43,7 @@ import {
   buildDelete,
   buildInsert,
   buildPlannedCount,
+  buildPut,
   buildRpc,
   buildRpcPlannedCount,
   buildSelect,
@@ -70,6 +71,7 @@ import {
   requireOne,
 } from "./rest-http.ts";
 import { csvFromJson } from "./rest-format.ts";
+import { openApiDocument } from "./rest-openapi.ts";
 import { IDENTIFIER } from "./realtime-shared.ts";
 import { positiveOption } from "./options.ts";
 import { writeRestTypes } from "./rest-codegen.ts";
@@ -122,6 +124,14 @@ export interface RestOptions {
    * `false`: a 406). Plans reveal table sizes and indexes; turn this on in development only.
    */
   explain?: boolean;
+  /**
+   * Allow aggregate functions in `select=` (`amount.sum()`, `count()`, … grouped by the other
+   * selected columns) — PostgREST's `db-aggregates-enabled` (default `false`: a 400). An
+   * aggregate reads every matching row whatever `limit` says, so a caller could make the
+   * database scan a whole table; turn it on when the tables are small or the statement timeout
+   * bounds the cost.
+   */
+  aggregates?: boolean;
 }
 
 /** Validated auto-REST options. */
@@ -144,6 +154,8 @@ export interface ResolvedRest {
   exactCount: "all" | "authenticated" | "never";
   /** Whether execution plans are served. */
   explain: boolean;
+  /** Whether aggregate functions are allowed. */
+  aggregates: boolean;
 }
 
 /** The schemas from `schema` / `schemas`, validated. */
@@ -195,6 +207,7 @@ export function resolveRest(o: RestOptions): ResolvedRest {
       : positiveOption(o.maxConcurrent, 1, "backend(): rest.maxConcurrent"),
     exactCount,
     explain: o.explain === true,
+    aggregates: o.aggregates === true,
   };
 }
 
@@ -640,6 +653,28 @@ async function planResponse(
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
+/** Whether a select tree uses an aggregate anywhere. */
+function usesAggregates(items: readonly SelectItem[]): boolean {
+  return items.some((item) =>
+    item.kind === "aggregate" || (item.kind === "embed" && usesAggregates(item.select))
+  );
+}
+
+/** `select=`, refused when it aggregates and `rest.aggregates` is off. */
+function selectOf(ctx: Ctx, raw: string | null = ctx.query.get("select")): SelectItem[] {
+  const items = parseSelect(raw);
+  if (!ctx.rest.aggregates && usesAggregates(items)) {
+    throw new RestError(
+      400,
+      "PGRST123",
+      "Use of aggregate functions is not allowed",
+      null,
+      "The server can allow them with backend({ rest: { aggregates: true } }).",
+    );
+  }
+  return items;
+}
+
 /** Everything one handled request carries. */
 interface Ctx {
   rest: ResolvedRest;
@@ -714,7 +749,7 @@ function readApplied(prefs: Preferences): void {
 async function read(ctx: Ctx, table: RestTable): Promise<Response> {
   readApplied(ctx.prefs);
   const shape = shapeOf(ctx.media, ctx.catalog);
-  const plan = planOf(ctx.catalog, tableSource(table), parseSelect(ctx.query.get("select")));
+  const plan = planOf(ctx.catalog, tableSource(table), selectOf(ctx));
   applyQuery(plan, ctx.query);
   const { offset, limit } = pageOf(ctx.rest, ctx.request, ctx.query);
   const counting = countingOf(ctx);
@@ -749,9 +784,7 @@ function writeReturnOf(ctx: Ctx, shape: BodyShape): WriteReturn {
 
 /** The plan a write's representation is shaped by (and whose top level holds the filters). */
 function writePlan(ctx: Ctx, table: RestTable): PlanNode {
-  const items = ctx.prefs.return === "headers-only"
-    ? primaryKeyItems(table)
-    : parseSelect(ctx.query.get("select"));
+  const items = ctx.prefs.return === "headers-only" ? primaryKeyItems(table) : selectOf(ctx);
   const plan = planOf(ctx.catalog, tableSource(table), items);
   applyQuery(plan, ctx.query);
   if (ctx.request.method !== "POST" && (ctx.query.has("limit") || ctx.query.has("offset"))) {
@@ -781,6 +814,7 @@ async function writeStatement(
 ): Promise<RestStatement> {
   if (ctx.request.method === "DELETE") return buildDelete(table, plan, ctx.catalog, { returning });
   const body = await bodyOf(ctx.request, ctx.rest.maxBodyBytes);
+  if (ctx.request.method === "PUT") return buildPut(table, plan, ctx.catalog, body, { returning });
   const columns = columnsParam(ctx.query);
   if (ctx.request.method === "PATCH") {
     return buildUpdate(table, plan, ctx.catalog, body, {
@@ -830,6 +864,7 @@ function locationOf(table: RestTable, body: string): string | undefined {
 function writeResponse(ctx: Ctx, table: RestTable, row: SqlRow | undefined): Response {
   const headers = baseHeaders(ctx.prefs, ctx.rest, ctx.schema);
   const created = ctx.request.method === "POST";
+  // A PUT answers like a PATCH: 200 with the row, or 204.
   const n = Number(row?.n ?? 0);
   if (ctx.prefs.count !== undefined) headers.set("content-range", `*/${n}`);
   if (ctx.prefs.return === "headers-only") {
@@ -902,7 +937,7 @@ function rpcPlan(ctx: Ctx, fn: RestFunction, input: RpcInput): PlanNode {
   if (!composite && select !== null && select.trim() !== "" && select.trim() !== "*") {
     throw new RestError(400, "PGRST100", `${fn.name} returns no columns to select`);
   }
-  const plan = planOf(ctx.catalog, functionSource(fn), composite ? parseSelect(select) : []);
+  const plan = planOf(ctx.catalog, functionSource(fn), composite ? selectOf(ctx, select) : []);
   const skip = input.kind === "query" ? new Set(fn.args.map((a) => a.name)) : new Set<string>();
   applyQuery(plan, ctx.query, skip);
   return plan;
@@ -962,7 +997,7 @@ async function rpc(ctx: Ctx, name: string): Promise<Response> {
 
 /** The methods each kind of route takes. */
 const READS = new Set(["GET", "HEAD"]);
-const WRITES = new Set(["POST", "PATCH", "DELETE"]);
+const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Decode a path segment (`""` for a malformed escape or a slash inside it). */
 function segmentName(segment: string): string {
@@ -979,10 +1014,12 @@ async function tableOf(
   catalog: RestCatalogCache,
   schema: string,
   name: string,
+  audience: (c: RestCatalog) => RestCatalog,
 ): Promise<{ table: RestTable; catalog: RestCatalog }> {
-  const { found, catalog: current } = await catalog.find((c) =>
-    name === "" ? undefined : tableIn(c, schema, name)
+  const { found, catalog: whole } = await catalog.find((c) =>
+    name === "" ? undefined : tableIn(audience(c), schema, name)
   );
+  const current = audience(whole);
   if (!found) {
     throw new RestError(
       404,
@@ -991,6 +1028,28 @@ async function tableOf(
     );
   }
   return { table: found, catalog: current };
+}
+
+/** `GET /rest/v1/`: the OpenAPI description of what the requester can use. */
+async function openApi(
+  rest: ResolvedRest,
+  cache: RestCatalogCache,
+  request: Request,
+  schema: string,
+  audience: (c: RestCatalog) => RestCatalog,
+): Promise<Response> {
+  if (!READS.has(request.method)) {
+    return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
+  }
+  const url = new URL(request.url);
+  const doc = openApiDocument(audience(await cache.get()), schema, url, rest.basePath);
+  return new Response(request.method === "HEAD" ? null : JSON.stringify(doc), {
+    status: 200,
+    headers: {
+      "content-type": "application/openapi+json; charset=utf-8",
+      "cache-control": "private, no-store",
+    },
+  });
 }
 
 /** Handle one request under the prefix. */
@@ -1006,24 +1065,27 @@ async function handle(
   if (!isRead && !WRITES.has(request.method)) {
     return new Response(null, {
       status: 405,
-      headers: { allow: "GET, HEAD, POST, PATCH, DELETE" },
+      headers: { allow: "GET, HEAD, POST, PUT, PATCH, DELETE" },
     });
   }
+  const schema = profileOf(request, rest.schemas, !isRead);
+  const identity = await identityOf(request);
+  // The secret key sees every relation and function of the schemas (still only by catalog name).
+  const audience = (c: RestCatalog) => identity.role === "service_role" ? c.service ?? c : c;
+  if (path === "") return await openApi(rest, cache, request, schema, audience);
   const prefs = preferencesOf(request);
   const media = mediaOfRequest(request);
   checkExplain(rest, media);
-  const schema = profileOf(request, rest.schemas, !isRead);
-  const identity = await identityOf(request);
   const base = { rest, gate, request, query, prefs, media, schema, identity };
   if (path.startsWith("rpc/")) {
-    if (request.method === "PATCH" || request.method === "DELETE") {
+    if (request.method !== "POST" && !isRead) {
       throw new RestError(405, "PGRST101", "For functions, only GET and POST verbs are allowed");
     }
     const name = segmentName(path.slice(4));
-    const { catalog } = await cache.find((c) => c.functions.get(schema)?.get(name));
-    return await rpc({ ...base, catalog }, name);
+    const { catalog } = await cache.find((c) => audience(c).functions.get(schema)?.get(name));
+    return await rpc({ ...base, catalog: audience(catalog) }, name);
   }
-  const { table, catalog } = await tableOf(cache, schema, segmentName(path));
+  const { table, catalog } = await tableOf(cache, schema, segmentName(path), audience);
   const ctx = { ...base, catalog };
   return isRead ? await read(ctx, table) : await write(ctx, table);
 }
@@ -1041,14 +1103,15 @@ function restHandler(
   const gate = () => made ??= new StatementGate(concurrencyOf(rest));
   return async (request) => {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith(prefix)) return null;
+    const root = url.pathname === rest.basePath;
+    if (!root && !url.pathname.startsWith(prefix)) return null;
     try {
       return await handle(
         rest,
         cache,
         gate,
         request,
-        url.pathname.slice(prefix.length),
+        root ? "" : url.pathname.slice(prefix.length),
         url.searchParams,
       );
     } catch (error) {

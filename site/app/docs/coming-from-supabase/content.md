@@ -494,11 +494,10 @@ the flags and the services.
 
 denext covers the app-backend half of Supabase; some of the platform is not there:
 
-- **Auto-REST leaves out a few PostgREST features.** Embedding through views, ordering by an
-  embedded column, top-level `or=` on embedded columns, `PUT` upserts, aggregate functions and
-  computed fields / relationships are not served; a `PATCH` or `DELETE` needs a filter (as on
-  Supabase, where `safeupdate` refuses one without), and `count: "exact"` is for signed-in users
-  unless `rest.exactCount` allows it.
+- **Auto-REST defaults differ in three places.** A `PATCH` or `DELETE` needs a filter (as on
+  Supabase, where `safeupdate` refuses one without); `count: "exact"` is for signed-in users unless
+  `rest.exactCount` allows it; and aggregates (`rest.aggregates`) and execution plans
+  (`rest.explain`) are off until you turn them on, as PostgREST ships them.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades

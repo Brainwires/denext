@@ -82,6 +82,8 @@ export interface FieldRef {
   readonly column: string;
   /** The JSON path (empty for the column itself). */
   readonly path: readonly JsonStep[];
+  /** In a logic tree: the embedded resources the column belongs to (`books.authors.name`). */
+  readonly embed?: readonly string[];
 }
 
 /** A column of the select list. */
@@ -114,8 +116,33 @@ export interface SelectEmbed {
   readonly select: readonly SelectItem[];
 }
 
+/** An aggregate: `col.sum()`, `col::int.avg()::text`, `count()`. */
+export interface SelectAggregate {
+  /** `aggregate`. */
+  readonly kind: "aggregate";
+  /** The function. */
+  readonly fn: "sum" | "avg" | "min" | "max" | "count";
+  /** Its column (none for `count()`). */
+  readonly field?: FieldRef;
+  /** A cast of the column before aggregating. */
+  readonly castBefore?: string;
+  /** A cast of the result. */
+  readonly cast?: string;
+  /** The output key (`alias:`, else the function's name). */
+  readonly key: string;
+}
+
 /** One item of a select list. */
-export type SelectItem = { readonly kind: "star" } | SelectField | SelectEmbed;
+export type SelectItem = { readonly kind: "star" } | SelectField | SelectEmbed | SelectAggregate;
+
+/** A type name in a cast. */
+const CAST_NAME = "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?(?: [a-z]+)*(?:\\[\\])?";
+/** What may follow a select column: `::cast`, `.fn()`, `::cast`. */
+const FIELD_TAIL = new RegExp(
+  `^(?:::(${CAST_NAME}))?(?:\\.(sum|avg|min|max|count)\\(\\))?(?:::(${CAST_NAME}))?$`,
+);
+/** `count()` on its own, maybe cast. */
+const COUNT_ALL = new RegExp(`^count\\(\\)(?:::(${CAST_NAME}))?$`);
 
 /** One identifier character run: letters, digits, `_`, `$`, and `-` not starting `->`. */
 const BARE = /[\p{L}\p{N}_$]+(?:-(?!>)[\p{L}\p{N}_$]+)*/uy;
@@ -230,9 +257,6 @@ function compact(text: string): string {
   return out;
 }
 
-/** A `::cast` type name as written (`text`, `int4`, `double precision`, `mood`, `api.mood`). */
-const CAST = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?: [a-z]+)*(?:\[\])?$/;
-
 /** Counts select items across the whole tree. */
 interface SelectBudget {
   items: number;
@@ -293,27 +317,52 @@ function selectItem(text: string, depth: number, budget: SelectBudget): SelectIt
   }
   if (text === "*") return { kind: "star" };
   const { alias, at } = aliasAt(text);
+  const countAll = COUNT_ALL.exec(text.slice(at));
+  if (countAll) return aggregateItem("count", alias, undefined, undefined, countAll[1]);
   const spread = text.startsWith("...", at);
   const embed = embedAt(text, spread ? at + 3 : at, alias, spread, depth, budget);
-  if (embed) return embed;
+  return embed ?? columnItem(text, at, alias);
+}
+
+/** An aggregate item. */
+function aggregateItem(
+  fn: string,
+  alias: string | undefined,
+  field: FieldRef | undefined,
+  before: string | undefined,
+  after: string | undefined,
+): SelectAggregate {
+  return {
+    kind: "aggregate",
+    fn: fn as SelectAggregate["fn"],
+    ...(field ? { field } : {}),
+    ...(before ? { castBefore: before } : {}),
+    ...(after ? { cast: after } : {}),
+    key: alias ?? fn,
+  };
+}
+
+/** A column item (`alias:col->path::cast`), or an aggregate over one (`col.sum()`). */
+function columnItem(text: string, at: number, alias: string | undefined): SelectItem {
   const { field, end } = fieldAt(text, at);
-  let cast: string | undefined;
-  if (text.startsWith("::", end)) {
-    cast = text.slice(end + 2);
-    if (!CAST.test(cast)) throw parseError(`${shown(cast)} is not a type name`);
-  } else if (end !== text.length) {
-    throw parseError(
-      `unexpected text in select item ${shown(text)}`,
-      "aggregate functions (col.sum()) are not supported",
-    );
-  }
-  const last = field.path.at(-1);
+  const tail = FIELD_TAIL.exec(text.slice(end));
+  if (!tail) throw parseError(`unexpected text in select item ${shown(text)}`);
+  const [, before, fn, after] = tail;
+  if (fn) return aggregateItem(fn, alias, field, before, after);
+  if (before && after) throw parseError(`two casts in select item ${shown(text)}`);
+  const cast = before ?? after;
   return {
     kind: "field",
     field,
     ...(cast === undefined ? {} : { cast }),
-    key: alias ?? (last && !/^-?\d+$/.test(last.key) ? last.key : field.column),
+    key: alias ?? fieldKey(field),
   };
+}
+
+/** A field's default key: the last JSON key (not an index), else the column. */
+function fieldKey(field: FieldRef): string {
+  const last = field.path.at(-1);
+  return last && !/^-?\d+$/.test(last.key) ? last.key : field.column;
 }
 
 /** A comma-separated select list (empty text: no columns). */
@@ -434,6 +483,26 @@ function unquote(value: string): string {
   return value;
 }
 
+/** `[not.]op[(modifier)].` — where a logic-tree filter's operator starts. */
+const OPERATOR_START = /^(?:not\.)?([a-z]+)(?:\([A-Za-z_][A-Za-z0-9_]*\))?\./;
+
+/**
+ * A logic-tree field, maybe on embedded resources (`books.authors.name.eq.x`): leading names
+ * not followed by an operator are embeds.
+ */
+function embeddedFieldAt(text: string): { field: FieldRef; end: number } {
+  const embed: string[] = [];
+  let { field, end } = fieldAt(text, 0);
+  while (text[end] === "." && field.path.length === 0) {
+    const op = OPERATOR_START.exec(text.slice(end + 1));
+    if (op && OPERATOR_NAMES.has(op[1])) break;
+    if (embed.length >= MAX_DEPTH) throw parseError(`embedding is limited to ${MAX_DEPTH} levels`);
+    embed.push(field.column);
+    ({ field, end } = fieldAt(text, end + 1));
+  }
+  return { field: embed.length ? { ...field, embed } : field, end };
+}
+
 /** One term of a logic tree. */
 function logicTerm(text: string, depth: number, counter: { filters: number }): Condition {
   const group = GROUP.exec(text);
@@ -446,7 +515,7 @@ function logicTerm(text: string, depth: number, counter: { filters: number }): C
       counter,
     );
   }
-  const { field, end } = fieldAt(text, 0);
+  const { field, end } = embeddedFieldAt(text);
   if (text[end] !== ".") throw parseError(`expected column.operator.value in ${shown(text)}`);
   counter.filters++;
   const filter = parseFilterValue(text.slice(end + 1), field.column);
@@ -499,10 +568,23 @@ export function parseLogic(
 export interface OrderTerm {
   /** The column and path. */
   readonly field: FieldRef;
+  /** A to-one embedded resource the column belongs to (`order=author(name)`). */
+  readonly relation?: string;
   /** `DESC`. */
   readonly descending: boolean;
   /** `NULLS FIRST` / `NULLS LAST`, when given. */
   readonly nulls?: "first" | "last";
+}
+
+/** An order term's field: `col`, `col->k`, or `rel(col)` on a to-one embed. */
+function orderFieldAt(term: string): { field: FieldRef; end: number; relation?: string } {
+  const head = identAt(term, 0);
+  if (head && term[head.end] === "(") {
+    const { field, end } = fieldAt(term, head.end + 1);
+    if (term[end] !== ")") throw parseError(`bad order term ${shown(term)}`);
+    return { field, end: end + 1, relation: head.value };
+  }
+  return fieldAt(term, 0);
 }
 
 /** `.asc|.desc` then `.nullsfirst|.nullslast`, both optional. */
@@ -518,7 +600,7 @@ const ORDER_TAIL = /^(?:\.(asc|desc))?(?:\.(nullsfirst|nullslast))?$/;
 export function parseOrder(raw: string): OrderTerm[] {
   if (raw.trim() === "") return [];
   return splitTopLevel(compact(raw)).map((term) => {
-    const { field, end } = fieldAt(term, 0);
+    const { field, end, relation } = orderFieldAt(term);
     const tail = ORDER_TAIL.exec(term.slice(end));
     if (!tail) {
       throw parseError(
@@ -528,6 +610,7 @@ export function parseOrder(raw: string): OrderTerm[] {
     }
     return {
       field,
+      ...(relation === undefined ? {} : { relation }),
       descending: tail[1] === "desc",
       ...(tail[2] ? { nulls: tail[2] === "nullsfirst" ? "first" : "last" } : {}),
     } as OrderTerm;

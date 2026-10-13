@@ -39,6 +39,7 @@ import {
   parseLogic,
   parseOrder,
   RestError,
+  type SelectAggregate,
   type SelectEmbed,
   type SelectItem,
   shown,
@@ -320,10 +321,43 @@ export function applyQuery(
 
 // ── Expressions ──────────────────────────────────────────────────────────────
 
+/**
+ * A computed field (PostgREST's): a function in the relation's schema named `name`, whose one
+ * argument is the relation's row, returning one value.
+ */
+function computedField(
+  catalog: RestCatalog,
+  source: QuerySource,
+  name: string,
+): RestFunction | undefined {
+  const relation = source.relation;
+  if (!relation) return undefined;
+  return catalog.functions.get(relation.schema)?.get(name)?.find((fn) =>
+    fn.args.length === 1 && fn.args[0].relation?.schema === relation.schema &&
+    fn.args[0].relation?.name === relation.name && !fn.setOf && fn.returns.kind !== "void"
+  );
+}
+
+/** Whether a name is a computed field rather than a column of `source`. */
+function isComputed(sql: Sql, source: QuerySource, name: string): boolean {
+  return !source.columns.some((c) => c.name === name) &&
+    computedField(sql.catalog, source, name) !== undefined;
+}
+
+/** A column (or computed field) reference, and its type. */
+function columnExpr(sql: Sql, source: QuerySource, alias: string, name: string) {
+  const column = source.columns.find((c) => c.name === name);
+  if (column) return { text: `${alias}.${quoteIdent(column.name)}`, type: column.castType };
+  const fn = computedField(sql.catalog, source, name);
+  if (!fn) columnOf(source, name);
+  const row = `ROW(${alias}.*)::${qualified(source.relation!)}`;
+  return { text: `${qualified(fn!)}(${row})`, type: fn!.returns.castType };
+}
+
 /** A field as SQL, and the type a value compared to it is cast to. */
 function fieldExpr(sql: Sql, source: QuerySource, alias: string, field: FieldRef) {
-  const column = columnOf(source, field.column);
-  let text = `${alias}.${quoteIdent(column.name)}`;
+  const column = columnExpr(sql, source, alias, field.column);
+  let text = column.text;
   for (const step of field.path) {
     const key = /^-?\d+$/.test(step.key)
       ? sql.params.bind("integer", step.key)
@@ -331,7 +365,7 @@ function fieldExpr(sql: Sql, source: QuerySource, alias: string, field: FieldRef
     text = `${text}${step.arrow}${key}`;
   }
   const last = field.path.at(-1);
-  if (!last) return { text, type: column.castType };
+  if (!last) return { text, type: column.type };
   return last.arrow === "->>"
     ? { text: `(${text})`, type: "text" }
     : { text: `(${text})::jsonb`, type: "jsonb" };
@@ -425,15 +459,55 @@ function operatorSql(sql: Sql, lhs: string, type: string, f: ParsedFilterValue):
 }
 
 /** A condition (a filter or a group) as SQL. */
-function conditionSql(sql: Sql, source: QuerySource, alias: string, c: Condition): string {
+function conditionSql(sql: Sql, node: PlanNode, alias: string, c: Condition): string {
   if (c.kind === "group") {
-    const joined = c.items.map((item) => conditionSql(sql, source, alias, item))
+    const joined = c.items.map((item) => conditionSql(sql, node, alias, item))
       .join(` ${c.op.toUpperCase()} `);
     return c.negate ? `NOT (${joined})` : `(${joined})`;
   }
-  const { text, type } = fieldExpr(sql, source, alias, c.field);
+  if (c.field.embed?.length) return embeddedCondition(sql, node, alias, c);
+  const { text, type } = fieldExpr(sql, node.source, alias, c.field);
   const condition = operatorSql(sql, text, type, c.filter);
   return c.filter.negate ? `NOT (${condition})` : condition;
+}
+
+/** The embedded level a logic-tree filter names, or PostgREST's 400. */
+function embeddedChild(node: PlanNode, key: string): PlanChild {
+  const child = node.children.get(key);
+  if (!child) {
+    throw new RestError(
+      400,
+      "PGRST108",
+      `'${key.slice(0, 64)}' is not an embedded resource in this request`,
+      null,
+      `Verify that '${key.slice(0, 64)}' is included in the 'select' query parameter.`,
+    );
+  }
+  return child;
+}
+
+/**
+ * A logic-tree filter on an embedded resource's column (`or=(a.eq.1,books.title.eq.x)`): the
+ * parent row has a related row that matches — `EXISTS` over the relationship.
+ */
+function embeddedCondition(
+  sql: Sql,
+  node: PlanNode,
+  alias: string,
+  c: Condition & { kind: "filter" },
+): string {
+  const [key, ...rest] = c.field.embed!;
+  const child = embeddedChild(node, key);
+  const inner = sql.alias("t");
+  const { from, correlation } = childFrom(sql, child, alias, inner);
+  const nested: Condition = {
+    ...c,
+    field: rest.length
+      ? { ...c.field, embed: rest }
+      : { column: c.field.column, path: c.field.path },
+  };
+  const where = [...correlation, conditionSql(sql, child, inner, nested)];
+  return `EXISTS (SELECT 1 FROM ${from} WHERE ${where.join(" AND ")})`;
 }
 
 /** A `::cast` from the request → its SQL, through the catalog's whitelist. */
@@ -445,11 +519,30 @@ function castSql(catalog: RestCatalog, cast: string): string {
   return array ? `${known}[]` : known;
 }
 
+/** An order term's expression: a column of the level, or of a to-one embed (a subquery). */
+function orderExpr(sql: Sql, node: PlanNode, alias: string, term: OrderTerm): string {
+  if (term.relation === undefined) return fieldExpr(sql, node.source, alias, term.field).text;
+  const child = embeddedChild(node, term.relation);
+  if (!child.rel.toOne) {
+    throw new RestError(
+      400,
+      "PGRST118",
+      `A related order on '${term.relation.slice(0, 64)}' is not possible`,
+      "Only a many-to-one or one-to-one embedded resource can order its parent",
+    );
+  }
+  const inner = sql.alias("t");
+  const { from, correlation } = childFrom(sql, child, alias, inner);
+  const value = fieldExpr(sql, child.source, inner, term.field).text;
+  const where = correlation.length ? ` WHERE ${correlation.join(" AND ")}` : "";
+  return `(SELECT ${value} FROM ${from}${where} LIMIT 1)`;
+}
+
 /** `ORDER BY` terms. */
-function orderSql(sql: Sql, source: QuerySource, alias: string, order: OrderTerm[]): string {
-  if (!order.length) return "";
-  const terms = order.map((term) =>
-    fieldExpr(sql, source, alias, term.field).text + (term.descending ? " DESC" : " ASC") +
+function orderSql(sql: Sql, node: PlanNode, alias: string): string {
+  if (!node.order.length) return "";
+  const terms = node.order.map((term) =>
+    orderExpr(sql, node, alias, term) + (term.descending ? " DESC" : " ASC") +
     (term.nulls ? (term.nulls === "first" ? " NULLS FIRST" : " NULLS LAST") : "")
   );
   return ` ORDER BY ${terms.join(", ")}`;
@@ -467,9 +560,13 @@ interface Lateral {
   where: string | undefined;
 }
 
-/** The `FROM` and correlation for a child level under `parent`. */
+/** The `FROM` and correlation for a child level under the parent level (aliased `parent`). */
 function childFrom(sql: Sql, child: PlanChild, parent: string, alias: string) {
   const rel = child.rel;
+  if (rel.computed) {
+    const row = `ROW(${parent}.*)::${qualified(rel.computed.parent)}`;
+    return { from: `${qualified(rel.computed.fn)}(${row}) AS ${alias}`, correlation: [] };
+  }
   const target = `${qualified(rel.target)} AS ${alias}`;
   if (!rel.junction) {
     return {
@@ -504,7 +601,13 @@ function lateralValue(child: PlanChild, inner: string): string {
 }
 
 /** Render one embed under the parent alias. */
-function lateralOf(sql: Sql, child: PlanChild, parent: string, depth: number): Lateral {
+function lateralOf(
+  sql: Sql,
+  child: PlanChild,
+  parent: string,
+  depth: number,
+  grouped: boolean,
+): Lateral {
   const alias = sql.alias("t");
   const l = sql.alias("l");
   const { from, correlation } = childFrom(sql, child, parent, alias);
@@ -522,7 +625,9 @@ function lateralOf(sql: Sql, child: PlanChild, parent: string, depth: number): L
     const join = filtered ? "JOIN LATERAL" : "LEFT JOIN LATERAL";
     return { join: ` ${join} (${inner}) AS ${l} ON TRUE`, select: `${l}.*`, where: undefined };
   }
-  const value = child.rel.toOne || child.count ? `${l}.v` : `coalesce(${l}.v, '[]'::json)`;
+  const plain = child.rel.toOne || child.count ? `${l}.v` : `coalesce(${l}.v, '[]'::json)`;
+  // Grouped by an aggregate: json has no equality, so the embed is grouped as jsonb.
+  const value = grouped ? `(${plain})::jsonb` : plain;
   const where = filtered ? `${l}.v IS NOT NULL` : child.isNull ? `${l}.v IS NULL` : undefined;
   return {
     join: ` LEFT JOIN LATERAL (${lateralValue(child, inner)}) AS ${l} ON TRUE`,
@@ -546,9 +651,46 @@ function itemSql(
 ): string | undefined {
   if (item.kind === "star") return `${alias}.*`;
   if (item.kind === "embed") return laterals.get(item.key)?.select;
+  if (item.kind === "aggregate") return aggregateSql(sql, node, alias, item);
   const { text } = fieldExpr(sql, node.source, alias, item.field);
   const value = item.cast === undefined ? text : `(${text})::${castSql(sql.catalog, item.cast)}`;
   return `${value} AS ${quoteIdent(item.key)}`;
+}
+
+/** An aggregate item: `sum(col::cast)::cast AS "sum"`, or `count(*)`. */
+function aggregateSql(sql: Sql, node: PlanNode, alias: string, item: SelectAggregate): string {
+  let arg = "*";
+  if (item.field) {
+    const { text } = fieldExpr(sql, node.source, alias, item.field);
+    arg = item.castBefore === undefined
+      ? text
+      : `(${text})::${castSql(sql.catalog, item.castBefore)}`;
+  }
+  const call = `${item.fn}(${arg})`;
+  const value = item.cast === undefined ? call : `(${call})::${castSql(sql.catalog, item.cast)}`;
+  return `${value} AS ${quoteIdent(item.key)}`;
+}
+
+/** Whether a level aggregates (its other items are then its grouping). */
+function aggregates(node: PlanNode): boolean {
+  return node.items.some((item) => item.kind === "aggregate");
+}
+
+/**
+ * The `GROUP BY` of an aggregating level, by select-list position: every item that is not an
+ * aggregate. A `*` or a spread there has no fixed position, so it is refused.
+ */
+function groupBy(node: PlanNode): string {
+  const positions: number[] = [];
+  node.items.forEach((item, i) => {
+    if (item.kind === "star" || (item.kind === "embed" && item.spread)) {
+      throw parseError(
+        "an aggregate groups by the other selected columns: list them instead of * or a spread",
+      );
+    }
+    if (item.kind !== "aggregate") positions.push(i + 1);
+  });
+  return positions.length ? ` GROUP BY ${positions.join(", ")}` : "";
 }
 
 /**
@@ -565,25 +707,27 @@ function renderLevel(
   depth = 0,
 ): string {
   if (depth > MAX_DEPTH) throw parseError(`embedding is limited to ${MAX_DEPTH} levels`);
+  const grouped = aggregates(node);
   const laterals = new Map<string, Lateral>();
   for (const [key, child] of node.children) {
-    if (mode === "count" && !filtersParent(child)) continue;
-    laterals.set(key, lateralOf(sql, child, alias, depth));
+    if (mode === "count" && !grouped && !filtersParent(child)) continue;
+    laterals.set(key, lateralOf(sql, child, alias, depth, grouped));
   }
   const where = [
     ...correlation,
-    ...node.conditions.map((c) => conditionSql(sql, node.source, alias, c)),
+    ...node.conditions.map((c) => conditionSql(sql, node, alias, c)),
     ...[...laterals.values()].flatMap((l) => l.where ? [l.where] : []),
   ];
-  const select = mode === "count"
+  // A count of an aggregating level counts its groups, so it keeps the select list.
+  const select = mode === "count" && !grouped
     ? "1"
     : node.items.map((item) => itemSql(sql, node, alias, item, laterals))
       .filter((s): s is string => s !== undefined).join(", ");
   const joins = [...laterals.values()].map((l) => l.join).join("");
   let text = `SELECT ${select} FROM ${from}${joins}` +
-    (where.length ? ` WHERE ${where.join(" AND ")}` : "");
+    (where.length ? ` WHERE ${where.join(" AND ")}` : "") + (grouped ? groupBy(node) : "");
   if (mode === "full") {
-    text += orderSql(sql, node.source, alias, node.order);
+    text += orderSql(sql, node, alias);
     if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
     if (node.offset) text += ` OFFSET ${node.offset}`;
   }
@@ -697,22 +841,35 @@ function writableColumns(table: RestTable, names: readonly string[]): RestColumn
 
 /** The parent-side columns an embed correlates on. */
 function correlationColumns(child: PlanChild): string[] {
+  if (child.rel.computed) return [];
   return child.rel.junction
     ? child.rel.junction.toParent.map(([, p]) => p)
     : child.rel.pairs.map(([, p]) => p);
 }
 
 /** The `RETURNING` list a representation needs: every column it reads, or `*`. */
-function returningList(plan: PlanNode): string {
-  if (plan.items.some((item) => item.kind === "star")) return "t0.*";
-  const names = new Set<string>();
-  for (const item of plan.items) if (item.kind === "field") names.add(item.field.column);
+function returningList(sql: Sql, plan: PlanNode): string {
+  const names = readColumns(sql, plan);
+  if (names === "*") return "t0.*";
+  if (!names.size) return '1 AS "?"';
+  return [...names].map((n) => `t0.${quoteIdent(columnOf(plan.source, n).name)}`).join(", ");
+}
+
+/** The columns a representation reads, or `*` when it needs the whole row. */
+function readColumns(sql: Sql, plan: PlanNode): Set<string> | "*" {
+  if (plan.items.some((item) => item.kind === "star")) return "*";
+  // A computed field or relationship takes the whole row.
+  if ([...plan.children.values()].some((c) => c.rel.computed)) return "*";
+  const fields = plan.items.flatMap((item) =>
+    (item.kind === "field" || item.kind === "aggregate") && item.field ? [item.field] : []
+  );
+  if (fields.some((f) => isComputed(sql, plan.source, f.column))) return "*";
+  const names = new Set(fields.map((f) => f.column));
   for (const child of plan.children.values()) {
     for (const c of correlationColumns(child)) names.add(c);
   }
-  for (const term of plan.order) names.add(term.field.column);
-  if (!names.size) return '1 AS "?"';
-  return [...names].map((n) => `t0.${quoteIdent(columnOf(plan.source, n).name)}`).join(", ");
+  for (const term of plan.order) if (term.relation === undefined) names.add(term.field.column);
+  return names;
 }
 
 /** What a write answers with. */
@@ -738,7 +895,7 @@ function returning(sql: Sql, dml: string, plan: PlanNode, ret: WriteReturn): str
   // The filters chose the rows the statement wrote; the written rows are not filtered again (an
   // update may have changed the very column a filter tested).
   const rows = renderLevel(sql, { ...plan, conditions: [] }, "_m AS t0", "t0", [], "full");
-  return `WITH _m AS (${dml} RETURNING ${returningList(plan)}) ` +
+  return `WITH _m AS (${dml} RETURNING ${returningList(sql, plan)}) ` +
     `SELECT ${aggregate(ret.shape ?? "json")} AS body, count(*)::text AS n FROM (${rows}) _r`;
 }
 
@@ -875,6 +1032,87 @@ export function buildInsert(
   return { text: returning(sql, dml, plan, options.returning), params: sql.params.values };
 }
 
+/** PostgREST's 405 for a PUT whose filters are not exactly `pk=eq.v` on every key column. */
+function putFilterError(): RestError {
+  return new RestError(
+    405,
+    "PGRST105",
+    "Filters must include all and only primary key columns with 'eq' operators",
+  );
+}
+
+/** The `pk=eq.v` filters of a PUT, by column — refused unless they are exactly the key. */
+function putKey(table: RestTable, plan: PlanNode): Map<string, string> {
+  const key = new Map<string, string>();
+  for (const c of plan.conditions) {
+    if (c.kind !== "filter" || c.field.embed?.length || c.field.path.length) throw putFilterError();
+    const f = c.filter;
+    if (f.op !== "eq" || f.negate || f.modifier !== undefined || key.has(c.field.column)) {
+      throw putFilterError();
+    }
+    key.set(c.field.column, f.value);
+  }
+  const pk = table.primaryKey;
+  if (!pk.length || key.size !== pk.length || !pk.every((c) => key.has(c))) throw putFilterError();
+  return key;
+}
+
+/** A body value as a URL filter spells it. */
+function urlText(value: unknown): string {
+  return value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+/**
+ * A `PUT`: insert one complete row, or replace the row with that primary key (PostgREST's
+ * single-row upsert). The filters must be exactly `pk=eq.value` for every key column, the body
+ * one object naming every writable column, and its key values those of the URL.
+ *
+ * @param table The catalog entry.
+ * @param plan The plan: the key filters and the representation's `select=`.
+ * @param catalog The catalog.
+ * @param body The parsed body.
+ * @param options What to answer with.
+ * @returns The statement.
+ * @throws {RestError} `PGRST105` (405) for other filters, `PGRST102` for a body that is not one
+ *   complete row, `PGRST115` when the body's key differs from the URL's.
+ */
+export function buildPut(
+  table: RestTable,
+  plan: PlanNode,
+  catalog: RestCatalog,
+  body: unknown,
+  options: { returning: WriteReturn },
+): RestStatement {
+  const key = putKey(table, plan);
+  const rows = Array.isArray(body) ? body : [body];
+  if (rows.length !== 1) {
+    throw new RestError(400, "PGRST102", "PUT payload must contain a single row");
+  }
+  const row = objectOf(rows[0]);
+  const missing = table.columns.filter((c) => !c.readOnly && !Object.hasOwn(row, c.name));
+  if (missing.length) {
+    throw new RestError(
+      400,
+      "PGRST102",
+      "You must specify all columns in the payload when using PUT",
+      `Missing: ${missing.map((c) => c.name).join(", ").slice(0, 200)}`,
+    );
+  }
+  for (const [column, value] of key) {
+    if (urlText(row[column]) !== value) {
+      throw new RestError(
+        400,
+        "PGRST115",
+        "Payload values do not match URL in primary key column(s)",
+      );
+    }
+  }
+  return buildInsert(table, { ...plan, conditions: [] }, catalog, row, {
+    conflict: { action: "merge", columns: table.primaryKey },
+    returning: options.returning,
+  });
+}
+
 /** The `WHERE` of a PATCH / DELETE: the top level's conditions; at least one is required. */
 function mutationWhere(sql: Sql, plan: PlanNode, verb: "UPDATE" | "DELETE"): string {
   if (plan.conditions.length === 0) {
@@ -886,7 +1124,7 @@ function mutationWhere(sql: Sql, plan: PlanNode, verb: "UPDATE" | "DELETE"): str
       "add a filter (?id=eq.1); to change every row, filter on a column every row matches",
     );
   }
-  return " WHERE " + plan.conditions.map((c) => conditionSql(sql, plan.source, "t0", c))
+  return " WHERE " + plan.conditions.map((c) => conditionSql(sql, plan, "t0", c))
     .join(" AND ");
 }
 

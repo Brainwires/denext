@@ -1,6 +1,6 @@
 // Public home feed. `export const revalidate` opts this route into ISR: it renders
 // to a cached shell that is regenerated at most once every 10s (stale-while-
-// revalidate), so the feed is cheap under load. Active in `deno task start` (prod).
+// revalidate), so the feed is cheap under load. Active in `denext task start` (prod).
 
 import { listPublicNotes } from "../lib/db.ts";
 

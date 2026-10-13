@@ -234,6 +234,19 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
+      postgis:
+        # Only tests/backend-rest-supabase-integration.test.ts's GeoJSON case uses this one
+        # (`Accept: application/geo+json` needs PostGIS); everything else runs on postgres:17.
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
       minio:
         # MinIO publishes no public images any more (minio/minio and quay.io/minio refuse
         # pulls); Bitnami's legacy build is the same server, and its entrypoint serves /data.
@@ -245,6 +258,7 @@ jobs:
           - 9100:9000
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
+      DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
       DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
       DENEXT_TEST_SUPABASE_JS: "1" # the stock @supabase/supabase-js client against the app
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
@@ -284,7 +298,7 @@ jobs:
           done
           exit 1
 
-      - name: Backend + Postgres integration tests (real Postgres and MinIO)
+      - name: Backend + Postgres integration tests (real Postgres, PostGIS and MinIO)
         env:
           NO_COLOR: "1" # plain test names for the grep below
         run: |

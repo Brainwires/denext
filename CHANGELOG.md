@@ -181,6 +181,15 @@ and this project adheres to
   (`PGRST301`, or `PGRST303` when expired). A GET runs in a READ ONLY transaction. Every name is still looked up in the
   catalog and every value bound; a request takes at most 64 filters, 256 select items and 8
   levels of embedding.
+- **`@denext/backend`: the rest of PostgREST in auto-REST.** Views embed through their column
+  lineage (a view inherits its base tables' foreign and unique keys, through views over views);
+  computed fields and computed relationships (a function taking the row; `ROWS 1` is to-one);
+  `order=rel(col)` on a to-one embed; logic trees on embedded columns (`or=(…,rel.col.eq.x)`);
+  `PUT` single-row upserts with PostgREST's checks (`PGRST105`, `PGRST115`); aggregates
+  (`sum` / `avg` / `min` / `max` / `count` with casts, grouped by the other items) behind the
+  opt-in `rest.aggregates`; the OpenAPI (Swagger 2.0) document at `GET /rest/v1`, following
+  privileges; and the secret key (`service_role`) sees every relation and function of the exposed
+  schemas, as in PostgREST. GeoJSON output now runs against PostGIS in CI.
 - **`@denext/backend`: `.denext/rest.ts` is `supabase gen types`-shaped.** `Database` with each
   exposed schema's `Tables` (with `Relationships`), `Views`, `Functions`, `Enums` and
   `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and

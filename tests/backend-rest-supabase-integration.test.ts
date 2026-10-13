@@ -141,6 +141,20 @@ const SCHEMA = `
   create table api.things (id int primary key, label text);
   ${open("api.things")}
   insert into api.things values (1, 'from api');
+  create view book_view with (security_invoker = on) as
+    select id, author_id, title, year from books;
+  grant select on book_view to anon, authenticated;
+  create view book_view2 with (security_invoker = on) as
+    select id as book_id, author_id as writer, title from book_view;
+  grant select on book_view2 to anon, authenticated;
+  create function full_title(books) returns text language sql stable
+    as $$ select $1.title || ' (' || $1.year || ')' $$;
+  create function author_of(books) returns setof authors rows 1 language sql stable
+    as $$ select * from authors where id = $1.author_id $$;
+  create function books_of(authors) returns setof books language sql stable
+    as $$ select * from books where author_id = $1.id $$;
+  create table hidden (id int primary key, note text);
+  insert into hidden values (1, 'secret');
   analyze;
 `;
 
@@ -168,7 +182,13 @@ Deno.test({
           backend({
             supabase: keyConfig,
             postgres: { sql: env.app },
-            rest: { schemas: ["public", "api"], exactCount: "all", explain: true, maxRows: 100 },
+            rest: {
+              schemas: ["public", "api"],
+              exactCount: "all",
+              explain: true,
+              aggregates: true,
+              maxRows: 100,
+            },
           }),
         ],
       } as DenextConfig;
@@ -596,6 +616,127 @@ Deno.test({
       });
 
       await t.step(
+        "views, computed fields and relationships, related order, embedded or",
+        async () => {
+          const viaView = await supabase.from("book_view").select("title, authors(name)").eq(
+            "id",
+            3,
+          )
+            .single();
+          assertEquals(viaView.data, { title: "Kindred", authors: { name: "Octavia" } });
+          const intoView = await supabase.from("authors").select("name, book_view(title)")
+            .eq("id", 1).order("title", { referencedTable: "book_view" }).single();
+          assertEquals(intoView.data, {
+            name: "Ursula",
+            book_view: [{ title: "A Wizard of Earthsea" }, { title: "The Left Hand of Darkness" }],
+          });
+          const viewOverView = await supabase.from("book_view2")
+            .select("title, writer, authors!writer(name)").eq("book_id", 4).single();
+          assertEquals(viewOverView.data, {
+            title: "Parable of the Sower",
+            writer: 2,
+            authors: { name: "Octavia" },
+          });
+          const computed = await supabase.from("books").select("title, full_title")
+            .like("full_title", "%(1979)").single();
+          assertEquals(computed.data, { title: "Kindred", full_title: "Kindred (1979)" });
+          const toOne = await supabase.from("books").select("title, author_of(name)").eq("id", 1)
+            .single();
+          assertEquals(toOne.data, {
+            title: "A Wizard of Earthsea",
+            author_of: { name: "Ursula" },
+          });
+          const toMany = await supabase.from("authors").select("name, books_of(title)").eq("id", 2)
+            .order("title", { referencedTable: "books_of" }).single();
+          assertEquals(toMany.data, {
+            name: "Octavia",
+            books_of: [{ title: "Kindred" }, { title: "Parable of the Sower" }],
+          });
+          const related = await supabase.from("books").select("title, authors(name)")
+            .order("authors(name)").order("year");
+          assertEquals(related.data?.map((r: { title: string }) => r.title), [
+            "Kindred",
+            "Parable of the Sower",
+            "A Wizard of Earthsea",
+            "The Left Hand of Darkness",
+          ]);
+          const toManyOrder = await supabase.from("authors").select("name, books(title)")
+            .order("books(title)");
+          assertEquals([toManyOrder.status, toManyOrder.error?.code], [400, "PGRST118"]);
+          const either = await supabase.from("books").select("id, authors(name)")
+            .or("year.eq.1968,authors.name.eq.Octavia").order("id");
+          assertEquals(either.data?.map((r: { id: number }) => r.id), [1, 3, 4]);
+          const notEmbedded = await supabase.from("books").select("id").or("authors.name.eq.x");
+          assertEquals([notEmbedded.status, notEmbedded.error?.code], [400, "PGRST108"]);
+        },
+      );
+
+      await t.step("aggregates, PUT, the OpenAPI document, the secret key's catalog", async () => {
+        const sums = await supabase.from("books").select("author_id, total:price.sum(), count()")
+          .order("author_id");
+        assertEquals(sums.error, null);
+        assertEquals(sums.data, [
+          { author_id: 1, total: 22.49, count: 2 },
+          { author_id: 2, total: 33.00, count: 2 },
+        ]);
+        const embedded = await supabase.from("authors").select("name, books(year.max())")
+          .eq("id", 1).single();
+        assertEquals(embedded.data, { name: "Ursula", books: [{ max: 1969 }] });
+        const cast = await supabase.from("books").select("year::text.min()").single();
+        assertEquals(cast.data, { min: "1968" });
+        const put = (query: string, body: unknown) =>
+          appFetch(`${ORIGIN}/rest/v1/items${query}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json", prefer: "return=representation" },
+            body: JSON.stringify(body),
+          });
+        const created = await put("?id=eq.70", { id: 70, name: "seventy", qty: 1, label: "a" });
+        assertEquals([created.status, await created.json()], [
+          200,
+          [{ id: 70, name: "seventy", qty: 1, label: "a" }],
+        ]);
+        const replaced = await put("?id=eq.70", { id: 70, name: "seventy", qty: 2, label: "b" });
+        assertEquals(await replaced.json(), [{ id: 70, name: "seventy", qty: 2, label: "b" }]);
+        const mismatch = await put("?id=eq.71", { id: 70, name: "x", qty: 1, label: "a" });
+        assertEquals([mismatch.status, (await mismatch.json()).code], [400, "PGRST115"]);
+        const partial = await put("?id=eq.70", { id: 70, name: "x" });
+        assertEquals([partial.status, (await partial.json()).code], [400, "PGRST102"]);
+        const notKey = await put("?name=eq.x", { id: 70, name: "x", qty: 1, label: "a" });
+        assertEquals([notKey.status, (await notKey.json()).code], [405, "PGRST105"]);
+        const slash = await appFetch(`${ORIGIN}/rest/v1/`);
+        assertEquals([slash.status, slash.headers.get("location")], [308, "/rest/v1"]);
+        const doc = await appFetch(`${ORIGIN}/rest/v1`, {
+          headers: { accept: "application/openapi+json" },
+        });
+        assertEquals(doc.headers.get("content-type"), "application/openapi+json; charset=utf-8");
+        const openapi = await doc.json();
+        assertEquals(openapi.swagger, "2.0");
+        assert(openapi.paths["/books"]?.get, "the books routes are listed");
+        assert(openapi.paths["/rpc/add"]?.post, "the functions are listed");
+        assertStringIncludes(
+          openapi.definitions.books.properties.author_id.description,
+          "This is a Foreign Key to `authors.id`.",
+        );
+        assertEquals(openapi.paths["/hidden"], undefined, "anon is shown only what it can use");
+        const apiDoc = await appFetch(`${ORIGIN}/rest/v1`, {
+          headers: { "accept-profile": "api" },
+        });
+        assert((await apiDoc.json()).paths["/things"]);
+        // deno-lint-ignore no-explicit-any
+        const service: any = createClient(ORIGIN, g.secretKey, {
+          global: { fetch: appFetch },
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        });
+        assertEquals((await service.from("hidden").select()).data, [{ id: 1, note: "secret" }]);
+        const anonHidden = await supabase.from("hidden").select();
+        assertEquals([anonHidden.status, anonHidden.error?.code], [404, "PGRST205"]);
+        const serviceDoc = await appFetch(`${ORIGIN}/rest/v1`, {
+          headers: { apikey: g.secretKey },
+        });
+        assert((await serviceDoc.json()).paths["/hidden"], "the secret key sees the whole schema");
+      });
+
+      await t.step(
         "API keys and access tokens: publishable, user JWT, secret, refused",
         async () => {
           const keys = await resolveSupabaseKeys(keyConfig);
@@ -711,6 +852,79 @@ export { author, label, mood, n, title };
       resetPlugins();
       installPostgres(undefined);
       installSupabaseKeys(undefined);
+      await env.drop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+const GIS_URL = Deno.env.get("DENEXT_TEST_POSTGIS_URL") || undefined;
+const gisReason = !GIS_URL
+  ? "set DENEXT_TEST_POSTGIS_URL (a PostGIS server)"
+  : !SQL
+  ? "needs denext's Deno runtime (Deno.SQL)"
+  : undefined;
+
+Deno.test({
+  name: `auto-REST × supabase-js: GeoJSON on PostGIS${gisReason ? ` (skipped: ${gisReason})` : ""}`,
+  ignore: gisReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await environment(true, undefined, GIS_URL);
+    const root = await Deno.makeTempDir({ prefix: "dnx-rest-gis-" });
+    const adminUrl = new URL(GIS_URL!);
+    adminUrl.pathname = `/${env.database}`;
+    const admin = new (Deno as unknown as { SQL: new (url: string) => typeof env.admin }).SQL(
+      adminUrl.toString(),
+    );
+    try {
+      await admin.unsafe("create extension if not exists postgis");
+      await Deno.mkdir(`${root}/app`);
+      resetPlugins();
+      installPostgres(undefined);
+      const config = {
+        plugins: [backend({ postgres: { sql: env.app }, rest: {} })],
+      } as DenextConfig;
+      await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
+      await rlsReady();
+      await db.service().unsafe(`
+        create table places (id int primary key, name text, geom geometry(Point, 4326));
+        ${open("places")}
+        insert into places values (1, 'here', ST_SetSRID(ST_MakePoint(1, 2), 4326));
+      `).simple!();
+      const manifest = await scanRoutes(`${root}/app`);
+      const handler = createApp({
+        getManifest: () => manifest,
+        load,
+        matchExternal: getPluginRequestHandler(),
+      });
+      const appFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const headers = new Headers(request.headers);
+        headers.set("host", "app.test");
+        return handler(new Request(request.url, { method: request.method, headers }));
+      }) as typeof fetch;
+      // deno-lint-ignore no-explicit-any
+      const supabase: any = createClient(ORIGIN, "anon", {
+        global: { fetch: appFetch },
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const { data, error, status } = await supabase.from("places").select("id, name, geom")
+        .geojson();
+      assertEquals([status, error], [200, null]);
+      assertEquals(data, {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [1, 2] },
+          properties: { id: 1, name: "here" },
+        }],
+      });
+    } finally {
+      resetPlugins();
+      installPostgres(undefined);
+      await admin.close();
       await env.drop();
       await Deno.remove(root, { recursive: true });
     }
