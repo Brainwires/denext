@@ -43,6 +43,7 @@ const KIND_LEAD: Record<GenerateKind, string> = {
   "action": 'actions/<name>.ts — a "use server" Server Action',
   "middleware": "middleware.ts beside app/ — runs before matched routes",
   "job": "jobs/<name>.ts — a defineJob job for cron or runJob()",
+  "function": "functions/<name>/index.ts — an Edge Function (@denext/backend)",
   "test": "tests/<Name>.test.tsx — a component test using denext/testing",
   "docker": "Dockerfile + docker-compose.yml + .dockerignore",
   "migration": "migrations/<stamp>_<name>.sql (+ jobs/migrate.ts) — a node:sqlite migration",

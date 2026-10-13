@@ -16,7 +16,7 @@
       "kind": "plugin",
       "factory": "backend",
       "optionsType": "BackendOptions",
-      "configKeys": ["storage", "postgres", "realtime", "rest"]
+      "configKeys": ["storage", "postgres", "realtime", "rest", "functions"]
     }
   },
   "publish": {

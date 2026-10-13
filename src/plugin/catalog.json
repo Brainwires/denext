@@ -28,7 +28,8 @@
         "storage",
         "postgres",
         "realtime",
-        "rest"
+        "rest",
+        "functions"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -319,6 +320,86 @@
                   "authenticated",
                   "never"
                 ]
+              }
+            }
+          },
+          "functions": {
+            "description": "Edge Functions: `functions/<name>.ts` (or `functions/<name>/index.ts`) served at `/functions/v1/<name>` — what supabase-js's `functions.invoke` calls — each in a Deno Worker of its own. A module that calls `Deno.serve(handler)` or default-exports a handler runs unchanged. Callers need a valid identity unless `verifyJwt: false`. `{}` serves the directory with the defaults.",
+            "type": "object",
+            "properties": {
+              "dir": {
+                "description": "The directory holding the functions, relative to the project (default `\"functions\"`, or `\"supabase/functions\"` when only that exists). A function is `<dir>/<name>.ts` or `<dir>/<name>/index.ts`; entries starting with `_` or `.` (`_shared/`) are not functions.",
+                "type": "string"
+              },
+              "basePath": {
+                "description": "Where the functions are served, app-relative (default `\"/functions/v1\"`).",
+                "type": "string"
+              },
+              "verifyJwt": {
+                "description": "Require a valid caller for every function unless it says otherwise (default `true`).",
+                "type": "boolean"
+              },
+              "timeoutMs": {
+                "description": "The longest one request may run, in milliseconds (default 150 000, Supabase's free tier).",
+                "type": "number"
+              },
+              "maxBodyBytes": {
+                "description": "The largest request body passed to a function, in bytes (default 20 MiB).",
+                "type": "number"
+              },
+              "env": {
+                "description": "Environment variables every function reads from `Deno.env`, over the process's own.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "description": "The app's public URL, which functions read as `SUPABASE_URL` (default: the origin of the request that starts the worker, plus the app's `basePath`).",
+                "type": "string"
+              },
+              "functions": {
+                "description": "Per-function settings, by name.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "verifyJwt": {
+                      "description": "Require a valid caller (a signed-in session, or — once the Supabase-compatible keys are configured — a valid access token or API key) before the function runs. Default: the directory's `verifyJwt` (itself `true`).",
+                      "type": "boolean"
+                    },
+                    "timeoutMs": {
+                      "description": "The longest one request may run, in milliseconds (default: the directory's).",
+                      "type": "number"
+                    },
+                    "env": {
+                      "description": "Environment variables this function reads from `Deno.env`, over the process's own.",
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "permissions": {
+                      "description": "The worker's permissions (`Deno.PermissionOptions`, e.g. `{ net: true, env: true, read: false }`); by default the worker has the server's. Needs Deno's worker options: list `\"worker-options\"` in `deno.json`'s `unstable` (the plugin refuses to start otherwise — without it Deno would exit the process on the first request).",
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inherit"
+                          ]
+                        },
+                        {
+                          "enum": [
+                            "none"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      ]
+                    }
+                  }
+                }
               }
             }
           }

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Edge Functions.** `backend({ functions: {} })` serves `functions/<name>.ts` /
+  `functions/<name>/index.ts` at `/functions/v1/<name>` (supabase-js `functions.invoke`
+  compatible), each function in a Deno Worker of its own; `Deno.serve(handler)` and
+  default-exported handlers both work. JWT verification is on by default (`verifyJwt: false` per
+  function), CORS preflights reach the function, responses stream, and `denext functions list`
+  lists them.
+
 ## 0.3.0 - 2026-10-13
 
 Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

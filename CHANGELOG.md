@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
+  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
+  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
+  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
+  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
+  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
+  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
+  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
+  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
+
 ### Changed
 
 - **esbuild 0.25.5, and no `npm:esbuild`.** denext vendors esbuild's JavaScript API

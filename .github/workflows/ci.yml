@@ -245,6 +245,7 @@ jobs:
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
       DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
+      DENEXT_TEST_SUPABASE_JS: "1" # the stock @supabase/supabase-js client against the app
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
@@ -294,7 +295,8 @@ jobs:
             tests/backend-auth-integration.test.ts \
             tests/db-admin-integration.test.ts \
             tests/postgres-integration.test.ts \
-            tests/backend-s3-minio.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-s3-minio.test.ts \
+            tests/backend-supabase-functions.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

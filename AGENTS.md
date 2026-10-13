@@ -638,6 +638,10 @@ head / list / remove` from `@denext/backend/server` — inside a request `author
 session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
 Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
 chars). Docs: https://denext.dev/docs/backend
+Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
+`Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
+`/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
+session unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
 
 **A database (zero-npm, server-only module):**
 

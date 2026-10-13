@@ -734,6 +734,91 @@ second request, or write a route handler), `or` / `and` groups, upserts (`on_con
 (`/rpc/<function>` — call it with `db()` in a route handler) and CSV bodies. The routes are not
 listed in the `@denext/openapi` document.
 
+## Edge Functions
+
+`backend({ functions: {} })` serves `functions/<name>.ts` (or `functions/<name>/index.ts`) at
+`/functions/v1/<name>`: the path and request shape supabase-js's `functions.invoke` uses, so a
+Supabase function moves over unchanged. A module that calls `Deno.serve(handler)` (any of its call
+shapes) or default-exports a handler (a function, or an object with `fetch`) is a function.
+
+```ts
+// functions/hello/index.ts — `denext generate function hello` writes this
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const { name } = await req.json();
+  return Response.json({ message: `Hello ${name}!` }, { headers: corsHeaders });
+});
+```
+
+```ts
+// denext.config.ts
+backend({
+  functions: {
+    functions: { "stripe-webhook": { verifyJwt: false } }, // anyone may call this one
+  },
+});
+```
+
+```ts
+// the browser, or any client
+const { data, error } = await supabase.functions.invoke("hello", { body: { name: "denext" } });
+const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stringify({ name }) });
+```
+
+- **The request.** The function sees the request as Supabase's runtime passes it: the method, the
+  headers (`Authorization`, `apikey`, `x-region`, …) and the body, buffered (JSON, text,
+  `FormData` and binary alike; at most `maxBodyBytes`). Its URL path starts with the function's
+  name — `/functions/v1/hello/users/1?x=1` arrives as `/hello/users/1?x=1` — so a router such as
+  Hono with `basePath("/hello")` works as on Supabase.
+- **The response** streams back as the function writes it, so server-sent events work.
+- **Callers.** Like Supabase's `verify_jwt`, every function requires a valid caller by default and
+  answers `401` before it runs otherwise. Today that is a denext auth session (the page's cookie, or a
+  native app's bearer token); a cookie-carrying write from another site is refused (`403`), as for
+  Server Actions. `verifyJwt: false`, for the directory or one function, lets anyone call it. A CORS
+  preflight (`OPTIONS`) is never checked: the function answers it, as in Supabase's `corsHeaders`
+  recipe.
+- **Environment.** `Deno.env.get("SUPABASE_URL")` is the app's own URL (the origin of the request
+  that starts the worker, or `url`), and `SUPABASE_DB_URL` is `DATABASE_URL`; `env` adds variables
+  for every function or for one. The process environment is visible too.
+- **`EdgeRuntime.waitUntil(promise)`** is accepted: the worker stays up, so the work finishes.
+- **Errors** come back in Supabase's relay shape, `{ code, message }`: `404 NOT_FOUND`,
+  `401 UNAUTHORIZED`, `503 BOOT_ERROR` (the module failed to load, or exports no handler),
+  `500 WORKER_ERROR` (the handler threw), `504 WORKER_TIMEOUT` (past `timeoutMs`) and `413` for a
+  body over the cap.
+
+### Isolation
+
+Each function runs in a Deno Worker of its own, started on its first request and kept warm: its
+own globals and module graph, so a function cannot reach the app's in-memory state or another
+function's. A worker that throws outside a request is replaced on the next one. Under
+`denext dev` an edit anywhere in the functions directory restarts the workers, and a function
+added while the server runs is found on its first request. By default a worker has the server's
+permissions; `permissions` gives one its own (`{ net: true, env: true, read: false }`), which needs
+Deno's worker options: add `"unstable": ["worker-options"]` to `deno.json` (the plugin refuses to
+start without it rather than let Deno exit on the first request). Functions run from source — `denext
+build` does not bundle them — so deploy the `functions/` directory with the app, as with `jobs/`.
+
+The directory is `functions/`, or `supabase/functions/` when only that exists (a project moved from
+the Supabase CLI). Entries starting with `_` (`_shared/`) or `.` are not functions, nor are test
+files. `denext functions list` prints each function's route, file and whether it verifies the
+caller.
+
+| Option         | Default            | What it does                                                                                          |
+| -------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `dir`          | `"functions"`      | The functions directory (relative to the project).                                                    |
+| `basePath`     | `"/functions/v1"`  | Where the functions are served (app-relative; `basePath` is prepended).                               |
+| `verifyJwt`    | `true`             | Require a valid caller before a function runs.                                                        |
+| `timeoutMs`    | 150 000            | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
+| `maxBodyBytes` | 20 MiB             | The largest request body passed to a function.                                                        |
+| `env`          | `{}`               | Variables every function reads from `Deno.env`, over the process's own.                               |
+| `url`          | the request origin | The app's public URL, which functions read as `SUPABASE_URL`.                                         |
+| `functions`    | `{}`               | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
+
 ## Browse it in `denext ui`
 
 [`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
@@ -744,6 +829,7 @@ and honours `--read-only`.
 
 ## More services
 
-Storage, Postgres, row-level security, realtime from the database and auto-REST are the services in
-`@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
-[jobs](/docs/jobs) are already part of denext itself.
+Storage, Postgres, row-level security, realtime from the database, auto-REST and Edge Functions are
+the services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data
+([Live](/docs/live)), typed [route handlers](/docs/typed-api) and scheduled [jobs](/docs/jobs) are
+already part of denext itself.

@@ -56,8 +56,8 @@ export default {
 | Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                                                     |
 | Realtime: Postgres changes                          | `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server, each change re-read under the viewer's policies. [Realtime](/docs/backend#realtime-from-the-database)                                      |
 | Realtime: broadcast, presence                       | `createChannel` / `useChannel` and `usePresence` from `denext/live`. [Live](/docs/live)                                                                                                                                             |
-| Edge Functions                                      | Route handlers (`app/api/<name>/route.ts`) and validated `defineApi` handlers; Server Actions for form mutations. [Typed API](/docs/typed-api)                                                                                      |
-| `supabase.functions.invoke()`, generated types      | `createApiClient()` / `useApi()`, typed from your route handlers. [Typed API](/docs/typed-api)                                                                                                                                      |
+| Edge Functions                                      | `backend({ functions })`: `functions/<name>/index.ts` served at `/functions/v1/<name>`, each in a worker of its own, `verify_jwt` on by default. Or route handlers. [Edge Functions](/docs/backend#edge-functions)                  |
+| `supabase.functions.invoke()`, generated types      | `functions.invoke` calls `/functions/v1/<name>` as on Supabase; for route handlers, `createApiClient()` / `useApi()`. [Typed API](/docs/typed-api)                                                                                  |
 | Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                                                              |
 | `pg_cron`, scheduled functions                      | `defineJob` in `jobs/` with a cron `schedule`. [Scheduled jobs](/docs/jobs)                                                                                                                                                         |
 | `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext job migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                                                         |
@@ -211,29 +211,30 @@ changed row is re-read as the subscriber, under their policies — a subscriber 
 their `select` policies hide. See
 [Realtime from the database](/docs/backend#realtime-from-the-database).
 
-### Edge Functions → route handlers
+### Edge Functions
+
+Copy `supabase/functions/` as it is (or leave it there: the plugin reads `supabase/functions/` when
+there is no `functions/`) and turn the functions on:
 
 ```ts
-// Supabase — supabase/functions/hello/index.ts
+// denext.config.ts
+backend({ functions: { functions: { "stripe-webhook": { verifyJwt: false } } } });
+```
+
+```ts
+// supabase/functions/hello/index.ts — unchanged
 Deno.serve(async (req) => {
   const { name } = await req.json();
   return Response.json({ message: `Hello ${name}` });
 });
-// called with: supabase.functions.invoke("hello", { body: { name } })
+// still called with: supabase.functions.invoke("hello", { body: { name } })
 ```
 
-```ts
-// denext — app/api/hello/route.ts
-export async function POST(req: Request): Promise<Response> {
-  const { name } = await req.json();
-  return Response.json({ message: `Hello ${name}` });
-}
-// called with: fetch("/api/hello", { method: "POST", body: … }), or createApiClient()
-```
-
-Both are Deno and web-standard `Request` / `Response`, so most function bodies move as they are.
-A route handler runs in your app's process, with `auth()`, `db()` and `storage` available, and
-`defineApi` adds validated, typed input and errors. See [Typed API](/docs/typed-api).
+Each function runs in a Deno Worker of its own with `Deno.serve`, `EdgeRuntime.waitUntil` and
+`SUPABASE_URL` / `SUPABASE_DB_URL` as on Supabase; `verify_jwt` becomes `verifyJwt` in the config.
+See [Edge Functions](/docs/backend#edge-functions). Code that wants `auth()`, `db()` and `storage`
+directly, or typed input with `defineApi`, fits a route handler (`app/api/hello/route.ts`) better:
+it runs in the app's process. See [Typed API](/docs/typed-api).
 
 ### Your existing policies
 

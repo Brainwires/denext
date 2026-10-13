@@ -72,6 +72,8 @@ import { db, installPostgres, openPostgres, type PostgresOptions } from "./src/p
 import { createRealtimeChannel, installRealtime, RealtimeEngine } from "./src/realtime.ts";
 import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
+import { type FunctionsOptions, resolveFunctions, setupFunctions } from "./src/functions.ts";
+import { createFunctionsCommand } from "./src/functions-command.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -85,6 +87,7 @@ export type {
 export type { TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
+export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";
@@ -131,6 +134,14 @@ export interface BackendOptions {
    * `postgres`.
    */
   rest?: RestOptions;
+  /**
+   * Edge Functions: `functions/<name>.ts` (or `functions/<name>/index.ts`) served at
+   * `/functions/v1/<name>` — what supabase-js's `functions.invoke` calls — each in a Deno Worker
+   * of its own. A module that calls `Deno.serve(handler)` or default-exports a handler runs
+   * unchanged. Callers need a valid identity unless `verifyJwt: false`. `{}` serves the
+   * directory with the defaults.
+   */
+  functions?: FunctionsOptions;
 }
 
 function env(name: string): string | undefined {
@@ -179,6 +190,45 @@ function setupRealtime(
   if (missing) console.warn(`[@denext/backend] realtime is unsupported here: ${missing}`);
 }
 
+/** Open (or adopt) the Postgres client, then the services that run on it. */
+function setupPostgres(
+  ctx: PluginContext,
+  options: BackendOptions,
+  rest: ReturnType<typeof resolveRest> | undefined,
+): void {
+  const { slot, owned } = openPostgres(options.postgres!, env);
+  installPostgres(slot);
+  if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
+  if (options.realtime) setupRealtime(ctx, options.realtime, slot);
+  if (rest) setupRest(ctx, rest);
+}
+
+/** Install the storage runtime and its request handler. */
+async function setupStorage(
+  ctx: PluginContext,
+  storageOptions: StorageOptions,
+  buckets: Map<string, ResolvedBucket>,
+): Promise<void> {
+  const dev = ctx.mode === "dev";
+  const secrets = resolveSecrets(storageOptions.secret, env, dev);
+  if (dev && storageOptions.secret === undefined && !env(SECRET_ENV)) {
+    console.warn(
+      `[@denext/backend] no ${SECRET_ENV}: signed storage URLs use a random dev secret and stop working on restart`,
+    );
+  }
+  await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
+  installRuntime({
+    driver: storageOptions.driver,
+    buckets,
+    secrets,
+    basePath: (ctx.config.basePath ?? "").replace(/\/$/, ""),
+    images: ctx.config.images,
+    multipartThreshold: storageOptions.multipartThreshold ?? DEFAULT_MULTIPART_THRESHOLD,
+    partSize: Math.max(storageOptions.partSize ?? DEFAULT_PART_SIZE, MIN_PART_SIZE),
+  });
+  ctx.addRequestHandler(handleStorageRequest);
+}
+
 /**
  * Create the backend plugin. Place it in your `denext.config.ts` `plugins`.
  *
@@ -197,35 +247,16 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   }
   if (options.rest && !options.postgres) throw new TypeError("backend(): rest needs `postgres`");
   const rest = options.rest ? resolveRest(options.rest) : undefined;
+  const functions = options.functions ? resolveFunctions(options.functions) : undefined;
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
-      if (options.postgres) {
-        const { slot, owned } = openPostgres(options.postgres, env);
-        installPostgres(slot);
-        if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
-        if (options.realtime) setupRealtime(ctx, options.realtime, slot);
-        if (rest) setupRest(ctx, rest);
+      if (options.postgres) setupPostgres(ctx, options, rest);
+      if (functions) {
+        ctx.addCommand(createFunctionsCommand(functions));
+        if (ctx.mode === "dev" || ctx.mode === "prod") await setupFunctions(ctx, functions);
       }
-      if (!storageOptions || !buckets) return;
-      const dev = ctx.mode === "dev";
-      const secrets = resolveSecrets(storageOptions.secret, env, dev);
-      if (dev && storageOptions.secret === undefined && !env(SECRET_ENV)) {
-        console.warn(
-          `[@denext/backend] no ${SECRET_ENV}: signed storage URLs use a random dev secret and stop working on restart`,
-        );
-      }
-      await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
-      installRuntime({
-        driver: storageOptions.driver,
-        buckets,
-        secrets,
-        basePath: (ctx.config.basePath ?? "").replace(/\/$/, ""),
-        images: ctx.config.images,
-        multipartThreshold: storageOptions.multipartThreshold ?? DEFAULT_MULTIPART_THRESHOLD,
-        partSize: Math.max(storageOptions.partSize ?? DEFAULT_PART_SIZE, MIN_PART_SIZE),
-      });
-      ctx.addRequestHandler(handleStorageRequest);
+      if (storageOptions && buckets) await setupStorage(ctx, storageOptions, buckets);
     },
   };
 }

@@ -27,6 +27,7 @@ export const GENERATE_KINDS = [
   "action",
   "middleware",
   "job",
+  "function",
   "test",
   "docker",
   "migration",
@@ -221,6 +222,26 @@ export default defineJob({
     void payload;
     // Do the work here. Run it with \`denext job ${name}\` or runJob("${name}").
   },
+});
+`;
+}
+
+/** An Edge Function in Supabase's shape, for `backend({ functions })` from `@denext/backend`. */
+function functionSource(name: string): string {
+  return `// Edge Function: /functions/v1/${name} — call it with supabase.functions.invoke("${name}", { body })
+// or fetch(). Served by backend({ functions: {} }) from @denext/backend, in a worker of its own.
+// Callers need a valid identity unless denext.config.ts sets functions.functions["${name}"].verifyJwt
+// to false.
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const { name } = await req.json().catch(() => ({ name: "world" }));
+  return Response.json({ message: \`Hello \${name}!\` }, { headers: corsHeaders });
 });
 `;
 }
@@ -428,6 +449,17 @@ function artifactTarget(
     case "job": {
       const base = segment.replace(/\.ts$/, "") || "job";
       return { path: safeJoin(projectDir, "jobs", base + ".ts"), content: jobSource(name) };
+    }
+    case "function": {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(segment)) {
+        throw new Error(
+          `denext: function name "${name}" must be a slug (letters, digits, "-" and "_").`,
+        );
+      }
+      return {
+        path: safeJoin(projectDir, "functions", segment, "index.ts"),
+        content: functionSource(segment),
+      };
     }
     case "component":
       return {
