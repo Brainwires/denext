@@ -319,7 +319,8 @@
       "bench/REPORT.md",
       "src/mcp/docs-corpus.json",
       "tests/fixtures/capacitor8/template/",
-      "tests/fixtures/docker-stack/"
+      "tests/fixtures/docker-stack/",
+      "tests/fixtures/saml/"
     ]
   },
   "lint": {
