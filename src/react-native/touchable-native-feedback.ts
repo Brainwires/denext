@@ -11,6 +11,7 @@
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { useMemo, useRef } from "../runtime/hooks.ts";
 import { Children, cloneElement } from "../runtime/react-core.ts";
+import { setRef } from "./internal.ts";
 
 /** react-native-web's `usePressEvents(hostRef, config)`, which returns the press handlers. */
 export type UsePressEvents = (
@@ -78,12 +79,6 @@ const FORWARDED = [
   "onLayout",
   "testID",
 ] as const;
-
-/** Set a ref (a callback or an object). */
-function setRef(ref: unknown, value: unknown): void {
-  if (typeof ref === "function") ref(value);
-  else if (ref && typeof ref === "object") (ref as { current: unknown }).current = value;
-}
 
 /** The `TouchableNativeFeedback` component, with its statics. */
 export interface TouchableNativeFeedbackComponent {

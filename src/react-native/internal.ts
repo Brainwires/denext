@@ -172,3 +172,14 @@ export function watchMedia(query: string, fn: (matches: boolean) => void): () =>
   media.addListener?.(listener);
   return () => media.removeListener?.(listener);
 }
+
+/**
+ * Set a React ref, a callback or an object, to `value`.
+ *
+ * @param ref The ref (anything else is ignored).
+ * @param value The value.
+ */
+export function setRef(ref: unknown, value: unknown): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object") (ref as { current: unknown }).current = value;
+}

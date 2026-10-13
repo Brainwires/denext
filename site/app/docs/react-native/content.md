@@ -371,13 +371,39 @@ What stays out of reach of a WebView:
 ### Text inputs
 
 react-native-web's `TextInput` is an `<input>` or a `<textarea>`, which keeps two browser
-defaults a React Native text input does not have. React Native mode drops both:
+defaults a React Native text input does not have and drops several React Native props. React
+Native mode fixes both:
 
 - **No focus ring.** The input's base style is React Native's outline, 0 wide and `solid`, so the
   browser draws no ring on focus, and an app's own `outlineWidth` / `outlineColor` (or a Tailwind
   `outline-*` class) still draws one.
 - **A one-line placeholder.** A long placeholder is cut with an ellipsis instead of wrapping, so a
   `multiline` input one line tall (a text field docked above the keyboard) does not show a clipped second line.
+- **Autofill.** `autoComplete` takes React Native's values: the ones spelled differently in HTML
+  (`"password-new"`, `"sms-otp"`, `"name-given"`, `"postal-address-region"`, `"birthdate-full"`,
+  …) become the HTML `autocomplete` token, and without `autoComplete`, iOS's `textContentType`
+  (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, `"password"`, `"none"`, …) sets it. The
+  WebView's password manager and one-time-code autofill read that token.
+- **`submitBehavior`** (React Native 0.73's replacement for `blurOnSubmit`): `"blurAndSubmit"`,
+  `"submit"` (a `multiline` input submits on Enter, inserts no newline and keeps focus) and
+  `"newline"` (a single-line input treats it as `"blurAndSubmit"`, as React Native does).
+  Shift+Enter and an IME composition are never a submit.
+- **`onEndEditing`** runs with `nativeEvent.text` when the input loses focus, before `onBlur`.
+- **`cursorColor` / `selectionColor`.** The caret is `cursorColor`, else `selectionColor`; the
+  selection highlight is `selectionColor` at 40%, as the platforms tint theirs.
+
+### Component props
+
+React Native mode also wraps react-native-web's `Modal`, `Pressable`, `ScrollView` and `Text`
+for the props it drops:
+
+| Component    | Prop                                        | What it does                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Modal`      | `onRequestClose`                            | In the Android shell a visible modal takes the back button and back gesture: `onRequestClose` runs and nothing under the modal does (the screen's `BackHandler` handlers, the router), as React Native's dialog. Escape still closes it everywhere (react-native-web's) |
+| `Pressable`  | `android_ripple`                            | In the Android shell, Material's ripple from the touch point: `color` (default `rgba(0, 0, 0, 0.12)`), `radius` (default: to the farthest corner), clipped to the box and its corners unless `borderless`. iOS and a browser draw none, as React Native                 |
+| `ScrollView` | `bounces={false}`, `overScrollMode="never"` | `overscroll-behavior: none` on the scroll axis: no rubber band (iOS) or stretch (Android). On the web it also stops the scroll chaining to the page, which a React Native scroll view never does                                                                        |
+| `ScrollView` | `contentOffset`                             | The starting scroll position, applied before the first paint; a later value does not scroll                                                                                                                                                                             |
+| `Text`       | `adjustsFontSizeToFit`, `minimumFontScale`  | A `Text` whose content overflows its box (a `numberOfLines` clamp, or a fixed width / height) draws a smaller `fontSize` until it fits, down to `minimumFontScale` (never below 4 px); measured after each render and when its box resizes                              |
 
 ### Scroll snapping
 

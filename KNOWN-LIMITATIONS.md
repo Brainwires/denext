@@ -216,6 +216,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   views are stand-ins; `react-native-webview` is an `<iframe>`.
 - **`LayoutAnimation` animates positions, not sizes**, takes the next DOM change as the commit,
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
+  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size). The
+  `android_ripple` of `Pressable` is drawn in the Android shell; `TouchableNativeFeedback`'s
+  `background` ripple is not.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
