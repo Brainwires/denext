@@ -13,7 +13,7 @@ the native path.
 
 ## The `.env` tiers
 
-Every CLI verb that loads your app (`dev`, `build`, `export`, `start`, `task`,
+Every CLI verb that loads your app (`dev`, `build`, `export`, `start`, `job`,
 `doctor`, `analyze`, `profile`, `desktop`) reads these files from the project
 directory, in this order, later files overriding earlier ones:
 

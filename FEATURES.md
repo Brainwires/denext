@@ -918,8 +918,8 @@ cache uses Deno's built-in `node:sqlite`.)
   plugin-contributed verbs). Verbs: `create`/`init`
   (`--template default|minimal`), `generate` (sixteen kinds: `page`, `route`,
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-  `middleware`, `task`, `test`, `docker`, `migration` (a timestamped SQL file + a
-  `node:sqlite` runner task), `seed`, `ci` (a GitHub Actions workflow); the engine takes
+  `middleware`, `job`, `test`, `docker`, `migration` (a timestamped SQL file + a
+  `node:sqlite` runner job), `seed`, `ci` (a GitHub Actions workflow); the engine takes
   `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
   `routes` (the app's pages and API routes with methods, params and files, as a table or

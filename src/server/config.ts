@@ -556,7 +556,7 @@ export interface JobsConfig {
    * Runs kept per job before the oldest are dropped (default 500).
    *
    * Per job rather than overall, so a job running every minute cannot evict a daily job's
-   * history. A task running more often than roughly every 20 minutes fills this inside a week,
+   * history. A job running more often than roughly every 20 minutes fills this inside a week,
    * so raise it for such a job if its counts should cover the whole window.
    *
    * @minimum 1

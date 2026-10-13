@@ -1,5 +1,5 @@
 // The request-serving parts of denext.config: routing, images, security headers (CSP, HSTS,
-// CORS, app links), the production-server knobs, the API batch, caches and task history.
+// CORS, app links), the production-server knobs, the API batch, caches and job history.
 
 import { type DenextConfig, isHeaderName, isOrigin } from "../config.ts";
 import { resolveCors } from "../cors.ts";

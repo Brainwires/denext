@@ -57,7 +57,7 @@ const COMPLETE_GRACE = 3600;
 type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
 
 /**
- * The request being served, or `null` outside any request (a task, a script, module load).
+ * The request being served, or `null` outside any request (a job, a script, module load).
  *
  * @returns The current request.
  */
@@ -68,7 +68,7 @@ function currentRequest(): Request | null {
 /**
  * Enforce `authorize` for one operation. A service handle is never checked; a public bucket's
  * downloads are open; inside a request `authorize` must return `true` (absent → denied). Outside
- * any request (a task, a script, module load) there is no session to authorize, so the operation
+ * any request (a job, a script, module load) there is no session to authorize, so the operation
  * is refused: such code uses `storage.bucket(name, { service: true })`, knowingly.
  *
  * @param bucket The bucket's rules.
@@ -90,7 +90,7 @@ async function authorizeOp(
     throw new StorageError(
       "forbidden",
       `${op} on ${bucket.name}/${key} outside a request has no session to authorize: ` +
-        `use storage.bucket(${JSON.stringify(bucket.name)}, { service: true }) in a task or script`,
+        `use storage.bucket(${JSON.stringify(bucket.name)}, { service: true }) in a job or script`,
     );
   }
   const allowed = bucket.authorize

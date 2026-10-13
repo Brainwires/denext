@@ -421,13 +421,13 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
   subscriptions. Resource caps in `LiveLimits` always apply. See
   [Live components](/docs/live).
 
-## Tasks
+## Jobs
 
 - **`scheduledJobs`** — `Record<string, string | string[]>`. Cron expression →
   the job name(s) it runs, merged with each job's own `schedule:`. Five-field
   Vixie cron in **UTC**, weekdays POSIX (`0–6`, `0` = Sunday); denext translates
   the weekday field into names for `Deno.cron`, which numbers days differently.
-  A malformed expression or an unknown task is skipped at boot with an error.
+  A malformed expression or an unknown job is skipped at boot with an error.
   See [Scheduled jobs](/docs/jobs#cron-syntax).
 - **`jobs`** — `JobsConfig`. Run history. `history: true` records every run —
   scheduled, `runJob`, and `denext job <name>` — to `.denext/jobs.db`

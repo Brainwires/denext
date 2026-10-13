@@ -34,7 +34,7 @@ export interface RlsOptions {
   claims?: (session: AuthSession) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
-/** A user to act as, for `db({ as: user })` outside a request (a task, a script). */
+/** A user to act as, for `db({ as: user })` outside a request (a job, a script). */
 export interface DbUser {
   /** The user id — `auth.uid()` in SQL (a UUID there, as in Supabase). */
   id: string;

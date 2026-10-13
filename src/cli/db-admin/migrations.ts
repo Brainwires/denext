@@ -1,5 +1,5 @@
 // The app's own SQL migrations — `migrations/*.sql`, the directory `denext generate migration`
-// writes and `tasks/migrate.ts` applies, tracked in `_migrations` — through denext's runner
+// writes and `jobs/migrate.ts` applies, tracked in `_migrations` — through denext's runner
 // (`migratePostgres` / `postgresMigrationStatus`). Applying hands the runner a guarded client, so
 // each migration's transaction carries a statement timeout like every other query here.
 

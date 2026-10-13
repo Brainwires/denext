@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- denext 4.0 calls background and scheduled work jobs: the docs, and the error a storage call
+  outside a request gets without `{ service: true }`, say "job" where they said "task".
+
 ## 0.2.1 - 2026-10-12
 
 Requires `@denext/denext` 3.4.16 or later.

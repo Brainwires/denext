@@ -123,7 +123,7 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 
 - **`authorize`** decides every operation (`upload`, `download`, `delete`, `list`) made inside a
   request, with `auth()`'s session; without one, everything but a public bucket's downloads is
-  denied. Outside a request (tasks, scripts) there is no session, so only a service handle
+  denied. Outside a request (jobs, scripts) there is no session, so only a service handle
   (`storage.bucket(name, { service: true })`) or a public bucket's download works.
 - **Size, type and content**: `maxBytes` and the `mime` allow-list are checked when an upload is
   signed and again on the bytes; a declared image must start with that format's magic bytes.

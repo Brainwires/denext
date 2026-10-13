@@ -24,7 +24,7 @@ Four pillars, in order:
    strategy (SSR, static export, Partial Prerendering with Cache Components, Astro-style islands,
    Qwik-style resumability); Live Server Components and typed server push; an end-to-end typed API
    that also serves OpenAPI and GraphQL; first-party auth; Deno's built-in SQLite, KV, Postgres,
-   Drizzle and Prisma; `use cache`; cron tasks; typed content collections; a plugin seam for the
+   Drizzle and Prisma; `use cache`; cron jobs; typed content collections; a plugin seam for the
    rest. They sit behind the conventions developers already know, and they are **secure by
    default**: a strict hash-based CSP, CSRF-defended Server Actions, signed `httpOnly` cookies,
    SSRF-safe fetch and image optimization, and Deno's permission sandbox around the runtime.

@@ -287,7 +287,12 @@ jobs:
         is the conformance gate (every route rendered, a well-formed document asserted) and{" "}
         <code>denext audit --strict</code> fails the build if runtime source imports npm — see{" "}
         <a href="/docs/doctor-audit">Doctor &amp; audit</a>. Add <code>--coverage</code>{" "}
-        to the test step and <code>deno coverage</code> after it for a report.
+        to the test step and <code>deno coverage</code> after it for a report. A plain{" "}
+        <code>deno task</code> runs the <code>deno test</code>{" "}
+        inside it on stock Deno; tests that use the toolchain&apos;s Vitest/Jest compatibility or
+        {" "}
+        <code>Deno.SQL</code> run with <code>denext task check</code> instead (see{" "}
+        <a href="/docs/toolchain">the toolchain</a>).
       </p>
 
       <h2 id="browser-tests">Browser tests with astral</h2>

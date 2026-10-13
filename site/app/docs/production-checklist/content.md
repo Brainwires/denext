@@ -89,7 +89,7 @@ Each line: what to set → where it is documented. Config keys go in
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use
   `VACUUM INTO` from a job. The cache is disposable; the others are not. →
   [Databases](/docs/database)
-- Deno Deploy has **no persistent disk**: the cache is per-isolate memory, task
+- Deno Deploy has **no persistent disk**: the cache is per-isolate memory, job
   history is a fragment that resets, and a SQLite file does not survive. Inject
   a shared `CacheStore` / `SessionStore` / `AuthAdapter` there. →
   [Multi-instance](/docs/multi-instance)
@@ -188,7 +188,7 @@ Each line: what to set → where it is documented. Config keys go in
 - If you run more than one replica: a shared `cache.store`, a shared auth
   `sessionStore` / `adapter`, a shared `rateLimit.store`, a `ChannelTransport`
   for Live, and **one** designated instance (or `Deno.cron`) for scheduled
-  tasks. Every item is a per-node component by default. →
+  jobs. Every item is a per-node component by default. →
   [Multi-instance](/docs/multi-instance)
 
 ## Copy-paste

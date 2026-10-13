@@ -255,7 +255,7 @@ for a single user's own updates and not for anything shared between users. See
 
 ## Scheduled jobs: one runner, not one per replica
 
-The userland scheduler is a minute tick inside every process that has tasks.
+The userland scheduler is a minute tick inside every process that has jobs.
 There is **no leader election**: three replicas each run `0 3 * * *` at 03:00
 UTC, and the overlap guard (a job never runs concurrently with _itself_) is per
 process. Pick one of:
@@ -266,7 +266,7 @@ process. Pick one of:
 
   ```ts
   // denext.config.ts
-  const runner = Deno.env.get("TASK_RUNNER") === "1";
+  const runner = Deno.env.get("JOB_RUNNER") === "1";
   export default {
     scheduledJobs: runner ? { "0 3 * * *": "cleanup" } : {},
   };
@@ -274,7 +274,7 @@ process. Pick one of:
 
   A job's own `schedule` in `defineJob` counts too; keep schedules in the
   config so the gate covers all of them.
-- **A separate process** for tasks: a worker with no web traffic that runs the
+- **A separate process** for jobs: a worker with no web traffic that runs the
   same build with the schedules, or system cron / a Kubernetes `CronJob` calling
   `denext job <name>` on demand.
 - **`Deno.cron`** on Deno Deploy (or a self-host started with

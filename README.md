@@ -208,7 +208,7 @@ S3, R2, MinIO or the filesystem (buckets with per-bucket rules, signed URLs, ima
 Postgres scoped by Supabase-compatible row-level security (`db()` runs each query as the request's
 user), realtime changes from your tables (`useTableChanges`), and a PostgREST-style REST API with a
 typed `from()` client. Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
-stores for auth, sessions, rate limits, the cache and task history, and SQL migrations; `denext ui`
+stores for auth, sessions, rate limits, the cache and job history, and SQL migrations; `denext ui`
 browses the database. → [Backend](https://denext.dev/docs/backend) ·
 [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
 
@@ -231,7 +231,7 @@ content collections, the backend and an Effect bridge. A project adds its own CL
 ## Developer experience
 
 One CLI covers the lifecycle: `dev` with per-module HMR and Fast Refresh, `build`, `export`,
-`start`, `generate` (routes, components, actions, tasks, tests, Docker), `test`, `lint`, `fmt`,
+`start`, `generate` (routes, components, actions, jobs, tests, Docker), `test`, `lint`, `fmt`,
 `check`, `add`, `plugin`, `patch` (patch-package for npm dependencies and for denext itself),
 `desktop`, `mobile`, `ota` and `completions`. A dev-time overlay reports server errors and type
 errors; the DevTools panel shows the live component tree and why a component re-rendered.

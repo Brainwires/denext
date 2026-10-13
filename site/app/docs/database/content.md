@@ -345,7 +345,7 @@ Verified against this runner: a second run is a no-op, a file with a syntax
 error is rolled back as a unit (the tables it created before the bad statement
 are gone) and the run exits `1`, and the job's returned line lands in the run
 history when `jobs: { history: true }` is on. Use it from a deploy step
-(`deno run -A jsr:@denext/denext@^3/cli task migrate` before `start`), a
+(`deno run -A jsr:@denext/denext@^3/cli job migrate` before `start`), a
 Kubernetes init container or a `preStart` hook — and keep the schema step out of
 the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the
@@ -376,7 +376,7 @@ denext job migrate --payload '{"status":true}'  # applied / pending / changed / 
 The same calls work from your own code: `migratePostgres(sql, { dir, dryRun })` and
 `postgresMigrationStatus(sql, { dir })` from `denext/server` (`migrations: [{ name, sql }]`
 works instead of a directory). A file edited after it was applied is reported as `changed` by
-the status, never re-run. On stock Deno, swap `postgresClient(url)` in the generated task for
+the status, never re-run. On stock Deno, swap `postgresClient(url)` in the generated job for
 `fromPostgresJs(postgres(url))`. A Prisma or Drizzle project keeps its own tool.
 
 ### Drizzle: `drizzle-kit generate` + `migrate()` (verified)

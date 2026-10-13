@@ -1101,7 +1101,7 @@ const VIEW_LEAD: Readonly<Record<string, string>> = {
   "/config/rendering": "Rendering mode, streaming, SPA, images, Tailwind, MDX, Live and cache.",
   "/config/security": "CSP, HSTS, the public env allowlist, and the API body and batch limits.",
   "/config/advanced": "Feature flags, compatibility, plugins, project verbs, the raw file.",
-  "/config/cron": "Scheduled tasks, their expressions, and the run history.",
+  "/config/cron": "Scheduled jobs, their expressions, and the run history.",
 };
 
 /**
