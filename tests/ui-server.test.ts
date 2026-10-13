@@ -430,6 +430,9 @@ Deno.test("the UI module graph never reaches the bundler or npm", async () => {
   };
   const forbidden = graph.modules
     .map((m) => m.specifier)
+    // `src/build/esbuild/version.ts` is one string constant (the toolchain's status checks its
+    // esbuild against it), not the bundler.
+    .filter((s) => !s.endsWith("/src/build/esbuild/version.ts"))
     .filter((s) => /esbuild|dev-server\/manifest|dev-unbundled|^npm:/.test(s));
   assertEquals(
     forbidden,

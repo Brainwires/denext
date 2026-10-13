@@ -76,6 +76,8 @@ on:
       - "src/build/png-raster.ts"
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
+      # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
+      - "src/build/esbuild/**"
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
