@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.0.0-rc.1] - 2026-10-13
+
 ### Breaking (4.0)
 
 - **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
@@ -13650,7 +13652,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.4.16...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.1...development
+[4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
 [3.4.16]: https://jsr.io/@denext/denext@3.4.16
 [3.4.15]: https://jsr.io/@denext/denext@3.4.15
 [3.4.14]: https://jsr.io/@denext/denext@3.4.14
