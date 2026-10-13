@@ -85,6 +85,19 @@ and this project adheres to
   or unique-local socket peer, counted by its own address, instead of skipping it. Both default to
   today's behaviour and are validated at boot.
 
+- **React Native mode: `TextInput` takes the props react-native-web drops.** `autoComplete`'s
+  React Native values (`"password-new"`, `"sms-otp"`, `"name-given"`, …) and iOS's
+  `textContentType` (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, …) become the HTML
+  `autocomplete` token password managers and one-time-code autofill read; `submitBehavior`
+  (`"submit"` on a `multiline` input submits on Enter without blurring); `onEndEditing`;
+  `cursorColor` / `selectionColor` tint the caret and the selection highlight.
+- **React Native mode: `Modal`, `Pressable`, `ScrollView` and `Text` take more React Native
+  props.** In the Android shell a visible `Modal` takes the back button and back gesture and calls
+  `onRequestClose` (nothing under it runs), and `Pressable`'s `android_ripple` draws Material's
+  ripple from the touch point; `ScrollView`'s `bounces={false}` / `overScrollMode="never"` turn the
+  overscroll effect off and `contentOffset` sets the starting position; `Text`'s
+  `adjustsFontSizeToFit` / `minimumFontScale` shrink an overflowing text until it fits.
+
 ### Changed
 
 - **`rateLimit()` follows the app's `trustForwardedHeaders`.** Without its own
@@ -111,6 +124,27 @@ and this project adheres to
 
 - The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
   (`2.9.7-denext.N` is Deno 2.9.7).
+- **Per-address limits key on the same client through a basePath, a config rewrite and a custom
+  middleware runner's rewrite.** The request rebuilt for the new URL lost the recorded socket peer, so
+  `rateLimit()`'s default key put every client of such a route in one `unknown` bucket and
+  `clientIp()` answered `undefined` there.
+- **`ipBucket()` (every per-address limit) buckets a NAT64 address (`64:ff9b::/96`) and an
+  IPv4-compatible one (`::198.51.100.7`) by the IPv4 address it carries**, as it already did for
+  an IPv4-mapped one, instead of putting every such client in one shared `/64`.
+
+### Security
+
+- **A typed-API batch item and a server-side typed-API self-call keep the client's
+  `rateLimitHeader` address.** The sub-request copied only an allowlist of the parent's headers,
+  so with `rateLimitHeader` set behind a loopback proxy each item had no address to limit on and
+  `rateLimit()` skipped it: the batch endpoint bypassed every per-route limit. The header the app
+  names is now inherited from the parent (a caller's extra header cannot replace it).
+- **Behaviour note for direct LAN / VPN deployments:** since the change above that aligns the
+  `denextAuth` per-IP budgets with the limit-address rule, those budgets (sign-in start, session
+  read, the IP-wide buckets) are skipped for ANY untrusted loopback/private socket peer, not only
+  one that sends `x-forwarded-for`. Where those peers are the real clients, set
+  `rateLimitLocalAddresses: true` to budget each by its own address. The credentials limiter's
+  per-identifier key applies either way.
 
 ## [3.4.16] - 2026-10-12
 
