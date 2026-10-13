@@ -89,23 +89,26 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
   const name = basename(opts.dir) || "my-app";
   return `# ${name}
 
-A [denext](https://denext.dev) app — write it once, ship it to the web, iOS, Android and the desktop.
+A [denext](https://denext.dev) app — write it once, ship it to the web, iOS,
+Android and the desktop.
 
 ## Tasks
 
-| Command            | What it does                                                        |
-| ------------------ | ------------------------------------------------------------------- |
-| \`deno task dev\`   | Dev server with per-module HMR at http://localhost:3000             |
-| \`deno task build\` | Production build into \`.denext/\`                                    |
-| \`deno task start\` | Serve the production build (least-privilege permissions)            |
-| \`deno task test\`  | Run the tests on denext's Deno toolchain (Vitest/Jest compat)        |
+| Command             | What it does                                                  |
+| ------------------- | ------------------------------------------------------------- |
+| \`denext task dev\`   | Dev server with per-module HMR at http://localhost:3000       |
+| \`denext task build\` | Production build into \`.denext/\`                              |
+| \`denext task start\` | Serve the production build (least-privilege permissions)      |
+| \`denext task test\`  | Run the tests on denext's Deno toolchain (Vitest/Jest compat) |
 ${
     opts.desktop || opts.capacitor
-      ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
+      ? "| `denext task export` | Static export into `out/` (the native shells ship this) |\n"
       : ""
   }${opts.fallow ? FALLOW_README_ROWS : ""}${opts.mcp ? MCP_README_ROWS : ""}
-The first \`dev\`/\`build\` downloads the framework from JSR (a few seconds); later runs
-are cached.
+\`denext task\` runs a task on denext's own Deno toolchain, so the
+[\`denext\` command](https://denext.dev/docs/getting-started) is all you need. With Deno
+installed, \`deno task <name>\` runs the same task. The first \`dev\`/\`build\` downloads the
+framework from JSR (a few seconds); later runs are cached.
 
 ## Where things live
 
@@ -140,8 +143,8 @@ ${
 
 /** The README task rows `--fallow` adds. */
 const FALLOW_README_ROWS =
-  "| `deno task fallow:audit` | fallow's changed-code gate (dead code, duplication, complexity) |\n" +
-  "| `deno task hooks:install` | Run that gate before every `git commit` (`.githooks/pre-commit`) |\n";
+  "| `denext task fallow:audit` | fallow's changed-code gate (dead code, duplication, complexity) |\n" +
+  "| `denext task hooks:install` | Run that gate before every `git commit` (`.githooks/pre-commit`) |\n";
 
 /** A generated file: repo-relative path + contents. */
 export interface ScaffoldFile {

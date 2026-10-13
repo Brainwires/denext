@@ -121,8 +121,9 @@ async function runCreate(
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = featureNotes(on);
   console.log(
-    `\n  Done. Next steps:\n${cd}    deno task dev\n` +
-      `\n  (The first run downloads the framework from JSR — a few seconds; later runs are cached.)\n` +
+    `\n  Done. Next steps:\n${cd}    denext task dev\n` +
+      `\n  (\`deno task dev\` does the same with Deno installed. The first run downloads the framework\n` +
+      `  from JSR — a few seconds; later runs are cached.)\n` +
       (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
   );
 }
@@ -177,16 +178,16 @@ function selectFeatures(ctx: CommandContext): Set<string> {
 function featureNotes(on: (key: string) => boolean): string[] {
   return [
     on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
-    on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9.7 for `deno desktop`)." : "",
+    on("desktop") ? "  Desktop: `denext task desktop`." : "",
     on("capacitor")
-      ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio).\n" +
-        "  Over-the-air UI updates: after `cap add ios|android`, `deno task mobile:add-ota`."
+      ? "  Mobile: `denext install`, then `denext task mobile:sync` (needs Xcode/Android Studio).\n" +
+        "  Over-the-air UI updates: after `cap add ios|android`, `denext task mobile:add-ota`."
       : "",
     on("compatibility")
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
       : "",
     on("fallow")
-      ? "  fallow: `deno task fallow:audit` runs the gate; `git init`, then `deno task hooks:install`\n" +
+      ? "  fallow: `denext task fallow:audit` runs the gate; `git init`, then `denext task hooks:install`\n" +
         "  runs it before every commit (AGENTS.md tells coding agents the same)."
       : "",
     on("mcp")

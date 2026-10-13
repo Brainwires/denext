@@ -139,3 +139,38 @@ jobs:
 
       - name: Timer stress (10 seeded runs)
         run: deno task test:stress --runs 10
+
+  # A machine with NO Deno, made to work by the `denext` executable alone: this checkout's binary
+  # is compiled on the runner, then installed by scripts/install.sh (DENEXT_ARTIFACTS — the local
+  # build, checksum-verified) inside a clean Debian container that has never had Deno. There it
+  # scaffolds an app and runs `denext task dev`, `denext build` + `start`, `test`, `fmt`, `lint`
+  # and `denext task build` with no `deno` anywhere (the installer's link opted out), checks the
+  # one refusal when there is no toolchain either, then that the installer's default links `deno`
+  # to the toolchain. The steps are scripts/ci/no-deno-e2e.sh.
+  no-deno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+
+      - name: Set up Deno (to compile the binary only; the container has none)
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # match ci.yml
+
+      - name: Build the denext binary as a local release
+        run: |
+          set -eu
+          mkdir -p dist/no-deno
+          deno compile -A --output dist/denext cli.ts
+          tar czf dist/no-deno/denext-x86_64-unknown-linux-gnu.tar.gz -C dist denext
+          (cd dist/no-deno && sha256sum denext-x86_64-unknown-linux-gnu.tar.gz > SHA256SUMS)
+          cp scripts/install.sh scripts/ci/no-deno-e2e.sh dist/no-deno/
+
+      - name: Install and run an app in a container with no Deno
+        run: |
+          docker run --rm -v "$PWD/dist/no-deno:/art:ro" debian:bookworm-slim sh -c '
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates procps >/dev/null &&
+            sh /art/no-deno-e2e.sh'

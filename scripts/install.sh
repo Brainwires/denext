@@ -5,12 +5,24 @@
 #
 # The binary is a CLI, not a second copy of the framework: inside a project it defers to the
 # denext version that project pins, so `denext build` builds exactly what `deno task build`
-# would. You do not need it — `deno run -A jsr:@denext/denext/cli <verb>` does the same thing.
+# would. It is all you need — Deno itself is not: after installing the binary the script runs
+# `denext toolchain install`, which downloads denext's own Deno build (SHA-256-verified) into
+# Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` …).
+# When no `deno` is on your PATH it also runs `denext toolchain link`, so `deno` is that toolchain
+# (a link at ~/.denext/bin/deno); an existing `deno` is never replaced or shadowed. Either
+# step failing (offline, say) is one warning, not a failed install: the binary downloads the
+# toolchain on first need instead.
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin/`); default: ~/.denext
 #   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
+#   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
+#                    downloads on the first command that needs it
+#   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your PATH)
+#   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.tar.gz` and
+#                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub — for
+#                    testing a build; the checksum is still required and checked
 #   GITHUB_TOKEN / GH_TOKEN  sent (as a Bearer header, to api.github.com only) for the latest-
 #                    version lookup, whose unauthenticated limit is 60 requests an hour per IP.
 #                    Without one, or when the API refuses, the version comes from the
@@ -45,6 +57,16 @@ target() {
   esac
 }
 
+# One release file ($1, by name) into $2: from DENEXT_ARTIFACTS when it is set, else downloaded
+# from the release. Fails when the file is not there.
+release_file() {
+  if [ -n "${DENEXT_ARTIFACTS:-}" ]; then
+    [ -f "$DENEXT_ARTIFACTS/$1" ] && cp "$DENEXT_ARTIFACTS/$1" "$2"
+  else
+    fetch "https://github.com/$REPO/releases/download/$VERSION/$1" -o "$2"
+  fi
+}
+
 # The SHA-256 of a file, with whichever tool this machine has.
 digest() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -58,15 +80,14 @@ digest() {
 # every platform), else the per-archive `$ASSET.sha256` beside it — both written by
 # .github/workflows/publish.yml. Prints the hex digest, or nothing when neither can be fetched.
 published_digest() {
-  base="https://github.com/$REPO/releases/download/$VERSION"
-  if fetch "$base/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
+  if release_file SHA256SUMS "$TMP/SHA256SUMS" 2>/dev/null; then
     line="$(grep " $ASSET\$" "$TMP/SHA256SUMS" 2>/dev/null | head -1 || true)"
     if [ -n "$line" ]; then
       echo "$line" | cut -d' ' -f1
       return 0
     fi
   fi
-  if fetch "$base/$ASSET.sha256" -o "$TMP/$ASSET.sha256" 2>/dev/null; then
+  if release_file "$ASSET.sha256" "$TMP/$ASSET.sha256" 2>/dev/null; then
     cut -d' ' -f1 <"$TMP/$ASSET.sha256"
   fi
 }
@@ -102,7 +123,9 @@ main() {
   TARGET="$(target)"
 
   VERSION="${DENEXT_VERSION:-}"
-  if [ -z "$VERSION" ]; then
+  if [ -z "$VERSION" ] && [ -n "${DENEXT_ARTIFACTS:-}" ]; then
+    VERSION="local"
+  elif [ -z "$VERSION" ]; then
     # `releases/latest` is the newest NON-prerelease: an rc tag is published as a prerelease and
     # never becomes "latest", so this resolves a stable version unless one is asked for.
     VERSION="$(latest_tag)"
@@ -113,12 +136,18 @@ main() {
   }
 
   ASSET="denext-$TARGET.tar.gz"
-  URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
 
-  echo "denext: downloading $VERSION for $TARGET"
-  fetch "$URL" -o "$TMP/$ASSET"
+  if [ -n "${DENEXT_ARTIFACTS:-}" ]; then
+    echo "denext: installing $ASSET from $DENEXT_ARTIFACTS"
+  else
+    echo "denext: downloading $VERSION for $TARGET"
+  fi
+  release_file "$ASSET" "$TMP/$ASSET" || {
+    echo "denext: could not get $ASSET (${DENEXT_ARTIFACTS:-release $VERSION})." >&2
+    exit 1
+  }
 
   # A binary that will run with the user's permissions is never installed unverified. A missing
   # checksum is as fatal as a wrong one — an attacker who can swap the archive can drop the
@@ -165,12 +194,30 @@ main() {
       ;;
   esac
 
-  # The binary is only the CLI: `dev`, `build`, `start` and every other verb that loads a
-  # project's modules run them in a `deno` child, so without Deno those verbs cannot work.
-  if ! command -v deno >/dev/null 2>&1; then
-    echo >&2
-    echo "denext: warning — \`deno\` is not on your PATH. The binary needs it for every verb that" >&2
-    echo "  loads a project (dev, build, start, …): https://deno.com/ → \`curl -fsSL https://deno.land/install.sh | sh\`" >&2
+  install_toolchain "$BIN_DIR/denext"
+}
+
+# Install denext's Deno toolchain through the new binary, and — when this machine has no `deno`
+# — link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the
+# toolchain on the first command that needs it. An existing `deno` is never replaced: the link
+# is made only when PATH has none, and `toolchain link` itself refuses to overwrite a file it
+# did not create.
+install_toolchain() {
+  [ "${DENEXT_NO_TOOLCHAIN:-}" = "1" ] && return 0
+  echo "denext: installing denext's Deno toolchain"
+  if ! "$1" toolchain install; then
+    echo "denext: warning — the Deno toolchain could not be installed now; it downloads on the" >&2
+    echo "  first command that needs it (or run \`denext toolchain install\`)." >&2
+    return 0
+  fi
+  if command -v deno >/dev/null 2>&1; then
+    echo "denext: keeping your deno ($(command -v deno)); denext runs its own toolchain anyway"
+    return 0
+  fi
+  [ "${DENEXT_NO_DENO_LINK:-}" = "1" ] && return 0
+  if ! "$1" toolchain link; then
+    echo "denext: warning — could not link \`deno\` to the toolchain (\`denext deno …\` still" >&2
+    echo "  runs it)." >&2
   fi
 }
 
