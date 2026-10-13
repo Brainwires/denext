@@ -29,7 +29,7 @@ import {
 } from "@luca/esbuild-deno-loader";
 import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 const WINDOWS = Deno.build.os === "windows";
 

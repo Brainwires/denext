@@ -9,7 +9,7 @@
 // SPA follow-up (`.ts` hook modules are instrumented; the production plugin is unchanged).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../src/build/esbuild/mod.ts";
 import { join, toFileUrl } from "@std/path";
 import { generateRouteEntry } from "../src/build/bundle.ts";
 import { routeDevMeta } from "../src/build/dev-server/route-meta.ts";

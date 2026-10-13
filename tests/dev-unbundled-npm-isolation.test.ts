@@ -4,7 +4,7 @@
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { createUnbundledState, depSlug } from "../src/build/dev-unbundled/state.ts";
 import { npmBuildIsolated, npmErrorModule } from "../src/build/dev-unbundled/deps.ts";
 

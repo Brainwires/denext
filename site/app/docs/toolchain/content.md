@@ -111,6 +111,31 @@ it is all it does.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
+## esbuild
+
+denext's bundling (the SPA and compatibility builds, dev's dependency pre-bundle, `analyze`,
+plugins) runs esbuild 0.25.5 through a copy of esbuild's own JavaScript API that denext vendors, so
+there is no `npm:esbuild` import. The binary it starts is, in order:
+
+1. `ESBUILD_BINARY_PATH`, when you set it. It must report `0.25.5`; any other version is refused
+   by name.
+2. The `esbuild` the toolchain ships beside `deno` (2.9.7-denext.17 and later). Each toolchain zip
+   carries `esbuild` (`esbuild.exe` on Windows) and its `esbuild.LICENSE`; the pin records its
+   version and SHA-256, the install extracts it from the already-verified zip, checks that hash,
+   and records it in the stamp. Later runs re-hash it whenever its size or modification time
+   changed.
+3. Otherwise — `DENEXT_DENO=stock`, plain stock Deno, a toolchain from before denext.17, or a
+   process that hasn't installed the toolchain — the official `@esbuild/<platform>` 0.25.5 npm
+   package's binary, cached in `<DENO_DIR>/denext-esbuild/`. It is copied from Deno's npm cache
+   when a copy there hashes to the pin, and otherwise downloaded from the registry
+   (`NPM_CONFIG_REGISTRY`, default `registry.npmjs.org`) with the tarball checked against its
+   pinned npm integrity and the binary against its pinned SHA-256 before it is made executable.
+
+A toolchain esbuild that does not match its pin (or is missing from the zip) is never installed:
+builds use the npm one and print one warning saying why. `denext toolchain status` shows which
+esbuild the next build runs and where it comes from. An idle esbuild process never keeps a command
+alive.
+
 ## `denext task`, `deno task` and tests
 
 `denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
@@ -167,7 +192,7 @@ Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
 
 ```sh
 denext toolchain install       # download + verify now (fails when it can't)
-denext toolchain status        # pinned version, cache state, whether this run is on it (--json, --verify)
+denext toolchain status        # pinned version, cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created

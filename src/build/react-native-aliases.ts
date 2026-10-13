@@ -22,7 +22,7 @@
 // `reactNative: { aliases: { "<package>": false } }` resolves that package normally again.
 
 import { dirname, join, toFileUrl } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import {
   COMMUNITY_ALIASES,

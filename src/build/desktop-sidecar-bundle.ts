@@ -17,7 +17,7 @@
 // Loaded only while packaging (`desktopIncludeArgs` imports it dynamically): esbuild must never be
 // compiled into the app.
 
-import * as esbuild from "esbuild";
+import * as esbuild from "./esbuild/mod.ts";
 import { builtinModules } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import {

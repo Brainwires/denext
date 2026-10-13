@@ -7,7 +7,7 @@
 // Each build (and each rebuild of the bundled dev loop) scans the directory again.
 
 import { join, relative } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 /** The esbuild namespace of the generated context module. */
 const CTX_NAMESPACE = "denext-expo-router-ctx";

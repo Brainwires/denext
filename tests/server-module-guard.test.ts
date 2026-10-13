@@ -5,7 +5,7 @@
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { serverStubPlugin } from "../src/build/next-compat.ts";
 import {
   findShippedServerModules,

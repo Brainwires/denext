@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   aliasRedirects,
   chooseVariant,

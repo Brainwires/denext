@@ -196,7 +196,7 @@ Deno.test({
   sanitizeResources: false,
 }, async () => {
   const { nodeModulesFileUrlPlugin } = await import("../src/build/next-compat.ts");
-  const esbuild = await import("esbuild");
+  const esbuild = await import("../src/build/esbuild/mod.ts");
   const { join, toFileUrl } = await import("@std/path");
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_nm_island_" }));
   try {
@@ -236,7 +236,7 @@ Deno.test({
   sanitizeResources: false,
 }, async () => {
   const { nodeGlobalsShimPath } = await import("../src/build/next-compat.ts");
-  const esbuild = await import("esbuild");
+  const esbuild = await import("../src/build/esbuild/mod.ts");
   const { join, toFileUrl } = await import("@std/path");
   const dir = await Deno.makeTempDir({ prefix: "denext_node_globals_" });
   try {
@@ -292,7 +292,7 @@ Deno.test({
   sanitizeResources: false,
 }, async () => {
   const { browserProcessShimPath } = await import("../src/build/next-compat.ts");
-  const esbuild = await import("esbuild");
+  const esbuild = await import("../src/build/esbuild/mod.ts");
   const { join, toFileUrl } = await import("@std/path");
   const dir = await Deno.makeTempDir({ prefix: "denext_browser_process_" });
   try {
@@ -334,7 +334,7 @@ Deno.test({
   sanitizeResources: false,
 }, async () => {
   const { cacheDirectivePlugin } = await import("../src/build/next-compat.ts");
-  const esbuild = await import("esbuild");
+  const esbuild = await import("../src/build/esbuild/mod.ts");
   const { join } = await import("@std/path");
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_use_cache_plugin_" }));
   try {
@@ -402,7 +402,7 @@ Deno.test({
     const out = await Deno.readTextFile(join(dir, "out", "app.js"));
     assertStringIncludes(out, `from "${runtime}"`, "framework URL kept as an external import");
   } finally {
-    const esbuild = await import("esbuild");
+    const esbuild = await import("../src/build/esbuild/mod.ts");
     await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
   }
@@ -499,7 +499,7 @@ Deno.test({
     assertStringIncludes(await Deno.readTextFile(cssFile), "blue");
     await Deno.stat(join(clientDir, server[0].slice("/_denext/client/".length)));
   } finally {
-    const esbuild = await import("esbuild");
+    const esbuild = await import("../src/build/esbuild/mod.ts");
     await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
   }

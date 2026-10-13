@@ -616,7 +616,8 @@ Deno.test("migrate --denext-local-path: denext's own deps never override the app
     assertEquals(imports.effect, undefined, "the app's effect is not mapped to denext's");
     assertEquals(imports.jsqr, undefined, "a dep denext's runtime source never imports");
     assertStringIncludes(imports["@std/path"], "jsr:@std/path", "one denext's source does");
-    assertStringIncludes(imports.esbuild, "npm:esbuild");
+    assertStringIncludes(imports.sass, "npm:sass", "an npm dep denext's build source imports");
+    assertEquals(imports.esbuild, undefined, "denext's esbuild API is vendored, not npm");
   });
   // Next path: a `catalog:` effect is not pinned, and denext's must not fill the gap.
   await withTree(

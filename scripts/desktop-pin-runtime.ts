@@ -19,10 +19,18 @@
 // unless all of them pass. The CLI archives get the same checks (manifest = SHA256SUMS, this tag's
 // URL, every SHA256SUMS `deno-cli-*` archive listed, the hash and the attestation). A release with
 // no `cli` section leaves the toolchain pin as it is. The output is deterministic; commit both.
+//
+// From 2.9.7-denext.17 each CLI zip also carries `esbuild[.exe]` (+ `esbuild.LICENSE`) and the
+// manifest's `cli` target entry an `esbuild: { version, sha256 }`; it is pinned beside the archive
+// (it must be the esbuild denext's vendored API speaks, src/build/esbuild/version.ts), and the
+// attestation pass extracts it from each archive and checks that SHA-256 too. Before denext.17 the
+// field is absent and denext's builds use the npm esbuild.
 
 import { encodeHex } from "@std/encoding/hex";
 import { fromFileUrl, join } from "@std/path";
 import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
+import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
+import { extractArchive } from "../src/build/safe-extract.ts";
 
 const REPO = "Brainwires/deno";
 const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.meta.url));
@@ -63,6 +71,15 @@ export interface PinFile {
   targets: Record<string, { runtimeLib: string } & Partial<Record<"webview" | "cef", PinArtifact>>>;
 }
 
+/** The esbuild a CLI zip carries (mirrors `DenoToolchainEsbuild`). */
+interface PinEsbuild {
+  version: string;
+  sha256: string;
+}
+
+/** One CLI archive in the toolchain pin. */
+type CliPinArtifact = PinArtifact & { format: "zip"; esbuild?: PinEsbuild };
+
 /** The toolchain pin's shape (mirrors `DenoToolchainPin` in src/build/deno-toolchain.ts). */
 export interface ToolchainPinFile {
   schema: 1;
@@ -70,7 +87,7 @@ export interface ToolchainPinFile {
   tag: string;
   repository: string;
   deno: string;
-  targets: Record<string, PinArtifact & { format: "zip" }>;
+  targets: Record<string, CliPinArtifact>;
 }
 
 /** Parse GNU `sha256sum` output into file → digest. */
@@ -205,13 +222,33 @@ export function pinFromRelease(tag: string, manifest: unknown, sumsText: string)
 }
 
 /** One CLI archive entry, checked like {@linkcode pinArtifact} (a zip on every target). */
-function cliArtifact(ctx: ReleaseCtx, target: string, a: Loose): PinArtifact & { format: "zip" } {
+function cliArtifact(ctx: ReleaseCtx, target: string, a: Loose): CliPinArtifact {
   const where = `cli ${target}`;
   const binary = target.includes("windows") ? "deno.exe" : "deno";
   if (a?.binary !== undefined && a.binary !== binary) {
     fail(`${where}: binary ${a.binary}, expected ${binary}`);
   }
-  return checkedArtifact(ctx, where, `${CLI_PREFIX}${ctx.version}-${target}.zip`, "zip", a);
+  const artifact = checkedArtifact(
+    ctx,
+    where,
+    `${CLI_PREFIX}${ctx.version}-${target}.zip`,
+    "zip",
+    a,
+  );
+  const esbuild = cliEsbuild(where, a.esbuild);
+  return esbuild ? { ...artifact, esbuild } : artifact;
+}
+
+/** A CLI entry's `esbuild` (absent before denext.17), checked against denext's esbuild version. */
+function cliEsbuild(where: string, e: Loose): PinEsbuild | undefined {
+  if (e === undefined || e === null) return undefined;
+  const version = String(e.version ?? "");
+  const sha256 = String(e.sha256 ?? "");
+  if (version !== ESBUILD_VERSION) {
+    fail(`${where}: esbuild ${version}, but denext's esbuild API speaks ${ESBUILD_VERSION}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(sha256)) fail(`${where}: bad esbuild sha256`);
+  return { version, sha256 };
 }
 
 /**
@@ -285,7 +322,10 @@ async function sha256File(path: string): Promise<string> {
 }
 
 /** The pin's archives, in target then backend order (then the CLI archives, when given). */
-function pinArchives(pin: PinFile, cli?: ToolchainPinFile | null): PinArtifact[] {
+function pinArchives(
+  pin: PinFile,
+  cli?: ToolchainPinFile | null,
+): (PinArtifact & { esbuild?: PinEsbuild })[] {
   return [
     ...Object.values(pin.targets).flatMap((t) => BACKENDS.flatMap((b) => t[b] ? [t[b]!] : [])),
     ...Object.values(cli?.targets ?? {}),
@@ -304,6 +344,28 @@ async function archiveFile(
   const path = join(tmp, a.file);
   await Deno.writeFile(path, res.body);
   return path;
+}
+
+/** The esbuild inside a CLI zip must hash to its pinned SHA-256 (checked in a temp dir). */
+async function checkZipEsbuild(
+  a: PinArtifact & { esbuild?: PinEsbuild },
+  path: string,
+  tmp: string,
+): Promise<void> {
+  if (!a.esbuild) return;
+  const out = await Deno.makeTempDir({ dir: tmp, prefix: "x-" });
+  try {
+    const dest = join(out, "x");
+    const result = await extractArchive(path, "zip", dest);
+    const exe = a.file.includes("windows") ? "esbuild.exe" : "esbuild";
+    const got = result.files[exe]?.sha256;
+    if (!got) fail(`${a.file}: the manifest pins an esbuild, the archive has no top-level ${exe}`);
+    if (got !== a.esbuild.sha256) {
+      fail(`${a.file}: esbuild sha256 ${got} != pinned ${a.esbuild.sha256}`);
+    }
+  } finally {
+    await Deno.remove(out, { recursive: true }).catch(() => {});
+  }
 }
 
 /** Hash one archive against the pin and `gh attestation verify` it; throws on a failure. */
@@ -330,6 +392,7 @@ export async function attestPin(pin: PinFile, options: AttestPinOptions = {}): P
     for (const a of pinArchives(pin, options.cli)) {
       const path = await archiveFile(a, tmp, options);
       await attestArchive(pin, a, path, options.run ?? runGh);
+      await checkZipEsbuild(a, path, tmp);
       if (!options.archives) await Deno.remove(path);
     }
   } finally {

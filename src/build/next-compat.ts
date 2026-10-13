@@ -47,7 +47,7 @@ import {
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "./esbuild/mod.ts";
 import {
   basename,
   dirname,

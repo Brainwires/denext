@@ -1395,8 +1395,8 @@ default").
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served
   runtime rides only Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A
   guard fails on any `npm:` specifier in compat modules. `deno.json`'s remaining
-  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` /
-  `@tanstack/router-plugin` —
+  `npm:` deps — the opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin` (esbuild's
+  JS API is vendored in `src/build/esbuild/` and runs the toolchain's or a verified npm binary) —
   are build/dev-time only and never enter a shipped bundle (the CSS + swc-AST
   tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
   npm); the image/og codecs are now first-party JSR packages

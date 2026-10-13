@@ -146,7 +146,8 @@ Each is documented as a manual recipe today (the
 
 ## Build toolchain: waiting on `deno bundle`
 
-`npm:esbuild` stays at build time because `deno bundle` exposes no plugin surface. The
+esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)
+stays at build time because `deno bundle` exposes no plugin surface. The
 next-compat and SPA-compat builds and the unbundled dev loop's dependency pre-bundle must
 rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 transforms
 (`?url` assets, CSS shims, MDX, `use cache`, Node-builtin stubs, `import.meta.env`, pnpm

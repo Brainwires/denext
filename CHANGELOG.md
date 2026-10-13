@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **esbuild 0.25.5, and no `npm:esbuild`.** denext vendors esbuild's JavaScript API
+  (`src/build/esbuild/`, MIT, from esbuild 0.25.5) and spawns an esbuild binary itself:
+  `ESBUILD_BINARY_PATH` when set (checked to be 0.25.5), else the `esbuild` denext's Deno toolchain
+  ships beside its `deno` (from 2.9.7-denext.17: extracted from the verified toolchain zip, checked
+  against the pinned SHA-256 and recorded in the toolchain stamp), else — `DENEXT_DENO=stock`,
+  stock Deno, or an older toolchain — the official `@esbuild/<platform>` 0.25.5 binary, taken from
+  Deno's npm cache or downloaded, with the tarball checked against its pinned npm integrity and the
+  binary against its pinned SHA-256 before it runs. A toolchain esbuild that fails verification is
+  never installed; builds use the npm one with a single warning. The `esbuild` entry is gone from
+  `deno.json` (and from the framework deps a local-path migration copies). `denext toolchain
+  status` shows which esbuild builds run. Moving from 0.24 to 0.25 changes nothing denext relies
+  on; a regular-expression plugin `filter` now honours its flags (`/…/i`), as esbuild 0.25.2 made
+  it.
+
 ### Fixed
 
 - **A fresh `denext create` project is `deno fmt`- and `deno lint`-clean.** Every template and

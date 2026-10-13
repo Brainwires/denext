@@ -1,7 +1,7 @@
 // Unbundled dev: the per-module transform (one first-party file → browser ESM with its
 // imports rewritten to dev URLs) and the transform of a GENERATED entry module.
 
-import * as esbuild from "esbuild";
+import * as esbuild from "../esbuild/mod.ts";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";

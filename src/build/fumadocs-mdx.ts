@@ -12,7 +12,7 @@
 
 import { dirname, join, toFileUrl } from "@std/path";
 import { denoExecutable } from "./deno-executable.ts";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { minDepAgeArgs } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
 

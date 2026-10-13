@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { dirname, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { flushSync } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { reactNativeBundleOptions } from "../src/build/react-native.ts";

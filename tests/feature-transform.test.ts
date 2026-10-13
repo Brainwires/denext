@@ -13,7 +13,7 @@ import { bundleSourceFiles } from "../src/build/bundle.ts";
 import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import { staticExport } from "../src/build/export.ts";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../src/build/esbuild/mod.ts";
 
 const IMPORT = `import { feature } from "denext/feature";\n`;
 

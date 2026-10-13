@@ -860,8 +860,11 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
   keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
-  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
-  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
+  (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
+  esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
+  (`DENEXT_DENO=stock`, stock Deno) the official `@esbuild/<platform>` binary, integrity-checked;
+  `ESBUILD_BINARY_PATH` overrides both. The build-time toolchain still uses a few opt-in npm tools —
+  `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking

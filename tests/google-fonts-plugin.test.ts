@@ -2,7 +2,7 @@
 // named loader, layered over the runtime module's own exports.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { GOOGLE_FONT_FAMILIES } from "../src/compat/next/font/google-families.ts";
 import { googleFontFamiliesModule, googleFontsPlugin } from "../src/build/google-fonts-plugin.ts";
 

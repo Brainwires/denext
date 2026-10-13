@@ -8,7 +8,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   ANIMATED_HOOK_EXPORTS,
   OVERLAY_ENTRY_EXPORTS,

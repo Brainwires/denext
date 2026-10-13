@@ -21,7 +21,7 @@
 // `@react-navigation/native`, which is used when the bundled copy is absent.
 
 import { join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 /** The esbuild namespace of the generated modules. */
 const NAMESPACE = "denext-expo-router-navigators";

@@ -18,7 +18,7 @@
 // present), so the repo root stays clean.
 
 import { join, toFileUrl } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../../../src/build/esbuild/mod.ts";
 import { reactNativeBundleOptions } from "../../../src/build/react-native.ts";
 import type { Surface, SurfaceSymbol } from "../types.ts";
 import { REACT_NATIVE_WEB_PACKAGE, REACT_NATIVE_WEB_PIN } from "./spec.ts";

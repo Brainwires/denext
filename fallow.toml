@@ -19,7 +19,6 @@ ignoreDependencies = [
   "react-native-maps",
   "react-native-video",
   "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
-  "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
   "@std/fs", # deno.json: jsr:@std/fs@^1.0.0
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
@@ -223,6 +222,10 @@ ignorePatterns = [
   "packages/avif/lib/*.js",
   "packages/lightningcss/lib/*.js",
   "packages/swc/lib/*.js",
+  # esbuild's own JS API protocol files (lib/shared/*.ts), vendored near-verbatim from esbuild
+  # 0.25.5 (MIT) so a version bump is a re-copy; refactoring them would defeat that. denext's
+  # host half (src/build/esbuild/mod.ts, binary.ts) is analyzed as usual.
+  "src/build/esbuild/vendor/**",
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
@@ -366,6 +369,12 @@ exports = ["redirect"]
 [[ignoreExports]]
 file = "src/build/bundle.ts"
 exports = ["ensureBundleSupport"]
+
+# denext's vendored esbuild API (`src/build/esbuild/mod.ts`) exports esbuild's own names —
+# `transform`, `version`, `build` — which the dev loop's unrelated `transform()` shares by name.
+[[ignoreExports]]
+file = "src/build/esbuild/mod.ts"
+exports = ["transform", "version"]
 
 # The `denext/remix` barrel re-exports the Remix runtime's same-named APIs (`Link`,
 # `LinkProps`, `useParams`, `useSearchParams`) — Remix-shaped twins of denext's own

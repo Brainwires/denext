@@ -6,7 +6,7 @@
 
 import { assertEquals } from "@std/assert";
 import { dirname, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { reactNativeBundleOptions } from "../src/build/react-native.ts";
 
 /** Write `files` (relative path → contents) under `root`. */

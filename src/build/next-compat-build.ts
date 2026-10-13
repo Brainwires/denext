@@ -14,7 +14,7 @@
 import type { PlatformResolution } from "./platform-extensions.ts";
 import { join } from "@std/path";
 import { keyedBundleRef } from "./next-compat-loader.ts";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import {
   type AssetOptions,
   bundleNextCompat,

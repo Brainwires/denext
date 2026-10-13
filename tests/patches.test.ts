@@ -3,7 +3,7 @@
 // materialized with absolutized imports and import-mapped in deno.json; the esbuild plugin
 // that feeds the patched framework source to a bundle; delete undoing both.
 
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {

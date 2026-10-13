@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../../src/build/esbuild/mod.ts";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 import { FALLOW_VERSION } from "../../src/build/fallow-template.ts";
 import {

@@ -20,7 +20,7 @@
 // it can't confidently instrument is loaded unchanged (its components simply
 // remount on edit — the pre-refresh behavior), never miscompiled.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { toFileUrl } from "@std/path";
 import {
   collectComponentMeta,
