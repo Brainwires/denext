@@ -319,6 +319,14 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   assertStringIncludes(old.findings[0].message, "needs Deno 2.9.7 exactly");
   assertStringIncludes(old.findings[1].message, "predates Deno.desktop.platformFeatures()");
   assertStringIncludes(old.findings[0].fix, "deno upgrade --version 2.9.7");
+  // denext's Deno toolchain (`2.9.7-denext.N`) is Deno 2.9.7: no mismatch.
+  const toolchain = await runDesktopDoctor({
+    ...linux,
+    runtimeStatus: () =>
+      Promise.resolve(status({ deno: { found: "2.9.7-denext.15", required: "2.9.7" } })),
+    pin: pin(45),
+  });
+  assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
   // Off Linux the pre-probe pin is not a finding (the facts only matter there).
   const mac = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status()),

@@ -29,6 +29,7 @@ import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import { readJsonFile, sha256File, streamHashed, sweepLeftovers } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
+import { denoReleaseVersion } from "./deno-version.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 
 /** A runtime backend (`deno desktop --backend`). */
@@ -764,14 +765,6 @@ async function denoCliVersion(deno: string): Promise<string> {
   return m[1];
 }
 
-/**
- * The Deno release a `deno --version` names, without the `-denext.N` suffix denext's Deno
- * toolchain carries (`2.9.7-denext.15` is Deno 2.9.7).
- */
-function denoRelease(version: string): string {
-  return version.replace(/-denext\.\d+$/, "");
-}
-
 /** The message for a `deno` that doesn't match the runtime's Deno version. */
 export function denoVersionMismatchMessage(
   found: string,
@@ -1097,7 +1090,7 @@ export async function resolveDesktopRuntimeEnv(
   }
   const deno = options.deno ?? "deno";
   const found = await (options.denoVersion ?? denoCliVersion)(deno);
-  if (denoRelease(found) !== pin.deno) {
+  if (denoReleaseVersion(found) !== pin.deno) {
     if (options.onDenoMismatch === "stock") return stockForMismatch(found, pin, deno, log);
     throw new Error(denoVersionMismatchMessage(found, pin, deno));
   }
@@ -1228,7 +1221,7 @@ export async function desktopRuntimeStatus(
   } catch (err) {
     problem = errText(err);
   }
-  const denoOk = found !== null && denoRelease(found) === pin.deno;
+  const denoOk = found !== null && denoReleaseVersion(found) === pin.deno;
   const denoText = denoOk
     ? `deno ${found} ✓`
     : `deno ${found ?? "not found"} ✗ — needs ${pin.deno}: deno upgrade --version ${pin.deno}`;

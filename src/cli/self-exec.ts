@@ -3,11 +3,7 @@
 
 import { dirname, fromFileUrl, join, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import {
-  type DenoToolchainChoice,
-  isToolchainDenoVersion,
-  TOOLCHAIN_ACTIVE_ENV,
-} from "../build/deno-toolchain.ts";
+import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -347,6 +343,60 @@ export function runsProjectCode(
   return actions.has(action ?? (command.name === "desktop" ? "run" : ""));
 }
 
+/**
+ * The `--config` / `-c` a `deno run` command line gave, read from the runtime flags before the
+ * script (`run --config x`, `-c x`, `--config=x`); `undefined` without one.
+ *
+ * @param argv The process's whole command line (`deno run … <script> …`).
+ * @returns The config path as written.
+ */
+export function configFromCommandLine(argv: readonly string[]): string | undefined {
+  const run = argv.indexOf("run");
+  for (let i = run + 1; run !== -1 && i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === "--config" || tok === "-c") return argv[i + 1];
+    const eq = /^(?:--config|-c)=(.+)$/.exec(tok);
+    if (eq) return eq[1];
+    if (!tok.startsWith("-")) return undefined; // the script: runtime flags end here
+  }
+  return undefined;
+}
+
+/** This process's command line (Linux `/proc`, macOS `ps`); `null` where it can't be read. */
+async function ownCommandLine(): Promise<string[] | null> {
+  try {
+    if (Deno.build.os === "linux") {
+      return (await Deno.readTextFile("/proc/self/cmdline")).split("\0").filter(Boolean);
+    }
+    if (Deno.build.os === "darwin") {
+      const out = await new Deno.Command("ps", {
+        args: ["-ww", "-o", "args=", "-p", String(Deno.pid)],
+        stdout: "piped",
+        stderr: "null",
+      }).output();
+      return new TextDecoder().decode(out.stdout).trim().split(/\s+/);
+    }
+  } catch { /* no permission, no ps */ }
+  return null;
+}
+
+/**
+ * The `--config` the toolchain child needs to read the config this process was started with: Deno
+ * offers no API for it, and a child whose entrypoint is a local file would otherwise discover the
+ * config beside that file. Read from this process's command line where the OS exposes it; `[]`
+ * when it gave none (the child then discovers the same config this process did).
+ *
+ * @param readArgv Reads the command line (tests pass a fake).
+ * @returns `["--config", <absolute path>]`, or `[]`.
+ */
+export async function toolchainConfigArgs(
+  readArgv: () => Promise<string[] | null> = ownCommandLine,
+): Promise<string[]> {
+  const argv = await readArgv();
+  const config = argv ? configFromCommandLine(argv) : undefined;
+  return config ? ["--config", resolve(config)] : [];
+}
+
 /** What {@linkcode maybeReexecToolchain} touches in the process (injectable for tests). */
 export interface ReexecToolchainDeps {
   /** An environment variable (production: `Deno.env.get`). */
@@ -355,6 +405,8 @@ export interface ReexecToolchainDeps {
   readonly setEnv: (name: string, value: string) => void;
   /** This process's `Deno.version.deno`. */
   readonly denoVersion: string;
+  /** The pinned toolchain version (`null` when this denext version pins none). */
+  readonly pinnedVersion: string | null;
   /** Whether this process is a compiled binary. */
   readonly standalone: () => boolean;
   /** Pick the Deno to run on (production: `resolveDenoToolchain`). */
@@ -376,8 +428,11 @@ export interface ReexecToolchainDeps {
  * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
  * instead — `DENO_BIN` (unless the user set one) — and its pinned-denext re-exec runs on it.
  *
- * Loops are impossible: the child carries `DENEXT_TOOLCHAIN_ACTIVE`, and a process that has it,
- * or whose Deno already is the toolchain (`-denext.N`), never re-execs. Every reason to stay on
+ * Loops are impossible: the child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>` and runs that
+ * version, and a process whose Deno is that marker's version (or the pinned version, or a
+ * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
+ * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
+ * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. Every reason to stay on
  * stock Deno (an opt-out, no pin yet, an unsupported host, a failed download) continues the
  * command in-process, after the choice's one warning.
  *
@@ -389,8 +444,10 @@ export async function maybeReexecToolchain(
   applies: boolean,
   deps: ReexecToolchainDeps,
 ): Promise<boolean> {
-  if (!applies || deps.env(TOOLCHAIN_ACTIVE_ENV)) return false;
-  if (isToolchainDenoVersion(deps.denoVersion)) return false;
+  if (!applies) return false;
+  const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
+  if (marker && (marker === "path" || marker === deps.denoVersion)) return false;
+  if (deps.pinnedVersion !== null && deps.denoVersion === deps.pinnedVersion) return false;
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
   if (choice.kind === "stock") return false;

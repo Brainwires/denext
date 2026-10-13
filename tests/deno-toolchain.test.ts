@@ -21,10 +21,10 @@ import {
   denoToolchainTarget,
   DenoToolchainUnavailableError,
   ensureDenoToolchain,
-  isToolchainDenoVersion,
   linkDenoToolchain,
   loadDenoToolchainPin,
   resolveDenoToolchain,
+  staleToolchainLink,
   TOOLCHAIN_STAMP,
   unlinkDenoToolchain,
 } from "../src/build/deno-toolchain.ts";
@@ -112,13 +112,10 @@ async function names(dir: string): Promise<string[]> {
 
 const binDir = (f: Fixture) => join(f.root, VERSION, TARGET);
 
-Deno.test("denoToolchainTarget / isToolchainDenoVersion name hosts and the fork's builds", () => {
+Deno.test("denoToolchainTarget names hosts", () => {
   assertEquals(denoToolchainTarget("darwin", "aarch64"), "darwin-aarch64");
   assertEquals(denoToolchainTarget("windows", "x86_64"), "windows-x86_64");
   assertEquals(denoToolchainTarget(), `${Deno.build.os}-${Deno.build.arch}`);
-  assert(isToolchainDenoVersion("2.9.7-denext.15"));
-  assertFalse(isToolchainDenoVersion("2.9.7"));
-  assertFalse(isToolchainDenoVersion("2.9.7-rc.1"));
 });
 
 Deno.test("the checked-in pin: a schema-1 table whose entries carry url + sha256 (or a placeholder)", () => {
@@ -127,7 +124,7 @@ Deno.test("the checked-in pin: a schema-1 table whose entries carry url + sha256
     assertEquals(Object.keys(DENO_TOOLCHAIN.targets), [], "a placeholder pins no targets");
     return;
   }
-  assert(isToolchainDenoVersion(DENO_TOOLCHAIN.version));
+  assert(/^\d+\.\d+\.\d+-denext\.\d+$/.test(DENO_TOOLCHAIN.version), DENO_TOOLCHAIN.version);
   for (const [target, a] of Object.entries(DENO_TOOLCHAIN.targets)) {
     assert(/^(darwin|linux|windows)-(x86_64|aarch64)$/.test(target), target);
     assert(/^https:\/\//.test(a.url), `${target}: an https url`);
@@ -390,8 +387,10 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
       env: envOf({}),
       missingGrants: () => Promise.resolve(["--allow-run"]),
     });
-    assert(grants.kind === "stock" && grants.warning);
-    assertStringIncludes(grants.warning, "lacks --allow-run");
+    // A process scoped down on purpose (the least-privilege `start` task) stays on the Deno that
+    // launched it without a warning on every start.
+    assert(grants.kind === "stock" && grants.warning === undefined);
+    assertStringIncludes(grants.reason, "lacks --allow-run");
 
     const off = await resolveDenoToolchain({ ...base, env: envOf({}), fetch: offline });
     assert(off.kind === "stock" && off.warning);
@@ -450,7 +449,13 @@ Deno.test("denoToolchainStatus: each cache state, the opt-outs, and whether this
       env: envOf({ DENEXT_TOOLCHAIN_ACTIVE: VERSION }),
       running: "2.9.7",
     });
-    assert(marked.active, "the re-exec marker counts as active");
+    assertFalse(marked.active, "a marker on a Deno of another version is not the toolchain");
+    const older = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: "2.9.7-denext.14",
+    });
+    assertFalse(older.active, "an older -denext.N build (a stale link) is not the toolchain");
     // A same-size rewrite keeps the mtime check honest only with --verify.
     const stat = await Deno.stat(rt.deno);
     await Deno.writeTextFile(rt.deno, BINARY.replace("fake", "evil"));
@@ -494,6 +499,19 @@ Deno.test("link / unlink touch only what link created", async () => {
       assertStringIncludes(made.pathLine, `export PATH="${join(home, ".denext", "bin")}:$PATH"`);
       assertEquals(await Deno.readLink(link), bin);
       await linkDenoToolchain(bin, { env, os: "linux", cacheRoot: root }); // re-link: replaced
+      const pin = { schema: 1 as const, version: VERSION, targets: {} };
+      const lopts = { env, os: "linux", cacheRoot: root };
+      assertEquals(await staleToolchainLink({ ...lopts, pin }), null, "current");
+      const stale = await staleToolchainLink({
+        ...lopts,
+        pin: { ...pin, version: "9.9.9-denext.2" },
+      });
+      assertStringIncludes(stale ?? "", "not the pinned toolchain 9.9.9-denext.2");
+      assertEquals(
+        await staleToolchainLink({ ...lopts, pin: { ...pin, version: null } }),
+        null,
+        "nothing pinned",
+      );
       assertEquals(await unlinkDenoToolchain({ env, os: "linux", cacheRoot: root }), link);
       assertEquals(await Deno.lstat(link).catch(() => null), null);
       assertEquals(await unlinkDenoToolchain({ env, os: "linux", cacheRoot: root }), null);
@@ -502,6 +520,11 @@ Deno.test("link / unlink touch only what link created", async () => {
     const shim = await linkDenoToolchain(bin, { env, os: "windows", cacheRoot: root });
     assertEquals(shim.link, `${link}.cmd`);
     assertStringIncludes(await Deno.readTextFile(shim.link), `"${bin}" %*`);
+    const wpin = { schema: 1 as const, version: "9.9.9-denext.2", targets: {} };
+    assertStringIncludes(
+      (await staleToolchainLink({ env, os: "windows", cacheRoot: root, pin: wpin })) ?? "",
+      `points at ${bin}`,
+    );
     assertStringIncludes(shim.pathLine, "setx PATH");
     assertEquals(await unlinkDenoToolchain({ env, os: "windows", cacheRoot: root }), shim.link);
     // Someone else's file is never replaced or removed.
