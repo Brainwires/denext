@@ -13,7 +13,7 @@ import {
   SERIAL_SOURCES,
   SERIAL_TESTS,
 } from "./serial-tests.ts";
-import { testPasses } from "../scripts/test-run.ts";
+import { findVitestFiles, isToolchainBuild, testPasses } from "../scripts/test-run.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -284,4 +284,75 @@ Deno.test("test-run: a flag's separate value stays with its flag; `--` args reac
   ]);
   // `foo` was a value, not a path: with no path, every serial file is in scope.
   assertEquals(testPasses(["--filter", "foo"], serial).serial?.at(-1), "tests/a.test.ts");
+});
+
+Deno.test("test-run: the Vitest files run in their own pass, never in the stock ones", () => {
+  const serial = ["tests/a.test.ts"];
+  const vitest = ["tests/v.vitest.ts", "tests/integration/w.vitest.ts"];
+  const all = testPasses(
+    ["--ignore=tests/e2e/", "--coverage=cov", "--reporter=dot"],
+    serial,
+    vitest,
+  );
+  // A `.vitest.ts` file is outside Deno's default discovery: the stock passes need no ignore.
+  assertEquals(all.parallel, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--coverage=cov",
+    "--reporter=dot",
+    "--parallel",
+    "--ignore=tests/e2e/,tests/a.test.ts",
+  ]);
+  // Coverage never reaches the Vitest pass (the pinned toolchain cannot map its modules).
+  assertEquals(all.vitest, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--reporter=dot",
+    "--parallel",
+    "tests/v.vitest.ts",
+    "tests/integration/w.vitest.ts",
+  ]);
+  // Paths and ignores narrow it like the others.
+  assertEquals(testPasses(["tests/integration/"], serial, vitest).vitest?.at(-1), vitest[1]);
+  assertEquals(
+    testPasses(["--ignore=tests/integration/"], serial, vitest).vitest?.at(-1),
+    vitest[0],
+  );
+  assertEquals(testPasses(["tests/other/"], serial, vitest).vitest, null);
+  // Outside CI the pass skips type-checking (a toolchain build would wipe stock Deno's check
+  // cache), unless the flags already decide.
+  assertEquals(testPasses(["tests/integration/"], serial, vitest, false).vitest, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--no-check",
+    "--parallel",
+    "tests/integration/w.vitest.ts",
+  ]);
+  assertEquals(
+    testPasses(["--check=all", "tests/integration/"], serial, vitest, false).vitest?.[3],
+    "--check=all",
+  );
+  // A Vitest file named on its own runs in the Vitest pass only.
+  const one = testPasses(["tests/v.vitest.ts"], serial, vitest);
+  assertEquals(one.parallel, null);
+  assertEquals(one.serial, null);
+  assertEquals(one.vitest?.at(-1), "tests/v.vitest.ts");
+});
+
+Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain builds run them", async () => {
+  const found = await findVitestFiles();
+  assert(found.length > 0, "the repo has Vitest files");
+  for (const f of found) {
+    assert(f.startsWith("tests/") && f.endsWith(".vitest.ts"), f);
+    assert(
+      !SERIAL_TESTS.includes(f),
+      `${f}: a Vitest file runs in its own pass, never the serial one`,
+    );
+  }
+  assert(isToolchainBuild("2.9.7-denext.15"));
+  assert(!isToolchainBuild("2.9.6"));
+  assert(!isToolchainBuild("2.9.7"));
 });

@@ -44,8 +44,33 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   at a time after the parallel pass, and `tests/serial-tests.test.ts` fails on an unlisted one.
 - **Await the work, never sleep for it.** A test that sleeps a fixed time while the code under
   test arms its own timer later fails now and then on a loaded machine. Wait for the event
-  itself, flush with `act()`, or run on a fake clock (`fakeTimers()` in
-  `tests/helpers/mobile-fakes.ts`); a longer sleep only hides the race.
+  itself, flush with `act()`, or run on a fake clock (`vi.useFakeTimers()` in a Vitest file,
+  below, or `fakeTimers()` in `tests/helpers/mobile-fakes.ts`); a longer sleep only hides the
+  race.
+- **Vitest files (`tests/**/*.vitest.ts`) are for what `Deno.test` can't do.** denext's Deno
+  toolchain (the `2.9.7-denext.N` fork that `denext test` runs on) has Vitest's API built into
+  `deno test`: `import { describe, expect, it, vi } from "vitest"` gives fake timers and a fake
+  `Date` (`vi.useFakeTimers()`, `vi.advanceTimersByTimeAsync()`, `vi.setSystemTime()`), module
+  mocks (`vi.mock()` — replace a module that shells out or reads the keychain), fresh module
+  instances (`vi.resetModules()` + `await import()`, instead of a `reset…ForTesting` export) and
+  `vi.stubGlobal` / `vi.stubEnv` with automatic restore. Write a NEW test that needs one of those
+  as a Vitest file instead of adding a test-only seam to `src/` or sleeping; everything else stays
+  `Deno.test`. Stock Deno cannot resolve `vitest`, and its test discovery skips the `.vitest.ts`
+  suffix, so plain `deno test` never sees these files: `scripts/test-run.ts` (`deno task test`,
+  `test:unit`, `check`; CI's `check` job) finds them and runs them in a third pass on the
+  toolchain — the running Deno when it already is one, else the pinned build it downloads and
+  verifies (`DENEXT_DENO=stock` skips the pass with a note; any other reason it can't is a
+  failure). Run one with `deno task test tests/jobs-timers.vitest.ts`. Outside CI that pass runs
+  with `--no-check` (CI, `CI=true`, type-checks them): Deno wipes a `DENO_DIR`'s type-check cache
+  whenever another Deno version opens it, so a toolchain type-check would cost the next stock run
+  its whole cache (~25 s for the suite) every time; add `--check` to type-check them locally. A Vitest file never goes
+  in `tests/serial-tests.ts` (its pass is separate from the stock ones), and `vitest` needs no
+  import-map entry. **Coverage:** the pinned toolchain (`2.9.7-denext.15`) cannot map a module
+  the Vitest transform emitted (`deno coverage` reports "Missing transpiled source" and drops the
+  whole file from a report it is merged into), so `test:coverage` / `coverage:fallow` run stock
+  Deno without the Vitest files, and `scripts/test-run.ts` strips `--coverage` from their pass.
+  Once the pin carries the fork's coverage fix (runtime `denext.16`), run that pass with
+  `--coverage` into the same profile directory and `deno coverage` on the toolchain.
   **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
   mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
   left out, see `scripts/test-stress.ts`) with the `tests/stress/timer-jitter.ts` preload, which

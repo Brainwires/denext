@@ -3,20 +3,21 @@
 // return an opaque `web:` id; the file functions reach it through `{ picked: id }`. Without the
 // API the old fallbacks run (`unavailable`, `<input type=file>`, a download). A fake FSA tree
 // stands in for Chromium's.
+//
+// Page memory is module state: each test loads a fresh instance of the modules
+// (`vi.resetModules()`), and "a reload forgets every handle" is tested by actually reloading
+// them — no test-only reset export (denext's Deno toolchain; CONTRIBUTING.md → Vitest files).
 
+import { it, vi } from "vitest";
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import {
-  deleteFile,
-  downloadToFile,
-  listDir,
-  pickDocument,
-  pickFolder,
-  readFile,
-  saveFile,
-  writeFile,
-} from "../src/mobile/mod.ts";
-import { resetPickedHandlesForTesting } from "../src/mobile/picked-web.ts";
-import { isDesktopBridgeError } from "../src/desktop/client.ts";
+
+/** A fresh instance of the mobile file API and the bridge error guard (a page load). */
+async function load() {
+  vi.resetModules();
+  const mobile = await import("../src/mobile/mod.ts");
+  const { isDesktopBridgeError } = await import("../src/desktop/client.ts");
+  return { ...mobile, isDesktopBridgeError };
+}
 
 /** A permission state the fake handles answer, shared by a whole tree. */
 interface Perms {
@@ -104,7 +105,6 @@ async function withGlobals(
   try {
     await fn();
   } finally {
-    resetPickedHandlesForTesting();
     for (const [k, d] of prev) {
       if (d) Object.defineProperty(g, k, d);
       else delete g[k];
@@ -114,7 +114,8 @@ async function withGlobals(
 
 const abort = () => Promise.reject(new DOMException("dismissed", "AbortError"));
 
-Deno.test("web picked: pickFolder registers the directory; read/write/list/delete through { picked }", async () => {
+it("web picked: pickFolder registers the directory; read/write/list/delete through { picked }", async () => {
+  const { deleteFile, listDir, pickFolder, readFile, writeFile } = await load();
   const root = new Node("directory", "Projects", perms());
   const readme = await root.getFileHandle("readme.md", { create: true });
   readme.text = "hi";
@@ -142,7 +143,8 @@ Deno.test("web picked: pickFolder registers the directory; read/write/list/delet
   });
 });
 
-Deno.test("web picked: writes ask for write access once; a refusal is a typed forbidden", async () => {
+it("web picked: writes ask for write access once; a refusal is a typed forbidden", async () => {
+  const { isDesktopBridgeError, listDir, pickFolder, writeFile } = await load();
   const root = new Node("directory", "P", perms("prompt", "granted"));
   await withGlobals({ showDirectoryPicker: () => Promise.resolve(root) }, async () => {
     const folder = await pickFolder();
@@ -166,7 +168,8 @@ Deno.test("web picked: writes ask for write access once; a refusal is a typed fo
   });
 });
 
-Deno.test('web picked: pickDocument uses showOpenFilePicker; the file is read with the path ""', async () => {
+it('web picked: pickDocument uses showOpenFilePicker; the file is read with the path ""', async () => {
+  const { deleteFile, listDir, pickDocument, readFile } = await load();
   const file = new Node("file", "a.txt", perms());
   file.text = "abc";
   const seen: unknown[] = [];
@@ -194,7 +197,8 @@ Deno.test('web picked: pickDocument uses showOpenFilePicker; the file is read wi
   });
 });
 
-Deno.test("web picked: saveFile uses showSaveFilePicker, writes, and returns a handle", async () => {
+it("web picked: saveFile uses showSaveFilePicker, writes, and returns a handle", async () => {
+  const { downloadToFile, readFile, saveFile, writeFile } = await load();
   const target = new Node("file", "export.csv", perms());
   const seen: unknown[] = [];
   const showSaveFilePicker = (o: unknown) => {
@@ -223,7 +227,8 @@ Deno.test("web picked: saveFile uses showSaveFilePicker, writes, and returns a h
   });
 });
 
-Deno.test("web picked: unknown handles are forbidden; no FSA keeps the old fallbacks", async () => {
+it("web picked: unknown handles are forbidden; no FSA keeps the old fallbacks", async () => {
+  const { isDesktopBridgeError, listDir, pickFolder, readFile } = await load();
   await withGlobals({}, async () => {
     for (const picked of ["web:forged", "h-1-folder"]) {
       const err = await assertRejects(() => readFile("a", { directory: { picked } }));
@@ -235,14 +240,18 @@ Deno.test("web picked: unknown handles are forbidden; no FSA keeps the old fallb
     assert(isDesktopBridgeError(err));
     assertEquals(err.code, "unavailable");
   });
-  // Handles do not survive a reset (a reload).
+  // Handles do not survive a reload: a fresh instance of the modules does not know them.
   const root = new Node("directory", "R", perms());
   await withGlobals({ showDirectoryPicker: () => Promise.resolve(root) }, async () => {
     const folder = await pickFolder();
     assert(folder);
-    resetPickedHandlesForTesting();
-    const err = await assertRejects(() => listDir("", { directory: { picked: folder.handle } }));
+    const reloaded = await load();
+    const err = await assertRejects(() =>
+      reloaded.listDir("", { directory: { picked: folder.handle } })
+    );
     assertStringIncludes(String(err), "forbidden");
+    // …while the page that picked it still reaches it.
+    assertEquals(await listDir("", { directory: { picked: folder.handle } }), []);
   });
   // Inside the Capacitor shell a picked handle is unavailable.
   const Capacitor = { isNativePlatform: () => true, getPlatform: () => "ios", Plugins: {} };

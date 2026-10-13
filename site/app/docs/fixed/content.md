@@ -469,7 +469,7 @@ More: [/docs/live](/docs/live).
 **Evidence.**
 
 - [`tests/jobs.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/jobs.test.ts): "scheduleJobs uses Deno.cron when available and hands it the schedule"
-- [`tests/jobs.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/jobs.test.ts): "userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose"
+- [`tests/jobs-timers.vitest.ts`](https://github.com/Brainwires/denext/blob/main/tests/jobs-timers.vitest.ts): "never fires on registration, once per matching minute, never overlapping, aborted on dispose"
 - [`tests/cli-job-history.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/cli-job-history.test.ts): "a manual CLI run is recorded, exactly like a scheduled one"
 
 More: [/docs/jobs](/docs/jobs).

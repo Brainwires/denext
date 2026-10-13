@@ -27,7 +27,6 @@ export { setDocument } from "./state.ts";
 export {
   __pumpForTests,
   __setAsyncContextScoping,
-  __setAsyncTransitionWarnMs,
   __setManualSlicingForTests,
   __setYieldEveryForTests,
 } from "./scheduler.ts";

@@ -547,8 +547,8 @@
           "name": "scheduleJobs uses Deno.cron when available and hands it the schedule"
         },
         {
-          "test": "tests/jobs.test.ts",
-          "name": "userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose"
+          "test": "tests/jobs-timers.vitest.ts",
+          "name": "never fires on registration, once per matching minute, never overlapping, aborted on dispose"
         },
         {
           "test": "tests/cli-job-history.test.ts",

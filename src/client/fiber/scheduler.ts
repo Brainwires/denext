@@ -295,18 +295,12 @@ export function __setAsyncContextScoping(on: boolean): void {
 }
 
 // Dev-only: how long an async transition may stay pending before we warn it looks
-// wedged (a never-settling `await` in `startTransition(async …)`). Overridable for
-// tests via __setAsyncTransitionWarnMs.
-let asyncTransitionWarnMs = 10_000;
-
-/** Test-only: set the async-transition watchdog threshold (ms). */
-export function __setAsyncTransitionWarnMs(ms: number): void {
-  asyncTransitionWarnMs = ms;
-}
+// wedged (a never-settling `await` in `startTransition(async …)`).
+const ASYNC_TRANSITION_WARN_MS = 10_000;
 
 /**
  * Arm a dev-only timer that warns if an async transition is still pending after
- * {@link asyncTransitionWarnMs}; returns its disarm, or undefined outside dev. The timer is
+ * {@link ASYNC_TRANSITION_WARN_MS}; returns its disarm, or undefined outside dev. The timer is
  * unref'd so it never keeps a process alive on its own. Installed by the dev entries
  * ({@linkcode installAsyncTransitionWatchdog}, via `installDevtools`), so a production bundle
  * carries neither the timer nor its message: the transition pays one `?.`.
@@ -316,11 +310,11 @@ function armAsyncTransitionWatchdog(): (() => void) | undefined {
   const timer = setTimeout(() => {
     console.warn(
       "denext: an async transition has been pending for over " +
-        `${Math.round(asyncTransitionWarnMs / 1000)}s. A never-settling await inside ` +
+        `${ASYNC_TRANSITION_WARN_MS / 1000}s. A never-settling await inside ` +
         "startTransition(async () => …) holds isPending true and keeps entangling " +
         "updates at transition priority. Ensure the async work resolves or rejects.",
     );
-  }, asyncTransitionWarnMs);
+  }, ASYNC_TRANSITION_WARN_MS);
   // Under Deno a pending timer keeps the loop alive; unref so the watchdog alone
   // can't. Guarded: `Deno` is undefined in the browser bundle.
   if (typeof Deno !== "undefined") {
