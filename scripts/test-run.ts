@@ -87,10 +87,19 @@ function inScope(
 }
 
 /**
- * The Vitest pass's own flags. Coverage never reaches it: under the pinned toolchain
- * (2.9.7-denext.15) `deno coverage` cannot map a module the Vitest transform emitted, and a profile
- * of one makes the whole file drop out of a report it is merged into, so the Vitest files stay out
- * of every coverage run until the pin carries the fork's fix (see CONTRIBUTING.md).
+ * The Vitest pass's grants: least privilege. From 2.9.7-denext.16 the Vitest layer's own reads
+ * (its config, `__mocks__`, automock) and environment reads need no permission, so these are only
+ * what the Vitest files themselves use (temp directories they write and read back). A new Vitest
+ * file that needs more adds it here.
+ */
+const VITEST_GRANTS: readonly string[] = ["--allow-read", "--allow-write"];
+
+/**
+ * The Vitest pass's own flags. Coverage never reaches it: the Vitest transform changes the code a
+ * module emits, and under the pinned toolchain (2.9.7-denext.16) `deno coverage` maps such a
+ * profile on its own but under-reports a module whose plain-run and Vitest-run profiles it merges
+ * (`src/server/auth/rate-limit.ts` 91.9% + 30.8% → 38.9% of lines), so the Vitest files stay out
+ * of every coverage run (see CONTRIBUTING.md).
  *
  * Type-checking is skipped (`--no-check`) unless `typeCheck` — CI — or the flags already decide.
  * Deno keeps one type-check cache per `DENO_DIR` and wipes it whenever another Deno version opens
@@ -149,7 +158,7 @@ export function testPasses(
     vitest: vitestFiles.length > 0
       ? [
         "test",
-        "-A",
+        ...VITEST_GRANTS,
         "--unstable-kv",
         ...vitestFlags(flags, typeCheckVitest),
         "--parallel",
@@ -177,7 +186,7 @@ export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
   return out.sort();
 }
 
-/** Whether `version` (`Deno.version.deno`) is a denext toolchain build (`2.9.7-denext.15`). */
+/** Whether `version` (`Deno.version.deno`) is a denext toolchain build (`2.9.7-denext.16`). */
 export function isToolchainBuild(version: string): boolean {
   return /-denext\.\d+$/.test(version);
 }

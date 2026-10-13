@@ -304,10 +304,12 @@ Deno.test("test-run: the Vitest files run in their own pass, never in the stock 
     "--parallel",
     "--ignore=tests/e2e/,tests/a.test.ts",
   ]);
-  // Coverage never reaches the Vitest pass (the pinned toolchain cannot map its modules).
+  // Coverage never reaches the Vitest pass (merged with a plain run's profile it under-reports),
+  // and the pass gets only the grants its files use.
   assertEquals(all.vitest, [
     "test",
-    "-A",
+    "--allow-read",
+    "--allow-write",
     "--unstable-kv",
     "--reporter=dot",
     "--parallel",
@@ -325,14 +327,15 @@ Deno.test("test-run: the Vitest files run in their own pass, never in the stock 
   // cache), unless the flags already decide.
   assertEquals(testPasses(["tests/integration/"], serial, vitest, false).vitest, [
     "test",
-    "-A",
+    "--allow-read",
+    "--allow-write",
     "--unstable-kv",
     "--no-check",
     "--parallel",
     "tests/integration/w.vitest.ts",
   ]);
   assertEquals(
-    testPasses(["--check=all", "tests/integration/"], serial, vitest, false).vitest?.[3],
+    testPasses(["--check=all", "tests/integration/"], serial, vitest, false).vitest?.[4],
     "--check=all",
   );
   // A Vitest file named on its own runs in the Vitest pass only.
@@ -352,7 +355,7 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
       `${f}: a Vitest file runs in its own pass, never the serial one`,
     );
   }
-  assert(isToolchainBuild("2.9.7-denext.15"));
+  assert(isToolchainBuild("2.9.7-denext.16"));
   assert(!isToolchainBuild("2.9.6"));
   assert(!isToolchainBuild("2.9.7"));
 });

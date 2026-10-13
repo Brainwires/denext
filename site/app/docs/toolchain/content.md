@@ -138,9 +138,16 @@ instead, or write the step itself as a denext verb:
 }
 ```
 
-The Vitest/Jest layer reads environment variables (`FORCE_TTY` and the others Vitest reads), so
-a `deno test` without `-A` needs `--allow-env` too: `denext deno test --allow-env --allow-read
-…`. `denext test` runs `deno test -A` and needs nothing more.
+The Vitest/Jest layer needs no permission of its own (from `2.9.7-denext.16`): its reads of the
+project (the config, `__mocks__`, automock) and of the environment variables Vitest reads take no
+grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
+--allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
+
+Coverage of a suite with Vitest files: report the Vitest files' coverage on the toolchain
+(`denext deno coverage`), in a report of its own. The Vitest layer changes the code a module
+emits, and `deno coverage` under-reports a module whose profiles from a plain run and a Vitest run
+it merges; a stock Deno run's profile of a module the toolchain has since run reads as "Missing
+transpiled source".
 
 denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
 call `deno test` directly so you can change them, or run them with `denext task`.
