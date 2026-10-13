@@ -43,12 +43,15 @@ import { sqliteSessionStore } from "./sqlite-session-store.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
+  factorPatchColumns,
   type FieldMap,
   fromRow,
+  MFA_FACTOR_MAP,
   MFA_MAP,
   NATIVE_GRANT_MAP,
   NATIVE_SESSION_MAP,
   NATIVE_SESSION_RETENTION,
+  pageWindow,
   PASSKEY_CHALLENGE_MAP,
   PASSKEY_MAP,
   patchUser,
@@ -121,6 +124,14 @@ const SCHEMA: TableSpec[] = [
       ["image", "TEXT"],
       ["roles", "TEXT"],
       ["created_at", "INTEGER"],
+      ["phone", "TEXT"],
+      ["phone_verified", "INTEGER"],
+      ["user_metadata", "TEXT"],
+      ["app_metadata", "TEXT"],
+      ["is_anonymous", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
+      ["banned_until", "INTEGER"],
     ],
     // Unique WHERE NOT NULL: one account per address, any number of address-less users.
     indexes: [{
@@ -128,6 +139,11 @@ const SCHEMA: TableSpec[] = [
         "WHERE email_lc IS NOT NULL",
       duplicates: "SELECT email_lc, count(*) FROM auth_users WHERE email_lc IS NOT NULL " +
         "GROUP BY email_lc HAVING count(*) > 1",
+    }, {
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_phone ON auth_users (phone) " +
+        "WHERE phone IS NOT NULL",
+      duplicates: "SELECT phone, count(*) FROM auth_users WHERE phone IS NOT NULL " +
+        "GROUP BY phone HAVING count(*) > 1",
     }],
     backfill: "UPDATE auth_users SET email_lc = lower(trim(email)) " +
       "WHERE email_lc IS NULL AND email IS NOT NULL",
@@ -145,6 +161,12 @@ const SCHEMA: TableSpec[] = [
       ["token_type", "TEXT"],
       ["scope", "TEXT"],
       ["id_token", "TEXT"],
+      ["identity_id", "TEXT"],
+      ["identity_data", "TEXT"],
+      ["email", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
     ],
     constraints: "PRIMARY KEY (provider, provider_account_id)",
     indexes: [{
@@ -204,6 +226,25 @@ const SCHEMA: TableSpec[] = [
       ["backup_code_hashes", "TEXT"],
       ["last_step", "INTEGER"],
     ],
+  },
+  {
+    name: "auth_mfa_factors",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["factor_type", "TEXT NOT NULL"],
+      ["status", "TEXT NOT NULL"],
+      ["friendly_name", "TEXT"],
+      ["secret", "TEXT"],
+      ["phone", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_step", "INTEGER"],
+      ["last_challenged_at", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON auth_mfa_factors (user_id)",
+    }],
   },
   {
     name: "auth_native_grants",
@@ -484,7 +525,7 @@ function saveUser(state: SqliteState, user: AdapterUser, createdAt: number): Ada
     email_lc: user.email ? emailKey(user.email) : null,
     created_at: createdAt,
   }, "id");
-  return { ...user };
+  return { ...user, createdAt };
 }
 
 /** The five required user methods. */
@@ -492,7 +533,13 @@ function userMethods(
   state: SqliteState,
 ): Pick<
   AuthAdapter,
-  "createUser" | "getUser" | "getUserByEmail" | "getUserByAccount" | "updateUser"
+  | "createUser"
+  | "getUser"
+  | "getUserByEmail"
+  | "getUserByAccount"
+  | "updateUser"
+  | "getUserByPhone"
+  | "listUsers"
 > {
   const read = (sql: string, params: SqlValue[]): AdapterUser | undefined => {
     const row = one(state.db(), sql, params);
@@ -501,6 +548,18 @@ function userMethods(
   return {
     createUser: (user) => saveUser(state, withUserId(user), state.now()),
     getUser: (id) => read("SELECT * FROM auth_users WHERE id = ?", [id]),
+    getUserByPhone: (phone) => read("SELECT * FROM auth_users WHERE phone = ?", [phone]),
+    listUsers({ page, perPage }) {
+      const { size, offset } = pageWindow(page, perPage);
+      const users = state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_users ORDER BY created_at, id LIMIT ? OFFSET ?",
+          [size, offset],
+        )
+        .map((row) => fromRow(USER_MAP, row));
+      const [{ n }] = state.db().query<{ n: number }>("SELECT count(*) AS n FROM auth_users");
+      return { users, total: Number(n) };
+    },
     getUserByEmail: (email) =>
       read("SELECT * FROM auth_users WHERE email_lc = ?", [emailKey(email)]),
     getUserByAccount: (ref) =>
@@ -527,7 +586,10 @@ function accountMethods(
 ): Pick<AuthAdapter, "linkAccount" | "unlinkAccount" | "listAccounts"> {
   return {
     linkAccount(account) {
-      put(state.db(), "auth_accounts", toRow(ACCOUNT_MAP, account));
+      put(state.db(), "auth_accounts", {
+        ...toRow(ACCOUNT_MAP, account),
+        created_at: account.createdAt ?? state.now(),
+      });
     },
     unlinkAccount(ref) {
       state.db().exec(
@@ -755,11 +817,56 @@ function nativeMethods(
         [state.now(), id],
       );
     },
-    revokeNativeSessionsByUser(userId) {
+    revokeNativeSessionsByUser(userId, exceptId) {
       state.db().exec(
-        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-        [state.now(), userId],
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL" +
+          " AND id IS NOT ?",
+        [state.now(), userId, exceptId ?? null],
       );
+    },
+  };
+}
+
+/** The `/auth/v1` MFA factors. */
+function factorMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createMfaFactor"
+  | "listMfaFactors"
+  | "updateMfaFactor"
+  | "claimMfaFactorStep"
+  | "deleteMfaFactor"
+> {
+  return {
+    createMfaFactor(record) {
+      put(state.db(), "auth_mfa_factors", toRow(MFA_FACTOR_MAP, record));
+    },
+    listMfaFactors: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_mfa_factors WHERE user_id = ? ORDER BY created_at, id",
+          [userId],
+        )
+        .map((row) => fromRow(MFA_FACTOR_MAP, row)),
+    updateMfaFactor(id, patch) {
+      const sets = factorPatchColumns(patch);
+      if (!sets.length) return;
+      state.db().exec(
+        `UPDATE auth_mfa_factors SET ${sets.map(([c]) => `${c} = ?`).join(", ")} WHERE id = ?`,
+        [...sets.map(([, v]) => v as SqlValue), id],
+      );
+    },
+    claimMfaFactorStep(id, step) {
+      const rows = state.db().query<{ id: string }>(
+        "UPDATE auth_mfa_factors SET last_step = ? WHERE id = ? " +
+          "AND (last_step IS NULL OR last_step < ?) RETURNING id",
+        [step, id, step],
+      );
+      return rows.length === 1;
+    },
+    deleteMfaFactor(id) {
+      state.db().exec("DELETE FROM auth_mfa_factors WHERE id = ?", [id]);
     },
   };
 }
@@ -840,6 +947,7 @@ const USER_TABLES = [
   "auth_credentials",
   "auth_api_tokens",
   "auth_mfa",
+  "auth_mfa_factors",
   "auth_native_sessions",
   "auth_passkeys",
 ];
@@ -951,6 +1059,7 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...credentialMethods(state),
     ...apiTokenMethods(state),
     ...mfaMethods(state),
+    ...factorMethods(state),
     ...nativeMethods(state),
     ...passkeyMethods(state),
     async deleteUser(id) {

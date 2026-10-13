@@ -483,6 +483,10 @@ With `backend({ supabase: true })` the backend also recognizes Supabase's creden
   private JWK, or a JSON array of them, current first; the public halves are served at
   `/auth/v1/.well-known/jwks.json`), or HS256 under the JWT secret when no signing key is set.
 
+The same option mounts GoTrue's `/auth/v1` over your `denextAuth()` users, so `supabase.auth.*`
+works unchanged; its options go under `supabase: { auth: { … } }` — see
+[Supabase clients](/docs/auth#supabase-clients-auth-v1).
+
 `denext backend keys` prints a fresh set as environment variables (`--legacy` adds a JWT secret
 and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
 `.denext/backend-keys.json`. Store them as secrets; never commit them.

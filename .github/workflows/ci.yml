@@ -299,7 +299,9 @@ jobs:
             tests/postgres-integration.test.ts \
             tests/backend-s3-minio.test.ts \
             tests/backend-supabase-functions.test.ts \
-            tests/backend-storage-supabase-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-storage-supabase-integration.test.ts \
+            tests/backend-supabase-auth.test.ts \
+            tests/backend-supabase-auth-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

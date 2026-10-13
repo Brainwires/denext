@@ -42,6 +42,30 @@ export interface AdapterUser {
   image?: string;
   /** Authorization roles — the values `requireAuth({ role })` / `requireSession({ role })` match. */
   roles?: string[];
+  /** Phone number in E.164 form (`+15551234567`), when known. */
+  phone?: string;
+  /** When the phone number was verified (epoch seconds); `undefined` while unverified. */
+  phoneVerified?: number;
+  /**
+   * Free-form profile data the user may edit (Supabase's `raw_user_meta_data`) — never use it
+   * for authorization.
+   */
+  userMetadata?: Record<string, unknown>;
+  /**
+   * Data only the server (the service role, the admin API) may write (Supabase's
+   * `raw_app_meta_data`): `provider`, `providers`, the app's own authorization claims.
+   */
+  appMetadata?: Record<string, unknown>;
+  /** An anonymous user (signed in with no identifier yet); `undefined` means `false`. */
+  isAnonymous?: boolean;
+  /** Creation time, epoch seconds (the SQL adapters stamp it; others keep what they are given). */
+  createdAt?: number;
+  /** Last change, epoch seconds. */
+  updatedAt?: number;
+  /** Last successful sign-in, epoch seconds. */
+  lastSignInAt?: number;
+  /** Banned until this time, epoch seconds: no sign-in or refresh before it. */
+  bannedUntil?: number;
 }
 
 /** A provider account linked to an {@linkcode AdapterUser}. */
@@ -66,6 +90,18 @@ export interface AdapterAccount {
   scope?: string;
   /** The raw `id_token`, when the app chose to persist it. */
   idToken?: string;
+  /** The identity's own id (Supabase's `identity_id`): a UUID, stable for the link's life. */
+  identityId?: string;
+  /** The provider's profile for this identity (Supabase's `identity_data`). */
+  identityData?: Record<string, unknown>;
+  /** The email this identity carries, when any. */
+  email?: string;
+  /** When the identity was linked, epoch seconds. */
+  createdAt?: number;
+  /** When the identity was last changed, epoch seconds. */
+  updatedAt?: number;
+  /** When the identity was last used to sign in, epoch seconds. */
+  lastSignInAt?: number;
 }
 
 /**
@@ -128,6 +164,35 @@ export interface MfaRecord {
   backupCodeHashes: string[];
   /** The last TOTP step already spent, for the replay guard. */
   lastStep?: number;
+}
+
+/**
+ * One MFA factor of the `/auth/v1` (GoTrue) API: a TOTP authenticator or a phone that receives
+ * codes by SMS. A user may hold several.
+ */
+export interface MfaFactorRecord {
+  /** The factor id (a UUID). */
+  id: string;
+  /** The owning {@linkcode AdapterUser.id}. */
+  userId: string;
+  /** `totp` or `phone`. */
+  type: "totp" | "phone";
+  /** `unverified` until its first successful verification. */
+  status: "unverified" | "verified";
+  /** A label the user chose (unique per user). */
+  friendlyName?: string;
+  /** The TOTP secret, sealed like {@linkcode MfaRecord.secret} (TOTP factors). */
+  secret?: string;
+  /** The phone number, E.164 (phone factors). */
+  phone?: string;
+  /** Creation time, epoch seconds. */
+  createdAt: number;
+  /** Last change, epoch seconds. */
+  updatedAt: number;
+  /** The last TOTP step spent — the replay guard. */
+  lastStep?: number;
+  /** The last challenge, epoch seconds. */
+  lastChallengedAt?: number;
 }
 
 /**
@@ -294,6 +359,25 @@ export interface AuthAdapter {
    * @returns The updated record.
    */
   updateUser(user: Partial<AdapterUser> & { id: string }): MaybePromise<AdapterUser>;
+
+  /**
+   * Look a user up by phone number (optional; gates phone sign-in). Numbers are stored and
+   * matched in E.164 form.
+   *
+   * @param phone The number.
+   * @returns The user, or `undefined`.
+   */
+  getUserByPhone?(phone: string): MaybePromise<AdapterUser | undefined>;
+
+  /**
+   * One page of users, oldest first (optional; gates the admin user listing).
+   *
+   * @param options The 1-based `page` and its size, `perPage`.
+   * @returns The page and the total number of users.
+   */
+  listUsers?(
+    options: { page: number; perPage: number },
+  ): MaybePromise<{ users: AdapterUser[]; total: number }>;
 
   // ---- accounts (required) -------------------------------------------------
 
@@ -482,6 +566,53 @@ export interface AuthAdapter {
    */
   claimTotpStep?(userId: string, step: number): MaybePromise<boolean>;
 
+  // ---- MFA factors of the /auth/v1 API (optional) ---------------------------
+
+  /**
+   * Store a new factor (optional; the factor group gates `/auth/v1/factors`).
+   *
+   * @param record The factor.
+   */
+  createMfaFactor?(record: MfaFactorRecord): MaybePromise<void>;
+
+  /**
+   * A user's factors, oldest first.
+   *
+   * @param userId The owner.
+   * @returns The factors.
+   */
+  listMfaFactors?(userId: string): MaybePromise<MfaFactorRecord[]>;
+
+  /**
+   * Change a factor's status, label or challenge time.
+   *
+   * @param id The factor id.
+   * @param patch The fields to change.
+   */
+  updateMfaFactor?(
+    id: string,
+    patch: Partial<
+      Pick<MfaFactorRecord, "status" | "friendlyName" | "updatedAt" | "lastChallengedAt">
+    >,
+  ): MaybePromise<void>;
+
+  /**
+   * **Atomically** claim a TOTP step on a factor: succeeds only when `step` is greater than its
+   * stored `lastStep`, and stores it in the same operation (the replay guard).
+   *
+   * @param id The factor id.
+   * @param step The step the presented code verified against.
+   * @returns `true` when claimed.
+   */
+  claimMfaFactorStep?(id: string, step: number): MaybePromise<boolean>;
+
+  /**
+   * Remove a factor. Removing an unknown one is not an error.
+   *
+   * @param id The factor id.
+   */
+  deleteMfaFactor?(id: string): MaybePromise<void>;
+
   // ---- native app sessions (optional) --------------------------------------
 
   /**
@@ -551,11 +682,13 @@ export interface AuthAdapter {
   revokeNativeSession?(id: string): MaybePromise<void>;
 
   /**
-   * Revoke every family of a user ("sign out everywhere", password reset).
+   * Revoke every family of a user ("sign out everywhere", password reset) — except `exceptId`,
+   * when given ("sign out my other sessions").
    *
    * @param userId The owner.
+   * @param exceptId A family to keep.
    */
-  revokeNativeSessionsByUser?(userId: string): MaybePromise<void>;
+  revokeNativeSessionsByUser?(userId: string, exceptId?: string): MaybePromise<void>;
 
   // ---- passkeys (optional) ---------------------------------------------------
 

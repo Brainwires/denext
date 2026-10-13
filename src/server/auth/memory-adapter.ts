@@ -35,6 +35,7 @@ import type {
   AdapterUser,
   ApiTokenRecord,
   AuthAdapter,
+  MfaFactorRecord,
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
@@ -43,6 +44,7 @@ import type {
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./adapter.ts";
+import { pageWindow } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
 import { inMemorySessionStore, type SessionStore } from "./session-store.ts";
 
@@ -126,6 +128,8 @@ interface MemoryState {
   apiTokenHashes: Map<string, string>;
   /** TOTP factors by user id. */
   mfa: Map<string, MfaRecord>;
+  /** `/auth/v1` MFA factors by id. */
+  factors: Table<MfaFactorRecord>;
   /** Native single-use grants (codes, nonces) by `kind\0hash`. */
   nativeGrants: Table<NativeGrantRecord>;
   /** Native session families by id. */
@@ -159,6 +163,7 @@ function createState(options: InMemoryAuthAdapterOptions): MemoryState {
     }),
     apiTokenHashes: new Map(),
     mfa: new Map(),
+    factors: table<MfaFactorRecord>(max),
     nativeGrants: table<NativeGrantRecord>(max),
     nativeSessions: table<NativeSessionRecord>(max),
     passkeys: table<PasskeyRecord>(max),
@@ -259,14 +264,33 @@ function userMethods(
   state: MemoryState,
 ): Pick<
   AuthAdapter,
-  "createUser" | "getUser" | "getUserByEmail" | "getUserByAccount" | "updateUser"
+  | "createUser"
+  | "getUser"
+  | "getUserByEmail"
+  | "getUserByAccount"
+  | "updateUser"
+  | "getUserByPhone"
+  | "listUsers"
 > {
   return {
     createUser(user) {
       const { id, ...rest } = user;
-      return saveUser(state, { ...rest, id: id ?? crypto.randomUUID() });
+      return saveUser(state, {
+        ...rest,
+        id: id ?? crypto.randomUUID(),
+        createdAt: rest.createdAt ?? state.now(),
+      });
     },
     getUser: (id) => copy(state.users.get(id)),
+    getUserByPhone(phone) {
+      for (const user of state.users.rows.values()) if (user.phone === phone) return copy(user);
+      return undefined;
+    },
+    listUsers({ page, perPage }) {
+      const { size, offset } = pageWindow(page, perPage);
+      const all = [...state.users.rows.values()];
+      return { users: all.slice(offset, offset + size).map((u) => ({ ...u })), total: all.length };
+    },
     getUserByEmail: (email) => copy(userByEmail(state, email)),
     getUserByAccount(ref) {
       const key = accountKey(ref);
@@ -297,7 +321,10 @@ function accountMethods(
 ): Pick<AuthAdapter, "linkAccount" | "unlinkAccount" | "listAccounts"> {
   return {
     linkAccount(account) {
-      state.accounts.set(accountKey(account), { ...account });
+      state.accounts.set(accountKey(account), {
+        ...account,
+        createdAt: account.createdAt ?? state.now(),
+      });
     },
     unlinkAccount(ref) {
       state.accounts.delete(accountKey(ref));
@@ -482,9 +509,9 @@ function nativeMethods(
       const record = state.nativeSessions.get(id);
       if (record && record.revokedAt === undefined) record.revokedAt = state.now();
     },
-    revokeNativeSessionsByUser(userId) {
+    revokeNativeSessionsByUser(userId, exceptId) {
       for (const record of state.nativeSessions.rows.values()) {
-        if (record.userId === userId && record.revokedAt === undefined) {
+        if (record.userId === userId && record.revokedAt === undefined && record.id !== exceptId) {
           record.revokedAt = state.now();
         }
       }
@@ -516,6 +543,7 @@ function deleteUserRows(state: MemoryState, id: string): void {
   if (address) dropWhere(state.tokens, (token) => emailKey(token.identifier) === address);
   state.credentials.delete(id);
   state.mfa.delete(id);
+  dropWhere(state.factors, (factor) => factor.userId === id);
   dropWhere(state.accounts, (account) => account.userId === id);
   dropWhere(
     state.apiTokens,
@@ -524,6 +552,43 @@ function deleteUserRows(state: MemoryState, id: string): void {
   );
   dropWhere(state.nativeSessions, (session) => session.userId === id);
   dropWhere(state.passkeys, (passkey) => passkey.userId === id);
+}
+
+/** The `/auth/v1` MFA factors. */
+function factorMethods(
+  state: MemoryState,
+): Pick<
+  AuthAdapter,
+  | "createMfaFactor"
+  | "listMfaFactors"
+  | "updateMfaFactor"
+  | "claimMfaFactorStep"
+  | "deleteMfaFactor"
+> {
+  return {
+    createMfaFactor(record) {
+      state.factors.set(record.id, { ...record });
+    },
+    listMfaFactors: (userId) =>
+      [...state.factors.rows.values()].filter((factor) => factor.userId === userId)
+        .sort((a, b) => a.createdAt - b.createdAt).map((factor) => ({ ...factor })),
+    updateMfaFactor(id, patch) {
+      const factor = state.factors.rows.get(id);
+      if (!factor) return;
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) Reflect.set(factor, key, value);
+      }
+    },
+    claimMfaFactorStep(id, step) {
+      const factor = state.factors.rows.get(id);
+      if (!factor || (factor.lastStep !== undefined && factor.lastStep >= step)) return false;
+      factor.lastStep = step;
+      return true;
+    },
+    deleteMfaFactor(id) {
+      state.factors.delete(id);
+    },
+  };
 }
 
 /** The passkey group: credential records and single-use challenges. */
@@ -627,6 +692,8 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     ...deletionMethods(state),
     // Passkeys: credential records + single-use challenges.
     ...passkeyMethods(state),
+    // The /auth/v1 MFA factors.
+    ...factorMethods(state),
     sessions: state.sessions,
     close: () => closeState(state),
   };

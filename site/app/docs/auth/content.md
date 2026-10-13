@@ -1718,6 +1718,135 @@ the API, the callback simply runs uncoordinated.
 options. The same primitive fits any "only one tab should do this" job — a one-time
 client migration, or electing a single leader tab for a shared connection.
 
+## Supabase clients: `/auth/v1`
+
+With [`backend({ supabase })`](/docs/backend#supabase-keys-and-access-tokens) the users
+`denextAuth()` keeps are also served by a GoTrue-compatible API at `/auth/v1`, so the stock
+`@supabase/supabase-js` client's `supabase.auth.*` works unchanged against your app — and a cookie
+session and a token session are the same user, in the same adapter:
+
+```ts
+// denext.config.ts
+import { credentials, denextAuth, github } from "denext/server";
+import { backend, backendAuthAdapter } from "@denext/backend";
+
+export default {
+  plugins: [
+    denextAuth({
+      secret: Deno.env.get("AUTH_SECRET")!,
+      canonicalOrigin: "https://app.example.com",
+      providers: [credentials(), github({ clientId: "…", clientSecret: "…" })],
+      adapter: backendAuthAdapter(), // or sqliteAuthAdapter() / inMemoryAuthAdapter()
+      sendVerificationRequest: sendMail, // confirmation, magic-link, recovery and invite mail
+    }),
+    backend({
+      postgres: {},
+      supabase: {
+        auth: {
+          siteUrl: "https://app.example.com",
+          redirectUrls: ["https://app.example.com/**", "myapp://auth/*"],
+          anonymousUsers: true,
+          sendSms: ({ phone, message }) => sms.send(phone, message), // phone OTP + phone MFA
+          mfa: { phone: true },
+        },
+      },
+    }),
+  ],
+};
+```
+
+```ts
+// the browser, a Capacitor shell, a script — anything supabase-js runs in
+import { createClient } from "@supabase/supabase-js";
+const supabase = createClient("https://app.example.com", PUBLISHABLE_KEY);
+await supabase.auth.signUp({ email, password, options: { data: { name } } });
+await supabase.auth.signInWithPassword({ email, password });
+await supabase.auth.signInWithOtp({ phone: "+15555550100" });
+await supabase.auth.signInWithOAuth({ provider: "github" }); // a provider from denextAuth()
+await supabase.auth.mfa.enroll({ factorType: "totp" });
+await supabase.auth.admin.listUsers(); // with the secret key, on a server
+```
+
+What it serves: `signup` (email or phone with a password, or anonymous), `token` with
+`grant_type=password | refresh_token | pkce | id_token` (Google / Apple id tokens, from
+`idTokenProviders` or `native.google` / `native.apple`), `otp` and `magiclink`, `verify` (POST,
+and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`, `recover`,
+`user` (GET and PUT: metadata, password, email and phone changes), `reauthenticate`, `logout`
+(`scope=local | others | global`), `authorize` (OAuth through the providers you configured; their
+callback stays `{basePath}/callback/:provider`), `user/identities/authorize` and identity
+unlinking, `factors` (TOTP and phone: enroll, challenge, verify, unenroll; `aal2` after a verified
+factor), `settings`, `sso` (SAML 2.0, below), and the admin API — `admin/users` (paginated list,
+create, read, update incl. `ban_duration`, delete), `invite`, `admin/generate_link` and
+`admin/users/:id/factors`. Errors are GoTrue's `{ code, error_code, msg }`, so `supabase-js` raises
+`AuthApiError` with the same `code`s.
+
+Users gain Supabase's fields on every adapter: `phone`, `userMetadata` / `appMetadata` (free-form
+JSON; only the admin API writes `app_metadata`), `isAnonymous`, timestamps, `bannedUntil`, and
+identity rows with `identityData`. Access tokens carry Supabase's claims (`sub`, `role`, `aud`,
+`email`, `phone`, `app_metadata`, `user_metadata`, `aal`, `amr`, `session_id`, `is_anonymous`,
+`exp`, `iat`, `iss`), so RLS policies written for Supabase work through `db()` and auto-REST.
+
+The `/auth/v1` options (`backend({ supabase: { auth } })`):
+
+| Option                             | Default           | What it does                                                              |
+| ---------------------------------- | ----------------- | ------------------------------------------------------------------------- |
+| `siteUrl`                          | `canonicalOrigin` | Where links land by default                                               |
+| `redirectUrls`                     | `[]`              | Other `redirect_to` targets (`*` one segment, `**` anything)              |
+| `jwtExpiry`                        | `3600`            | Access-token lifetime, seconds                                            |
+| `refreshTokenReuseInterval`        | `10`              | Seconds a used refresh token may be presented again                       |
+| `disableSignup`                    | `false`           | Refuse new sign-ups (invites and the admin API still create users)        |
+| `autoconfirm` / `phoneAutoconfirm` | `false`           | Sign in at sign-up without confirming the email / phone                   |
+| `anonymousUsers`                   | `false`           | Allow `signInAnonymously()`                                               |
+| `minPasswordLength`                | `8`               | Password policy (`weak_password`)                                         |
+| `otpLength` / `otpExpiry`          | `6` / `3600`      | Email and SMS codes                                                       |
+| `sendSms`                          | none              | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                   |
+| `captcha`                          | off               | `{ provider: "hcaptcha" \| "turnstile", secret }` — checks `captchaToken` |
+| `hooks`                            | none              | `customAccessToken`, `sendEmail`, `sendSms` (Supabase's auth hooks)       |
+| `requireReauthentication`          | `false`           | A password change needs a `reauthenticate()` nonce                        |
+| `manualLinking`                    | `true`            | Allow `linkIdentity()`                                                    |
+| `mfa`                              | TOTP              | `{ phone: true }` adds SMS factors; `maxFactors` (10)                     |
+| `saml`                             | none              | `{ providers: [{ id, domains, metadataXml, attributeMapping }] }`         |
+
+### SAML single sign-on
+
+`saml.providers` lists identity providers by their metadata XML;
+`signInWithSSO({ domain })` or `({ providerId })` starts an SP-initiated login, the IdP posts to
+`/auth/v1/sso/saml/acs`, and this service provider's metadata is at `/auth/v1/sso/saml/metadata`
+(the entity id unless `saml.entityId` says otherwise). Responses are verified by denext's own SAML
+code: a strict XML parser (no DOCTYPE or entities), exclusive c14n, RSA-SHA256/512 or ECDSA-SHA256
+signatures only, keys only from the metadata's certificates, claims read only from the element
+whose signature verified (signature-wrapping, duplicate IDs, a second assertion, comment
+injection are refused), audience, recipient, destination, validity window and `InResponseTo`
+checked. IdP-initiated logins are refused: the `RelayState` names a single-use record of the
+request being answered. A user's SSO identity is `sso:<id>`; an existing account is reused only on
+one of the provider's `domains`.
+
+### Threat notes
+
+- **Keys.** The secret key and the legacy `service_role` JWT bypass row-level security and the
+  admin API trusts them: server-side only. The publishable key is public by design — authorization
+  is RLS and the endpoints' own checks.
+- **Tokens.** Access tokens are ES256 (or HS256 under a legacy secret) with `exp` required and only
+  Supabase's three roles; `none` and algorithm confusion are refused. Every request re-checks the
+  token's session, so `signOut` ends it at once (Supabase lets it live to expiry). Refresh tokens
+  rotate; a used one is answered again only within `refreshTokenReuseInterval`, after which
+  presenting it is a replay that revokes the whole session.
+- **Codes and links.** Email / SMS codes are stored only as a hash of an HMAC under the auth secret,
+  are single-use, expire (`otpExpiry`) and are rate-limited per address (`rateLimit.mfa` /
+  `rateLimit.verification`); a link and its code are one secret. Password sign-in uses the
+  credentials limiter and answers an unknown user and a wrong password alike; a second sign-up for
+  a confirmed address answers with an obfuscated user.
+- **Pre-account hijacking.** Confirming an address keeps only the password the confirmed sign-up
+  chose; one set by anybody else before the confirmation is removed and the sessions end.
+- **PKCE and OAuth.** Only `s256` is accepted. An OAuth flow is bound to the browser by denext's
+  signed transaction cookie; a PKCE flow started cross-origin finishes without it, but nothing —
+  no session, no identity link — happens until the code is exchanged with the verifier. Implicit
+  flows (tokens in the fragment) have the login-CSRF exposure GoTrue's have; prefer PKCE.
+- **Redirects.** `redirect_to` must be the site URL's origin or match `redirectUrls`; anything else
+  falls back to the site URL.
+- **MFA.** Factor secrets are sealed under the auth secret; a challenge is single-use and lives five
+  minutes; a TOTP step is never accepted twice; removing a verified factor needs `aal2`.
+
 ## Security notes
 
 - **CSRF.** Every state-changing auth POST — the Credentials and email callbacks,

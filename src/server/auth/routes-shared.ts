@@ -261,6 +261,11 @@ export interface Transaction {
   nonce?: string;
   /** The already-coerced same-origin path to return to. */
   returnTo?: string;
+  /**
+   * An `/auth/v1` (GoTrue) flow: where it lands, its PKCE challenge, and the user an identity
+   * is being linked to. The callback hands such a transaction to the `/auth/v1` handler.
+   */
+  gotrue?: { redirectTo: string; challenge?: string; linkUserId?: string };
 }
 
 /**

@@ -10,6 +10,35 @@ and this project adheres to
 
 ### Added
 
+- **`/auth/v1`: the stock supabase-js `supabase.auth.*` against denext auth.** With
+  `backend({ supabase })` the users `denextAuth()` keeps are also served by a GoTrue-compatible
+  API: `signup` (email or phone with a password, or anonymous), `token`
+  (`password`, `refresh_token`, `pkce`, `id_token`), `otp` / `magiclink`, `verify` (the code, the
+  link hash, and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`,
+  `recover`, `user` (GET / PUT: metadata, password, email and phone changes; an anonymous user
+  becomes permanent by confirming one), `reauthenticate`, `logout` (`local` / `others` /
+  `global`), `authorize` and `user/identities/authorize` (OAuth through the configured providers,
+  whose callback stays `{basePath}/callback/:provider`), identity unlinking, `factors` (TOTP and
+  SMS: enroll, challenge, verify to `aal2`, unenroll), `settings`, SAML 2.0 `sso` (SP-initiated,
+  metadata and ACS, on the new SAML primitives), and the admin API (`admin/users` with
+  pagination, create / read / update incl. `ban_duration` / delete, `invite`,
+  `admin/generate_link`, factor removal). Sessions are rotating refresh-token families with
+  GoTrue's reuse detection; access tokens carry Supabase's claims and re-check their session on
+  every request. Options under `backend({ supabase: { auth } })`: `siteUrl`, `redirectUrls`,
+  `jwtExpiry`, `refreshTokenReuseInterval`, `disableSignup`, `autoconfirm`, `phoneAutoconfirm`,
+  `anonymousUsers`, `minPasswordLength`, `otpLength`, `otpExpiry`, `sendSms`, `captcha`
+  (hCaptcha / Turnstile), `hooks` (`customAccessToken`, `sendEmail`, `sendSms`),
+  `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`. Errors are
+  GoTrue's `{ code, error_code, msg }`. Tested with `@supabase/supabase-js` on the in-memory
+  adapter and on Postgres.
+- **Auth adapters keep Supabase's user fields.** `AdapterUser` gains `phone`, `phoneVerified`,
+  `userMetadata`, `appMetadata`, `isAnonymous`, `createdAt`, `updatedAt`, `lastSignInAt` and
+  `bannedUntil`; `AdapterAccount` gains `identityId`, `identityData`, `email` and timestamps; new
+  optional methods `getUserByPhone`, `listUsers` and an MFA-factor group (`createMfaFactor`,
+  `listMfaFactors`, `updateMfaFactor`, `claimMfaFactorStep`, `deleteMfaFactor`);
+  `revokeNativeSessionsByUser(userId, exceptId?)`. The in-memory, SQLite and Postgres adapters
+  implement all of it (Postgres migration `0002_auth_user_profile`; SQLite adds the columns on
+  open).
 - **Supabase-compatible keys and request identity (`backend({ supabase })`).** `@denext/backend`
   takes a `supabase` option (`true`, or the keys) that installs Supabase's API keys — a
   publishable key (`sb_publishable_…`, the `anon` role), a secret key (`sb_secret_…`, the

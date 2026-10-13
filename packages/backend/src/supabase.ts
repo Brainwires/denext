@@ -10,6 +10,7 @@
 import type { CommandSpec } from "@denext/denext/cli/command";
 import {
   generateSupabaseKeys,
+  type GoTrueOptions,
   installSupabaseKeys,
   resolveSupabaseKeys,
   SUPABASE_KEY_ENV,
@@ -21,7 +22,14 @@ import type { PluginContext } from "@denext/denext/server";
 import { join } from "@std/path";
 
 /** `backend({ supabase })`: the Supabase-compatible endpoints and their keys. */
-export interface SupabaseOptions extends SupabaseKeysConfig {}
+export interface SupabaseOptions extends SupabaseKeysConfig {
+  /**
+   * `/auth/v1` (GoTrue) options: the site URL and redirect allow-list, sign-up and
+   * confirmation policy, anonymous users, SMS delivery, captcha, hooks, MFA and SAML. The users
+   * themselves, the providers and the email delivery come from `denextAuth()`.
+   */
+  auth?: GoTrueOptions;
+}
 
 /** Where `denext dev` keeps the key set it generated. */
 export const DEV_KEYS_FILE = ".denext/backend-keys.json";

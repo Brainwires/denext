@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`/auth/v1`.** `backend({ supabase: { auth } })` serves the GoTrue-compatible auth API over
+  the `denextAuth()` users (sign-up, password / OTP / magic link / phone / anonymous / OAuth /
+  id_token / PKCE sign-in, user updates, MFA factors, identities, SAML SSO, the admin API), so the
+  stock supabase-js `supabase.auth.*` works unchanged.
+
 - **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
   secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing
   keys, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.

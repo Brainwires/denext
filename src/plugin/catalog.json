@@ -414,14 +414,18 @@
             }
           },
           "supabase": {
-            "description": "The Supabase-compatible surface: `true` (keys from the environment) or the keys. Installs the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that `resolveIdentity()`, `db()` and `auth()` recognize, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.",
+            "description": "The Supabase-compatible surface: `true` (keys from the environment) or the keys and the `/auth/v1` options (`auth`). Installs the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that `resolveIdentity()`, `db()` and `auth()` recognize, serves GoTrue's `/auth/v1` over the `denextAuth()` users (with the JWKS at `/auth/v1/.well-known/jwks.json`), and adds `denext backend keys`.",
             "anyOf": [
               {
                 "type": "boolean"
               },
               {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "auth": {
+                    "description": "`/auth/v1` (GoTrue) options: the site URL and redirect allow-list, sign-up and confirmation policy, anonymous users, SMS delivery, captcha, hooks, MFA and SAML. The users themselves, the providers and the email delivery come from `denextAuth()`."
+                  }
+                }
               }
             ]
           },

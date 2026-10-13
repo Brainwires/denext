@@ -574,6 +574,7 @@ export type {
   ApiTokenRecord,
   AuthAdapter,
   MaybePromise,
+  MfaFactorRecord,
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
@@ -628,6 +629,21 @@ export type {
   VerifySupabaseJwtOptions,
 } from "./auth/gotrue/keys.ts";
 export { jwtBearerOf, sessionFromClaims, verifyAccessToken } from "./auth/gotrue/access.ts";
+export { bearerTokenOf } from "./auth/bearer-header.ts";
+// The GoTrue-compatible `/auth/v1` API (`backend({ supabase })` mounts it).
+export { handleGoTrueRequest, installGoTrue } from "./auth/gotrue/handler.ts";
+export type { GoTrueHandlerOptions } from "./auth/gotrue/handler.ts";
+export { GoTrueError } from "./auth/gotrue/errors.ts";
+export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
+export type {
+  GoTrueAccessTokenHookInput,
+  GoTrueCaptchaOptions,
+  GoTrueHooks,
+  GoTrueOptions,
+  GoTrueSamlProvider,
+  GoTrueSendEmailPayload,
+  GoTrueSmsMessage,
+} from "./auth/gotrue/options.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";

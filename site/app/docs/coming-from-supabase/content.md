@@ -143,6 +143,11 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 `denextAuth({ … })`; Supabase sends auth mail for you, denext calls your
 `sendVerificationRequest`. See [Auth](/docs/auth).
 
+Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
+calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
+OAuth with your `denextAuth()` providers, MFA, SAML SSO and the admin API — over the same users
+the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-auth-v1).
+
 ### Storage: upload and signed URLs
 
 ```ts
@@ -456,16 +461,12 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   computed fields / relationships are not served; a `PATCH` or `DELETE` needs a filter (as on
   Supabase, where `safeupdate` refuses one without), and `count: "exact"` is for signed-in users
   unless `rest.exactCount` allows it.
-- **supabase-js: the database, storage, realtime and functions calls.** `from()`, `rpc()` and
-  `schema()` work against `/rest/v1`, `supabase.storage` against `/storage/v1`,
-  `supabase.channel()` against `/realtime/v1` and `functions.invoke` against `/functions/v1`,
-  unchanged (point `createClient` at the app); the other calls have to be rewritten, as above.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
   are your Postgres provider's job.
-- **Auth gaps.** No phone or SMS sign-in, no anonymous sign-in, no SAML SSO (generic `oidc()`
-  covers OIDC identity providers), and no built-in mailer — you supply `sendVerificationRequest`.
+- **No built-in mailer or SMS sender.** `/auth/v1` sends through your `sendVerificationRequest`
+  (or the `sendEmail` hook) and your `sendSms`.
 - **Realtime is LISTEN/NOTIFY.** Notifications serialize on commit across the database, so very high
   write volumes are better served by logical replication (planned); a table's full old row
   (`old: "full"`) is carried only when it fits a notification (about 7.5 KB of JSON). Tables opt

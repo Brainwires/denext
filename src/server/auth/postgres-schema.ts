@@ -82,6 +82,33 @@ CREATE TABLE IF NOT EXISTS ${p}auth_rate_limits (
   key TEXT PRIMARY KEY, hits BIGINT NOT NULL, reset_at DOUBLE PRECISION NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_rate_limits_reset ON ${p}auth_rate_limits (reset_at);
 `,
+  }, {
+    // Supabase-shaped users and identities: phone, metadata, anonymous users, timestamps.
+    name: "0002_auth_user_profile",
+    sql: `
+ALTER TABLE ${p}auth_users ADD COLUMN phone TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN phone_verified BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN user_metadata TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN app_metadata TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN is_anonymous BOOLEAN;
+ALTER TABLE ${p}auth_users ADD COLUMN updated_at BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN last_sign_in_at BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN banned_until BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_users_phone ON ${p}auth_users (phone)
+  WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS auth_users_created ON ${p}auth_users (created_at, id);
+ALTER TABLE ${p}auth_accounts ADD COLUMN identity_id TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN identity_data TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN email TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN created_at BIGINT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN updated_at BIGINT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN last_sign_in_at BIGINT;
+CREATE TABLE IF NOT EXISTS ${p}auth_mfa_factors (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, factor_type TEXT NOT NULL, status TEXT NOT NULL,
+  friendly_name TEXT, secret TEXT, phone TEXT, created_at BIGINT, updated_at BIGINT,
+  last_step BIGINT, last_challenged_at BIGINT);
+CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON ${p}auth_mfa_factors (user_id);
+`,
   }];
 }
 

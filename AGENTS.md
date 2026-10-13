@@ -646,6 +646,13 @@ role. Object/bucket rows live in Supabase's `storage.objects` / `storage.buckets
 `node:sqlite` file; `storage: { rls: true }` authorizes with SQL policies on them
 (`storage.foldername(name)`, `auth.uid()`). Set `DENEXT_STORAGE_SECRET` (≥ 32 chars). Docs:
 https://denext.dev/docs/backend
+Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the API keys
+(`DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`, ES256 `DENEXT_JWT_SIGNING_KEYS`, legacy
+`DENEXT_JWT_SECRET`; `denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the
+`denextAuth()` users, so stock `supabase.auth.*` works (password, OTP / magic link, phone via
+`sendSms`, anonymous, OAuth, MFA, SAML SSO, admin API). `resolveIdentity()` from
+`@denext/backend/server` resolves any request (access token → secret key → denext session → anon);
+`db()` uses it.
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a

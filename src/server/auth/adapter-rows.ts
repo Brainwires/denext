@@ -8,6 +8,7 @@ import type {
   AdapterUser,
   ApiTokenRecord,
   MaybePromise,
+  MfaFactorRecord,
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
@@ -63,6 +64,35 @@ const LIST: Codec = {
   to: (value) => Array.isArray(value) ? JSON.stringify(value) : null,
 };
 
+/** A boolean column whose `false` reads as absent (an optional flag). */
+const FLAG: Codec = {
+  from: (value) => value === true || value === 1 || value === "t" || value === "true" || undefined,
+  to: (value) => value === true ? true : null,
+};
+
+/** Parse a JSON object, tolerating a NULL or a corrupted value. */
+function parseObject(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A text column holding a JSON object — absent when the column is NULL. */
+const OBJECT: Codec = {
+  from: (value) => parseObject(value),
+  to: (value) =>
+    value && typeof value === "object" && !Array.isArray(value) ? JSON.stringify(value) : null,
+};
+
 /** A text column holding a JSON array of strings that is never absent, only empty. */
 const CODES: Codec = { from: (value) => parseList(value) ?? [], to: LIST.to };
 
@@ -107,6 +137,15 @@ export const USER_MAP: FieldMap<AdapterUser> = {
   name: ["name", TEXT],
   image: ["image", TEXT],
   roles: ["roles", LIST],
+  phone: ["phone", TEXT],
+  phoneVerified: ["phone_verified", INT],
+  userMetadata: ["user_metadata", OBJECT],
+  appMetadata: ["app_metadata", OBJECT],
+  isAnonymous: ["is_anonymous", FLAG],
+  createdAt: ["created_at", INT],
+  updatedAt: ["updated_at", INT],
+  lastSignInAt: ["last_sign_in_at", INT],
+  bannedUntil: ["banned_until", INT],
 };
 
 export const ACCOUNT_MAP: FieldMap<AdapterAccount> = {
@@ -120,6 +159,12 @@ export const ACCOUNT_MAP: FieldMap<AdapterAccount> = {
   tokenType: ["token_type", TEXT],
   scope: ["scope", TEXT],
   idToken: ["id_token", TEXT],
+  identityId: ["identity_id", TEXT],
+  identityData: ["identity_data", OBJECT],
+  email: ["email", TEXT],
+  createdAt: ["created_at", INT],
+  updatedAt: ["updated_at", INT],
+  lastSignInAt: ["last_sign_in_at", INT],
 };
 
 export const VERIFICATION_MAP: FieldMap<VerificationTokenRecord> = {
@@ -149,6 +194,28 @@ export const MFA_MAP: FieldMap<MfaRecord> = {
   backupCodeHashes: ["backup_code_hashes", CODES],
   lastStep: ["last_step", INT],
 };
+
+export const MFA_FACTOR_MAP: FieldMap<MfaFactorRecord> = {
+  id: ["id", TEXT],
+  userId: ["user_id", TEXT],
+  type: ["factor_type", TEXT],
+  status: ["status", TEXT],
+  friendlyName: ["friendly_name", TEXT],
+  secret: ["secret", TEXT],
+  phone: ["phone", TEXT],
+  createdAt: ["created_at", INT],
+  updatedAt: ["updated_at", INT],
+  lastStep: ["last_step", INT],
+  lastChallengedAt: ["last_challenged_at", INT],
+};
+
+/** The columns {@linkcode AuthAdapter.updateMfaFactor} may change, by field. */
+const MFA_FACTOR_PATCHABLE = {
+  status: "status",
+  friendlyName: "friendly_name",
+  updatedAt: "updated_at",
+  lastChallengedAt: "last_challenged_at",
+} as const;
 
 export const NATIVE_GRANT_MAP: FieldMap<NativeGrantRecord> = {
   hash: ["hash", TEXT],
@@ -264,4 +331,31 @@ export async function spendBackupCode(
     if (await swap(JSON.stringify(rest), JSON.stringify(record.backupCodeHashes))) return true;
   }
   return false;
+}
+
+/**
+ * The `LIMIT` / `OFFSET` of a 1-based page (both clamped to at least 1).
+ *
+ * @param page The page.
+ * @param perPage Its size.
+ * @returns The size and the offset.
+ */
+export function pageWindow(page: number, perPage: number): { size: number; offset: number } {
+  const size = Math.max(1, Math.floor(perPage));
+  return { size, offset: (Math.max(1, Math.floor(page)) - 1) * size };
+}
+
+/**
+ * The `column = value` pairs an `updateMfaFactor` patch sets (undefined fields skipped).
+ *
+ * @param patch The patch.
+ * @returns The pairs, in field order.
+ */
+export function factorPatchColumns(patch: object): Array<[column: string, value: unknown]> {
+  const out: Array<[string, unknown]> = [];
+  for (const [field, column] of Object.entries(MFA_FACTOR_PATCHABLE)) {
+    const value = (patch as Record<string, unknown>)[field];
+    if (value !== undefined) out.push([column, value]);
+  }
+  return out;
 }

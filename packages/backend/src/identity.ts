@@ -17,6 +17,7 @@ import {
   apiKeyRole,
   auth,
   type AuthSession,
+  bearerTokenOf,
   installedSupabaseKeys,
   looksLikeJwt,
   opaqueKeyRole,
@@ -107,11 +108,7 @@ export const ANON_IDENTITY: RequestIdentity = Object.freeze({
 }) as RequestIdentity;
 
 function bearerOf(request: Request): string | undefined {
-  const header = request.headers.get("authorization");
-  if (!header) return undefined;
-  const space = header.indexOf(" ");
-  if (space < 0 || header.slice(0, space).toLowerCase() !== "bearer") return undefined;
-  return header.slice(space + 1).trim() || undefined;
+  return bearerTokenOf(request.headers.get("authorization"));
 }
 
 function refused(error: unknown): IdentityError {

@@ -56,6 +56,7 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
+import { handleGoTrueRequest, installGoTrue } from "@denext/denext/server";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
 import { handleStorageApi } from "./src/storage-api.ts";
@@ -156,10 +157,11 @@ export interface BackendOptions {
    */
   rest?: RestOptions;
   /**
-   * The Supabase-compatible surface: `true` (keys from the environment) or the keys. Installs
-   * the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that
-   * `resolveIdentity()`, `db()` and `auth()` recognize, serves the JWKS at
-   * `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.
+   * The Supabase-compatible surface: `true` (keys from the environment) or the keys and the
+   * `/auth/v1` options (`auth`). Installs the API keys (publishable / secret, and the legacy JWT
+   * keys) and the JWT signing keys that `resolveIdentity()`, `db()` and `auth()` recognize,
+   * serves GoTrue's `/auth/v1` over the `denextAuth()` users (with the JWKS at
+   * `/auth/v1/.well-known/jwks.json`), and adds `denext backend keys`.
    */
   supabase?: boolean | SupabaseOptions;
   /**
@@ -277,10 +279,16 @@ function setupRealtime(
   if (missing) console.warn(`[@denext/backend] realtime is unsupported here: ${missing}`);
 }
 
-/** Install the Supabase keys, the JWKS route and `denext backend keys`. */
+/** Install the Supabase keys, `/auth/v1` (with the JWKS) and `denext backend keys`. */
 async function setupSupabase(ctx: PluginContext, option: true | SupabaseOptions): Promise<void> {
-  const keys = await setupSupabaseKeys(ctx, option === true ? {} : option, env);
-  ctx.addRequestHandler((request) => jwksResponse(request, keys));
+  const supabase = option === true ? {} : option;
+  const keys = await setupSupabaseKeys(ctx, supabase, env);
+  const auth = { options: supabase.auth ?? {}, keys };
+  installGoTrue(auth);
+  ctx.addTeardown(() => installGoTrue(undefined));
+  ctx.addRequestHandler((request) =>
+    jwksResponse(request, keys) ?? handleGoTrueRequest(request, auth)
+  );
   ctx.addCommand(createBackendCommand());
 }
 

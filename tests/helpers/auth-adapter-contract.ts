@@ -616,6 +616,128 @@ const SESSION_CASES: Record<string, Case> = {
   },
 };
 
+const PROFILE_CASES: Record<string, Case> = {
+  "Supabase fields round-trip: phone, metadata, anonymous, timestamps, ban": async (adapter) => {
+    const user = await adapter.createUser({
+      phone: "+15555550100",
+      phoneVerified: at(-10),
+      userMetadata: { name: "Ada", nested: { a: [1, 2] } },
+      appMetadata: { provider: "phone", providers: ["phone"] },
+      isAnonymous: true,
+      updatedAt: at(-5),
+      lastSignInAt: at(-1),
+      bannedUntil: at(3600),
+    });
+    const read = await adapter.getUser(user.id);
+    assertEquals(read?.phone, "+15555550100");
+    assertEquals(read?.phoneVerified, at(-10));
+    assertEquals(read?.userMetadata, { name: "Ada", nested: { a: [1, 2] } });
+    assertEquals(read?.appMetadata, { provider: "phone", providers: ["phone"] });
+    assertEquals(read?.isAnonymous, true);
+    assertEquals(read?.lastSignInAt, at(-1));
+    assertEquals(read?.bannedUntil, at(3600));
+    assert(typeof read?.createdAt === "number", "createdAt is stamped");
+    assertEquals((await adapter.getUserByPhone!("+15555550100"))?.id, user.id);
+    assertEquals(await adapter.getUserByPhone!("+15555550199"), undefined);
+    const plain = await adapter.createUser({ email: "plain@x.test" });
+    assertEquals((await adapter.getUser(plain.id))?.isAnonymous, undefined, "false reads absent");
+    const promoted = await adapter.updateUser({ id: user.id, isAnonymous: false });
+    assert(!promoted.isAnonymous);
+    assert(!(await adapter.getUser(user.id))?.isAnonymous);
+  },
+  "listUsers pages oldest first and counts every user": async (adapter) => {
+    for (let i = 0; i < 5; i++) await adapter.createUser({ email: `u${i}@x.test` });
+    const page1 = await adapter.listUsers!({ page: 1, perPage: 2 });
+    assertEquals(page1.total, 5);
+    assertEquals(page1.users.length, 2);
+    const page3 = await adapter.listUsers!({ page: 3, perPage: 2 });
+    assertEquals(page3.users.length, 1);
+    const ids = new Set([
+      ...page1.users,
+      ...(await adapter.listUsers!({ page: 2, perPage: 2 })).users,
+      ...page3.users,
+    ].map((u) => u.id));
+    assertEquals(ids.size, 5);
+  },
+  "identity fields round-trip on linked accounts": async (adapter) => {
+    const user = await adapter.createUser({ email: "id@x.test" });
+    await adapter.linkAccount({
+      userId: user.id,
+      provider: "github",
+      providerAccountId: "42",
+      identityId: "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a0001",
+      identityData: { sub: "42", login: "ada" },
+      email: "id@x.test",
+      updatedAt: at(-2),
+      lastSignInAt: at(-1),
+    });
+    const [account] = await adapter.listAccounts!(user.id);
+    assertEquals(account.identityId, "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a0001");
+    assertEquals(account.identityData, { sub: "42", login: "ada" });
+    assertEquals(account.email, "id@x.test");
+    assertEquals(account.lastSignInAt, at(-1));
+    assert(typeof account.createdAt === "number", "createdAt is stamped");
+  },
+  "MFA factors: create, list, update, claim a step once, delete": async (adapter) => {
+    const user = await adapter.createUser({ email: "f@x.test" });
+    await adapter.createMfaFactor!({
+      id: "f1",
+      userId: user.id,
+      type: "totp",
+      status: "unverified",
+      friendlyName: "app",
+      secret: "sealed",
+      createdAt: at(-10),
+      updatedAt: at(-10),
+    });
+    await adapter.createMfaFactor!({
+      id: "f2",
+      userId: user.id,
+      type: "phone",
+      status: "unverified",
+      phone: "+15555550100",
+      createdAt: at(-5),
+      updatedAt: at(-5),
+    });
+    const listed = await adapter.listMfaFactors!(user.id);
+    assertEquals(listed.map((f) => f.id), ["f1", "f2"]);
+    assertEquals(listed[0].secret, "sealed");
+    assertEquals(listed[1].phone, "+15555550100");
+    await adapter.updateMfaFactor!("f1", { status: "verified", lastChallengedAt: at(-1) });
+    await adapter.updateMfaFactor!("f1", {});
+    const [f1] = await adapter.listMfaFactors!(user.id);
+    assertEquals(f1.status, "verified");
+    assertEquals(f1.lastChallengedAt, at(-1));
+    assertEquals(f1.friendlyName, "app");
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 100), true);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 100), false);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 99), false);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 101), true);
+    assertEquals(await adapter.claimMfaFactorStep!("nope", 1), false);
+    await adapter.deleteMfaFactor!("f2");
+    await adapter.deleteMfaFactor!("nope");
+    assertEquals((await adapter.listMfaFactors!(user.id)).map((f) => f.id), ["f1"]);
+    await adapter.deleteUser!(user.id);
+    assertEquals(await adapter.listMfaFactors!(user.id), []);
+  },
+  "revokeNativeSessionsByUser can keep one family": async (adapter) => {
+    const family = (id: string) => ({
+      id,
+      userId: "u1",
+      generation: 0,
+      salt: "s",
+      session: "{}",
+      createdAt: at(0),
+      expiresAt: at(3600),
+    });
+    await adapter.createNativeSession!(family("keep"));
+    await adapter.createNativeSession!(family("drop"));
+    await adapter.revokeNativeSessionsByUser!("u1", "keep");
+    assertEquals((await adapter.getNativeSession!("keep"))?.revokedAt, undefined);
+    assert((await adapter.getNativeSession!("drop"))?.revokedAt !== undefined);
+  },
+};
+
 const LIFECYCLE_CASES: Record<string, Case> = {
   "close() is idempotent": async (adapter) => {
     await adapter.createUser({ email: "ada@x.test" });
@@ -671,5 +793,6 @@ export async function adapterContract(
   await runCases(t, make, MFA_CASES);
   await runCases(t, make, NATIVE_CASES);
   await runCases(t, make, SESSION_CASES);
+  await runCases(t, make, PROFILE_CASES);
   await runCases(t, make, LIFECYCLE_CASES);
 }

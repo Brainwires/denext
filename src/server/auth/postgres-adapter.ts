@@ -25,12 +25,15 @@ import type { AdapterUser, AuthAdapter } from "./adapter.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
+  factorPatchColumns,
   type FieldMap,
   fromRow,
+  MFA_FACTOR_MAP,
   MFA_MAP,
   NATIVE_GRANT_MAP,
   NATIVE_SESSION_MAP,
   NATIVE_SESSION_RETENTION,
+  pageWindow,
   PASSKEY_CHALLENGE_MAP,
   PASSKEY_MAP,
   patchUser,
@@ -151,7 +154,7 @@ async function saveUser(db: Pg, user: AdapterUser, createdAt: number): Promise<A
     email_lc: user.email ? emailKey(user.email) : null,
     created_at: createdAt,
   }, ["id"]);
-  return { ...user };
+  return { ...user, createdAt };
 }
 
 /** The five required user methods. */
@@ -159,12 +162,30 @@ function userMethods(
   db: Pg,
 ): Pick<
   AuthAdapter,
-  "createUser" | "getUser" | "getUserByEmail" | "getUserByAccount" | "updateUser"
+  | "createUser"
+  | "getUser"
+  | "getUserByEmail"
+  | "getUserByAccount"
+  | "updateUser"
+  | "getUserByPhone"
+  | "listUsers"
 > {
   const users = db.t("auth_users");
   return {
     createUser: (user) => saveUser(db, withUserId(user), db.now()),
     getUser: (id) => db.record(USER_MAP, `SELECT * FROM ${users} WHERE id = $1`, [id]),
+    getUserByPhone: (phone) =>
+      db.record(USER_MAP, `SELECT * FROM ${users} WHERE phone = $1`, [phone]),
+    async listUsers({ page, perPage }) {
+      const { size, offset } = pageWindow(page, perPage);
+      const list = await db.records(
+        USER_MAP,
+        `SELECT * FROM ${users} ORDER BY created_at, id LIMIT $1 OFFSET $2`,
+        [size, offset],
+      );
+      const [row] = await db.rows(`SELECT count(*) AS n FROM ${users}`, []);
+      return { users: list, total: Number(row?.n ?? 0) };
+    },
     getUserByEmail: (email) =>
       db.record(USER_MAP, `SELECT * FROM ${users} WHERE email_lc = $1`, [emailKey(email)]),
     getUserByAccount: (ref) =>
@@ -197,7 +218,10 @@ function accountAndTokenMethods(
   const tokens = db.t("auth_verification_tokens");
   return {
     linkAccount: (account) =>
-      db.upsert("auth_accounts", toRow(ACCOUNT_MAP, account), ["provider", "provider_account_id"]),
+      db.upsert("auth_accounts", {
+        ...toRow(ACCOUNT_MAP, account),
+        created_at: account.createdAt ?? db.now(),
+      }, ["provider", "provider_account_id"]),
     unlinkAccount: (ref) =>
       db.run(`DELETE FROM ${accounts} WHERE provider = $1 AND provider_account_id = $2`, [
         ref.provider,
@@ -377,7 +401,12 @@ function nativeMethods(
         [fromGeneration + 1, expiresAt, rotation?.rotatedAt ?? null, id, fromGeneration],
       ),
     revokeNativeSession: (id) => revoke("id", id),
-    revokeNativeSessionsByUser: (userId) => revoke("user_id", userId),
+    revokeNativeSessionsByUser: (userId, exceptId) =>
+      exceptId === undefined ? revoke("user_id", userId) : db.run(
+        `UPDATE ${families} SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL ` +
+          "AND id <> $3",
+        [db.now(), userId, exceptId],
+      ),
   };
 }
 
@@ -445,6 +474,7 @@ const USER_TABLES = [
   "auth_credentials",
   "auth_api_tokens",
   "auth_mfa",
+  "auth_mfa_factors",
   "auth_native_sessions",
   "auth_passkeys",
   "auth_sessions",
@@ -473,12 +503,53 @@ function deleteUserRows(db: Pg, id: string): Promise<void> {
   });
 }
 
+/** The `/auth/v1` MFA factors. */
+function factorMethods(
+  db: Pg,
+): Pick<
+  AuthAdapter,
+  | "createMfaFactor"
+  | "listMfaFactors"
+  | "updateMfaFactor"
+  | "claimMfaFactorStep"
+  | "deleteMfaFactor"
+> {
+  const factors = db.t("auth_mfa_factors");
+  return {
+    createMfaFactor: (record) =>
+      db.upsert("auth_mfa_factors", toRow(MFA_FACTOR_MAP, record), ["id"]),
+    listMfaFactors: (userId) =>
+      db.records(
+        MFA_FACTOR_MAP,
+        `SELECT * FROM ${factors} WHERE user_id = $1 ORDER BY created_at, id`,
+        [userId],
+      ),
+    async updateMfaFactor(id, patch) {
+      const sets = factorPatchColumns(patch);
+      if (!sets.length) return;
+      const assignments = sets.map(([column], i) => `${column} = $${i + 1}`).join(", ");
+      await db.run(`UPDATE ${factors} SET ${assignments} WHERE id = $${sets.length + 1}`, [
+        ...sets.map(([, value]) => value),
+        id,
+      ]);
+    },
+    claimMfaFactorStep: (id, step) =>
+      db.one(
+        `UPDATE ${factors} SET last_step = $1 WHERE id = $2 ` +
+          "AND (last_step IS NULL OR last_step < $1) RETURNING id",
+        [step, id],
+      ),
+    deleteMfaFactor: (id) => db.run(`DELETE FROM ${factors} WHERE id = $1`, [id]),
+  };
+}
+
 /** Every method group, in the order the contract lists them. */
 const GROUPS = [
   userMethods,
   accountAndTokenMethods,
   credentialAndApiTokenMethods,
   mfaMethods,
+  factorMethods,
   nativeMethods,
   passkeyMethods,
 ];
