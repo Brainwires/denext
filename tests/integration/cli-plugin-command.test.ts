@@ -91,6 +91,34 @@ Deno.test("a `commands:` verb dispatches with no plugin at all", async () => {
   }
 });
 
+Deno.test("a verb whose config loads slower than the listing budget still dispatches", async () => {
+  // The config takes longer to import than COMMAND_LOAD_BUDGET_MS (1.5 s) — what a cold module
+  // cache or a loaded CI runner does to a trivial one. Dispatch must wait for it rather than
+  // report a declared verb as "unknown command".
+  const slow = `await new Promise((resolve) => setTimeout(resolve, 2500));\n${COMMANDS_CONFIG}`;
+  const dir = await project("denext_config_slow_", slow);
+  try {
+    const { code, out, err } = await runCli(["seed", "posts", "--cwd", dir]);
+    assert(code === 0, `expected exit 0, got ${code}. stderr:\n${err}`);
+    assertStringIncludes(out, "SEED_OK:posts");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("an unknown verb says why when the config could not be read", async () => {
+  const dir = await project("denext_config_broken_", `throw new Error("config exploded");\n`);
+  try {
+    const { code, err } = await runCli(["seed", "--cwd", dir]);
+    assert(code === 1, `expected exit 1, got ${code}`);
+    assertStringIncludes(err, 'unknown command "seed"');
+    assertStringIncludes(err, "project verbs were not loaded");
+    assertStringIncludes(err, "config exploded");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("`--help` does not load project code — it points at `denext commands`", async () => {
   const dir = await project("denext_config_help_", COMMANDS_CONFIG);
   try {

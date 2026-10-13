@@ -7,7 +7,7 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { CommandRegistry, type CommandSpec } from "../src/cli/command.ts";
-import { loadPluginCommands } from "../src/cli/plugin-commands.ts";
+import { discoveryShortfall, loadPluginCommands } from "../src/cli/plugin-commands.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 import { resetPlugins } from "../src/plugin/mod.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -110,6 +110,22 @@ Deno.test("a config that throws degrades to an error result, not a throw", async
     assertEquals(result.timedOut, false);
     assert(result.error, "the failure is reported, not thrown");
   });
+});
+
+Deno.test("discoveryShortfall says why project verbs are missing, or nothing", () => {
+  assertEquals(discoveryShortfall({ loaded: 0, timedOut: false }, 1500), null);
+  assertEquals(discoveryShortfall({ loaded: 2, timedOut: false }, 1500), null);
+  assertEquals(
+    discoveryShortfall({ loaded: 0, timedOut: true }, 30_000),
+    "project verbs were not loaded: plugin setup exceeded 30.0 s",
+  );
+  assertEquals(
+    discoveryShortfall(
+      { loaded: 0, timedOut: false, error: "denext: failed to load denext.config.ts: boom" },
+      1500,
+    ),
+    "project verbs were not loaded: failed to load denext.config.ts: boom",
+  );
 });
 
 Deno.test("validateDenextConfig field-scopes a malformed commands entry", () => {

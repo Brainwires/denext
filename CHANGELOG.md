@@ -151,6 +151,11 @@ and this project adheres to
 
 ### Fixed
 
+- **Running a project verb no longer reports it as an unknown command on a loaded machine.**
+  `denext <verb>` discovered the project's `commands:` / plugin verbs under the 1.5 s budget meant
+  for listings, so a config import slowed by a cold cache or a busy CPU dropped the verb silently
+  (`denext: unknown command "seed"`). Dispatch now waits up to 30 s, and when discovery still falls
+  short — a hung plugin `setup`, a config that throws — the error says why.
 - The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
   (`2.9.7-denext.N` is Deno 2.9.7).
 - **`denext create`'s least-privilege `deno task start` serves the built app.** It failed with

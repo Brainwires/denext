@@ -44,7 +44,11 @@ import {
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
-import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
+import {
+  COMMAND_DISPATCH_BUDGET_MS,
+  discoveryShortfall,
+  loadPluginCommands,
+} from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
 import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
@@ -545,16 +549,25 @@ function isVersionToken(token: string): boolean {
  * Parse the argv with denext's precedence: a built-in verb, else one the project contributes
  * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
  * runs on denext's Deno exactly as `denext deno <args…>` would (and never returns).
+ *
+ * Discovery here runs under the DISPATCH budget, not the listing one: the verb was asked for by
+ * name, so a slow config import on a loaded machine must not make it "unknown". When discovery
+ * still falls short, the unknown-command error says why instead of only that it is unknown.
  */
 async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> {
   let outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
-  await loadPluginCommands(registry, cwdFromArgs(Deno.args));
+  const loaded = await loadPluginCommands(registry, cwdFromArgs(Deno.args), {
+    timeoutMs: COMMAND_DISPATCH_BUDGET_MS,
+  });
   outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
   const forward = denoForwardFor(Deno.args, outcome.unknownVerb);
   if (forward) return await runDenoPassthrough(forward.args, forward.cwd, true);
-  return outcome;
+  const shortfall = discoveryShortfall(loaded, COMMAND_DISPATCH_BUDGET_MS);
+  return shortfall === null
+    ? outcome
+    : { ...outcome, message: `${outcome.message} (${shortfall})` };
 }
 
 /**

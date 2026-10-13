@@ -18,6 +18,15 @@ import type { CommandRegistry, CommandSpec } from "./command.ts";
 /** Default wall-clock budget for discovering a project's verbs (ms). */
 export const COMMAND_LOAD_BUDGET_MS = 1500;
 
+/**
+ * The budget when the CLI must DISPATCH a verb the built-ins do not know (ms): `denext seed`
+ * cannot run `seed` without discovering it, so a slow config import or plugin `setup` — a cold
+ * module cache, a loaded machine — must not turn a real project verb into "unknown command".
+ * {@linkcode COMMAND_LOAD_BUDGET_MS} stays the budget for listings, which only describe verbs;
+ * this one bounds only a `setup` that genuinely hangs.
+ */
+export const COMMAND_DISPATCH_BUDGET_MS = 30_000;
+
 /** Options for {@linkcode loadPluginCommands}. */
 export interface LoadCommandsOptions {
   /** Wall-clock budget for the whole discovery, in ms (default 1500). */
@@ -134,4 +143,25 @@ export async function loadPluginCommands(
   }
   if (collected === TIMED_OUT) return { loaded: 0, timedOut: true };
   return { loaded: registerNew(registry, collected), timedOut: false };
+}
+
+/**
+ * Why discovery left the project's verbs out, in the words an "unknown command" error appends —
+ * so a verb the project does declare is never reported as unknown with no reason. Null when
+ * discovery completed (then the verb really is unknown).
+ *
+ * @param result What {@linkcode loadPluginCommands} returned.
+ * @param timeoutMs The budget it ran under.
+ * @returns The explanation, or null.
+ */
+export function discoveryShortfall(result: LoadCommandsResult, timeoutMs: number): string | null {
+  if (result.timedOut) {
+    return `project verbs were not loaded: plugin setup exceeded ${
+      (timeoutMs / 1000).toFixed(1)
+    } s`;
+  }
+  if (result.error !== undefined) {
+    return `project verbs were not loaded: ${result.error.replace(/^denext: /, "")}`;
+  }
+  return null;
 }

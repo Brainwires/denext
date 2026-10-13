@@ -284,6 +284,11 @@ process alive. Discovery runs under a **1.5 s budget** (`--timeout <ms>` to chan
 budget that elapses or a config that cannot be read degrades to a printed notice and
 `timedOut` / `error` in the JSON, never a hang and never a non-zero exit.
 
+Running one (`denext seed`) discovers it the same way, but under a **30 s** budget: the verb was
+asked for by name, so a config import slowed by a cold cache or a busy machine must not make it
+"unknown". If discovery still falls short (a `setup()` that hangs, a config that throws), the
+"unknown command" error says why.
+
 `denext --help` deliberately does **not** enumerate them: help must not evaluate your
 project. Inside a project it prints a single line pointing at `denext commands` (and noting
 that the verbs are in shell completions too), and stops.
