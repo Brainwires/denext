@@ -63,7 +63,7 @@ import { handleStorageApi } from "./src/storage-api.ts";
 import { postgresMetaStore } from "./src/storage-meta-pg.ts";
 import { sqliteMetaStore } from "./src/storage-meta-sqlite.ts";
 import type { BucketWrite, MetaStore } from "./src/storage-meta.ts";
-import { declaredBucketRows } from "./src/storage-ops.ts";
+import { declaredBucketRows, storageAdmin } from "./src/storage-ops.ts";
 import { resolve as resolvePath } from "@std/path";
 import {
   DEFAULT_MAX_BYTES,
@@ -383,6 +383,7 @@ async function setupStorage(
     apiBase,
     maxTransformDimension: storageOptions.maxTransformDimension ?? 2500,
   };
+  rt.admin = storageAdmin(rt);
   installRuntime(rt);
   ctx.addRequestHandler(handleStorageRequest);
   if (apiBase) ctx.addRequestHandler((request) => handleStorageApi(rt, request));

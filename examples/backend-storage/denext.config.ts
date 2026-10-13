@@ -15,6 +15,9 @@ const driver = bucket
 export default {
   plugins: [
     backend({
+      // Supabase-compatible API keys (`denext dev` generates a set in .denext/backend-keys.json),
+      // so the stock supabase-js client works against /storage/v1 — see scripts/supabase-js.ts.
+      supabase: true,
       storage: {
         driver,
         // Signs this app's storage URLs. Set DENEXT_STORAGE_SECRET (≥ 32 characters) in
@@ -28,11 +31,19 @@ export default {
             mime: ["image/png", "image/jpeg", "image/webp", "image/gif"],
             authorize: ({ op }) => op === "upload" || op === "list",
           },
-          // Private: every download is a signed URL that expires.
+          // Private: every download is a signed URL that expires. Large files go up resumably
+          // (TUS), in chunks that survive a dropped connection.
           documents: {
-            maxBytes: 20 * 1024 * 1024,
+            maxBytes: 200 * 1024 * 1024,
             mime: ["application/pdf", "text/plain"],
             authorize: ({ op }) => op !== "delete",
+          },
+          // Versioned: saving a note keeps the old text as a noncurrent version.
+          notes: {
+            versioned: true,
+            mime: ["text/plain"],
+            maxBytes: 64 * 1024,
+            authorize: () => true,
           },
         },
       },

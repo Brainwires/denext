@@ -49,6 +49,13 @@ export interface BucketConfig {
    * Absent, every operation is denied — except downloads from a {@link public} bucket.
    */
   authorize?: (context: StorageAuthorizeContext) => boolean | Promise<boolean>;
+  /**
+   * Object versioning, as Supabase Storage has it: `true` keeps every overwritten or deleted
+   * object as a noncurrent version (a delete leaves a delete marker); `false` suspends it
+   * (history is kept, new writes replace). Omitted: off (`DISABLED`), or whatever the bucket's
+   * row says once it has been turned on.
+   */
+  versioned?: boolean;
 }
 
 /** Options for the storage half of `backend()`. */
@@ -323,8 +330,10 @@ export interface ObjectDetails {
   etag: string;
   /** Free-form metadata (`user_metadata`), or `null`. */
   metadata: Record<string, unknown> | null;
-  /** The version written last. */
+  /** This version's id. */
   version: string;
+  /** When this version stopped being current, or `null` for the current one. */
+  archivedAt: string | null;
   /** The owner (a user id), or `null`. */
   owner: string | null;
   /** When it was created (ISO 8601). */
@@ -361,6 +370,10 @@ export interface FolderListOptions {
   offset?: number;
   /** Only names (below the prefix) starting with this, case-insensitively. */
   search?: string;
+  /** Noncurrent versions: `exclude` (default), `include` or `only`. */
+  versions?: "exclude" | "include" | "only";
+  /** Delete markers: `exclude` (default), `include` or `only`. */
+  deleteMarkers?: "exclude" | "include" | "only";
   /** The column and direction (default `name`, `asc`); folders always come first. */
   sortBy?: {
     column?: "name" | "created_at" | "updated_at" | "last_accessed_at";
@@ -384,6 +397,11 @@ export interface BucketSettings {
   fileSizeLimit?: number | string | null;
   /** Allowed content types (`image/*`, `application/pdf`); `null` for any. */
   allowedMimeTypes?: string[] | null;
+  /**
+   * Object versioning: a new bucket starts `DISABLED` or `ENABLED`; an update sets `ENABLED` or
+   * `SUSPENDED` (there is no way back to `DISABLED`).
+   */
+  versioningStatus?: "DISABLED" | "ENABLED" | "SUSPENDED";
 }
 
 /** A bucket as {@link Storage.getBucket} returns it. */
@@ -400,6 +418,8 @@ export interface BucketInfo {
   allowedMimeTypes: string[] | null;
   /** Declared in `denext.config.ts` (changed there, not at runtime). */
   declared: boolean;
+  /** Object versioning: `DISABLED`, `ENABLED` or `SUSPENDED`. */
+  versioningStatus: "DISABLED" | "ENABLED" | "SUSPENDED";
   /** When it was created (ISO 8601). */
   createdAt: string;
   /** When its settings last changed (ISO 8601). */
@@ -417,18 +437,21 @@ export interface StorageBucket {
   createSignedUploadUrl(key: string, options: SignedUploadOptions): Promise<SignedUpload>;
   /** A download URL (op `download`): signed and expiring, or stable for a public bucket. */
   createSignedUrl(key: string, options?: SignedUrlOptions): Promise<string>;
-  /** Delete objects (op `delete`, checked per key). */
-  remove(keys: string | string[]): Promise<void>;
+  /**
+   * Delete objects (op `delete`, checked per key). In a versioned bucket a key leaves a delete
+   * marker; `{ key, versionId }` deletes that version for good.
+   */
+  remove(keys: string | (string | { key: string; versionId?: string })[]): Promise<void>;
   /** One page of the objects under `prefix` (op `list`). */
   list(prefix?: string, options?: ListOptions): Promise<ListResult>;
   /** An object's info, or `null` (op `download`). */
   head(key: string): Promise<ObjectInfo | null>;
   /** Store bytes from the server (op `upload`); size cap, allow-list and sniffing apply. */
   upload(key: string, body: UploadBody, options?: UploadOptions): Promise<ObjectInfo>;
-  /** Read an object, or `null` (op `download`). */
-  download(key: string): Promise<StoredObject | null>;
-  /** An object's stored facts, or `null` (op `download`). */
-  info(key: string): Promise<ObjectDetails | null>;
+  /** Read an object (or one of its versions), or `null` (op `download`). */
+  download(key: string, options?: VersionOptions): Promise<StoredObject | null>;
+  /** An object's (or a version's) stored facts, or `null` (op `download`). */
+  info(key: string, options?: VersionOptions): Promise<ObjectDetails | null>;
   /** Whether an object exists (op `download`). */
   exists(key: string): Promise<boolean>;
   /** Download URLs for several keys at once (op `download`); `null` where one is not found. */
@@ -441,6 +464,23 @@ export interface StorageBucket {
   move(from: string, to: string, options?: TransferOptions): Promise<ObjectDetails>;
   /** One page of a folder, Supabase-style: subfolders first, then the objects in it (op `list`). */
   listFolder(prefix?: string, options?: FolderListOptions): Promise<FolderEntry[]>;
+}
+
+/** Which version of an object (default: the current one). */
+export interface VersionOptions {
+  /** A version id (from `info()`, or a listing with `versions`). */
+  versionId?: string;
+}
+
+/** A bucket's lifecycle policy (noncurrent-version expiration). */
+export interface LifecyclePolicy {
+  /** 1 to 1000 rules. */
+  rules: {
+    id?: string;
+    status: "Enabled" | "Disabled";
+    filter: Record<string, never>;
+    noncurrentVersionExpiration: { noncurrentDays: number; newerNoncurrentVersions?: number };
+  }[];
 }
 
 /** Options for {@link Storage.bucket}. */
@@ -479,4 +519,12 @@ export interface Storage {
   deleteBucket(name: string, options?: BucketAccessOptions): Promise<void>;
   /** Delete every object in a bucket. */
   emptyBucket(name: string, options?: BucketAccessOptions): Promise<void>;
+  /** A bucket's lifecycle policy, or `null`. */
+  getBucketLifecycle(name: string, options?: BucketAccessOptions): Promise<LifecyclePolicy | null>;
+  /** Replace a bucket's lifecycle policy (`null` removes it). */
+  updateBucketLifecycle(
+    name: string,
+    policy: LifecyclePolicy | null,
+    options?: BucketAccessOptions,
+  ): Promise<void>;
 }

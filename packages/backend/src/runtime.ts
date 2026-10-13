@@ -5,7 +5,12 @@
 
 import type { ImagesConfig } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
-import type { MetaStore } from "./storage-meta.ts";
+import type {
+  BucketRow,
+  LifecycleConfiguration,
+  MetaStore,
+  VersioningStatus,
+} from "./storage-meta.ts";
 import type { BucketConfig, StorageAuthorizeContext, StorageDriver } from "./types.ts";
 
 /** Default per-bucket size cap: 50 MiB. */
@@ -25,6 +30,10 @@ export interface ResolvedBucket extends BucketConfig {
   name: string;
   /** The size cap (default applied). */
   maxBytes: number;
+  /** Object versioning (the bucket row's; `DISABLED` before the row is read). */
+  versioning?: VersioningStatus;
+  /** The lifecycle policy (noncurrent-version expiration), or `null`. */
+  lifecycle?: LifecycleConfiguration | null;
 }
 
 /** The installed storage. */
@@ -49,6 +58,21 @@ export interface StorageRuntime {
   apiBase: string | null;
   /** The largest width or height the API's render routes produce. */
   maxTransformDimension: number;
+  /**
+   * Operations for `denext ui`'s Database → Storage page (it reaches the runtime through the
+   * process-global slot, so it uses the same rules and metadata rows as the app).
+   */
+  admin?: StorageAdmin;
+}
+
+/** What `denext ui` uses: every bucket (declared and runtime), and removal through the ops. */
+export interface StorageAdmin {
+  /** Every bucket: declared ones first, then the runtime ones. */
+  buckets(): Promise<{ name: string; public: boolean; maxBytes: number; mime: string[] | null }[]>;
+  /** Whether a bucket exists (declared or runtime). */
+  hasBucket(name: string): Promise<boolean>;
+  /** Remove one object as the service (its metadata row with it). */
+  remove(bucket: string, key: string): Promise<void>;
 }
 
 const SLOT = Symbol.for("denext.backend.storage");
@@ -112,8 +136,7 @@ const bucketCache = new WeakMap<
  */
 export async function resolveBucket(rt: StorageRuntime, name: string): Promise<ResolvedBucket> {
   const declared = typeof name === "string" ? rt.buckets.get(name) : undefined;
-  if (declared) return declared;
-  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name)) {
+  if (!declared && (typeof name !== "string" || !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name))) {
     throw new StorageError("unknown_bucket", `unknown bucket ${JSON.stringify(name)}`);
   }
   let cache = bucketCache.get(rt);
@@ -121,20 +144,42 @@ export async function resolveBucket(rt: StorageRuntime, name: string): Promise<R
   const hit = cache.get(name);
   let bucket = hit && Date.now() - hit.at < BUCKET_TTL ? hit.bucket : undefined;
   if (bucket === undefined) {
-    const row = await rt.meta.getBucket(name, { kind: "service" });
-    bucket = row
-      ? {
-        name,
-        public: row.public,
-        maxBytes: row.file_size_limit ?? DEFAULT_MAX_BYTES,
-        mime: row.allowed_mime_types ?? undefined,
-        authorize: rt.authorize,
-      }
-      : null;
+    bucket = bucketFrom(rt, name, declared, await rt.meta.getBucket(name, { kind: "service" }));
     cache.set(name, { at: Date.now(), bucket });
   }
   if (!bucket) throw new StorageError("unknown_bucket", `unknown bucket ${JSON.stringify(name)}`);
   return bucket;
+}
+
+/** A bucket's rules from its declaration (when it has one) and its row. */
+function bucketFrom(
+  rt: StorageRuntime,
+  name: string,
+  declared: ResolvedBucket | undefined,
+  row: BucketRow | null,
+): ResolvedBucket | null {
+  if (declared) {
+    return {
+      ...declared,
+      versioning: row?.versioning_status ?? declaredVersioning(declared),
+      lifecycle: row?.lifecycle ?? null,
+    };
+  }
+  if (!row) return null;
+  return {
+    name,
+    public: row.public,
+    maxBytes: row.file_size_limit ?? DEFAULT_MAX_BYTES,
+    mime: row.allowed_mime_types ?? undefined,
+    authorize: rt.authorize,
+    versioning: row.versioning_status,
+    lifecycle: row.lifecycle,
+  };
+}
+
+/** A declared bucket's versioning before its row says otherwise. */
+function declaredVersioning(bucket: ResolvedBucket): VersioningStatus {
+  return bucket.versioned === true ? "ENABLED" : "DISABLED";
 }
 
 /**

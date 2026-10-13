@@ -653,3 +653,35 @@ Deno.test("storage: a project without storage says so", async () => {
   assertEquals(reply.driver, null);
   assertEquals(((await ask(sql, { op: "objects", bucket: "x" })) as DbFailure).code, "not_found");
 });
+
+Deno.test("storage: the plugin's admin hooks — runtime buckets, removal through its ops", async () => {
+  const { removed, restore } = installStorage();
+  const holder = globalThis as { [STORAGE]?: Record<string, unknown> };
+  const viaAdmin: string[] = [];
+  holder[STORAGE]!.admin = {
+    buckets: () =>
+      Promise.resolve([
+        { name: "files", public: false, maxBytes: 1024, mime: ["text/plain"] },
+        { name: "runtime", public: true, maxBytes: 50, mime: null },
+      ]),
+    hasBucket: (name: string) => Promise.resolve(name === "runtime"),
+    remove: (bucket: string, key: string) => {
+      viaAdmin.push(`${bucket}/${key}`);
+      return Promise.resolve();
+    },
+  };
+  try {
+    const { sql } = fakeClient([]);
+    const buckets = await ask(sql, { op: "buckets" });
+    assert(buckets.ok && "buckets" in buckets);
+    assertEquals(buckets.buckets.map((b) => b.name), ["files", "runtime"]);
+    const objects = await ask(sql, { op: "objects", bucket: "runtime", prefix: "" });
+    assert(objects.ok && "objects" in objects);
+    await ask(sql, { op: "removeObject", bucket: "runtime", key: "a.txt", confirm: true });
+    assertEquals([viaAdmin, removed], [["runtime/a.txt"], []]);
+    const unknown = await ask(sql, { op: "objects", bucket: "nope" });
+    assertEquals((unknown as DbFailure).code, "not_found");
+  } finally {
+    restore();
+  }
+});

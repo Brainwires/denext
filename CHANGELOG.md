@@ -39,6 +39,23 @@ and this project adheres to
   `revokeNativeSessionsByUser(userId, exceptId?)`. The in-memory, SQLite and Postgres adapters
   implement all of it (Postgres migration `0002_auth_user_profile`; SQLite adds the columns on
   open).
+- **Storage: object versioning, as Supabase Storage has it.** A bucket's `versioning_status`
+  (`DISABLED`, `ENABLED`, `SUSPENDED`; `createBucket` / `updateBucket`, or `versioned` on a
+  declared bucket): overwriting keeps the old object as a noncurrent version, deleting leaves a
+  delete marker. Versions are read, signed, listed (`noncurrentVersions`, `deleteMarkers`,
+  `exactMatch`), restored (`copy` with `sourceVersionId`) and deleted for good
+  (`remove([{ path, versionId }])`, which brings the newest noncurrent version back when it deletes
+  the current one); a bucket lifecycle policy (`getBucketLifecycle`, `updateBucketLifecycle`,
+  `deleteBucketLifecycle`) expires noncurrent versions. Migration `backend_storage_0002` adds the
+  columns (`storage.objects.archived_at`, `is_delete_marker`, `is_versioned`;
+  `storage.buckets.versioning_status`, `lifecycle`); a sqlite metadata file is upgraded in place.
+- **Storage `listV2`**: cursor pages, flat or with `with_delimiter` (folders apart), for
+  supabase-js's `listV2` and `listFilesV2` from `@denext/backend/client`.
+- **Signed TUS uploads**: `/storage/v1/upload/resumable/sign` with `x-signature` (a
+  `createSignedUploadUrl` token), as on Supabase; `uploadResumable(…, { signature })`.
+- **`denext ui` storage** lists buckets created at runtime too, and deletes through the plugin's
+  storage operations (so the object's metadata row goes with its bytes).
+
 - **Supabase-compatible keys and request identity (`backend({ supabase })`).** `@denext/backend`
   takes a `supabase` option (`true`, or the keys) that installs Supabase's API keys — a
   publishable key (`sb_publishable_…`, the `anon` role), a secret key (`sb_secret_…`, the
@@ -189,6 +206,12 @@ and this project adheres to
   re-checks who is on the other end.
 
 ### Changed
+
+- **Storage form uploads are streamed**: the file part of a multipart upload flows through the
+  size cap and sniffing to the store instead of being read into memory first.
+- **Storage bucket listings for anon and signed-in users** answer as Supabase does without
+  policies: `listBuckets` is an empty list and `getBucket` is `Bucket not found` (they were `403`);
+  the service role, and `storage: { rls: true }` policies, see buckets as before.
 
 - **`@denext/backend`: `storage.buckets` may be empty** (buckets can be created at runtime), and an
   upload refused for its size now says "The object exceeded the maximum allowed size".

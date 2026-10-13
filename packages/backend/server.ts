@@ -60,6 +60,7 @@ export type {
   BucketSettings,
   FolderEntry,
   FolderListOptions,
+  LifecyclePolicy,
   ListedObject,
   ListOptions,
   ListResult,
@@ -75,4 +76,5 @@ export type {
   TransferOptions,
   UploadBody,
   UploadOptions,
+  VersionOptions,
 } from "./src/types.ts";

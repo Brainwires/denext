@@ -58,6 +58,7 @@ A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 | `maxBytes`  | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                  |
 | `mime`      | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes. |
 | `authorize` | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                |
+| `versioned` | off     | Object versioning ([below](#object-versioning)): `true` keeps overwritten and deleted objects as noncurrent versions; `false` suspends it.                                               |
 
 `op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
 copy is `download` on the source and `upload` on the destination, a move adds `delete` on the
@@ -284,13 +285,22 @@ const { data: files } = await supabase.storage.from("avatars").list(userId, {
 ```
 
 Every call of the storage client is there: `createBucket`, `getBucket`, `listBuckets` (with
-`search`, sorting and paging), `updateBucket`, `emptyBucket`, `deleteBucket`; `upload` and `update`
-(raw bodies or `FormData`, `upsert`, `cacheControl`, `contentType`, `metadata`), `download` (with a
-`transform`), `info`, `exists`, `list` (folders first, `search`, `sortBy`, `limit`, `offset`),
-`remove` (many at once), `move` and `copy` (also into another bucket), `createSignedUrl` and
-`createSignedUrls` (with `download` and `transform`), `createSignedUploadUrl` +
-`uploadToSignedUrl`, and `getPublicUrl` (with `download` and `transform`). Errors come back as
-Storage's `{ statusCode, error, message }` (`409 Duplicate`, `413`, `415`, `403`, `404`).
+`search`, sorting and paging), `updateBucket`, `emptyBucket`, `deleteBucket`, and the lifecycle
+calls; `upload` and `update` (raw bodies or `FormData`, `upsert`, `cacheControl`, `contentType`,
+`metadata`), `download` (with a `transform`), `info`, `exists`, `list` (folders first, `search`,
+`sortBy`, `limit`, `offset`, `noncurrentVersions`, `deleteMarkers`, `exactMatch`), `listV2` (cursor
+pages, with or without `with_delimiter`), `remove` (many at once, a path or `{ path, versionId }`),
+`move` and `copy` (also into another bucket, `sourceVersionId`), `createSignedUrl` and
+`createSignedUrls` (with `download`, `transform` and `versionId`), `createSignedUploadUrl` +
+`uploadToSignedUrl`, and `getPublicUrl` (with `download`, `transform` and `versionId`). Errors come
+back as Storage's `{ statusCode, error, message }` (`409 Duplicate`, `413`, `415`, `403`, `404`).
+
+A form upload (supabase-js sends a `Blob` or `File` as one) is streamed: the fields before the
+file are read, the file's bytes go through the size cap, the allow-list and content sniffing to the
+store as they arrive — never buffered whole. Bucket rows are as private as on Supabase: with
+TypeScript rules, `listBuckets` answers anon and signed-in users with an empty list and `getBucket`
+with `Bucket not found` (Supabase's `storage.buckets` has row-level security and no policy); the
+service role sees every bucket, and under `rls: true` your policies on `storage.buckets` decide.
 
 Who a request is comes from the backend's shared identity, with
 [`backend({ supabase })`](#supabase-keys-and-access-tokens) providing the keys: a user's access token
@@ -310,10 +320,11 @@ the source's format; the default is WebP). They run through the same image pipel
 decompression-bomb checks as the transforms above.
 
 Without supabase-js, `@denext/backend/client` calls the same API from the browser with the page's
-cookies: `listFiles(bucket, prefix, { limit, offset, search, sortBy })`, `getFileInfo`,
+cookies: `listFiles(bucket, prefix, { limit, offset, search, sortBy, noncurrentVersions })`,
+`listFilesV2(bucket, { prefix, cursor, limit, withDelimiter })`, `getFileInfo` (`versionId`),
 `removeFiles(bucket, keys)`, `moveFile` and `copyFile` (`{ destinationBucket }`),
 `getSignedUrls(bucket, keys, { expiresIn })`, `getPublicUrl(bucket, key, { transform, download })`
-and `uploadResumable(bucket, key, file, { chunkSize, upsert, onProgress, signal })` — a TUS upload
+and `uploadResumable(bucket, key, file, { chunkSize, upsert, onProgress, signal, signature })` — a TUS upload
 that retries a dropped chunk from the offset the server reports and terminates a cancelled one.
 A refused call throws `StorageApiClientError` (`code` is Storage's error name, `status` the HTTP
 status).
@@ -336,6 +347,10 @@ const upload = new tus.Upload(file, {
 upload.start();
 ```
 
+A signed upload URL works for TUS too, as on Supabase: point the client at
+`/storage/v1/upload/resumable/sign` and send the token from `createSignedUploadUrl` as the
+`x-signature` header (no session needed); the token names the one object it may write.
+
 An upload is authorized when it is created (`authorize`, or the policies) and bound to its creator;
 its size against the bucket's cap and its type against the allow-list are checked then, and the
 assembled object's size and first bytes again at the end. It expires 24 hours after creation
@@ -343,6 +358,39 @@ assembled object's size and first bytes again at the end. It expires 24 hours af
 under S3's 5 MiB minimum waits as a tail object); on the filesystem each `PATCH` is a chunk,
 joined through the usual checks at the end. Progress lives in the metadata store, so any replica
 can take the next `PATCH`.
+
+### Object versioning
+
+A bucket keeps versions the way Supabase Storage does. Its `versioning_status` is `DISABLED` (never
+on), `ENABLED` or `SUSPENDED`: `createBucket(id, { versioningStatus: "ENABLED" })`,
+`updateBucket(id, { versioningStatus: "ENABLED" | "SUSPENDED" })` (there is no way back to
+`DISABLED`), or `versioned: true | false` on a declared bucket.
+
+- While `ENABLED`, overwriting an object keeps the previous one as a **noncurrent version**, and
+  deleting it (by path) leaves a **delete marker** as the current version: the object reads as
+  absent, its history stays. While `SUSPENDED`, new writes replace the current object unless it was
+  written while versioning was on.
+- Every version has a `version` id (`info()` returns it). Read one with
+  `download(path, { versionId })`, `info(path, { versionId })`, `createSignedUrl(path, s, {
+  versionId })` or `getPublicUrl(path, { versionId })`; restore one with `copy(path, path, {
+  sourceVersionId })`; delete one for good with `remove([{ path, versionId }])` — deleting the
+  current version brings the newest noncurrent one back.
+- `list(prefix, { noncurrentVersions, deleteMarkers })` (`exclude`, the default, `include` or
+  `only`) and `listV2` show versions, each entry with `version`, `archived_at`,
+  `is_delete_marker` and `is_versioned`; `exactMatch` lists one object's versions.
+- A **lifecycle policy** expires noncurrent versions: `updateBucketLifecycle(id, { rules: [{
+  status: "Enabled", filter: {}, noncurrentVersionExpiration: { noncurrentDays: 30,
+  newerNoncurrentVersions: 2 } }] })`, `getBucketLifecycle`, `deleteBucketLifecycle` (validated as
+  Supabase does: 1–1000 rules, `filter: {}` only). Expiry runs in the background of the bucket's
+  writes, at most once a minute per server.
+
+The rows live in `storage.objects` (`archived_at` set on a noncurrent version, `is_delete_marker`
+on a marker), so policies on `storage.objects` see every version. A noncurrent version's bytes are
+copied to an internal namespace of the store (`.denext-versions/<bucket>/<version>`) before they
+would be overwritten; on S3 that is one server-side `CopyObject` per overwrite. The server API
+has the same: `bucket.download(key, { versionId })`, `info(key, { versionId })`,
+`remove([{ key, versionId }])`, `listFolder(prefix, { versions, deleteMarkers })` and
+`storage.getBucketLifecycle` / `updateBucketLifecycle`.
 
 ### SQL row-level security for storage
 
@@ -1197,7 +1245,9 @@ caller.
 [`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
 and their rows (paged, editable, each write previewed as the exact SQL first), row-level security
 policies — with an "as user" preview of what a user id sees under them — migrations, the storage
-buckets and their objects, and denext auth's users. It runs on loopback with the rest of the UI,
+buckets (declared and created at runtime) and their objects — a delete there goes through the
+same storage operations as the app's, so the object's metadata row goes too — and denext auth's
+users. It runs on loopback with the rest of the UI,
 and honours `--read-only`.
 
 ## Self-hosting with Docker

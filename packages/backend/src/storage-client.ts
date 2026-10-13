@@ -66,6 +66,14 @@ export interface FileEntry {
   last_accessed_at: string | null;
   /** Size, type, cache and ETag facts; `null` for a folder. */
   metadata: FileMetadata | null;
+  /** The version's id (listings that include versions or delete markers). */
+  version?: string | null;
+  /** When the version stopped being current (`null`: the current one). */
+  archived_at?: string | null;
+  /** A delete marker. */
+  is_delete_marker?: boolean | null;
+  /** Written while the bucket kept versions. */
+  is_versioned?: boolean | null;
 }
 
 /** What {@linkcode getFileInfo} returns. */
@@ -164,6 +172,12 @@ export function listFiles(
       column: "name" | "created_at" | "updated_at" | "last_accessed_at";
       order?: "asc" | "desc";
     };
+    /** Noncurrent versions (versioned buckets): `exclude` (default), `include` or `only`. */
+    noncurrentVersions?: "exclude" | "include" | "only";
+    /** Delete markers: `exclude` (default), `include` or `only`. */
+    deleteMarkers?: "exclude" | "include" | "only";
+    /** Only the object named exactly `prefix` (all its versions). */
+    exactMatch?: boolean;
   } = {},
 ): Promise<FileEntry[]> {
   const { apiBase: _a, signal: _s, ...query } = options;
@@ -184,9 +198,49 @@ export function listFiles(
 export function getFileInfo(
   bucket: string,
   key: string,
-  options: StorageApiOptions = {},
+  options: StorageApiOptions & { versionId?: string } = {},
 ): Promise<FileInfo> {
-  return call(`/object/info/${encodePath(bucket, key)}`, { method: "GET" }, options);
+  const query = options.versionId ? `?versionId=${encodeURIComponent(options.versionId)}` : "";
+  return call(`/object/info/${encodePath(bucket, key)}${query}`, { method: "GET" }, options);
+}
+
+/** One page of {@linkcode listFilesV2}. */
+export interface FilePage {
+  /** Whether another page follows (pass `nextCursor` for it). */
+  hasNext: boolean;
+  /** The folders at this level (with `withDelimiter`). */
+  folders: { name: string; key: string }[];
+  /** The files. */
+  objects: (FileEntry & { key: string })[];
+  /** The next page's cursor. */
+  nextCursor?: string;
+}
+
+/**
+ * List files with a cursor (Supabase's `listV2`): every file under `prefix`, or — with
+ * `withDelimiter` — one level of it, folders apart.
+ *
+ * @param bucket The bucket.
+ * @param options Prefix, cursor, page size, delimiter, sort and version filters.
+ * @returns One page.
+ */
+export function listFilesV2(
+  bucket: string,
+  options: StorageApiOptions & {
+    prefix?: string;
+    cursor?: string;
+    limit?: number;
+    withDelimiter?: boolean;
+    sortBy?: { column: "name" | "created_at" | "updated_at"; order?: "asc" | "desc" };
+    noncurrentVersions?: "exclude" | "include" | "only";
+    deleteMarkers?: "exclude" | "include" | "only";
+  } = {},
+): Promise<FilePage> {
+  const { apiBase: _a, signal: _s, withDelimiter, ...query } = options;
+  return call(`/object/list-v2/${encodeURIComponent(bucket)}`, {
+    method: "POST",
+    body: { ...query, with_delimiter: withDelimiter === true },
+  }, options);
 }
 
 /**
@@ -200,7 +254,7 @@ export function getFileInfo(
  */
 export function removeFiles(
   bucket: string,
-  keys: string[],
+  keys: (string | { path: string; versionId: string })[],
   options: StorageApiOptions = {},
 ): Promise<{ name: string }[]> {
   return call(`/object/${encodeURIComponent(bucket)}`, {
@@ -321,13 +375,24 @@ export interface ResumableUploadOptions extends StorageApiOptions {
   retries?: number;
   /** Called as chunks are accepted. */
   onProgress?: (progress: { loaded: number; total: number }) => void;
+  /**
+   * A signed upload token (`createSignedUploadUrl`'s): the upload is authorized by it rather than
+   * the page's session (sent as `x-signature` to `/upload/resumable/sign`).
+   */
+  signature?: string;
 }
 
 function base64(text: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 }
 
-const TUS = { "tus-resumable": "1.0.0" };
+/** The headers every TUS request carries (and a signed upload's token). */
+function tus(options: ResumableUploadOptions): Record<string, string> {
+  return {
+    "tus-resumable": "1.0.0",
+    ...(options.signature ? { "x-signature": options.signature } : {}),
+  };
+}
 
 /**
  * Upload a file resumably (TUS 1.0.0), chunk by chunk: a dropped chunk is retried from the
@@ -350,7 +415,7 @@ export async function uploadResumable(
     await sendChunks(url, file, options);
   } catch (err) {
     if (options.signal?.aborted) {
-      await fetch(url, { method: "DELETE", credentials: "same-origin", headers: TUS })
+      await fetch(url, { method: "DELETE", credentials: "same-origin", headers: tus(options) })
         .then((r) => r.body?.cancel(), () => {});
     }
     throw err;
@@ -365,7 +430,9 @@ async function createUpload(
   file: Blob,
   options: ResumableUploadOptions,
 ): Promise<string> {
-  const endpoint = `${apiBaseOf(options.apiBase)}/upload/resumable`;
+  const endpoint = `${apiBaseOf(options.apiBase)}/upload/resumable${
+    options.signature ? "/sign" : ""
+  }`;
   const metadata = [
     ["bucketName", bucket],
     ["objectName", key],
@@ -376,7 +443,7 @@ async function createUpload(
     method: "POST",
     credentials: "same-origin",
     headers: {
-      ...TUS,
+      ...tus(options),
       "upload-length": String(file.size),
       "upload-metadata": metadata,
       ...(options.upsert ? { "x-upsert": "true" } : {}),
@@ -401,7 +468,7 @@ async function patchChunk(
     method: "PATCH",
     credentials: "same-origin",
     headers: {
-      ...TUS,
+      ...tus(options),
       "upload-offset": String(offset),
       "content-type": "application/offset+octet-stream",
     },
@@ -410,7 +477,7 @@ async function patchChunk(
   });
   if (res.status === 409) {
     await res.body?.cancel();
-    return await serverOffset(url, options.signal);
+    return await serverOffset(url, options);
   }
   if (res.status !== 204) throw await failure(res);
   return Number(res.headers.get("upload-offset"));
@@ -429,16 +496,17 @@ async function sendChunks(url: string, file: Blob, options: ResumableUploadOptio
     } catch (err) {
       if (err instanceof StorageApiClientError || options.signal?.aborted) throw err;
       if (++failures > (options.retries ?? 3)) throw err;
-      offset = await serverOffset(url, options.signal);
+      offset = await serverOffset(url, options);
     }
   }
 }
 
-async function serverOffset(url: string, signal?: AbortSignal): Promise<number> {
+async function serverOffset(url: string, options: ResumableUploadOptions): Promise<number> {
+  const signal = options.signal;
   const res = await fetch(url, {
     method: "HEAD",
     credentials: "same-origin",
-    headers: TUS,
+    headers: tus(options),
     signal,
   });
   if (!res.ok) throw new StorageApiClientError("resume_failed", res.status, "the upload is gone");

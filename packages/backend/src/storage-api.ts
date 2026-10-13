@@ -44,9 +44,17 @@ import {
   secretsOf,
   type StorageRuntime,
 } from "./runtime.ts";
-import { nowSeconds, openToken, sealToken } from "./signing.ts";
+import { fromBase64Url, nowSeconds, openToken, sealToken, toBase64Url } from "./signing.ts";
+import { locationOf } from "./storage-versions.ts";
 import { isIdentityError } from "./identity.ts";
-import type { BucketRow, ListQuery, ObjectRow, SortColumn } from "./storage-meta.ts";
+import {
+  type BucketRow,
+  type ListQuery,
+  type ObjectRow,
+  SERVICE,
+  type SortColumn,
+  type VersionFilter,
+} from "./storage-meta.ts";
 import {
   actorFor,
   authorizeOp,
@@ -58,13 +66,16 @@ import {
   deleteBucket,
   emptyBucket,
   getBucket,
+  getLifecycle,
   listBuckets,
   listEntries,
+  listRows,
   moveObject,
   putObject,
   readableRow,
   removeObjects,
   SERVICE_CALLER,
+  setLifecycle,
   updateBucket,
 } from "./storage-ops.ts";
 import {
@@ -76,7 +87,7 @@ import {
   transformError,
   transformSource,
 } from "./serve.ts";
-import { parseMultipart } from "./multipart.ts";
+import { streamMultipart } from "./multipart.ts";
 import { handleResumable } from "./storage-tus.ts";
 
 /** A JSON request body's cap. */
@@ -228,30 +239,27 @@ async function uploadPayload(request: Request, bucket: ResolvedBucket): Promise<
   };
 }
 
-/** A form upload: the file part (supabase-js names it `""`), `cacheControl`, `metadata`. */
+/**
+ * A form upload, streamed: the fields before the file (`cacheControl`, `metadata`) are read, the
+ * file part's bytes flow on to the size cap and the store without being buffered.
+ */
 async function formPayload(
   request: Request,
   bucket: ResolvedBucket,
   type: string,
 ): Promise<UploadPayload> {
-  const bytes = await readCappedBody(request, capFor(bucket) + FORM_OVERHEAD);
-  if (bytes === TOO_LARGE) {
+  const length = request.headers.get("content-length");
+  if (length !== null && Number(length) > capFor(bucket) + FORM_OVERHEAD) {
     throw new StorageError("too_large", "The object exceeded the maximum allowed size");
   }
-  if (bytes === STALLED) throw new StorageError("bad_request", "request body stalled");
-  const parts = parseMultipart(bytes, type);
-  const file = parts.find((p) => p.filename !== undefined) ?? parts.find((p) => p.name === "");
+  if (!request.body) throw new StorageError("bad_request", "the form has no file");
+  const { fields, file } = await streamMultipart(request.body, type);
   if (!file) throw new StorageError("bad_request", "the form has no file");
-  const field = (name: string) => {
-    const part = parts.find((p) => p !== file && p.name === name);
-    return part ? new TextDecoder().decode(part.body) : null;
-  };
   return {
-    stream: new Blob([file.body as BlobPart]).stream(),
-    size: file.body.byteLength,
+    stream: file.stream,
     contentType: file.contentType || undefined,
-    cacheControl: cacheControlOf(field("cacheControl")),
-    userMetadata: userMetadata(field("metadata")),
+    cacheControl: cacheControlOf(fields.get("cacheControl") ?? null),
+    userMetadata: userMetadata(fields.get("metadata") ?? null),
   };
 }
 
@@ -284,14 +292,15 @@ async function serve(
   request: Request,
   params: URLSearchParams,
 ): Promise<Response> {
-  const info = await rt.driver.head(bucket, key);
+  const at = locationOf(bucket, key, row);
+  const info = await rt.driver.head(at.bucket, at.key);
   if (!info) throw new StorageError("not_found", "Object not found");
   const type = essence(info.contentType) || "application/octet-stream";
   const headers = objectHeaders(info, cacheOf(row), disposition(type, key, params.get("download")));
   const early = preflight(info, headers, request);
   if (early instanceof Response) return early;
   if (request.method === "HEAD") return objectResponse(info, headers, early.range, null);
-  const object = await rt.driver.get(bucket, key, early.range);
+  const object = await rt.driver.get(at.bucket, at.key, early.range);
   if (!object) throw new StorageError("not_found", "Object not found");
   return objectResponse(info, headers, early.range, object.body);
 }
@@ -374,7 +383,8 @@ async function render(
   request: Request,
   params: URLSearchParams,
 ): Promise<Response> {
-  const object = await rt.driver.get(bucket, key);
+  const at = locationOf(bucket, key, row);
+  const object = await rt.driver.get(at.bucket, at.key);
   if (!object) throw new StorageError("not_found", "Object not found");
   const bytes = await transformSource(object);
   const download = params.get("download");
@@ -415,7 +425,16 @@ const OBJECT_SORT = new Set(["name", "updated_at", "created_at", "last_accessed_
 
 /** A bucket row as Storage answers it. */
 function bucketJson(row: BucketRow) {
-  return { ...row, type: "STANDARD" };
+  const { lifecycle: _lifecycle, ...bucket } = row;
+  return { ...bucket, type: "STANDARD" };
+}
+
+/** A request's `versionId` (a query parameter), or `undefined`. */
+function versionOf(params: URLSearchParams): string | undefined {
+  const v = params.get("versionId");
+  if (v === null || v === "") return undefined;
+  if (v.length > 64) throw new StorageError("bad_request", "invalid versionId");
+  return v;
 }
 
 function boundedInt(value: unknown, fallback: number, max: number): number {
@@ -447,8 +466,34 @@ function settingsOf(body: Record<string, unknown>) {
     public: typeof body.public === "boolean" ? body.public : undefined,
     fileSizeLimit: body.file_size_limit as number | string | null | undefined,
     allowedMimeTypes: body.allowed_mime_types as string[] | null | undefined,
+    versioningStatus: body.versioning_status as "ENABLED" | undefined,
   };
 }
+
+const VERSION_FILTERS = new Set(["exclude", "include", "only"]);
+
+/** `noncurrentVersions` / `deleteMarkers` (default `exclude`). */
+function versionFilter(value: unknown, name: string): VersionFilter {
+  if (value === undefined || value === null) return "exclude";
+  if (typeof value !== "string" || !VERSION_FILTERS.has(value)) {
+    throw new StorageError("bad_request", `${name} must be exclude, include or only`);
+  }
+  return value as VersionFilter;
+}
+
+const lifecycleRoute: Handler = async ({ rt, request, caller }, m) => {
+  const id = decodeSegment(m[1]);
+  switch (request.method) {
+    case "GET":
+      return Response.json(await getLifecycle(rt, id, caller));
+    case "PUT":
+      return Response.json(await setLifecycle(rt, id, await jsonBody(request), caller));
+    case "DELETE":
+      await setLifecycle(rt, id, null, caller);
+      return Response.json({ message: "Successfully deleted" });
+  }
+  return methodNotAllowed("GET, PUT, DELETE");
+};
 
 const createBucketRoute: Handler = async ({ rt, request, caller }) => {
   const body = await jsonBody(request);
@@ -489,15 +534,157 @@ function listQueryOf(body: Record<string, unknown>): ListQuery {
   const raw = typeof body.prefix === "string" ? body.prefix.replace(/^\/+/, "") : "";
   const prefix = raw === "" || raw.endsWith("/") ? raw : `${raw}/`;
   if (prefix) normalizeKey(prefix.slice(0, -1));
+  const exact = body.exactMatch === true;
   return {
-    prefix,
+    prefix: exact ? normalizeKey(raw) : prefix,
     search: typeof body.search === "string" ? body.search : "",
     limit: boundedInt(body.limit, 100, 1000),
     offset: boundedInt(body.offset, 0, Number.MAX_SAFE_INTEGER),
     column: column as SortColumn,
     order,
+    versions: versionFilter(body.noncurrentVersions, "noncurrentVersions"),
+    markers: versionFilter(body.deleteMarkers, "deleteMarkers"),
+    exact,
   };
 }
+
+/** A `listV2` cursor: where the next page starts (opaque to the client). */
+function cursorOf(value: unknown): number {
+  if (value === undefined || value === null || value === "") return 0;
+  const bytes = typeof value === "string" ? fromBase64Url(value) : null;
+  const offset = bytes ? Number(new TextDecoder().decode(bytes)) : NaN;
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new StorageError("bad_request", "invalid cursor");
+  }
+  return offset;
+}
+
+function nextCursor(offset: number): string {
+  return toBase64Url(new TextEncoder().encode(String(offset)));
+}
+
+/** A `listV2` object entry. */
+function v2Object(row: { name: string; key: string } & Partial<ObjectRow>) {
+  return {
+    name: row.name,
+    key: row.key,
+    id: row.id,
+    updated_at: row.updated_at,
+    created_at: row.created_at,
+    last_accessed_at: row.last_accessed_at,
+    metadata: row.metadata ?? null,
+    version: row.version,
+    archived_at: row.archived_at ?? null,
+    is_delete_marker: row.is_delete_marker ?? false,
+    is_versioned: row.is_versioned ?? false,
+  };
+}
+
+/**
+ * `POST /object/list-v2/<bucket>`: cursor-paged. With `with_delimiter`, one level of the prefix —
+ * `folders` (`{ name, key }`) and `objects` — else every object under it, flat.
+ */
+/** A `listV2` body, validated. */
+interface V2Query {
+  raw: string;
+  exact: boolean;
+  limit: number;
+  offset: number;
+  column: "name" | "updated_at" | "created_at";
+  order: "asc" | "desc";
+  versions: VersionFilter;
+  markers: VersionFilter;
+}
+
+function v2QueryOf(body: Record<string, unknown>): V2Query {
+  const sortBy = (body.sortBy ?? {}) as { column?: string; order?: string };
+  const column = sortBy.column ?? "name";
+  const order = (sortBy.order ?? "asc").toLowerCase();
+  if (!["name", "updated_at", "created_at"].includes(column) || !["asc", "desc"].includes(order)) {
+    throw new StorageError("bad_request", "invalid sortBy");
+  }
+  return {
+    raw: typeof body.prefix === "string" ? body.prefix.replace(/^\/+/, "") : "",
+    exact: body.exactMatch === true,
+    limit: Math.max(1, boundedInt(body.limit, 1000, 1000)),
+    offset: cursorOf(body.cursor),
+    column: column as V2Query["column"],
+    order: order as V2Query["order"],
+    versions: versionFilter(body.noncurrentVersions, "noncurrentVersions"),
+    markers: versionFilter(body.deleteMarkers, "deleteMarkers"),
+  };
+}
+
+/** One page's answer: `hasNext` and the cursor from `fetched` (one more than the page). */
+function v2Page<T>(q: V2Query, fetched: T[]) {
+  const more = fetched.length > q.limit;
+  return {
+    page: fetched.slice(0, q.limit),
+    paging: { hasNext: more, ...(more ? { nextCursor: nextCursor(q.offset + q.limit) } : {}) },
+  };
+}
+
+/** `listV2` with a delimiter: one level of the prefix, folders apart. */
+async function listV2Level(rt: StorageRuntime, bucket: ResolvedBucket, q: V2Query, caller: Caller) {
+  const prefix = q.raw === "" || q.raw.endsWith("/")
+    ? q.raw
+    : q.raw.slice(0, q.raw.lastIndexOf("/") + 1);
+  if (prefix) normalizeKey(prefix.slice(0, -1));
+  const entries = await listEntries(rt, bucket, {
+    prefix,
+    search: q.raw.slice(prefix.length),
+    limit: q.limit + 1,
+    offset: q.offset,
+    column: q.column,
+    order: q.order,
+    versions: q.versions,
+    markers: q.markers,
+  }, caller);
+  const { page, paging } = v2Page(q, entries);
+  return {
+    ...paging,
+    folders: page.filter((e) => e.id === null).map((e) => ({
+      name: e.name,
+      key: `${prefix}${e.name}/`,
+    })),
+    objects: page.filter((e) => e.id !== null).map((e) =>
+      v2Object({ ...e, key: `${prefix}${e.name}` } as never)
+    ),
+  };
+}
+
+/** `listV2` without a delimiter: every object under the prefix. */
+async function listV2Flat(rt: StorageRuntime, bucket: ResolvedBucket, q: V2Query, caller: Caller) {
+  if (q.raw && q.exact) normalizeKey(q.raw);
+  const rows = await listRows(rt, bucket, {
+    prefix: q.raw,
+    limit: q.limit + 1,
+    offset: q.offset,
+    column: q.column,
+    order: q.order,
+    versions: q.versions,
+    markers: q.markers,
+    exact: q.exact,
+  }, caller);
+  const { page, paging } = v2Page(q, rows);
+  return {
+    ...paging,
+    folders: [],
+    objects: page.map((r) =>
+      v2Object({ ...r, name: r.name.slice(q.exact ? 0 : q.raw.length), key: r.name })
+    ),
+  };
+}
+
+const listV2Route: Handler = async ({ rt, request, caller }, m) => {
+  const bucket = await resolveBucket(rt, decodeSegment(m[1]));
+  const body = await jsonBody(request);
+  const q = v2QueryOf(body);
+  const delimited = body.with_delimiter === true && !q.exact;
+  return Response.json(
+    delimited ? await listV2Level(rt, bucket, q, caller) : await listV2Flat(rt, bucket, q, caller),
+  );
+};
 
 const listRoute: Handler = async ({ rt, request, caller }, m) => {
   const bucket = await resolveBucket(rt, decodeSegment(m[1]));
@@ -507,7 +694,7 @@ const listRoute: Handler = async ({ rt, request, caller }, m) => {
 
 /** A move or copy body. */
 function transferOf(body: Record<string, unknown>) {
-  const { bucketId, sourceKey, destinationKey, destinationBucket } = body;
+  const { bucketId, sourceKey, destinationKey, destinationBucket, sourceVersionId } = body;
   if (
     typeof bucketId !== "string" || typeof sourceKey !== "string" ||
     typeof destinationKey !== "string"
@@ -517,7 +704,13 @@ function transferOf(body: Record<string, unknown>) {
   const to = typeof destinationBucket === "string" && destinationBucket
     ? destinationBucket
     : bucketId;
-  return { from: { bucket: bucketId, key: sourceKey }, to: { bucket: to, key: destinationKey } };
+  const versionId = typeof sourceVersionId === "string" && sourceVersionId
+    ? sourceVersionId
+    : undefined;
+  return {
+    from: { bucket: bucketId, key: sourceKey, versionId },
+    to: { bucket: to, key: destinationKey },
+  };
 }
 
 const moveRoute: Handler = async ({ rt, request, caller }) => {
@@ -538,8 +731,12 @@ const removeManyRoute: Handler = async ({ rt, request, caller }, m) => {
   }
   const keys = body.prefixes.map((p) => {
     const path = typeof p === "string" ? p : (p as { path?: unknown })?.path;
+    const versionId = typeof p === "string" ? undefined : (p as { versionId?: unknown })?.versionId;
     if (typeof path !== "string") throw new StorageError("bad_request", "invalid path");
-    return normalizeKey(path.replace(/^\/+/, ""));
+    if (versionId !== undefined && typeof versionId !== "string") {
+      throw new StorageError("bad_request", "invalid versionId");
+    }
+    return { key: normalizeKey(path.replace(/^\/+/, "")), versionId };
   });
   return Response.json(await removeObjects(rt, bucket, keys, caller));
 };
@@ -550,6 +747,8 @@ interface DownloadToken {
   b: string;
   k: string;
   t?: string;
+  /** A noncurrent version's id. */
+  v?: string;
 }
 
 /** The token-bearing path of a signed download (the key unencoded, as Storage returns it). */
@@ -559,6 +758,7 @@ async function signedPath(
   key: string,
   expiresIn: unknown,
   transform: ApiTransform | undefined,
+  versionId?: string,
 ): Promise<string> {
   const seconds = clampExpiry(Number(expiresIn), 3600);
   const t = transform && Object.keys(transform).length
@@ -569,6 +769,7 @@ async function signedPath(
     b: bucket,
     k: key,
     ...(t ? { t } : {}),
+    ...(versionId ? { v: versionId } : {}),
   }, secretsOf(rt));
   return `${t ? "/render/image/sign" : "/object/sign"}/${bucket}/${key}?token=${token}`;
 }
@@ -579,8 +780,9 @@ async function signable(
   bucket: ResolvedBucket,
   key: string,
   caller: Caller,
+  versionId?: string,
 ): Promise<void> {
-  const row = await readableRow(rt, bucket, key, caller);
+  const row = await readableRow(rt, bucket, key, caller, versionId);
   if (!row?.metadata && !(await rt.driver.head(bucket.name, key))) {
     throw new StorageError("not_found", "Object not found");
   }
@@ -621,27 +823,31 @@ const signRoute: Handler = async (ctx, m) => {
   if (request.method === "POST") {
     const bucket = await resolveBucket(rt, name);
     const body = await jsonBody(request);
-    await signable(rt, bucket, key, caller);
+    const versionId = typeof body.versionId === "string" && body.versionId
+      ? body.versionId
+      : undefined;
+    await signable(rt, bucket, key, caller, versionId);
     const transform = body.transform && typeof body.transform === "object"
       ? transformOf(transformParams(body.transform as ApiTransform))
       : undefined;
     return Response.json({
-      signedURL: await signedPath(rt, bucket.name, key, body.expiresIn, transform),
+      signedURL: await signedPath(rt, bucket.name, key, body.expiresIn, transform, versionId),
     });
   }
   if (request.method !== "GET" && request.method !== "HEAD") {
     return methodNotAllowed("GET, HEAD, POST");
   }
   const token = await openDownload(rt, params, name, key);
-  return await serve(
-    rt,
-    token.b,
-    token.k,
-    await rt.meta.getObject(token.b, token.k, { kind: "service" }),
-    request,
-    params,
-  );
+  return await serve(rt, token.b, token.k, await tokenRow(rt, token), request, params);
 };
+
+/** The row a signed download names: the current object, or the version it was signed for. */
+async function tokenRow(rt: StorageRuntime, token: DownloadToken): Promise<ObjectRow | null> {
+  if (!token.v) return await rt.meta.getObject(token.b, token.k, SERVICE);
+  const row = await rt.meta.getVersion(token.b, token.k, token.v, SERVICE);
+  if (!row || row.is_delete_marker) throw new StorageError("not_found", "Object not found");
+  return row;
+}
 
 async function openDownload(
   rt: StorageRuntime,
@@ -740,7 +946,13 @@ async function scopedObject(ctx: RouteContext, scope: string, path: string) {
   const bucket = await resolveBucket(ctx.rt, name);
   const isPublic = scope === "public";
   if (isPublic && !bucket.public) throw new StorageError("not_found", "Object not found");
-  const row = await readableRow(ctx.rt, bucket, key, isPublic ? SERVICE_CALLER : ctx.caller);
+  const row = await readableRow(
+    ctx.rt,
+    bucket,
+    key,
+    isPublic ? SERVICE_CALLER : ctx.caller,
+    versionOf(ctx.params),
+  );
   return { bucket, key, row };
 }
 
@@ -766,7 +978,7 @@ const objectRoute: Handler = async (ctx, m) => {
         rt,
         bucket.name,
         key,
-        await readableRow(rt, bucket, key, caller),
+        await readableRow(rt, bucket, key, caller, versionOf(params)),
         request,
         params,
       );
@@ -795,7 +1007,7 @@ const renderRoute: Handler = async ({ rt, request, params, caller }, m) => {
   if (scope === "sign") {
     const token = await openDownload(rt, params, bucket.name, key);
     if (!token.t) throw new StorageError("bad_signature", "the token carries no transform");
-    const row = await rt.meta.getObject(bucket.name, key, { kind: "service" });
+    const row = await tokenRow(rt, token);
     return await render(
       rt,
       bucket.name,
@@ -807,7 +1019,13 @@ const renderRoute: Handler = async ({ rt, request, params, caller }, m) => {
     );
   }
   if (scope === "public" && !bucket.public) throw new StorageError("not_found", "Object not found");
-  const row = await readableRow(rt, bucket, key, scope === "public" ? SERVICE_CALLER : caller);
+  const row = await readableRow(
+    rt,
+    bucket,
+    key,
+    scope === "public" ? SERVICE_CALLER : caller,
+    versionOf(params),
+  );
   return await render(rt, bucket.name, key, row, transformOf(params), request, params);
 };
 
@@ -823,8 +1041,10 @@ const ROUTES: [Set<string>, RegExp, Handler][] = [
   [new Set(["GET"]), /^\/bucket\/?$/, listBucketsRoute],
   [new Set(["POST"]), /^\/bucket\/?$/, createBucketRoute],
   [new Set(["POST"]), /^\/bucket\/([^/]+)\/empty\/?$/, emptyBucketRoute],
+  [new Set(["GET", "PUT", "DELETE"]), /^\/bucket\/([^/]+)\/lifecycle\/?$/, lifecycleRoute],
   [new Set(["GET", "PUT", "DELETE"]), /^\/bucket\/([^/]+)\/?$/, bucketRoute],
   [new Set(["POST"]), /^\/object\/list\/([^/]+)\/?$/, listRoute],
+  [new Set(["POST"]), /^\/object\/list-v2\/([^/]+)\/?$/, listV2Route],
   [new Set(["POST"]), /^\/object\/move\/?$/, moveRoute],
   [new Set(["POST"]), /^\/object\/copy\/?$/, copyRoute],
   [new Set(["POST"]), /^\/object\/sign\/([^/]+)\/?$/, signManyRoute],

@@ -1,5 +1,7 @@
-// The storage half of the Database section: the buckets `backend({ storage })` declares and the
-// objects in them, through the very driver the app uses. The plugin installs its storage in a
+// The storage half of the Database section: the app's buckets — declared in `backend({ storage })`
+// or created at runtime — and the objects in them, through the very driver the app uses; a
+// removal goes through the plugin's own storage operations (its `admin` hooks), so the object's
+// metadata row goes with its bytes. The plugin installs its storage in a
 // process-global slot at setup (`Symbol.for("denext.backend.storage")`, the slot the app's own
 // `storage` reads), so after the child has set the project's plugins up the driver and buckets
 // are there — described structurally here, since denext does not depend on the package.
@@ -44,10 +46,18 @@ interface Bucket {
   mime?: string[];
 }
 
+/** The plugin's operations for this page (`@denext/backend` ≥ the release that added them). */
+interface StorageAdmin {
+  buckets(): Promise<{ name: string; public: boolean; maxBytes: number; mime: string[] | null }[]>;
+  hasBucket(name: string): Promise<boolean>;
+  remove(bucket: string, key: string): Promise<void>;
+}
+
 /** The installed storage. */
 interface StorageRuntime {
   driver: Driver;
   buckets: Map<string, Bucket>;
+  admin?: StorageAdmin;
 }
 
 const SLOT = Symbol.for("denext.backend.storage");
@@ -62,13 +72,14 @@ export function hasStorage(): boolean {
   return runtime() !== null;
 }
 
-/** The runtime and one declared bucket (a name the config does not declare is refused). */
-function bucketOf(name: string): { rt: StorageRuntime; bucket: Bucket } {
+/** The runtime and one bucket — declared, or created at runtime (an unknown name is refused). */
+async function bucketOf(name: string): Promise<{ rt: StorageRuntime; bucket: { name: string } }> {
   const rt = runtime();
   if (!rt) throw new AdminRefusal("not_found", "this project declares no storage");
-  const bucket = typeof name === "string" ? rt.buckets.get(name) : undefined;
-  if (!bucket) throw new AdminRefusal("not_found", `no bucket ${JSON.stringify(name)}`);
-  return { rt, bucket };
+  const declared = typeof name === "string" ? rt.buckets.get(name) : undefined;
+  if (declared) return { rt, bucket: declared };
+  if (typeof name === "string" && await rt.admin?.hasBucket(name)) return { rt, bucket: { name } };
+  throw new AdminRefusal("not_found", `no bucket ${JSON.stringify(name)}`);
 }
 
 /** An object key the admin will pass to the driver. */
@@ -83,21 +94,22 @@ function checkKey(key: string): string {
 async function existing(
   name: string,
   key: string,
-): Promise<{ rt: StorageRuntime; bucket: Bucket; info: ObjectInfo }> {
-  const { rt, bucket } = bucketOf(name);
+): Promise<{ rt: StorageRuntime; bucket: { name: string }; info: ObjectInfo }> {
+  const { rt, bucket } = await bucketOf(name);
   const info = await rt.driver.head(bucket.name, checkKey(key));
   if (!info) throw new AdminRefusal("not_found", `no object ${JSON.stringify(key)}`);
   return { rt, bucket, info };
 }
 
 /**
- * The declared buckets.
+ * The buckets: declared and created at runtime.
  *
  * @returns The driver's name and each bucket's rules.
  */
-export function listBuckets(): DbReplies["buckets"] {
+export async function listBuckets(): Promise<DbReplies["buckets"]> {
   const rt = runtime();
   if (!rt) return { driver: null, buckets: [] };
+  if (rt.admin) return { driver: rt.driver.name, buckets: await rt.admin.buckets() };
   return {
     driver: rt.driver.name,
     buckets: [...rt.buckets.values()].map((b) => ({
@@ -122,7 +134,7 @@ export async function listObjects(
   prefix = "",
   cursor?: string,
 ): Promise<DbReplies["objects"]> {
-  const { rt, bucket } = bucketOf(name);
+  const { rt, bucket } = await bucketOf(name);
   const page = await rt.driver.list(bucket.name, String(prefix), {
     limit: DB_OBJECTS_PAGE,
     ...(cursor ? { cursor: String(cursor) } : {}),
@@ -203,6 +215,9 @@ export async function removeObject(
 ): Promise<DbReplies["removeObject"]> {
   assertWritable(readOnly);
   const { rt, bucket } = await existing(name, key);
-  if (confirm) await rt.driver.remove(bucket.name, key);
+  if (confirm) {
+    if (rt.admin) await rt.admin.remove(bucket.name, key);
+    else await rt.driver.remove(bucket.name, key);
+  }
   return { bucket: bucket.name, key, applied: confirm };
 }

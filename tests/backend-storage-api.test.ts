@@ -8,7 +8,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { backend, fs, StorageError } from "../packages/backend/mod.ts";
 import { storage } from "../packages/backend/server.ts";
 import { runtime } from "../packages/backend/src/runtime.ts";
-import { parseMultipart } from "../packages/backend/src/multipart.ts";
+import { streamMultipart } from "../packages/backend/src/multipart.ts";
 import { parseMimeList, parseSizeLimit } from "../packages/backend/src/storage-ops.ts";
 import { shapeListing } from "../packages/backend/src/storage-meta.ts";
 import { parseUploadMetadata } from "../packages/backend/src/storage-tus.ts";
@@ -480,7 +480,7 @@ Deno.test({
   }
 });
 
-Deno.test("validators: sizes, mime lists, multipart, paths, transforms, listings", () => {
+Deno.test("validators: sizes, mime lists, multipart, paths, transforms, listings", async () => {
   assertEquals(
     [
       parseSizeLimit(null),
@@ -498,34 +498,53 @@ Deno.test("validators: sizes, mime lists, multipart, paths, transforms, listings
   assertEquals(parseMimeList(["Image/*", " text/plain "]), ["image/*", "text/plain"]);
   assertThrows(() => parseMimeList("image/*"), StorageError);
   assertThrows(() => parseMimeList(["*/*"]), StorageError);
-  const parts = parseMultipart(
-    new TextEncoder().encode(
-      '--b\r\ncontent-disposition: form-data; name="q\\"x"; filename="f.txt"\r\ncontent-type: text/plain\r\n\r\nbody\r\n--b--',
-    ),
-    'multipart/form-data; boundary="b"',
+  // The streaming form reader: fields before the file, the file as a stream, in any chunking.
+  const form = (text: string, chunk = 3) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        const bytes = new TextEncoder().encode(text);
+        for (let i = 0; i < bytes.length; i += chunk) c.enqueue(bytes.slice(i, i + chunk));
+        c.close();
+      },
+    });
+  const body = '--b\r\ncontent-disposition: form-data; name="cacheControl"\r\n\r\n60\r\n' +
+    '--b\r\ncontent-disposition: form-data; name="q\\"x"; filename="f.txt"\r\n' +
+    "content-type: text/plain\r\n\r\nbody --b inside\r\n-- more\r\n--b--";
+  for (const chunk of [1, 3, 7, 1000]) {
+    const parsed = await streamMultipart(form(body, chunk), 'multipart/form-data; boundary="b"');
+    assertEquals(parsed.fields.get("cacheControl"), "60");
+    assertEquals([parsed.file?.name, parsed.file?.filename, parsed.file?.contentType], [
+      'q"x',
+      "f.txt",
+      "text/plain",
+    ]);
+    assertEquals(await new Response(parsed.file!.stream).text(), "body --b inside\r\n-- more");
+  }
+  const none = await streamMultipart(
+    form('--b\r\ncontent-disposition: form-data; name="x"\r\n\r\n1\r\n--b--'),
+    "multipart/form-data; boundary=b",
+  );
+  assertEquals([none.fields.get("x"), none.file], ["1", null]);
+  const refused = async (text: string, type = "multipart/form-data; boundary=b") => {
+    try {
+      const out = await streamMultipart(form(text), type);
+      if (out.file) await new Response(out.file.stream).text();
+      return "ok";
+    } catch (err) {
+      return err instanceof StorageError ? err.code : String(err);
+    }
+  };
+  assertEquals(await refused("", "multipart/form-data"), "bad_request");
+  assertEquals(await refused("nothing"), "bad_request");
+  assertEquals(await refused("--bX"), "bad_request");
+  assertEquals(await refused("--b\r\nno headers end"), "bad_request");
+  assertEquals(
+    await refused('--b\r\ncontent-disposition: form-data; name=""\r\n\r\nno end'),
+    "bad_request",
   );
   assertEquals(
-    parts.map((p) => [p.name, p.filename, p.contentType, new TextDecoder().decode(p.body)]),
-    [
-      ['q"x', "f.txt", "text/plain", "body"],
-    ],
-  );
-  assertThrows(() => parseMultipart(new Uint8Array(), "multipart/form-data"), StorageError);
-  assertThrows(
-    () => parseMultipart(new TextEncoder().encode("nothing"), "multipart/form-data; boundary=b"),
-    StorageError,
-  );
-  assertThrows(
-    () => parseMultipart(new TextEncoder().encode("--bX"), "multipart/form-data; boundary=b"),
-    StorageError,
-  );
-  assertThrows(
-    () =>
-      parseMultipart(
-        new TextEncoder().encode("--b\r\nno headers end"),
-        "multipart/form-data; boundary=b",
-      ),
-    StorageError,
+    await refused('--b\r\ncontent-disposition: form-data; name="big"\r\n\r\n' + "x".repeat(70_000)),
+    "bad_request",
   );
   assertEquals(bucketAndKey("b/a%20b/c"), { bucket: "b", key: "a b/c" });
   assertThrows(() => bucketAndKey("nokey"), StorageError);
@@ -555,6 +574,9 @@ Deno.test("validators: sizes, mime lists, multipart, paths, transforms, listings
     created_at: at,
     updated_at: at,
     last_accessed_at: at,
+    archived_at: null,
+    is_delete_marker: false,
+    is_versioned: false,
   });
   const listing = shapeListing([row("p/a", "2"), row("p/b", "1"), row("p/d/x", "3")], {
     prefix: "p/",
@@ -637,6 +659,196 @@ Deno.test({
     }).catch((e) => e);
     assert(cancelled instanceof Error);
     assertEquals(await storage.bucket("own", { service: true }).exists(`${dir}/cancel.txt`), false);
+  } finally {
+    globalThis.fetch = original;
+    await h.close();
+  }
+});
+
+Deno.test({
+  name: "versions on the server API; the admin hooks; lifecycle validation",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const h = await harness();
+  try {
+    const opts = { service: true };
+    await storage.createBucket("hist", { versioningStatus: "ENABLED" }, opts);
+    assertEquals((await storage.getBucket("hist", opts)).versioningStatus, "ENABLED");
+    assertEquals(
+      await code(storage.createBucket("hist2", { versioningStatus: "SUSPENDED" }, opts)),
+      "bad_request",
+    );
+    const files = storage.bucket("hist", opts);
+    await files.upload("a.txt", "one", { contentType: "text/plain" });
+    const v1 = (await files.info("a.txt"))!.version;
+    await files.upload("a.txt", "two", { contentType: "text/plain" });
+    const old = await files.download("a.txt", { versionId: v1 });
+    assertEquals(await new Response(old!.body).text(), "one");
+    assertEquals((await files.info("a.txt", { versionId: v1 }))?.archivedAt !== null, true);
+    assertEquals(await files.download("a.txt", { versionId: "nope" }), null);
+    const versions = await files.listFolder("", { versions: "include" });
+    assertEquals(versions.length, 2);
+    await files.remove([{ key: "a.txt", versionId: v1 }]);
+    assertEquals((await files.listFolder("", { versions: "only" })).length, 0);
+    await files.remove("a.txt");
+    assertEquals(await files.exists("a.txt"), false);
+    assertEquals((await files.listFolder("", { deleteMarkers: "only" })).length, 1);
+    // A move in a versioned bucket is a copy and a delete.
+    await files.upload("m.txt", "m", { contentType: "text/plain" });
+    await files.move("m.txt", "n.txt");
+    assertEquals([await files.exists("m.txt"), await files.exists("n.txt")], [false, true]);
+    // Lifecycle.
+    assertEquals(await storage.getBucketLifecycle("hist", opts), null);
+    const policy = {
+      rules: [{
+        status: "Enabled" as const,
+        filter: {},
+        noncurrentVersionExpiration: { noncurrentDays: 1 },
+      }],
+    };
+    await storage.updateBucketLifecycle("hist", policy, opts);
+    assertEquals((await storage.getBucketLifecycle("hist", opts))?.rules[0].id, "rule-1");
+    for (
+      const bad of [
+        {},
+        { rules: [] },
+        { rules: [{ ...policy.rules[0], status: "On" }] },
+        { rules: [{ ...policy.rules[0], expiration: { days: 1 } }] },
+        { rules: [{ ...policy.rules[0], noncurrentVersionExpiration: { noncurrentDays: 0 } }] },
+        {
+          rules: [{
+            ...policy.rules[0],
+            noncurrentVersionExpiration: { noncurrentDays: 1, newerNoncurrentVersions: 101 },
+          }],
+        },
+        { rules: [{ ...policy.rules[0], id: "x" }, { ...policy.rules[0], id: "x" }] },
+        { rules: ["x"] },
+      ]
+    ) {
+      assertEquals(
+        await code(storage.updateBucketLifecycle("hist", bad as never, opts)),
+        "bad_request",
+        JSON.stringify(bad),
+      );
+    }
+    await storage.updateBucketLifecycle("hist", null, opts);
+    assertEquals(await storage.getBucketLifecycle("hist", opts), null);
+    await storage.updateBucket("hist", { versioningStatus: "SUSPENDED" }, opts);
+    assertEquals(
+      await code(storage.updateBucket("hist", { versioningStatus: "DISABLED" }, opts)),
+      "bad_request",
+    );
+    // The admin hooks `denext ui` uses.
+    const admin = runtime().admin!;
+    assertEquals((await admin.buckets()).map((b) => b.name), ["own", "hist"]);
+    assertEquals([await admin.hasBucket("hist"), await admin.hasBucket("ghost")], [true, false]);
+    await files.upload("z.txt", "z", { contentType: "text/plain" });
+    await admin.remove("hist", "z.txt");
+    assertEquals(await files.exists("z.txt"), false);
+    await storage.emptyBucket("hist", opts);
+    await storage.deleteBucket("hist", opts);
+  } finally {
+    await h.close();
+  }
+});
+
+Deno.test("sqlite metadata: a file from before versioning is upgraded in place", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { sqliteMetaStore } = await import("../packages/backend/src/storage-meta-sqlite.ts");
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/old.db`;
+  const old = new DatabaseSync(path);
+  old.exec(`
+    create table buckets (id text primary key, name text not null unique, owner text, owner_id text,
+      public integer not null default 0, file_size_limit integer, allowed_mime_types text,
+      created_at text not null, updated_at text not null);
+    create table objects (id text primary key, bucket_id text not null references buckets(id),
+      name text not null, owner text, owner_id text, version text not null, metadata text,
+      user_metadata text, created_at text not null, updated_at text not null,
+      last_accessed_at text not null, unique (bucket_id, name));
+    insert into buckets values ('b', 'b', null, null, 0, null, null, 't', 't');
+    insert into objects values ('o1', 'b', 'k', null, null, 'v1', '{"size":1}', null, 't', 't', 't');
+  `);
+  old.close();
+  const store = sqliteMetaStore(path);
+  try {
+    const row = await store.getObject("b", "k", { kind: "service" });
+    assertEquals([row?.version, row?.archived_at, row?.is_versioned], ["v1", null, false]);
+    assertEquals((await store.getBucket("b", { kind: "service" }))?.versioning_status, "DISABLED");
+    await store.replaceCurrent({
+      bucket_id: "b",
+      name: "k",
+      owner_id: null,
+      version: "v2",
+      metadata: null,
+      user_metadata: null,
+    }, true);
+    assertEquals(
+      (await store.getVersion("b", "k", "v1", { kind: "service" }))?.archived_at !== null,
+      true,
+    );
+  } finally {
+    store.close?.();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "client: listFilesV2, version-aware info and remove, signed resumable uploads",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const h = await harness();
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input), ORIGIN);
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `Bearer ${SECRET_KEY}`);
+    return h.fetch(url, { ...init, headers });
+  }) as typeof fetch;
+  try {
+    const { getFileInfo, listFilesV2, removeFiles, uploadResumable } = await import(
+      "../packages/backend/client.ts"
+    );
+    await storage.createBucket("v2", { versioningStatus: "ENABLED" }, { service: true });
+    const files = storage.bucket("v2", { service: true });
+    for (const k of ["a/1.txt", "a/2.txt", "b.txt"]) {
+      await files.upload(k, k, { contentType: "text/plain" });
+    }
+    const page = await listFilesV2("v2", { limit: 2 });
+    assertEquals([page.objects.map((o) => o.key), page.hasNext], [["a/1.txt", "a/2.txt"], true]);
+    const rest = await listFilesV2("v2", { limit: 2, cursor: page.nextCursor });
+    assertEquals([rest.objects.map((o) => o.key), rest.hasNext], [["b.txt"], false]);
+    const top = await listFilesV2("v2", { withDelimiter: true });
+    assertEquals([top.folders, top.objects.map((o) => o.name)], [[{ name: "a", key: "a/" }], [
+      "b.txt",
+    ]]);
+    const v1 = (await getFileInfo("v2", "b.txt")).version;
+    await files.upload("b.txt", "again", { contentType: "text/plain" });
+    assertEquals((await getFileInfo("v2", "b.txt", { versionId: v1 })).version, v1);
+    assertEquals((await removeFiles("v2", [{ path: "b.txt", versionId: v1 }])).length, 1);
+    // A signed resumable upload (the token, not the session, authorizes it).
+    const signed = await h.fetch(`${ORIGIN}/storage/v1/object/upload/sign/v2/t.txt`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${SECRET_KEY}` },
+    });
+    const { token } = await signed.json();
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      h.fetch(
+        new URL(String(input instanceof Request ? input.url : input), ORIGIN),
+        init,
+      )) as typeof fetch;
+    await uploadResumable("v2", "t.txt", new Blob(["signed bytes"], { type: "text/plain" }), {
+      signature: token,
+      chunkSize: 5,
+    });
+    assertEquals((await files.info("t.txt"))?.size, 12);
+    const wrong = await uploadResumable("v2", "other.txt", new Blob(["x"]), { signature: token })
+      .catch((e) => e);
+    assertEquals(wrong.status, 400);
+    await storage.emptyBucket("v2", { service: true });
+    await storage.deleteBucket("v2", { service: true });
   } finally {
     globalThis.fetch = original;
     await h.close();

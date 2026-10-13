@@ -319,6 +319,32 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
     assertEquals(bad.error?.statusCode, "400");
   });
 
+  await t.step("listV2: cursor pages, with and without a delimiter", async () => {
+    const files = admin.storage.from(docs);
+    const level = await files.listV2({ prefix: "folder/", with_delimiter: true });
+    assertEquals(level.error, null);
+    assertEquals(level.data?.folders.map((f) => [f.name, f.key]), [["sub", "folder/sub/"]]);
+    assertEquals(level.data?.objects.map((o) => [o.name, o.key]), [[
+      "note.txt",
+      "folder/note.txt",
+    ]]);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const { data, error } = await files.listV2({ limit: 2, cursor });
+      assertEquals(error, null);
+      seen.push(...data!.objects.map((o) => o.key!));
+      if (!data!.hasNext) break;
+      cursor = data!.nextCursor;
+    }
+    assertEquals(seen, [...seen].sort());
+    assert(seen.includes("folder/sub/deep.txt") && seen.includes("a.txt"), String(seen));
+    const desc = await files.listV2({ limit: 1, sortBy: { column: "name", order: "desc" } });
+    assertEquals(desc.data?.objects[0].key, "zeta/z.txt");
+    const bad = await files.listV2({ cursor: "!!" });
+    assertEquals(bad.error?.statusCode, "400");
+  });
+
   await t.step("signed URLs: one, many, download, expiry; signed uploads", async () => {
     const files = admin.storage.from(docs);
     const one = await files.createSignedUrl("hello.txt", 60);
@@ -467,6 +493,96 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
     assertEquals(removed.data?.map((r) => r.name), [`${USER_A}/mine.txt`]);
   });
 
+  await t.step("versioning: versions, delete markers, restore, lifecycle", async () => {
+    const ver = `ver-${run}`;
+    assertEquals(
+      (await admin.storage.createBucket(ver, { public: false, versioningStatus: "ENABLED" })).error,
+      null,
+    );
+    assertEquals((await admin.storage.getBucket(ver)).data?.versioning_status, "ENABLED");
+    const files = admin.storage.from(ver);
+    await files.upload("f.txt", "one", { contentType: "text/plain" });
+    const v1 = (await files.info("f.txt")).data!.version;
+    await files.upload("f.txt", "two", { contentType: "text/plain", upsert: true });
+    const v2 = (await files.info("f.txt")).data!.version;
+    assert(v1 && v2 && v1 !== v2);
+    assertEquals(await (await files.download("f.txt")).data?.text(), "two");
+    assertEquals(await (await files.download("f.txt", { versionId: v1 })).data?.text(), "one");
+    const old = await files.createSignedUrl("f.txt", 60, { versionId: v1 });
+    assertEquals(await (await h.fetch(old.data!.signedUrl)).text(), "one");
+    assertEquals((await files.info("f.txt", { versionId: v1 })).data?.version, v1);
+    const all = await files.list("", { noncurrentVersions: "include" });
+    assertEquals(all.data?.map((e) => [e.name, e.version === v2, e.archived_at === null]), [
+      ["f.txt", true, true],
+      ["f.txt", false, false],
+    ]);
+    const only = await files.list("", { noncurrentVersions: "only" });
+    assertEquals(only.data?.map((e) => e.version), [v1]);
+    // A delete leaves a marker; the history stays.
+    assertEquals((await files.remove(["f.txt"])).data?.map((r) => r.name), ["f.txt"]);
+    assertEquals((await files.exists("f.txt")).data, false);
+    const markers = await files.list("", { deleteMarkers: "only" });
+    assertEquals(markers.data?.map((e) => [e.name, e.is_delete_marker]), [["f.txt", true]]);
+    assertEquals(await (await files.download("f.txt", { versionId: v2 })).data?.text(), "two");
+    // Restore: copy a version back over the path.
+    const restored = await files.copy("f.txt", "f.txt", { sourceVersionId: v1 });
+    assertEquals(restored.error, null);
+    assertEquals(await (await files.download("f.txt")).data?.text(), "one");
+    // Delete one version for good.
+    const gone = await files.remove([{ path: "f.txt", versionId: v2 }]);
+    assertEquals(gone.data?.length, 1);
+    assertEquals((await files.download("f.txt", { versionId: v2 })).error?.status, 404);
+    // Deleting the current version brings the newest noncurrent one back.
+    const current = (await files.info("f.txt")).data!.version;
+    await files.remove([{ path: "f.txt", versionId: current }]);
+    assertEquals((await files.exists("f.txt")).data, false, "the marker is current again");
+    // Suspended: history stays, new writes replace.
+    assertEquals(
+      (await admin.storage.updateBucket(ver, { public: false, versioningStatus: "SUSPENDED" }))
+        .error,
+      null,
+    );
+    assertEquals((await admin.storage.getBucket(ver)).data?.versioning_status, "SUSPENDED");
+    const back = await admin.storage.updateBucket(ver, {
+      public: false,
+      versioningStatus: "DISABLED" as never,
+    });
+    assertEquals(back.error?.statusCode, "400");
+    await files.upload("s.txt", "a", { contentType: "text/plain" });
+    await files.upload("s.txt", "b", { contentType: "text/plain", upsert: true });
+    assertEquals((await files.list("", { noncurrentVersions: "only", search: "s" })).data, []);
+    // Lifecycle: noncurrent-version expiration.
+    assertEquals((await admin.storage.getBucketLifecycle(ver)).error?.status, 404);
+    const rules = {
+      rules: [{
+        id: "expire",
+        status: "Enabled" as const,
+        filter: {},
+        noncurrentVersionExpiration: { noncurrentDays: 30, newerNoncurrentVersions: 2 },
+      }],
+    };
+    assertEquals((await admin.storage.updateBucketLifecycle(ver, rules)).data, rules);
+    assertEquals((await admin.storage.getBucketLifecycle(ver)).data, rules);
+    const prefixRule = await admin.storage.updateBucketLifecycle(ver, {
+      rules: [{ ...rules.rules[0], filter: { prefix: "x" } as never }],
+    });
+    assertEquals(prefixRule.error?.statusCode, "400");
+    assertEquals((await admin.storage.deleteBucketLifecycle(ver)).error, null);
+    assertEquals((await admin.storage.getBucketLifecycle(ver)).error?.status, 404);
+    assertEquals((await admin.storage.emptyBucket(ver)).error, null);
+    assertEquals(
+      (await files.list("", { noncurrentVersions: "include", deleteMarkers: "include" })).data,
+      [],
+    );
+    assertEquals((await admin.storage.deleteBucket(ver)).error, null);
+  });
+
+  await t.step("anon and users see no bucket (as on Supabase), not an error", async () => {
+    const listed = await anon.storage.listBuckets();
+    assertEquals([listed.error, listed.data], [null, []]);
+    assertEquals((await anon.storage.getBucket("private")).error?.statusCode, "404");
+  });
+
   await t.step("remove, empty and delete buckets", async () => {
     const files = admin.storage.from(docs);
     const removed = await files.remove(["a.txt", "hello.txt", "never.txt"]);
@@ -521,6 +637,41 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
       assertEquals(back.byteLength, size);
       assertEquals(back.subarray(size - 64), bytes.subarray(size - 64));
       assertEquals((await admin.storage.from(`tus-${run}`).info("big/file.bin")).data?.size, size);
+
+      // A signed upload through TUS: the token, not a session, authorizes it.
+      const signedUp = await admin.storage.from(`tus-${run}`).createSignedUploadUrl("signed/t.bin");
+      const signedBytes = new Uint8Array(300 * 1024).fill(7);
+      await new Promise<void>((resolve, reject) => {
+        const upload = new tus.Upload(Buffer.from(signedBytes), {
+          endpoint: `${base}/sign`,
+          chunkSize: 100 * 1024,
+          retryDelays: [],
+          headers: { "x-signature": signedUp.data!.token },
+          metadata: {
+            bucketName: `tus-${run}`,
+            objectName: "signed/t.bin",
+            contentType: "application/octet-stream",
+          },
+          onError: reject,
+          onSuccess: () => resolve(),
+        });
+        upload.start();
+      });
+      assertEquals(
+        (await admin.storage.from(`tus-${run}`).info("signed/t.bin")).data?.size,
+        signedBytes.length,
+      );
+      const wrongObject = await fetch(`${base}/sign`, {
+        method: "POST",
+        headers: {
+          "tus-resumable": "1.0.0",
+          "x-signature": signedUp.data!.token,
+          "upload-length": "1",
+          "upload-metadata": `bucketName ${btoa(`tus-${run}`)},objectName ${btoa("other.bin")}`,
+        },
+      });
+      assertEquals(wrongObject.status, 400);
+      await wrongObject.body?.cancel();
 
       const headers = {
         "tus-resumable": "1.0.0",

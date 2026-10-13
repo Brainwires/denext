@@ -15,6 +15,7 @@ import {
   forgetBucket,
   resolveBucket,
   type ResolvedBucket,
+  type StorageAdmin,
   type StorageRuntime,
 } from "./runtime.ts";
 import { SERVICE_IDENTITY, type StorageIdentity, storageIdentity } from "./storage-identity.ts";
@@ -23,14 +24,28 @@ import {
   type BucketQuery,
   type BucketRow,
   type BucketWrite,
+  type FlatQuery,
+  type LifecycleConfiguration,
   type ListEntry,
   type ListQuery,
   type ObjectMetadata,
   type ObjectRow,
   type ObjectWrite,
   SERVICE,
+  type VersioningStatus,
 } from "./storage-meta.ts";
 import { limit, peek } from "./streams.ts";
+import {
+  deleteCurrent,
+  deleteVersion,
+  dropVersionBytes,
+  isVersioned,
+  type Location,
+  locationOf,
+  parseLifecycle,
+  prepareOverwrite,
+  replaceVersioned,
+} from "./storage-versions.ts";
 import type { BucketSettings, ObjectInfo, StorageOp } from "./types.ts";
 
 type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
@@ -307,7 +322,13 @@ export async function reserveObject(
     metadata: null,
     user_metadata: options.userMetadata ?? null,
   };
-  if (options.upsert) await rt.meta.checkWrite(write, true, actor);
+  if (isVersioned(bucket)) {
+    // No reserved row (a delete marker may hold the name): a duplicate is a live object.
+    if (!options.upsert && await rt.meta.getObject(bucket.name, key, SERVICE)) {
+      throw new StorageError("duplicate", "The resource already exists");
+    }
+    await rt.meta.checkWrite(write, true, actor);
+  } else if (options.upsert) await rt.meta.checkWrite(write, true, actor);
   else await rt.meta.writeObject(write, false, actor);
   return version;
 }
@@ -325,22 +346,21 @@ export async function recordObject(
   options: { upsert: boolean; owner: string | null; userMetadata?: Record<string, unknown> | null },
   metadata: ObjectMetadata,
 ): Promise<ObjectRow> {
+  const write = {
+    bucket_id: bucket,
+    name: key,
+    owner_id: options.owner,
+    version,
+    metadata,
+    user_metadata: options.userMetadata ?? null,
+  };
+  const resolved = await resolveBucket(rt, bucket);
+  if (isVersioned(resolved)) return await replaceVersioned(rt, resolved, write);
   if (!options.upsert) {
     const row = await rt.meta.finishObject(bucket, key, version, metadata);
     if (row) return row;
   }
-  return await rt.meta.writeObject(
-    {
-      bucket_id: bucket,
-      name: key,
-      owner_id: options.owner,
-      version,
-      metadata,
-      user_metadata: options.userMetadata ?? null,
-    },
-    true,
-    SERVICE,
-  );
+  return await rt.meta.writeObject(write, true, SERVICE);
 }
 
 /** Drop a reserved row whose bytes never arrived (only while it is still at `version`). */
@@ -382,10 +402,12 @@ export async function putObject(
   const owner = options.owner !== undefined ? options.owner : await ownerOf(caller);
   const row = { upsert: options.upsert, owner, userMetadata: options.userMetadata };
   const version = await reserveObject(rt, bucket, key, row, await actorFor(rt, caller));
+  const undo = await prepareOverwrite(rt, bucket, key);
   let info: ObjectInfo;
   try {
     info = await storeChecked(rt, bucket, key, body, type, max, options.size);
   } catch (err) {
+    await undo();
     if (!options.upsert) await releaseObject(rt, bucket.name, key, version);
     throw err;
   }
@@ -404,9 +426,17 @@ export async function readableRow(
   bucket: ResolvedBucket,
   key: string,
   caller: Caller,
+  versionId?: string,
 ): Promise<ObjectRow | null> {
   await authorizeOp(rt, bucket, "download", key, caller);
   const actor = bucket.public ? SERVICE : await actorFor(rt, caller);
+  if (versionId !== undefined) {
+    const version = await rt.meta.getVersion(bucket.name, key, versionId, actor);
+    if (!version || version.is_delete_marker || !version.metadata) {
+      throw new StorageError("not_found", "Object not found");
+    }
+    return version;
+  }
   const row = await rt.meta.getObject(bucket.name, key, actor);
   if (!row && actor.kind === "scoped") {
     throw new StorageError("not_found", "Object not found");
@@ -423,15 +453,52 @@ export async function readableRow(
 export async function removeObjects(
   rt: StorageRuntime,
   bucket: ResolvedBucket,
-  keys: string[],
+  keys: (string | { key: string; versionId?: string })[],
   caller: Caller,
 ): Promise<ObjectRow[]> {
-  for (const k of keys) await authorizeOp(rt, bucket, "delete", k, caller);
+  const entries = keys.map((k) => typeof k === "string" ? { key: k } : k);
+  for (const e of entries) await authorizeOp(rt, bucket, "delete", e.key, caller);
   const actor = await actorFor(rt, caller);
+  if (isVersioned(bucket) || entries.some((e) => e.versionId !== undefined)) {
+    return await removeVersioned(rt, bucket, entries, actor);
+  }
+  return await removeCurrent(rt, bucket, entries.map((e) => e.key), actor);
+}
+
+/** Delete current objects in a bucket without versioning. */
+async function removeCurrent(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  keys: string[],
+  actor: Actor,
+): Promise<ObjectRow[]> {
   const rows = await rt.meta.deleteObjects(bucket.name, keys, actor);
   const doomed = actor.kind === "scoped" ? rows.map((r) => r.name) : keys;
   await eachLimited(doomed, 8, (k) => rt.driver.remove(bucket.name, k));
   return rows;
+}
+
+/**
+ * Delete in a versioned bucket (or exact versions anywhere): a path leaves a delete marker, a
+ * `versionId` deletes that version for good. Each row is checked under the caller's policies.
+ */
+async function removeVersioned(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  entries: { key: string; versionId?: string }[],
+  actor: Actor,
+): Promise<ObjectRow[]> {
+  const out: ObjectRow[] = [];
+  for (const { key, versionId } of entries) {
+    const row = await rt.meta.checkDelete(bucket.name, key, versionId, actor);
+    if (!row) continue;
+    out.push(
+      versionId === undefined && isVersioned(bucket)
+        ? await deleteCurrent(rt, bucket, row)
+        : await deleteVersion(rt, bucket, row),
+    );
+  }
+  return out;
 }
 
 /** Run `fn` over `items`, at most `width` at a time. */
@@ -445,7 +512,7 @@ async function eachLimited<T>(items: T[], width: number, fn: (item: T) => Promis
 
 /** A copy or move's source and destination. */
 export interface Transfer {
-  from: { bucket: string; key: string };
+  from: { bucket: string; key: string; versionId?: string };
   to: { bucket: string; key: string };
 }
 
@@ -460,7 +527,7 @@ function checkDestination(to: ResolvedBucket, info: { size: number; contentType:
 /** Copy the bytes: the driver's own copy, else a read streamed back through the checks. */
 async function copyBytes(
   rt: StorageRuntime,
-  from: { bucket: string; key: string },
+  from: Location,
   to: ResolvedBucket,
   key: string,
 ): Promise<ObjectInfo> {
@@ -499,16 +566,18 @@ export async function copyObject(
   caller: Caller,
 ): Promise<ObjectRow> {
   const { from, to, fromKey, toKey } = await transferEnds(rt, transfer);
-  const source = await sourceOf(rt, from, fromKey, caller);
+  const source = await sourceOf(rt, from, fromKey, caller, transfer.from.versionId);
   await authorizeOp(rt, to, "upload", toKey, caller);
   checkDestination(to, source);
   const owner = await ownerOf(caller);
   const row = { upsert, owner, userMetadata: source.userMetadata };
   const version = await reserveObject(rt, to, toKey, row, await actorFor(rt, caller));
+  const undo = await prepareOverwrite(rt, to, toKey);
   let info: ObjectInfo;
   try {
-    info = await copyBytes(rt, { bucket: from.name, key: fromKey }, to, toKey);
+    info = await copyBytes(rt, source.location, to, toKey);
   } catch (err) {
+    await undo();
     if (!upsert) await releaseObject(rt, to.name, toKey, version);
     throw err;
   }
@@ -523,14 +592,21 @@ export async function copyObject(
 }
 
 /** A readable source object's facts (its row's, else the driver's). */
-async function sourceOf(rt: StorageRuntime, bucket: ResolvedBucket, key: string, caller: Caller) {
-  const row = await readableRow(rt, bucket, key, caller);
+async function sourceOf(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  key: string,
+  caller: Caller,
+  versionId?: string,
+) {
+  const row = await readableRow(rt, bucket, key, caller, versionId);
   if (row?.metadata) {
     return {
       size: row.metadata.size,
       contentType: row.metadata.mimetype,
       cacheControl: row.metadata.cacheControl,
       userMetadata: row.user_metadata,
+      location: locationOf(bucket.name, key, row),
     };
   }
   const info = await rt.driver.head(bucket.name, key);
@@ -540,6 +616,7 @@ async function sourceOf(rt: StorageRuntime, bucket: ResolvedBucket, key: string,
     contentType: info.contentType,
     cacheControl: DEFAULT_CACHE_CONTROL,
     userMetadata: null,
+    location: { bucket: bucket.name, key } as Location,
   };
 }
 
@@ -556,6 +633,16 @@ export async function moveObject(
   caller: Caller,
 ): Promise<ObjectRow> {
   const { from, to, fromKey, toKey } = await transferEnds(rt, transfer);
+  const versionId = transfer.from.versionId;
+  if (versionId !== undefined || isVersioned(from) || isVersioned(to)) {
+    // Versioned: a copy, then the source deleted (a marker, or that version for good). Moving a
+    // noncurrent version onto its own path restores it.
+    const restore = from.name === to.name && fromKey === toKey && versionId !== undefined;
+    await authorizeOp(rt, from, "delete", fromKey, caller);
+    const copied = await copyObject(rt, transfer, restore, caller);
+    await removeObjects(rt, from, [{ key: fromKey, versionId }], caller);
+    return copied;
+  }
   if (from.name === to.name && fromKey === toKey) {
     throw new StorageError("bad_request", "the source and destination are the same");
   }
@@ -588,6 +675,21 @@ export async function listEntries(
 ): Promise<ListEntry[]> {
   await authorizeOp(rt, bucket, "list", query.prefix, caller);
   return await rt.meta.listObjects(bucket.name, query, await actorFor(rt, caller));
+}
+
+/**
+ * Every object under a prefix (no folders), in order — `listV2` without a delimiter.
+ *
+ * @returns The rows.
+ */
+export async function listRows(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  query: FlatQuery,
+  caller: Caller,
+): Promise<ObjectRow[]> {
+  await authorizeOp(rt, bucket, "list", query.prefix, caller);
+  return await rt.meta.listFlat(bucket.name, query, await actorFor(rt, caller));
 }
 
 // ── Buckets ─────────────────────────────────────────────────────────────────
@@ -660,12 +762,29 @@ export function parseMimeList(value: unknown): string[] | null {
 }
 
 function bucketWrite(id: string, settings: BucketSettings): BucketWrite {
+  const status = settings.versioningStatus;
+  if (status !== undefined && status !== "DISABLED" && status !== "ENABLED") {
+    throw new StorageError(
+      "bad_request",
+      "a new bucket's versioning_status is DISABLED or ENABLED",
+    );
+  }
   return {
     id,
     public: settings.public === true,
     file_size_limit: parseSizeLimit(settings.fileSizeLimit),
     allowed_mime_types: parseMimeList(settings.allowedMimeTypes),
+    ...(status ? { versioning_status: status } : {}),
   };
+}
+
+/** A versioning change: `ENABLED` or `SUSPENDED` (there is no way back to `DISABLED`). */
+function versioningUpdate(status: VersioningStatus | undefined): VersioningStatus | undefined {
+  if (status === undefined || status === "ENABLED" || status === "SUSPENDED") return status;
+  throw new StorageError(
+    "bad_request",
+    "versioning_status can only be set to ENABLED or SUSPENDED",
+  );
 }
 
 /** Refuse a change to a bucket `denext.config.ts` declares (the config is its source). */
@@ -725,6 +844,7 @@ export async function updateBucket(
     allowed_mime_types: settings.allowedMimeTypes === undefined
       ? current.allowed_mime_types
       : parseMimeList(settings.allowedMimeTypes),
+    versioning_status: versioningUpdate(settings.versioningStatus),
   };
   if (!(await rt.meta.updateBucket(write, actor))) {
     throw new StorageError("unknown_bucket", "Bucket not found");
@@ -760,31 +880,86 @@ export async function emptyBucket(rt: StorageRuntime, id: string, caller: Caller
   let after = "";
   for (;;) {
     const names = await rt.meta.names(id, after, 200);
-    if (!names.length) return;
+    if (!names.length) break;
     after = names[names.length - 1];
     const rows = await rt.meta.deleteObjects(id, names, actor);
     await eachLimited(rows.map((r) => r.name), 8, (k) => rt.driver.remove(bucket.name, k));
   }
+  // Noncurrent versions and delete markers go too.
+  for (;;) {
+    const rows = await rt.meta.purgeVersions(id, 200);
+    if (!rows.length) return;
+    await dropVersionBytes(rt, id, rows);
+  }
 }
 
-/** A bucket's row as the caller may see it. */
+/**
+ * Who reads bucket rows: the service role; a request's user under SQL-RLS (the policies decide);
+ * otherwise nobody — as on Supabase, where `storage.buckets` has row-level security and no
+ * policy, so anon and users see no bucket at all (not an error).
+ */
+async function bucketReader(rt: StorageRuntime, caller: Caller): Promise<Actor | null> {
+  if (await caller.isService()) return SERVICE;
+  return rt.rls ? await actorFor(rt, caller) : null;
+}
+
+/** A bucket's row as the caller may see it (`Bucket not found` when it may not). */
 export async function getBucket(
   rt: StorageRuntime,
   id: string,
   caller: Caller,
 ): Promise<BucketRow> {
-  const row = await rt.meta.getBucket(id, await bucketActor(rt, caller));
+  const actor = await bucketReader(rt, caller);
+  const row = actor ? await rt.meta.getBucket(id, actor) : null;
   if (!row) throw new StorageError("unknown_bucket", "Bucket not found");
   return row;
 }
 
-/** The buckets the caller may see. */
+/** The buckets the caller may see (none, for anon and users without SQL-RLS policies). */
 export async function listBuckets(
   rt: StorageRuntime,
   query: BucketQuery,
   caller: Caller,
 ): Promise<BucketRow[]> {
-  return await rt.meta.listBuckets(query, await bucketActor(rt, caller));
+  const actor = await bucketReader(rt, caller);
+  return actor ? await rt.meta.listBuckets(query, actor) : [];
+}
+
+/**
+ * A bucket's lifecycle policy.
+ *
+ * @throws {StorageError} `not_found` (`NoSuchLifecycleConfiguration`) when it has none.
+ */
+export async function getLifecycle(
+  rt: StorageRuntime,
+  id: string,
+  caller: Caller,
+): Promise<LifecycleConfiguration> {
+  const row = await getBucket(rt, id, caller);
+  if (!row.lifecycle) {
+    throw new StorageError("not_found", "The bucket has no lifecycle configuration");
+  }
+  return row.lifecycle;
+}
+
+/**
+ * Replace (or, with `null`, remove) a bucket's lifecycle policy.
+ *
+ * @returns The stored policy.
+ */
+export async function setLifecycle(
+  rt: StorageRuntime,
+  id: string,
+  config: unknown,
+  caller: Caller,
+): Promise<LifecycleConfiguration | null> {
+  const actor = await bucketActor(rt, caller);
+  const parsed = config === null ? null : parseLifecycle(config);
+  if (!(await rt.meta.setLifecycle(id, parsed, actor))) {
+    throw new StorageError("unknown_bucket", "Bucket not found");
+  }
+  forgetBucket(rt, id);
+  return parsed;
 }
 
 /** The config-declared buckets as rows to seed `storage.buckets` with. */
@@ -794,5 +969,52 @@ export function declaredBucketRows(buckets: Map<string, ResolvedBucket>): Bucket
     public: b.public === true,
     file_size_limit: b.maxBytes === DEFAULT_MAX_BYTES ? null : b.maxBytes,
     allowed_mime_types: b.mime?.length ? [...b.mime] : null,
+    ...(b.versioned === undefined
+      ? {}
+      : { versioning_status: b.versioned ? "ENABLED" as const : "SUSPENDED" as const }),
   }));
+}
+
+/**
+ * The operations `denext ui` uses through the runtime slot: every bucket (declared and runtime),
+ * and removal as the service through the same ops (so the metadata rows go with the bytes).
+ *
+ * @param rt The runtime.
+ * @returns The admin operations.
+ */
+export function storageAdmin(rt: StorageRuntime): StorageAdmin {
+  return {
+    async buckets() {
+      const rows = await rt.meta.listBuckets({ column: "name", order: "asc" }, SERVICE);
+      const declared = [...rt.buckets.values()];
+      const runtimeOnly = rows.filter((r) => !rt.buckets.has(r.id));
+      return [
+        ...declared.map((b) => ({
+          name: b.name,
+          public: b.public === true,
+          maxBytes: b.maxBytes,
+          mime: b.mime ?? null,
+        })),
+        ...runtimeOnly.map((r) => ({
+          name: r.id,
+          public: r.public,
+          maxBytes: r.file_size_limit ?? DEFAULT_MAX_BYTES,
+          mime: r.allowed_mime_types,
+        })),
+      ];
+    },
+    async hasBucket(name) {
+      try {
+        await resolveBucket(rt, name);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async remove(name, key) {
+      const bucket = await resolveBucket(rt, name);
+      const k = normalizeKey(key);
+      await removeObjects(rt, bucket, [k], SERVICE_CALLER);
+    },
+  };
 }

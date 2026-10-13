@@ -7,7 +7,11 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { SqlClient } from "../src/server/postgres.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
-import { postgresMetaStore, storageMigrations } from "../packages/backend/src/storage-meta-pg.ts";
+import {
+  postgresMetaStore,
+  storageMigrations,
+  versionPredicate,
+} from "../packages/backend/src/storage-meta-pg.ts";
 import { StorageError } from "../packages/backend/src/errors.ts";
 import type { Actor, ResumableRow } from "../packages/backend/src/storage-meta.ts";
 
@@ -149,7 +153,9 @@ Deno.test("pg metadata store: statements, scoping, dry runs, errors and shapes",
     assertEquals(log.length, quiet);
     await store.checkWrite(write, true, SCOPED);
     assert(
-      log.slice(quiet).some((s) => s.text.includes("on conflict (bucket_id, name) do update")),
+      log.slice(quiet).some((s) =>
+        s.text.includes("on conflict (bucket_id, name) where archived_at is null do update")
+      ),
     );
     failures.push([/insert into storage\.objects/, err("42501")]);
     await assertRejects(
@@ -240,6 +246,98 @@ Deno.test("pg metadata store: a failed migration is retried by the next call", a
     const store = postgresMetaStore();
     await assertRejects(() => store.ready(), Error, "boom");
     await store.ready();
+  } finally {
+    installPostgres(undefined);
+  }
+});
+
+Deno.test("pg metadata store: versions, delete markers, lifecycle, flat listings", async () => {
+  const answers: [RegExp, unknown[]][] = [];
+  const { client, log } = scripted((text) => {
+    const answer = answers.findIndex(([re]) => re.test(text));
+    if (answer >= 0) return answers.splice(answer, 1)[0][1];
+    return [];
+  });
+  installPostgres({ sql: client, rls: { migrate: false } });
+  try {
+    const store = postgresMetaStore();
+    await store.ready();
+    assert(storageMigrations()[1].sql.includes("bucketid_objname_current"));
+    assertEquals(
+      versionPredicate(),
+      "((archived_at is null and not is_delete_marker and metadata is not null))",
+    );
+    assert(versionPredicate("only", "include").includes("is_delete_marker"));
+    assert(!versionPredicate("only").includes("metadata is not null"));
+    answers.push([/version = \$3/, json({ ...OBJECT, archived_at: "t" })]);
+    assertEquals((await store.getVersion("b", "k.txt", "v1", SERVICE))?.archived_at, "t");
+    answers.push([/archived_at is null`?$|and archived_at is null\s*\)?\s*r?$/m, json(OBJECT)]);
+    await store.currentRow("b", "k.txt");
+    const write = {
+      bucket_id: "b",
+      name: "k.txt",
+      owner_id: null,
+      version: "v2",
+      metadata: null,
+      user_metadata: null,
+    };
+    answers.push([/insert into storage\.objects/, json({ ...OBJECT, version: "v2" })]);
+    assertEquals((await store.replaceCurrent(write, true)).version, "v2");
+    assert(log.some((l) => l.text.includes("set archived_at = now()")));
+    answers.push([/insert into storage\.objects/, json({ ...OBJECT, version: "v3" })]);
+    await store.replaceCurrent(write, false);
+    assert(
+      log.some((l) =>
+        /delete from storage\.objects\s+where bucket_id = \$1 and name = \$2 and archived_at is null/
+          .test(l.text)
+      ),
+    );
+    answers.push([
+      /select .* from storage\.objects where bucket_id = \$1 and name = \$2\s+and \(\$3/s,
+      json(OBJECT),
+    ]);
+    assertEquals((await store.checkDelete("b", "k.txt", undefined, SERVICE))?.id, OBJECT.id);
+    answers.push([
+      /delete from storage\.objects where bucket_id = \$1 and name = \$2\s+and \(\$3/,
+      json(OBJECT),
+    ]);
+    assertEquals((await store.checkDelete("b", "k.txt", "v1", SCOPED))?.id, OBJECT.id);
+    answers.push([/and version = \$3/, json(OBJECT)]);
+    assertEquals((await store.deleteVersion("b", "k.txt", "v1"))?.id, OBJECT.id);
+    answers.push([/set archived_at = null/, json(OBJECT)]);
+    assertEquals((await store.promoteLatest("b", "k.txt"))?.id, OBJECT.id);
+    answers.push([/set lifecycle/, json({ id: "b" })]);
+    assertEquals(await store.setLifecycle("b", { rules: [] }, SERVICE), true);
+    answers.push([/order by created_at desc, name desc/, json(OBJECT)]);
+    assertEquals(
+      (await store.listFlat("b", {
+        prefix: "a/",
+        limit: 10,
+        offset: 0,
+        column: "created_at",
+        order: "desc",
+        versions: "include",
+      }, SERVICE)).length,
+      1,
+    );
+    answers.push([/archived_at is not null or is_delete_marker/, json(OBJECT)]);
+    assertEquals((await store.purgeVersions("b", 10)).length, 1);
+    answers.push([/make_interval/, json(OBJECT)]);
+    assertEquals((await store.expireNoncurrent("b", 30, 2, 100)).length, 1);
+    await store.listObjects("b", {
+      prefix: "k.txt",
+      search: "",
+      limit: 10,
+      offset: 0,
+      column: "name",
+      order: "asc",
+      versions: "include",
+      markers: "include",
+      exact: true,
+    }, SERVICE);
+    const listing = log.findLast((l) => l.text.includes("split_part"))!;
+    assert(listing.text.includes("split_part(name, '/', -1)"));
+    assertEquals(listing.params[6], "k.txt");
   } finally {
     installPostgres(undefined);
   }

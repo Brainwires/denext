@@ -1,5 +1,6 @@
 import { storage } from "@denext/backend/server";
 import { Uploader } from "./uploader.tsx";
+import { ResumableUploader } from "./resumable.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,19 @@ export default async function Home() {
         PDFs and text files go to a private bucket; each link is signed and expires in an hour.
       </p>
       <Uploader bucket="documents" accept="application/pdf,text/plain" />
+      <h2>Large files, resumably</h2>
+      <p>
+        <code>uploadResumable()</code> speaks TUS to{" "}
+        <code>/storage/v1/upload/resumable</code>: a dropped chunk is retried from where the server
+        got to.
+      </p>
+      <ResumableUploader
+        bucket="documents"
+        accept="application/pdf,text/plain"
+      />
+      <p>
+        <a href="/notes">A versioned note</a> — every save keeps the previous text.
+      </p>
     </main>
   );
 }

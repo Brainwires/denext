@@ -20,6 +20,26 @@ export interface BucketRow {
   allowed_mime_types: string[] | null;
   created_at: string;
   updated_at: string;
+  /** Object versioning: `DISABLED` (never on), `ENABLED`, or `SUSPENDED`. */
+  versioning_status: VersioningStatus;
+  /** The lifecycle policy (noncurrent-version expiration), or `null`. */
+  lifecycle: LifecycleConfiguration | null;
+}
+
+/** A bucket's object versioning status, as Supabase Storage reports it. */
+export type VersioningStatus = "DISABLED" | "ENABLED" | "SUSPENDED";
+
+/** One lifecycle rule: expire noncurrent versions (Supabase's only action). */
+export interface LifecycleRule {
+  id: string;
+  status: "Enabled" | "Disabled";
+  filter: Record<string, never>;
+  noncurrentVersionExpiration: { noncurrentDays: number; newerNoncurrentVersions?: number };
+}
+
+/** A bucket's lifecycle policy. */
+export interface LifecycleConfiguration {
+  rules: LifecycleRule[];
 }
 
 /** The `metadata` an object row carries — the shape supabase-js reads. */
@@ -46,6 +66,12 @@ export interface ObjectRow {
   created_at: string;
   updated_at: string;
   last_accessed_at: string;
+  /** When this version stopped being current (`null`: it is the current one). */
+  archived_at: string | null;
+  /** A delete marker (a versioned bucket's delete): no bytes, the object reads as absent. */
+  is_delete_marker: boolean;
+  /** Written while the bucket's versioning was `ENABLED` (kept when overwritten). */
+  is_versioned: boolean;
 }
 
 /** What a new or replaced object row is written with. */
@@ -56,6 +82,8 @@ export interface ObjectWrite {
   version: string;
   metadata: ObjectMetadata | null;
   user_metadata: Record<string, unknown> | null;
+  is_versioned?: boolean;
+  is_delete_marker?: boolean;
 }
 
 /** One entry of a Supabase listing: a folder (no `id`) or an object. */
@@ -66,7 +94,15 @@ export interface ListEntry {
   created_at: string | null;
   last_accessed_at: string | null;
   metadata: ObjectMetadata | null;
+  /** Version facts (objects only; with versions or delete markers asked for). */
+  version?: string | null;
+  archived_at?: string | null;
+  is_delete_marker?: boolean | null;
+  is_versioned?: boolean | null;
 }
+
+/** Which versions a listing includes: the current ones, also the others, or only the others. */
+export type VersionFilter = "exclude" | "include" | "only";
 
 /** The sortable columns of a listing. */
 export type SortColumn = "name" | "updated_at" | "created_at" | "last_accessed_at";
@@ -81,6 +117,24 @@ export interface ListQuery {
   offset: number;
   column: SortColumn;
   order: "asc" | "desc";
+  /** Noncurrent versions (default `exclude`). */
+  versions?: VersionFilter;
+  /** Delete markers (default `exclude`). */
+  markers?: VersionFilter;
+  /** Only the object named exactly `prefix` (its versions). */
+  exact?: boolean;
+}
+
+/** A flat (`listV2` without a delimiter) listing: every object under `prefix`, in order. */
+export interface FlatQuery {
+  prefix: string;
+  limit: number;
+  offset: number;
+  column: "name" | "updated_at" | "created_at";
+  order: "asc" | "desc";
+  versions?: VersionFilter;
+  markers?: VersionFilter;
+  exact?: boolean;
 }
 
 /** A bucket listing (`GET /bucket`). */
@@ -99,6 +153,7 @@ export interface BucketWrite {
   file_size_limit: number | null;
   allowed_mime_types: string[] | null;
   owner_id?: string | null;
+  versioning_status?: VersioningStatus;
 }
 
 /** A resumable upload in progress. */
@@ -184,6 +239,46 @@ export interface MetaStore {
   listObjects(bucket: string, query: ListQuery, as: Actor): Promise<ListEntry[]>;
   /** Up to `limit` names in `bucket` after `after` (emptying a bucket), as the service. */
   names(bucket: string, after: string, limit: number): Promise<string[]>;
+  // ── versions (versioned buckets) ──
+  /** A row by its version id — current or archived, an object or a delete marker. */
+  getVersion(bucket: string, name: string, version: string, as: Actor): Promise<ObjectRow | null>;
+  /** The current row (an object or a delete marker), as the service. */
+  currentRow(bucket: string, name: string): Promise<ObjectRow | null>;
+  /**
+   * Make `row` the current version, in one transaction: the current row is archived (`keep`) or
+   * deleted first. As the service (the caller has already been authorized).
+   */
+  replaceCurrent(row: ObjectWrite, keep: boolean): Promise<ObjectRow>;
+  /**
+   * The row a delete would remove — the current object, or the exact `version` — checked under
+   * `as` (`select` + `delete`, rolled back), or `null` when absent or hidden.
+   */
+  checkDelete(
+    bucket: string,
+    name: string,
+    version: string | undefined,
+    as: Actor,
+  ): Promise<ObjectRow | null>;
+  /** Permanently delete one version row (as the service); returns it. */
+  deleteVersion(bucket: string, name: string, version: string): Promise<ObjectRow | null>;
+  /** With no current row left, make the newest archived row current; returns it. */
+  promoteLatest(bucket: string, name: string): Promise<ObjectRow | null>;
+  /** Store (or clear, `null`) a bucket's lifecycle policy. */
+  setLifecycle(id: string, config: LifecycleConfiguration | null, as: Actor): Promise<boolean>;
+  /** Every row under a prefix (no folders), in order — `listV2` without a delimiter. */
+  listFlat(bucket: string, query: FlatQuery, as: Actor): Promise<ObjectRow[]>;
+  /** Delete up to `limit` archived rows and delete markers (emptying a bucket); returns them. */
+  purgeVersions(bucket: string, limit: number): Promise<ObjectRow[]>;
+  /**
+   * Delete up to `limit` noncurrent versions older than `days` beyond each name's newest
+   * `keepNewer` (a lifecycle rule); returns them.
+   */
+  expireNoncurrent(
+    bucket: string,
+    days: number,
+    keepNewer: number,
+    limit: number,
+  ): Promise<ObjectRow[]>;
   // ── resumable uploads (service) ──
   createResumable(row: ResumableRow): Promise<void>;
   getResumable(id: string): Promise<ResumableRow | null>;
@@ -213,26 +308,49 @@ export function likeEscape(text: string): string {
  * @returns The page.
  */
 export function shapeListing(rows: ObjectRow[], query: ListQuery): ListEntry[] {
+  const withVersions = (query.versions ?? "exclude") !== "exclude" ||
+    (query.markers ?? "exclude") !== "exclude";
   const folders = new Set<string>();
   const objects: ListEntry[] = [];
   for (const row of rows) {
-    const rest = row.name.slice(query.prefix.length);
-    const slash = rest.indexOf("/");
-    if (slash >= 0) folders.add(rest.slice(0, slash));
-    else {
-      objects.push({
-        name: rest,
-        id: row.id,
-        updated_at: row.updated_at,
-        created_at: row.created_at,
-        last_accessed_at: row.last_accessed_at,
-        metadata: row.metadata,
-      });
+    const rest = query.exact
+      ? row.name.slice(row.name.lastIndexOf("/") + 1)
+      : row.name.slice(query.prefix.length);
+    const slash = query.exact ? -1 : rest.indexOf("/");
+    if (slash >= 0) {
+      folders.add(rest.slice(0, slash));
+      continue;
     }
+    objects.push({
+      name: rest,
+      id: row.id,
+      updated_at: row.updated_at,
+      created_at: row.created_at,
+      last_accessed_at: row.last_accessed_at,
+      metadata: row.metadata,
+      ...(withVersions
+        ? {
+          version: row.version,
+          archived_at: row.archived_at,
+          is_delete_marker: row.is_delete_marker,
+          is_versioned: row.is_versioned,
+        }
+        : {}),
+    });
   }
   const dir = query.order === "desc" ? -1 : 1;
-  const cmp = (a: string | null, b: string | null) =>
+  const cmp = (a: string | null | undefined, b: string | null | undefined) =>
     (a ?? "") < (b ?? "") ? -dir : (a ?? "") > (b ?? "") ? dir : 0;
+  const age = (a: ListEntry, b: ListEntry) =>
+    (a.archived_at ?? "") === (b.archived_at ?? "")
+      ? 0
+      : !a.archived_at
+      ? -1
+      : !b.archived_at
+      ? 1
+      : a.archived_at < b.archived_at
+      ? 1
+      : -1;
   const folderEntries: ListEntry[] = [...folders].sort((a, b) => cmp(a, b)).map((name) => ({
     name,
     id: null,
@@ -240,8 +358,11 @@ export function shapeListing(rows: ObjectRow[], query: ListQuery): ListEntry[] {
     created_at: null,
     last_accessed_at: null,
     metadata: null,
+    ...(withVersions
+      ? { version: null, archived_at: null, is_delete_marker: null, is_versioned: null }
+      : {}),
   }));
-  objects.sort((a, b) => cmp(a[query.column], b[query.column]) || cmp(a.name, b.name));
+  objects.sort((a, b) => cmp(a[query.column], b[query.column]) || cmp(a.name, b.name) || age(a, b));
   return [...folderEntries, ...objects].slice(query.offset, query.offset + query.limit);
 }
 

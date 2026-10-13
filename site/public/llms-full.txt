@@ -645,7 +645,9 @@ remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` f
 absence denies; outside a request only `{ service: true }` (which skips it) works. Browser:
 `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. It also serves
 Supabase's Storage API at `/storage/v1` — stock `supabase.storage` (supabase-js v2) works unchanged,
-plus TUS uploads at `/storage/v1/upload/resumable`; with `backend({ supabase })` keys the secret key is the service
+plus TUS uploads at `/storage/v1/upload/resumable` (`/sign` + `x-signature` for a signed upload),
+`listV2`, and Supabase-style object versioning (`versioned: true` / `versioningStatus`, `versionId`
+reads and deletes, lifecycle rules); with `backend({ supabase })` keys the secret key is the service
 role. Object/bucket rows live in Supabase's `storage.objects` / `storage.buckets` (Postgres) or a
 `node:sqlite` file; `storage: { rls: true }` authorizes with SQL policies on them
 (`storage.foldername(name)`, `auth.uid()`). Set `DENEXT_STORAGE_SECRET` (≥ 32 chars). Docs:

@@ -17,6 +17,7 @@ import {
   type Actor,
   type BucketQuery,
   type BucketRow,
+  type FlatQuery,
   likeEscape,
   type ListEntry,
   type ListQuery,
@@ -24,6 +25,8 @@ import {
   type ObjectRow,
   type ObjectWrite,
   type ResumableRow,
+  SERVICE,
+  type VersionFilter,
 } from "./storage-meta.ts";
 
 /** Where the storage migrations are recorded. */
@@ -133,15 +136,43 @@ CREATE TABLE IF NOT EXISTS storage.denext_resumable_uploads (
   lease_until bigint
 );
 REVOKE ALL ON storage.denext_resumable_uploads FROM anon, authenticated;`,
+  }, {
+    name: "backend_storage_0002",
+    sql:
+      `ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS versioning_status text NOT NULL DEFAULT 'DISABLED';
+ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS lifecycle jsonb;
+ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS is_delete_marker boolean NOT NULL DEFAULT false;
+ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS is_versioned boolean NOT NULL DEFAULT false;
+DROP INDEX IF EXISTS storage.bucketid_objname;
+CREATE UNIQUE INDEX IF NOT EXISTS bucketid_objname_current ON storage.objects (bucket_id, name)
+  WHERE archived_at IS NULL;
+CREATE INDEX IF NOT EXISTS objects_noncurrent ON storage.objects (bucket_id, name, archived_at)
+  WHERE archived_at IS NOT NULL;`,
   }];
 }
 
 type JsonRow = { j: string };
 
-const OBJECT_COLUMNS =
-  "id, bucket_id, name, owner, owner_id, version, metadata, user_metadata, created_at, updated_at, last_accessed_at";
-const BUCKET_COLUMNS_SQL =
-  "id, name, owner, owner_id, public, file_size_limit, allowed_mime_types, created_at, updated_at";
+const OBJECT_COLUMNS = "id, bucket_id, name, owner, owner_id, version, metadata, user_metadata, " +
+  "created_at, updated_at, last_accessed_at, archived_at, is_delete_marker, is_versioned";
+const BUCKET_COLUMNS_SQL = "id, name, owner, owner_id, public, file_size_limit, " +
+  "allowed_mime_types, created_at, updated_at, versioning_status, lifecycle";
+
+/** The current version of an object that exists (not an archived version, not a delete marker). */
+const LIVE = "archived_at is null and not is_delete_marker";
+
+/** The rows a listing includes, by its version filters. */
+export function versionPredicate(
+  versions: VersionFilter = "exclude",
+  markers: VersionFilter = "exclude",
+): string {
+  const parts: string[] = [];
+  if (versions !== "only" && markers !== "only") parts.push(`(${LIVE} and metadata is not null)`);
+  if (versions !== "exclude") parts.push("(archived_at is not null and not is_delete_marker)");
+  if (markers !== "exclude") parts.push("is_delete_marker");
+  return `(${parts.join(" or ")})`;
+}
 
 /** Rows as JSON text, so every driver hands back the same shapes (timestamps as ISO strings). */
 function asJson(select: string): string {
@@ -235,19 +266,35 @@ export function postgresMetaStore(): MetaStore {
       mapError(err);
     }
   };
+  /** Run a statement under `as` and roll it back; returns the rows it touched. */
+  const dryRunRows = async <T>(as: Actor, text: string, params: unknown[]): Promise<T[]> => {
+    await ready();
+    let seen: T[] = [];
+    try {
+      await client(as).begin(async (tx) => {
+        seen = parse<T>(await tx.unsafe<JsonRow>(text, params) as JsonRow[]);
+        throw DRY_RUN;
+      });
+    } catch (err) {
+      if (err !== DRY_RUN) mapError(err);
+    }
+    return seen;
+  };
   const getObject = async (bucket: string, name: string, as: Actor) =>
     (await query<ObjectRow>(
       as,
-      `select ${OBJECT_COLUMNS} from storage.objects where bucket_id = $1 and name = $2`,
+      `select ${OBJECT_COLUMNS} from storage.objects where bucket_id = $1 and name = $2 and ${LIVE}`,
       [bucket, name],
     ))[0] ?? null;
   const objectWriteSql = (upsert: boolean) =>
-    `insert into storage.objects (bucket_id, name, owner, owner_id, version, metadata, user_metadata)
-     values ($1, $2, $3::uuid, $4, $5, $6::jsonb, $7::jsonb)` +
+    `insert into storage.objects (bucket_id, name, owner, owner_id, version, metadata, user_metadata,
+       is_versioned, is_delete_marker)
+     values ($1, $2, $3::uuid, $4, $5, $6::jsonb, $7::jsonb, $8, $9)` +
     (upsert
-      ? ` on conflict (bucket_id, name) do update set owner = excluded.owner,
+      ? ` on conflict (bucket_id, name) where archived_at is null do update set owner = excluded.owner,
           owner_id = excluded.owner_id, version = excluded.version, metadata = excluded.metadata,
-          user_metadata = excluded.user_metadata, updated_at = now(), last_accessed_at = now()`
+          user_metadata = excluded.user_metadata, is_versioned = excluded.is_versioned,
+          is_delete_marker = excluded.is_delete_marker, updated_at = now(), last_accessed_at = now()`
       : "");
   const objectParams = (row: ObjectWrite) => [
     row.bucket_id,
@@ -257,6 +304,8 @@ export function postgresMetaStore(): MetaStore {
     row.version,
     row.metadata ? JSON.stringify(row.metadata) : null,
     row.user_metadata ? JSON.stringify(row.user_metadata) : null,
+    row.is_versioned === true,
+    row.is_delete_marker === true,
   ];
   const resumableOf = (
     r: {
@@ -281,12 +330,24 @@ export function postgresMetaStore(): MetaStore {
       for (const row of rows) {
         await exec(
           { kind: "service" },
-          `insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-           values ($1, $1, $2, $3, $4::text[])
+          `insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types,
+             versioning_status)
+           values ($1, $1, $2, $3, $4::text[], coalesce($5, 'DISABLED'))
            on conflict (id) do update set public = excluded.public,
              file_size_limit = excluded.file_size_limit,
-             allowed_mime_types = excluded.allowed_mime_types, updated_at = now()`,
-          [row.id, row.public, row.file_size_limit, row.allowed_mime_types],
+             allowed_mime_types = excluded.allowed_mime_types,
+             versioning_status = case
+               when $5::text is null then storage.buckets.versioning_status
+               when $5 = 'SUSPENDED' and storage.buckets.versioning_status = 'DISABLED' then 'DISABLED'
+               else $5 end,
+             updated_at = now()`,
+          [
+            row.id,
+            row.public,
+            row.file_size_limit,
+            row.allowed_mime_types,
+            row.versioning_status ?? null,
+          ],
         );
       }
     },
@@ -311,8 +372,9 @@ export function postgresMetaStore(): MetaStore {
     createBucket(row, as) {
       return exec(
         as,
-        `insert into storage.buckets (id, name, owner, owner_id, public, file_size_limit, allowed_mime_types)
-         values ($1, $1, $2::uuid, $3, $4, $5, $6::text[])`,
+        `insert into storage.buckets (id, name, owner, owner_id, public, file_size_limit,
+           allowed_mime_types, versioning_status)
+         values ($1, $1, $2::uuid, $3, $4, $5, $6::text[], coalesce($7, 'DISABLED'))`,
         [
           row.id,
           ownerUuid(row.owner_id ?? null),
@@ -320,6 +382,7 @@ export function postgresMetaStore(): MetaStore {
           row.public,
           row.file_size_limit,
           row.allowed_mime_types,
+          row.versioning_status ?? null,
         ],
       );
     },
@@ -328,10 +391,17 @@ export function postgresMetaStore(): MetaStore {
         as,
         dml(
           `update storage.buckets set public = $2, file_size_limit = $3,
-           allowed_mime_types = $4::text[], updated_at = now() where id = $1`,
+           allowed_mime_types = $4::text[], versioning_status = coalesce($5, versioning_status),
+           updated_at = now() where id = $1`,
           "id",
         ),
-        [row.id, row.public, row.file_size_limit, row.allowed_mime_types],
+        [
+          row.id,
+          row.public,
+          row.file_size_limit,
+          row.allowed_mime_types,
+          row.versioning_status ?? null,
+        ],
         false,
       );
       return rows.length > 0;
@@ -375,7 +445,7 @@ export function postgresMetaStore(): MetaStore {
         { kind: "service" },
         dml(
           `update storage.objects set metadata = $4::jsonb, updated_at = now()
-           where bucket_id = $1 and name = $2 and version = $3`,
+           where bucket_id = $1 and name = $2 and version = $3 and archived_at is null`,
           OBJECT_COLUMNS,
         ),
         [bucket, name, version, JSON.stringify(metadata)],
@@ -388,7 +458,7 @@ export function postgresMetaStore(): MetaStore {
         as,
         dml(
           `delete from storage.objects where bucket_id = $1 and name = any($2::text[])
-           and ($3::text is null or version = $3)`,
+           and ${LIVE} and ($3::text is null or version = $3)`,
           OBJECT_COLUMNS,
         ),
         [bucket, names, version ?? null],
@@ -397,7 +467,7 @@ export function postgresMetaStore(): MetaStore {
     },
     async moveObject(from, to, as, isDryRun) {
       const text = `update storage.objects set bucket_id = $3, name = $4, updated_at = now()
-        where bucket_id = $1 and name = $2`;
+        where bucket_id = $1 and name = $2 and ${LIVE}`;
       const params = [from.bucket, from.name, to.bucket, to.name];
       if (isDryRun) {
         const source = await getObject(from.bucket, from.name, as);
@@ -419,26 +489,43 @@ export function postgresMetaStore(): MetaStore {
       const column = OBJECT_SORT.has(q.column) ? q.column : "name";
       const order = q.order === "desc" ? "desc" : "asc";
       const sortKey = column === "name" ? "entry" : column;
+      const withVersions = (q.versions ?? "exclude") !== "exclude" ||
+        (q.markers ?? "exclude") !== "exclude";
+      const versionCols = withVersions
+        ? ", version, archived_at, is_delete_marker, is_versioned"
+        : "";
+      const match =
+        "($7::text is not null and name = $7 or $7::text is null and name like $2::text escape '\\')";
       return query<ListEntry>(
         as,
         `with m as (
            select id, updated_at, created_at, last_accessed_at, metadata,
-             split_part(substr(name, $3), '/', 1) as entry,
-             strpos(substr(name, $3), '/') > 0 as is_folder
+             version, archived_at, is_delete_marker, is_versioned,
+             ${
+          q.exact ? "split_part(name, '/', -1)" : "split_part(substr(name, $3), '/', 1)"
+        } as entry,
+             ${q.exact ? "false" : "strpos(substr(name, $3), '/') > 0"} as is_folder
            from storage.objects
-           where bucket_id = $1 and name like $2 escape '\\' and metadata is not null
-             and substr(name, $3) ilike $4 escape '\\'
+           where bucket_id = $1 and ${match} and ${versionPredicate(q.versions, q.markers)}
+             and ($7::text is not null or substr(name, $3) ilike $4 escape '\\')
          ),
          f as (select entry, row_number() over (order by entry ${order}) as rn
                from m where is_folder group by entry),
-         o as (select *, row_number() over (order by ${sortKey} ${order}, entry) as rn
+         o as (select *, row_number() over (order by ${sortKey} ${order}, entry,
+                 archived_at desc nulls first) as rn
                from m where not is_folder)
-         select name, id, updated_at, created_at, last_accessed_at, metadata from (
+         select name, id, updated_at, created_at, last_accessed_at, metadata${versionCols} from (
            select entry as name, null::uuid as id, null::timestamptz as updated_at,
              null::timestamptz as created_at, null::timestamptz as last_accessed_at,
-             null::jsonb as metadata, 0 as k, rn from f
+             null::jsonb as metadata${
+          withVersions
+            ? ", null::text as version, null::timestamptz as archived_at, " +
+              "null::boolean as is_delete_marker, null::boolean as is_versioned"
+            : ""
+        }, 0 as k, rn from f
            union all
-           select entry, id, updated_at, created_at, last_accessed_at, metadata, 1, rn from o
+           select entry, id, updated_at, created_at, last_accessed_at, metadata${versionCols}, 1, rn
+           from o
          ) x order by k, rn limit $5 offset $6`,
         [
           bucket,
@@ -447,16 +534,151 @@ export function postgresMetaStore(): MetaStore {
           `${likeEscape(q.search)}%`,
           q.limit,
           q.offset,
+          q.exact ? q.prefix : null,
         ],
       );
     },
     async names(bucket, after, limit) {
       const rows = await query<{ name: string }>(
         { kind: "service" },
-        "select name from storage.objects where bucket_id = $1 and name > $2 order by name limit $3",
+        `select name from storage.objects where bucket_id = $1 and name > $2 and ${LIVE}
+         order by name limit $3`,
         [bucket, after, limit],
       );
       return rows.map((r) => r.name);
+    },
+    async getVersion(bucket, name, version, as) {
+      return (await query<ObjectRow>(
+        as,
+        `select ${OBJECT_COLUMNS} from storage.objects
+         where bucket_id = $1 and name = $2 and version = $3`,
+        [bucket, name, version],
+      ))[0] ?? null;
+    },
+    async currentRow(bucket, name) {
+      return (await query<ObjectRow>(
+        SERVICE,
+        `select ${OBJECT_COLUMNS} from storage.objects
+         where bucket_id = $1 and name = $2 and archived_at is null`,
+        [bucket, name],
+      ))[0] ?? null;
+    },
+    async replaceCurrent(row, keep) {
+      await ready();
+      try {
+        const rows = await db.service().begin(async (tx) => {
+          await tx.unsafe(
+            keep
+              ? `update storage.objects set archived_at = now()
+                 where bucket_id = $1 and name = $2 and archived_at is null`
+              : `delete from storage.objects
+                 where bucket_id = $1 and name = $2 and archived_at is null`,
+            [row.bucket_id, row.name],
+          );
+          return await tx.unsafe<JsonRow>(
+            dml(objectWriteSql(false), OBJECT_COLUMNS),
+            objectParams(row),
+          );
+        });
+        return parse<ObjectRow>(rows as JsonRow[])[0];
+      } catch (err) {
+        mapError(err);
+      }
+    },
+    async checkDelete(bucket, name, version, as) {
+      const text = dml(
+        `delete from storage.objects where bucket_id = $1 and name = $2
+         and ($3::text is null and ${LIVE} or version = $3)`,
+        OBJECT_COLUMNS,
+      );
+      const params = [bucket, name, version ?? null];
+      if (as.kind === "service") {
+        return (await query<ObjectRow>(
+          as,
+          `select ${OBJECT_COLUMNS} from storage.objects where bucket_id = $1 and name = $2
+           and ($3::text is null and ${LIVE} or version = $3)`,
+          params,
+        ))[0] ?? null;
+      }
+      return (await dryRunRows<ObjectRow>(as, text, params))[0] ?? null;
+    },
+    async deleteVersion(bucket, name, version) {
+      return (await query<ObjectRow>(
+        SERVICE,
+        dml(
+          "delete from storage.objects where bucket_id = $1 and name = $2 and version = $3",
+          OBJECT_COLUMNS,
+        ),
+        [bucket, name, version],
+        false,
+      ))[0] ?? null;
+    },
+    async promoteLatest(bucket, name) {
+      return (await query<ObjectRow>(
+        SERVICE,
+        dml(
+          `update storage.objects set archived_at = null
+           where id = (select id from storage.objects where bucket_id = $1 and name = $2
+             and archived_at is not null order by archived_at desc limit 1)
+           and not exists (select 1 from storage.objects
+             where bucket_id = $1 and name = $2 and archived_at is null)`,
+          OBJECT_COLUMNS,
+        ),
+        [bucket, name],
+        false,
+      ))[0] ?? null;
+    },
+    async setLifecycle(id, config, as) {
+      const rows = await query<{ id: string }>(
+        as,
+        dml("update storage.buckets set lifecycle = $2::jsonb where id = $1", "id"),
+        [id, config ? JSON.stringify(config) : null],
+        false,
+      );
+      return rows.length > 0;
+    },
+    listFlat(bucket, q: FlatQuery, as) {
+      const column = ["name", "updated_at", "created_at"].includes(q.column) ? q.column : "name";
+      const order = q.order === "desc" ? "desc" : "asc";
+      return query<ObjectRow>(
+        as,
+        `select ${OBJECT_COLUMNS} from storage.objects
+         where bucket_id = $1
+           and ($5::text is not null and name = $5 or $5::text is null and name like $2::text escape '\\')
+           and ${versionPredicate(q.versions, q.markers)}
+         order by ${column} ${order}, name ${order}, archived_at desc nulls first
+         limit $3 offset $4`,
+        [bucket, `${likeEscape(q.prefix)}%`, q.limit, q.offset, q.exact ? q.prefix : null],
+      );
+    },
+    purgeVersions(bucket, limit) {
+      return query<ObjectRow>(
+        SERVICE,
+        dml(
+          `delete from storage.objects where id in (select id from storage.objects
+             where bucket_id = $1 and (archived_at is not null or is_delete_marker) limit $2)`,
+          OBJECT_COLUMNS,
+        ),
+        [bucket, limit],
+        false,
+      );
+    },
+    expireNoncurrent(bucket, days, keepNewer, limit) {
+      return query<ObjectRow>(
+        SERVICE,
+        dml(
+          `delete from storage.objects where id in (
+             select id from (
+               select id, archived_at, row_number() over (
+                 partition by name order by archived_at desc) as rn
+               from storage.objects
+               where bucket_id = $1 and archived_at is not null and not is_delete_marker
+             ) v where rn > $3 and archived_at < now() - make_interval(days => $2::int) limit $4)`,
+          OBJECT_COLUMNS,
+        ),
+        [bucket, days, keepNewer, limit],
+        false,
+      );
     },
     createResumable(row) {
       return exec(

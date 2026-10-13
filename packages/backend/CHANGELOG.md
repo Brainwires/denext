@@ -7,6 +7,11 @@
   id_token / PKCE sign-in, user updates, MFA factors, identities, SAML SSO, the admin API), so the
   stock supabase-js `supabase.auth.*` works unchanged.
 
+- **Storage versioning, `listV2`, signed TUS, streamed forms.** Supabase-style object versioning
+  (noncurrent versions, delete markers, `versionId` reads and deletes, restore by copy, lifecycle
+  policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a
+  signed upload token (`/upload/resumable/sign`), multipart uploads streamed instead of buffered,
+  anon/user bucket listings answered as Supabase does (empty), and the `denext ui` admin hooks.
 - **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
   secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing
   keys, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.

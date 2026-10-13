@@ -28,6 +28,7 @@ import {
   deleteBucket,
   emptyBucket,
   getBucket,
+  getLifecycle,
   listBuckets,
   listEntries,
   metadataOf,
@@ -38,9 +39,11 @@ import {
   removeObjects,
   serverCaller,
   SERVICE_CALLER,
+  setLifecycle,
   updateBucket,
 } from "./storage-ops.ts";
 import type { BucketRow, ObjectRow } from "./storage-meta.ts";
+import { locationOf, prepareOverwrite } from "./storage-versions.ts";
 import type {
   BucketAccessOptions,
   BucketInfo,
@@ -177,6 +180,8 @@ async function checkUpload(
     true,
     await actorFor(rt, caller),
   );
+  // A versioned bucket keeps the current version's bytes before the client's PUT replaces them.
+  await prepareOverwrite(rt, bucket, key);
   return owner;
 }
 
@@ -395,6 +400,7 @@ function detailsOf(row: ObjectRow): ObjectDetails {
     etag: (row.metadata?.eTag ?? "").replace(/^"|"$/g, ""),
     metadata: row.user_metadata,
     version: row.version,
+    archivedAt: row.archived_at,
     owner: row.owner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -410,6 +416,7 @@ function bucketInfoOf(rt: StorageRuntime, row: BucketRow): BucketInfo {
     fileSizeLimit: row.file_size_limit,
     allowedMimeTypes: row.allowed_mime_types,
     declared: rt.buckets.has(row.id),
+    versioningStatus: row.versioning_status ?? "DISABLED",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -456,7 +463,11 @@ function bucketHandle(name: string, service: boolean): StorageBucket {
     },
     async remove(keys) {
       const { rt, bucket, caller } = await ctx();
-      const list = (Array.isArray(keys) ? keys : [keys]).map(normalizeKey);
+      const list = (Array.isArray(keys) ? keys : [keys]).map((k) =>
+        typeof k === "string"
+          ? { key: normalizeKey(k) }
+          : { key: normalizeKey(k.key), versionId: k.versionId }
+      );
       await removeObjects(rt, bucket, list, caller);
     },
     async list(prefix = "", options: ListOptions = {}): Promise<ListResult> {
@@ -485,6 +496,8 @@ function bucketHandle(name: string, service: boolean): StorageBucket {
         offset: Math.max(Math.trunc(options.offset ?? 0), 0),
         column: options.sortBy?.column ?? "name",
         order: options.sortBy?.order === "desc" ? "desc" : "asc",
+        versions: options.versions,
+        markers: options.deleteMarkers,
       }, caller);
       return entries.map((e) => ({
         name: e.name,
@@ -508,11 +521,11 @@ function bucketHandle(name: string, service: boolean): StorageBucket {
       await readableRow(rt, bucket, k, caller);
       return await rt.driver.head(bucket.name, k);
     },
-    async info(key) {
+    async info(key, options = {}) {
       const { rt, bucket, caller } = await ctx();
       const k = normalizeKey(key);
       try {
-        const row = await readableRow(rt, bucket, k, caller);
+        const row = await readableRow(rt, bucket, k, caller, options.versionId);
         return row?.metadata ? detailsOf(row) : null;
       } catch (err) {
         if (err instanceof StorageError && err.code === "not_found") return null;
@@ -545,11 +558,20 @@ function bucketHandle(name: string, service: boolean): StorageBucket {
         lastModified: new Date(row.metadata!.lastModified),
       };
     },
-    async download(key): Promise<StoredObject | null> {
+    async download(key, options = {}): Promise<StoredObject | null> {
       const { rt, bucket, caller } = await ctx();
       const k = normalizeKey(key);
-      await readableRow(rt, bucket, k, caller);
-      return await rt.driver.get(bucket.name, k);
+      let row: ObjectRow | null;
+      try {
+        row = await readableRow(rt, bucket, k, caller, options.versionId);
+      } catch (err) {
+        if (options.versionId && err instanceof StorageError && err.code === "not_found") {
+          return null;
+        }
+        throw err;
+      }
+      const at = locationOf(bucket.name, k, row);
+      return await rt.driver.get(at.bucket, at.key);
     },
     async copy(from, to, options = {}) {
       const { rt, caller } = await ctx();
@@ -610,5 +632,16 @@ export const storage: Storage = {
   },
   async emptyBucket(name, options) {
     await emptyBucket(runtime(), name, adminCaller(options));
+  },
+  async getBucketLifecycle(name, options) {
+    try {
+      return await getLifecycle(runtime(), name, adminCaller(options));
+    } catch (err) {
+      if (err instanceof StorageError && err.code === "not_found") return null;
+      throw err;
+    }
+  },
+  async updateBucketLifecycle(name, policy, options) {
+    await setLifecycle(runtime(), name, policy, adminCaller(options));
   },
 };

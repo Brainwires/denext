@@ -17,7 +17,9 @@ import { StorageError } from "./errors.ts";
 import { isIdentityError } from "./identity.ts";
 import { normalizeKey } from "./keys.ts";
 import { checkSniffed, essence, SNIFF_BYTES } from "./mime.ts";
-import { resolveBucket, type ResolvedBucket, type StorageRuntime } from "./runtime.ts";
+import { resolveBucket, type ResolvedBucket, secretsOf, type StorageRuntime } from "./runtime.ts";
+import { openToken } from "./signing.ts";
+import { prepareOverwrite } from "./storage-versions.ts";
 import type { ResumableRow } from "./storage-meta.ts";
 import {
   actorFor,
@@ -30,6 +32,7 @@ import {
   recordObject,
   releaseObject,
   reserveObject,
+  SERVICE_CALLER,
   storeChecked,
 } from "./storage-ops.ts";
 import { concat, limit, readAll } from "./streams.ts";
@@ -136,9 +139,34 @@ async function route(
   if (request.headers.get("tus-resumable") !== TUS_VERSION) {
     return tusError(412, "InvalidRequest", "Tus-Resumable 1.0.0 is required");
   }
-  if (rest !== "" && rest !== "/") return await existing(rt, request, rest.slice(1), caller);
+  // `/sign`: the upload is authorized by a signed upload token (`x-signature`), not the caller.
+  let signed: SignedUpload | undefined;
+  if (rest === "/sign" || rest.startsWith("/sign/")) {
+    signed = await openToken<SignedUpload>("ul", request.headers.get("x-signature"), secretsOf(rt));
+    rest = rest.slice("/sign".length);
+    caller = SERVICE_CALLER;
+  }
+  if (rest !== "" && rest !== "/") {
+    return await existing(rt, request, rest.slice(1), caller, signed);
+  }
   if (request.method !== "POST") return tusError(405, "MethodNotAllowed", "use POST");
-  return await create(rt, request, caller);
+  return await create(rt, request, caller, signed);
+}
+
+/** A signed upload token's payload (`createSignedUploadUrl`). */
+interface SignedUpload {
+  exp: number;
+  b: string;
+  k: string;
+  u: boolean;
+  o: string | null;
+}
+
+/** A signed upload's token names exactly this object. */
+function checkSigned(signed: SignedUpload | undefined, bucket: string, key: string): void {
+  if (signed && (signed.b !== bucket || signed.k !== key)) {
+    throw new StorageError("bad_signature", "the token is for another object");
+  }
 }
 
 /** HEAD, PATCH or DELETE an upload in progress. */
@@ -147,9 +175,11 @@ async function existing(
   request: Request,
   id: string,
   caller: Caller,
+  signed?: SignedUpload,
 ): Promise<Response> {
   const row = /^[A-Za-z0-9_-]{16,64}$/.test(id) ? await rt.meta.getResumable(id) : null;
   if (!row) return tusError(404, "not_found", "Upload not found");
+  checkSigned(signed, row.bucket_id, row.name);
   if (row.expires_at < Date.now()) {
     await discard(rt, row);
     return tusError(410, "Gone", "Upload expired");
@@ -201,6 +231,7 @@ async function creationOf(
   rt: StorageRuntime,
   request: Request,
   caller: Caller,
+  signed?: SignedUpload,
 ): Promise<Creation> {
   if (request.headers.has("upload-defer-length")) {
     throw new StorageError("bad_request", "Upload-Defer-Length is not supported");
@@ -213,6 +244,7 @@ async function creationOf(
   }
   const bucket = await resolveBucket(rt, meta.bucketName);
   const key = normalizeKey(meta.objectName.replace(/^\/+/, ""));
+  checkSigned(signed, bucket.name, key);
   await authorizeOp(rt, bucket, "upload", key, caller);
   const contentType = checkContentType(bucket, meta.contentType || "application/octet-stream");
   capFor(bucket, undefined, length);
@@ -224,8 +256,8 @@ async function creationOf(
     contentType,
     cacheControl: cacheControlOf(meta.cacheControl || null),
     userMetadata: meta.metadata ? parseJsonObject(meta.metadata) : null,
-    upsert: request.headers.get("x-upsert") === "true",
-    owner: identity.role === "authenticated" ? identity.userId ?? null : null,
+    upsert: signed ? signed.u : request.headers.get("x-upsert") === "true",
+    owner: signed ? signed.o : identity.role === "authenticated" ? identity.userId ?? null : null,
   };
 }
 
@@ -257,9 +289,14 @@ async function newUpload(rt: StorageRuntime, c: Creation, version: string): Prom
 }
 
 /** POST: create an upload (and take its first bytes, creation-with-upload). */
-async function create(rt: StorageRuntime, request: Request, caller: Caller): Promise<Response> {
+async function create(
+  rt: StorageRuntime,
+  request: Request,
+  caller: Caller,
+  signed?: SignedUpload,
+): Promise<Response> {
   sweep(rt);
-  const c = await creationOf(rt, request, caller);
+  const c = await creationOf(rt, request, caller, signed);
   const reservation = { upsert: c.upsert, owner: c.owner, userMetadata: c.userMetadata };
   const actor = await actorFor(rt, caller);
   const version = await reserveObject(rt, c.bucket, c.key, reservation, actor);
@@ -267,7 +304,9 @@ async function create(rt: StorageRuntime, request: Request, caller: Caller): Pro
   try {
     row = await newUpload(rt, c, version);
     await rt.meta.createResumable(row);
-    const location = `${rt.basePath}${rt.apiBase}/upload/resumable/${row.id}`;
+    const location = `${rt.basePath}${rt.apiBase}/upload/resumable${
+      signed ? "/sign" : ""
+    }/${row.id}`;
     const headers = tusHeaders({ location, "upload-expires": expiresHeader(row) });
     const type = request.headers.get("content-type") ?? "";
     if (c.length === 0 || (request.body && essence(type) === "application/offset+octet-stream")) {
@@ -476,12 +515,15 @@ async function uploadPart(
 /** The last byte is in: assemble, check (size, type, sniffed head), record the row. */
 async function complete(rt: StorageRuntime, row: ResumableRow, bucket: ResolvedBucket) {
   const reservation = { upsert: row.upsert, owner: row.owner_id, userMetadata: row.user_metadata };
+  // A versioned bucket keeps the current version's bytes before the assembly replaces them.
+  const undo = await prepareOverwrite(rt, bucket, row.name);
   let info: ObjectInfo;
   try {
     info = row.upload_id
       ? await assembleParts(rt, row, bucket)
       : await assembleChunks(rt, row, bucket);
   } catch (err) {
+    await undo();
     await discard(rt, row);
     throw err;
   }
