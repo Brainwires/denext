@@ -30,7 +30,7 @@ export interface ExampleEntry {
   hasReadme: boolean;
   /** The {@link CATEGORIES} id the example is grouped under on the docs site. */
   category: string;
-  /** The commands that run it, as its README gives them (`deno task dev` when it gives none). */
+  /** The commands that run it, as its README gives them (`denext task dev` when it gives none). */
   run: string;
   /** Where {@link run} is meant to be typed: the example's directory or the repo root. */
   runFrom: "example" | "root";
@@ -120,7 +120,7 @@ interface ReadmeSection {
   inline: string[];
 }
 
-/** The inline code spans on a line that run something (`` `deno task dev` ``). */
+/** The inline code spans on a line that run something (`` `denext task dev` ``). */
 function inlineCommands(line: string): string[] {
   return [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim()).filter((c) =>
     RUNS_SOMETHING.test(c)
@@ -160,7 +160,7 @@ function readmeSections(md: string): ReadmeSection[] {
 /**
  * The commands a README gives for running its example: the first shell block under a
  * "Run" / "Run it" / "Setup" / "Try …" / "Quick start" heading; else, when the first such section
- * spells its steps in prose, the inline commands in it (`` `deno task dev` ``), one per line;
+ * spells its steps in prose, the inline commands in it (`` `denext task dev` ``), one per line;
  * else, when the README has no such heading, the first shell block that runs `deno task` /
  * `deno run` / `deno install` / `denext`. `null` when there is none.
  */
@@ -173,9 +173,11 @@ export function runCommands(md: string): string | null {
   return run[0].inline.length ? run[0].inline.join("\n") : null;
 }
 
-/** Commands that name a root task (`deno task example:x`) or a repo path run from the repo root. */
+/** Commands that name a root task (`denext task example:x`) or a repo path run from the repo root. */
 export function runsFromRoot(commands: string): boolean {
-  return /\bdeno task example:|(?:^|\s)(?:\.\/)?cli\.ts\b|(?:^|\s)examples\//m.test(commands);
+  return /\b(?:deno|denext) task example:|(?:^|\s)(?:\.\/)?cli\.ts\b|(?:^|\s)examples\//m.test(
+    commands,
+  );
 }
 
 export { stripComments } from "../src/utils/strip-comments.ts";
@@ -270,7 +272,7 @@ function entryFor(name: string): ExampleEntry {
       `examples/${name} has no docs category — add it to EXAMPLE_CATEGORY in ${import.meta.url}`,
     );
   }
-  const run = (readme && runCommands(readme)) || "deno task dev";
+  const run = (readme && runCommands(readme)) || "denext task dev";
   return {
     name,
     title: title || name,

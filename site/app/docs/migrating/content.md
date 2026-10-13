@@ -141,9 +141,12 @@ above is what it generates, shown so you can audit or hand-tune it; a fresh
 compat project gets the same map from `denext create --compatibility`.
 
 ```sh
-deno run -A jsr:@denext/denext/cli migrate
-deno task dev
+denext migrate
+denext task dev
 ```
+
+With Deno installed and no `denext` command, `deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli migrate`
+and `deno task dev` do the same.
 
 By default `migrate` **only creates config files** — it never rewrites your
 source. Your imports keep pointing at `next/*` and `react`, and the alias map
@@ -153,7 +156,7 @@ confirmation prompt), or run the standalone `denext codemod` later.
 
 > [!NOTE]
 > Migrating a project that already has `node_modules` installed (most real
-> apps)? Add `--node-modules-dir=none` to the migrate command:
+> apps) with the CLI run through `deno run`? Add `--node-modules-dir=none` to it:
 > `deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
 > it, Deno runs in manual-`node_modules` mode and can't resolve the CLI's own
 > build dependencies. (Your app's `node_modules` is untouched either way — the
@@ -166,7 +169,7 @@ confirmation prompt), or run the standalone `denext codemod` later.
 
 `migrate` also writes a `.gitignore` for the artifacts it generates —
 `.denext/` (build cache), `out/` (the static export), with `--desktop`
-`desktop-icon.png` and `/*.app/` (the bundle `deno task desktop` writes into the
+`desktop-icon.png` and `/*.app/` (the bundle `denext task desktop` writes into the
 project), and with a Capacitor target the native build outputs (`ios/App/build/`,
 `android/app/build/`, the web assets `cap sync` copies in, …) — creating the file
 if absent and appending only the missing lines (it never reorders or removes your
@@ -202,12 +205,12 @@ React and no `next.config.*`). It detects the shape and writes a
 (`spa.rootId`), and `spa.env` seeded from your Vite `define` block and
 `import.meta.env.VITE_*` usage. Each key reads the build environment
 (`buildEnv("VITE_API_URL")`: the shell, or a `.env` file), so
-`VITE_API_URL=https://… deno task export` works as `vite build` did. Add
+`VITE_API_URL=https://… denext task export` works as `vite build` did. Add
 `--desktop` to also emit a `deno desktop` entry, and `--backend http://127.0.0.1:3773 --proxy /api,/ws` to wire a
 [backend proxy](/docs/spa):
 
 ```sh
-deno run -A jsr:@denext/denext/cli migrate apps/web \
+denext migrate apps/web \
   --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws
 ```
 
@@ -246,7 +249,7 @@ generic), a **Next App Router** app (whose static export the shell bundles) and 
 Expo app; a Pages Router or Remix / React Router app is reported as not covered.
 
 ```sh
-deno run -A jsr:@denext/denext/cli migrate apps/web --enable-capacitor \
+denext migrate apps/web --enable-capacitor \
   --app-id com.example.web --platform ios
 ```
 
@@ -450,7 +453,7 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 6. **Swap native deps** (`better-sqlite3` → `node:sqlite`, §6).
 7. **Test dev and a production build** at each stage.
 
-Deploying the result: `deno task build` then `deno task start`, or a fully
+Deploying the result: `denext task build` then `denext task start`, or a fully
 static export — any host that runs Deno works. See [Deployment](/docs/deploy).
 
 Starting fresh instead? You don't need the alias — import from `denext` and

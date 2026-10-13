@@ -40,11 +40,11 @@ we want to hear about it privately first.
 
 ### Supported versions
 
-| Version                       | Supported                              |
-| ----------------------------- | -------------------------------------- |
-| 2.x (`@denext/denext@^2`)     | ✅ security fixes land in the next 2.x |
-| 1.x                           | ❌ upgrade to 2.x                      |
-| `@denext/*` workspace plugins | ✅ latest minor of each package        |
+| Version                            | Supported                              |
+| ---------------------------------- | -------------------------------------- |
+| 4.x (`@denext/denext@^4.0.0-rc.1`) | ✅ security fixes land in the next 4.x |
+| 3.x and older                      | ❌ upgrade to 4.x                      |
+| `@denext/*` workspace plugins      | ✅ latest minor of each package        |
 
 ### Reporting a vulnerability
 

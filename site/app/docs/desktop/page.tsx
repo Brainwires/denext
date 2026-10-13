@@ -61,10 +61,12 @@ export default function Desktop() {
         </li>
       </ul>
       <p>
-        The scaffolded <code>deno task desktop</code> / <code>deno task desktop:package</code> (and
+        The scaffolded <code>denext task desktop</code> / <code>denext task desktop:package</code>
         {" "}
-        <code>desktop:package:linux</code>) tasks still work and wrap the same scripts; the verbs
-        above are the first-class equivalents.
+        (and{" "}
+        <code>desktop:package:linux</code>) tasks still work and wrap the same scripts (with Deno
+        installed, <code>deno task desktop</code>{" "}
+        runs them too); the verbs above are the first-class equivalents.
       </p>
       <p>
         The generated <code>desktop.ts</code>{" "}
@@ -92,12 +94,11 @@ await runDesktop({
         compiles the entry&apos;s imports into the app, so importing the config module would ship
         every plugin it imports (and their build toolchain) too. An entry that still imports{" "}
         <code>./denext.config.ts</code>{" "}
-        keeps working; switch it to the JSON to leave the build-only code out.{" "}
+        also works but ships the build-only code; the JSON leaves it out.{" "}
         <code>resolveDesktopCapabilities</code> also returns <code>spa.proxy</code> as{" "}
         <code>proxy</code>, so the spread reverse-proxies a backend when the config sets one.{" "}
-        <code>denext migrate --desktop</code>{" "}
-        writes the same entry. An entry written before 2.11 has no{" "}
-        <code>resolveDesktopCapabilities</code> spread, so every capability answers{" "}
+        <code>denext migrate --desktop</code> writes the same entry. An entry without the{" "}
+        <code>resolveDesktopCapabilities</code> spread gets no capabilities: every one answers{" "}
         <code>unavailable</code>{" "}
         and the page keeps its web path; add the spread to serve the ones you enable.
       </p>
@@ -142,7 +143,7 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         to intercept requests before the default serve/proxy.
       </Callout>
       <Callout kind="note">
-        For a migrated SPA (Vite/CRA), package with the generated <code>deno task desktop</code>
+        For a migrated SPA (Vite/CRA), package with the generated <code>denext task desktop</code>
         {" "}
         rather than a bare <code>deno desktop desktop.ts</code> — it bakes the required flags:{" "}
         <code>--include out</code>,{" "}
@@ -356,14 +357,14 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
 denext desktop package
 
 # a specific architecture (cross-compiles if needed)
-deno task desktop:package --arch arm64
-deno task desktop:package --arch x86_64
+denext task desktop:package --arch arm64
+denext task desktop:package --arch x86_64
 
 # both, as two separate .app bundles
-deno task desktop:package --arch both
+denext task desktop:package --arch both
 
 # one universal .app whose binaries are lipo-merged (runs natively on both)
-deno task desktop:package --arch universal
+denext task desktop:package --arch universal
 # …the same, forwarded through the verb:
 denext desktop package -- --arch universal`}
       </Code>
@@ -405,7 +406,7 @@ denext desktop package -- --arch universal`}
       </p>
       <Code lang="bash">
         {`export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-deno task desktop:package --arch universal`}
+denext task desktop:package --arch universal`}
       </Code>
       <p>
         With a real identity the bundle is signed inside-out with the Hardened Runtime and a secure
@@ -536,11 +537,6 @@ desktop: {
           self-signed development certificate must be trusted (Trusted Root and Trusted Publishers)
           before a build signed with it runs.
         </li>
-        <li>
-          <strong>No update from denext 3.1.x.</strong>{" "}
-          A Windows CEF app packaged with denext 3.1.x or earlier (runtime denext.8) can&apos;t
-          update itself to the new layout: reinstall it.
-        </li>
       </ul>
 
       <h2 id="notarization">Notarization</h2>
@@ -562,7 +558,7 @@ desktop: {
       <Code lang="bash">
         {`export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export DENEXT_NOTARY_PROFILE="denext-notary"
-deno task desktop:package --arch universal`}
+denext task desktop:package --arch universal`}
       </Code>
       <p>
         The resulting <code>.app</code> (and <code>.dmg</code>) in <code>dist/</code>{" "}
@@ -586,7 +582,7 @@ deno task desktop:package --arch universal`}
 denext desktop package --target-os linux
 
 # both Linux arches, with every installer
-deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
+denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
       </Code>
       <Callout kind="note">
         The end user's Linux desktop needs a <strong>WebKitGTK</strong> runtime (<code>
@@ -2841,10 +2837,12 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         and laufey backend hosts from{" "}
         <a href="https://github.com/Brainwires/deno/releases">Brainwires/deno</a>{" "}
         (Deno 2.9.7 plus the patches behind the stable app origin, per-app web storage, deep links
-        and single instance). Your stock <code>deno</code>{" "}
-        CLI does the build; denext points it at the runtime through <code>DENORT_DESKTOP_BIN</code>
-        {" "}
-        and <code>LAUFEY_DEV_DIR</code>.
+        and single instance). The build runs on{" "}
+        <a href="/docs/toolchain">
+          denext&apos;s Deno toolchain
+        </a>{" "}
+        (the same release&apos;s CLI); denext points it at the runtime through{" "}
+        <code>DENORT_DESKTOP_BIN</code> and <code>LAUFEY_DEV_DIR</code>.
       </p>
       <p>
         Every change the runtime makes to stock Deno Desktop and why, how it is tested and verified,
@@ -2854,7 +2852,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
       <ul>
         <li>
           <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
-          <code>deno desktop</code> embeds it, so for any other version{" "}
+          <code>deno desktop</code>{" "}
+          embeds it. The toolchain is that release, so this holds by itself; on stock Deno (<code>
+            DENEXT_DENO=stock
+          </code>, or no toolchain for the host) of any other version{" "}
           <code>denext desktop package</code> fails before the build with the fix:{" "}
           <code>deno upgrade --version 2.9.7</code> (or <code>DENO_BIN</code>{" "}
           pointing at a 2.9.7 binary for <code>run</code> / <code>dev</code>).{" "}

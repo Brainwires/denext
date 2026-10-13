@@ -30,7 +30,7 @@ denext export .   # writes out/ — pure HTML, 0 KB JS on static pages
 ### Docker
 
 ```dockerfile
-FROM denoland/deno:2.9.6
+FROM denoland/deno:2.9.7
 
 # Build and run as the image's unprivileged `deno` user — /app must be its own, because
 # the build writes .denext/ and the durable cache (.denext/cache.db) lives there too.
@@ -52,6 +52,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
 
 # `deno task start` = --allow-net --allow-read --allow-env --allow-write=.denext (the
 # least-privilege task `denext create` writes; the write grant keeps the cache durable).
+# It spawns nothing, so it serves on the image's own Deno.
 CMD ["deno", "task", "start"]
 ```
 
@@ -79,7 +80,7 @@ dependency-cache layer, the exact run flags and whether the port comes from
 
 ### Deno Deploy
 
-Push the repo and point the entrypoint at `jsr:@denext/denext@^2/cli` with args
+Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0-rc.1/cli` with args
 `start .`, or add a build step running `deno task build`. Deno Deploy provides
 TLS and autoscaling; still set a per-instance `maxConcurrency` (§1) and your
 secrets (`SESSION_SECRET`, etc.) as environment variables.
@@ -99,13 +100,15 @@ WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
 Environment=DENEXT_CANONICAL_ORIGIN=https://example.com
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^2/cli start .
+ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0-rc.1/cli start .
 Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
 
-Run `deno task build` in your deploy step, then `systemctl restart my-app`.
+Run `denext task build` (or `deno task build`) in your deploy step, then
+`systemctl restart my-app`. The least-privilege `start` spawns no child process, so it runs
+on whichever `deno` the unit names; it needs no `--allow-run` and no toolchain download.
 Front it with nginx/Caddy for TLS + the concurrency limit (§1).
 
 ## 1. Put a concurrency ceiling in front of denext (required)
@@ -145,7 +148,7 @@ misconfigured — the edge ceiling above is still required.
 ```ts
 // denext.config.ts
 export default { maxConcurrency: 100 } satisfies DenextConfig;
-// or, per deployment: DENEXT_MAX_CONCURRENCY=100 deno task start
+// or, per deployment: DENEXT_MAX_CONCURRENCY=100 denext task start
 ```
 
 **`slotBackstop` (with `requestTimeout: 0`).** If you disable the request

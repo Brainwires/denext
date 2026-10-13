@@ -5,8 +5,8 @@ cooperative scheduler could _not_ do: **time-slicing** and **mid-flight
 interruption**.
 
 ```sh
-deno task example:concurrency          # build once, serve
-deno task example:concurrency --dev    # rebuild on each request
+denext task example:concurrency          # build once, serve
+denext task example:concurrency --dev    # rebuild on each request
 ```
 
 Open <http://localhost:3003>.

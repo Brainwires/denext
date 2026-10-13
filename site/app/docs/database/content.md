@@ -52,7 +52,7 @@ export default function Page() {
 }
 ```
 
-Run with read/write permission (`deno task dev` already uses `-A`). Writes
+Run with read/write permission (`denext task dev` already uses `-A`). Writes
 belong in Server Actions (`"use server"`), so forms work with no client JS. See
 [`examples/notes`](https://github.com/Brainwires/denext/tree/main/examples/notes)
 for a complete app (auth + CRUD + ISR) built this way. `node:sqlite` is a
@@ -211,7 +211,7 @@ datasource db {
 > generated Deno client, injects the driver adapter at each
 > `new PrismaClient()`, writes the `deno.json` `links` + npm pins + a
 > `prisma:setup` task, and drops the superseded `@prisma/client` /`prisma` from
-> `package.json`. Then just run `deno task prisma:setup` once. The manual steps
+> `package.json`. Then just run `denext task prisma:setup` once. The manual steps
 > below are what that automation encodes.
 
 Steps: bundle the compat into the `links` package, install, generate, push, then
@@ -345,7 +345,7 @@ Verified against this runner: a second run is a no-op, a file with a syntax
 error is rolled back as a unit (the tables it created before the bad statement
 are gone) and the run exits `1`, and the job's returned line lands in the run
 history when `jobs: { history: true }` is on. Use it from a deploy step
-(`deno run -A jsr:@denext/denext@^3/cli job migrate` before `start`), a
+(`deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli job migrate` before `start`), a
 Kubernetes init container or a `preStart` hook — and keep the schema step out of
 the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the

@@ -293,9 +293,7 @@ denext job --history                 # recent runs, through the configured histo
         <code>denext job</code> runs these modules. <code>denext task</code> is Deno's: it runs a
         {" "}
         <code>deno.json</code> / <code>package.json</code> task on denext's Deno toolchain (see{" "}
-        <a href="/docs/cli#deno-verbs">the CLI reference</a>). Before denext 4.0 jobs were called
-        tasks; a config that still sets <code>tasks</code> or <code>scheduledTasks</code>{" "}
-        fails to load and names the new key.
+        <a href="/docs/cli#deno-verbs">the CLI reference</a>).
       </Callout>
 
       <h2>Registering a job programmatically</h2>

@@ -383,8 +383,9 @@ attack surface, so each ships with its own invariant:
   key that is mid-lockout** — a flood of fresh keys cannot wash out a lockout
   that is doing its job; when every tracked key is locked out and the cap is
   reached, the new key is refused instead. And behind a reverse proxy the app
-  has **not** declared (`trustForwardedHeaders` off, a private peer, an
-  `x-forwarded-for` present) the two per-IP budgets are skipped with one warning
+  has **not** declared (`trustForwardedHeaders` off and a loopback, private,
+  link-local or unique-local peer, whether or not it sends `x-forwarded-for`)
+  the two per-IP budgets are skipped with one warning
   rather than collapsing every visitor into one bucket — which would have been
   an app-wide outage on the 21st sign-in. Setting `canonicalOrigin` without
   `trustForwardedHeaders` (on `denextAuth` or, inherited, on the app) warns once

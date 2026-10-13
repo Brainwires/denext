@@ -88,9 +88,13 @@ them.
 
 ```sh
 # in the Remix project root
-deno run --node-modules-dir=none -A jsr:@denext/denext@^2/cli migrate --from remix
-deno task dev
+denext migrate --from remix
+denext task dev
 ```
+
+With Deno installed and no `denext` command:
+`deno run --node-modules-dir=none -A jsr:@denext/denext@^4.0.0-rc.1/cli migrate --from remix`,
+then `deno task dev`.
 
 Commit before you run it. The Remix path rewrites `app/` in place, and a clean
 working tree makes the transform a single reviewable diff.
@@ -402,7 +406,7 @@ single denext React.
   `styles.css?url` import are served under `/_denext/client/assets/`, and a
   Tailwind v3 stylesheet is compiled through the project's own `tailwindcss`.
   A Prisma app gets the Rust-free Deno client and has its SQL migrations
-  applied by `deno task prisma:setup` (§8).
+  applied by `denext task prisma:setup` (§8).
 
 ---
 
@@ -459,7 +463,7 @@ The CLI prints up to twelve notes and a count of the rest.
   generator becomes the ESM `prisma-client` with `queryCompiler` and
   `driverAdapters`, every `@prisma/client` import is repointed, the adapter is
   injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim,
-  npm pins, and a `prisma:setup` task. Run `deno task prisma:setup` once. Only
+  npm pins, and a `prisma:setup` task. Run `denext task prisma:setup` once. Only
   runtime source under `app/` / `src/` / `lib/` is rewritten (a `prisma/seed.ts`
   is left for Node), a `new PrismaClient(<non-object>)` is flagged for a
   one-line manual adapter add, and non-SQLite datasources need their own driver
@@ -502,11 +506,11 @@ for real npm React libraries, and the Prisma wiring.
 3. **Run `denext migrate --from remix`** (§3) and read the review notes (§7).
 4. **Diff `app/`.** Skim one converted route of each kind (a page with a loader,
    one with an action, a layout, the root) so the three-file split is familiar.
-5. **`deno task dev`**, then walk the app: navigation, a form submit, a fetcher,
+5. **`denext task dev`**, then walk the app: navigation, a form submit, a fetcher,
    a deferred route, an error boundary.
 6. **Address the notes**: break-outs, `CatchBoundary`, root `links`, layouts
    without an `<Outlet />`.
-7. **Build and serve** with `deno task build` then `deno task start`, and test
+7. **Build and serve** with `denext task build` then `denext task start`, and test
    the no-JavaScript form path once.
 8. Write **new** routes the denext way (a Server Component in `page.tsx`)
    alongside the migrated ones; there is no need to convert the old ones.

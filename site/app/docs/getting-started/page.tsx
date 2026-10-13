@@ -292,10 +292,10 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         at a pinned version, so nothing is installed globally:
       </p>
       <Code lang="sh">
-        {`deno task fallow:audit      # the changed-code gate: exit 1 on a "fail" verdict
-deno task hooks:install     # git runs that gate before every commit (git config core.hooksPath)
-deno task fallow            # dead code + duplication + health over the whole project
-deno task coverage:fallow   # deno test --coverage → coverage/coverage-final.json (measured CRAP)`}
+        {`denext task fallow:audit      # the changed-code gate: exit 1 on a "fail" verdict
+denext task hooks:install     # git runs that gate before every commit (git config core.hooksPath)
+denext task fallow            # dead code + duplication + health over the whole project
+denext task coverage:fallow   # deno test --coverage → coverage/coverage-final.json (measured CRAP)`}
       </Code>
       <p>
         The hook is installed only when you run <code>hooks:install</code>{" "}

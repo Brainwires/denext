@@ -60,7 +60,7 @@ escape hatch, so both engines run in one app. `reactNative: { lists: "library" }
 
 ## Running a cell
 
-Web: `(cd web && deno task dev)` then `/?list=legend&kind=chat&n=100000`. Without a query the
+Web: `(cd web && denext task dev)` then `/?list=legend&kind=chat&n=100000`. Without a query the
 page lists every cell. Android: `adb shell am start -a android.intent.action.VIEW -d
 'denextscrollbench://run?list=legend&kind=chat&n=100000' com.brainwires.denext.scrollbench`
 (RN: `rnscrollbench://…`, `com.brainwires.rnscrollbench`). While a cell runs,
@@ -73,7 +73,7 @@ page lists every cell. Android: `adb shell am start -a android.intent.action.VIE
 
 `./build-apks.sh [host] [out-dir]` exports the web app here and builds both release APKs on a
 Linux host over SSH (JDK 21, `~/Android/Sdk`), x86_64 only, signed with a throwaway key made on
-the host. The placeholder images come from `deno task images` (committed).
+the host. The placeholder images come from `denext task images` (committed).
 
 ## Measuring
 
@@ -87,8 +87,8 @@ deno run -A harness/measure.ts coldstart --runs 5
 ```
 
 The method, and what each number does and does not mean, is in the header of
-`harness/measure.ts`. Checks without a device: `deno task test` (parsers, matrix, data) and
-`deno task smoke` (every web impl in headless Chromium after `cd web && deno task export`).
+`harness/measure.ts`. Checks without a device: `denext task test` (parsers, matrix, data) and
+`denext task smoke` (every web impl in headless Chromium after `cd web && denext task export`).
 
 ## Server-rendered lists (`ssr/`)
 
@@ -116,11 +116,11 @@ client, so no row data crosses the Flight boundary. The report lists what shippi
 props would add.
 
 ```sh
-(cd ssr && deno task build)                  # production build; `deno task dev` to browse
-(cd ssr && deno task test)                   # every route renders its cell (no browser)
-deno task ssr-measure --smoke                # one run per impl at 100 and 1k rows
-deno task ssr-measure                        # the matrix → results/ssr-<date>/results.{md,json}
-deno task ssr-measure --impls islands --kinds fixed,chat --out results/ssr-2026-09-27
+(cd ssr && denext task build)                  # production build; `denext task dev` to browse
+(cd ssr && denext task test)                   # every route renders its cell (no browser)
+denext task ssr-measure --smoke                # one run per impl at 100 and 1k rows
+denext task ssr-measure                        # the matrix → results/ssr-<date>/results.{md,json}
+denext task ssr-measure --impls islands --kinds fixed,chat --out results/ssr-2026-09-27
                                              # re-run the island pages' cells (also: static,
                                              # virtual, or impl ids); the report is rebuilt
                                              # from every cell in --out

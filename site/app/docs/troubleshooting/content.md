@@ -68,7 +68,7 @@ For a one-off run, pass the flag on `deno run`, or set the env var so the
 
 ```sh
 deno run --min-dep-age=0 -A jsr:@denext/denext/cli build
-DENEXT_MIN_DEP_AGE=0 deno task build
+DENEXT_MIN_DEP_AGE=0 denext task build
 ```
 
 See [Contributing](/docs/contributing) → release gotchas.
@@ -88,20 +88,19 @@ See the [changelog](/docs/changelog) entry for 2.4.2.
 
 ## "denext needs Deno 2.9+" / `deno bundle` not found
 
-**Cause.** `build` and `dev` bundle client code by shelling out to Deno's own
-`deno bundle` subcommand, which needs Deno ≥ 2.9; the binary on `PATH` is older
-or missing.
+**Cause.** `build` and `dev` bundle client code with Deno's own `deno bundle` subcommand, which
+needs Deno ≥ 2.9. Normally they run on [denext's Deno toolchain](/docs/toolchain) and this never
+comes up; it does when the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a
+platform with no build) and the stock `deno` they fall back to is older or missing.
 
-**Fix.** Upgrade Deno, or point denext at a 2.9+ binary.
+**Fix.** Fetch the toolchain once you are online, or point denext at a Deno 2.9+ binary.
 
 ```sh
-deno upgrade
+denext toolchain install
+denext toolchain status      # which Deno a command runs on, and why
 # or
-DENO_BIN=/path/to/deno deno task build
+DENO_BIN=/path/to/deno denext task build
 ```
-
-See the [Quick start](https://github.com/Brainwires/denext#quick-start) in the README
-for the Deno version denext needs.
 
 ## "no dispatcher installed" / hooks throwing inside an npm React library
 
@@ -284,7 +283,7 @@ after the first `denext_component_tree`, `denext_why_render` or
 `denext_hook_state` call.
 
 **Fix.** Call the tool again after the page's next render, or start
-`deno task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
+`denext task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
 
 ## `denext: hydration mismatch — …`
 
@@ -425,20 +424,15 @@ The entries below are for an app in a Capacitor shell. The full guide is
 
 ### The app stays on its splash screen under `denext mobile dev`
 
-**Cause.** One of two things stops the page before it hides the splash:
+**Cause.** On iOS 14 and later, a WebView reaches a server on the local network only when the
+app's `Info.plist` has an `NSLocalNetworkUsageDescription` (and `NSAppTransportSecurity` →
+`NSAllowsLocalNetworking` for plain `http`); without them iOS denies the requests silently, and
+the page never loads far enough to hide the splash.
 
-1. denext before 2.10.0 sent a SPA's own CSS import (`import "./styles.css"`)
-   through the JavaScript transform in unbundled dev, which failed the page.
-2. On iOS 14 and later, a WebView reaches a server on the local network only
-   when the app's `Info.plist` has an `NSLocalNetworkUsageDescription` (and
-   `NSAppTransportSecurity` → `NSAllowsLocalNetworking` for plain `http`);
-   without them iOS denies the requests silently.
-
-**Fix.** Upgrade to denext 2.10.0 or later. `denext mobile dev` adds both
-`Info.plist` keys for the session, but a changed `Info.plist` is a native
-change: rebuild and run the app from Xcode after the first session. Allow the
-app when iOS asks for local network access (or turn it on under Settings →
-Privacy & Security → Local Network).
+**Fix.** `denext mobile dev` adds both `Info.plist` keys for the session, but a changed
+`Info.plist` is a native change: rebuild and run the app from Xcode after the first session.
+Allow the app when iOS asks for local network access (or turn it on under Settings → Privacy &
+Security → Local Network).
 
 See [Live reload on a device](/docs/mobile#live-reload-on-a-device).
 
@@ -453,7 +447,7 @@ in the native config copies (`ios/App/App/capacitor.config.json`,
 
 ```sh
 denext mobile dev --restore   # capacitor.config, Info.plist, the dev URL in the native copies
-deno task export
+denext task export
 npx cap copy
 ```
 

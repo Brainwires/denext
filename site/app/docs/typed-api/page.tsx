@@ -149,7 +149,10 @@ try {
           <code>POST /_denext/api-batch</code>. Same-origin only, a marker header a{" "}
           <code>{"<form>"}</code>{" "}
           cannot set, capped, and every item runs as a sub-request through the full pipeline, so
-          middleware applies exactly as to a direct call. Mutations never batch.
+          middleware applies exactly as to a direct call. Each item keeps the parent&apos;s client
+          address — including the <code>rateLimitHeader</code> header the app names — so a per-route
+          {" "}
+          <code>rateLimit()</code> counts a batched call like a direct one. Mutations never batch.
         </li>
         <li>
           <strong>In-process on the server.</strong>{" "}

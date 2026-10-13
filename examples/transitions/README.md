@@ -7,8 +7,8 @@ time-sliced and interruptible — so `isPending` shows and the browser
 paints/handles keystrokes before the heavy re-render commits.
 
 ```sh
-deno task example:transitions          # build once, serve
-deno task example:transitions --dev    # rebuild on each request
+denext task example:transitions          # build once, serve
+denext task example:transitions --dev    # rebuild on each request
 ```
 
 Open <http://localhost:3002> and type quickly in the filter box.

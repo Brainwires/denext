@@ -714,7 +714,8 @@ Hardened by default — secure cookie defaults, **hash-based CSP** on buffered
 responses, opinionated hardening headers (nosniff, frame-options, HSTS over
 HTTPS), error redaction, correlation ids (`x-request-id`), config validation,
 SSRF-pinned image fetch, per-address limits (`rateLimit()`, Live's connection cap,
-`clientIpForLimits()`) that switch off rather than go site-wide behind an untrusted proxy, and a
+`clientIpForLimits()`) that switch off rather than go site-wide behind an untrusted proxy (or key on
+the proxy's client-address header, `rateLimitHeader`), and a
 continuously-run **CVE-defense** probe suite. The
 full mechanism ledger is **Part 2 §1**; the threat-by-threat posture is in
 [the CVE-defense guide](https://denext.dev/docs/security).
@@ -881,8 +882,30 @@ cache uses Deno's built-in `node:sqlite`.)
   `<title>`, no server crash — classifying each route static (0 KB JS) or
   interactive. A CI gate that turns "every route renders" from a claim into a
   checked assertion.
+- **Vitest suites on denext's Deno toolchain** — under `denext test`, a test file that imports
+  `vitest` gets Vitest's API from the toolchain's `deno test`: fake timers and a fake `Date`
+  (`vi.useFakeTimers()`, `vi.advanceTimersByTimeAsync()`, `vi.setSystemTime()`), module mocks
+  (`vi.mock()`), fresh module instances (`vi.resetModules()`) and `vi.stubGlobal` /
+  `vi.stubEnv`, with no runner to install and no permission of its own; an existing Vitest or
+  Jest suite runs as it is. See [Testing](https://denext.dev/docs/testing#vitest).
 
 ## Build, tooling & CLI
+
+- **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
+  themselves on a pinned `2.9.7-denext.N` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
+  SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
+  The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
+  links it as `deno` only when none is on `PATH`), and every child the CLI starts finds it first
+  on `PATH`. `denext toolchain install|status|path|link|unlink`; `DENEXT_DENO=stock` opts out,
+  and a failed download falls back to stock Deno with one warning. See
+  [the toolchain](https://denext.dev/docs/toolchain). — `src/cli/self-exec.ts`,
+  `src/build/deno-executable.ts`.
+- **Every Deno verb through `denext`** — a verb denext doesn't define (`compile`, `run`, `x`,
+  `bench`, `install`, …) runs on the toolchain exactly as `denext deno <verb>` would, arguments
+  verbatim; `denext main.ts` is `deno run`; `denext task` is `deno task` with every `deno` inside
+  the task on the toolchain. Built-in verbs win, then the project's own, then Deno's. —
+  `src/cli/deno-verbs.ts`.
 
 - Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
   SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
@@ -935,8 +958,9 @@ cache uses Deno's built-in `node:sqlite`.)
   **`doctor --report`** prints one markdown health report — the checks, every
   route's conformance result, and the last build's client bundle by chunk and
   role, read from `.denext/client` without building — and `--json` emits the same
-  data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
-  SBOM), `desktop run|dev|build|package|add|publish-update`,
+  data structurally; `info <module>` is Deno's `deno info`), `audit` (dependency inventory +
+  zero-npm proof + CycloneDX SBOM, then `deno audit` over the lockfile; `--skip-deno-audit`),
+  `job` (run, list and inspect background jobs), `toolchain`, `desktop run|dev|build|package|add|publish-update`,
   `mobile add|add-ota|dev|fingerprint|assets|build|submit|doctor|privacy|inspect`, `ota
   keygen|manifest`, `migrate`, `codemod`, `mcp` / `mcp init` (the agent
   server below), `fallow init`, `version`. **A project can add its own verbs two ways**: a
@@ -1182,7 +1206,13 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   middleware's default key, Live's per-address connection cap
   (`live.limits.maxConnectionsPerIp`, default 64, a `429` past it) and
   `@denext/backend` realtime's signed-out quota follow it, each warning once
-  when it switches itself off. — `clientIpForLimits` in
+  when it switches itself off. **`rateLimitHeader`** (`DENEXT_RATE_LIMIT_HEADER`) names the
+  header the fronting proxy writes the client address to (`cf-connecting-ip`,
+  `fly-client-ip`, `x-real-ip`): every per-address limit keys on it, and a request without it
+  falls back to the trusted hop or socket peer (never unlimited). A typed-API batch item and a
+  server-side self-call inherit that header from the parent request, so the batch endpoint can't
+  skip a per-route limit. **`rateLimitLocalAddresses: true`** counts a loopback or private peer
+  as itself instead of skipping it. — `clientIpForLimits` in
   `src/server/request-context.ts`, `limitAddrOf` / `ipBucket` in
   `src/server/remote-addr.ts`, `connectionsFull` in `src/server/live.ts`.
 - **Open-redirect neutralization** — `safeRedirectLocation` collapses

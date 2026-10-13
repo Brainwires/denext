@@ -30,12 +30,12 @@ variants.
 
 ```sh
 npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's
-deno task dev                    # the app in a browser: http://localhost:3000
-deno task export                 # static export → out/ (Capacitor's webDir)
-deno task cap:sync               # export + `cap sync ios`
-DENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)
-deno task ios:check              # an unsigned compile check
-deno task mobile:dev             # live reload on a phone: the shell loads `denext dev`
+denext task dev                    # the app in a browser: http://localhost:3000
+denext task export                 # static export → out/ (Capacitor's webDir)
+denext task cap:sync               # export + `cap sync ios`
+DENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Debug build (xcodebuild)
+denext task ios:check              # an unsigned compile check
+denext task mobile:dev             # live reload on a phone: the shell loads `denext dev`
 ```
 
 `mobile:dev` binds `172.20.10.2` (the Mac's address on an iPhone's Personal
@@ -61,7 +61,7 @@ deno run -A --node-modules-dir=none ../../cli.ts migrate --from expo .
 
 npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2
 npm install --save-exact -D @capacitor/cli@8.5.2
-deno task export && npx cap add ios
+denext task export && npx cap add ios
 deno run -A --node-modules-dir=none ../../cli.ts mobile add haptics device splash browser \
   deep-links system-bars storage keyboard dialog share --scheme helloworld
 ```
@@ -87,7 +87,7 @@ deno run -A --node-modules-dir=none ../../cli.ts mobile add storage
 
 ## Device checklist (iPhone)
 
-After `deno task cap:sync` and `deno task ios`:
+After `denext task cap:sync` and `denext task ios`:
 
 1. **Launch.** The splash hides and Home shows "Welcome to Expo" with the
    animated Expo icon. The floating tab bar (Home · Explore · Lab · Docs; the

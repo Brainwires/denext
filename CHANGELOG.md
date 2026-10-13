@@ -48,6 +48,13 @@ and this project adheres to
   checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
   the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
 
+### Notes
+
+- **How denext's Deno build is kept current**: how the `2.9.7-denext.N` toolchain tracks Deno
+  releases and takes fixes between them, how each denext release pins and verifies one build, and
+  how the first command bootstraps it. See
+  [denext's Deno toolchain › Notes](https://denext.dev/docs/toolchain#notes-how-denexts-deno-build-is-kept-current).
+
 ## [4.0.0-rc.1] - 2026-10-13
 
 ### Breaking (4.0)

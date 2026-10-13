@@ -49,7 +49,8 @@ export function llmsIndex(): string {
 - Imports come from \`denext\`, not \`react\` — \`import { useState } from "denext"\`. There is
   **no \`react\`/\`react-dom\` package** (a drop-in aliases them; new code imports \`denext\`).
 - **No \`package.json\`/npm** — a \`deno.json\` with URL/\`jsr:\`/\`npm:\` imports; run with
-  \`deno task dev|build|start\`.
+  \`denext task dev|build|start\` (the \`denext\` command brings its own Deno; \`deno task\`
+  works too).
 - Server-only helpers (\`cookies\`, \`headers\`, \`revalidatePath\`) come from
   \`denext/server\`; client-only from \`denext/client\`.
 - File conventions are **the same as the Next.js App Router** (\`app/page.tsx\`,

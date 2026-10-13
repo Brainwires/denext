@@ -357,7 +357,7 @@ await run(HAS_MIGRATIONS ? "prisma migrate deploy" : "prisma db push", [
   ...(HAS_MIGRATIONS ? ["migrate", "deploy"] : ["db", "push", "--skip-generate", "--accept-data-loss"]),
 ], { DATABASE_URL });
 
-console.log("\\n✓ Prisma setup complete — run \`deno task build\` (or dev).");
+console.log("\\n✓ Prisma setup complete — run \`denext task build\` (or dev).");
 `;
   await mfs.mkdir(join(dir, "scripts"), { recursive: true });
   await mfs.writeTextFile(join(dir, SETUP_SCRIPT), script);

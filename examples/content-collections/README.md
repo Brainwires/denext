@@ -10,7 +10,7 @@ every entry, builds a store and **generates the types** — live under `denext d
 are server-side, so the whole blog ships **zero client JavaScript**.
 
 ```sh
-deno task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry
+denext task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry
 ```
 
 The drafts show the schema doing work: `draft: z.boolean().default(false)` is filled in when a

@@ -8,9 +8,9 @@ of all at once — full 6/6 Astro directive parity, plus resumability Astro lack
 
 ```sh
 cd examples/islands
-deno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)
+denext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)
 # or a production build:
-deno task build && deno task start
+denext task build && denext task start
 ```
 
 ## The directives

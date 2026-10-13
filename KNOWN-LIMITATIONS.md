@@ -29,6 +29,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ## denext features: scope
 
+### denext's Deno toolchain
+
+- **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
+  Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
+  Vitest/Jest compatibility in `deno test`.
+- **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
+  `denext task` is what puts the toolchain inside a task.
+- **Coverage from a Vitest run doesn't merge with a plain run's.** The Vitest layer changes the
+  code a module emits, so `deno coverage` under-reports a module whose profiles from both kinds
+  of run it merges; report a Vitest run's coverage on its own.
+
 ### Islands, resumability and Cache Components
 
 - **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate

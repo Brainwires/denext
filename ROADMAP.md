@@ -5,8 +5,15 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.4.x** ships continuously from `development` as patch releases; what each one added is in
-> the changelog.
+> denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
+> and minor releases from there; what each one added is in the changelog.
+
+## Deno toolchain
+
+- **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
+  replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
+- **esbuild in the toolchain download** (`2.9.7-denext.17`): carry esbuild 0.25.5 in the same
+  verified download, so a build fetches no `npm:esbuild`.
 
 ## Deno Desktop
 

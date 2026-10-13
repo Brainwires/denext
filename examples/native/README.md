@@ -3,7 +3,7 @@
 One [denext](../../) app packaged three ways: the **web**, a **native desktop
 app** via [`deno desktop`](https://docs.deno.com/runtime/desktop/), and **iOS /
 Android** via [Capacitor](https://capacitorjs.com). All three serve the same
-static export (`deno task export` → `out/`).
+static export (`denext task export` → `out/`).
 
 ## The app
 
@@ -29,18 +29,18 @@ context), `app/cat.tsx` (the cat), `public/styles.css`.
 ## Web
 
 ```sh
-deno task dev      # → http://localhost:3000
-deno task start    # serve the production build
+denext task dev      # → http://localhost:3000
+denext task start    # serve the production build
 ```
 
-## Desktop (`deno desktop`, Deno 2.9+)
+## Desktop (`deno desktop`)
 
 `desktop.ts` is a `Deno.serve()` handler over the static export; `deno desktop`
 wraps it in a native window (native WebView, single binary).
 
 ```sh
-deno task desktop           # export + open the app in a native window
-deno task desktop:package   # export + build a distributable (./dist/)
+denext task desktop           # export + open the app in a native window
+denext task desktop:package   # export + build a distributable (./dist/)
 ```
 
 The app name / bundle id live in the `desktop` block of `deno.json`.
@@ -54,10 +54,10 @@ shells. Its CLI and platforms are Node packages, so install them once:
 
 ```sh
 deno install                       # installs the @capacitor/* devDependencies
-deno task mobile:sync              # export + copy web assets into the native projects
+denext task mobile:sync              # export + copy web assets into the native projects
 deno run -A --node-modules-dir npm:@capacitor/cli add ios        # first time only
-deno task mobile:ios               # open in Xcode   (needs Xcode)
-deno task mobile:android           # open in Android Studio (needs Android Studio)
+denext task mobile:ios               # open in Xcode   (needs Xcode)
+denext task mobile:android           # open in Android Studio (needs Android Studio)
 ```
 
 ## Releasing (fastlane)

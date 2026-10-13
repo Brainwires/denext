@@ -7,7 +7,7 @@ the browser straight to the store with progress; the server signs them, then
 checks size, type and the first bytes of what arrived.
 
 ```sh
-deno task dev          # http://localhost:3000 — files land in ./.storage
+denext task dev          # http://localhost:3000 — files land in ./.storage
 ```
 
 ## On S3, Cloudflare R2 or MinIO
@@ -18,7 +18,7 @@ is a key prefix in it):
 ```sh
 S3_BUCKET=my-bucket S3_REGION=us-east-1 \
 AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… \
-DENEXT_STORAGE_SECRET=$(openssl rand -base64 32) deno task dev
+DENEXT_STORAGE_SECRET=$(openssl rand -base64 32) denext task dev
 ```
 
 Add `S3_ENDPOINT=http://127.0.0.1:9000` for MinIO, or

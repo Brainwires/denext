@@ -23,7 +23,7 @@ Add it to `deno.json`'s `imports` next to your other `denext/*` entries:
 ```json
 {
   "imports": {
-    "denext/navigation": "jsr:@denext/denext@^2.11.0/navigation"
+    "denext/navigation": "jsr:@denext/denext@^4.0.0-rc.1/navigation"
   }
 }
 ```

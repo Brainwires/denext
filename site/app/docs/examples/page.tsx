@@ -15,7 +15,7 @@ export const metadata = {
 
 const RUN = `git clone https://github.com/Brainwires/denext
 cd denext/examples/hello
-deno task dev          # http://localhost:3000`;
+denext task dev        # http://localhost:3000`;
 
 const TAG_LEGEND: [string, string][] = [
   ["app-router", "An app/ directory — the App Router, the default."],
@@ -66,7 +66,10 @@ export default function Examples() {
         Every example's <code>deno.json</code> defines the usual <code>dev</code> /{" "}
         <code>build</code> / <code>start</code>{" "}
         tasks; a few add their own (database setup, a native package step, an export) — see each
-        README.
+        README. <code>denext task</code>{" "}
+        runs them on denext&apos;s Deno toolchain; with Deno installed, <code>deno task dev</code>
+        {" "}
+        runs the same task.
       </p>
 
       <h2 id="all">All examples</h2>

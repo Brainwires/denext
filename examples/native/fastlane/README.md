@@ -17,7 +17,7 @@ Capacitor):
 ```sh
 cd ..                                           # examples/native
 deno install                                    # @capacitor/* devDependencies
-deno task mobile:sync                            # export + create web assets
+denext task mobile:sync                            # export + create web assets
 deno run -A --node-modules-dir npm:@capacitor/cli add ios
 deno run -A --node-modules-dir npm:@capacitor/cli add android
 ```

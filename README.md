@@ -221,7 +221,8 @@ run history. → [Jobs](https://denext.dev/docs/jobs)
 
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
-actions, request ids, instrumentation, a Dockerfile generator and recipes for Docker, Deno Deploy
+actions, request ids, per-address rate limits that key on the client address your proxy sends
+(`rateLimitHeader`), instrumentation, a Dockerfile generator and recipes for Docker, Deno Deploy
 and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
 [Security](https://denext.dev/docs/security) ·
 [Production checklist](https://denext.dev/docs/production-checklist)
@@ -236,7 +237,10 @@ content collections, the backend and an Effect bridge. A project adds its own CL
 One CLI covers the lifecycle: `dev` with per-module HMR and Fast Refresh, `build`, `export`,
 `start`, `generate` (routes, components, actions, jobs, tests, Docker), `test`, `lint`, `fmt`,
 `check`, `add`, `plugin`, `patch` (patch-package for npm dependencies and for denext itself),
-`desktop`, `mobile`, `ota` and `completions`. A dev-time overlay reports server errors and type
+`desktop`, `mobile`, `ota`, `job` and `completions`. Every other Deno verb works through it too
+(`denext compile`, `denext run`, `denext x`, …), and `denext task` runs a `deno.json` task, all on
+denext's own Deno build (`Deno.SQL`, Vitest/Jest compatibility in `deno test`), downloaded and
+SHA-256-verified on first need. → [Toolchain](https://denext.dev/docs/toolchain) A dev-time overlay reports server errors and type
 errors; the DevTools panel shows the live component tree and why a component re-rendered.
 → [CLI reference](https://denext.dev/docs/cli) · [DevTools](https://denext.dev/docs/devtools)
 
@@ -246,7 +250,7 @@ errors; the DevTools panel shows the live component tree and why a component re-
 self-time and heap growth for a route in headless Chromium, with a budget gate for CI.
 `denext/testing` drives the whole app the way a JavaScript-disabled browser would (cookie jar, form
 submit), renders components with real hooks and events, and probes every route for a well-formed
-document. → [Testing](https://denext.dev/docs/testing) · [Profiling](https://denext.dev/docs/profile)
+document; a test file that imports `vitest` gets fake timers and `vi.mock` under `denext test`. → [Testing](https://denext.dev/docs/testing) · [Profiling](https://denext.dev/docs/profile)
 · [Doctor & audit](https://denext.dev/docs/doctor-audit)
 
 **A GUI over the project.** `denext ui` serves a loopback project dashboard: a schema-driven,
@@ -334,7 +338,7 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
 2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno.
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
-   scaffolded `deno task dev` / `build` / `start` already use it.
+   scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version.
 
 A project is a `deno.json` with the JSX settings, the import map and the lint plugin — no
 `node_modules`, no lockfile churn:
@@ -347,12 +351,12 @@ A project is a `deno.json` with the JSX settings, the import map and the lint pl
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^3",
-    "denext/jsx-runtime": "jsr:@denext/denext@^3/jsx-runtime",
-    "denext/server": "jsr:@denext/denext@^3/server",
-    "denext/client": "jsr:@denext/denext@^3/client"
+    "denext": "jsr:@denext/denext@^4.0.0-rc.1",
+    "denext/jsx-runtime": "jsr:@denext/denext@^4.0.0-rc.1/jsx-runtime",
+    "denext/server": "jsr:@denext/denext@^4.0.0-rc.1/server",
+    "denext/client": "jsr:@denext/denext@^4.0.0-rc.1/client"
   },
-  "lint": { "plugins": ["jsr:@denext/denext/lint-plugin"] }
+  "lint": { "plugins": ["jsr:@denext/denext@^4.0.0-rc.1/lint-plugin"] }
 }
 ```
 

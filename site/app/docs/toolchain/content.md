@@ -103,7 +103,9 @@ failed download, the command prints one warning saying why and continues on stoc
 that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
 directory) stays on the Deno that launched it without a warning: that is the least-privilege
 `start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
---allow-write=.denext …`), so production `start` runs on whichever `deno` started it. Run `start`
+--allow-write=.denext …`), so production `start` runs on whichever `deno` started it. That
+`start` spawns no child process (the build already wrote what it serves), so it needs no
+`--allow-run` either. Run `start`
 with `-A` (or add `--allow-run` and write access to the cache) to serve on the toolchain, or
 start the server with `denext deno run …`. `denext toolchain status` says which Deno a command
 runs on. Only `denext toolchain install` fails when the toolchain can't be had, since installing
@@ -156,7 +158,7 @@ instead, or write the step itself as a denext verb:
 {
   "tasks": {
     // denext's own test verb (`deno test -A` on the toolchain); what `denext create` scaffolds
-    "test": "deno run -A jsr:@denext/denext@^3/cli test",
+    "test": "deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli test",
     // or run any deno subcommand on it, arguments verbatim
     "test:raw": "denext deno test -A"
   }
@@ -207,3 +209,27 @@ and `link` replaces it (commands switch to the pinned build either way).
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.
+
+## Notes: how denext's Deno build is kept current
+
+**Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
+Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
+published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
+review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
+read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
+skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update. Each new Deno
+release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
+replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
+
+**Support across denext releases.** The patches are carried forward from release to release. Each
+denext release pins exactly one build (a SHA-256 per target, checked on download), so a project
+always runs the build its denext version was tested with, and upgrading denext moves the build with
+it. `DENEXT_DENO=stock` always works: what needs the build (`Deno.SQL`, Vitest/Jest compatibility,
+the bundled esbuild) falls back or says why it can't.
+
+**Bootstrapping.** The first command that runs project code — or the installer, ahead of time —
+downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
+against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
+the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
+replaced (`denext toolchain link` opts in), and a failed download falls back to stock Deno with one
+warning. From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.

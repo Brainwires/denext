@@ -40,7 +40,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -54,7 +54,7 @@
       ],
       "hasReadme": true,
       "category": "compat",
-      "run": "deno task example:animation          # build once, serve\ndeno task example:animation --dev    # rebuild on each request",
+      "run": "denext task example:animation          # build once, serve\ndenext task example:animation --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -68,7 +68,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev      # http://localhost:3000\n# or, production:\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  deno task build && deno task start",
+      "run": "denext task dev      # http://localhost:3000\n# or, production:\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  denext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -82,7 +82,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev          # http://localhost:3000 — files land in ./.storage",
+      "run": "denext task dev          # http://localhost:3000 — files land in ./.storage",
       "runFrom": "example"
     },
     {
@@ -95,7 +95,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task dev      # http://localhost:3000\n# or\ndeno task build && deno task start",
+      "run": "denext task dev      # http://localhost:3000\n# or\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -108,7 +108,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (dev always renders fresh)\ndeno task build && deno task start   # ISR + data cache active",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000  (dev always renders fresh)\ndenext task build && denext task start   # ISR + data cache active",
       "runFrom": "example"
     },
     {
@@ -135,7 +135,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "cd examples/clerk && deno install\ndeno task dev\ndeno task build && deno task start",
+      "run": "cd examples/clerk && deno install\ndenext task dev\ndenext task build && denext task start",
       "runFrom": "root"
     },
     {
@@ -149,7 +149,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task example:concurrency          # build once, serve\ndeno task example:concurrency --dev    # rebuild on each request",
+      "run": "denext task example:concurrency          # build once, serve\ndenext task example:concurrency --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -163,7 +163,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
+      "run": "denext task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
       "runFrom": "example"
     },
     {
@@ -177,7 +177,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndeno task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndeno task test:window        # package, launch and assert every check (exits 1 on a failure)\ndeno task drive start        # launch the last build in drive mode (the manual checks, scripted)",
+      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)",
       "runFrom": "example"
     },
     {
@@ -190,7 +190,7 @@
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "deno task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndeno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "run": "denext task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndenext task dev        # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
@@ -219,7 +219,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev     # http://localhost:3000",
+      "run": "denext task dev     # http://localhost:3000",
       "runFrom": "example"
     },
     {
@@ -234,7 +234,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's\ndeno task dev                    # the app in a browser: http://localhost:3000\ndeno task export                 # static export → out/ (Capacitor's webDir)\ndeno task cap:sync               # export + `cap sync ios`\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check              # an unsigned compile check\ndeno task mobile:dev             # live reload on a phone: the shell loads `denext dev`",
+      "run": "npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's\ndenext task dev                    # the app in a browser: http://localhost:3000\ndenext task export                 # static export → out/ (Capacitor's webDir)\ndenext task cap:sync               # export + `cap sync ios`\nDENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Debug build (xcodebuild)\ndenext task ios:check              # an unsigned compile check\ndenext task mobile:dev             # live reload on a phone: the shell loads `denext dev`",
       "runFrom": "example"
     },
     {
@@ -247,7 +247,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (runtime <link> fallback)\ndeno task build && deno task start   # fonts self-hosted from /_denext/fonts",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000  (runtime <link> fallback)\ndenext task build && denext task start   # fonts self-hosted from /_denext/fonts",
       "runFrom": "example"
     },
     {
@@ -261,7 +261,7 @@
       ],
       "hasReadme": true,
       "category": "compat",
-      "run": "deno task example:game          # build once, serve → http://localhost:3005\ndeno task example:game --dev    # rebuild on each request",
+      "run": "denext task example:game          # build once, serve → http://localhost:3005\ndenext task example:game --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -275,7 +275,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev          # http://localhost:3000 — GraphiQL at /graphql",
+      "run": "denext task dev          # http://localhost:3000 — GraphiQL at /graphql",
       "runFrom": "example"
     },
     {
@@ -288,7 +288,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -302,7 +302,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev      # http://localhost:3000\ndeno task build    # static/prod build (emits the runtime into the output)\ndeno task start    # serve the build",
+      "run": "denext task dev      # http://localhost:3000\ndenext task build    # static/prod build (emits the runtime into the output)\ndenext task start    # serve the build",
       "runFrom": "example"
     },
     {
@@ -315,7 +315,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "# from this directory\ndeno task dev      # http://localhost:3000\ndeno task build && deno task start",
+      "run": "# from this directory\ndenext task dev      # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -328,7 +328,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "deno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "run": "denext task dev        # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
@@ -341,7 +341,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "cd examples/islands\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "run": "cd examples/islands\ndenext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndenext task build && denext task start",
       "runFrom": "root"
     },
     {
@@ -354,7 +354,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task dev     # or: deno task build && deno task start",
+      "run": "denext task dev     # or: denext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -368,13 +368,13 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "npm install            # the Capacitor packages and plugins (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task build        # production build → .denext/\ndeno task export       # static export → out/ (Capacitor's webDir), stamped for OTA\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\ndeno task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Release build (xcodebuild)",
+      "run": "npm install            # the Capacitor packages and plugins (package.json)\ndenext task dev          # the UI in a browser: http://localhost:3000\ndenext task build        # production build → .denext/\ndenext task export       # static export → out/ (Capacitor's webDir), stamped for OTA\ndenext task cap:sync     # export + `cap sync` into ios/ and android/\ndenext task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)\nDENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Release build (xcodebuild)",
       "runFrom": "example"
     },
     {
       "name": "native",
       "title": "denext native example — desktop + mobile",
-      "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (deno task export → out/).",
+      "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (denext task export → out/).",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/native",
       "tags": [
         "desktop",
@@ -383,7 +383,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "deno task dev      # → http://localhost:3000\ndeno task start    # serve the production build",
+      "run": "denext task dev      # → http://localhost:3000\ndenext task start    # serve the production build",
       "runFrom": "example"
     },
     {
@@ -397,7 +397,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "npm install            # the Capacitor packages (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check    # an unsigned compile check\ndeno task android      # android/app/build/outputs/apk/debug/app-debug.apk",
+      "run": "npm install            # the Capacitor packages (package.json)\ndenext task dev          # the UI in a browser: http://localhost:3000\ndenext task cap:sync     # export + `cap sync` into ios/ and android/\nDENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Debug build (xcodebuild)\ndenext task ios:check    # an unsigned compile check\ndenext task android      # android/app/build/outputs/apk/debug/app-debug.apk",
       "runFrom": "example"
     },
     {
@@ -411,7 +411,7 @@
       ],
       "hasReadme": true,
       "category": "compat",
-      "run": "deno task example:next-compat          # build once, serve (production-like)\ndeno task example:next-compat --dev    # rebuild on each request",
+      "run": "denext task example:next-compat          # build once, serve (production-like)\ndenext task example:next-compat --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -436,7 +436,7 @@
       ],
       "hasReadme": true,
       "category": "compat",
-      "run": "deno task example:next-compat-recharts          # build once, serve (prod-like)\ndeno task example:next-compat-recharts --dev    # rebuild on each request",
+      "run": "denext task example:next-compat-recharts          # build once, serve (prod-like)\ndenext task example:next-compat-recharts --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -449,7 +449,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "deno task dev      # http://localhost:3000\n# or, production:\ndeno task build && deno task start",
+      "run": "denext task dev      # http://localhost:3000\n# or, production:\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -464,7 +464,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json",
+      "run": "denext task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json",
       "runFrom": "example"
     },
     {
@@ -479,7 +479,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -493,7 +493,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "cd examples/plugin-aliases\ndeno task dev            # http://localhost:3006",
+      "run": "cd examples/plugin-aliases\ndenext task dev            # http://localhost:3006",
       "runFrom": "root"
     },
     {
@@ -506,7 +506,7 @@
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "cd examples/postgres-load\ncp .env.example .env         # DATABASE_URL + POOL_SIZE\n\ndeno task db:up              # start Postgres in Docker (or point .env anywhere)\n                             # it publishes 127.0.0.1:5432 — this machine only\ndeno task build              # build the app\ndeno task start              # serve on http://localhost:3005",
+      "run": "cd examples/postgres-load\ncp .env.example .env         # DATABASE_URL + POOL_SIZE\n\ndenext task db:up              # start Postgres in Docker (or point .env anywhere)\n                             # it publishes 127.0.0.1:5432 — this machine only\ndenext task build              # build the app\ndenext task start              # serve on http://localhost:3005",
       "runFrom": "root"
     },
     {
@@ -519,7 +519,7 @@
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "deno task setup   # one-time: bundle the shim, install, prisma generate + db push\ndeno task dev      # http://localhost:3000   (or: deno task build && deno task start)",
+      "run": "denext task setup   # one-time: bundle the shim, install, prisma generate + db push\ndenext task dev      # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
@@ -533,7 +533,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "deno task dev          # http://localhost:3000",
+      "run": "denext task dev          # http://localhost:3000",
       "runFrom": "example"
     },
     {
@@ -546,7 +546,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "cd examples/resumability\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "run": "cd examples/resumability\ndenext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndenext task build && denext task start",
       "runFrom": "root"
     },
     {
@@ -561,7 +561,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "npm install          # react-native-web (the app's own dependency; denext ships none)\ndeno task dev        # in the browser\ndeno task desktop    # export + open in a native window (Deno 2.9+)\ndeno task desktop:dev    # live reload inside the window",
+      "run": "npm install            # react-native-web (the app's own dependency; denext ships none)\ndenext task dev        # in the browser\ndenext task desktop    # export + open in a native window\ndenext task desktop:dev  # live reload inside the window",
       "runFrom": "example"
     },
     {
@@ -572,7 +572,7 @@
       "tags": [],
       "hasReadme": true,
       "category": "native",
-      "run": "(cd web && deno task dev)",
+      "run": "(cd web && denext task dev)",
       "runFrom": "example"
     },
     {
@@ -585,7 +585,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "deno task dev      # dev server + live reload\ndeno task build    # production build → .denext/\ndeno task start    # serve the production build\ndeno task export   # static export → out/  (what deno desktop packages)",
+      "run": "denext task dev      # dev server + live reload\ndenext task build    # production build → .denext/\ndenext task start    # serve the production build\ndenext task export   # static export → out/  (what deno desktop packages)",
       "runFrom": "example"
     },
     {
@@ -598,7 +598,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "run": "# from this directory\ndenext task dev             # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -611,7 +611,7 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "deno task dev      # → http://localhost:3000  (Tailwind recompiles on change)\ndeno task build    # compile Tailwind + bundle\ndeno task start    # serve the production build",
+      "run": "denext task dev      # → http://localhost:3000  (Tailwind recompiles on change)\ndenext task build    # compile Tailwind + bundle\ndenext task start    # serve the production build",
       "runFrom": "example"
     },
     {
@@ -625,7 +625,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "deno task install   # installs @tanstack/react-router into node_modules (once)\ndeno task dev       # http://localhost:3000\ndeno task build && deno task start",
+      "run": "denext task install   # installs @tanstack/react-router into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -639,7 +639,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task example:transitions          # build once, serve\ndeno task example:transitions --dev    # rebuild on each request",
+      "run": "denext task example:transitions          # build once, serve\ndenext task example:transitions --dev    # rebuild on each request",
       "runFrom": "root"
     },
     {
@@ -653,7 +653,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "deno task dev     # or: deno task build && deno task start",
+      "run": "denext task dev     # or: denext task build && denext task start",
       "runFrom": "example"
     }
   ]

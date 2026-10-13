@@ -118,7 +118,7 @@ Deno.test("denext fallow init prints what it wrote; an unknown action exits 1", 
   const out = cap.logs.join("\n");
   assertStringIncludes(out, "+ fallow.toml");
   assertStringIncludes(out, "already present: fallow.toml");
-  assertStringIncludes(out, "deno task hooks:install");
+  assertStringIncludes(out, "denext task hooks:install");
   assert(exit.calls.includes(1));
   assertStringIncludes(cap.errs.join("\n"), 'unknown action "setup"');
   assertStringIncludes(fallowCommand.usage ?? "", `npm:fallow@${FALLOW_VERSION}`);

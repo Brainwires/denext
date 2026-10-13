@@ -6,8 +6,8 @@ project**, both running on denext's single React. Each is server-rendered to its
 initial state and animates after hydration.
 
 ```sh
-deno task example:animation          # build once, serve
-deno task example:animation --dev    # rebuild on each request
+denext task example:animation          # build once, serve
+denext task example:animation --dev    # rebuild on each request
 ```
 
 Open <http://localhost:3003> — the motion card animates in on load (hover it to

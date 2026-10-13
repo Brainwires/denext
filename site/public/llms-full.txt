@@ -790,6 +790,11 @@ await screen.fireEvent.click(screen.getByRole("button"));
 // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange.
 ```
 
+A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
+`vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
+Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
+`deno test` also runs. Keep a Vitest run's coverage in its own report.
+
 **Conformance-probing every route (CI gate):**
 
 ```ts
@@ -896,7 +901,7 @@ denext ships tooling so agents get it right the first time:
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
-  page — props, named hooks, why a component re-rendered; these need `deno task dev`
+  page — props, named hooks, why a component re-rendered; these need `denext task dev`
   AND the app open in a browser, and each answer states how stale its snapshot is. The
   page starts pushing only once one of them has been called, so the FIRST call may say
   "posted nothing yet" — call it again after the page's next commit, or start dev with

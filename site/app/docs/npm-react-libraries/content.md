@@ -72,13 +72,13 @@ other.
     "skipLibCheck": true
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^2",
-    "denext/": "jsr:@denext/denext@^2/",
-    "react": "jsr:@denext/denext@^2/react",
-    "react/jsx-runtime": "jsr:@denext/denext@^2/react/jsx-runtime",
-    "react-dom": "jsr:@denext/denext@^2/react-dom",
-    "react-dom/client": "jsr:@denext/denext@^2/react-dom/client",
-    "react-is": "jsr:@denext/denext@^2/react-is"
+    "denext": "jsr:@denext/denext@^4.0.0-rc.1",
+    "denext/": "jsr:@denext/denext@^4.0.0-rc.1/",
+    "react": "jsr:@denext/denext@^4.0.0-rc.1/react",
+    "react/jsx-runtime": "jsr:@denext/denext@^4.0.0-rc.1/react/jsx-runtime",
+    "react-dom": "jsr:@denext/denext@^4.0.0-rc.1/react-dom",
+    "react-dom/client": "jsr:@denext/denext@^4.0.0-rc.1/react-dom/client",
+    "react-is": "jsr:@denext/denext@^4.0.0-rc.1/react-is"
   }
 }
 ```
@@ -101,8 +101,8 @@ export default {
 Then install and run as usual:
 
 ```sh
-deno install          # populates node_modules from package.json
-deno task dev
+denext install        # deno install: populates node_modules from package.json
+denext task dev
 ```
 
 `denext add npm:zod` / `denext remove` / `denext update` wrap the matching

@@ -247,6 +247,10 @@ Where `@denext/backend` deliberately departs from Supabase. See
   default (`rest.exactCount`).
 - **There is no service-role key.** The unscoped connection is `db.service()` (and a bucket's
   `{ service: true }`) in server code; nothing the browser holds can bypass the policies.
+- **A request without the rate-limit header is still limited.** `rateLimitHeader` is Supabase
+  Auth's `GOTRUE_RATE_LIMIT_HEADER`, but where Supabase applies no limit to a request that lacks
+  the header, denext keys it on the trusted hop or the socket peer (with one warning), so a
+  client that reaches the server directly can't skip every limit by leaving the header out.
 
 ## Security posture — safe defaults
 
@@ -292,12 +296,13 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
 - **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
   `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
   one IP key, so the limit is effectively per account (an attacker can lock an account
-  they know the email of for one window); set the flag when a proxy fronts the app.
+  they know the email of for one window); set the flag when a proxy fronts the app, or name
+  the proxy's client-address header with `rateLimitHeader`.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
   process (plugin teardown is skipped on a forced exit).
 - **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
-  generated `start` task runs least-privilege.
+  generated `start` task runs least-privilege and spawns nothing (no `--allow-run`).
 - **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**
   at render time — supply a local `fonts` option, or set `offline: true` on the
   `ImageResponse` to refuse the fetch (it raises a clear error instead of

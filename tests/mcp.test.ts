@@ -364,7 +364,7 @@ Deno.test("runTool: dev_logs guides the user when no dev server is running", asy
   const dir = await Deno.makeTempDir({ prefix: "denext-nodev-" });
   try {
     const res = await runTool("denext_dev_logs", { dir });
-    assertStringIncludes(res.content[0].text, "deno task dev");
+    assertStringIncludes(res.content[0].text, "denext task dev");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

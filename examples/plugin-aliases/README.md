@@ -14,14 +14,14 @@ target route under the alias path (`plugin.ts`).
 
 ```sh
 cd examples/plugin-aliases
-deno task dev            # http://localhost:3006
+denext task dev            # http://localhost:3006
 ```
 
 - <http://localhost:3006/> and <http://localhost:3006/home> render the same
   page.
 - <http://localhost:3006/about> and <http://localhost:3006/about-us> too.
 
-`deno task build` / `deno task start` and `deno task export` (static) all honor
+`denext task build` / `denext task start` and `denext task export` (static) all honor
 the aliases — the synthesizer runs in every pipeline, and each alias is an
 ordinary page route the core renders.
 

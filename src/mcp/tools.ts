@@ -178,7 +178,7 @@ async function devLogs(dir: string, kind?: string, limit?: number): Promise<stri
   const state = await fetchDevState(dir, { kind, limit });
   if (!state) {
     return `No running dev server found for ${dir} (looked for .denext/dev.json). ` +
-      "Start it with `deno task dev`, then reload the app in a browser to capture events.";
+      "Start it with `denext task dev`, then reload the app in a browser to capture events.";
   }
   if (state.events.length === 0) {
     return `The dev server is running but has recorded no ${kind ?? ""} events yet.`.replace(
@@ -313,7 +313,7 @@ export const TOOLS: readonly Tool[] = [
     description:
       "Read the RUNNING dev server's recent events — server errors (with codeframes), server + " +
       "browser console, completed requests (method/path/status/ms), and HMR events. Use it to " +
-      "see what actually happened at runtime. Requires `deno task dev` to be running.",
+      "see what actually happened at runtime. Requires `denext task dev` to be running.",
     inputSchema: {
       type: "object",
       properties: {

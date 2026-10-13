@@ -29,7 +29,7 @@ Everything the typed-API surface ships, in one small app:
 ## Run it
 
 ```sh
-deno task dev     # or: deno task build && deno task start
+denext task dev     # or: denext task build && denext task start
 ```
 
 Open two tabs. Add or toggle a todo in one: the list refetches (tag watch), the
@@ -55,4 +55,4 @@ module's TYPE and registers the schema
 `denext.config.ts` wires [`@denext/openapi`](../../packages/openapi): the same `defineApi`
 definitions serve `GET /openapi.json` (an OpenAPI 3.1 document — every schema fully described,
 because `lib/schema.ts` implements Standard JSON Schema) and a server-rendered reference at
-`GET /docs`; `deno task build` writes `.denext/openapi.json`.
+`GET /docs`; `denext task build` writes `.denext/openapi.json`.

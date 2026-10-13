@@ -1253,7 +1253,7 @@ async function appFrameworkRoot(
     console.warn(
       `denext: this app's denext is ${version} (${denext}), but denext ${running.version} is ` +
         `building it, so its client bundles run ${running.version}'s runtime. Run the CLI the ` +
-        `app pins (\`deno task build\`) to build with ${version}.`,
+        `app pins (\`denext task build\`) to build with ${version}.`,
     );
   }
   return root;

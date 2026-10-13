@@ -664,6 +664,8 @@ output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`.
 button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
 it refuses any name the project does not declare, passes it as an argv element rather than
 through a shell, and ties the child to the stream so closing the page takes the task with it.
+A task runs exactly as `denext task <name>` would: on [denext's Deno toolchain](/docs/toolchain),
+with that `deno` first on the task's `PATH`.
 
 Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
 registered with `defineJob`; these are `deno.json` scripts.

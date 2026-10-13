@@ -162,8 +162,7 @@ file into the output directory.
   import the plugin).
 - `@denext/graphql/command` — the CLI verb builder.
 
-Requires the denext that ships `tapChannel` in `@denext/denext/plugin-kit` (the release after
-2.1.0-rc.1).
+Requires `@denext/denext@^4.0.0-rc.1` (pinned in this package's `deno.json`).
 
 ## License
 

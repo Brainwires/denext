@@ -279,14 +279,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 1. **Start from a clean, pushed `development`** (`git status` clean; all work
    lands on `development` — never branch off it).
 2. **Run the heavy CI jobs on that commit.** A push to `development` runs only
-   ci.yml's fast jobs; `integration`, `next-compat` and `coverage` run on pull
-   requests, `main` and a manual dispatch. Dispatch it and wait:
+   ci.yml's fast jobs; `integration`, `next-compat`, `coverage` and
+   `backend-integration` (the `@denext/backend` suites against a real Postgres and MinIO,
+   as service containers) run on pull requests, `main` and a manual dispatch. Dispatch it
+   and wait:
    `gh workflow run ci.yml --ref development`, then
    `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
    The release script checks this itself (`scripts/release-ci.ts`): it refuses
    to start unless the newest ci.yml run on HEAD that ran those jobs has
-   `check`, `integration`, `next-compat`, `coverage`, `ios-export-router` and
-   `windows-resolve` green (it needs `gh`, logged in).
+   `check`, `integration`, `next-compat`, `coverage`, `backend-integration`,
+   `ios-export-router` and `windows-resolve` green (it needs `gh`, logged in).
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every

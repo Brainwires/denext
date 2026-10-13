@@ -82,7 +82,7 @@ Each line: what to set → where it is documented. Config keys go in
   lives at `.denext/cache.db` and job history at `.denext/jobs.db`. Without
   the grant the cache **silently falls back to memory** (one warning line at
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
-  `deno task start` already grants it. →
+  `denext task start` already grants it. →
   [Health & readiness](/docs/deploy#13-health--readiness)
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
@@ -206,7 +206,7 @@ PORT=3000                                        # every PaaS injects one; --por
 ```
 
 ```sh
-deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^2/cli start .
+deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0-rc.1/cli start .
 ```
 
 And the config keys that belong in `denext.config.ts` rather than the

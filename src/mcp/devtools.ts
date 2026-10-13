@@ -8,7 +8,7 @@
 //
 // Three things can be missing, and they need three DIFFERENT answers: there is no dev
 // server; there is one but no page has pushed a tree; there is a tree but no component by
-// that name. The first is fixed by `deno task dev`, the second by opening the app in a
+// that name. The first is fixed by `denext task dev`, the second by opening the app in a
 // browser, the third by naming a component that exists — so the failure strings below are
 // deliberately distinct, and the third lists what IS there.
 
@@ -49,14 +49,14 @@ export interface TreeOptions {
 /** The two "nothing to show" answers, each naming the ONE thing that fixes it. */
 export function missText(reason: DevInspectMiss, dir: string): string {
   if (reason === "no-dev-server") {
-    return `no dev server running (\`deno task dev\`) for ${dir} — the DevTools bridge reads ` +
+    return `no dev server running (\`denext task dev\`) for ${dir} — the DevTools bridge reads ` +
       "the component tree from a RUNNING dev server (it looked for .denext/dev.json).";
   }
   return "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted " +
     "nothing yet. The dev server is running, but the tree is pushed from the page, and the " +
     "page only starts pushing once a read like this one has happened (it arms on the first " +
     "call). So: load a route in a browser, interact with it (or reload), and ask again. " +
-    "`DENEXT_DEV_INSPECT=1 deno task dev` arms it from the start.";
+    "`DENEXT_DEV_INSPECT=1 denext task dev` arms it from the start.";
 }
 
 /** `snapshot N.Ns old · <url>`, plus a refresh hint once the tree is stale. */
@@ -390,7 +390,8 @@ const PAGE_ARGS = {
 } as const;
 
 /** How every bridge tool's description ends — every precondition, stated every time. */
-const NEEDS = "Requires `deno task dev` to be running AND the app open in a browser (the tree is " +
+const NEEDS =
+  "Requires `denext task dev` to be running AND the app open in a browser (the tree is " +
   "pushed from the page, so it is a snapshot, and the answer says how old it is). The page " +
   "starts pushing only once one of these tools has been called, so the FIRST call on a page may " +
   "answer 'posted nothing yet' — call it again after the page's next commit.";

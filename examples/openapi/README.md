@@ -2,10 +2,10 @@
 
 `@denext/openapi` in one app: a tiny pet store defined with `defineApi` + **Zod**, which the
 plugin turns — with no extra annotation — into an **OpenAPI 3.1** document at `/openapi.json`, an
-interactive **Swagger UI** at `/docs`, and an `openapi.json` file written by `deno task build`.
+interactive **Swagger UI** at `/docs`, and an `openapi.json` file written by `denext task build`.
 
 ```sh
-deno task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json
+denext task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json
 ```
 
 ```sh
@@ -29,7 +29,7 @@ curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
 ## Types for a consumer outside this app
 
 ```sh
-deno task openapi:types    # writes lib/api-types.gen.ts (committed; regenerate after changing an API)
+denext task openapi:types    # writes lib/api-types.gen.ts (committed; regenerate after changing an API)
 ```
 
 `lib/api-types.gen.ts` is what a **separate** frontend or script uses: openapi-typescript-style

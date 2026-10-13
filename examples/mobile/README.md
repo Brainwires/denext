@@ -9,19 +9,19 @@ Activity and over-the-air UI updates. Each section has a button that runs the
 capability and prints the result on screen.
 
 It is a template for your own app and a device test bed. Everything also runs in
-a desktop browser through `denext/mobile`'s web fallbacks (`deno task dev`), and
+a desktop browser through `denext/mobile`'s web fallbacks (`denext task dev`), and
 the native-only capabilities say `unsupported` there.
 
 ## Run it
 
 ```sh
 npm install            # the Capacitor packages and plugins (package.json)
-deno task dev          # the UI in a browser: http://localhost:3000
-deno task build        # production build → .denext/
-deno task export       # static export → out/ (Capacitor's webDir), stamped for OTA
-deno task cap:sync     # export + `cap sync` into ios/ and android/
-deno task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)
-DENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Release build (xcodebuild)
+denext task dev          # the UI in a browser: http://localhost:3000
+denext task build        # production build → .denext/
+denext task export       # static export → out/ (Capacitor's webDir), stamped for OTA
+denext task cap:sync     # export + `cap sync` into ios/ and android/
+denext task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)
+DENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Release build (xcodebuild)
 ```
 
 Android: open `android/` in Android Studio, or
@@ -43,7 +43,7 @@ from the repository; an app uses `denext` or
 npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2 @capacitor/android@8.5.2
 npm install --save-exact -D @capacitor/cli@8.5.2
 npx cap init "denext mobile" com.brainwires.denext.mobile --web-dir out
-deno task export
+denext task export
 npx cap add ios
 npx cap add android
 
@@ -131,7 +131,7 @@ $DENEXT mobile add live-activity --name Build --app-group group.com.brainwires.d
   xcrun devicectl device process launch --console --terminate-existing --device <udid> \
     --payload-url denextmobile://selftest com.brainwires.denext.mobile
   ```
-- `serve.ts`: `deno task ota:serve`, the OTA server for the device test.
+- `serve.ts`: `denext task ota:serve`, the OTA server for the device test.
 
 ## Testing each capability on a device
 
@@ -161,7 +161,7 @@ redirect goes to the app's scheme.
 
 1. Build and install the app (it embeds the public key of your key pair).
 2. Change something visible in `src/`, then on your machine:
-   `DENEXT_OTA_SIGNING_KEY="$(cat ota.key)" deno task ota:serve` (exports a
+   `DENEXT_OTA_SIGNING_KEY="$(cat ota.key)" denext task ota:serve` (exports a
    signed UI to `out/` and serves it on port 8787).
 3. In the app, put `http://<your machine's LAN IP>:8787` in the OTA section,
    press Check (`ready` with a version), then Apply: the app reloads into the

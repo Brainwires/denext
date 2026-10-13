@@ -422,7 +422,7 @@ Deno.test("hookStateText: every cell, one cell by index, and the unnamed-hooks n
 Deno.test("the three failure strings are distinct and each names its own fix", () => {
   const noServer = missText("no-dev-server", "/proj");
   const noSnapshot = missText("no-snapshot", "/proj");
-  assertStringIncludes(noServer, "no dev server running (`deno task dev`)");
+  assertStringIncludes(noServer, "no dev server running (`denext task dev`)");
   assertStringIncludes(
     noSnapshot,
     "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted nothing yet",
@@ -451,7 +451,7 @@ Deno.test("the three bridge tools are registered, grouped, and say what they nee
   for (const name of names) {
     const tool = TOOLS.find((t) => t.name === name);
     assert(tool, `${name} is registered`);
-    assertStringIncludes(tool!.description, "deno task dev");
+    assertStringIncludes(tool!.description, "denext task dev");
     assertStringIncludes(tool!.description, "open in a browser");
     assertEquals(tool!.inputSchema.type, "object");
   }
@@ -470,7 +470,7 @@ Deno.test({
     assertEquals(await fetchDevInspect(dir), { ok: false, reason: "no-dev-server" });
     const res = await runTool("denext_component_tree", { dir });
     assertEquals(res.isError, true);
-    assertStringIncludes(res.content[0].text, "no dev server running (`deno task dev`)");
+    assertStringIncludes(res.content[0].text, "no dev server running (`denext task dev`)");
     const why = await runTool("denext_why_render", { dir, component: "Counter" });
     assertEquals(why.isError, true);
     assertStringIncludes(why.content[0].text, "no dev server running");

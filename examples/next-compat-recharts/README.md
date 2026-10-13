@@ -13,8 +13,8 @@ renders end to end (axes, grid, line, tooltip).
 From the denext repo **root**:
 
 ```sh
-deno task example:next-compat-recharts          # build once, serve (prod-like)
-deno task example:next-compat-recharts --dev    # rebuild on each request
+denext task example:next-compat-recharts          # build once, serve (prod-like)
+denext task example:next-compat-recharts --dev    # rebuild on each request
 ```
 
 Then open <http://localhost:3001> and hover a data point for the tooltip.
