@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.0.0-rc.2] - 2026-10-13
+
 ### Changed
 
 - **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
@@ -13662,7 +13664,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.2...development
+[4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
 [3.4.16]: https://jsr.io/@denext/denext@3.4.16
 [3.4.15]: https://jsr.io/@denext/denext@3.4.15
