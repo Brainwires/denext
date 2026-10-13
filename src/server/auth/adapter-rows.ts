@@ -215,6 +215,7 @@ export const MFA_FACTOR_MAP: FieldMap<MfaFactorRecord> = {
 const MFA_FACTOR_PATCHABLE = {
   status: "status",
   friendlyName: "friendly_name",
+  secret: "secret",
   updatedAt: "updated_at",
   lastChallengedAt: "last_challenged_at",
 } as const;

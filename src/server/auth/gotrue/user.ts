@@ -6,21 +6,13 @@
  */
 
 import type { AdapterAccount, AdapterUser, AuthAdapter } from "../adapter.ts";
-import { sha256Hex } from "../hash.ts";
+import { derivedId } from "../factors.ts";
 
 /** An ISO-8601 timestamp for epoch seconds, or `undefined`. */
 export function iso(seconds: number | undefined): string | undefined {
   return typeof seconds === "number" && Number.isFinite(seconds)
     ? new Date(seconds * 1000).toISOString()
     : undefined;
-}
-
-/** A UUID-shaped id derived from a string (for identities stored before they had one). */
-async function derivedUuid(input: string): Promise<string> {
-  const hex = await sha256Hex(input);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${
-    hex.slice(20, 32)
-  }`;
 }
 
 /** One identity in GoTrue's shape. */
@@ -41,7 +33,7 @@ async function identityOf(account: AdapterAccount): Promise<GoTrueIdentity> {
   const data = account.identityData ?? { sub: account.providerAccountId };
   return {
     identity_id: account.identityId ??
-      await derivedUuid(`identity:${account.provider}:${account.providerAccountId}`),
+      await derivedId(`identity:${account.provider}:${account.providerAccountId}`),
     id: account.providerAccountId,
     user_id: account.userId,
     identity_data: { ...data, sub: data.sub ?? account.providerAccountId },
@@ -107,7 +99,7 @@ export async function identitiesOf(
 export interface GoTrueFactor {
   id: string;
   friendly_name?: string;
-  factor_type: "totp" | "phone";
+  factor_type: "totp" | "phone" | "webauthn" | "recovery_code";
   status: "verified" | "unverified";
   created_at: string;
   updated_at: string;

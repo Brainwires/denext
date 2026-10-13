@@ -5247,7 +5247,7 @@
           "kind": "interface",
           "signature": "interface AuthAdapter",
           "doc": "Where denext auth persists identities. Implement it over any store; denext ships inMemoryAuthAdapter() and sqliteAuthAdapter().",
-          "docFull": "Where denext auth persists identities. Implement it over any store; denext ships\n`inMemoryAuthAdapter()` and `sqliteAuthAdapter()`.\n\n**Atomicity contract.** Three methods are **consume-once** and MUST be atomic against\nconcurrent callers — a compare-and-delete / conditional update inside one transaction,\nnot a read followed by a write. Two racing requests must see exactly one success:\n{@linkcode AuthAdapter.useVerificationToken} (delete-and-return),\n{@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and\n{@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). So are the passkey group's\n{@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),\n{@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and\n{@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic\nimplementation turns each of them into a replay window.",
+          "docFull": "Where denext auth persists identities. Implement it over any store; denext ships\n`inMemoryAuthAdapter()` and `sqliteAuthAdapter()`.\n\n**Atomicity contract.** Three methods are **consume-once** and MUST be atomic against\nconcurrent callers — a compare-and-delete / conditional update inside one transaction,\nnot a read followed by a write. Two racing requests must see exactly one success:\n{@linkcode AuthAdapter.useVerificationToken} (delete-and-return),\n{@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and\n{@linkcode AuthAdapter.claimMfaFactorStep} (claim a TOTP step). So are the passkey group's\n{@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),\n{@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and\n{@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic\nimplementation turns each of them into a replay window.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5553,8 +5553,8 @@
           "slug": "buildAuthnRequest",
           "kind": "function",
           "signature": "buildAuthnRequest(options: BuildAuthnRequestOptions): Promise<object>",
-          "doc": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request is unsigned and names this SP's HTTP-POST ACS URL. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.",
-          "docFull": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is\nDEFLATE-compressed, base64-encoded and URL-encoded into `SAMLRequest`). The request is\nunsigned and names this SP's HTTP-POST ACS URL. Remember the returned `id` (with the\nRelayState) and pass it as `expectedInResponseTo` when the Response arrives.",
+          "doc": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request names this SP's HTTP-POST ACS URL, and is signed (SigAlg + Signature) when sp.signingKey is set. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.",
+          "docFull": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is\nDEFLATE-compressed, base64-encoded and URL-encoded into `SAMLRequest`). The request names\nthis SP's HTTP-POST ACS URL, and is signed (`SigAlg` + `Signature`) when `sp.signingKey` is set. Remember the returned `id` (with the\nRelayState) and pass it as `expectedInResponseTo` when the Response arrives.",
           "params": [],
           "returns": "id, the request ID (_ + 40 hex digits), and url, where to redirect the browser.",
           "examples": [],
@@ -5567,6 +5567,54 @@
           "signature": "interface BuildAuthnRequestOptions",
           "doc": "Options for buildAuthnRequest.",
           "docFull": "Options for {@link buildAuthnRequest}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildLogoutRequest",
+          "slug": "buildLogoutRequest",
+          "kind": "function",
+          "signature": "buildLogoutRequest(options: BuildLogoutRequestOptions): Promise<object>",
+          "doc": "Build an SP-initiated LogoutRequest, signed over the HTTP-Redirect binding (RSA-SHA256), and the IdP URL that carries it. Remember the returned id: the LogoutResponse must answer it.",
+          "docFull": "Build an SP-initiated LogoutRequest, signed over the HTTP-Redirect binding (RSA-SHA256), and\nthe IdP URL that carries it. Remember the returned `id`: the LogoutResponse must answer it.",
+          "params": [],
+          "returns": "id and url (where to send the browser).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildLogoutRequestOptions",
+          "slug": "BuildLogoutRequestOptions",
+          "kind": "interface",
+          "signature": "interface BuildLogoutRequestOptions",
+          "doc": "Options for buildLogoutRequest.",
+          "docFull": "Options for {@link buildLogoutRequest}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildLogoutResponse",
+          "slug": "buildLogoutResponse",
+          "kind": "function",
+          "signature": "buildLogoutResponse(options: BuildLogoutResponseOptions): Promise<string>",
+          "doc": "Build the LogoutResponse answering an IdP-initiated LogoutRequest, signed over the HTTP-Redirect binding, and the IdP URL that carries it.",
+          "docFull": "Build the LogoutResponse answering an IdP-initiated LogoutRequest, signed over the\nHTTP-Redirect binding, and the IdP URL that carries it.",
+          "params": [],
+          "returns": "The URL to send the browser to.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildLogoutResponseOptions",
+          "slug": "BuildLogoutResponseOptions",
+          "kind": "interface",
+          "signature": "interface BuildLogoutResponseOptions",
+          "doc": "Options for buildLogoutResponse.",
+          "docFull": "Options for {@link buildLogoutResponse}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6004,8 +6052,8 @@
           "slug": "confirmTotp",
           "kind": "function",
           "signature": "confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>",
-          "doc": "Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
-          "docFull": "Confirm a pending enrollment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
+          "doc": "Confirm a pending TOTP enrollment with a code from the authenticator app. On success the factor is verified and — for a user's first verified factor — mfa.backupCodes backup codes are minted, returned here in plaintext exactly once and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
+          "docFull": "Confirm a pending TOTP enrollment with a code from the authenticator app. On success the\nfactor is verified and — for a user's first verified factor — `mfa.backupCodes` backup\ncodes are minted, returned here in plaintext exactly once and stored only as hashes. The\ncode's step is claimed, so it can't then be replayed at the step-up.",
           "params": [
             {
               "name": "config",
@@ -6025,8 +6073,8 @@
           "slug": "ConfirmTotpResult",
           "kind": "typeAlias",
           "signature": "type ConfirmTotpResult = object | object",
-          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. \"invalid_code\": a wrong or replayed code. \"not_pending\": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).",
-          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once. `\"invalid_code\"`: a wrong or\nreplayed code. `\"not_pending\"`: no enrollment awaits confirmation (none started, already\nconfirmed, or replaced meanwhile).",
+          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once (empty when the user already had a verified factor, whose codes stay valid). \"invalid_code\": a wrong or replayed code. \"not_pending\": no enrollment awaits confirmation.",
+          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once (empty when the user already had\na verified factor, whose codes stay valid). `\"invalid_code\"`: a wrong or replayed code.\n`\"not_pending\"`: no enrollment awaits confirmation.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6805,8 +6853,8 @@
           "slug": "disableTotp",
           "kind": "function",
           "signature": "disableTotp(config: AuthConfig, userId: string): Promise<void>",
-          "doc": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.",
-          "docFull": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.\nCallers must have proved a fresh factor first — see the `/mfa/disable` endpoint.\n\nIt is also the **administrator's recovery** for a factor no configured `secret` opens any\nmore (a `secret` replaced rather than rotated, or an altered row): such a user can't pass a\nTOTP check, so without a backup code or a passkey with user verification they can't reach\n`/mfa/disable` themselves, and `enrollTotp` keeps answering `already_enrolled` — by design,\nsince a pending (password-only) session may enroll and must not be able to replace a factor.\nVerify the user's identity out of band, call this, and they enroll again.",
+          "doc": "Remove a user's TOTP factors — and their backup codes when no other verified factor remains. A no-op for a user without one. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.",
+          "docFull": "Remove a user's TOTP factors — and their backup codes when no other verified factor remains.\nA no-op for a user without one. Callers must have proved a fresh factor first — see the\n`/mfa/disable` endpoint.\n\nIt is also the **administrator's recovery** for a factor no configured `secret` opens any\nmore (a `secret` replaced rather than rotated, or an altered row): such a user can't pass a\nTOTP check, so without a backup code or a passkey with user verification they can't reach\n`/mfa/disable` themselves, and `enrollTotp` keeps answering `already_enrolled` — by design,\nsince a pending (password-only) session may enroll and must not be able to replace a factor.\nVerify the user's identity out of band, call this, and they enroll again.",
           "params": [
             {
               "name": "config",
@@ -6977,8 +7025,8 @@
           "slug": "enrollTotp",
           "kind": "function",
           "signature": "enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>",
-          "doc": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
-          "docFull": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.\n\nFrom a complete session this needs a recent sign-in (`session.authTime` within\n`mfa.freshness`, five minutes at least), exactly as `POST {basePath}/mfa/enroll` does: a\nstolen long-lived session must not set up a factor of its own and lock the owner out. A\npending session (`mfa.required: \"always\"`) is minutes old and may enroll.",
+          "doc": "Start a TOTP enrollment: mint a secret, store it as an **unverified** TOTP factor, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). Earlier unverified TOTP factors are replaced. While a verified TOTP factor exists another one is added only from a session that proved a second factor recently (hasFreshFactor), and a pending session adds none while any verified factor exists; otherwise the answer is already_enrolled — a first factor alone must never add a factor next to one.",
+          "docFull": "Start a TOTP enrollment: mint a secret, store it as an **unverified** TOTP factor, and return\nit with the provisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). Earlier\nunverified TOTP factors are replaced. While a verified TOTP factor exists another one is\nadded only from a session that proved a second factor recently (`hasFreshFactor`), and a\npending session adds none while any verified factor exists; otherwise the answer is\n`already_enrolled` — a first factor alone must never add a factor next to one.\n\nFrom a complete session this needs a recent sign-in (`session.authTime` within\n`mfa.freshness`, five minutes at least), exactly as `POST {basePath}/mfa/enroll` does: a\nstolen long-lived session must not set up a factor of its own and lock the owner out. A\npending session (`mfa.required: \"always\"`) is minutes old and may enroll.",
           "params": [
             {
               "name": "config",
@@ -6989,7 +7037,7 @@
               "doc": "The enrolling user's session (auth(), or pendingMfaSession())."
             }
           ],
-          "returns": "{ ok: true, secret, uri }, or { ok: false, error }.",
+          "returns": "{ ok: true, factorId, secret, uri }, or { ok: false, error }.",
           "examples": [],
           "denextOnly": true
         },
@@ -6998,8 +7046,8 @@
           "slug": "EnrollTotpResult",
           "kind": "typeAlias",
           "signature": "type EnrollTotpResult = parenthesized | object",
-          "doc": "The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — \"already_enrolled\" (a confirmed factor exists; disable it first) or \"reauth_required\" (a complete session that didn't sign in recently).",
-          "docFull": "The outcome of {@linkcode enrollTotp}: the fresh secret and its URI, or why none was minted\n— `\"already_enrolled\"` (a confirmed factor exists; disable it first) or `\"reauth_required\"`\n(a complete session that didn't sign in recently).",
+          "doc": "The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — \"already_enrolled\" (a verified TOTP factor exists and this session did not just prove a second factor) or \"reauth_required\" (a complete session that didn't sign in recently).",
+          "docFull": "The outcome of {@linkcode enrollTotp}: the fresh secret and its URI, or why none was minted\n— `\"already_enrolled\"` (a verified TOTP factor exists and this session did not just prove a\nsecond factor) or `\"reauth_required\"` (a complete session that didn't sign in recently).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7564,7 +7612,7 @@
           "name": "GoTrueErrorCode",
           "slug": "GoTrueErrorCode",
           "kind": "typeAlias",
-          "signature": "type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | not_found | method_not_allowed",
+          "signature": "type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | not_found | method_not_allowed",
           "doc": "A GoTrue error code (the subset denext answers with).",
           "docFull": "A GoTrue error code (the subset denext answers with).",
           "params": [],
@@ -7603,6 +7651,18 @@
           "signature": "interface GoTrueOptions",
           "doc": "The /auth/v1 options.",
           "docFull": "The `/auth/v1` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueSamlOptions",
+          "slug": "GoTrueSamlOptions",
+          "kind": "interface",
+          "signature": "interface GoTrueSamlOptions",
+          "doc": "The /auth/v1 SAML 2.0 options.",
+          "docFull": "The `/auth/v1` SAML 2.0 options.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9104,8 +9164,8 @@
           "slug": "MfaFactorRecord",
           "kind": "interface",
           "signature": "interface MfaFactorRecord",
-          "doc": "One MFA factor of the /auth/v1 (GoTrue) API: a TOTP authenticator or a phone that receives codes by SMS. A user may hold several.",
-          "docFull": "One MFA factor of the `/auth/v1` (GoTrue) API: a TOTP authenticator or a phone that receives\ncodes by SMS. A user may hold several.",
+          "doc": "One MFA factor — denext's sign-in and the /auth/v1 (GoTrue) API share them: a TOTP authenticator, a phone that receives codes by SMS, or a WebAuthn authenticator enrolled as a second factor. A user may hold several of each.",
+          "docFull": "One MFA factor — denext's sign-in and the `/auth/v1` (GoTrue) API share them: a TOTP\nauthenticator, a phone that receives codes by SMS, or a WebAuthn authenticator enrolled as a\nsecond factor. A user may hold several of each.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9115,9 +9175,9 @@
           "name": "MfaMethod",
           "slug": "MfaMethod",
           "kind": "typeAlias",
-          "signature": "type MfaMethod = totp | bcp | hwk",
-          "doc": "A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey (\"hwk\", RFC 8176's proof of possession of a hardware-secured key).",
-          "docFull": "A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey\n(`\"hwk\"`, RFC 8176's proof of possession of a hardware-secured key).",
+          "signature": "type MfaMethod = totp | bcp | hwk | sms",
+          "doc": "A second factor a step-up can be completed with: a TOTP code, a backup code, an SMS code (\"sms\"), or a passkey (\"hwk\", RFC 8176's proof of possession of a hardware-secured key).",
+          "docFull": "A second factor a step-up can be completed with: a TOTP code, a backup code, an SMS code\n(`\"sms\"`), or a passkey (`\"hwk\"`, RFC 8176's proof of possession of a hardware-secured key).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9152,7 +9212,7 @@
               "doc": "The user."
             }
           ],
-          "returns": "Whether a confirmed factor is on file, whether an enrollment awaits confirmation, and how many backup codes remain.",
+          "returns": "Whether a verified factor is on file, whether a TOTP enrollment awaits confirmation, and how many backup codes remain.",
           "examples": [],
           "denextOnly": true
         },
@@ -9943,7 +10003,7 @@
               "doc": "The metadata document."
             }
           ],
-          "returns": "The entity id, the HTTP-Redirect SSO URL, the signing certificates (bare base64 DER, those with a key type denext can verify) and the advertised NameID formats.",
+          "returns": "The entity id, the HTTP-Redirect SSO URL, the HTTP-Redirect SingleLogoutService (when advertised), the signing certificates (bare base64 DER, those with a key type denext can verify) and the advertised NameID formats.",
           "examples": [],
           "denextOnly": true
         },
@@ -10012,6 +10072,35 @@
           "doc": "A passkey as the app may show it — no key material.",
           "docFull": "A passkey as the app may show it — no key material.",
           "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PeekedLogoutMessage",
+          "slug": "PeekedLogoutMessage",
+          "kind": "interface",
+          "signature": "interface PeekedLogoutMessage",
+          "doc": "What a logout message says before anything is verified — only to choose the IdP.",
+          "docFull": "What a logout message says before anything is verified — only to choose the IdP.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "peekLogoutMessage",
+          "slug": "peekLogoutMessage",
+          "kind": "function",
+          "signature": "peekLogoutMessage(input: SamlBindingInput): Promise<PeekedLogoutMessage>",
+          "doc": "Read a logout message's kind, Issuer and RelayState WITHOUT verifying it — enough to pick the IdP whose certificates then verify it. Never act on what this returns.",
+          "docFull": "Read a logout message's kind, Issuer and RelayState WITHOUT verifying it — enough to pick the\nIdP whose certificates then verify it. Never act on what this returns.",
+          "params": [
+            {
+              "name": "input",
+              "doc": "The raw query (HTTP-Redirect) or the posted form (HTTP-POST)."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -11739,6 +11828,18 @@
           "denextOnly": true
         },
         {
+          "name": "SamlBindingInput",
+          "slug": "SamlBindingInput",
+          "kind": "typeAlias",
+          "signature": "type SamlBindingInput = object | object",
+          "doc": "How a logout message arrived: the raw query (HTTP-Redirect) or the posted form.",
+          "docFull": "How a logout message arrived: the raw query (HTTP-Redirect) or the posted form.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SamlError",
           "slug": "SamlError",
           "kind": "class",
@@ -11754,7 +11855,7 @@
           "name": "SamlErrorCode",
           "slug": "SamlErrorCode",
           "kind": "typeAlias",
-          "signature": "type SamlErrorCode = malformed_xml | doctype_forbidden | malformed_response | unexpected_markup | unsigned | bad_signature | signature_wrapping | multiple_assertions | encrypted_assertion_unsupported | status_not_success | bad_destination | bad_recipient | bad_subject_confirmation | bad_audience | bad_issuer | expired | not_yet_valid | in_response_to_mismatch | idp_initiated_disallowed | replay | unsupported_algorithm | bad_certificate | bad_metadata",
+          "signature": "type SamlErrorCode = malformed_xml | doctype_forbidden | malformed_response | unexpected_markup | unsigned | bad_signature | signature_wrapping | multiple_assertions | encrypted_assertion_unsupported | decryption_failed | status_not_success | bad_destination | bad_recipient | bad_subject_confirmation | bad_audience | bad_issuer | expired | not_yet_valid | in_response_to_mismatch | idp_initiated_disallowed | replay | unsupported_algorithm | bad_certificate | bad_metadata | bad_key | bad_binding",
           "doc": "The stable machine codes a SamlError carries. Switch on code, never on the message (which is for logs and may change between versions).",
           "docFull": "The stable machine codes a {@link SamlError} carries. Switch on `code`, never on the\nmessage (which is for logs and may change between versions).",
           "params": [],
@@ -11769,6 +11870,18 @@
           "signature": "interface SamlIdpConfig",
           "doc": "A trusted SAML 2.0 Identity Provider.",
           "docFull": "A trusted SAML 2.0 Identity Provider.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlPrivateKey",
+          "slug": "SamlPrivateKey",
+          "kind": "typeAlias",
+          "signature": "type SamlPrivateKey = string | JsonWebKey",
+          "doc": "An SP private key: a PKCS #8 PEM (-----BEGIN PRIVATE KEY-----) or an RSA private JWK. Only RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).",
+          "docFull": "An SP private key: a PKCS #8 PEM (`-----BEGIN PRIVATE KEY-----`) or an RSA private JWK.\nOnly RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11882,8 +11995,8 @@
           "slug": "SecondFactorResult",
           "kind": "typeAlias",
           "signature": "type SecondFactorResult = object | object",
-          "doc": "The outcome of verifySecondFactor: the method that verified, or why nothing did — \"invalid_code\" (wrong, replayed or spent) or \"not_enrolled\" (no confirmed factor).",
-          "docFull": "The outcome of {@linkcode verifySecondFactor}: the method that verified, or why nothing did\n— `\"invalid_code\"` (wrong, replayed or spent) or `\"not_enrolled\"` (no confirmed factor).",
+          "doc": "The outcome of verifySecondFactor: the method that verified, or why nothing did — \"invalid_code\" (wrong, replayed or spent) or \"not_enrolled\" (no verified factor).",
+          "docFull": "The outcome of {@linkcode verifySecondFactor}: the method that verified, or why nothing did\n— `\"invalid_code\"` (wrong, replayed or spent) or `\"not_enrolled\"` (no verified factor).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -12461,12 +12574,12 @@
           "slug": "spMetadataXml",
           "kind": "function",
           "signature": "spMetadataXml(sp: SamlSpConfig, options?: object): string",
-          "doc": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor and its HTTP-POST AssertionConsumerService), for the IdP administrator to import.",
-          "docFull": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor and its\nHTTP-POST AssertionConsumerService), for the IdP administrator to import.",
+          "doc": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor), for the IdP administrator to import: its signing and encryption certificates (when configured), its SingleLogoutService (HTTP-Redirect and HTTP-POST, when sp.sloUrl is set), the NameID format and the HTTP-POST AssertionConsumerService.",
+          "docFull": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor), for the IdP\nadministrator to import: its signing and encryption certificates (when configured), its\nSingleLogoutService (HTTP-Redirect and HTTP-POST, when `sp.sloUrl` is set), the NameID\nformat and the HTTP-POST AssertionConsumerService.",
           "params": [
             {
               "name": "sp",
-              "doc": "This SP's entity id and ACS URL."
+              "doc": "This SP's entity id, ACS URL and (optionally) SLO URL and certificates."
             },
             {
               "name": "options",
@@ -12660,6 +12773,66 @@
           "signature": "type SqlValue = null | number | bigint | string | Uint8Array",
           "doc": "A value bindable as a SQLite statement parameter.",
           "docFull": "A value bindable as a SQLite statement parameter.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SsoAttributeMapping",
+          "slug": "SsoAttributeMapping",
+          "kind": "interface",
+          "signature": "interface SsoAttributeMapping",
+          "doc": "GoTrue's SAML attribute_mapping.",
+          "docFull": "GoTrue's SAML `attribute_mapping`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SsoAttributeMappingKey",
+          "slug": "SsoAttributeMappingKey",
+          "kind": "interface",
+          "signature": "interface SsoAttributeMappingKey",
+          "doc": "How a SAML attribute maps to a user field — GoTrue's attribute_mapping.keys[field]: the value of the attribute name (or the first of names present), else default; array keeps every value.",
+          "docFull": "How a SAML attribute maps to a user field — GoTrue's `attribute_mapping.keys[field]`: the\nvalue of the attribute `name` (or the first of `names` present), else `default`; `array`\nkeeps every value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SsoProviderRecord",
+          "slug": "SsoProviderRecord",
+          "kind": "interface",
+          "signature": "interface SsoProviderRecord",
+          "doc": "A stored SAML 2.0 identity provider of the /auth/v1 SSO admin API (/admin/sso/providers). The entity id is unique across providers, and so is every domain.",
+          "docFull": "A stored SAML 2.0 identity provider of the `/auth/v1` SSO admin API\n(`/admin/sso/providers`). The entity id is unique across providers, and so is every domain.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SsoProviderWrite",
+          "slug": "SsoProviderWrite",
+          "kind": "typeAlias",
+          "signature": "type SsoProviderWrite = ok | not_found | entity_id_exists | domain_exists",
+          "doc": "What a create / update of an SsoProviderRecord came to.",
+          "docFull": "What a create / update of an {@linkcode SsoProviderRecord} came to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SsoSessionRecord",
+          "slug": "SsoSessionRecord",
+          "kind": "interface",
+          "signature": "interface SsoSessionRecord",
+          "doc": "An /auth/v1 session that a SAML assertion started — what an IdP-initiated LogoutRequest (NameID + SessionIndex) is resolved to.",
+          "docFull": "An `/auth/v1` session that a SAML assertion started — what an IdP-initiated LogoutRequest\n(NameID + SessionIndex) is resolved to.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13362,6 +13535,30 @@
           "denextOnly": true
         },
         {
+          "name": "VerifiedLogoutRequest",
+          "slug": "VerifiedLogoutRequest",
+          "kind": "interface",
+          "signature": "interface VerifiedLogoutRequest",
+          "doc": "A LogoutRequest that passed every check.",
+          "docFull": "A LogoutRequest that passed every check.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerifiedLogoutResponse",
+          "slug": "VerifiedLogoutResponse",
+          "kind": "interface",
+          "signature": "interface VerifiedLogoutResponse",
+          "doc": "A LogoutResponse that passed every check.",
+          "docFull": "A LogoutResponse that passed every check.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "VerifiedSamlAssertion",
           "slug": "VerifiedSamlAssertion",
           "kind": "interface",
@@ -13457,6 +13654,47 @@
           "denextOnly": true
         },
         {
+          "name": "VerifyLogoutOptions",
+          "slug": "VerifyLogoutOptions",
+          "kind": "interface",
+          "signature": "interface VerifyLogoutOptions",
+          "doc": "Options for verifyLogoutRequest / verifyLogoutResponse.",
+          "docFull": "Options for {@link verifyLogoutRequest} / {@link verifyLogoutResponse}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyLogoutRequest",
+          "slug": "verifyLogoutRequest",
+          "kind": "function",
+          "signature": "verifyLogoutRequest(options: VerifyLogoutOptions): Promise<VerifiedLogoutRequest>",
+          "doc": "Verify an IdP-initiated LogoutRequest.",
+          "docFull": "Verify an IdP-initiated LogoutRequest.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyLogoutResponse",
+          "slug": "verifyLogoutResponse",
+          "kind": "function",
+          "signature": "verifyLogoutResponse(options: VerifyLogoutOptions & object): Promise<VerifiedLogoutResponse>",
+          "doc": "Verify the LogoutResponse answering an SP-initiated LogoutRequest.",
+          "docFull": "Verify the LogoutResponse answering an SP-initiated LogoutRequest.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The message, the IdP, the SP, the replay cache and expectedInResponseTo."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "verifyPassword",
           "slug": "verifyPassword",
           "kind": "function",
@@ -13524,7 +13762,7 @@
           "kind": "function",
           "signature": "verifySamlResponse(options: VerifySamlResponseOptions): Promise<VerifiedSamlAssertion>",
           "doc": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.",
-          "docFull": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.\n\nChecks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status\nSuccess; no encrypted assertion and exactly one Assertion in the whole document, a direct\nchild of the Response; unique IDs; every signature present on the Response or Assertion\nverifies with a configured certificate, and at least one is present (the Assertion's when\n`requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this\nACS URL; Conditions and AudienceRestriction; the AuthnStatement session window;\nInResponseTo; and finally the replay cache. Claims are read only from the verified\nelement objects.",
+          "docFull": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.\n\nChecks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status\nSuccess; no EncryptedID and exactly one Assertion or EncryptedAssertion in the whole document,\na direct child of the Response; unique IDs; the Response signature, when present, BEFORE\nanything is decrypted (so it covers the cipher text); an EncryptedAssertion decrypted with\n`sp.encryptionKey` and its content parsed by the same strict parser (no DOCTYPE, exactly one\nAssertion, IDs unique across the outer document and the decrypted one); every signature\npresent verifies with a configured certificate and at least one is present (the Assertion's\nwhen `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this\nACS URL; Conditions and AudienceRestriction; the AuthnStatement session window; InResponseTo;\nand finally the replay cache. Claims are read only from the verified element objects.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13547,8 +13785,8 @@
           "slug": "verifySecondFactor",
           "kind": "function",
           "signature": "verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult>",
-          "doc": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).",
-          "docFull": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code\n(claiming its step — a replay is refused), else as a backup code (spent on a match).",
+          "doc": "Check a second-factor proof for a user with a verified factor: a TOTP code from any of their TOTP factors (its step claimed — a replay is refused), the code of an open SMS challenge (challengeId), or a backup code (spent on a match).",
+          "docFull": "Check a second-factor proof for a user with a verified factor: a TOTP code from any of their\nTOTP factors (its step claimed — a replay is refused), the code of an open SMS challenge\n(`challengeId`), or a backup code (spent on a match).",
           "params": [
             {
               "name": "config",
@@ -13556,10 +13794,10 @@
             },
             {
               "name": "input",
-              "doc": "The user, and the code they typed (TOTP digits or a backup code, hyphen optional)."
+              "doc": "The user, the code they typed (TOTP digits, an SMS code or a backup code, hyphen optional), and for an SMS code the challenge it answers."
             }
           ],
-          "returns": "{ ok: true, method } (\"totp\" or \"bcp\"), or { ok: false, error }.",
+          "returns": "{ ok: true, method, factorId? }, or { ok: false, error }.",
           "examples": [],
           "denextOnly": true
         },

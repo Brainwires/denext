@@ -8,7 +8,11 @@
 // next test.
 
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
-import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
+import type {
+  AuthAdapter,
+  VerificationTokenRecord,
+  VerificationTokenRef,
+} from "../../src/server/auth/adapter.ts";
 import type { AuthSession } from "../../src/server/auth/types.ts";
 
 /** One contract case: exercise a fresh adapter, throw to fail. */
@@ -31,6 +35,17 @@ const token = (expires = at(3600)) => ({
   expires,
   purpose: "email" as const,
 });
+
+/** The verification-token pair, bound to `adapter`. */
+function tokenMethods(adapter: AuthAdapter) {
+  const create = adapter.createVerificationToken;
+  const use = adapter.useVerificationToken;
+  assert(create && use);
+  return {
+    create: (record: VerificationTokenRecord) => create.call(adapter, record),
+    use: (ref: VerificationTokenRef) => use.call(adapter, ref),
+  };
+}
 
 /** An API-token record for `userId`. */
 const apiToken = (id: string, userId: string, expiresAt?: number) => ({
@@ -237,6 +252,16 @@ const VERIFICATION_CASES: Record<string, Case> = {
       (await use.call(adapter, record))?.tokenHash,
       record.tokenHash,
       "none of those misses consumed the real token",
+    );
+  },
+  "a newer token for the same identifier and purpose replaces the older": async (adapter) => {
+    const { create, use } = tokenMethods(adapter);
+    await create(token());
+    await create({ ...token(), tokenHash: "c".repeat(64) });
+    assertEquals(await use(token()), undefined, "the older token is gone");
+    assertEquals(
+      (await use({ ...token(), tokenHash: "c".repeat(64) }))?.tokenHash,
+      "c".repeat(64),
     );
   },
   "one identifier can hold a token per purpose": async (adapter) => {

@@ -46,6 +46,7 @@ import type {
 } from "./adapter.ts";
 import { pageWindow } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
+import { constantTimeEqualHex } from "./hash.ts";
 import { inMemorySessionStore, type SessionStore } from "./session-store.ts";
 import { type MemorySsoGroup, memorySsoGroup } from "./memory-sso.ts";
 
@@ -214,9 +215,12 @@ function accountKey(ref: AdapterAccountRef): string {
   return `${ref.provider}${SEP}${ref.providerAccountId}`;
 }
 
-/** The key one verification token lives under (its uniqueness tuple). */
-function tokenKey(ref: VerificationTokenRef): string {
-  return `${ref.purpose}${SEP}${ref.identifier}${SEP}${ref.tokenHash}`;
+/**
+ * The key one verification token lives under: one live token per identifier and purpose, as
+ * the SQL adapters' primary key has it — a newer token replaces (and so invalidates) the older.
+ */
+function tokenKey(ref: Pick<VerificationTokenRef, "identifier" | "purpose">): string {
+  return `${ref.purpose}${SEP}${ref.identifier}`;
 }
 
 /**
@@ -351,7 +355,8 @@ function verificationMethods(
     useVerificationToken(ref) {
       const key = tokenKey(ref);
       const record = state.tokens.get(key);
-      if (!record) return undefined;
+      // A different hash is a wrong token: it is not consumed (the right one still works).
+      if (!record || !constantTimeEqualHex(record.tokenHash, ref.tokenHash)) return undefined;
       // Consume first, answer second: an expired token is spent too (it is never worth
       // retrying), but it never resolves — a stale link fails closed.
       state.tokens.delete(key);

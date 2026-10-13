@@ -105,17 +105,31 @@ Deno.test("a password set by someone else before the address is confirmed does n
     // The owner signs up; their confirmation code binds their password.
     await api(app, "/signup", { body: { email: "own@example.com", password: "owner password" } });
     const ownerCode = code(app);
-    // An attacker signs up for the same (unconfirmed) address with their own password.
+    // A retry with the same password keeps it (and replaces the code).
+    await api(app, "/signup", { body: { email: "own@example.com", password: "owner password" } });
+    const retryCode = code(app);
+    assertEquals(
+      (await api(app, "/verify", {
+        body: { type: "signup", email: "own@example.com", token: ownerCode },
+      })).status,
+      403,
+      "the reissue retired the older code",
+    );
+    // An attacker signs up for the same (unconfirmed) address with their own password: a
+    // different password clears the account's, and the new code (in the owner's inbox) binds none.
     await api(app, "/signup", { body: { email: "own@example.com", password: "attacker pass" } });
-    // The owner confirms with their code: the attacker's password is retired.
+    assert(retryCode !== code(app));
     const confirmed = await api(app, "/verify", {
-      body: { type: "signup", email: "own@example.com", token: ownerCode },
+      body: { type: "signup", email: "own@example.com", token: code(app) },
     });
     assertEquals(confirmed.status, 200);
-    assertEquals(
-      (await password(app, "own@example.com", "attacker pass")).json.error_code,
-      "invalid_credentials",
-    );
+    assert(confirmed.json.access_token, "confirming signs the owner in");
+    for (const guess of ["attacker pass", "owner password"]) {
+      assertEquals(
+        (await password(app, "own@example.com", guess)).json.error_code,
+        "invalid_credentials",
+      );
+    }
   });
 });
 

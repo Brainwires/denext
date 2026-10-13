@@ -53,6 +53,7 @@ import {
   consumeHitBudget,
   mfaLimiter,
   subjectBucketKeys,
+  verificationLimiter,
 } from "./rate-limit.ts";
 import {
   afterSignIn,
@@ -64,7 +65,9 @@ import {
   redirect,
   wantsJson,
 } from "./routes-shared.ts";
+import { hasVerifiedFactor, openFactorChallenge, userFactors } from "./factors.ts";
 import { readAuthSession } from "./session.ts";
+import { smsSenderOf } from "./sms.ts";
 import { mfaStepLocation } from "./sign-in-tail.ts";
 import type { AuthSession } from "./types.ts";
 
@@ -73,8 +76,12 @@ const MAX_BODY_BYTES = 4 * 1024;
 
 /** The fields an MFA endpoint reads. */
 interface MfaFields {
-  /** The TOTP or backup code; `""` when absent. */
+  /** The TOTP, SMS or backup code; `""` when absent. */
   code: string;
+  /** An SMS code's challenge (from `/mfa/challenge`). */
+  challengeId?: string;
+  /** The phone factor the challenge was sent for. */
+  factorId?: string;
   /** The requested return target (`/mfa` only). */
   callbackUrl?: string;
 }
@@ -110,6 +117,8 @@ async function readMfaFields(ctx: AuthRouteContext): Promise<MfaFields> {
   return {
     code: typeof body.code === "string" ? body.code : "",
     callbackUrl: typeof body.callbackUrl === "string" ? body.callbackUrl : undefined,
+    challengeId: typeof body.challengeId === "string" ? body.challengeId : undefined,
+    factorId: typeof body.factorId === "string" ? body.factorId : undefined,
   };
 }
 
@@ -177,8 +186,13 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
   if (!session || session instanceof Response) return session;
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
-  const { code, callbackUrl } = await readMfaFields(ctx);
-  const result = await verifySecondFactor(ctx.config, { userId: session.user.id, code });
+  const { code, callbackUrl, challengeId, factorId } = await readMfaFields(ctx);
+  const result = await verifySecondFactor(ctx.config, {
+    userId: session.user.id,
+    code,
+    challengeId,
+    factorId,
+  });
   const asJson = wantsJson(ctx.request);
   if (!result.ok) {
     await emitMfaFailure(ctx, session, "invalid_mfa_code");
@@ -215,6 +229,11 @@ async function handleConfirm(ctx: AuthRouteContext): Promise<Response | null> {
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
   const { code } = await readMfaFields(ctx);
+  // A pending session confirms only a user's first factor: with one verified, the step-up is
+  // `/mfa` — never confirming another enrollment (made earlier, perhaps by someone else).
+  if (session.mfaPending && await hasVerifiedFactor(ctx.config, session.user.id)) {
+    return json({ error: "already enrolled" }, 409);
+  }
   const result = await confirmTotp(ctx.config, { user: session.user, code });
   if (!result.ok) return invalidCode();
   if (!session.mfaPending) return json({ ok: true, backupCodes: result.backupCodes });
@@ -253,7 +272,42 @@ async function handleDisable(ctx: AuthRouteContext): Promise<Response | null> {
  * MFA budget itself wherever it checks a code, so none carries a dispatch-level `limit`; an
  * adapter failure is logged and answered `503` ({@link contained}).
  */
+/**
+ * `POST {basePath}/mfa/challenge` (`{ factorId }`): send an SMS code to one of the pending
+ * user's verified phone factors; answer `{ challengeId, expiresAt }` for the step-up at `/mfa`.
+ */
+async function handleChallenge(ctx: AuthRouteContext): Promise<Response | null> {
+  const session = await mfaCaller(ctx, (s) => s.mfaPending === true);
+  if (!session || session instanceof Response) return session;
+  // Sends draw on the verification-send budget (SMS pumping), not the code-guessing one.
+  const keys = subjectBucketKeys("verify", `mfa-sms:${session.user.id}`, ctx.request, ctx.config);
+  const retryAfter = await consumeHitBudget(verificationLimiter(ctx.config), keys);
+  if (retryAfter !== null) {
+    return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
+  }
+  const { factorId } = await readMfaFields(ctx);
+  const send = smsSenderOf(ctx.config);
+  const factor = (await userFactors(ctx.config, session.user.id)).find((f) =>
+    f.id === factorId && f.type === "phone" && f.status === "verified"
+  );
+  if (!factor || !send) return json({ error: "no such phone factor" }, 404);
+  const opened = await openFactorChallenge(ctx.config, factor);
+  await send({
+    phone: factor.phone!,
+    otp: opened.code!,
+    message: `Your code is ${opened.code}`,
+    channel: "sms",
+    type: "mfa",
+  });
+  return json({ challengeId: opened.id, expiresAt: opened.expiresAt });
+}
+
 export const mfaRoutes: AuthRoute[] = [
+  {
+    method: "POST",
+    pattern: "/mfa/challenge",
+    handler: contained("the SMS second-factor challenge", handleChallenge),
+  },
   {
     method: "POST",
     pattern: "/mfa",

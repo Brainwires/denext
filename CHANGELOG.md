@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- **`denextAuth({ sendSms, captcha, hooks, anonymous })`.** SMS delivery, captcha (hCaptcha /
+  Turnstile), Supabase's auth hooks (`customAccessToken`, `sendEmail`, `sendSms`) and anonymous
+  sign-in are now configured once on `denextAuth()`; `/auth/v1` uses them unless
+  `backend({ supabase: { auth } })` sets its own.
 - **`/auth/v1`: the stock supabase-js `supabase.auth.*` against denext auth.** With
   `backend({ supabase })` the users `denextAuth()` keeps are also served by a GoTrue-compatible
   API: `signup` (email or phone with a password, or anonymous), `token`
@@ -56,6 +60,27 @@ and this project adheres to
   `verifyLogoutRequest`, `verifyLogoutResponse`, `SamlSpConfig.signingKey` / `encryptionKey` and
   the codes `decryption_failed`, `bad_key` and `bad_binding`. Golden encrypted, signed and logout
   fixtures come from xmlsec1 and `openssl`.
+- **One MFA factor store for `denextAuth()` and `/auth/v1`.** A user may hold several second
+  factors — TOTP authenticators, phones that receive SMS codes, and WebAuthn authenticators — in
+  the adapter's factor group, and both sign-in paths read the same factors and enforce them the
+  same way: any verified factor makes a cookie sign-in pending and an `/auth/v1` session `aal1`
+  (which `auth()` reads as signed out until the step-up, like a pending cookie). The cookie
+  step-up takes a code from any TOTP factor, or an SMS code after the new
+  `POST {basePath}/mfa/challenge` (`{ factorId }`) texted it; `verifySecondFactor` takes
+  `challengeId` / `factorId` and answers the `factorId` and the `"sms"` method. `/auth/v1` adds
+  WebAuthn factors (`factorType: "webauthn"`, backed by the passkey store — deleting the passkey
+  deletes the factor), recovery codes (`/factors/recovery-codes*`, denext's backup codes, listed
+  as a `recovery_code` factor), and passkeys (`/passkeys/registration/*`,
+  `/passkeys/authentication/*`, `GET /passkeys`, `PATCH|DELETE /passkeys/:id`,
+  `admin/users/:id/passkeys`), over the store `{basePath}/passkey*` uses. A TOTP secret a
+  pre-4.0 denext kept in the user's MFA record moves into a factor, as stored, the first time
+  the user's factors are read (no key needed, so an unopenable one keeps the user enrolled); it
+  is re-sealed for the factor after the first code it accepts. Once a factor is verified, adding
+  another — enrolling, first verifying, registering a passkey through `/auth/v1` — needs `aal2`
+  (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm one, so a first
+  factor alone never adds a factor of its own. A repeated `/auth/v1` sign-up for an unconfirmed
+  address keeps the account's password only when it is the same one; a different one clears it
+  (the newest confirmation goes to the owner, who sets a password after confirming).
 - **Auth adapters keep Supabase's user fields.** `AdapterUser` gains `phone`, `phoneVerified`,
   `userMetadata`, `appMetadata`, `isAnonymous`, `createdAt`, `updatedAt`, `lastSignInAt` and
   `bannedUntil`; `AdapterAccount` gains `identityId`, `identityData`, `email` and timestamps; new
@@ -321,6 +346,9 @@ and this project adheres to
 
 ### Fixed
 
+- **`inMemoryAuthAdapter()` keeps one live verification token per address and purpose**, as the
+  SQL adapters do: issuing a new one retires the older, and a token is consumed only when its
+  hash matches (compared in constant time).
 - **The toolchain re-exec reads the project's `deno.json`.** A project task that runs the CLI from
   JSR (`deno run -A jsr:@denext/denext@<v>/cli build`) found the project's config from the working
   directory, but the copy it re-ran on denext's Deno toolchain started from the module's https URL,

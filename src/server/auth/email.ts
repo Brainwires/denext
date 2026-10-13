@@ -35,7 +35,7 @@ import type { AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts
 import { isVerified } from "./adapter-link.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
-import { disableTotp } from "./mfa.ts";
+import { forgetPasskeyFactor, removeAllFactors } from "./factors.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import {
@@ -524,21 +524,17 @@ async function retirePassword(
 }
 
 /**
- * Drop the second factor of an account whose address was never verified. A TOTP secret
- * (and its backup codes) enrolled before the mailbox was proven belongs to whoever set it
- * up — possibly an attacker, who would then hold the second factor of the victim's
- * account, or lock the victim out of it. The adapter's MFA group has no delete, so this is
- * `disableTotp`: the empty, unconfirmed record every MFA check reads as "not enrolled". An
- * adapter that can read an MFA record but lacks the rest of the group makes `disableTotp`
- * throw, which fails the flow closed.
+ * Drop the second factors of an account whose address was never verified. A factor (and the
+ * backup codes) set up before the mailbox was proven belongs to whoever set it up — possibly an
+ * attacker, who would then hold the second factor of the victim's account, or lock the victim
+ * out of it. Every factor goes: TOTP, phone and WebAuthn factors, and the backup codes.
  */
 async function retireSecondFactor(
   config: AuthConfig,
-  adapter: ProvenMailboxAdapter,
+  _adapter: ProvenMailboxAdapter,
   userId: string,
 ): Promise<void> {
-  if (!(await adapter.getMfa?.(userId))) return;
-  await disableTotp(config, userId);
+  await removeAllFactors(config, userId);
 }
 
 /**
@@ -588,7 +584,10 @@ async function deletePasskeys(
         "passkeys of an unverified account can't be removed before its address is verified.",
     );
   }
-  for (const passkey of passkeys) await adapter.deletePasskey(passkey.id);
+  for (const passkey of passkeys) {
+    await adapter.deletePasskey(passkey.id);
+    await forgetPasskeyFactor(config, userId, passkey.id);
+  }
 }
 
 /**

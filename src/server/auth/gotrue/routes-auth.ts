@@ -8,7 +8,6 @@
 
 import type { AdapterUser } from "../adapter.ts";
 import { isNativeIdTokenProvider, verifyNativeIdToken } from "../native-idtoken.ts";
-import { resolveAuthOptions } from "../options.ts";
 import {
   credentialsLimiter,
   defaultRateLimitKey,
@@ -21,6 +20,7 @@ import { authTrustsProxy } from "../rate-limit.ts";
 import { isOAuthProvider } from "../types.ts";
 import {
   checkPassword,
+  contestPassword,
   createAccount,
   credentialFingerprint,
   linkIdentity,
@@ -174,13 +174,8 @@ async function emailSignup(
       userMetadata: data,
       emailVerified: ctx.options.autoconfirm,
     });
-  if (existing) {
-    // An unconfirmed account: the newest sign-up's password is the one its confirmation binds.
-    await ctx.adapter.setCredential?.(
-      existing.id,
-      await resolveAuthOptions(ctx.config).hasher.hash(password),
-    );
-  }
+  // An unconfirmed account: a different password from a repeated sign-up is not kept.
+  if (existing) await contestPassword(ctx, existing.id, password);
   if (ctx.options.autoconfirm) return ok(await startSession(ctx.session, user, amr("password")));
   await spend(ctx, verificationLimiter(ctx.config), "verify", email, "over_email_send_rate_limit");
   const issued = await issueOtp(ctx, "email", email, {
@@ -218,12 +213,8 @@ async function phoneSignup(
       userMetadata: data,
       phoneVerified: ctx.options.phoneAutoconfirm,
     });
-  if (existing) {
-    await ctx.adapter.setCredential?.(
-      existing.id,
-      await resolveAuthOptions(ctx.config).hasher.hash(password),
-    );
-  }
+  // An unconfirmed account: a different password from a repeated sign-up is not kept.
+  if (existing) await contestPassword(ctx, existing.id, password);
   if (ctx.options.phoneAutoconfirm) {
     return ok(await startSession(ctx.session, user, amr("password")));
   }

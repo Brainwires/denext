@@ -609,3 +609,31 @@ Deno.test("captcha: missing, refused, provider failure and accepted tokens", asy
     assertEquals(seen, ["bad", "boom", "good"]);
   });
 });
+
+Deno.test("denextAuth's shared settings (anonymous, captcha, hooks) apply to /auth/v1", async () => {
+  await withApp({}, async (app) => {
+    const refused = await api(app, "/signup", { body: {} });
+    assertEquals(refused.json.error_code, "captcha_failed");
+    const anon = await api(app, "/signup", {
+      body: { gotrue_meta_security: { captcha_token: "ok" } },
+    });
+    assertEquals(anon.status, 200);
+    const claims = JSON.parse(
+      atob((anon.json.access_token as string).split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    assertEquals(claims.is_anonymous, true);
+    assertEquals(claims.shared, true);
+  }, {
+    anonymous: true,
+    captcha: {
+      provider: "turnstile",
+      secret: "s",
+      fetch: () => Promise.resolve(Response.json({ success: true })),
+    },
+    hooks: {
+      customAccessToken: ({ claims }: { claims: Record<string, unknown> }) => ({
+        claims: { ...claims, shared: true },
+      }),
+    },
+  } as never);
+});

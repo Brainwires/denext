@@ -52,10 +52,32 @@ export async function verifyAccessToken(
   config?: AuthConfig | null,
   options: VerifySupabaseJwtOptions = {},
 ): Promise<SupabaseJwtClaims> {
+  return (await verifyAccessTokenSession(keys, token, config, options)).claims;
+}
+
+/**
+ * {@linkcode verifyAccessToken}, also saying whether the token's session still owes a second
+ * factor (an `aal1` session of a user who must complete MFA).
+ *
+ * @param keys The key material.
+ * @param token The JWT.
+ * @param config The auth config whose adapter holds the sessions (optional).
+ * @param options The clock.
+ * @returns The claims, and whether the session is pending.
+ * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session.
+ */
+async function verifyAccessTokenSession(
+  keys: SupabaseKeys,
+  token: string,
+  config?: AuthConfig | null,
+  options: VerifySupabaseJwtOptions = {},
+): Promise<{ claims: SupabaseJwtClaims; pending: boolean }> {
   const claims = await verifySupabaseJwt(keys, token, options);
-  if (claims.role !== "authenticated" || typeof claims.session_id !== "string") return claims;
+  if (claims.role !== "authenticated" || typeof claims.session_id !== "string") {
+    return { claims, pending: false };
+  }
   const adapter = nativeAdapterOf(config?.adapter);
-  if (!adapter) return claims;
+  if (!adapter) return { claims, pending: false };
   const family = await adapter.getNativeSession(claims.session_id);
   const now = Math.floor((options.now ?? Date.now()) / 1000);
   if (
@@ -64,7 +86,15 @@ export async function verifyAccessToken(
   ) {
     throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
   }
-  return claims;
+  return { claims, pending: claims.aal !== "aal2" && snapshotPending(family.session) };
+}
+
+function snapshotPending(raw: string): boolean {
+  try {
+    return (JSON.parse(raw) as { pending?: unknown }).pending === true;
+  } catch {
+    return false;
+  }
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -144,9 +174,12 @@ export async function sessionFromJwtBearer(
   const keys = installedSupabaseKeys();
   if (!keys) return undefined;
   try {
-    const claims = await verifyAccessToken(keys, token, config);
+    const { claims, pending } = await verifyAccessTokenSession(keys, token, config);
     if (claims.role !== "authenticated") return undefined;
-    return sessionFromClaims(claims);
+    const session = sessionFromClaims(claims);
+    // A session still owing its second factor fails closed in `auth()`, as a cookie one does.
+    if (pending) session.mfaPending = true;
+    return session;
   } catch {
     return null;
   }

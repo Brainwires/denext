@@ -28,6 +28,8 @@ import type { AuthConfig } from "../types.ts";
 import { GoTrueError } from "./errors.ts";
 import { signSupabaseJwt, type SupabaseKeys } from "./keys.ts";
 import type { GoTrueOptions } from "./options.ts";
+import { toAuthUser } from "../adapter-link.ts";
+import { mfaPendingFor } from "../mfa.ts";
 import { factorsJson } from "./factors.ts";
 import { appMetadataOf, identitiesOf, userJson, userMetadataOf } from "./user.ts";
 
@@ -70,6 +72,12 @@ interface GoTrueSnapshot {
   aal: "aal1" | "aal2";
   /** The SAML origin, for a session a SAML assertion started. */
   sso?: SsoSessionInfo;
+  /**
+   * The user owed a second factor when this `aal1` session started (`mfa.required: "always"`,
+   * or a verified factor on file): `auth()` reads it as a pending session, exactly as it reads a
+   * cookie session still owing its second factor.
+   */
+  pending?: true;
 }
 
 /** Everything the session functions need. */
@@ -300,22 +308,46 @@ export async function ssoOriginOf(
  * @returns The session response.
  * @throws {GoTrueError} `user_banned` for a banned user.
  */
-export async function startSession(
+export function startSession(
   ctx: SessionContext,
   user: AdapterUser,
   amr: AmrEntry,
+  sso?: SsoSessionInfo,
+): Promise<GoTrueSessionJson> {
+  return startSessionWithAal(ctx, user, amr, "aal1", sso);
+}
+
+/**
+ * Start a session at a given assurance level — `aal2` for a first factor that is itself two
+ * (a passkey with user verification).
+ *
+ * @param ctx The session context.
+ * @param user The user.
+ * @param amr How they authenticated.
+ * @param aal The level the sign-in reached.
+ * @param sso The SAML origin, for a SAML sign-in (kept for Single Logout).
+ * @returns The session response.
+ * @throws {GoTrueError} `user_banned` for a banned user.
+ */
+export async function startSessionWithAal(
+  ctx: SessionContext,
+  user: AdapterUser,
+  amr: AmrEntry,
+  aal: "aal1" | "aal2",
   sso?: SsoSessionInfo,
 ): Promise<GoTrueSessionJson> {
   if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
   const at = now();
   const adapter = ctx.config.adapter!;
   const updated = await adapter.updateUser({ id: user.id, lastSignInAt: at });
+  const owed = aal === "aal1" && await mfaPendingFor(ctx.config, toAuthUser(updated));
   const snapshot: GoTrueSnapshot = {
     gotrue: 1,
     user: { id: user.id },
     provider: amr.provider ?? (amr.method === "oauth" ? "oauth" : amr.method),
     amr: [amr],
-    aal: "aal1",
+    aal,
+    ...(owed ? { pending: true as const } : {}),
     ...(sso && { sso }),
   };
   const family: NativeSessionRecord = {
@@ -352,11 +384,8 @@ export async function stepUpSession(
   if (!live) throw new GoTrueError(401, "session_not_found", "Session not found");
   const families = familiesOf(ctx.config);
   const at = now();
-  const snapshot: GoTrueSnapshot = {
-    ...live.snapshot,
-    amr: [factor, ...live.snapshot.amr],
-    aal: "aal2",
-  };
+  const { pending: _pending, ...rest } = live.snapshot;
+  const snapshot: GoTrueSnapshot = { ...rest, amr: [factor, ...live.snapshot.amr], aal: "aal2" };
   const family: NativeSessionRecord = {
     id: crypto.randomUUID(),
     userId: user.id,

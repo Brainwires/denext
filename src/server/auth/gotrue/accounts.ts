@@ -93,6 +93,30 @@ export async function retireForeignPassword(
   await ctx.adapter.revokeNativeSessionsByUser?.(user.id);
 }
 
+/**
+ * A repeated sign-up for an address (or number) nobody has confirmed yet. The same password
+ * keeps the account's; a different one clears it — the newest sign-up's confirmation goes to the
+ * same inbox, so binding its password would let whoever signed up last keep a password on the
+ * owner's account. The owner confirms (which signs them in) and sets a password then.
+ *
+ * @param ctx The context.
+ * @param userId The unconfirmed account.
+ * @param password The password this sign-up chose.
+ */
+export async function contestPassword(
+  ctx: GoTrueContext,
+  userId: string,
+  password: string,
+): Promise<void> {
+  const stored = await ctx.adapter.getCredential?.(userId);
+  if (!stored || await resolveAuthOptions(ctx.config).hasher.verify(password, stored)) return;
+  if (ctx.adapter.deleteCredential) await ctx.adapter.deleteCredential(userId);
+  else {
+    const random = crypto.randomUUID() + crypto.randomUUID();
+    await ctx.adapter.setCredential?.(userId, await hashPassword(ctx, random));
+  }
+}
+
 /** Link (or refresh) an identity row. */
 export async function linkIdentity(
   ctx: GoTrueContext,

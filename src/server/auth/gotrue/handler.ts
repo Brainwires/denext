@@ -18,6 +18,7 @@ import type { GoTrueOptions } from "./options.ts";
 import * as authRoutes from "./routes-auth.ts";
 import * as userRoutes from "./routes-user.ts";
 import * as factorRoutes from "./routes-factors.ts";
+import * as passkeyRoutes from "./routes-passkeys.ts";
 import * as adminRoutes from "./routes-admin.ts";
 import * as oauthRoutes from "./routes-oauth.ts";
 import { setGoTrueOAuthCallback } from "../routes-oauth.ts";
@@ -69,6 +70,85 @@ const ROUTES: Route[] = [
     access: "apikey",
   },
   { method: "POST", pattern: "/factors", handler: factorRoutes.enroll, access: "apikey" },
+  {
+    method: "GET",
+    pattern: "/factors/recovery-codes",
+    handler: factorRoutes.recoveryStatus,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/factors/recovery-codes",
+    handler: factorRoutes.recoveryGenerate,
+    access: "apikey",
+  },
+  {
+    method: "DELETE",
+    pattern: "/factors/recovery-codes",
+    handler: factorRoutes.recoveryRemove,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/factors/recovery-codes/verify",
+    handler: factorRoutes.recoveryVerify,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/factors/recovery-codes/regenerate",
+    handler: factorRoutes.recoveryRegenerate,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/passkeys/registration/options",
+    handler: passkeyRoutes.registrationOptions,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/passkeys/registration/verify",
+    handler: passkeyRoutes.registrationVerify,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/passkeys/authentication/options",
+    handler: passkeyRoutes.authenticationOptions,
+    access: "apikey",
+  },
+  {
+    method: "POST",
+    pattern: "/passkeys/authentication/verify",
+    handler: passkeyRoutes.authenticationVerify,
+    access: "apikey",
+  },
+  { method: "GET", pattern: "/passkeys", handler: passkeyRoutes.listOwnPasskeys, access: "apikey" },
+  {
+    method: "PATCH",
+    pattern: "/passkeys/:id",
+    handler: passkeyRoutes.updatePasskey,
+    access: "apikey",
+  },
+  {
+    method: "DELETE",
+    pattern: "/passkeys/:id",
+    handler: passkeyRoutes.deleteOwnPasskey,
+    access: "apikey",
+  },
+  {
+    method: "GET",
+    pattern: "/admin/users/:id/passkeys",
+    handler: passkeyRoutes.adminListPasskeys,
+    access: "admin",
+  },
+  {
+    method: "DELETE",
+    pattern: "/admin/users/:id/passkeys/:passkey",
+    handler: passkeyRoutes.adminDeletePasskey,
+    access: "admin",
+  },
   {
     method: "POST",
     pattern: "/factors/:id/challenge",
@@ -213,7 +293,7 @@ const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers":
     "authorization, apikey, content-type, x-client-info, x-supabase-api-version, x-region",
-  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "access-control-max-age": "86400",
 };
 
@@ -247,6 +327,25 @@ function configOf(handler: GoTrueHandlerOptions): AuthConfig {
   return config;
 }
 
+/**
+ * The `/auth/v1` options with the auth config's shared settings filled in: `sendSms`,
+ * `captcha`, `hooks` and `anonymous` set on `denextAuth()` apply here unless
+ * `backend({ supabase: { auth } })` sets its own.
+ *
+ * @param options The `/auth/v1` options.
+ * @param config The auth config.
+ * @returns The effective options.
+ */
+function effectiveGoTrueOptions(options: GoTrueOptions, config: AuthConfig): GoTrueOptions {
+  return {
+    ...options,
+    sendSms: options.sendSms ?? config.sendSms,
+    captcha: options.captcha ?? config.captcha,
+    hooks: { ...config.hooks, ...options.hooks },
+    anonymousUsers: options.anonymousUsers ?? config.anonymous,
+  };
+}
+
 /** The per-request context. */
 function contextFor(
   request: Request,
@@ -258,6 +357,7 @@ function contextFor(
   const config = configOf(handler);
   const origin = new URL(absoluteUrl(request, "/", { canonicalOrigin: config.canonicalOrigin }))
     .origin;
+  const effective = effectiveGoTrueOptions(handler.options, config);
   return {
     request,
     url,
@@ -266,11 +366,11 @@ function contextFor(
     params,
     config,
     adapter: config.adapter!,
-    options: handler.options,
+    options: effective,
     keys: handler.keys,
     session: {
       config,
-      options: handler.options,
+      options: effective,
       keys: handler.keys,
       issuer: `${origin}${GOTRUE_PREFIX}`,
     },
@@ -340,7 +440,7 @@ export function installGoTrue(handler: GoTrueHandlerOptions | undefined): void {
         .origin;
       return {
         config,
-        options: handler.options,
+        options: effectiveGoTrueOptions(handler.options, config),
         keys: handler.keys,
         issuer: `${origin}${GOTRUE_PREFIX}`,
       };

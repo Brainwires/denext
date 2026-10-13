@@ -9,6 +9,7 @@ import type { AdapterAccount, AdapterUser, AuthAdapter, VerificationPurpose } fr
 import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
+import type { GoTrueCaptchaOptions, GoTrueHooks, GoTrueSmsMessage } from "./gotrue/options.ts";
 
 /** A normalized user profile — the non-sensitive identity denext stores in the session. */
 export interface AuthUser {
@@ -850,6 +851,31 @@ export interface AuthConfig {
    * denext ships no mailer; the flows that need one refuse to start without this.
    */
   sendVerificationRequest?: SendVerificationRequest;
+  /**
+   * Deliver an SMS — phone sign-in codes (`phoneOtp()`), phone MFA codes and phone changes, for
+   * denext's own endpoints and for `/auth/v1` (`backend({ supabase })`) alike. denext ships no
+   * SMS gateway; the phone flows refuse to start without this (or `hooks.sendSms`).
+   */
+  sendSms?: (message: GoTrueSmsMessage) => Promise<void> | void;
+  /**
+   * Verify a captcha token (hCaptcha or Turnstile) on the endpoints that create sessions or
+   * send messages — sign-up, password sign-in, one-time codes, recovery, anonymous sign-in —
+   * on denext's endpoints and `/auth/v1` alike. Off by default.
+   */
+  captcha?: GoTrueCaptchaOptions;
+  /**
+   * Supabase's auth hooks, shared by denext's endpoints and `/auth/v1`: `customAccessToken`
+   * shapes the claims of every session (an `/auth/v1` access token, and the
+   * `request.jwt.claims` a cookie session's queries run with), `sendEmail` delivers every auth
+   * email (instead of `sendVerificationRequest`), `sendSms` every SMS (instead of `sendSms`).
+   */
+  hooks?: GoTrueHooks;
+  /**
+   * Anonymous sign-in: a user with no identifier yet (`signIn("anonymous")`,
+   * `supabase.auth.signInAnonymously()`), who becomes permanent by adding a confirmed email or
+   * phone. Default `false`.
+   */
+  anonymous?: boolean;
   /** Token lifetimes and link targets for email verification, password reset, magic links and one-time codes. */
   email?: AuthEmailConfig;
   /** Second-factor (TOTP) policy. */

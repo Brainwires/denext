@@ -1,32 +1,14 @@
 /**
- * The `/auth/v1` MFA factors as stored (the adapter's factor group) and as GoTrue lists them.
+ * The MFA factors as GoTrue lists them (`user.factors`): the shared factor store's TOTP, phone
+ * and WebAuthn factors, plus the backup codes as one `recovery_code` factor.
  *
  * @module
  */
 
-import type { AuthAdapter, MfaFactorRecord } from "../adapter.ts";
+import type { MfaFactorRecord } from "../adapter.ts";
+import { derivedId, type FactorAdapter, factorStoreOf, userFactors } from "../factors.ts";
 import type { AuthConfig } from "../types.ts";
 import { type GoTrueFactor, iso } from "./user.ts";
-
-/** The adapter methods the factor endpoints need. */
-export type FactorAdapter = Required<
-  Pick<
-    AuthAdapter,
-    | "createMfaFactor"
-    | "listMfaFactors"
-    | "updateMfaFactor"
-    | "claimMfaFactorStep"
-    | "deleteMfaFactor"
-  >
->;
-
-const FACTOR_METHODS = [
-  "createMfaFactor",
-  "listMfaFactors",
-  "updateMfaFactor",
-  "claimMfaFactorStep",
-  "deleteMfaFactor",
-] as const;
 
 /**
  * The configured adapter's factor group, or `null`.
@@ -35,11 +17,17 @@ const FACTOR_METHODS = [
  * @returns The adapter narrowed to the factor methods.
  */
 export function factorAdapterOf(config: AuthConfig): FactorAdapter | null {
-  const adapter = config.adapter;
-  if (!adapter) return null;
-  return FACTOR_METHODS.every((m) => typeof adapter[m] === "function")
-    ? adapter as FactorAdapter
-    : null;
+  return factorStoreOf(config.adapter);
+}
+
+/**
+ * The id the backup codes are listed under (stable per user).
+ *
+ * @param userId The user.
+ * @returns The factor id.
+ */
+export function recoveryFactorId(userId: string): Promise<string> {
+  return derivedId(`recovery-codes:${userId}`);
 }
 
 /**
@@ -63,14 +51,25 @@ export function factorJson(factor: MfaFactorRecord): GoTrueFactor {
 }
 
 /**
- * A user's factors in GoTrue's shape (`[]` when the adapter keeps none).
+ * A user's factors in GoTrue's shape (`[]` when the adapter keeps none), the backup codes last.
  *
  * @param config The auth config.
  * @param userId The user.
  * @returns The factors.
  */
 export async function factorsJson(config: AuthConfig, userId: string): Promise<GoTrueFactor[]> {
-  const adapter = factorAdapterOf(config);
-  if (!adapter) return [];
-  return (await adapter.listMfaFactors(userId)).map(factorJson);
+  const out = (await userFactors(config, userId)).map(factorJson);
+  const record = await config.adapter?.getMfa?.(userId);
+  if (record && record.backupCodeHashes.length > 0) {
+    const at = iso(record.confirmedAt ?? Math.floor(Date.now() / 1000))!;
+    out.push({
+      id: await recoveryFactorId(userId),
+      factor_type: "recovery_code",
+      status: "verified",
+      friendly_name: "Recovery codes",
+      created_at: at,
+      updated_at: at,
+    });
+  }
+  return out;
 }

@@ -28,6 +28,7 @@
  */
 
 import type { AuthAdapter, PasskeyRecord } from "./adapter.ts";
+import { forgetPasskeyFactor } from "./factors.ts";
 import { sha256Hex } from "./hash.ts";
 import { base64UrlEncode, randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
@@ -303,5 +304,6 @@ export async function deletePasskey(
   const record = await adapter.getPasskey(input.id);
   if (!record || record.userId !== input.userId) return false;
   await adapter.deletePasskey(input.id);
+  await forgetPasskeyFactor(config, input.userId, input.id);
   return true;
 }

@@ -167,21 +167,25 @@ export interface MfaRecord {
 }
 
 /**
- * One MFA factor of the `/auth/v1` (GoTrue) API: a TOTP authenticator or a phone that receives
- * codes by SMS. A user may hold several.
+ * One MFA factor — denext's sign-in and the `/auth/v1` (GoTrue) API share them: a TOTP
+ * authenticator, a phone that receives codes by SMS, or a WebAuthn authenticator enrolled as a
+ * second factor. A user may hold several of each.
  */
 export interface MfaFactorRecord {
   /** The factor id (a UUID). */
   id: string;
   /** The owning {@linkcode AdapterUser.id}. */
   userId: string;
-  /** `totp` or `phone`. */
-  type: "totp" | "phone";
+  /** `totp`, `phone` or `webauthn`. */
+  type: "totp" | "phone" | "webauthn";
   /** `unverified` until its first successful verification. */
   status: "unverified" | "verified";
   /** A label the user chose (unique per user). */
   friendlyName?: string;
-  /** The TOTP secret, sealed like {@linkcode MfaRecord.secret} (TOTP factors). */
+  /**
+   * The TOTP secret, sealed like {@linkcode MfaRecord.secret} (TOTP factors); the passkey's
+   * credential id (WebAuthn factors, once verified).
+   */
   secret?: string;
   /** The phone number, E.164 (phone factors). */
   phone?: string;
@@ -380,7 +384,7 @@ export interface VerificationTokenRef {
  * not a read followed by a write. Two racing requests must see exactly one success:
  * {@linkcode AuthAdapter.useVerificationToken} (delete-and-return),
  * {@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and
- * {@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). So are the passkey group's
+ * {@linkcode AuthAdapter.claimMfaFactorStep} (claim a TOTP step). So are the passkey group's
  * {@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),
  * {@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and
  * {@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic
@@ -594,10 +598,9 @@ export interface AuthAdapter {
 
   /**
    * **Atomically** replace a user's stored TOTP secret, only while it still equals
-   * `expected` (optional) — how a legacy plaintext secret, or one sealed under a rotated-out
-   * auth `secret`, is re-sealed when it is read. A compare-and-swap of that one field, never a
-   * whole-record write: a concurrent `claimTotpStep` or `consumeBackupCode` must not be undone.
-   * Without it, such a secret stays in its old (still readable) form.
+   * `expected` (optional) — how a pre-4.0 record's secret is cleared once it has moved into a
+   * factor. A compare-and-swap of that one field, never a whole-record write: a concurrent
+   * `consumeBackupCode` must not be undone. Without it the move falls back to `setMfa`.
    *
    * @param userId The owner.
    * @param expected The stored secret as it was read.
@@ -632,6 +635,9 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @param step The TOTP step the presented code verified against.
    * @returns `true` when the step was claimed (i.e. not a replay).
+   * @deprecated No longer called: TOTP secrets live in factors, whose steps
+   * {@linkcode AuthAdapter.claimMfaFactorStep} claims (a pre-4.0 record's spent step moves with
+   * its secret).
    */
   claimTotpStep?(userId: string, step: number): MaybePromise<boolean>;
 
@@ -653,7 +659,8 @@ export interface AuthAdapter {
   listMfaFactors?(userId: string): MaybePromise<MfaFactorRecord[]>;
 
   /**
-   * Change a factor's status, label or challenge time.
+   * Change a factor's status, label, secret (a re-sealed TOTP secret, a WebAuthn factor's
+   * credential id) or challenge time.
    *
    * @param id The factor id.
    * @param patch The fields to change.
@@ -661,7 +668,10 @@ export interface AuthAdapter {
   updateMfaFactor?(
     id: string,
     patch: Partial<
-      Pick<MfaFactorRecord, "status" | "friendlyName" | "updatedAt" | "lastChallengedAt">
+      Pick<
+        MfaFactorRecord,
+        "status" | "friendlyName" | "secret" | "updatedAt" | "lastChallengedAt"
+      >
     >,
   ): MaybePromise<void>;
 

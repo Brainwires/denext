@@ -108,8 +108,9 @@ function validateConfig(config: AuthConfig): void {
     // Every sign-in would come back pending with no way to enroll or verify a factor:
     // nobody could ever finish signing in.
     throw new Error(
-      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA group (getMfa, ' +
-        "setMfa, consumeBackupCode, claimTotpStep).",
+      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA factor store ' +
+        "(createMfaFactor, listMfaFactors, updateMfaFactor, claimMfaFactorStep, deleteMfaFactor) " +
+        "and backup codes (getMfa, setMfa, consumeBackupCode).",
     );
   }
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();

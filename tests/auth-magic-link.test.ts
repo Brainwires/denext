@@ -682,7 +682,11 @@ Deno.test("an already-verified account keeps its TOTP factor through an email si
   await send(h, "owner@x.test");
   const coded = await submitCode(h, "owner@x.test", h.sent[0].token);
   assertEquals(await coded.res.json(), { ok: true, mfa: "required" });
-  assertEquals(await h.adapter.getMfa!(id), factor, "the owner's own factor is untouched");
+  // The legacy record's secret moved into the factor store on that read; the factor (and the
+  // backup codes) are untouched.
+  assertEquals(await h.adapter.getMfa!(id), { ...factor, secret: "" });
+  const status = await mfaStatus(h.config, id);
+  assertEquals([status.enrolled, status.backupCodesRemaining], [true, 1], "the owner's own factor");
   assert(!h.events.includes("emailVerified"));
 });
 

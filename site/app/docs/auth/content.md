@@ -137,7 +137,8 @@ Every path is relative to `basePath` (default `/auth`).
 | `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                   |
 | `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                         |
 | `/reset/confirm`      | POST        | `{ email, token, password }`: set the new password.                                                                                                                  |
-| `/mfa`                | POST        | Finish a pending sign-in with a TOTP or backup code.                                                                                                                 |
+| `/mfa`                | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                            |
+| `/mfa/challenge`      | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                |
 | `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                             |
 | `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                             |
 | `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                      |
@@ -155,7 +156,7 @@ Every path is relative to `basePath` (default `/auth`).
 A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall
 through to your app — that is where a reset link and `pages.mfa` can land. The account rows
 exist only when the adapter can run them — `/verify` and `/reset*` need the
-verification-token group (`/reset*` also `setCredential`), `/mfa*` the whole MFA group,
+verification-token group (`/reset*` also `setCredential`), `/mfa*` the MFA factor and backup-code groups,
 `/passkey*` a `passkeys` config — and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
 config (and an adapter with the native session group), and `/account/delete` only with an
 adapter that implements `deleteUser`.
@@ -457,7 +458,8 @@ else is optional and gates the feature that needs it.
 | Verification tokens | `createVerificationToken`, `useVerificationToken`                                                                                | Email verification, reset, magic links, email codes |
 | Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                                                                    | `credentials()` without `authorize`, password reset |
 | API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens`                                        | Bearer tokens and `/auth/tokens`                    |
-| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`, `replaceMfaSecret`                               | TOTP two-factor and backup codes                    |
+| MFA factors         | `createMfaFactor`, `listMfaFactors`, `updateMfaFactor`, `claimMfaFactorStep`, `deleteMfaFactor`                                  | TOTP, phone and WebAuthn second factors             |
+| Backup codes        | `getMfa`, `setMfa`, `consumeBackupCode`, optional `deleteMfa`, `replaceMfaSecret`                                                | Backup codes; moving a pre-4.0 TOTP secret          |
 | Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge` | WebAuthn sign-in and step-up                        |
 | Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                            | `session.strategy: "database"`, drain               |
 
@@ -469,8 +471,8 @@ write. Two racing requests must see exactly one success:
   resolves `undefined` (fail closed), never left to be retried.
 - `consumeBackupCode` — walk the stored hashes, `await` the caller's constant-time
   comparison, and remove the first match inside the same critical section.
-- `claimTotpStep` — succeed only when the step is strictly greater than the stored one,
-  and store it in the same operation.
+- `claimMfaFactorStep` — succeed only when the step is strictly greater than the factor's
+  stored one, and store it in the same operation.
 - `usePasskeyChallenge` — delete-and-return, like `useVerificationToken`; `createPasskey`
   stores nothing (and answers `false`) when the credential ID is already registered; and
   `updatePasskey` writes only while the stored counter is still the one the assertion was
@@ -854,9 +856,11 @@ HTML-escaped. A link without a valid address or token goes to the error page ins
 
 A user who enrolls an authenticator app is asked for a code at every sign-in, whatever the
 first factor — a password, an OAuth / OIDC provider, a magic link or an emailed code. It
-needs an adapter implementing the whole MFA group (`getMfa`, `setMfa`, `consumeBackupCode`
-and `claimTotpStep` — both shipped adapters do); without it nobody is ever asked, and the
-`/mfa*` endpoints are a plain 404.
+needs an adapter implementing the MFA factor group and the backup codes (the in-memory, SQLite
+and Postgres adapters do); without it nobody is ever asked, and the `/mfa*` endpoints are a
+plain 404. A user may hold several factors — TOTP authenticators, phones and WebAuthn
+authenticators — and the same factors serve [`/auth/v1`](#one-factor-store-for-both-sign-in-paths)
+when `backend({ supabase })` is on.
 
 ```ts
 denextAuth({
@@ -884,9 +888,10 @@ Action:
    entry and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is
    the user's email, else their id) to render as a QR code — `totpQrSvg(uri)` does that
    with no library (below). Enrolling again replaces an
-   unconfirmed enrollment; a confirmed factor is a `409` (`error: "already_enrolled"` from the
-   function) until it
-   is disabled. From a complete session the route also needs a recent sign-in (`authTime`
+   unconfirmed enrollment. With a confirmed TOTP factor on file, enrolling another (a second
+   authenticator) needs a session whose own second factor is fresh (`mfa.freshness`), else it
+   is a `409` (`error: "already_enrolled"` from the function); a pending session never enrolls
+   next to a verified factor of any kind. From a complete session the route also needs a recent sign-in (`authTime`
    within `mfa.freshness`, five minutes at least) and answers
    `403 { error: "reauth_required" }` otherwise, so a stolen session can't enroll a factor of
    its own. The function applies the same rule and answers `{ ok: false, error:
@@ -987,10 +992,13 @@ export default async function Mfa({ searchParams }: PageProps) {
 Keep that page out of your `requireAuth` matcher: a pending session never passes
 `requireAuth`.
 
-`POST {basePath}/mfa` takes a TOTP code or a backup code (the hyphen is optional). A right
-one mints a **fresh**, complete session — the pending one is discarded (its store record
+`POST {basePath}/mfa` takes a TOTP code (from any of the user's TOTP factors), a backup code
+(the hyphen is optional), or — after `POST {basePath}/mfa/challenge` with `{ factorId }`
+texted a phone factor a code through `sendSms` — `{ code, challengeId, factorId }`. A challenge
+is single-use, right or wrong, and lives five minutes; sends draw on the verification-send
+budget, not the code budget. A right one mints a **fresh**, complete session — the pending one is discarded (its store record
 deleted), never upgraded in place, so there is nothing to fixate — with `amr` extended by
-`totp` or `bcp`, fires `signIn`, and answers `{ ok: true, user }` or a `303` to the
+`totp`, `sms` or `bcp`, fires `signIn`, and answers `{ ok: true, user }` or a `303` to the
 `callbackUrl`. A wrong one is a `401`, or for a form a `303` back to `pages.mfa` with
 `?error=CredentialsSignin`, and fires `signInFailed` with `"invalid_mfa_code"`. The
 endpoint serves only a pending session: none is a `401`, a complete one a `403`. Under
@@ -999,7 +1007,7 @@ endpoint serves only a pending session: none is a `401`, a complete one a `403`.
 because confirming completes the step-up.
 
 **Every code works once.** A TOTP code is accepted within ±`mfa.window` steps, and its step
-is then claimed through the adapter's atomic `claimTotpStep`, so it can't be presented
+is then claimed on its factor through the adapter's atomic `claimMfaFactorStep`, so it can't be presented
 twice — not even to confirm an enrollment and then step up with it. A backup code is spent
 through the atomic `consumeBackupCode`. Every code check on `/mfa`, `/mfa/confirm` and
 `/mfa/disable` spends one unit of the per-user budget — 5 per 5 minutes (`rateLimit.mfa`),
@@ -1018,7 +1026,8 @@ freshness check — gate it yourself.
 For a settings page, `mfaStatus(authConfig, userId)` answers
 `{ enrolled, pendingConfirmation, backupCodesRemaining }` (`enrolled` means a confirmed factor,
 as in `mfa.required: "enrolled"`), and `verifySecondFactor(authConfig, { userId, code })`
-checks a code (claiming or spending it) and answers `{ ok: true, method: "totp" | "bcp" }` or
+checks a code (claiming or spending it) — with `challengeId` and `factorId` an SMS challenge's
+code — and answers `{ ok: true, method: "totp" | "sms" | "bcp", factorId? }` or
 `{ ok: false, error: "invalid_code" | "not_enrolled" }`. The RFC 6238 primitives underneath are exported too:
 `generateTotpSecret()`, `totpAuthUri({ secret, account, issuer })`, `totpQrSvg(uri)`,
 `verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
@@ -1033,17 +1042,17 @@ opens it only to check a code:
 
 - **AES-256-GCM** (NIST SP 800-38D) under a key derived from the auth `secret` with
   **HKDF-SHA-256** (RFC 5869) and a dedicated label, so it is independent of the key that
-  signs session cookies. Each seal draws a fresh random 96-bit nonce, and the user id is bound
-  in as additional data, so a sealed secret copied onto another user's row does not open.
+  signs session cookies. Each seal draws a fresh random 96-bit nonce, and the factor (user id
+  and factor id) is bound in as additional data, so a sealed secret copied onto another
+  factor's row does not open.
 - The stored value carries its version, nonce and ciphertext together:
   `totp.v1.<nonce>.<ciphertext>`. Store it as an opaque string.
 - **Rotation.** With `secret: [current, previous]`, a factor sealed under `previous` still
-  opens, and is re-sealed under `current` **only when a TOTP or backup-code check for that
-  user passes** — through the adapter's `replaceMfaSecret`. Keep a retired secret in the list
+  opens, and is re-sealed under `current` **only when a TOTP code from that factor passes** —
+  through the adapter's `updateMfaFactor`. Keep a retired secret in the list
   until every factor sealed under it has been re-sealed that way: a user who only ever signs in
-  with a passkey under user verification is never checked, so never re-sealed, and with an
-  adapter that has no `replaceMfaSecret` nothing is ever re-sealed, so there the old secret
-  must stay for good. **Replacing** the secret instead of listing both bricks every factor
+  with a passkey under user verification (or a backup code) is never checked, so never
+  re-sealed. **Replacing** the secret instead of listing both bricks every factor
   sealed under the old one: it **fails closed** — no TOTP code verifies, the user still owes a
   second factor, a backup code still works, and the logger warns with the user id (never the
   secret).
@@ -1053,18 +1062,54 @@ opens it only to check a code:
   userId)`. `enrollTotp` keeps answering `already_enrolled` over such a factor on purpose: a
   pending session — a password alone — may enroll, and must never be able to replace a second
   factor.
-- **Existing rows.** A secret stored in plaintext by an earlier denext keeps verifying and is
-  re-sealed on that read. A tampered row, an unknown version or anything that is neither
+- **Existing rows.** Before 4.0 the one TOTP secret lived in the user's MFA record. The first
+  time a user's factors are read it moves, as stored, into a TOTP factor (verified when the
+  record was confirmed; its spent step kept), and the record keeps only the backup codes — the
+  move clears the record's secret with `replaceMfaSecret`'s compare-and-swap (or `setMfa`). It
+  needs no key: a secret no configured `secret` opens moves too, and the user stays enrolled.
+  Sealed for the user, or plaintext from before sealing, it keeps verifying and is re-sealed
+  for the factor after the first code it accepts. A tampered row, an unknown version or anything that is neither
   sealed nor base32 is refused, never used as a plaintext secret.
 - **A writable database is out of scope.** A plain base32 value always opens as a legacy row
   (no per-row marker says it was ever sealed), so whoever can write the MFA table can swap a
   sealed secret for a plaintext one they know. That access could equally rewrite a password
   hash or delete the factor; sealing protects a copied database, not a writable one.
 
-The re-seal on read goes through the adapter's optional `replaceMfaSecret(userId, expected,
-next)`: a compare-and-swap of that one column, so it can't undo a concurrent `claimTotpStep`
-or `consumeBackupCode`. Both shipped adapters implement it; a custom adapter without it keeps
-reading old rows as they are, and seals every new enrollment.
+### One factor store for both sign-in paths
+
+With `backend({ supabase })` the `/auth/v1` API (`supabase.auth.mfa.*`) reads and writes the
+same factors as denext's cookie sign-in, so a factor enrolled either way is enforced both ways:
+
+- **Who owes a factor.** Any verified factor — TOTP, phone or WebAuthn — makes a user enrolled:
+  a cookie sign-in is pending until `/mfa` (or a passkey step-up), and an `/auth/v1` session is
+  `aal1` with `nextLevel: "aal2"` until `/factors/:id/verify`. An `aal1` access token that owes
+  a factor is a session `auth()` reads as `null` (it fails closed, like a pending cookie), so
+  `requireSession` and Server Actions refuse it. Row-level security reads the token's own
+  claims (`auth.jwt() ->> 'aal'`), as on Supabase: a policy that needs the second factor checks
+  for `aal2`.
+- **Adding a factor needs the one already held.** Once a user holds a verified factor, an
+  `aal1` session can't enroll another, verify a new one or register a passkey through
+  `/auth/v1` (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm a
+  TOTP factor — otherwise a password alone could add a factor of its own and step up with it.
+- **TOTP** factors enrolled through `/mfa/enroll` or `POST /factors` are interchangeable; each
+  claims its own steps, so a code is accepted once across both paths.
+- **Phone** factors are enrolled through `/auth/v1` (`mfa: { phone: true }` and an SMS sender:
+  `denextAuth({ sendSms })`, `hooks.sendSms`, or the `/auth/v1` option); the cookie step-up
+  texts one with `/mfa/challenge`.
+- **WebAuthn** factors (`factorType: "webauthn"`, with `denextAuth({ passkeys })` configured)
+  are passkeys: the first challenge is a registration (`webauthn.type: "create"`), later ones
+  assertions limited to that credential. The client's `rpId` / `rpOrigins` must name the
+  configured relying party. Deleting the passkey deletes the factor. A passkey registered
+  through `/passkey/register` or `supabase.auth.passkey` is a sign-in method, not a factor: it
+  makes nobody enrolled, but under user verification it is two factors on its own (`aal2`).
+- **Backup codes** are `/auth/v1`'s recovery codes (`/factors/recovery-codes*`, listed as one
+  `recovery_code` factor): the same hashes, spent once by either path. Minting or regenerating
+  them needs `aal2` once a factor is verified.
+- **Passkeys** through `/auth/v1` (`/passkeys/registration/*`, `/passkeys/authentication/*`,
+  `GET /passkeys`, `PATCH|DELETE /passkeys/:id`, `admin/users/:id/passkeys`) use the passkey
+  store `/passkey*` does. Registration and removal need a sign-in within `mfa.freshness` and a
+  confirmed address; a challenge is single-use and bound to the `challenge_id` it was issued
+  with.
 
 ## Passkeys (WebAuthn)
 
@@ -1786,6 +1831,10 @@ identity rows with `identityData`. Access tokens carry Supabase's claims (`sub`,
 `email`, `phone`, `app_metadata`, `user_metadata`, `aal`, `amr`, `session_id`, `is_anonymous`,
 `exp`, `iat`, `iss`), so RLS policies written for Supabase work through `db()` and auto-REST.
 
+`sendSms`, `captcha`, `hooks` and `anonymous` can also be set once on `denextAuth({ … })`; they
+then apply to denext's own endpoints and to `/auth/v1`, and the `/auth/v1` options below override
+them there.
+
 The `/auth/v1` options (`backend({ supabase: { auth } })`):
 
 | Option                             | Default           | What it does                                                              |
@@ -2042,8 +2091,8 @@ What the first-party auth layer still does not do — the full ledger is
   one — use `magicLink({ confirm: true })`, or `emailOtp()`.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
   current (first) secret, and live for minutes. A retired secret must stay in the list until
-  the TOTP factors sealed under it are re-sealed, which happens only when a TOTP or backup-code
-  check passes (never for a passkey-only user, never without `replaceMfaSecret`).
+  the TOTP factors sealed under it are re-sealed, which happens only when a TOTP code from that
+  factor passes (never for a user who steps up only with a passkey or a backup code).
 - **One passkey ceremony per browser at a time**: the ceremony cookie is per browser, so a
   second ceremony supersedes the first.
 - **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking
