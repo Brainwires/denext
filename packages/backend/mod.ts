@@ -91,6 +91,18 @@ import {
   setupSupabaseKeys,
   type SupabaseOptions,
 } from "./src/supabase.ts";
+import { installVault, vaultMigrations, type VaultOptions } from "./src/vault.ts";
+import { ensureQueuesMigrated, installQueues, type QueuesOptions } from "./src/queues.ts";
+import { queuesMigrations } from "./src/queues-sql.ts";
+import {
+  ensureWebhooksMigrated,
+  installWebhooks,
+  resolveWebhooks,
+  startWebhookDelivery,
+  webhooksMigrations,
+  type WebhooksOptions,
+} from "./src/webhooks.ts";
+import { backendMigrationsOf, createDbCommand } from "./src/db-command.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -109,6 +121,14 @@ export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
 export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
 export type { SupabaseOptions } from "./src/supabase.ts";
+export type { VaultOptions } from "./src/vault.ts";
+export { vaultMigrations } from "./src/vault.ts";
+export type { QueuesOptions } from "./src/queues.ts";
+export { queuesMigrations, queuesSetupSql } from "./src/queues-sql.ts";
+export type { WebhooksOptions, WebhookTarget } from "./src/webhooks.ts";
+export { webhooksMigrations } from "./src/webhooks.ts";
+export { vectorSearchSql } from "./src/vector.ts";
+export type { VectorSearchSqlOptions } from "./src/vector.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";
@@ -172,6 +192,22 @@ export interface BackendOptions {
    * directory with the defaults.
    */
   functions?: FunctionsOptions;
+  /**
+   * Vault: secrets encrypted with AES-256-GCM in the app (key: `DENEXT_VAULT_KEY`) and stored in
+   * `vault.secrets`, Supabase Vault's table shape — `vault` from `@denext/backend/server`. Needs
+   * `postgres`.
+   */
+  vault?: VaultOptions;
+  /**
+   * Queues with pgmq's SQL API (no extension) and Supabase's `pgmq_public` wrappers — `queue()`,
+   * `queues` and `queueConsumer()` from `@denext/backend/server`. Needs `postgres`.
+   */
+  queues?: QueuesOptions;
+  /**
+   * Database webhooks: `supabase_functions.http_request` triggers record changes, and the app
+   * delivers them to the configured hooks, signed and retried. Needs `postgres`.
+   */
+  webhooks?: WebhooksOptions;
 }
 
 function env(name: string): string | undefined {
@@ -297,12 +333,81 @@ function setupPostgres(
   ctx: PluginContext,
   options: BackendOptions,
   rest: ReturnType<typeof resolveRest> | undefined,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
 ): void {
   const { slot, owned } = openPostgres(options.postgres!, env);
   installPostgres(slot);
   if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
   if (options.realtime) setupRealtime(ctx, options.realtime, slot);
   if (rest) setupRest(ctx, rest);
+  installVault(options.vault);
+  installQueues(options.queues);
+  installWebhooks(webhooks);
+  ctx.addCommand(dbCommandFor(options, webhooks));
+  if (ctx.mode === "dev" || ctx.mode === "prod") startServices(ctx, options, webhooks);
+}
+
+/** `denext db`, over the services this config enables. */
+function dbCommandFor(
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+) {
+  const on = { vault: !!options.vault, queues: !!options.queues, webhooks: !!webhooks };
+  return createDbCommand({
+    url: options.postgres?.url ?? env("DATABASE_URL"),
+    backendMigrations: () =>
+      backendMigrationsOf([
+        on.vault ? vaultMigrations : () => [],
+        on.queues ? queuesMigrations : () => [],
+        on.webhooks ? webhooksMigrations : () => [],
+      ]),
+    serviceSchemas: [
+      ...(on.vault ? ["vault"] : []),
+      ...(on.queues ? ["pgmq", "pgmq_public"] : []),
+      ...(on.webhooks ? ["supabase_functions"] : []),
+    ],
+  });
+}
+
+/**
+ * At server start: apply the queues and webhooks migrations (so a migration that creates a
+ * webhook trigger finds `supabase_functions.http_request`), and start webhook delivery.
+ */
+function startServices(
+  ctx: PluginContext,
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+): void {
+  const warn = (what: string) => (error: unknown) =>
+    console.warn(
+      `[@denext/backend] ${what}: ${(error as Error)?.message ?? error} (retried on first use)`,
+    );
+  if (options.queues && options.queues.migrate !== false) {
+    Promise.resolve().then(() => ensureQueuesMigrated(db.service())).catch(warn("queues"));
+  }
+  if (!webhooks) return;
+  if (webhooks.migrate) {
+    Promise.resolve().then(() => ensureWebhooksMigrated(db.service())).catch(warn("webhooks"));
+  }
+  if (webhooks.delivery === "auto") ctx.addTeardown(startWebhookDelivery(webhooks));
+}
+
+/** The services that run on Postgres refuse a config without it. */
+function checkNeedsPostgres(options: BackendOptions): void {
+  if (options.postgres) return;
+  if (options.storage?.rls) throw new TypeError("backend(): storage.rls needs `postgres`");
+  for (const service of ["realtime", "rest", "vault", "queues", "webhooks"] as const) {
+    if (options[service]) throw new TypeError(`backend(): ${service} needs \`postgres\``);
+  }
+}
+
+/** `denext functions`, and the functions themselves under `denext dev` / `denext start`. */
+async function setupFunctionsService(
+  ctx: PluginContext,
+  functions: ReturnType<typeof resolveFunctions>,
+): Promise<void> {
+  ctx.addCommand(createFunctionsCommand(functions));
+  if (ctx.mode === "dev" || ctx.mode === "prod") await setupFunctions(ctx, functions);
 }
 
 /**
@@ -319,26 +424,18 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   const buckets = storageOptions
     ? resolveBuckets(storageOptions.buckets, storageOptions.authorize)
     : undefined;
-  if (storageOptions?.rls && !options.postgres) {
-    throw new TypeError("backend(): storage.rls needs `postgres`");
-  }
+  checkNeedsPostgres(options);
   const apiBase = storageOptions ? storageApiBase(storageOptions.api) : null;
-  if (options.realtime) {
-    if (!options.postgres) throw new TypeError("backend(): realtime needs `postgres`");
-    resolveRealtime(options.realtime);
-  }
-  if (options.rest && !options.postgres) throw new TypeError("backend(): rest needs `postgres`");
+  if (options.realtime) resolveRealtime(options.realtime);
   const rest = options.rest ? resolveRest(options.rest) : undefined;
   const functions = options.functions ? resolveFunctions(options.functions) : undefined;
+  const webhooks = options.webhooks ? resolveWebhooks(options.webhooks, env) : undefined;
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
       if (options.supabase) await setupSupabase(ctx, options.supabase);
-      if (options.postgres) setupPostgres(ctx, options, rest);
-      if (functions) {
-        ctx.addCommand(createFunctionsCommand(functions));
-        if (ctx.mode === "dev" || ctx.mode === "prod") await setupFunctions(ctx, functions);
-      }
+      if (options.postgres) setupPostgres(ctx, options, rest, webhooks);
+      if (functions) await setupFunctionsService(ctx, functions);
       if (storageOptions && buckets) {
         await setupStorage(ctx, storageOptions, buckets, apiBase, options.postgres !== undefined);
       }

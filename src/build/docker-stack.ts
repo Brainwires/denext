@@ -151,9 +151,20 @@ export const STACK_ENV: readonly StackEnvVar[] = [
   },
   {
     name: "DENEXT_VAULT_KEY",
-    about: "@denext/backend: encrypts the vault's secrets in Postgres.",
+    about:
+      "@denext/backend: encrypts the vault's secrets in Postgres (AES-256-GCM, ≥ 32 characters).",
     generate: RAND_B64,
     required: true,
+    app: true,
+    when: (o) => o.backend === true && o.postgres === true,
+  },
+  {
+    name: "DENEXT_WEBHOOK_SECRET",
+    about: "@denext/backend database webhooks: signs each delivery (Standard Webhooks). " +
+      "Optional: only read when backend({ webhooks }) is configured.",
+    generate: RAND_B64,
+    example: "",
+    required: false,
     app: true,
     when: (o) => o.backend === true && o.postgres === true,
   },

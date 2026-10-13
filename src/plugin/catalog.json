@@ -508,6 +508,118 @@
                 }
               }
             }
+          },
+          "vault": {
+            "description": "Vault: secrets encrypted with AES-256-GCM in the app (key: `DENEXT_VAULT_KEY`) and stored in `vault.secrets`, Supabase Vault's table shape — `vault` from `@denext/backend/server`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "key": {
+                "description": "The encryption key (default `DENEXT_VAULT_KEY`): at least 32 characters (a random 32-byte value, base64-encoded, is ideal). A list rotates keys: the first encrypts, every one decrypts.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "migrate": {
+                "description": "Apply the `backend_vault_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              }
+            }
+          },
+          "queues": {
+            "description": "Queues with pgmq's SQL API (no extension) and Supabase's `pgmq_public` wrappers — `queue()`, `queues` and `queueConsumer()` from `@denext/backend/server`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "migrate": {
+                "description": "Apply the `backend_queues_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              }
+            }
+          },
+          "webhooks": {
+            "description": "Database webhooks: `supabase_functions.http_request` triggers record changes, and the app delivers them to the configured hooks, signed and retried. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "hooks": {
+                "description": "Targets a trigger can name: `supabase_functions.http_request('order-created')`.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "description": "Where the event is sent.",
+                      "type": "string"
+                    },
+                    "secret": {
+                      "description": "The signing secret (`whsec_<base64>` or any string); default: `webhooks.secret`.",
+                      "type": "string"
+                    },
+                    "headers": {
+                      "description": "Headers added to every request (the trigger's own come first; signing headers win).",
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "timeoutMs": {
+                      "description": "The request timeout in milliseconds (default: the trigger's, else 5000).",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              },
+              "allowUrls": {
+                "description": "URLs a trigger may name directly (Supabase's `http_request('https://…')`): each entry is a URL prefix (`\"https://hooks.example.com/\"`). Default: none — a URL in a trigger is refused.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "secret": {
+                "description": "The default signing secret (default `DENEXT_WEBHOOK_SECRET`).",
+                "type": "string"
+              },
+              "maxAttempts": {
+                "description": "Attempts before an event is marked failed (default 8).",
+                "type": "number"
+              },
+              "backoffMs": {
+                "description": "The first retry's delay in ms, doubled per attempt (default 10 000).",
+                "type": "number"
+              },
+              "maxBackoffMs": {
+                "description": "The longest retry delay in ms (default 3 600 000).",
+                "type": "number"
+              },
+              "pollIntervalMs": {
+                "description": "How often the deliverer looks for due events, in ms (default 5000; NOTIFY wakes it sooner).",
+                "type": "number"
+              },
+              "delivery": {
+                "description": "`\"auto\"` (default): `denext dev` / `denext start` deliver in the background. `\"manual\"`: only `deliverWebhooks()` does (from a job, say).",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              "migrate": {
+                "description": "Apply the `backend_webhooks_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              },
+              "fetch": {
+                "description": "The `fetch` deliveries use (tests)."
+              }
+            }
           }
         }
       }

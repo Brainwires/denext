@@ -13,6 +13,7 @@
 export const SERIAL_TESTS: readonly string[] = [
   "tests/auth-example.test.ts",
   "tests/backend-postgres.test.ts",
+  "tests/backend-supabase-functions.test.ts",
   "tests/build-next-config-eval.test.ts",
   "tests/build.test.ts",
   "tests/cache-default-store.test.ts",

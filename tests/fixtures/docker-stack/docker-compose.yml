@@ -30,6 +30,7 @@ services:
       DENEXT_JWT_SIGNING_KEYS: ${DENEXT_JWT_SIGNING_KEYS:-}
       DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:-}
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
+      DENEXT_WEBHOOK_SECRET: ${DENEXT_WEBHOOK_SECRET:-}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
     healthcheck:
@@ -70,6 +71,7 @@ services:
       DENEXT_JWT_SIGNING_KEYS: ${DENEXT_JWT_SIGNING_KEYS:-}
       DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:-}
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
+      DENEXT_WEBHOOK_SECRET: ${DENEXT_WEBHOOK_SECRET:-}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
     depends_on:

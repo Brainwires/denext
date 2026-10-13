@@ -223,7 +223,8 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17
+        # Postgres 17 with the pgvector extension available (the vector search tests create it).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -301,7 +302,8 @@ jobs:
             tests/backend-supabase-functions.test.ts \
             tests/backend-storage-supabase-integration.test.ts \
             tests/backend-supabase-auth.test.ts \
-            tests/backend-supabase-auth-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-supabase-auth-integration.test.ts \
+            tests/backend-platform-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

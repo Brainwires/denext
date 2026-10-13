@@ -3,20 +3,11 @@
 
 import { relative, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
+import { type CommandIo, consoleIo } from "./command-io.ts";
 import { discoverFunctions, functionsDir, type ResolvedFunctions } from "./functions.ts";
 
 /** Where the command prints (injectable for tests). */
-export interface FunctionsCommandIo {
-  log(line: string): void;
-  error(line: string): void;
-  exit(code: number): void;
-}
-
-const defaultIo: FunctionsCommandIo = {
-  log: (line) => console.log(line),
-  error: (line) => console.error(line),
-  exit: (code) => Deno.exit(code),
-};
+export type FunctionsCommandIo = CommandIo;
 
 /** One function, as `list` reports it. */
 export interface ListedFunction {
@@ -56,7 +47,7 @@ export async function listFunctions(
  */
 export function createFunctionsCommand(
   config: ResolvedFunctions,
-  io: FunctionsCommandIo = defaultIo,
+  io: FunctionsCommandIo = consoleIo,
 ): CommandSpec {
   return {
     name: "functions",

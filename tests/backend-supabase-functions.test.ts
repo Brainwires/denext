@@ -157,3 +157,94 @@ Deno.serve(async (req) => {
     }
   },
 });
+
+Deno.test({
+  name: `supabase-js functions.invoke with Supabase keys: anon key, user token, secret key${
+    enabled ? "" : " (skipped: set DENEXT_TEST_SUPABASE_JS=1)"
+  }`,
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { createClient, FunctionsHttpError } = await supabaseJs();
+    const { installedSupabaseKeys, signSupabaseJwt } = await import("../src/server/mod.ts");
+    const PUBLISHABLE = "sb_publishable_functions_test_key_000000";
+    const SECRET = "sb_secret_functions_test_key_00000000000";
+    const app = await functionsApp({
+      "functions/whoami.ts": `
+Deno.serve((req) => Response.json({
+  auth: req.headers.get("authorization"),
+  anonKey: Deno.env.get("SUPABASE_ANON_KEY"),
+  serviceKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ? "set" : null,
+}));`,
+    }, {
+      supabase: {
+        publishableKey: PUBLISHABLE,
+        secretKey: SECRET,
+        jwtSecret: "functions-jwt-secret-at-least-32-characters!",
+      },
+      functions: {},
+    });
+    const saved = {
+      p: Deno.env.get("DENEXT_PUBLISHABLE_KEY"),
+      s: Deno.env.get("DENEXT_SECRET_KEY"),
+    };
+    Deno.env.set("DENEXT_PUBLISHABLE_KEY", PUBLISHABLE);
+    Deno.env.set("DENEXT_SECRET_KEY", SECRET);
+    try {
+      const fetchApp = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        return app.call(url.pathname + url.search, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+          // deno-lint-ignore no-explicit-any
+          ...(request.body ? { duplex: "half" } as any : {}),
+        });
+      }) as typeof fetch;
+      const client = (key: string, headers: Record<string, string> = {}) =>
+        createClient(ORIGIN, key, {
+          global: { fetch: fetchApp, headers },
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+      // The anon key passes verification, as on Supabase.
+      const anon = await client(PUBLISHABLE).functions.invoke("whoami");
+      assertEquals(anon.error, null);
+      const got = anon.data as Record<string, unknown>;
+      assertEquals(got.auth, `Bearer ${PUBLISHABLE}`);
+      assertEquals([got.anonKey, got.serviceKey], [PUBLISHABLE, "set"]);
+      // A user's access token, and the secret key.
+      const token = await signSupabaseJwt(installedSupabaseKeys()!, {
+        sub: "6d1c4c6e-7a1e-4d43-9a0f-3c1f0c0a0003",
+        role: "authenticated",
+        aud: "authenticated",
+        exp: Math.floor(Date.now() / 1000) + 600,
+      });
+      const user = await client(PUBLISHABLE, { Authorization: `Bearer ${token}` }).functions
+        .invoke("whoami");
+      assertEquals(user.error, null);
+      assertEquals((await client(SECRET).functions.invoke("whoami")).error, null);
+      // A wrong key, a forged token and no credential at all are refused before the function runs.
+      for (
+        const refused of [
+          client("sb_publishable_wrong"),
+          client(PUBLISHABLE, { Authorization: `Bearer ${token.slice(0, -2)}xx` }),
+        ]
+      ) {
+        const { error } = await refused.functions.invoke("whoami");
+        assertInstanceOf(error, FunctionsHttpError);
+        assertEquals((error as InstanceType<typeof FunctionsHttpError>).context.status, 401);
+      }
+      assertEquals((await app.call("/functions/v1/whoami")).status, 401);
+    } finally {
+      for (
+        const [name, value] of [["DENEXT_PUBLISHABLE_KEY", saved.p], ["DENEXT_SECRET_KEY", saved.s]]
+      ) {
+        if (value === undefined) Deno.env.delete(name!);
+        else Deno.env.set(name!, value);
+      }
+      await app.close();
+    }
+  },
+});

@@ -50,6 +50,28 @@ export type {
   TableEvent,
   TableFilter,
 } from "./src/realtime-shared.ts";
+export { vault, VaultError } from "./src/vault.ts";
+export type { DecryptedSecret, Vault, VaultSecret } from "./src/vault.ts";
+export { queue, queueConsumer, QueueError, queues } from "./src/queues.ts";
+export type {
+  Queue,
+  QueueConsumerOptions,
+  QueueConsumerResult,
+  QueueMessage,
+  QueueMetrics,
+  Queues,
+} from "./src/queues.ts";
+export {
+  fromVector,
+  matchDocuments,
+  requireVector,
+  toVector,
+  vectorSearchSql,
+  VectorUnavailableError,
+} from "./src/vector.ts";
+export type { DocumentMatch, MatchDocumentsOptions, VectorSearchSqlOptions } from "./src/vector.ts";
+export { deliverWebhooks, signWebhook, verifyWebhook, webhookEvents } from "./src/webhooks.ts";
+export type { DeliveryResult, WebhookEvent } from "./src/webhooks.ts";
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";

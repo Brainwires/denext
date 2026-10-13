@@ -1198,13 +1198,18 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
   Hono with `basePath("/hello")` works as on Supabase.
 - **The response** streams back as the function writes it, so server-sent events work.
 - **Callers.** Like Supabase's `verify_jwt`, every function requires a valid caller by default and
-  answers `401` before it runs otherwise. Today that is a denext auth session (the page's cookie, or a
-  native app's bearer token); a cookie-carrying write from another site is refused (`403`), as for
-  Server Actions. `verifyJwt: false`, for the directory or one function, lets anyone call it. A CORS
+  answers `401` before it runs otherwise. A valid caller is anything the backend's shared identity
+  accepts: a user's access token, the publishable (anon) or secret key with
+  `backend({ supabase: … })` — as on Supabase, where the anon key passes `verify_jwt` — or a denext
+  auth session (the page's cookie, or a native app's bearer token). A presented credential that is
+  refused (a bad or expired token) is a `401` too. A cookie-carrying write from another site is
+  refused (`403`), as for Server Actions. `verifyJwt: false`, for the directory or one function, lets anyone call it. A CORS
   preflight (`OPTIONS`) is never checked: the function answers it, as in Supabase's `corsHeaders`
   recipe.
 - **Environment.** `Deno.env.get("SUPABASE_URL")` is the app's own URL (the origin of the request
-  that starts the worker, or `url`), and `SUPABASE_DB_URL` is `DATABASE_URL`; `env` adds variables
+  that starts the worker, or `url`), and `SUPABASE_DB_URL` is `DATABASE_URL`; `SUPABASE_ANON_KEY` / `SUPABASE_PUBLISHABLE_KEY` and
+  `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` come from `DENEXT_PUBLISHABLE_KEY` and
+  `DENEXT_SECRET_KEY`; `env` adds variables
   for every function or for one. The process environment is visible too.
 - **`EdgeRuntime.waitUntil(promise)`** is accepted: the worker stays up, so the work finishes.
 - **Errors** come back in Supabase's relay shape, `{ code, message }`: `404 NOT_FOUND`,
@@ -1240,6 +1245,187 @@ caller.
 | `url`          | the request origin | The app's public URL, which functions read as `SUPABASE_URL`.                                         |
 | `functions`    | `{}`               | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
 
+## Vault
+
+`backend({ postgres: {}, vault: {} })` keeps secrets encrypted in your database, in Supabase
+Vault's table shape (`vault.secrets`: `id`, `name`, `description`, `secret`, `key_id`, `nonce`,
+`created_at`, `updated_at`).
+
+```ts
+import { vault } from "@denext/backend/server";
+
+const id = await vault.createSecret("sk_live_…", "stripe_key", "Stripe secret key");
+const stripeKey = await vault.get("stripe_key"); // the plaintext, or null
+await vault.updateSecret(id, { secret: "sk_live_new" });
+const all = await vault.decryptedSecrets(); // the rows of Supabase's vault.decrypted_secrets
+```
+
+- **Encryption** is AES-256-GCM, done in the app with a key from `DENEXT_VAULT_KEY` (at least 32
+  characters; `openssl rand -base64 32` makes one) or `vault: { key }`. The key never reaches
+  Postgres, its logs or a backup. Each write takes a fresh 96-bit nonce, and the row's id is
+  authenticated with the ciphertext, so a ciphertext copied onto another row does not decrypt.
+- **Rotation.** `key: [newKey, oldKey]` decrypts with either (each row records which key, as
+  `key_id`) and encrypts with the first; `vault.rotate()` re-encrypts every row under it.
+- **Who can read it.** Only server code. The table has row-level security on and nothing granted
+  to `anon` or `authenticated`, so neither REST nor a user's `db()` reaches it.
+- **Not in SQL.** Supabase decrypts inside the database (`select decrypted_secret from
+  vault.decrypted_secrets`, with pgsodium's server key). Here that would put the key in the
+  database, so there is no `vault.create_secret()` SQL function or decrypted view: create and
+  read secrets with `vault` on the server (for example in a [job](/docs/jobs) or a migration
+  script).
+
+## Queues
+
+`backend({ postgres: {}, queues: {} })` adds message queues with [pgmq](https://github.com/pgmq/pgmq)'s
+API, written in plain SQL: no extension to install. SQL written for Supabase Queues runs
+unchanged, and so do Supabase's `pgmq_public` functions for the REST API.
+
+```ts
+import { queue, queueConsumer, queues } from "@denext/backend/server";
+
+await queues.create("emails");
+const emails = queue<{ to: string }>("emails");
+await emails.send({ to: "a@example.com" }, { delay: 10 }); // visible in 10 s
+const batch = await emails.read({ vt: 60, qty: 10 }); // hidden from other readers for 60 s
+await emails.archive(batch.map((m) => m.msgId));
+```
+
+```ts
+// jobs/send-emails.ts — drains the queue every minute
+import { queueConsumer } from "@denext/backend/server";
+
+export default queueConsumer<{ to: string }>({
+  queue: "emails",
+  schedule: "* * * * *",
+  maxAttempts: 5, // then archived unhandled
+  handler: async ({ message }) => await sendEmail(message.to),
+});
+```
+
+```sql
+-- the same, in SQL
+select pgmq.create('emails');
+select * from pgmq.send('emails', '{"to":"a@example.com"}');
+select * from pgmq.read('emails', 60, 10);
+select pgmq.archive('emails', 1);
+```
+
+- **The functions** are pgmq 1.4's: `create`, `create_unlogged`, `drop_queue`, `list_queues`,
+  `send`, `send_batch`, `read` (with a visibility timeout), `read_with_poll`, `pop`, `archive`,
+  `delete`, `set_vt`, `purge_queue`, `metrics`, `metrics_all`. Each queue is two tables,
+  `pgmq.q_<name>` and its archive `pgmq.a_<name>`. A database that has the pgmq extension already
+  keeps it; the plugin then adds only `pgmq_public`.
+- **Queue names** are 1–47 lowercase letters, digits or `_`, checked in SQL before any table name
+  is built from them.
+- **Who can use a queue.** Every function runs with the caller's rights (`security invoker`, as in
+  pgmq). The server's `queue()` uses the app's own database user; `queue(name, { as })` acts as a
+  user. Through REST (`supabase.schema("pgmq_public").rpc("send", { queue_name, message })`),
+  `anon` and `authenticated` can call the `pgmq_public` functions, but reach a queue only once you
+  grant them its table, and the table's row-level security policies then apply:
+
+  ```sql
+  grant select, insert, update, delete on pgmq.q_tasks to authenticated;
+  alter table pgmq.q_tasks enable row level security;
+  create policy "own tasks" on pgmq.q_tasks to authenticated
+    using (message ->> 'owner' = auth.uid()::text)
+    with check (message ->> 'owner' = auth.uid()::text);
+  ```
+
+- **`queueConsumer`** returns a [job](/docs/jobs): each run reads batches of `batchSize` (default
+  10) under `vt` seconds (default 30), runs the handler on each message, and archives it
+  (`onSuccess: "delete"` deletes it). A handler that throws leaves the message to reappear after
+  `vt`; one read more than `maxAttempts` times (default 5) is archived unhandled and logged.
+
+## Vector search (pgvector)
+
+The helpers work with Postgres's [pgvector](https://github.com/pgvector/pgvector) extension, which
+your database must have (most providers include it; the `pgvector/pgvector` image does locally).
+Nothing needs it until you use it, and then a missing extension is a clear error that names the
+fix.
+
+```ts
+// migrations/<stamp>_documents.sql — paste the output of:
+import { vectorSearchSql } from "@denext/backend";
+console.log(vectorSearchSql({ table: "documents", dimensions: 1536 }));
+// create extension if not exists vector; a documents table with an HNSW index; row-level
+// security; and Supabase's match_documents(query_embedding, match_threshold, match_count).
+```
+
+```ts
+import { db, matchDocuments, toVector } from "@denext/backend/server";
+
+const matches = await matchDocuments({ embedding, matchThreshold: 0.78, matchCount: 10 });
+// [{ id, content, metadata, similarity }], closest first, under the caller's row-level security
+await db()`insert into documents (content, embedding) values (${text}, ${
+  toVector(embedding)
+}::vector)`;
+```
+
+`vectorSearchSql` takes `table`, `dimensions`, `fn` (the function's name) and `distance`
+(`"cosine"`, `"inner_product"` or `"l2"`); the function is also callable through REST `/rpc`.
+`toVector` / `fromVector` convert between number arrays and pgvector's text form, and
+`requireVector()` checks for the extension.
+
+## Database webhooks
+
+`backend({ postgres: {}, webhooks })` brings Supabase's database webhooks without `pg_net`: a
+trigger records each change, and the app delivers it.
+
+```ts
+// denext.config.ts
+backend({
+  postgres: {},
+  webhooks: {
+    hooks: { "order-created": { url: "https://hooks.example.com/orders" } },
+    secret: Deno.env.get("DENEXT_WEBHOOK_SECRET"), // signs every delivery
+  },
+});
+```
+
+```sql
+create trigger order_created after insert on orders for each row
+  execute function supabase_functions.http_request('order-created');
+```
+
+- **The payload** is Supabase's: `{ "type": "INSERT", "table": "orders", "schema": "public",
+  "record": {…}, "old_record": null }` (`old_record` for updates and deletes; both `null` for a
+  statement-level trigger, such as `TRUNCATE`). The trigger's other arguments are Supabase's too:
+  method, headers (JSON), query parameters (JSON) and a timeout in milliseconds.
+- **Where it may go is the app's decision.** The trigger's first argument names a configured hook.
+  A trigger written for Supabase with a URL instead works only when `allowUrls` lists a prefix of
+  it; any other target is recorded as failed and never fetched. Redirects are not followed.
+- **Delivery.** The event is stored in `supabase_functions.webhook_events` in the same transaction
+  as the change, and `denext dev` / `denext start` deliver it at once (NOTIFY) or within
+  `pollIntervalMs`. A non-2xx answer or a network error is retried with exponential backoff
+  (`backoffMs`, doubled up to `maxBackoffMs`) until `maxAttempts`, then marked failed. Several app
+  instances share the work without sending one event twice at once; delivery is at least once,
+  so receivers dedupe on `webhook-id`. `delivery: "manual"` leaves it to `deliverWebhooks()` (from
+  a job), and `webhookEvents({ status })` lists recent events.
+- **Signing** follows [Standard Webhooks](https://www.standardwebhooks.com): `webhook-id`,
+  `webhook-timestamp` and `webhook-signature: v1,<base64 HMAC-SHA256>`, with the hook's `secret`
+  or `webhooks.secret` (`DENEXT_WEBHOOK_SECRET`). A receiver checks it with
+  `verifyWebhook(request, secret)`, which returns the payload or `null`.
+
+## `denext db`
+
+With `backend({ postgres })` in the config, `denext db` manages the database the way the Supabase
+CLI's `supabase db` does. Migrations are `migrations/*.sql` (what
+[`denext generate migration`](/docs/database) writes), or `supabase/migrations/*.sql`.
+
+| Command                                                   | What it does                                                                                                                                                                                                      |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `denext db push [--dry-run]`                              | Apply the plugin's own migrations (row-level security, and vault, queues or webhooks when enabled), then the pending migrations, each recorded in `_migrations` (the table `denext job migrate` uses).            |
+| `denext db status`                                        | Each migration, applied or pending; files whose SQL changed after they ran are flagged.                                                                                                                           |
+| `denext db reset --yes`                                   | Drop `public` and the plugin's schemas, re-apply everything, then run `supabase/seed.sql` or `seed.sql`. For development databases.                                                                               |
+| `denext db diff [--schema a,b] [--file name]`             | Apply the migrations to a throwaway shadow database and print the DDL for what the live database has that they do not (a change made in `denext ui`, say); `--file` writes it as `migrations/<stamp>_<name>.sql`. |
+| `denext db dump [--data-only] [--schema s] [--file path]` | `pg_dump` the database (schema only by default). Needs `pg_dump` on PATH; the password is passed in the environment, not on the command line.                                                                     |
+
+`diff` and `dump` need the database URL (`DATABASE_URL` or `postgres.url`), and `diff` needs a role
+allowed to `CREATE DATABASE`. `diff` compares tables, columns, constraints, indexes, row-level
+security and policies, functions, views, triggers and enum types; it does not compare grants,
+comments, extensions or sequence settings. There is no `db pull` (there is no hosted project to
+pull from) and no `db lint`.
+
 ## Browse it in `denext ui`
 
 [`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
@@ -1273,7 +1459,7 @@ storage-endpoint note: [Deployment › Self-hosted stack](/docs/deploy#self-host
 
 ## More services
 
-Storage, Postgres, row-level security, realtime from the database, auto-REST and Edge Functions are
-the services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data
+Storage, Postgres, row-level security, realtime from the database, auto-REST, Edge Functions,
+Vault, queues, vector search and database webhooks are the services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data
 ([Live](/docs/live)), typed [route handlers](/docs/typed-api) and scheduled [jobs](/docs/jobs) are
 already part of denext itself.

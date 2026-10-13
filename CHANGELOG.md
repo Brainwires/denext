@@ -204,6 +204,35 @@ and this project adheres to
   (a WebSocket it upgraded) captures the request before upgrading and later re-enters a copy of it,
   so `auth()`, `cookies()` and `clientIpForLimits()` answer as they did for the original — how it
   re-checks who is on the other end.
+- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
+  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
+  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
+  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
+  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
+  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
+  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
+  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
+  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
+- **Vault, queues, vector search and database webhooks in `@denext/backend`.**
+  `backend({ postgres: {}, vault: {} })` stores secrets in `vault.secrets` (Supabase Vault's
+  table shape), encrypted with AES-256-GCM in the app under `DENEXT_VAULT_KEY` (the row id is
+  authenticated with the ciphertext; keys rotate with `key: [new, old]` and `vault.rotate()`); the
+  plaintext is read only by server code (`vault.get`, `vault.decryptedSecrets`). `queues: {}`
+  installs pgmq's SQL API as plain tables and functions (no extension; `send`, `send_batch`,
+  `read` with a visibility timeout, `read_with_poll`, `pop`, `archive`, `delete`, `set_vt`,
+  `metrics`, `purge_queue`, …) plus Supabase's `pgmq_public` wrappers, all security invoker, so
+  grants and row-level security on each queue table decide who can use it; `queue()`, `queues`
+  and the `queueConsumer()` job drive them from the server. `vectorSearchSql()` writes Supabase's
+  pgvector `match_documents` recipe and `matchDocuments()` / `toVector()` call it (a missing
+  `vector` extension is a clear error). `webhooks` gives `supabase_functions.http_request`
+  triggers without `pg_net`: the change is recorded with Supabase's payload and the app delivers
+  it to a configured hook (or an `allowUrls` prefix, nothing else), signed with Standard Webhooks
+  headers (`verifyWebhook()` checks them) and retried with backoff.
+- **`denext db push | status | reset | diff | dump`** (from `@denext/backend`): apply the plugin's
+  and the project's migrations (`migrations/` or `supabase/migrations/`), reset a development
+  database and run its seed file, print (or write as a migration) the DDL for what the live
+  database has that the migrations do not, by comparing it with a throwaway shadow database, and
+  run `pg_dump`.
 
 ### Changed
 

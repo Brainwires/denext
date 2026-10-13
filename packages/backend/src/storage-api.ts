@@ -184,21 +184,26 @@ async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   if (bytes === TOO_LARGE) throw new StorageError("too_large", "request body too large");
   if (bytes === STALLED) throw new StorageError("bad_request", "request body stalled");
   if (bytes.byteLength === 0) return {};
-  try {
-    const value = JSON.parse(new TextDecoder().decode(bytes));
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
-  } catch { /* refused below */ }
+  const value = jsonObject(new TextDecoder().decode(bytes));
+  if (value) return value;
   throw new StorageError("bad_request", "the body must be a JSON object");
+}
+
+/** JSON text as an object, or `undefined` for anything else (invalid JSON included). */
+function jsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const value = JSON.parse(text);
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  } catch { /* not JSON */ }
+  return undefined;
 }
 
 /** `user_metadata` from JSON text, capped and checked to be an object. */
 function userMetadata(text: string | null): Record<string, unknown> | null {
   if (text === null || text === "") return null;
   if (text.length > METADATA_LIMIT) throw new StorageError("bad_request", "metadata too large");
-  try {
-    const value = JSON.parse(text);
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
-  } catch { /* refused below */ }
+  const value = jsonObject(text);
+  if (value) return value;
   throw new StorageError("bad_request", "metadata must be a JSON object");
 }
 

@@ -20,7 +20,6 @@
 
 import { join, resolve, toFileUrl } from "@std/path";
 import {
-  auth,
   clientIp,
   csrf,
   nativeBearerToken,
@@ -31,6 +30,7 @@ import {
 } from "@denext/denext/server";
 import type { HostMessage, WorkerMessage } from "./functions-protocol.ts";
 import { positiveOption } from "./options.ts";
+import { isIdentityError, resolveIdentity } from "./identity.ts";
 
 /** One function's settings, `backend({ functions: { functions: { <name>: … } } })`. */
 export interface FunctionConfig {
@@ -412,6 +412,24 @@ export class FunctionHost {
     if (!pending) return;
     clearTimeout(pending.timer);
     this.#pending.delete(id);
+    this.#stopIfRetired();
+  }
+
+  #retiring = false;
+  /** Calls waiting for the worker to start (not yet in `#pending`). */
+  #booting = 0;
+
+  #stopIfRetired(): void {
+    if (this.#retiring && this.#pending.size === 0 && this.#booting === 0) this.stop();
+  }
+
+  /**
+   * Stop the worker once the requests it is serving finish (an edit under `denext dev`: the next
+   * request goes to a new host, and nothing in flight is cut off).
+   */
+  retire(): void {
+    this.#retiring = true;
+    this.#stopIfRetired();
   }
 
   #abort(id: number): void {
@@ -434,11 +452,18 @@ export class FunctionHost {
     timeoutMs: number,
   ): Promise<Response> {
     if (!this.#ready) this.#ready = this.#start(env);
+    this.#booting++;
     try {
       await this.#ready;
     } catch (error) {
       console.error(`[@denext/backend] function ${this.name} failed to start:`, error);
       return relayError(503, "BOOT_ERROR", "Function failed to start (please check logs)");
+    } finally {
+      this.#booting--;
+    }
+    if (call.signal?.aborted) {
+      this.#stopIfRetired();
+      return relayError(499, "CLIENT_CLOSED", "the client closed the request");
     }
     const worker = this.#worker!;
     const id = this.#nextId++;
@@ -515,24 +540,21 @@ interface FunctionCaller {
 }
 
 /**
- * The caller of a function request, or `null` when it carries no valid identity.
- *
- * INTEGRATION POINT (Supabase parity W2): this resolves identity with today's session path —
- * `auth()`, which reads denext auth's session cookie or a native app's bearer token. When the
- * shared identity function lands (API keys, Supabase access tokens, the `apikey` header), call it
- * here instead: a valid anon key is then a valid caller (`role: "anon"`), as on Supabase, where
- * `verify_jwt` accepts the anon key.
+ * The caller of a function request through the shared identity function (`resolveIdentity`):
+ * a user's access token, an API key (the anon key counts, as with Supabase's `verify_jwt`), or
+ * a denext session. `null` when the request carries no credential at all.
  *
  * @param request The request.
  * @returns The caller, or `null`.
+ * @throws {IdentityError} For a credential that was presented and refused.
  */
 async function functionCaller(request: Request): Promise<FunctionCaller | null> {
-  const session = await auth();
-  if (!session) return null;
+  const identity = await resolveIdentity(request);
+  if (identity.source === "none") return null;
   return {
-    role: "authenticated",
-    userId: session.user.id,
-    cookie: nativeBearerToken(request) === undefined,
+    role: identity.role,
+    userId: identity.userId,
+    cookie: identity.source === "session" && nativeBearerToken(request) === undefined,
   };
 }
 
@@ -550,7 +572,8 @@ interface FunctionRegistry {
 
 /**
  * A registry over a functions directory. In dev a miss re-reads the directory (a function
- * created while the server runs gets its route); `reset()` stops every worker (an edit).
+ * created while the server runs gets its route); `reset()` stops every worker (teardown), and
+ * `reset(false)` retires them once their requests finish (an edit).
  *
  * @param dir The directory.
  * @param config The resolved options (per-function permissions).
@@ -563,7 +586,7 @@ function directoryRegistry(
   config: ResolvedFunctions,
   dev: boolean,
   spawn?: WorkerFactory,
-): FunctionRegistry & { reset(): void } {
+): FunctionRegistry & { reset(hard?: boolean): void } {
   let found: Promise<Map<string, string>> | undefined;
   const hosts = new Map<string, FunctionHost>();
   const read = () => found ??= discoverFunctions(dir);
@@ -584,8 +607,8 @@ function directoryRegistry(
       return host;
     },
     hosts: () => hosts.values(),
-    reset() {
-      for (const host of hosts.values()) host.stop();
+    reset(hard = true) {
+      for (const host of hosts.values()) hard ? host.stop() : host.retire();
       hosts.clear();
       found = undefined;
     },
@@ -605,8 +628,25 @@ function workerEnv(
     config.url ?? new URL(request.url).origin + appBasePath;
   const database = readEnv("SUPABASE_DB_URL") ?? readEnv("DATABASE_URL");
   if (database) env.SUPABASE_DB_URL = database;
-  return { ...env, ...config.env, ...config.functions[name]?.env };
+  return { ...env, ...keyEnv(readEnv), ...config.env, ...config.functions[name]?.env };
 }
+
+/** The keys under Supabase's names, from the backend's own (the first of a rotation list). */
+function keyEnv(readEnv: (name: string) => string | undefined): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [names, from] of KEY_ENV) {
+    const value = readEnv(from)?.split(",")[0]?.trim();
+    if (!value) continue;
+    for (const target of names.filter((n) => !readEnv(n))) env[target] = value;
+  }
+  return env;
+}
+
+/** Supabase's key variables, filled from `DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`. */
+const KEY_ENV: Array<[string[], string]> = [
+  [["SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"], "DENEXT_PUBLISHABLE_KEY"],
+  [["SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"], "DENEXT_SECRET_KEY"],
+];
 
 function readProcessEnv(name: string): string | undefined {
   try {
@@ -709,8 +749,14 @@ function isSafeMethod(method: string): boolean {
  */
 async function refusal(request: Request, verify: boolean): Promise<Response | null> {
   if (request.method === "OPTIONS" || !verify) return null;
-  const caller = await functionCaller(request);
-  if (!caller) return relayError(401, "UNAUTHORIZED", "Missing or invalid authorization");
+  let caller: FunctionCaller | null;
+  try {
+    caller = await functionCaller(request);
+  } catch (error) {
+    if (!isIdentityError(error)) throw error;
+    return relayError(401, "UNAUTHORIZED", error.message);
+  }
+  if (!caller) return relayError(401, "UNAUTHORIZED", "Missing authorization header");
   if (!caller.cookie || isSafeMethod(request.method)) return null;
   try {
     await checkCsrf({ request, params: {}, ctx: {}, method: request.method as "POST" });
@@ -780,7 +826,7 @@ export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctio
   const appBasePath = (ctx.config.basePath ?? "").replace(/\/$/, "");
   ctx.addRequestHandler(functionsHandler(config, registry, appBasePath));
   ctx.addTeardown(() => registry.reset());
-  if (dev) watchFunctions(ctx, dir, registry.reset);
+  if (dev) watchFunctions(ctx, dir, () => registry.reset(false));
 }
 
 /** Restart the workers after an edit under `dir` (debounced). */

@@ -90,6 +90,16 @@
   `storage: { rls: true }` to authorize with SQL policies on `storage.objects` / `storage.buckets`.
   The server API gains `info`, `exists`, `copy`, `move`, `listFolder`, `createSignedUrls`,
   `getPublicUrl` and bucket management; `authorize` receives the request's `identity`.
+- **Vault** (`vault: {}`): AES-256-GCM secrets in `vault.secrets`, key from `DENEXT_VAULT_KEY`,
+  read by server code only (`vault` from `@denext/backend/server`).
+- **Queues** (`queues: {}`): pgmq's SQL API without the extension, Supabase's `pgmq_public`
+  wrappers, and `queue()` / `queues` / `queueConsumer()` on the server.
+- **pgvector**: `vectorSearchSql()` (the `match_documents` recipe), `matchDocuments()`,
+  `toVector()` / `fromVector()`, `requireVector()`.
+- **Database webhooks** (`webhooks`): `supabase_functions.http_request` triggers delivered by the
+  app to configured hooks, signed (Standard Webhooks) and retried; `deliverWebhooks()`,
+  `webhookEvents()`, `verifyWebhook()`.
+- **`denext db push | status | reset | diff | dump`.**
 
 ## 0.3.0 - 2026-10-13
 

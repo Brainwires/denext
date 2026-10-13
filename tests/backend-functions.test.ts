@@ -314,22 +314,38 @@ Deno.test({
   async fn() {
     const app = await functionsApp({
       "functions/wait.ts": `
+let started = 0;
 let aborted = 0;
 Deno.serve(async (req) => {
-  if (new URL(req.url).searchParams.has("count")) return new Response(String(aborted));
+  if (new URL(req.url).searchParams.has("count")) return new Response(started + "/" + aborted);
+  started++;
   await new Promise((resolve) => req.signal.addEventListener("abort", () => { aborted++; resolve(null); }));
   return new Response("done");
 });`,
     }, { functions: { verifyJwt: false } });
     try {
+      const count = async () => await (await app.call("/functions/v1/wait?count")).text();
+      const until = async (want: string) => {
+        for (let i = 0; i < 200 && await count() !== want; i++) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        assertEquals(await count(), want);
+      };
       const controller = new AbortController();
       const pending = app.call("/functions/v1/wait", { signal: controller.signal });
-      await new Promise((r) => setTimeout(r, 300));
+      await until("1/0"); // the function is running
       controller.abort();
       const res = await pending.catch(() => null);
       if (res) await res.body?.cancel().catch(() => {});
-      await new Promise((r) => setTimeout(r, 100));
-      assertEquals(await (await app.call("/functions/v1/wait?count")).text(), "1");
+      await until("1/1");
+      // A request already aborted never reaches the function.
+      const gone = new AbortController();
+      gone.abort();
+      const skipped = await app.call("/functions/v1/wait", { signal: gone.signal }).catch(() =>
+        null
+      );
+      if (skipped) await skipped.body?.cancel().catch(() => {});
+      assertEquals(await count(), "1/1");
     } finally {
       await app.close();
     }
@@ -487,4 +503,66 @@ Deno.test("denext functions list: names, routes, files and verifyJwt", async () 
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "functions: with Supabase keys, the anon key passes; a refused credential is a 401",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const KEY = "sb_publishable_functions_unit_key_000000";
+    const app = await functionsApp(
+      { "functions/me.ts": `Deno.serve(() => new Response("ok"));` },
+      {
+        supabase: { publishableKey: KEY, jwtSecret: "functions-unit-jwt-secret-at-least-32-chars" },
+        functions: {},
+      },
+    );
+    try {
+      assertEquals(
+        await (await app.call("/functions/v1/me", { headers: { apikey: KEY } })).text(),
+        "ok",
+      );
+      const forged = await app.call("/functions/v1/me", {
+        headers: { apikey: KEY, authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.bad" },
+      });
+      assertEquals(forged.status, 401);
+      await forged.body?.cancel();
+      const none = await app.call("/functions/v1/me");
+      assertEquals([none.status, (await none.json()).message], [
+        401,
+        "Missing authorization header",
+      ]);
+    } finally {
+      await app.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "FunctionHost.retire: in-flight requests finish, then the worker stops",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${dir}/slow.ts`,
+        `Deno.serve(async () => { await new Promise((r) => setTimeout(r, 200)); return new Response("late"); });`,
+      );
+      const host = new FunctionHost("slow", `${dir}/slow.ts`, undefined);
+      const call = { url: "https://x.test/slow", method: "GET", headers: [], body: null };
+      // Retired while it is still starting: the call waits for it, then it stops.
+      const first = host.call(call, {}, 5000);
+      host.retire();
+      assert(host.running, "still serving");
+      assertEquals(await (await first).text(), "late");
+      assert(!host.running, "stopped after the last request");
+      const idle = new FunctionHost("slow", `${dir}/slow.ts`, undefined);
+      idle.retire();
+      assert(!idle.running);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

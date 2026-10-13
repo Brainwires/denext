@@ -662,7 +662,13 @@ Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
-session unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
+server-only), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
+`queueConsumer({ queue, handler })` as a job), `vectorSearchSql()` / `matchDocuments()` (pgvector)
+and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
+delivered signed + retried) from `@denext/backend/server`; `denext db push | status | reset --yes |
+diff | dump` manages migrations (`migrations/` or `supabase/migrations/`).
 
 **A database (zero-npm, server-only module):**
 
