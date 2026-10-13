@@ -91,7 +91,8 @@ import {
   setupSupabaseKeys,
   type SupabaseOptions,
 } from "./src/supabase.ts";
-import { installVault, vaultMigrations, type VaultOptions } from "./src/vault.ts";
+import { installVault, vaultKeyedClient, vaultMigrations, type VaultOptions } from "./src/vault.ts";
+import { vaultSqlMigrations } from "./src/vault-sql.ts";
 import { ensureQueuesMigrated, installQueues, type QueuesOptions } from "./src/queues.ts";
 import { queuesMigrations } from "./src/queues-sql.ts";
 import {
@@ -123,6 +124,7 @@ export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
 export type { SupabaseOptions } from "./src/supabase.ts";
 export type { VaultOptions } from "./src/vault.ts";
 export { vaultMigrations } from "./src/vault.ts";
+export { vaultSqlMigrations } from "./src/vault-sql.ts";
 export type { QueuesOptions } from "./src/queues.ts";
 export { queuesMigrations, queuesSetupSql } from "./src/queues-sql.ts";
 export type { WebhooksOptions, WebhookTarget } from "./src/webhooks.ts";
@@ -358,6 +360,7 @@ function dbCommandFor(
     backendMigrations: () =>
       backendMigrationsOf([
         on.vault ? vaultMigrations : () => [],
+        options.vault?.sql ? vaultSqlMigrations : () => [],
         on.queues ? queuesMigrations : () => [],
         on.webhooks ? webhooksMigrations : () => [],
       ]),
@@ -366,6 +369,7 @@ function dbCommandFor(
       ...(on.queues ? ["pgmq", "pgmq_public"] : []),
       ...(on.webhooks ? ["supabase_functions"] : []),
     ],
+    keyed: options.vault?.sql ? vaultKeyedClient : undefined,
   });
 }
 

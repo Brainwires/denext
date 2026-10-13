@@ -16,6 +16,7 @@
 
 import { migratePostgres, type Migration, type SqlClient } from "@denext/denext/server";
 import { db } from "./postgres.ts";
+import { VAULT_KEYS_SETTING, vaultKeysJson, vaultSqlMigrations } from "./vault-sql.ts";
 
 /** `backend({ vault })`. */
 export interface VaultOptions {
@@ -26,6 +27,14 @@ export interface VaultOptions {
   key?: string | string[];
   /** Apply the `backend_vault_0001` migration on first use (default `true`). */
   migrate?: boolean;
+  /**
+   * Supabase's SQL surface too: `vault.create_secret()`, `vault.update_secret()` and the
+   * `vault.decrypted_secrets` view, for SQL and migrations written for Supabase. They read the key
+   * from a transaction-local setting the app sets — only in `vault.withKey()` transactions and
+   * `denext db push / reset / diff` — so outside those they raise an error. Needs `pgcrypto`.
+   * See the docs for what this mode trusts the database session with.
+   */
+  sql?: boolean;
 }
 
 /** One secret's metadata (no plaintext). */
@@ -106,8 +115,12 @@ END $do$;`,
 
 /** A derived key and its id. */
 export interface VaultKey {
+  /** The key's public id (`key_id`). */
   id: string;
+  /** The AES-256-GCM key. */
   key: CryptoKey;
+  /** Its raw bytes, for the SQL mode only. */
+  raw: Uint8Array;
 }
 
 const encoder = new TextEncoder();
@@ -144,15 +157,17 @@ export async function deriveVaultKey(secret: string): Promise<VaultKey> {
     salt: encoder.encode("denext-vault"),
     info: encoder.encode(info),
   });
-  const key = await crypto.subtle.deriveKey(
-    params("aes-256-gcm v1"),
-    material,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
+  // The same 256 bits `deriveKey` would produce; kept raw for the SQL mode (`vault: { sql }`),
+  // which hands them to the database for one transaction at a time.
+  const raw = new Uint8Array(
+    await crypto.subtle.deriveBits(params("aes-256-gcm v1"), material, 256),
   );
+  const key = await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
   const id = new Uint8Array(await crypto.subtle.deriveBits(params("key id v1"), material, 128));
-  return { id: asUuid(id), key };
+  return { id: asUuid(id), key, raw };
 }
 
 /**
@@ -224,6 +239,7 @@ function fromBase64(text: string): Uint8Array<ArrayBuffer> {
 interface VaultSlot {
   keys: () => Promise<VaultKey[]>;
   migrate: boolean;
+  sql: boolean;
 }
 
 const SLOT = Symbol.for("denext.backend.vault");
@@ -270,7 +286,11 @@ export function installVault(
     }
     return derived;
   };
-  (globalThis as Holder)[SLOT] = { keys, migrate: options.migrate !== false };
+  (globalThis as Holder)[SLOT] = {
+    keys,
+    migrate: options.migrate !== false,
+    sql: options.sql === true,
+  };
 }
 
 function slot(): VaultSlot {
@@ -292,9 +312,8 @@ async function client(): Promise<SqlClient> {
   if (slot().migrate) {
     let pending = migrated.get(sql);
     if (!pending) {
-      pending = migratePostgres(sql, { migrations: vaultMigrations(), table: VAULT_TABLE }).then(
-        () => undefined,
-      );
+      const migrations = [...vaultMigrations(), ...(slot().sql ? vaultSqlMigrations() : [])];
+      pending = migratePostgres(sql, { migrations, table: VAULT_TABLE }).then(() => undefined);
       pending.catch(() => migrated.delete(sql));
       migrated.set(sql, pending);
     }
@@ -376,6 +395,13 @@ export interface Vault {
   delete(idOrName: string): Promise<boolean>;
   /** Re-encrypt every secret not under the first key with it. Resolves the count. */
   rotate(): Promise<number>;
+  /**
+   * Run `fn` in a transaction (as the app's own database user) where Supabase's SQL vault works:
+   * the keys are set transaction-locally, so `vault.create_secret()` and
+   * `select … from vault.decrypted_secrets` run inside it, and nothing outlives it. Needs
+   * `vault: { sql: true }`.
+   */
+  withKey<T>(fn: (sql: SqlClient) => T | Promise<T>): Promise<T>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -472,6 +498,22 @@ export const vault: Vault = {
       : await sql.unsafe("DELETE FROM vault.secrets WHERE name = $1 RETURNING 1", [idOrName]);
     return rows.length > 0;
   },
+  async withKey(fn) {
+    if (!slot().sql) {
+      throw new VaultError(
+        "not_configured",
+        "vault.withKey() needs backend({ vault: { sql: true } })",
+      );
+    }
+    const keys = await slot().keys();
+    const sql = await client();
+    return await sql.begin(async (tx) => {
+      await tx.unsafe(`SELECT set_config('${VAULT_KEYS_SETTING}', $1, true)`, [
+        vaultKeysJson(keys),
+      ]);
+      return await fn(tx);
+    });
+  },
   async rotate() {
     const keys = await slot().keys();
     const sql = await client();
@@ -489,3 +531,35 @@ export const vault: Vault = {
     return count;
   },
 };
+
+/**
+ * A client whose every transaction (`begin`) first sets the vault keys transaction-locally — what
+ * `denext db push` runs migrations with in SQL mode, so a migration that calls
+ * `vault.create_secret()` works. Statements outside a transaction get no key.
+ *
+ * @param sql The connecting role's client.
+ * @returns The client, or `sql` unchanged when the SQL vault is off or has no key.
+ */
+export async function vaultKeyedClient(sql: SqlClient): Promise<SqlClient> {
+  const found = (globalThis as Holder)[SLOT];
+  if (!found?.sql) return sql;
+  let keys: VaultKey[];
+  try {
+    keys = await found.keys();
+  } catch {
+    return sql; // No key: SQL that needs it fails with the vault's own error.
+  }
+  const json = vaultKeysJson(keys);
+  const begin = (fn: (tx: SqlClient) => unknown) =>
+    sql.begin(async (tx) => {
+      await tx.unsafe(`SELECT set_config('${VAULT_KEYS_SETTING}', $1, true)`, [json]);
+      return await fn(tx);
+    });
+  return new Proxy(sql, {
+    get(target, key) {
+      if (key === "begin") return begin;
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}

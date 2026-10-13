@@ -33,6 +33,11 @@ export interface DbCommandConfig {
   backendMigrations: () => Migration[];
   /** The schemas the backend's services own (dropped by `reset`). */
   serviceSchemas: string[];
+  /**
+   * Wraps the client migrations run on — the SQL vault sets its keys in each migration's
+   * transaction, so a migration can call `vault.create_secret()`.
+   */
+  keyed?: (sql: SqlClient) => Promise<SqlClient>;
 }
 
 /** Where the command prints, and how it runs `pg_dump` (injectable for tests). */
@@ -99,6 +104,7 @@ async function push(
   projectRoot: string,
   dryRun: boolean,
 ): Promise<string[]> {
+  if (config.keyed) sql = await config.keyed(sql);
   const own = await migratePostgres(sql, {
     migrations: config.backendMigrations(),
     table: BACKEND_TABLE,

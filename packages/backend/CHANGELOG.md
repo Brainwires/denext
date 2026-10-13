@@ -99,6 +99,10 @@
 - **Database webhooks** (`webhooks`): `supabase_functions.http_request` triggers delivered by the
   app to configured hooks, signed (Standard Webhooks) and retried; `deliverWebhooks()`,
   `webhookEvents()`, `verifyWebhook()`.
+- **Vault in SQL** (`vault: { sql: true }`): `vault.create_secret()`, `vault.update_secret()`,
+  `vault.decrypted_secrets`, same format as the app side; keys set per transaction by
+  `vault.withKey()` and `denext db push`.
+- `vectorSearchSql()` now comes from `@denext/denext/server` (re-exported unchanged).
 - **`denext db push | status | reset | diff | dump`.**
 
 ## 0.3.0 - 2026-10-13

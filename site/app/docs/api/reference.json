@@ -4905,6 +4905,31 @@
           "denextOnly": true
         },
         {
+          "name": "apiKeyRole",
+          "slug": "apiKeyRole",
+          "kind": "function",
+          "signature": "apiKeyRole(keys: SupabaseKeys, value: string, options?: VerifySupabaseJwtOptions): Promise<anon | service_role>",
+          "doc": "The role an API key grants — an opaque publishable / secret key, or a legacy anon / service_role JWT signed by these keys. A user's access token is not an API key.",
+          "docFull": "The role an API key grants — an opaque publishable / secret key, or a legacy `anon` /\n`service_role` JWT signed by these keys. A user's access token is not an API key.",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            },
+            {
+              "name": "value",
+              "doc": "The presented key."
+            },
+            {
+              "name": "options",
+              "doc": "The clock."
+            }
+          ],
+          "returns": "anon or service_role.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiMatch",
           "slug": "ApiMatch",
           "kind": "interface",
@@ -5490,6 +5515,23 @@
           "denextOnly": true
         },
         {
+          "name": "bearerTokenOf",
+          "slug": "bearerTokenOf",
+          "kind": "function",
+          "signature": "bearerTokenOf(header: string | null | undefined): string | undefined",
+          "doc": "The bearer token of an Authorization header (scheme case-insensitive, token trimmed).",
+          "docFull": "The bearer token of an `Authorization` header (scheme case-insensitive, token trimmed).",
+          "params": [
+            {
+              "name": "header",
+              "doc": "The header value."
+            }
+          ],
+          "returns": "The token, or undefined for another scheme or an empty token.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "broadcastChannelTransport",
           "slug": "broadcastChannelTransport",
           "kind": "function",
@@ -5503,6 +5545,30 @@
             }
           ],
           "returns": "The transport.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildAuthnRequest",
+          "slug": "buildAuthnRequest",
+          "kind": "function",
+          "signature": "buildAuthnRequest(options: BuildAuthnRequestOptions): Promise<object>",
+          "doc": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request is unsigned and names this SP's HTTP-POST ACS URL. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.",
+          "docFull": "Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is\nDEFLATE-compressed, base64-encoded and URL-encoded into `SAMLRequest`). The request is\nunsigned and names this SP's HTTP-POST ACS URL. Remember the returned `id` (with the\nRelayState) and pass it as `expectedInResponseTo` when the Response arrives.",
+          "params": [],
+          "returns": "id, the request ID (_ + 40 hex digits), and url, where to redirect the browser.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildAuthnRequestOptions",
+          "slug": "BuildAuthnRequestOptions",
+          "kind": "interface",
+          "signature": "interface BuildAuthnRequestOptions",
+          "doc": "Options for buildAuthnRequest.",
+          "docFull": "Options for {@link buildAuthnRequest}.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -5685,6 +5751,23 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "canSign",
+          "slug": "canSign",
+          "kind": "function",
+          "signature": "canSign(keys: SupabaseKeys): boolean",
+          "doc": "Whether these keys can mint access tokens (a signing key or a legacy secret).",
+          "docFull": "Whether these keys can mint access tokens (a signing key or a legacy secret).",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            }
+          ],
+          "returns": "true when signSupabaseJwt can sign.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "cappedBody",
@@ -7278,6 +7361,35 @@
           "denextOnly": true
         },
         {
+          "name": "GeneratedSupabaseKeys",
+          "slug": "GeneratedSupabaseKeys",
+          "kind": "interface",
+          "signature": "interface GeneratedSupabaseKeys",
+          "doc": "A freshly generated key set, as generateSupabaseKeys returns it.",
+          "docFull": "A freshly generated key set, as {@linkcode generateSupabaseKeys} returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "generateSupabaseKeys",
+          "slug": "generateSupabaseKeys",
+          "kind": "function",
+          "signature": "generateSupabaseKeys(options?: object): Promise<GeneratedSupabaseKeys>",
+          "doc": "Generate a new key set: a publishable key, a secret key and an ES256 signing key — plus, with legacy, a JWT secret and the anon / service_role JWTs signed with it (valid ten years, like Supabase's).",
+          "docFull": "Generate a new key set: a publishable key, a secret key and an ES256 signing key — plus,\nwith `legacy`, a JWT secret and the `anon` / `service_role` JWTs signed with it (valid ten\nyears, like Supabase's).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "legacy: also mint the HS256 keys."
+            }
+          ],
+          "returns": "The keys. Store them as environment secrets; never commit them.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "generateTotpSecret",
           "slug": "generateTotpSecret",
           "kind": "function",
@@ -7409,6 +7521,147 @@
             }
           ],
           "returns": "The configured Google provider (id: \"google\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueAccessTokenHookInput",
+          "slug": "GoTrueAccessTokenHookInput",
+          "kind": "interface",
+          "signature": "interface GoTrueAccessTokenHookInput",
+          "doc": "What GoTrueHooks.customAccessToken receives.",
+          "docFull": "What {@linkcode GoTrueHooks.customAccessToken} receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueCaptchaOptions",
+          "slug": "GoTrueCaptchaOptions",
+          "kind": "interface",
+          "signature": "interface GoTrueCaptchaOptions",
+          "doc": "Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.",
+          "docFull": "Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueError",
+          "slug": "GoTrueError",
+          "kind": "class",
+          "signature": "class GoTrueError",
+          "doc": "A GoTrue-shaped refusal; goTrueErrorResponse renders it.",
+          "docFull": "A GoTrue-shaped refusal; {@linkcode goTrueErrorResponse} renders it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueErrorCode",
+          "slug": "GoTrueErrorCode",
+          "kind": "typeAlias",
+          "signature": "type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | not_found | method_not_allowed",
+          "doc": "A GoTrue error code (the subset denext answers with).",
+          "docFull": "A GoTrue error code (the subset denext answers with).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueHandlerOptions",
+          "slug": "GoTrueHandlerOptions",
+          "kind": "interface",
+          "signature": "interface GoTrueHandlerOptions",
+          "doc": "What the handler needs besides the request.",
+          "docFull": "What the handler needs besides the request.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueHooks",
+          "slug": "GoTrueHooks",
+          "kind": "interface",
+          "signature": "interface GoTrueHooks",
+          "doc": "Supabase's auth hooks, as functions.",
+          "docFull": "Supabase's auth hooks, as functions.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueOptions",
+          "slug": "GoTrueOptions",
+          "kind": "interface",
+          "signature": "interface GoTrueOptions",
+          "doc": "The /auth/v1 options.",
+          "docFull": "The `/auth/v1` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueSamlProvider",
+          "slug": "GoTrueSamlProvider",
+          "kind": "interface",
+          "signature": "interface GoTrueSamlProvider",
+          "doc": "A SAML 2.0 identity provider for signInWithSSO.",
+          "docFull": "A SAML 2.0 identity provider for `signInWithSSO`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueSendEmailPayload",
+          "slug": "GoTrueSendEmailPayload",
+          "kind": "interface",
+          "signature": "interface GoTrueSendEmailPayload",
+          "doc": "What GoTrueHooks.sendEmail receives — Supabase's Send Email Hook payload.",
+          "docFull": "What {@linkcode GoTrueHooks.sendEmail} receives — Supabase's Send Email Hook payload.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueSmsMessage",
+          "slug": "GoTrueSmsMessage",
+          "kind": "interface",
+          "signature": "interface GoTrueSmsMessage",
+          "doc": "What GoTrueOptions.sendSms delivers.",
+          "docFull": "What {@linkcode GoTrueOptions.sendSms} delivers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "handleGoTrueRequest",
+          "slug": "handleGoTrueRequest",
+          "kind": "function",
+          "signature": "handleGoTrueRequest(request: Request, handler: GoTrueHandlerOptions): Promise<Response | null>",
+          "doc": "Handle an /auth/v1 request.",
+          "docFull": "Handle an `/auth/v1` request.",
+          "params": [
+            {
+              "name": "request",
+              "doc": "The request (app-relative: basePath already stripped)."
+            },
+            {
+              "name": "handler",
+              "doc": "The options, the keys and (optionally) the auth config."
+            }
+          ],
+          "returns": "The response, or null for a path outside /auth/v1.",
           "examples": [],
           "denextOnly": true
         },
@@ -7791,6 +8044,18 @@
           "denextOnly": true
         },
         {
+          "name": "inMemorySamlReplayCache",
+          "slug": "inMemorySamlReplayCache",
+          "kind": "function",
+          "signature": "inMemorySamlReplayCache(): SamlReplayCache",
+          "doc": "A process-local SamlReplayCache. Right for one server process (and for tests); use a shared store when several replicas receive SAML Responses.",
+          "docFull": "A process-local {@link SamlReplayCache}. Right for one server process (and for tests);\nuse a shared store when several replicas receive SAML Responses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "inMemorySessionStore",
           "slug": "inMemorySessionStore",
           "kind": "function",
@@ -7839,6 +8104,52 @@
           "doc": "How an action validates FormData into its typed input: a function or a Standard Schema.",
           "docFull": "How an action validates `FormData` into its typed input: a function or a Standard Schema.",
           "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installedSupabaseKeys",
+          "slug": "installedSupabaseKeys",
+          "kind": "function",
+          "signature": "installedSupabaseKeys(): SupabaseKeys | undefined",
+          "doc": "The installed key material, or undefined when backend({ supabase }) is not configured.",
+          "docFull": "The installed key material, or `undefined` when `backend({ supabase })` is not configured.",
+          "params": [],
+          "returns": "The keys.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installGoTrue",
+          "slug": "installGoTrue",
+          "kind": "function",
+          "signature": "installGoTrue(handler: GoTrueHandlerOptions | undefined): void",
+          "doc": "Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — or remove them with undefined. backend({ supabase }) calls it at setup.",
+          "docFull": "Mount the `/auth/v1` flows that finish outside its own paths — an OAuth callback arrives at\ndenext's `{basePath}/callback/:provider` — or remove them with `undefined`.\n`backend({ supabase })` calls it at setup.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "The options and keys, or undefined."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installSupabaseKeys",
+          "slug": "installSupabaseKeys",
+          "kind": "function",
+          "signature": "installSupabaseKeys(keys: SupabaseKeys | undefined): void",
+          "doc": "Install the process's key material (backend({ supabase }) does at setup), or clear it with undefined. Process-global, so a bundled copy of this module sees the same keys.",
+          "docFull": "Install the process's key material (`backend({ supabase })` does at setup), or clear it with\n`undefined`. Process-global, so a bundled copy of this module sees the same keys.",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -8349,6 +8660,23 @@
           "denextOnly": true
         },
         {
+          "name": "jwtBearerOf",
+          "slug": "jwtBearerOf",
+          "kind": "function",
+          "signature": "jwtBearerOf(header: string | null | undefined): string | undefined",
+          "doc": "The JWT an Authorization: Bearer header carries, or undefined for none (another scheme, a native nat_… token, an opaque API key).",
+          "docFull": "The JWT an `Authorization: Bearer` header carries, or `undefined` for none (another scheme,\na native `nat_…` token, an opaque API key).",
+          "params": [
+            {
+              "name": "header",
+              "doc": "The Authorization header."
+            }
+          ],
+          "returns": "The JWT.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Key",
           "slug": "Key",
           "kind": "typeAlias",
@@ -8599,6 +8927,18 @@
           "denextOnly": true
         },
         {
+          "name": "looksLikeJwt",
+          "slug": "looksLikeJwt",
+          "kind": "function",
+          "signature": "looksLikeJwt(value: string): boolean",
+          "doc": "Whether a string has the shape of a compact JWS (three base64url segments).",
+          "docFull": "Whether a string has the shape of a compact JWS (three base64url segments).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "magicLink",
           "slug": "magicLink",
           "kind": "function",
@@ -8754,6 +9094,18 @@
           "signature": "type MfaAttemptResult = object | object",
           "doc": "The outcome of spendMfaAttempt.",
           "docFull": "The outcome of {@linkcode spendMfaAttempt}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MfaFactorRecord",
+          "slug": "MfaFactorRecord",
+          "kind": "interface",
+          "signature": "interface MfaFactorRecord",
+          "doc": "One MFA factor of the /auth/v1 (GoTrue) API: a TOTP authenticator or a phone that receives codes by SMS. A user may hold several.",
+          "docFull": "One MFA factor of the `/auth/v1` (GoTrue) API: a TOTP authenticator or a phone that receives\ncodes by SMS. A user may hold several.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9302,6 +9654,27 @@
           "denextOnly": true
         },
         {
+          "name": "opaqueKeyRole",
+          "slug": "opaqueKeyRole",
+          "kind": "function",
+          "signature": "opaqueKeyRole(keys: SupabaseKeys, value: string): Promise<anon | service_role | null>",
+          "doc": "The role an opaque API key grants: anon for a publishable key, service_role for a secret key, null for anything else (a JWT included — verify those with verifySupabaseJwt). Constant-time over the key's SHA-256.",
+          "docFull": "The role an opaque API key grants: `anon` for a publishable key, `service_role` for a secret\nkey, `null` for anything else (a JWT included — verify those with\n{@linkcode verifySupabaseJwt}). Constant-time over the key's SHA-256.",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            },
+            {
+              "name": "value",
+              "doc": "The presented key."
+            }
+          ],
+          "returns": "The role, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OpenGraphImage",
           "slug": "OpenGraphImage",
           "kind": "interface",
@@ -9554,6 +9927,23 @@
           "docFull": "Parse an `Accept-Language` header into an ordered list of locale codes.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "parseIdpMetadata",
+          "slug": "parseIdpMetadata",
+          "kind": "function",
+          "signature": "parseIdpMetadata(xml: string): SamlIdpConfig & object",
+          "doc": "Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.",
+          "docFull": "Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding\nexactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from\na URL you trust, or pin the certificate it yields.",
+          "params": [
+            {
+              "name": "xml",
+              "doc": "The metadata document."
+            }
+          ],
+          "returns": "The entity id, the HTTP-Redirect SSO URL, the signing certificates (bare base64 DER, those with a key type denext can verify) and the advertised NameID formats.",
           "examples": [],
           "denextOnly": true
         },
@@ -10901,6 +11291,27 @@
           "denextOnly": true
         },
         {
+          "name": "resolveSupabaseKeys",
+          "slug": "resolveSupabaseKeys",
+          "kind": "function",
+          "signature": "resolveSupabaseKeys(config?: SupabaseKeysConfig, env?: (name: string) => string | undefined): Promise<SupabaseKeys>",
+          "doc": "Resolve the configured key material (each field falling back to its environment variable).",
+          "docFull": "Resolve the configured key material (each field falling back to its environment variable).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The configured keys."
+            },
+            {
+              "name": "env",
+              "doc": "Reads an environment variable."
+            }
+          ],
+          "returns": "The resolved keys.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ResolvingMetadata",
           "slug": "ResolvingMetadata",
           "kind": "typeAlias",
@@ -11328,6 +11739,66 @@
           "denextOnly": true
         },
         {
+          "name": "SamlError",
+          "slug": "SamlError",
+          "kind": "class",
+          "signature": "class SamlError",
+          "doc": "A refused SAML message or bad SAML configuration. code is a stable machine code (see SamlErrorCode); the message is human-readable detail for logs. Never echo the message to an end user — report a generic sign-in failure.",
+          "docFull": "A refused SAML message or bad SAML configuration. `code` is a stable machine code\n(see {@link SamlErrorCode}); the message is human-readable detail for logs. Never echo\nthe message to an end user — report a generic sign-in failure.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlErrorCode",
+          "slug": "SamlErrorCode",
+          "kind": "typeAlias",
+          "signature": "type SamlErrorCode = malformed_xml | doctype_forbidden | malformed_response | unexpected_markup | unsigned | bad_signature | signature_wrapping | multiple_assertions | encrypted_assertion_unsupported | status_not_success | bad_destination | bad_recipient | bad_subject_confirmation | bad_audience | bad_issuer | expired | not_yet_valid | in_response_to_mismatch | idp_initiated_disallowed | replay | unsupported_algorithm | bad_certificate | bad_metadata",
+          "doc": "The stable machine codes a SamlError carries. Switch on code, never on the message (which is for logs and may change between versions).",
+          "docFull": "The stable machine codes a {@link SamlError} carries. Switch on `code`, never on the\nmessage (which is for logs and may change between versions).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlIdpConfig",
+          "slug": "SamlIdpConfig",
+          "kind": "interface",
+          "signature": "interface SamlIdpConfig",
+          "doc": "A trusted SAML 2.0 Identity Provider.",
+          "docFull": "A trusted SAML 2.0 Identity Provider.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlReplayCache",
+          "slug": "SamlReplayCache",
+          "kind": "interface",
+          "signature": "interface SamlReplayCache",
+          "doc": "Where assertion IDs are remembered so each is accepted once. Back it with something every replica shares (a database table, a KV store) when the SP runs on more than one process.",
+          "docFull": "Where assertion IDs are remembered so each is accepted once. Back it with something every\nreplica shares (a database table, a KV store) when the SP runs on more than one process.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlSpConfig",
+          "slug": "SamlSpConfig",
+          "kind": "interface",
+          "signature": "interface SamlSpConfig",
+          "doc": "This SAML 2.0 Service Provider.",
+          "docFull": "This SAML 2.0 Service Provider.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "scanRoutes",
           "slug": "scanRoutes",
           "kind": "function",
@@ -11696,6 +12167,23 @@
           "denextOnly": true
         },
         {
+          "name": "sessionFromClaims",
+          "slug": "sessionFromClaims",
+          "kind": "function",
+          "signature": "sessionFromClaims(claims: SupabaseJwtClaims): AuthSession",
+          "doc": "The denext session an authenticated access token stands for.",
+          "docFull": "The denext session an `authenticated` access token stands for.",
+          "params": [
+            {
+              "name": "claims",
+              "doc": "Verified claims (role: \"authenticated\")."
+            }
+          ],
+          "returns": "The session.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SessionOptions",
           "slug": "SessionOptions",
           "kind": "interface",
@@ -11774,6 +12262,27 @@
           "docFull": "Why a sign-in attempt was refused, as `signInFailed` reports it — a closed set, so an app can\nswitch over it exhaustively:\n\n- `\"invalid_credentials\"` — a wrong password, or a wrong, spent or expired email link / code;\n- `\"invalid_mfa_code\"` — a wrong TOTP or backup code (or passkey) at the second-factor step;\n- `\"invalid_passkey\"` — a passkey assertion that failed verification (the WebAuthn reason\n  goes to the logger);\n- `\"rate_limited\"` — a budget was spent;\n- `\"access_denied\"` — `callbacks.signIn` vetoed it;\n- `\"account_not_linked\"` — the account-linking rules refused to attach it to an existing user;\n- `\"adapter_error\"` — the adapter threw while persisting it;\n- `\"invalid_state\"` — an OAuth callback without its matching transaction (CSRF, replay);\n- `\"invalid_request\"` — a malformed OAuth callback (a form_post body, a downgraded GET);\n- `\"config\"` — the provider could not be resolved (discovery, a malformed endpoint);\n- `\"oauth_failed\"` — the code exchange, the `id_token` or the profile failed;\n- `\"provider_error\"` — the provider itself answered `?error=` (its code in `providerError`);\n- `\"invalid_nonce\"` / `\"invalid_token\"` — a native `id_token` sign-in's nonce or token.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "signSupabaseJwt",
+          "slug": "signSupabaseJwt",
+          "kind": "function",
+          "signature": "signSupabaseJwt(keys: SupabaseKeys, claims: Record<string, unknown>): Promise<string>",
+          "doc": "Sign claims as a compact JWT: ES256 under the current signing key, else HS256 under the legacy secret.",
+          "docFull": "Sign claims as a compact JWT: ES256 under the current signing key, else HS256 under the\nlegacy secret.",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            },
+            {
+              "name": "claims",
+              "doc": "The claims (exp must be set by the caller)."
+            }
+          ],
+          "returns": "The JWT.",
           "examples": [],
           "denextOnly": true
         },
@@ -11944,6 +12453,27 @@
             }
           ],
           "returns": "{ ok: true } — check the code — or { ok: false, error: \"rate_limited\", retryAfter } with the seconds until the budget refills.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "spMetadataXml",
+          "slug": "spMetadataXml",
+          "kind": "function",
+          "signature": "spMetadataXml(sp: SamlSpConfig, options?: object): string",
+          "doc": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor and its HTTP-POST AssertionConsumerService), for the IdP administrator to import.",
+          "docFull": "This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor and its\nHTTP-POST AssertionConsumerService), for the IdP administrator to import.",
+          "params": [
+            {
+              "name": "sp",
+              "doc": "This SP's entity id and ACS URL."
+            },
+            {
+              "name": "options",
+              "doc": "nameIdFormat (default email address) and wantAssertionsSigned (default true; pair it with requireSignedAssertion when verifying)."
+            }
+          ],
+          "returns": "The metadata document.",
           "examples": [],
           "denextOnly": true
         },
@@ -12250,6 +12780,119 @@
           "signature": "interface SubscriptionRunContext",
           "doc": "What a subscription's authorize / resolve receive besides the parsed input.",
           "docFull": "What a subscription's `authorize` / `resolve` receive besides the parsed input.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SUPABASE_KEY_ENV",
+          "slug": "SUPABASE_KEY_ENV",
+          "kind": "variable",
+          "signature": "SUPABASE_KEY_ENV: object",
+          "doc": "Environment variables the keys default to.",
+          "docFull": "Environment variables the keys default to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "supabaseJwks",
+          "slug": "supabaseJwks",
+          "kind": "function",
+          "signature": "supabaseJwks(keys: SupabaseKeys): object",
+          "doc": "The JWKS document — the public halves of the ES256 keys (empty under HS256 only: a symmetric secret is never published).",
+          "docFull": "The JWKS document — the public halves of the ES256 keys (empty under HS256 only: a\nsymmetric secret is never published).",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            }
+          ],
+          "returns": "{ keys: [...] }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseJwtClaims",
+          "slug": "SupabaseJwtClaims",
+          "kind": "interface",
+          "signature": "interface SupabaseJwtClaims",
+          "doc": "Verified JWT claims.",
+          "docFull": "Verified JWT claims.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseKeyError",
+          "slug": "SupabaseKeyError",
+          "kind": "class",
+          "signature": "class SupabaseKeyError",
+          "doc": "A refused token or API key. Its message never contains the presented value.",
+          "docFull": "A refused token or API key. Its message never contains the presented value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseKeyErrorCode",
+          "slug": "SupabaseKeyErrorCode",
+          "kind": "typeAlias",
+          "signature": "type SupabaseKeyErrorCode = bad_jwt | jwt_expired | invalid_api_key",
+          "doc": "Why a token or key was refused — GoTrue / PostgREST-shaped codes.",
+          "docFull": "Why a token or key was refused — GoTrue / PostgREST-shaped codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseKeys",
+          "slug": "SupabaseKeys",
+          "kind": "interface",
+          "signature": "interface SupabaseKeys",
+          "doc": "Resolved key material. Build it with resolveSupabaseKeys.",
+          "docFull": "Resolved key material. Build it with {@linkcode resolveSupabaseKeys}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseKeysConfig",
+          "slug": "SupabaseKeysConfig",
+          "kind": "interface",
+          "signature": "interface SupabaseKeysConfig",
+          "doc": "The key material for backend({ supabase }). Every field defaults to its environment variable.",
+          "docFull": "The key material for `backend({ supabase })`. Every field defaults to its environment variable.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseRole",
+          "slug": "SupabaseRole",
+          "kind": "typeAlias",
+          "signature": "type SupabaseRole = anon | authenticated | service_role",
+          "doc": "The roles a Supabase JWT or API key can carry.",
+          "docFull": "The roles a Supabase JWT or API key can carry.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupabaseSigningKey",
+          "slug": "SupabaseSigningKey",
+          "kind": "interface",
+          "signature": "interface SupabaseSigningKey",
+          "doc": "One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).",
+          "docFull": "One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -12642,6 +13285,35 @@
           "denextOnly": false
         },
         {
+          "name": "vectorSearchSql",
+          "slug": "vectorSearchSql",
+          "kind": "function",
+          "signature": "vectorSearchSql(o?: VectorSearchSqlOptions): string",
+          "doc": "The SQL for Supabase's semantic-search recipe, for a migration: the vector extension, a documents table (id, content, metadata, embedding vector(N)) with an HNSW index, and a match_documents(query_embedding, match_threshold, match_count) function returning the closest rows with their similarity — callable with matchDocuments() from @denext/backend/server, db(), or REST /rpc.",
+          "docFull": "The SQL for Supabase's semantic-search recipe, for a migration: the `vector` extension, a\ndocuments table (`id`, `content`, `metadata`, `embedding vector(N)`) with an HNSW index, and a\n`match_documents(query_embedding, match_threshold, match_count)` function returning the closest\nrows with their similarity — callable with `matchDocuments()` from `@denext/backend/server`,\n`db()`, or REST `/rpc`.\n\n```sh\ndenext generate vector-search documents   # writes it as a migration\n```",
+          "params": [
+            {
+              "name": "o",
+              "doc": "The table, dimensions, function name and distance."
+            }
+          ],
+          "returns": "The SQL.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VectorSearchSqlOptions",
+          "slug": "VectorSearchSqlOptions",
+          "kind": "interface",
+          "signature": "interface VectorSearchSqlOptions",
+          "doc": "Options for vectorSearchSql.",
+          "docFull": "Options for {@linkcode vectorSearchSql}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "VerificationPurpose",
           "slug": "VerificationPurpose",
           "kind": "typeAlias",
@@ -12686,6 +13358,47 @@
           "docFull": "Identifies one verification token (the tuple its uniqueness is scoped by).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerifiedSamlAssertion",
+          "slug": "VerifiedSamlAssertion",
+          "kind": "interface",
+          "signature": "interface VerifiedSamlAssertion",
+          "doc": "The claims of a Response that passed every check.",
+          "docFull": "The claims of a Response that passed every check.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyAccessToken",
+          "slug": "verifyAccessToken",
+          "kind": "function",
+          "signature": "verifyAccessToken(keys: SupabaseKeys, token: string, config?: AuthConfig | null, options?: VerifySupabaseJwtOptions): Promise<SupabaseJwtClaims>",
+          "doc": "Verify a Supabase JWT and, for a user's access token, that its session is still live (when the adapter keeps sessions): not revoked, not expired, the same user.",
+          "docFull": "Verify a Supabase JWT and, for a user's access token, that its session is still live (when\nthe adapter keeps sessions): not revoked, not expired, the same user.",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The key material."
+            },
+            {
+              "name": "token",
+              "doc": "The JWT."
+            },
+            {
+              "name": "config",
+              "doc": "The auth config whose adapter holds the sessions (optional)."
+            },
+            {
+              "name": "options",
+              "doc": "The clock."
+            }
+          ],
+          "returns": "The claims.",
           "examples": [],
           "denextOnly": true
         },
@@ -12806,6 +13519,30 @@
           "denextOnly": true
         },
         {
+          "name": "verifySamlResponse",
+          "slug": "verifySamlResponse",
+          "kind": "function",
+          "signature": "verifySamlResponse(options: VerifySamlResponseOptions): Promise<VerifiedSamlAssertion>",
+          "doc": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.",
+          "docFull": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.\n\nChecks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status\nSuccess; no encrypted assertion and exactly one Assertion in the whole document, a direct\nchild of the Response; unique IDs; every signature present on the Response or Assertion\nverifies with a configured certificate, and at least one is present (the Assertion's when\n`requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this\nACS URL; Conditions and AudienceRestriction; the AuthnStatement session window;\nInResponseTo; and finally the replay cache. Claims are read only from the verified\nelement objects.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerifySamlResponseOptions",
+          "slug": "VerifySamlResponseOptions",
+          "kind": "interface",
+          "signature": "interface VerifySamlResponseOptions",
+          "doc": "Options for verifySamlResponse.",
+          "docFull": "Options for {@link verifySamlResponse}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "verifySecondFactor",
           "slug": "verifySecondFactor",
           "kind": "function",
@@ -12823,6 +13560,43 @@
             }
           ],
           "returns": "{ ok: true, method } (\"totp\" or \"bcp\"), or { ok: false, error }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifySupabaseJwt",
+          "slug": "verifySupabaseJwt",
+          "kind": "function",
+          "signature": "verifySupabaseJwt(keys: SupabaseKeys, token: string, options?: VerifySupabaseJwtOptions): Promise<SupabaseJwtClaims>",
+          "doc": "Verify a JWT signed by these keys: the signature (ES256 by kid, or HS256 under the legacy secret), exp (required), nbf / iat (not in the future) and the role (one of Supabase's three; an authenticated token needs a sub).",
+          "docFull": "Verify a JWT signed by these keys: the signature (ES256 by `kid`, or HS256 under the legacy\nsecret), `exp` (required), `nbf` / `iat` (not in the future) and the `role` (one of\nSupabase's three; an `authenticated` token needs a `sub`).",
+          "params": [
+            {
+              "name": "keys",
+              "doc": "The resolved keys."
+            },
+            {
+              "name": "token",
+              "doc": "The compact JWT."
+            },
+            {
+              "name": "options",
+              "doc": "The clock."
+            }
+          ],
+          "returns": "The verified claims.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerifySupabaseJwtOptions",
+          "slug": "VerifySupabaseJwtOptions",
+          "kind": "interface",
+          "signature": "interface VerifySupabaseJwtOptions",
+          "doc": "Options for verifySupabaseJwt.",
+          "docFull": "Options for {@linkcode verifySupabaseJwt}.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },

@@ -1268,11 +1268,51 @@ const all = await vault.decryptedSecrets(); // the rows of Supabase's vault.decr
   `key_id`) and encrypts with the first; `vault.rotate()` re-encrypts every row under it.
 - **Who can read it.** Only server code. The table has row-level security on and nothing granted
   to `anon` or `authenticated`, so neither REST nor a user's `db()` reaches it.
-- **Not in SQL.** Supabase decrypts inside the database (`select decrypted_secret from
-  vault.decrypted_secrets`, with pgsodium's server key). Here that would put the key in the
-  database, so there is no `vault.create_secret()` SQL function or decrypted view: create and
-  read secrets with `vault` on the server (for example in a [job](/docs/jobs) or a migration
-  script).
+
+### Vault in SQL
+
+`vault: { sql: true }` adds Supabase's SQL surface over the same rows: `vault.create_secret(secret,
+name, description)`, `vault.update_secret(id, secret, name, description, key_id)` and the
+`vault.decrypted_secrets` view, so SQL and migrations written for Supabase run unchanged. Both
+sides use one format (AES-256-GCM, the row id authenticated), so the app reads what SQL wrote and
+the other way round. It needs the `pgcrypto` extension (trusted: the plugin creates it).
+
+The key still never lives in the database. The app sets it for one transaction at a time, only in
+transactions it opens: `vault.withKey(fn)` and every migration `denext db push`, `reset` or `diff`
+applies. Anywhere else the functions and the view raise `vault: no key in this transaction`.
+
+```ts
+import { vault } from "@denext/backend/server";
+
+const rows = await vault.withKey((sql) =>
+  sql`select name, decrypted_secret from vault.decrypted_secrets`
+);
+```
+
+```sql
+-- supabase/migrations/…_secrets.sql, applied with `denext db push`
+select vault.create_secret('sk_live_…', 'stripe_key', 'Stripe secret key');
+```
+
+What the SQL mode trusts, compared with the app-only vault:
+
+- **The key transits the database session.** For that transaction it sits in a transaction-local
+  setting (`set_config('denext.vault_keys', $1, true)`), sent as a bound parameter, so it is not in
+  `pg_stat_activity`'s query text or `pg_stat_statements`. Anything running in that same
+  transaction — a trigger or function your SQL calls — could read it with `current_setting()`;
+  run only your own SQL inside `withKey`.
+- **Server logs can capture it.** With `log_statement = 'all'` (or `'mod'` plus a logged write),
+  Postgres logs bind parameters; a superuser, the provider, or `auto_explain` with parameter
+  logging could see the key. Keep statement logging off for the app's role, or use the app-only
+  vault.
+- **Encryption runs on the database server**, in PL/pgSQL over pgcrypto's AES block function
+  (pgcrypto has no GCM; the code builds it from AES, as specified by NIST SP 800-38D). It is slower
+  than WebCrypto — fine for secrets, not for bulk data — and not constant-time.
+- **Grants are the same:** only the app's own database user can call the functions or read the
+  view; `anon` and `authenticated` get nothing, through REST or `db()`.
+
+Without `sql: true` none of this exists: the key stays in the app process, and secrets are read
+with `vault.get()` / `vault.decryptedSecrets()`.
 
 ## Queues
 
@@ -1343,13 +1383,16 @@ your database must have (most providers include it; the `pgvector/pgvector` imag
 Nothing needs it until you use it, and then a missing extension is a clear error that names the
 fix.
 
-```ts
-// migrations/<stamp>_documents.sql — paste the output of:
-import { vectorSearchSql } from "@denext/backend";
-console.log(vectorSearchSql({ table: "documents", dimensions: 1536 }));
-// create extension if not exists vector; a documents table with an HNSW index; row-level
-// security; and Supabase's match_documents(query_embedding, match_threshold, match_count).
+```sh
+denext generate vector-search documents   # migrations/<stamp>_documents_vector_search.sql
+denext db push
 ```
+
+The migration creates the `vector` extension, a `documents` table (`id`, `content`, `metadata`,
+`embedding vector(1536)` — change the dimensions to your model's) with an HNSW index and
+row-level security, and Supabase's `match_documents(query_embedding, match_threshold,
+match_count)` (`match_<table>` for another table). `vectorSearchSql({ table, dimensions, fn,
+distance })` from `@denext/backend` returns the same SQL with other settings.
 
 ```ts
 import { db, matchDocuments, toVector } from "@denext/backend/server";

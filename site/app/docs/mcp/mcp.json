@@ -26,12 +26,12 @@
     },
     {
       "name": "denext_generate",
-      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|loading|error|not-found|component|api|action|middleware|job|function|test|docker|migration|seed|ci. Existing files are never overwritten unless force is set; pass dryRun to see the planned files and their contents without writing anything.",
+      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|loading|error|not-found|component|api|action|middleware|job|function|test|docker|migration|vector-search|seed|ci. Existing files are never overwritten unless force is set; pass dryRun to see the planned files and their contents without writing anything.",
       "params": [
         {
           "name": "kind",
           "type": "string",
-          "description": "page|route|layout|loading|error|not-found|component|api|action|middleware|job|function|test|docker|migration|seed|ci",
+          "description": "page|route|layout|loading|error|not-found|component|api|action|middleware|job|function|test|docker|migration|vector-search|seed|ci",
           "required": true
         },
         {

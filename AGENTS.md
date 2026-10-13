@@ -660,8 +660,9 @@ Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` 
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
 valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
 With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
-server-only), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
-`queueConsumer({ queue, handler })` as a job), `vectorSearchSql()` / `matchDocuments()` (pgvector)
+server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
+inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
+`queueConsumer({ queue, handler })` as a job), `denext generate vector-search <table>` + `matchDocuments()` (pgvector)
 and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
 delivered signed + retried) from `@denext/backend/server`; `denext db push | status | reset --yes |
 diff | dump` manages migrations (`migrations/` or `supabase/migrations/`).

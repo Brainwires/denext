@@ -534,6 +534,10 @@
               "migrate": {
                 "description": "Apply the `backend_vault_0001` migration on first use (default `true`).",
                 "type": "boolean"
+              },
+              "sql": {
+                "description": "Supabase's SQL surface too: `vault.create_secret()`, `vault.update_secret()` and the `vault.decrypted_secrets` view, for SQL and migrations written for Supabase. They read the key from a transaction-local setting the app sets — only in `vault.withKey()` transactions and `denext db push / reset / diff` — so outside those they raise an error. Needs `pgcrypto`. See the docs for what this mode trusts the database session with.",
+                "type": "boolean"
               }
             }
           },

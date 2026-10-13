@@ -1,21 +1,54 @@
 ---
 title: Coming from Supabase
 slug: coming-from-supabase
-lead: A concept map and migration checklist for Supabase developers. With denext and the opt-in @denext/backend plugin your backend lives in your app — auth, Postgres scoped by row-level security, storage, realtime and a PostgREST-style REST API — and you bring the Postgres.
+lead: The stock @supabase/supabase-js client works against a denext app — auth, the database, storage, realtime and Edge Functions — served by your app from a Postgres you bring. A concept map, what is deliberately different, and a migration checklist.
 ---
 
-Supabase is a hosted platform your app talks to over HTTP. denext is the other way round: the
-backend is part of your app. [`denextAuth`](/docs/auth) signs users in, route handlers and
-Server Actions are your functions, and [`@denext/backend`](/docs/backend) adds storage, Postgres
-with Supabase-compatible row-level security, and realtime changes from your tables. You run it
-where you run the app, against a Postgres you provide (any provider, or your own server).
+Supabase is a hosted platform your app talks to over HTTP. With denext and the opt-in
+[`@denext/backend`](/docs/backend) plugin, the same API is served by your app itself, against a
+Postgres you provide (any provider, or your own server): point the client you already have at it.
 
-To be plain about it once: **denext is not a hosted service.** Parts of the supabase-js API
-already work against the app with `createClient(appUrl, publishableKey)` — the database
-(`from()`, `rpc()`), Storage (`supabase.storage`, policies on `storage.objects` included), Realtime
-(`supabase.channel()`) and Edge Functions (`functions.invoke`) — and the rest are calls to rewrite,
-below. What carries over unchanged is the database: your tables, your SQL functions and your
-row-level security policies, which use the same roles and the same `auth.*` functions.
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+// Your app's own origin and its publishable key (`denext backend keys` prints a set).
+const supabase = createClient("https://app.example.com", PUBLISHABLE_KEY);
+```
+
+**What works with the stock client**, once the matching option is on:
+
+| supabase-js                                                  | Served at                | Turned on by                                                                             |
+| ------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------- |
+| API keys and access tokens (`apikey`, `Bearer`)              | every route below        | `backend({ supabase: true })` — or `supabase: { publishableKey, secretKey, … }`          |
+| `supabase.auth.*` (GoTrue)                                   | `/auth/v1`               | `supabase: { auth: { … } }` with `denextAuth()` [→](/docs/auth#supabase-clients-auth-v1) |
+| `from()`, `rpc()`, `schema()` (PostgREST 12)                 | `/rest/v1`               | `rest: {}` (`rest.schemas` for more than `public`) [→](/docs/backend#auto-rest)          |
+| `supabase.storage` (incl. TUS uploads)                       | `/storage/v1`            | `storage: { … }` (`storage.rls` for SQL policies) [→](/docs/backend#storage)             |
+| `supabase.channel()` (Postgres changes, broadcast, presence) | `/realtime/v1/websocket` | `realtime: realtime({ … })` [→](/docs/backend#realtime-from-the-database)                |
+| `supabase.functions.invoke()`                                | `/functions/v1/<name>`   | `functions: {}` [→](/docs/backend#edge-functions)                                        |
+| `schema("pgmq_public").rpc(…)` (Queues)                      | `/rest/v1/rpc/…`         | `queues: {}` with `rest` [→](/docs/backend#queues)                                       |
+
+The database side carries over as SQL: your tables, functions and row-level security policies
+(the same `anon` / `authenticated` roles and `auth.uid()` / `auth.jwt()`), Supabase's
+`storage.objects` and `realtime.messages` policies, pgmq's queue functions, pgvector's
+`match_documents`, `supabase_functions.http_request` webhook triggers and — with
+`vault: { sql: true }` — `vault.create_secret()` and `vault.decrypted_secrets`.
+
+**What is deliberately different:**
+
+- **Your app is the server.** There is no hosted project, dashboard, logs explorer or usage
+  metering; [`denext ui`](/docs/ui#database) is a local, loopback console. Backups, pooling and
+  upgrades are your Postgres provider's job.
+- **One user store, two ways in.** `/auth/v1` serves the users `denextAuth()` keeps, so a cookie
+  session from denext's own sign-in and a supabase-js token session are the same user; server
+  code reads either with `auth()`. You supply the mailer and SMS sender (`sendVerificationRequest`,
+  `sendSms`).
+- **Least exposure by default.** Auto-REST serves only tables with RLS on (and `security_invoker`
+  views) unless you name others; Edge Functions verify the caller unless `verifyJwt: false`;
+  webhooks reach only targets configured in the app; the vault key never lives in the database
+  (its SQL surface works only inside transactions the app opens).
+- **Server code does not need the client.** Inside the app, `db()` (scoped by the same policies),
+  `storage`, `queue()` and `vault` from `@denext/backend/server` are direct, typed calls — no HTTP
+  round trip.
 
 ```sh
 denext plugin add @denext/backend
@@ -28,12 +61,15 @@ import { backend, backendAuthAdapter, fs, realtime } from "@denext/backend";
 
 export default {
   plugins: [
+    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
     backend({
       postgres: {}, // reads DATABASE_URL
+      supabase: { auth: { siteUrl: "https://app.example.com" } }, // keys from the environment
+      rest: {},
       storage: { driver: fs({ dir: ".storage" }), buckets: { avatars: { public: true } } },
       realtime: realtime({ tables: { notes: {} } }),
+      functions: {},
     }),
-    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
   ],
 };
 ```
@@ -63,10 +99,10 @@ export default {
 | Database webhooks                                   | `supabase_functions.http_request` triggers, delivered by the app (signed, retried) to the hooks you configure; or `onTableChange(table, fn)` on the server. [Database webhooks](/docs/backend#database-webhooks)                                                                                                                               |
 | `pg_cron`, scheduled functions                      | `defineJob` in `jobs/` with a cron `schedule`. [Scheduled jobs](/docs/jobs)                                                                                                                                                                                                                                                                    |
 | Queues (pgmq), `pgmq_public`                        | The same SQL API without the extension, `queue()` / `queueConsumer()` on the server. [Queues](/docs/backend#queues)                                                                                                                                                                                                                            |
-| pgvector, `match_documents`                         | The same extension and recipe: `vectorSearchSql()`, `matchDocuments()`. [Vector search](/docs/backend#vector-search-pgvector)                                                                                                                                                                                                                  |
+| pgvector, `match_documents`                         | The same extension and recipe: `denext generate vector-search <table>`, `matchDocuments()`. [Vector search](/docs/backend#vector-search-pgvector)                                                                                                                                                                                              |
 | `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext db push`; also `denext db reset`, `db diff` and `db dump`. [`denext db`](/docs/backend#denext-db)                                                                                                                                                                                                  |
 | Studio (table editor, policies, storage, users)     | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                                                                                                                                                                        |
-| Vault, project secrets                              | `vault` from `@denext/backend/server`: `vault.secrets` encrypted with AES-256-GCM by the app (`DENEXT_VAULT_KEY`); plain settings stay environment variables. [Vault](/docs/backend#vault)                                                                                                                                                     |
+| Vault, project secrets                              | `vault` from `@denext/backend/server` (AES-256-GCM under `DENEXT_VAULT_KEY`, same table shape); with `vault: { sql: true }` also `vault.create_secret()` and `vault.decrypted_secrets` in SQL. [Vault](/docs/backend#vault)                                                                                                                    |
 
 ## Side by side
 
@@ -477,8 +513,9 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   views, functions, enums and relationships of the exposed schemas) and types `createClient<Database>()`
   and denext's `from()`; `db()`'s tagged SQL is untyped, so for server queries use an ORM such as
   [Drizzle](/docs/database#orms) or write the row types.
-- **Vault decrypts in the app, not in SQL.** There is no `vault.decrypted_secrets` view or
-  `vault.create_secret()` SQL function: the key stays out of the database, so secrets are read with
-  `vault` in server code.
+- **Vault's SQL needs the app.** `vault.create_secret()` and `vault.decrypted_secrets` work
+  (`vault: { sql: true }`) only inside transactions the app opens with the key — `vault.withKey()`
+  and `denext db push` — because the key is never stored in the database; a `pg_cron` job or a
+  `psql` session cannot read secrets on its own. App-side reads (`vault.get()`) need no SQL mode.
 - **No extensions catalogue.** The Postgres extensions you have (pgvector, say) are the ones your
   provider installs; queues and webhooks need none.

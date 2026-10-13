@@ -265,3 +265,58 @@ Deno.test("vault: the migration runs once before the first call", async () => {
     tearDown();
   }
 });
+
+Deno.test("vault SQL mode: withKey sets the keys for one transaction, as a bound parameter", async () => {
+  const { vaultKeyedClient } = await import("../packages/backend/src/vault.ts");
+  const { vaultKeysJson, vaultSqlMigrations } = await import(
+    "../packages/backend/src/vault-sql.ts"
+  );
+  // Only the test's own (lowercase) statements return a row; the migration runner's see none.
+  const sql = scriptedSql((text) => (text.startsWith("select") ? [{ ok: 1 }] : []));
+  installPostgres({ sql, rls: { migrate: false } });
+  try {
+    installVault({ key: KEY, migrate: false });
+    await assertRejects(() => vault.withKey(() => 1), VaultError, "sql: true");
+    assertEquals(await vaultKeyedClient(sql), sql, "off: the client unchanged");
+    installVault({ key: KEY, migrate: false, sql: true });
+    const result = await vault.withKey(async (tx) => [...await tx`select 1 as ok`]);
+    assertEquals(result, [{ ok: 1 }]);
+    const set = sql.calls.find((c) =>
+      c.text.includes("set_config('denext.vault_keys', $1, true)")
+    )!;
+    const key = await deriveVaultKey(KEY);
+    assertEquals(set.params, [vaultKeysJson([key])]);
+    assert(!set.text.includes(JSON.parse(set.params[0] as string)[0].key), "never in the text");
+    assertEquals(JSON.parse(set.params[0] as string)[0].id, key.id);
+    // The keyed client: every transaction gets the keys; plain statements do not.
+    const keyed = await vaultKeyedClient(sql);
+    sql.calls.length = 0;
+    await keyed.begin(async (tx) => await tx`select 2`);
+    assert(sql.calls[0].text.includes("set_config"));
+    await keyed`select 3`;
+    assertEquals(sql.calls.at(-1)!.text.includes("set_config"), false);
+    // No key configured: unchanged, so the SQL raises its own error.
+    installVault({ sql: true, migrate: false }, () => undefined);
+    assertEquals(await vaultKeyedClient(sql), sql);
+    // With migrate on, the SQL migration runs after the table's.
+    installVault({ key: KEY, sql: true });
+    sql.calls.length = 0;
+    await vault.list();
+    const order = sql.calls.map((c) => c.text).filter((t) =>
+      /CREATE TABLE IF NOT EXISTS vault\.secrets|vault\.create_secret/.test(t)
+    );
+    assertEquals(order.length, 2);
+    const [migration] = vaultSqlMigrations();
+    for (
+      const part of [
+        "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+        "vault.decrypted_secrets",
+        "SET search_path = pg_catalog, pg_temp",
+        "REVOKE ALL ON vault.decrypted_secrets FROM anon",
+        "aes-ecb/pad:none",
+      ]
+    ) assertStringIncludes(migration.sql, part);
+  } finally {
+    tearDown();
+  }
+});

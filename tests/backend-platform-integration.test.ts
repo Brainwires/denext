@@ -38,6 +38,7 @@ import {
   webhookEvents,
 } from "../packages/backend/server.ts";
 import { installPostgres, rlsReady } from "../packages/backend/src/postgres.ts";
+import { installVault } from "../packages/backend/src/vault.ts";
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
@@ -584,6 +585,132 @@ Deno.test({
     } finally {
       resetPlugins();
       installPostgres(undefined);
+      await env.drop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: `vault SQL mode on a real Postgres: Supabase's SQL surface, one format both ways${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { createDbCommand, backendMigrationsOf } = await import(
+      "../packages/backend/src/db-command.ts"
+    );
+    const { vaultMigrations, vaultKeyedClient } = await import("../packages/backend/src/vault.ts");
+    const { vaultSqlMigrations } = await import("../packages/backend/src/vault-sql.ts");
+    const env = await environment();
+    const root = await Deno.makeTempDir({ prefix: "dnx-vault-sql-" });
+    try {
+      await Deno.mkdir(`${root}/app`);
+      await Deno.mkdir(`${root}/supabase/migrations`, { recursive: true });
+      // A migration written for Supabase.
+      await Deno.writeTextFile(
+        `${root}/supabase/migrations/20260101000000_secrets.sql`,
+        "select vault.create_secret('from-a-migration', 'migrated', 'made in SQL');",
+      );
+      resetPlugins();
+      installPostgres(undefined);
+      const config = {
+        plugins: [
+          backend({ postgres: { sql: env.app }, vault: { key: [KEY, OLD_KEY], sql: true } }),
+        ],
+      } as DenextConfig;
+      await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
+      await rlsReady();
+      const lines: string[] = [];
+      const command = createDbCommand({
+        url: env.url,
+        backendMigrations: () => backendMigrationsOf([vaultMigrations, vaultSqlMigrations]),
+        serviceSchemas: ["vault"],
+        keyed: vaultKeyedClient,
+      }, {
+        log: (l) => lines.push(l),
+        error: (l) => lines.push(`error: ${l}`),
+        exit: () => {},
+        run: () => Promise.reject(new Error("unused")),
+        write: () => Promise.resolve(),
+        connect: (url) => new SQL!(url),
+      });
+      await command.run({
+        positionals: ["push"],
+        flags: {},
+        global: { cwd: root } as never,
+        rest: [],
+      });
+      assert(lines.some((l) => l.includes("20260101000000_secrets.sql")), lines.join("\n"));
+      // Written by SQL (in the migration), read by the app.
+      assertEquals(await vault.get("migrated"), "from-a-migration");
+      // Written by the app (several lengths, multi-byte text), read by SQL.
+      const values = ["", "x", "exactly sixteen!", "a".repeat(100), "πλαίσιο — секрет 🔑"];
+      for (const [i, value] of values.entries()) await vault.createSecret(value, `app_${i}`);
+      const fromSql = await vault.withKey(async (
+        sql,
+      ) => [
+        ...await sql`select name, decrypted_secret from vault.decrypted_secrets
+          where name like 'app_%' order by name`,
+      ]);
+      assertEquals(fromSql.map((r) => r.decrypted_secret), values);
+      // SQL writes, the app reads; update_secret re-encrypts; descriptions change.
+      await vault.withKey(async (sql) => {
+        const [{ id }] = await sql`select vault.create_secret('sql-made', 'sql_one', 'd') as id`;
+        await sql`select vault.update_secret(${id}::uuid, 'sql-changed', null, 'd2')`;
+      });
+      assertEquals(await vault.get("sql_one"), "sql-changed");
+      assertEquals((await vault.list()).find((s) => s.name === "sql_one")?.description, "d2");
+      // A row under the older key: SQL reads it, and re-encrypts it under the first key on update.
+      installVault({ key: OLD_KEY, sql: true });
+      const legacy = await vault.createSecret("legacy", "old_key_row");
+      installVault({ key: [KEY, OLD_KEY], sql: true });
+      await vault.withKey(async (sql) => {
+        const [row] =
+          await sql`select decrypted_secret from vault.decrypted_secrets where id = ${legacy}::uuid`;
+        assertEquals(row.decrypted_secret, "legacy");
+        await sql`select vault.update_secret(${legacy}::uuid, new_key_id => ${
+          (await (await import("../packages/backend/src/vault.ts")).deriveVaultKey(KEY)).id
+        }::uuid)`;
+      });
+      assertEquals(await vault.get("old_key_row"), "legacy");
+      // Without the key — any transaction the app did not open with it — the SQL refuses.
+      await assertRejects(
+        () => db.service()`select * from vault.decrypted_secrets`,
+        Error,
+        "no key in this transaction",
+      );
+      await assertRejects(() => db.service()`select vault.create_secret('x')`, Error, "no key");
+      // The key does not outlive its transaction on the pooled connection.
+      for (let i = 0; i < 4; i++) {
+        const [s] = await db
+          .service()`select coalesce(current_setting('denext.vault_keys', true), '') as k`;
+        assertEquals(s.k, "");
+      }
+      // Clients get nothing, even inside a keyed transaction.
+      await assertRejects(
+        () => db({ as: { id: A } })`select * from vault.decrypted_secrets`,
+        Error,
+        "permission denied",
+      );
+      await assertRejects(
+        () => db({ as: "anon" })`select vault.create_secret('x')`,
+        Error,
+        "permission denied",
+      );
+      // A tampered row reads as null in SQL too.
+      await db
+        .service()`update vault.secrets set name = 'tampered', secret = (select secret from vault.secrets where name = 'app_1') where name = 'app_2'`;
+      const [tampered] = await vault.withKey(async (
+        sql,
+      ) => [
+        ...await sql`select decrypted_secret from vault.decrypted_secrets where name = 'tampered'`,
+      ]);
+      assertEquals(tampered.decrypted_secret, null);
+    } finally {
+      resetPlugins();
+      installPostgres(undefined);
+      installVault(undefined);
       await env.drop();
       await Deno.remove(root, { recursive: true });
     }

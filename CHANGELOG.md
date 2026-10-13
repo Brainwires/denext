@@ -228,6 +228,16 @@ and this project adheres to
   triggers without `pg_net`: the change is recorded with Supabase's payload and the app delivers
   it to a configured hook (or an `allowUrls` prefix, nothing else), signed with Standard Webhooks
   headers (`verifyWebhook()` checks them) and retried with backoff.
+- **Vault in SQL** (`backend({ vault: { sql: true } })`): Supabase's `vault.create_secret()`,
+  `vault.update_secret()` and `vault.decrypted_secrets` over the same rows and the same AES-256-GCM
+  format as the app-side vault (GCM built in PL/pgSQL over pgcrypto's AES block, so each side
+  reads what the other wrote). The key never lives in the database: the app sets it
+  transaction-locally, as a bound parameter, only in transactions it opens — `vault.withKey(fn)`
+  and the migrations `denext db push` applies — and elsewhere the SQL refuses with "no key in this
+  transaction". Only the app's own database user can call it.
+- **`denext generate vector-search [table]`** writes a migration with Supabase's pgvector recipe
+  (the extension, the table with an HNSW index and row-level security, `match_<table>()`);
+  `vectorSearchSql()` is now also exported from `denext/server`.
 - **`denext db push | status | reset | diff | dump`** (from `@denext/backend`): apply the plugin's
   and the project's migrations (`migrations/` or `supabase/migrations/`), reset a development
   database and run its seed file, print (or write as a migration) the DDL for what the live

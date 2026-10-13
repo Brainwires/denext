@@ -8,7 +8,7 @@
 import { dirname, join, relative } from "@std/path";
 import { type DockerRequest, resolveDocker } from "./docker-detect.ts";
 import { type DockerOptions, dockerPlan } from "./docker-template.ts";
-import { ciPlan, migrationPlan, seedPlan } from "./generate-ops.ts";
+import { ciPlan, migrationPlan, seedPlan, vectorSearchPlan } from "./generate-ops.ts";
 import { resolveProject } from "./paths.ts";
 
 /**
@@ -32,6 +32,7 @@ export const GENERATE_KINDS = [
   "test",
   "docker",
   "migration",
+  "vector-search",
   "seed",
   "ci",
 ] as const;
@@ -46,6 +47,7 @@ export type GenerateKind = typeof GENERATE_KINDS[number];
  * to name.
  */
 export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKind>([
+  "vector-search",
   "docker",
   "middleware",
   "loading",
@@ -56,7 +58,7 @@ export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKi
 ]);
 
 /** The kinds that write project-root ops files (no App Router `app/` dir needed). */
-type OpsKind = "docker" | "migration" | "seed" | "ci";
+type OpsKind = "docker" | "migration" | "vector-search" | "seed" | "ci";
 
 /** One file a generate run would produce. */
 export interface GeneratePreviewFile {
@@ -363,7 +365,8 @@ async function planArtifacts(
 }
 
 function isOpsKind(kind: GenerateKind): kind is OpsKind {
-  return kind === "docker" || kind === "migration" || kind === "seed" || kind === "ci";
+  return kind === "docker" || kind === "migration" || kind === "vector-search" || kind === "seed" ||
+    kind === "ci";
 }
 
 /** The project-root ops scaffolds (Docker, migrations, seeds, CI); `name` is the override. */
@@ -386,6 +389,8 @@ async function opsPlan(
     }
     case "migration":
       return await migrationPlan(projectDir, name);
+    case "vector-search":
+      return vectorSearchPlan(projectDir, name);
     case "seed":
       return await seedPlan(projectDir, name);
     case "ci":
