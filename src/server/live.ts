@@ -544,7 +544,8 @@ function warnPerIpRefusalOnce(bucket: string): void {
     `denext: refused a Live connection from ${bucket}: it already holds ` +
       `${limits.maxConnectionsPerIp} (live.limits.maxConnectionsPerIp). If many visitors ` +
       "legitimately share that address (a NAT, a proxy), raise the limit; behind your own " +
-      "proxy set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1).",
+      "proxy set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1), or name the header it " +
+      "writes the client address into in `rateLimitHeader`.",
   );
 }
 
