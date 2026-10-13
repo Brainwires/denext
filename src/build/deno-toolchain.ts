@@ -661,6 +661,11 @@ export interface DenoToolchainStatusOptions {
   readonly verify?: boolean;
   /** This process's Deno version (default `Deno.version.deno`). */
   readonly running?: string;
+  /**
+   * Whether this process is a compiled `denext` executable (default: `Deno.build.standalone`).
+   * Its own embedded Deno never runs a command: every child it starts runs on the toolchain.
+   */
+  readonly standalone?: boolean;
 }
 
 const STATE_TEXT: Record<DenoToolchainStatus["state"], string> = {
@@ -695,6 +700,36 @@ async function cacheState(
   return { state: "cached", path };
 }
 
+/** A compiled executable fetches the toolchain before any command but `toolchain` / `completions`. */
+const MISSING_STANDALONE_TEXT = "not cached yet (downloaded on the first denext command)";
+
+/**
+ * What a compiled `denext` executable says about the Deno that runs: never its own embedded one
+ * (which runs only the CLI itself) but the one it hands every child — the toolchain, a
+ * `DENEXT_DENO=<path>` binary, or with `DENEXT_DENO=stock` the `deno` on PATH.
+ */
+function executableText(mode: "pinned" | "stock" | "path", embedded: string): string {
+  const own = `this executable embeds deno ${embedded} for itself only`;
+  if (mode === "stock") return `commands run on the \`deno\` on PATH (${own})`;
+  return `denext runs every command on it (${own})`;
+}
+
+/** What status says about the Deno running: this process's, or a compiled executable's children's. */
+function runningLine(
+  standalone: boolean,
+  mode: "pinned" | "stock" | "path",
+  active: boolean,
+  running: string,
+): string {
+  if (standalone) return executableText(mode, running);
+  return active ? `running on it (deno ${running})` : `running on deno ${running}`;
+}
+
+/** The cache state's text; a compiled executable downloads a missing toolchain sooner. */
+function stateLine(state: DenoToolchainStatus["state"], standalone: boolean): string {
+  return standalone && state === "missing" ? MISSING_STANDALONE_TEXT : STATE_TEXT[state];
+}
+
 /**
  * Report denext's Deno toolchain on this machine: the pinned version, whether it is cached and
  * verified, whether this process runs on it, and why not. Never downloads.
@@ -716,7 +751,9 @@ export async function denoToolchainStatus(
   const active = mode.mode === "path"
     ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
     : pin.version !== null && running === pin.version;
-  const runningText = active ? `running on it (deno ${running})` : `running on deno ${running}`;
+  const standalone = options.standalone ??
+    (Deno.build as { standalone?: boolean }).standalone === true;
+  const runningText = runningLine(standalone, mode.mode, active, running);
   const base = { version: pin.version, target, active, running, state: "n/a" as const };
   if (mode.mode === "stock") {
     return {
@@ -753,7 +790,7 @@ export async function denoToolchainStatus(
     path,
     ok: state !== "invalid",
     detail: `${pin.version ? `toolchain ${pin.version} for ${target}` : "toolchain"}; ` +
-      `${STATE_TEXT[state]}; ${runningText}`,
+      `${stateLine(state, standalone)}; ${runningText}`,
   };
 }
 
