@@ -74,6 +74,12 @@ import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
 import { type FunctionsOptions, resolveFunctions, setupFunctions } from "./src/functions.ts";
 import { createFunctionsCommand } from "./src/functions-command.ts";
+import {
+  createBackendCommand,
+  jwksResponse,
+  setupSupabaseKeys,
+  type SupabaseOptions,
+} from "./src/supabase.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -88,6 +94,7 @@ export type { TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
 export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
+export type { SupabaseOptions } from "./src/supabase.ts";
 export { fs } from "./src/fs-driver.ts";
 export type { FsDriverOptions } from "./src/fs-driver.ts";
 export { s3 } from "./src/s3-driver.ts";
@@ -134,6 +141,13 @@ export interface BackendOptions {
    * `postgres`.
    */
   rest?: RestOptions;
+  /**
+   * The Supabase-compatible surface: `true` (keys from the environment) or the keys. Installs
+   * the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that
+   * `resolveIdentity()`, `db()` and `auth()` recognize, serves the JWKS at
+   * `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.
+   */
+  supabase?: boolean | SupabaseOptions;
   /**
    * Edge Functions: `functions/<name>.ts` (or `functions/<name>/index.ts`) served at
    * `/functions/v1/<name>` — what supabase-js's `functions.invoke` calls — each in a Deno Worker
@@ -188,6 +202,13 @@ function setupRealtime(
     ? "this Postgres client has no listen() (LISTEN/NOTIFY)"
     : undefined;
   if (missing) console.warn(`[@denext/backend] realtime is unsupported here: ${missing}`);
+}
+
+/** Install the Supabase keys, the JWKS route and `denext backend keys`. */
+async function setupSupabase(ctx: PluginContext, option: true | SupabaseOptions): Promise<void> {
+  const keys = await setupSupabaseKeys(ctx, option === true ? {} : option, env);
+  ctx.addRequestHandler((request) => jwksResponse(request, keys));
+  ctx.addCommand(createBackendCommand());
 }
 
 /** Open (or adopt) the Postgres client, then the services that run on it. */
@@ -251,6 +272,7 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
+      if (options.supabase) await setupSupabase(ctx, options.supabase);
       if (options.postgres) setupPostgres(ctx, options, rest);
       if (functions) {
         ctx.addCommand(createFunctionsCommand(functions));

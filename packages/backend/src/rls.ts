@@ -14,9 +14,19 @@
 
 import type { AuthSession, SqlClient, SqlQuery } from "@denext/denext/server";
 import { migratePostgres, type Migration } from "@denext/denext/server";
+import type { RequestIdentity } from "./identity.ts";
 
-/** The two Postgres roles a scoped query runs as — Supabase's names. */
-export type RlsRole = "anon" | "authenticated";
+/**
+ * The roles a scoped query runs as — Supabase's names. `service_role` (the secret key) runs as
+ * the connecting role itself, with no row-level security, but with its claims set, so
+ * `auth.role()` reads `service_role`.
+ */
+export type RlsRole = "anon" | "authenticated" | "service_role";
+
+/** The Postgres role `set_config('role', …)` takes for a scope: `none` resets to the connecting role. */
+function pgRole(role: RlsRole): string {
+  return role === "service_role" ? "none" : role;
+}
 
 /** `backend({ postgres: { rls } })`: how row-level security is set up. */
 export interface RlsOptions {
@@ -48,9 +58,10 @@ export interface DbUser {
 
 /**
  * Who a `db()` client acts as: `"anon"`, a user (a {@linkcode DbUser} or a denext
- * `AuthSession`), or `"service"` — the connecting role, with no row-level security at all.
+ * `AuthSession`), a request's resolved identity (`resolveIdentity()`), or `"service"` — the
+ * connecting role, with no row-level security at all.
  */
-export type DbIdentity = "anon" | "service" | DbUser | AuthSession;
+export type DbIdentity = "anon" | "service" | DbUser | AuthSession | RequestIdentity;
 
 /** Options for `db()`. */
 export interface DbOptions {
@@ -150,7 +161,7 @@ $$`,
 ];
 
 /** One `DO` block per role: create it when missing (a concurrent creator is not an error). */
-function createRole(role: RlsRole): string {
+function createRole(role: "anon" | "authenticated"): string {
   return `DO $do$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN
@@ -166,7 +177,7 @@ END $do$;`;
  * connecting role can already switch to it (a superuser always can); a refusal names the fix.
  * Postgres 16 split "member of" from "may SET ROLE to", so the check asks for the right one.
  */
-function grantRole(role: RlsRole): string {
+function grantRole(role: "anon" | "authenticated"): string {
   return `DO $do$
 BEGIN
   IF current_setting('server_version_num')::int >= 160000 THEN
@@ -332,7 +343,7 @@ export function userClaims(user: DbUser): Record<string, unknown> {
 }
 
 /** Whether a value is a denext `AuthSession` (it has a `user`) rather than a `DbUser`. */
-export function isSession(value: DbUser | AuthSession): value is AuthSession {
+export function isSession(value: DbUser | AuthSession | RequestIdentity): value is AuthSession {
   return typeof (value as AuthSession).user === "object" && (value as AuthSession).user !== null;
 }
 
@@ -366,7 +377,7 @@ async function inScope<T>(
   scope: RlsScope,
   work: (tx: SqlClient) => PromiseLike<T> | T,
 ): Promise<T> {
-  const setup = start(tx.unsafe(RLS_SETUP, [scope.role, scope.claims]));
+  const setup = start(tx.unsafe(RLS_SETUP, [pgRole(scope.role), scope.claims]));
   let result: Promise<T>;
   try {
     result = start(work(tx));
@@ -395,7 +406,10 @@ async function scopedQuery<T>(
 ): Promise<T[]> {
   const settled = await (base.begin as unknown as (
     fn: (tx: SqlClient) => [PromiseLike<unknown>, PromiseLike<T[]>],
-  ) => Promise<unknown>)((tx) => [tx.unsafe(RLS_SETUP, [scope.role, scope.claims]), query(tx)]);
+  ) => Promise<unknown>)((tx) => [
+    tx.unsafe(RLS_SETUP, [pgRole(scope.role), scope.claims]),
+    query(tx),
+  ]);
   const rows = Array.isArray(settled) ? settled[1] : undefined;
   // A client whose begin() does not await a returned array would hand the queries back
   // unstarted — awaiting them now would run them outside the scoped transaction.

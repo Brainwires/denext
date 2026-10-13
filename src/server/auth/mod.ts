@@ -42,6 +42,7 @@ import {
   verifyNativeAccessToken,
 } from "./native.ts";
 import { currentContext, headers } from "../request-context.ts";
+import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -343,8 +344,18 @@ function currentSession(): Promise<AuthSession | null> {
   // `cookies()` is: it marks the render dynamic (a bearer page is never stored by ISR and
   // answers `private, no-store`), postpones under PPR, throws inside `"use cache"` and reads
   // empty under `force-static` — a user's page can't be cached and served to the next visitor.
-  const bearer = currentContext() ? nativeBearerOf(headers().get("authorization")) : undefined;
+  const header = currentContext() ? headers().get("authorization") : null;
+  const bearer = nativeBearerOf(header);
   if (bearer !== undefined) return verifyNativeAccessToken(activeConfig, bearer);
+  // A Supabase access token (`backend({ supabase })`) is a session the same way; an `anon` /
+  // `service_role` key in the header is not a user, and leaves the cookie to decide.
+  const jwt = jwtBearerOf(header);
+  if (jwt !== undefined) {
+    const config = activeConfig;
+    return sessionFromJwtBearer(config, jwt).then((session) =>
+      session === undefined ? readAuthSession(config) : session
+    );
+  }
   return readAuthSession(activeConfig);
 }
 

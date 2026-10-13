@@ -25,7 +25,10 @@ services:
       S3_REGION: us-east-1
       S3_BUCKET: ${S3_BUCKET:-media}
       AUTH_SECRET: ${AUTH_SECRET:?set it in .env (see .env.example)}
-      DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:?set it in .env (see .env.example)}
+      DENEXT_PUBLISHABLE_KEY: ${DENEXT_PUBLISHABLE_KEY:-}
+      DENEXT_SECRET_KEY: ${DENEXT_SECRET_KEY:-}
+      DENEXT_JWT_SIGNING_KEYS: ${DENEXT_JWT_SIGNING_KEYS:-}
+      DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:-}
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
     healthcheck:
@@ -61,7 +64,10 @@ services:
       S3_REGION: us-east-1
       S3_BUCKET: ${S3_BUCKET:-media}
       AUTH_SECRET: ${AUTH_SECRET:?set it in .env (see .env.example)}
-      DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:?set it in .env (see .env.example)}
+      DENEXT_PUBLISHABLE_KEY: ${DENEXT_PUBLISHABLE_KEY:-}
+      DENEXT_SECRET_KEY: ${DENEXT_SECRET_KEY:-}
+      DENEXT_JWT_SIGNING_KEYS: ${DENEXT_JWT_SIGNING_KEYS:-}
+      DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:-}
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
     depends_on:

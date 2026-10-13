@@ -601,6 +601,33 @@ export { requireBearer } from "./auth/bearer.ts";
 export type { BearerContext, RequireBearerOptions } from "./auth/bearer.ts";
 export { issueApiToken, listApiTokens, revokeApiToken, verifyApiToken } from "./auth/api-token.ts";
 export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
+// Supabase-compatible keys and access tokens (`backend({ supabase })` from @denext/backend).
+export {
+  apiKeyRole,
+  canSign,
+  generateSupabaseKeys,
+  installedSupabaseKeys,
+  installSupabaseKeys,
+  looksLikeJwt,
+  opaqueKeyRole,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+  SUPABASE_KEY_ENV,
+  supabaseJwks,
+  SupabaseKeyError,
+  verifySupabaseJwt,
+} from "./auth/gotrue/keys.ts";
+export type {
+  GeneratedSupabaseKeys,
+  SupabaseJwtClaims,
+  SupabaseKeyErrorCode,
+  SupabaseKeys,
+  SupabaseKeysConfig,
+  SupabaseRole,
+  SupabaseSigningKey,
+  VerifySupabaseJwtOptions,
+} from "./auth/gotrue/keys.ts";
+export { jwtBearerOf, sessionFromClaims, verifyAccessToken } from "./auth/gotrue/access.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";

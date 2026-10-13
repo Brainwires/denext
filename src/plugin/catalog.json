@@ -29,7 +29,8 @@
         "postgres",
         "realtime",
         "rest",
-        "functions"
+        "functions",
+        "supabase"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -322,6 +323,18 @@
                 ]
               }
             }
+          },
+          "supabase": {
+            "description": "The Supabase-compatible surface: `true` (keys from the environment) or the keys. Installs the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that `resolveIdentity()`, `db()` and `auth()` recognize, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {}
+              }
+            ]
           },
           "functions": {
             "description": "Edge Functions: `functions/<name>.ts` (or `functions/<name>/index.ts`) served at `/functions/v1/<name>` — what supabase-js's `functions.invoke` calls — each in a Deno Worker of its own. A module that calls `Deno.serve(handler)` or default-exports a handler runs unchanged. Callers need a valid identity unless `verifyJwt: false`. `{}` serves the directory with the defaults.",

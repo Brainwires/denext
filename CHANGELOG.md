@@ -10,6 +10,36 @@ and this project adheres to
 
 ### Added
 
+- **Supabase-compatible keys and request identity (`backend({ supabase })`).** `@denext/backend`
+  takes a `supabase` option (`true`, or the keys) that installs Supabase's API keys — a
+  publishable key (`sb_publishable_…`, the `anon` role), a secret key (`sb_secret_…`, the
+  `service_role`) and the legacy HS256 `anon` / `service_role` JWTs — and an ES256 signing key whose
+  public half is served at `/auth/v1/.well-known/jwks.json`. Every field defaults to an environment
+  variable (`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY`, `DENEXT_JWT_SECRET`,
+  `DENEXT_JWT_SIGNING_KEYS`); `denext backend keys [--legacy]` mints a set, and `denext dev` with
+  none configured generates one into `.denext/backend-keys.json`. `resolveIdentity(request?)` from
+  `@denext/backend/server` is the one function that decides who a request is — a user's access
+  token (`Authorization: Bearer <jwt>`), then the secret key, then the denext session (cookie or
+  native token), then `anon` — and returns `{ role: "anon" | "authenticated" | "service_role",
+  claims, userId?, source, session? }`; a presented credential that is invalid or expired throws
+  `IdentityError` (401) instead of falling back to `anon`. `db()` now resolves each request
+  through it, so `request.jwt.claims` carries an access token's claims as they are, and the
+  service role runs as the connecting role (no row-level security) with `auth.role()` reading
+  `service_role`; `identityScope(identity)` and `db({ as: identity })` take a resolved identity.
+  `auth()` reads such an access token as a session, and re-checks its `session_id` against the
+  adapter's session families, so a revoked session's tokens stop at once. Core exports the key
+  primitives (`resolveSupabaseKeys`, `signSupabaseJwt`, `verifySupabaseJwt`, `apiKeyRole`,
+  `generateSupabaseKeys`, `supabaseJwks`, `verifyAccessToken`) from `denext/server`.
+
+- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
+  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
+  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
+  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
+  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
+  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
+  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
+  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
+  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
 - **`denext generate docker` writes a self-hosted stack.** It reads the project and adds the
   services it needs to the compose file: Postgres 17 (for `@denext/backend` or a Postgres
   `DATABASE_URL`; `pgvector/pgvector:pg17` when a migration creates the `vector` extension), MinIO

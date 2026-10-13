@@ -160,7 +160,12 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
   const names = (o: StackOptions) => stackEnv(o).map((v) => v.name);
   assertEquals(names({ postgres: true }), ["POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"]);
   assertEquals(names({ auth: true }), ["AUTH_SECRET"]);
-  assertEquals(names({ backend: true }), ["DENEXT_JWT_SECRET"]);
+  assertEquals(names({ backend: true }), [
+    "DENEXT_PUBLISHABLE_KEY",
+    "DENEXT_SECRET_KEY",
+    "DENEXT_JWT_SIGNING_KEYS",
+    "DENEXT_JWT_SECRET",
+  ]);
   assert(names({ backend: true, postgres: true }).includes("DENEXT_VAULT_KEY"));
   assertEquals(names({ backendStorage: true }), ["DENEXT_STORAGE_SECRET"]);
   assert(names({ storage: true }).includes("MINIO_ROOT_PASSWORD"));

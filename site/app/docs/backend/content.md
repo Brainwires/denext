@@ -317,6 +317,46 @@ identity wherever it runs.
 bypassed (it owns the tables): use it for migrations, maintenance tasks and admin code that has
 already checked who is asking, never for a query built from a request on a user's behalf.
 
+### Supabase keys and access tokens
+
+With `backend({ supabase: true })` the backend also recognizes Supabase's credentials, so a
+`supabase-js` client can call it with an API key and a user's access token:
+
+- **API keys**: a publishable key (`sb_publishable_…`, the `anon` role, safe in a browser), a
+  secret key (`sb_secret_…`, the `service_role`, server-side only), and the legacy `anon` /
+  `service_role` JWTs signed HS256 with a JWT secret. They come from `DENEXT_PUBLISHABLE_KEY`,
+  `DENEXT_SECRET_KEY` and `DENEXT_JWT_SECRET` (or `backend({ supabase: { publishableKey,
+  secretKey, jwtSecret } })`); several, comma-separated, rotate one out.
+- **Access tokens**: JWTs with Supabase's claims, signed ES256 under `DENEXT_JWT_SIGNING_KEYS` (a
+  private JWK, or a JSON array of them, current first; the public halves are served at
+  `/auth/v1/.well-known/jwks.json`), or HS256 under the JWT secret when no signing key is set.
+
+`denext backend keys` prints a fresh set as environment variables (`--legacy` adds a JWT secret
+and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
+`.denext/backend-keys.json`. Store them as secrets; never commit them.
+
+Every request is resolved by one function, `resolveIdentity()` from `@denext/backend/server`, which
+`db()`, auto-REST and the other endpoints share. The first that applies wins:
+
+| Credential                                                          | Role            | `request.jwt.claims`         |
+| ------------------------------------------------------------------- | --------------- | ---------------------------- |
+| `Authorization: Bearer <access token>`                              | `authenticated` | the token's claims, as-is    |
+| the secret key (`apikey` header or bearer) or legacy `service_role` | `service_role`  | `{ "role": "service_role" }` |
+| a denext session (the auth cookie, or a native `nat_…` token)       | `authenticated` | built from the session       |
+| the publishable key, the legacy `anon` JWT, or nothing              | `anon`          | `{ "role": "anon" }`         |
+
+A credential that is presented and refused — an expired or forged token, an unknown key — is an
+`IdentityError` (401), never a quiet fall back to `anon`. `service_role` runs as the app's database
+user (no row-level security) with `auth.role()` reading `service_role`. An access token names its
+session (`session_id`), and that session is checked on every request, so signing out ends its
+tokens at once rather than at their expiry.
+
+```ts
+import { db, resolveIdentity } from "@denext/backend/server";
+const who = await resolveIdentity(); // { role, claims, userId?, source, session? }
+const rows = await db({ as: who })`select * from notes`;
+```
+
 ### How it works
 
 Each `db()` query is one transaction: `BEGIN`, then

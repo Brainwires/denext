@@ -25,7 +25,20 @@
 export { storage } from "./src/storage.ts";
 export { db } from "./src/postgres.ts";
 export type { Db } from "./src/postgres.ts";
-export type { DbIdentity, DbOptions, DbUser, RlsRole } from "./src/rls.ts";
+export type { DbIdentity, DbOptions, DbUser, RlsRole, RlsScope } from "./src/rls.ts";
+export {
+  ANON_IDENTITY,
+  IdentityError,
+  identityScope,
+  isIdentityError,
+  resolveIdentity,
+} from "./src/identity.ts";
+export type {
+  IdentityErrorCode,
+  IdentityRole,
+  RequestIdentity,
+  ResolveIdentityOptions,
+} from "./src/identity.ts";
 export { onTableChange, RealtimeUnsupportedError, tableChanges } from "./src/realtime.ts";
 export type { TableChangeEvent, TableChangesOptions } from "./src/realtime.ts";
 export type {

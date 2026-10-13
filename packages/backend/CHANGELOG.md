@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
+  secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing
+  keys, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.
+  `resolveIdentity(request?)` (from `@denext/backend/server`) resolves a request to
+  `{ role, claims, userId?, source, session? }` — access token, secret key, denext session, then
+  `anon` — and throws `IdentityError` (401) for a refused credential; `db()` scopes every query
+  with it, the service role running as the connecting role with its claims.
+
 - **Edge Functions.** `backend({ functions: {} })` serves `functions/<name>.ts` /
   `functions/<name>/index.ts` at `/functions/v1/<name>` (supabase-js `functions.invoke`
   compatible), each function in a Deno Worker of its own; `Deno.serve(handler)` and

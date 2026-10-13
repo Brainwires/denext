@@ -71,6 +71,9 @@ const RAND_B64 = "openssl rand -base64 32";
 /** How to generate a URL-safe password (it ends up inside `DATABASE_URL`). */
 const RAND_HEX = "openssl rand -hex 24";
 
+/** How to mint the `@denext/backend` Supabase keys (prints them as env lines). */
+const BACKEND_KEYS = "denext backend keys";
+
 /** What a missing required secret says when compose refuses to start. */
 const MISSING = "set it in .env (see .env.example)";
 
@@ -112,10 +115,37 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     when: (o) => o.auth === true,
   },
   {
+    name: "DENEXT_PUBLISHABLE_KEY",
+    about: "@denext/backend supabase: the publishable (anon) API key, sb_publishable_….",
+    generate: BACKEND_KEYS,
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "DENEXT_SECRET_KEY",
+    about:
+      "@denext/backend supabase: the secret (service_role) API key, sb_secret_… — never ship it to a browser.",
+    generate: BACKEND_KEYS,
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "DENEXT_JWT_SIGNING_KEYS",
+    about:
+      "@denext/backend supabase: ES256 private JWK(s) signing access tokens, as JSON (current first).",
+    generate: BACKEND_KEYS,
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
     name: "DENEXT_JWT_SECRET",
-    about: "@denext/backend: signs the API keys and access tokens (HS256).",
-    generate: RAND_B64,
-    required: true,
+    about:
+      "@denext/backend supabase (legacy): verifies HS256 anon / service_role JWT keys (≥ 32 characters).",
+    generate: "denext backend keys --legacy",
+    required: false,
     app: true,
     when: (o) => o.backend === true,
   },

@@ -36,6 +36,7 @@
  */
 
 import { hmacSign, hmacVerify } from "../session.ts";
+import { bearerTokenOf } from "./bearer-header.ts";
 import type { AuthAdapter, NativeSessionRecord } from "./adapter.ts";
 import { emitAuthEvent } from "./events.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
@@ -797,11 +798,8 @@ export function nativeBearerToken(request: Request | undefined): string | undefi
  * @returns The `nat_…` token, or `undefined`.
  */
 export function nativeBearerOf(header: string | null | undefined): string | undefined {
-  if (!header) return undefined;
-  const space = header.indexOf(" ");
-  if (space < 0 || header.slice(0, space).toLowerCase() !== "bearer") return undefined;
-  const token = header.slice(space + 1).trim();
-  return token.startsWith(ACCESS_PREFIX) ? token : undefined;
+  const token = bearerTokenOf(header);
+  return token?.startsWith(ACCESS_PREFIX) ? token : undefined;
 }
 
 /**
