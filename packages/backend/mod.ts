@@ -70,6 +70,9 @@ import { resolveSecrets, SECRET_ENV } from "./src/signing.ts";
 import type { StorageOptions } from "./src/types.ts";
 import { db, installPostgres, openPostgres, type PostgresOptions } from "./src/postgres.ts";
 import { createRealtimeChannel, installRealtime, RealtimeEngine } from "./src/realtime.ts";
+import { createHub, handleRealtimeRequest, installRealtimeHub } from "./src/realtime-socket.ts";
+import { postgresBus } from "./src/realtime-bus.ts";
+import { channelPermissions } from "./src/realtime-authz.ts";
 import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
 import { type FunctionsOptions, resolveFunctions, setupFunctions } from "./src/functions.ts";
@@ -88,9 +91,10 @@ export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-s
 export type {
   RealtimeOptions,
   RealtimeRevalidateOptions,
+  RealtimeSocketOptions,
   RealtimeTableOptions,
 } from "./src/realtime-sql.ts";
-export type { TableEvent } from "./src/realtime-shared.ts";
+export type { FilterOp, TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
 export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
@@ -195,6 +199,28 @@ function setupRealtime(
   );
   installRealtime(engine);
   ctx.addTeardown(() => engine.stop());
+  const resolved = resolveRealtime(options);
+  if (resolved.socket) {
+    const hub = createHub({
+      engine,
+      limits: resolved.socket,
+      permissions: (scope, topic) =>
+        channelPermissions(db.service(), scope, topic, resolved.queryTimeoutMs),
+      bus: (handlers) =>
+        postgresBus({
+          client: () => db.service(),
+          instance: crypto.randomUUID(),
+          ready: () => engine.start(),
+          handlers,
+        }),
+    });
+    installRealtimeHub(hub);
+    ctx.addRequestHandler(handleRealtimeRequest);
+    ctx.addTeardown(async () => {
+      await hub.stop();
+      installRealtimeHub(undefined);
+    });
+  }
   if (ctx.mode !== "dev") return;
   const missing = "error" in slot
     ? slot.error.message

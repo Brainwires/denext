@@ -180,6 +180,61 @@ Deno.test("applyTableChanges: upserts, renames and deletes by the key column", (
   assertEquals(rows.length, 2, "the input is not modified");
 });
 
+Deno.test("applyTableChanges: a truncate empties the rows; later changes apply after it", () => {
+  const out = applyTableChanges([{ id: 1 }, { id: 2 }], [
+    { op: "truncate" },
+    { op: "insert", key: "3", row: { id: 3 } },
+  ]);
+  assertEquals(out, [{ id: 3 }]);
+});
+
+Deno.test("useTableChanges: events keeps only the kinds of change asked for; operator filters key", () => {
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    let state!: TableChangesState<Note>;
+    const batches: string[][] = [];
+    const initial = [{ id: 1, body: "one" }];
+    function App() {
+      state = useTableChanges<Note>("notes", {
+        initial,
+        filter: "id=gte.1",
+        events: ["insert", "truncate"],
+        onChange: (changes) => batches.push(changes.map((c) => c.op)),
+      });
+      return h("span", null, state.rows.map((r) => r.body).join(","));
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const sent = JSON.parse(ws.sent.find((s) => s.includes("channel-subscribe"))!);
+    assertEquals(decodeSubscriptionKey(sent.key)!.filter, { column: "id", op: "gte", value: "1" });
+    ws.deliver({ type: "channel-ready", subId: sent.subId });
+    flushSync();
+    const frame = (seq: number, value: unknown) =>
+      ws.deliver({ type: "channel", subId: sent.subId, seq, value });
+    frame(1, {
+      seq: 1,
+      changes: [
+        { op: "update", key: "1", row: { id: 1, body: "uno" } },
+        { op: "insert", key: "2", row: { id: 2, body: "two" } },
+      ],
+    });
+    flushSync();
+    assertEquals(container.textContent, "one,two", "the update was not asked for");
+    frame(2, { seq: 2, changes: [{ op: "delete", key: "1" }] });
+    flushSync();
+    assertEquals(container.textContent, "one,two");
+    frame(3, { seq: 3, changes: [{ op: "truncate" }] });
+    flushSync();
+    assertEquals(container.textContent, "");
+    assertEquals(batches, [["insert"], ["truncate"]]);
+    root.unmount();
+  });
+});
+
 Deno.test("fromPostgresJs maps listen() (and leaves it out when the driver has none)", async () => {
   const calls: unknown[] = [];
   const pg = Object.assign(() => Promise.resolve([]), {

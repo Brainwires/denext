@@ -666,11 +666,15 @@ tables by migration on first use. With `@denext/backend`, `backend({ postgres: {
 (signed out, or outside a request), transaction-locally; `db({ as: { id } })` acts for a user in a
 task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant … to authenticated`.
 Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
-installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter? })` from
-`@denext/backend/client` keeps rows live, each change re-read AS the subscriber under RLS (a
-delete only to subscribers who could see the row); `onTableChange(table, fn)` /
-`tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
-`table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter?, events? })`
+from `@denext/backend/client` keeps rows live (filters `eq neq lt lte gt gte in`), each change
+re-read AS the subscriber under RLS (a delete only to subscribers who could see the row);
+`onTableChange(table, fn)` / `tableChanges(table, { as, onChange })` from `@denext/backend/server`,
+and `revalidate: true` pushes `table:<name>` tags. The same option serves Supabase Realtime at
+`/realtime/v1/websocket`: stock `supabase.channel()` — `postgres_changes`, broadcast (also
+`realtime.send()` / `realtime.broadcast_changes()` in SQL, `broadcast()` on the server), presence
+across instances, private channels under `realtime.messages` policies — works unchanged. Needs a
+client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
 Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS on (and
 `security_invoker` views; others only when named in `rest.tables`) and the functions anon /
 authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>` and

@@ -23,6 +23,8 @@ export interface FakeTableSpec {
   policy?: (claims: Claims, row: Row) => boolean;
   /** The columns' types, as the catalog reports them (default: none known). */
   types?: Record<string, string>;
+  /** The columns' type names (`int8`), as the catalog reports them (default: none). */
+  udts?: Record<string, string>;
 }
 
 /** Seed / re-read concurrency, now and at its highest. */
@@ -59,6 +61,30 @@ export interface FakeRealtimeClient extends SqlClient {
   readonly inFlight: InFlight;
 }
 
+/** A filter as the fake evaluates it: numbers compare as numbers, `in` takes a JSON list. */
+function compare(value: unknown, op: string, param: unknown): boolean {
+  if (op === "in" || op === "= any") {
+    return (JSON.parse(String(param)) as string[]).includes(String(value));
+  }
+  const numeric = typeof value === "number";
+  const a = numeric ? value : String(value);
+  const b = numeric ? Number(param) : String(param);
+  switch (op) {
+    case "<>":
+      return a !== b;
+    case "<":
+      return a < b;
+    case "<=":
+      return a <= b;
+    case ">":
+      return a > b;
+    case ">=":
+      return a >= b;
+    default:
+      return a === b;
+  }
+}
+
 /**
  * Build the fake.
  *
@@ -83,7 +109,11 @@ export function fakeRealtimeClient(
   /** The column-type lookup: the spec's `types` of the table `$1` names. */
   const typesOf = (params: unknown[]): Row[] => {
     const table = /^(?:"\w+"\.)?"(\w+)"$/.exec(String(params[0]))?.[1] ?? "";
-    return Object.entries(specs[table]?.types ?? {}).map(([name, type]) => ({ name, type }));
+    return Object.entries(specs[table]?.types ?? {}).map(([name, type]) => ({
+      name,
+      type,
+      ...(specs[table]?.udts?.[name] ? { udt: specs[table].udts![name] } : {}),
+    }));
   };
 
   const answer = (text: string, params: unknown[], claims: Claims): Row[] => {
@@ -91,9 +121,13 @@ export function fakeRealtimeClient(
     parameters.push(params);
     const reread = /to_jsonb\(t\)::text as r from "(\w+)" t/.exec(text);
     const seed = /^select to_jsonb\(t\."(\w+)"\) #>> '\{\}' as k from "(\w+)" t/.exec(text);
-    const filter = /t\."(\w+)"(?:::text)? = \$2/.exec(text);
-    if (/from pg_attribute a where a\.attrelid = \$1::regclass/.test(text)) return typesOf(params);
-    const filterOk = (row: Row) => !filter || String(row[filter[1]]) === String(params[1]);
+    const filter =
+      /t\."(\w+)"(?:::text)? (=|<>|<=|<|>=|>|in|= any)[ (]+(?:select jsonb_array_elements_text\()?\$2/
+        .exec(text);
+    if (/from pg_attribute a .*where a\.attrelid = \$1::regclass/s.test(text)) {
+      return typesOf(params);
+    }
+    const filterOk = (row: Row) => !filter || compare(row[filter[1]], filter[2], params[1]);
     if (reread) {
       const table = reread[1];
       const keys = new Set(JSON.parse(String(params[0])) as string[]);

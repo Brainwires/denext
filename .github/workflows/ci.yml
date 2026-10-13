@@ -293,6 +293,7 @@ jobs:
             tests/backend-rest-integration.test.ts \
             tests/backend-rest-supabase-integration.test.ts \
             tests/backend-realtime-integration.test.ts \
+            tests/backend-supabase-realtime-integration.test.ts \
             tests/backend-auth-integration.test.ts \
             tests/db-admin-integration.test.ts \
             tests/postgres-integration.test.ts \

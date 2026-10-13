@@ -210,7 +210,8 @@
                         "enum": [
                           "insert",
                           "update",
-                          "delete"
+                          "delete",
+                          "truncate"
                         ]
                       }
                     },
@@ -221,6 +222,13 @@
                     "schema": {
                       "description": "The table's schema (default: the connection's search path).",
                       "type": "string"
+                    },
+                    "old": {
+                      "description": "What a change carries of the row as it was before an update or a delete (Supabase's `old` record): `\"key\"` (the default) — the key column only, which is what Supabase sends for a table under row-level security; `\"full\"` — the whole old row, carried in the notification, so only when it fits (about 7.5 KB of JSON; a larger one arrives without it, with `errors: [\"Error 413: Payload Too Large\"]`). The old row reaches only subscribers who could see the row before the change.",
+                      "enum": [
+                        "key",
+                        "full"
+                      ]
                     }
                   }
                 }
@@ -264,6 +272,39 @@
               "maxTrackedKeys": {
                 "description": "Keys tracked per subscription, so a delete reaches only subscribers who could see the row (default 10 000); see the docs for what happens past it.",
                 "type": "number"
+              },
+              "socket": {
+                "description": "Serve Supabase Realtime's protocol — `/realtime/v1/websocket` (Phoenix channels: `postgres_changes`, broadcast, presence, private channels) and the REST broadcast `/realtime/v1/api/broadcast` — so `@supabase/supabase-js`'s `supabase.channel(…)` works against the app. On by default; `false` turns it off; an object sets its limits.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "maxConnections": {
+                        "description": "Sockets held at once on one server instance (default 10 000).",
+                        "type": "number"
+                      },
+                      "maxConnectionsPerAddress": {
+                        "description": "Sockets from one client address (`clientIpForLimits()` — set `trustForwardedHeaders` behind a proxy; default 100).",
+                        "type": "number"
+                      },
+                      "maxChannelsPerConnection": {
+                        "description": "Channels one socket may join (default 100, as Supabase).",
+                        "type": "number"
+                      },
+                      "maxEventsPerSecond": {
+                        "description": "Messages a socket may send per second, heartbeats included (default 100).",
+                        "type": "number"
+                      },
+                      "maxPayloadBytes": {
+                        "description": "The largest broadcast payload, and tracked presence state, in bytes (default 256 KiB).",
+                        "type": "number"
+                      }
+                    }
+                  }
+                ]
               }
             },
             "required": [

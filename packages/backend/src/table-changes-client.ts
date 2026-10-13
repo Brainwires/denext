@@ -12,13 +12,23 @@ import {
   REALTIME_CHANNEL_ID,
   type TableChange,
   type TableChangesFrame,
+  type TableEvent,
   type TableFilter,
 } from "./realtime-shared.ts";
 
 /** Options for {@linkcode useTableChanges}. */
 export interface UseTableChangesOptions<Row> {
-  /** A one-column equality filter: `{ list_id: 42 }` or Supabase's `"list_id=eq.42"`. */
+  /**
+   * A one-column filter: `{ list_id: 42 }`, `{ priority: { gte: 3 } }`,
+   * `{ status: { in: ["open", "blocked"] } }`, or Supabase's `"list_id=eq.42"` /
+   * `"priority=gte.3"` / `"status=in.(open,blocked)"` (`eq neq lt lte gt gte in`).
+   */
   filter?: TableFilter;
+  /**
+   * The kinds of change to apply and report (default all): `insert` (a row entered this
+   * viewer's view), `update`, `delete` (a row left it) and `truncate`.
+   */
+  events?: TableEvent[];
   /**
    * The rows to start from — typically read during SSR with `db()` (so under the same
    * policies). A new array (a re-read after `stale`) replaces the hook's rows.
@@ -81,6 +91,10 @@ export function applyTableChanges<Row>(
   const byKey = new Map<string, Row>();
   for (const row of rows) byKey.set(keyOf(row, column), row);
   for (const change of changes) {
+    if (change.op === "truncate") {
+      byKey.clear();
+      continue;
+    }
     if (change.op === "delete") {
       byKey.delete(change.key);
       continue;
@@ -113,7 +127,7 @@ export function applyTableChanges<Row>(
  * `row`: re-read it.
  *
  * @param table A table from `realtime({ tables })`.
- * @param options `filter`, `initial`, `key`, `enabled`, `onChange`, `onResync`.
+ * @param options `filter`, `events`, `initial`, `key`, `enabled`, `onChange`, `onResync`.
  * @returns `{ rows, changes, status, stale, error }`.
  */
 export function useTableChanges<Row = Record<string, unknown>>(
@@ -131,6 +145,7 @@ export function useTableChanges<Row = Record<string, unknown>>(
   callbacks.current = options;
   const enabled = options.enabled ?? true;
   const filterKey = JSON.stringify(options.filter ?? null);
+  const eventsKey = options.events ? [...options.events].sort().join(",") : "";
 
   // A new `initial` array (a re-read) replaces the rows and clears `stale`.
   const firstInitial = useRef(true);
@@ -174,7 +189,10 @@ export function useTableChanges<Row = Record<string, unknown>>(
         const gap = lastSeq !== 0 && frame.seq !== lastSeq + 1;
         lastSeq = frame.seq;
         if (frame.resync || gap) markStale();
-        const changes = frame.changes ?? [];
+        const wanted = callbacks.current.events;
+        const changes = (frame.changes ?? []).filter((change) =>
+          !wanted || wanted.includes(change.op)
+        );
         if (changes.length === 0) return;
         setState((s) => ({
           ...s,
@@ -199,7 +217,7 @@ export function useTableChanges<Row = Record<string, unknown>>(
       },
     );
     // deno-lint-ignore no-explicit-any
-  }, [table, filterKey, enabled, column] as any);
+  }, [table, filterKey, eventsKey, enabled, column] as any);
 
   return state;
 }

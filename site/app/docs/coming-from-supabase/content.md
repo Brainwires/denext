@@ -10,9 +10,10 @@ Server Actions are your functions, and [`@denext/backend`](/docs/backend) adds s
 with Supabase-compatible row-level security, and realtime changes from your tables. You run it
 where you run the app, against a Postgres you provide (any provider, or your own server).
 
-To be plain about it once: **denext is not a hosted service, and it is not supabase-js
-compatible.** There is no `createClient(url, anonKey)` to point at it and no drop-in for the
-supabase-js API. What carries over unchanged is the database: your tables, your SQL functions
+To be plain about it once: **denext is not a hosted service.** Parts of the supabase-js API
+already work against the app with `createClient(appUrl, publishableKey)` — the database
+(`from()`, `rpc()`), Realtime (`supabase.channel()`) and Edge Functions (`functions.invoke`) — and
+the rest are calls to rewrite, below. What carries over unchanged is the database: your tables, your SQL functions
 and your row-level security policies, which use the same roles and the same `auth.*` functions.
 
 ```sh
@@ -54,8 +55,8 @@ export default {
 | `supabase.auth.getUser()` on the server             | `await auth()` from `denext/server`.                                                                                                                                                                                                                                                                                                           |
 | Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem: `public` buckets, signed URLs, `transform`. [Storage](/docs/backend#storage)                                                                                                                                                                                                        |
 | Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                                                                                                                                                                |
-| Realtime: Postgres changes                          | `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server, each change re-read under the viewer's policies. [Realtime](/docs/backend#realtime-from-the-database)                                                                                                                                                 |
-| Realtime: broadcast, presence                       | `createChannel` / `useChannel` and `usePresence` from `denext/live`. [Live](/docs/live)                                                                                                                                                                                                                                                        |
+| Realtime: Postgres changes                          | `supabase.channel().on("postgres_changes", …)` unchanged against the app's `/realtime/v1/websocket`; or `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server — each change re-read under the viewer's policies. [Realtime](/docs/backend#supabase-realtime-supabasechannel)                                 |
+| Realtime: broadcast, presence, private channels     | `supabase.channel()` unchanged — broadcast (`self`, `ack`, REST, `realtime.send()` / `realtime.broadcast_changes()` from SQL), presence across instances, private channels under your `realtime.messages` policies; `broadcast()` from server code. [Realtime](/docs/backend#supabase-realtime-supabasechannel)                                |
 | Edge Functions                                      | `backend({ functions })`: `functions/<name>/index.ts` served at `/functions/v1/<name>`, each in a worker of its own, `verify_jwt` on by default. Or route handlers. [Edge Functions](/docs/backend#edge-functions)                                                                                                                             |
 | `supabase.functions.invoke()`, generated types      | `functions.invoke` calls `/functions/v1/<name>` as on Supabase; for route handlers, `createApiClient()` / `useApi()`. [Typed API](/docs/typed-api)                                                                                                                                                                                             |
 | Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                                                                                                                                                                         |
@@ -205,11 +206,19 @@ export function Notes({ initial, listId }: { initial: Note[]; listId: number }) 
 }
 ```
 
-The filter takes Supabase's `column=eq.value` form or `{ list_id: listId }`. The hook keeps the
-row list for you; `onChange` gets each batch if you would rather apply them yourself. Every
-changed row is re-read as the subscriber, under their policies — a subscriber never receives a row
-their `select` policies hide. See
-[Realtime from the database](/docs/backend#realtime-from-the-database).
+The Supabase code above also runs as it is: the app serves Supabase Realtime's protocol at
+`/realtime/v1/websocket`, so `createClient(appUrl, key).channel(…)` gets the same payloads —
+`postgres_changes` with every filter operator (`eq neq lt lte gt gte in`), broadcast, presence and
+private channels authorized by your `realtime.messages` policies. The tables still have to be listed
+in `realtime({ tables })` (that installs their triggers) instead of added to the
+`supabase_realtime` publication.
+
+The hook is the denext-native way: the filter takes Supabase's `column=op.value` form or
+`{ list_id: listId }` / `{ priority: { gte: 3 } }`, `events` narrows the kinds of change, and it
+keeps the row list for you; `onChange` gets each batch if you would rather apply them yourself.
+Either way every changed row is re-read as the subscriber, under their policies — a subscriber
+never receives a row their `select` policies hide, and a delete reaches only subscribers who could
+see the row. See [Supabase Realtime](/docs/backend#supabase-realtime-supabasechannel).
 
 ### Edge Functions
 
@@ -288,9 +297,11 @@ claims are set.
    `denext generate migration <name>` + `denext job migrate`.
 5. **Apply denext's own migrations.** They run on first use: auth's `auth_*` tables when
    `backendAuthAdapter()` first runs (recorded in `auth_migrations`), the RLS setup and realtime
-   triggers when the backend first needs them (recorded in `backend_migrations`). Pass
-   `migrate: false` to either and apply them from a deploy step if the app's user should not
-   run DDL.
+   triggers and the `realtime` schema when the backend first needs them (recorded in
+   `backend_migrations`). Pass `migrate: false` to either and apply them from a deploy step if the
+   app's user should not run DDL. Policies you wrote on `realtime.messages` (private channels) are
+   in the `realtime` schema you left out: re-create them once the realtime migration has made the
+   table.
 6. **Move the users** — see [Moving users](#moving-users).
 7. **Copy the storage objects** — see [Moving files](#moving-files).
 8. **Swap the environment.** `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`
@@ -437,9 +448,10 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   computed fields / relationships are not served; a `PATCH` or `DELETE` needs a filter (as on
   Supabase, where `safeupdate` refuses one without), and `count: "exact"` is for signed-in users
   unless `rest.exactCount` allows it.
-- **supabase-js: the database calls.** `from()`, `rpc()` and `schema()` work against
-  `/rest/v1` unchanged (point `createClient` at the app); the other calls have to be rewritten, as
-  above.
+- **supabase-js: the database, realtime and functions calls.** `from()`, `rpc()` and `schema()`
+  work against `/rest/v1`, `supabase.channel()` against `/realtime/v1` and `functions.invoke`
+  against `/functions/v1`, unchanged (point `createClient` at the app); the other calls have to be
+  rewritten, as above.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
@@ -449,8 +461,10 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
 - **Storage policies are TypeScript, not SQL.** A bucket's `authorize` function replaces policies
   on `storage.objects`, and there is no `storage` schema to join against. Uploads are presigned
   (multipart on S3), not TUS resumable uploads.
-- **Realtime is LISTEN/NOTIFY.** `TRUNCATE` sends nothing, and very high write volumes serialize
-  on commit; logical replication is planned.
+- **Realtime is LISTEN/NOTIFY.** Notifications serialize on commit across the database, so very high
+  write volumes are better served by logical replication (planned); a table's full old row
+  (`old: "full"`) is carried only when it fits a notification (about 7.5 KB of JSON). Tables opt
+  in through `realtime({ tables })`, not the `supabase_realtime` publication.
 - **Types for the REST client.** `.denext/rest.ts` is `supabase gen types`-shaped (tables,
   views, functions, enums and relationships of the exposed schemas) and types `createClient<Database>()`
   and denext's `from()`; `db()`'s tagged SQL is untyped, so for server queries use an ORM such as

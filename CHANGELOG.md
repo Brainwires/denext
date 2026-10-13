@@ -100,6 +100,24 @@ and this project adheres to
   `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and
   `Constants`, so `createClient<Database>()` type-checks; it still registers the default schema
   for denext's `from()`.
+- **`@denext/backend`: Supabase Realtime, served by the app.** With `backend({ realtime })` the app
+  serves `/realtime/v1/websocket` — the Phoenix channels protocol (serializer `1.0.0` and `2.0.0`,
+  binary broadcast frames included) — and the REST broadcast `/realtime/v1/api/broadcast`, so the
+  stock `@supabase/supabase-js` `supabase.channel(…)` works unchanged: `postgres_changes` (event,
+  schema, table and the `eq neq lt lte gt gte in` filters; Supabase's payload shape; old records
+  as the key, or the whole row with `old: "full"`; `TRUNCATE`), every row re-read as the
+  subscriber under row-level security and a delete sent only to subscribers who could see the
+  row; broadcast (`self`, `ack`, REST, and `realtime.send()` / `realtime.broadcast_changes()` from
+  SQL) and presence across every instance sharing the database; private channels authorized by
+  the `realtime.messages` policies, evaluated as the joining user. The socket's `apikey` and every
+  `access_token` are verified with the `backend({ supabase })` keys; a token's expiry closes its
+  channels. `useTableChanges` gains
+  operator filters and an `events` option; `broadcast()` publishes from server code. See
+  [Supabase Realtime](https://denext.dev/docs/backend#supabase-realtime-supabasechannel).
+- **`captureRequestContext()` in `denext/plugin-kit`.** A plugin holding a long-lived connection
+  (a WebSocket it upgraded) captures the request before upgrading and later re-enters a copy of it,
+  so `auth()`, `cookies()` and `clientIpForLimits()` answer as they did for the original — how it
+  re-checks who is on the other end.
 
 ### Changed
 

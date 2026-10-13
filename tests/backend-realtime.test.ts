@@ -35,6 +35,7 @@ import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
 import {
   installRealtime,
   parseNotification,
+  RAW_FRAME_BYTES,
   realtimeEngine,
   rereadQuery,
   REVALIDATE_OWNER_SQL,
@@ -46,6 +47,7 @@ import type { SqlClient } from "../src/server/postgres.ts";
 import {
   decodeSubscriptionKey,
   encodeSubscriptionKey,
+  formatFilter,
   newNonce,
   parseFilter,
 } from "../packages/backend/src/realtime-shared.ts";
@@ -805,7 +807,7 @@ Deno.test("realtime: a malformed notification is ignored; an overflow or keyless
     await env.hub.subscribe(ca, "notes");
     env.sql.notify("not json");
     env.sql.notify(JSON.stringify({ table: "elsewhere", op: "insert", key: "1" }));
-    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", key: "1" }));
+    env.sql.notify(JSON.stringify({ table: "notes", op: "upsert", key: "1" }));
     await settle(80);
     assertEquals(ca.frames.length, 0);
     env.sql.notify(JSON.stringify({ table: "notes", op: "insert", overflow: true }));
@@ -883,31 +885,50 @@ Deno.test("realtimeMigrations: the trigger function (then its UTC-key replacemen
   const migrations = realtimeMigrations({
     tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
   });
-  assertEquals(migrations.length, 4);
-  assertEquals(migrations.slice(0, 2).map((m) => m.name), [
+  assertEquals(migrations.length, 7);
+  assertEquals(migrations.slice(0, 5).map((m) => m.name), [
     "backend_realtime_0001",
     "backend_realtime_0002",
+    "backend_realtime_0003",
+    "backend_realtime_0004",
+    "backend_realtime_0005",
   ]);
-  for (const fn of migrations.slice(0, 2)) {
+  for (const fn of migrations.slice(0, 3)) {
     assert(fn.sql.startsWith("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
     assert(fn.sql.includes("pg_notify('denext_realtime', body)"));
     assert(fn.sql.includes("octet_length(body) > 7900"), "an oversized key never fails the write");
-    assert(!/to_jsonb\(NEW\)\s*[,)]/.test(fn.sql), "keys only, never the row");
+    assert(!/to_jsonb\(NEW\)\s*[,)]/.test(fn.sql), "keys only, never the new row");
   }
   // 0002 spells a timestamptz key in UTC, the column's type read from the catalog.
   assert(migrations[1].sql.includes("'pg_catalog.timestamptz'::pg_catalog.regtype"));
   assert(migrations[1].sql.includes("new_key::timestamptz AT TIME ZONE 'UTC'"));
-  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[2].name));
+  // 0003 carries the old row only for a table that asks (its third argument), and TRUNCATE.
+  assert(migrations[2].sql.includes("TG_NARGS > 2 AND TG_ARGV[2] = 'full'"));
+  assert(migrations[2].sql.includes("'old_overflow', true"));
+  assert(migrations[2].sql.includes("CREATE OR REPLACE FUNCTION denext_realtime_truncate()"));
+  // 0004: Supabase's realtime schema surface; 0005: the shared presence tables.
+  assert(migrations[3].sql.includes("CREATE TABLE IF NOT EXISTS realtime.messages"));
+  assert(migrations[3].sql.includes("ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY"));
+  assert(migrations[3].sql.includes("FUNCTION realtime.send("));
+  assert(migrations[3].sql.includes("FUNCTION realtime.broadcast_changes("));
+  assert(migrations[3].sql.includes("FUNCTION realtime.topic()"));
+  assert(migrations[4].sql.includes("realtime.denext_presences"));
+  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[5].name));
   assert(
-    migrations[2].sql.includes(
+    migrations[5].sql.includes(
       `CREATE TRIGGER denext_realtime AFTER INSERT OR UPDATE OR DELETE ON "notes"`,
     ),
   );
-  assert(migrations[3].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
-  assert(migrations[3].sql.includes("denext_realtime_notify('items', 'sku')"));
-  // Another event set is another migration name (it replaces the trigger).
+  assert(migrations[5].sql.includes(`AFTER TRUNCATE ON "notes"`));
+  assert(migrations[6].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
+  assert(migrations[6].sql.includes("denext_realtime_notify('items', 'sku')"));
+  assert(!migrations[6].sql.includes("CREATE TRIGGER denext_realtime_truncate"));
+  // Another event set is another migration name (it replaces the trigger); so is `old`.
   const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } } });
-  assert(changed[2].name !== migrations[2].name);
+  assert(changed[5].name !== migrations[5].name);
+  const full = realtimeMigrations({ tables: { notes: { old: "full" } } });
+  assert(full[5].name !== migrations[5].name);
+  assert(full[5].sql.includes("denext_realtime_notify('notes', 'id', 'full')"));
   const sql = realtimeSetupSql({ tables: { notes: {} } });
   assert(sql.startsWith("-- @denext/backend realtime"));
   assert(sql.includes("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
@@ -963,8 +984,47 @@ Deno.test("realtime keys, filters and notifications parse strictly", () => {
   assertEquals(parseFilter({ done: false }), { column: "done", value: "false" });
   assertThrows(() => parseFilter({ a: 1, b: 2 }), TypeError, "one column");
   assertThrows(() => parseFilter({ "a;drop": 1 }), TypeError, "plain column");
-  assertThrows(() => parseFilter({ a: {} as unknown as string }), TypeError, "string, number");
-  assertThrows(() => parseFilter("a=gt.1"), TypeError, "column=eq.value");
+  assertThrows(() => parseFilter({ a: {} as unknown as string }), TypeError, "one operator");
+  assertThrows(() => parseFilter({ a: [1] as unknown as string }), TypeError, "string, number");
+  assertThrows(() => parseFilter("a=like.1"), TypeError, "column=op.value");
+  assertEquals(parseFilter("a=gt.1"), { column: "a", op: "gt", value: "1" });
+  assertEquals(parseFilter({ a: { lte: 3 } }), { column: "a", op: "lte", value: "3" });
+  assertEquals(parseFilter('s=in.(x,"y,z",w)'), {
+    column: "s",
+    op: "in",
+    value: '["x","y,z","w"]',
+    values: ["x", "y,z", "w"],
+  });
+  assertEquals(parseFilter({ s: { in: ["x", 2] } })?.values, ["x", "2"]);
+  assertThrows(() => parseFilter({ a: { gt: 1, lt: 2 } }), TypeError, "one operator");
+  assertThrows(() => parseFilter({ a: { gt: [1, 2] } }), TypeError, "one value");
+  assertThrows(() => parseFilter("a=in.1"), TypeError, "a list");
+  assertThrows(
+    () => parseFilter({ a: { in: [...Array(101).keys()] } }),
+    TypeError,
+    "1 to 100",
+  );
+  const gtKey = encodeSubscriptionKey({ table: "notes", nonce, filter: parseFilter("n=gte.5") });
+  assertEquals(decodeSubscriptionKey(gtKey)?.filter, { column: "n", op: "gte", value: "5" });
+  const inKey = encodeSubscriptionKey({ table: "notes", nonce, filter: parseFilter("n=in.(1,2)") });
+  assertEquals(decodeSubscriptionKey(inKey)?.filter?.values, ["1", "2"]);
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|eq|1`), null, "eq has the short form");
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|like|1`), null);
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|in|%5B1%5D`), null, "in lists strings");
+  assertEquals(formatFilter(parseFilter('s=in.(a,"b\\"c")')!), 's=in.("a","b\\"c")');
+  assertEquals(formatFilter(parseFilter("n=neq.4")!), "n=neq.4");
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "truncate", ts: 9 })),
+    { table: "t", op: "truncate", ts: 9 },
+  );
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "delete", key: "1", old: { id: 1 } })),
+    { table: "t", op: "delete", key: "1", old: { id: 1 } },
+  );
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "delete", key: "1", old_overflow: true })),
+    { table: "t", op: "delete", key: "1", oldOverflow: true },
+  );
 
   assertEquals(
     parseNotification(JSON.stringify({ table: "t", op: "update", key: "2", old_key: "1", ts: 5 })),
@@ -1028,4 +1088,190 @@ Deno.test("realtime: a timestamptz key is spelled in UTC by the re-read and the 
     seedQuery(table, undefined, 10, plain).text,
     `select to_jsonb(t."at") #>> '{}' as k from "stamps" t limit $1`,
   );
+});
+
+// ── Raw mode (Supabase postgres_changes), truncate, old rows, operators ─────
+
+const rawScope = (sub: string) => ({
+  role: "authenticated" as const,
+  claims: JSON.stringify({ sub, role: "authenticated" }),
+});
+const ALL_EVENTS = new Set(["insert", "update", "delete", "truncate"] as const);
+
+Deno.test("realtime raw mode: the database's operations, under the subscriber's policies", async () => {
+  const sql = fakeRealtimeClient({
+    notes: {
+      policy: ownerOnly,
+      types: { id: "bigint", owner: "uuid" },
+      udts: { id: "int8", owner: "uuid" },
+    },
+    items: { key: "sku" },
+  });
+  const env = await setUp({}, sql);
+  try {
+    const engine = realtimeEngine();
+    const notes = engine.table("notes");
+    assertEquals(await engine.columns(notes), [
+      { name: "id", type: "int8" },
+      { name: "owner", type: "uuid" },
+    ]);
+    const frames: TableChangesFrame[] = [];
+    const inserts: TableChangesFrame[] = [];
+    const binding = (await engine.bind({
+      table: notes,
+      scope: rawScope(A),
+      owner: `authenticated:${A}`,
+      events: ALL_EVENTS,
+      onFrame: (frame) => frames.push(frame),
+    }))!;
+    await engine.bind({
+      table: notes,
+      scope: rawScope(A),
+      owner: `authenticated:${A}`,
+      events: new Set(["insert"]),
+      onFrame: (frame) => inserts.push(frame),
+    });
+    const all = () => frames.flatMap((f) => f.changes ?? []);
+    env.sql.insert("notes", { id: 1, owner: A, body: "mine" });
+    env.sql.insert("notes", { id: 2, owner: B, body: "theirs" });
+    await until(() => all().length === 1);
+    assertEquals(all()[0].op, "insert");
+    assert(typeof (all()[0] as { ts?: number }).ts === "number");
+    // B's row handed to A: an UPDATE (what the database ran), not an insert.
+    env.sql.update("notes", "2", { owner: A });
+    await until(() => all().length === 2, 3_000, `2 changes: ${JSON.stringify(all())}`);
+    assertEquals([all()[1].op, all()[1].key], ["update", "2"]);
+    // Handed back: silent (A cannot see it now), and its delete is not sent either.
+    env.sql.update("notes", "2", { owner: B });
+    await settle(80);
+    env.sql.remove("notes", "2");
+    await settle(80);
+    // A's own delete, with the old row the trigger carried.
+    env.sql.tables.get("notes")!.delete("1");
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "delete", key: "1", old: { id: 1, owner: A }, ts: 7 }),
+    );
+    await until(() => all().length === 3, 3_000, `3 changes: ${JSON.stringify(all())}`);
+    await settle(80);
+    assertEquals(all()[2] as unknown, { op: "delete", key: "1", ts: 7, old: { id: 1, owner: A } });
+    assertEquals(inserts.flatMap((f) => f.changes ?? []).map((c) => c.op), ["insert"], "events");
+    // An update whose old row did not fit.
+    env.sql.insert("notes", { id: 3, owner: A, body: "x" });
+    await until(() => all().length === 4, 3_000, `4 changes: ${JSON.stringify(all())}`);
+    env.sql.tables.get("notes")!.set("3", { id: 3, owner: A, body: "y" });
+    env.sql.notify(JSON.stringify({ table: "notes", op: "update", key: "3", old_overflow: true }));
+    await until(() => all().length === 5, 3_000, `5 changes: ${JSON.stringify(all())}`);
+    assertEquals((all()[4] as { oldOverflow?: true }).oldOverflow, true);
+    // Rescope: the same identity only.
+    assertEquals(binding.rescope(rawScope(A)), true);
+    assertEquals(binding.rescope(rawScope(B)), false);
+    binding.stop();
+    env.sql.insert("notes", { id: 4, owner: A, body: "z" });
+    await settle(120);
+    assertEquals(all().length, 5);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: truncate reaches the subscribers who could see rows; old rows on view changes", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const raw: TableChangesFrame[] = [];
+    const empty: TableChangesFrame[] = [];
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(A),
+      owner: "x",
+      events: ALL_EVENTS,
+      onFrame: (frame) => raw.push(frame),
+    });
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(B),
+      owner: "y",
+      events: ALL_EVENTS,
+      onFrame: (frame) => empty.push(frame),
+    });
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "notes")).ok);
+    env.sql.insert("notes", { id: 1, owner: A, body: "a" });
+    await until(() => raw.length === 1 && ca.frames.length === 1);
+    // A view-mode update carries the old row.
+    env.sql.tables.get("notes")!.set("1", { id: 1, owner: A, body: "b" });
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "update", key: "1", old: { id: 1, body: "a" } }),
+    );
+    await until(() => ca.frames.length === 2);
+    assertEquals((changesOf(ca)[1] as { old?: unknown }).old, { id: 1, body: "a" });
+    // A pending change before the truncate is moot; one after it follows it.
+    env.sql.insert("notes", { id: 2, owner: A, body: "gone" });
+    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", ts: 9 }));
+    env.sql.tables.get("notes")!.clear();
+    await until(() => raw.length === 3 && ca.frames.length === 3);
+    assertEquals(raw[2].changes, [{ op: "truncate", ts: 9 } as never]);
+    assertEquals(changesOf(ca).at(-1), { op: "truncate" });
+    assertEquals(empty.length, 0, "B saw no rows: nothing to clear");
+    // After the truncate the view starts empty: a delete of an old key is not sent.
+    env.sql.notify(JSON.stringify({ table: "notes", op: "delete", key: "1", old: { id: 1 } }));
+    await settle(80);
+    assertEquals(ca.frames.length, 3);
+    // A view delete carries the old row.
+    env.sql.insert("notes", { id: 5, owner: A, body: "e" });
+    await until(() => ca.frames.length === 4);
+    env.sql.tables.get("notes")!.delete("5");
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "delete", key: "5", old: { id: 5, body: "e" } }),
+    );
+    await until(() => ca.frames.length === 5);
+    assertEquals(changesOf(ca).at(-1), { op: "delete", key: "5", old: { id: 5, body: "e" } });
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: operator filters narrow the re-read; a raw row over 1 MiB is truncated", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const seen = new Map<string, string[]>();
+    for (const filter of ["list=neq.1", "list=lt.3", "list=gte.3", "list=in.(1,4)"]) {
+      seen.set(filter, []);
+      await engine.bind({
+        table: engine.table("notes"),
+        filter: parseFilter(filter),
+        scope: rawScope(A),
+        owner: "z",
+        events: ALL_EVENTS,
+        onFrame: (frame) =>
+          seen.get(filter)!.push(...(frame.changes ?? []).map((c) => String(c.key))),
+      });
+    }
+    for (let id = 1; id <= 4; id++) env.sql.insert("notes", { id, owner: A, list: id, body: "b" });
+    await until(() => seen.get("list=in.(1,4)")!.length === 2);
+    await settle(80);
+    assertEquals(seen.get("list=neq.1"), ["2", "3", "4"]);
+    assertEquals(seen.get("list=lt.3"), ["1", "2"]);
+    assertEquals(seen.get("list=gte.3"), ["3", "4"]);
+    assertEquals(seen.get("list=in.(1,4)"), ["1", "4"]);
+    const big = toFrames(
+      [{ op: "insert", key: "9", row: { body: "x".repeat(RAW_FRAME_BYTES) } }],
+      RAW_FRAME_BYTES,
+    );
+    assertEquals(big[0].changes, [{ op: "insert", key: "9", truncated: true }]);
+    const update = toFrames([{
+      op: "update",
+      key: "9",
+      row: { b: "x".repeat(200) },
+      old: { a: 1 },
+    }], 50);
+    assertEquals(update[0].changes, [{ op: "update", key: "9", truncated: true }]);
+    const del = toFrames([{ op: "delete", key: "9", old: { b: "x".repeat(200) } }], 50);
+    assertEquals(del[0].changes, [{ op: "delete", key: "9" }]);
+    assertEquals(toFrames([{ op: "truncate" }], 1)[0].changes, [{ op: "truncate" }]);
+    assertEquals(splitFrame({ seq: 1, changes: [{ op: "truncate" }] }), [{ seq: 0, resync: true }]);
+  } finally {
+    await env.done();
+  }
 });

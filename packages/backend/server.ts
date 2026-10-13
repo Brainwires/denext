@@ -40,8 +40,11 @@ export type {
   ResolveIdentityOptions,
 } from "./src/identity.ts";
 export { onTableChange, RealtimeUnsupportedError, tableChanges } from "./src/realtime.ts";
+export { broadcast } from "./src/realtime-socket.ts";
 export type { TableChangeEvent, TableChangesOptions } from "./src/realtime.ts";
 export type {
+  FilterOp,
+  FilterValue,
   TableChange,
   TableChangesFrame,
   TableEvent,

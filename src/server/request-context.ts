@@ -14,7 +14,13 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { clientAddrOf, ipBucket, limitAddrOf, type LimitAddrPolicy } from "./remote-addr.ts";
+import {
+  clientAddrOf,
+  copyRemoteAddr,
+  ipBucket,
+  limitAddrOf,
+  type LimitAddrPolicy,
+} from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -682,6 +688,43 @@ export function withoutRequestContext<T>(fn: () => T): T {
 /** The current request context, or undefined if none is active. */
 export function currentContext(): RequestContext | undefined {
   return storage.getStore();
+}
+
+/** Headers a captured request does not keep: the upgrade handshake's and the body's. */
+const UNCAPTURED_HEADERS =
+  /^(?:upgrade|connection|sec-websocket-.*|content-length|content-type|transfer-encoding)$/i;
+
+/**
+ * Capture the current request so its session can be read again later, outside it — what a
+ * plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on
+ * the other end: the returned function runs `fn` in a fresh request context for a copy of this
+ * request (its URL, its headers — cookies included — and its client address, with the app's
+ * proxy trust and limit policy), so `auth()`, `cookies()` and `clientIpForLimits()` answer as
+ * they did for the original. Capture BEFORE `Deno.upgradeWebSocket`, which consumes the request.
+ * Outside a request the function runs `fn` as it is.
+ *
+ * @returns A runner: `(fn) => fn()` in a context equivalent to the captured request's.
+ */
+export function captureRequestContext(): <T>(fn: () => T) => T {
+  const ctx = currentContext();
+  if (!ctx) return (fn) => fn();
+  const headers = new Headers();
+  for (const [name, value] of ctx.request.headers) {
+    if (!UNCAPTURED_HEADERS.test(name)) headers.append(name, value);
+  }
+  const template = new Request(ctx.request.url, { headers });
+  copyRemoteAddr(ctx.request, template);
+  const trust: RequestContextTrust = {
+    ...(ctx.trustForwardedHeaders !== undefined
+      ? { trustForwardedHeaders: ctx.trustForwardedHeaders }
+      : {}),
+    ...(ctx.limitPolicy !== undefined ? { limitPolicy: ctx.limitPolicy } : {}),
+  };
+  return (fn) => {
+    const request = new Request(template);
+    copyRemoteAddr(template, request);
+    return runWithContext(createRequestContext(request, undefined, trust), fn);
+  };
 }
 
 /**

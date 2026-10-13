@@ -47,6 +47,31 @@
   the whole catalog (`tables`, `foreignKeys`, `functions`, `enums`, …); `generateRestTypes(catalog)`
   takes the catalog alone; the client's `range()` sends `offset` / `limit` (as supabase-js does)
   instead of a `Range` header, and `maybeSingle()` checks the row count on the client.
+- **Supabase Realtime.** `backend({ realtime })` serves `/realtime/v1/websocket` (Phoenix channels,
+  serializer `1.0.0` and `2.0.0`, binary broadcast frames) and `POST /realtime/v1/api/broadcast`, so
+  `@supabase/supabase-js`'s `supabase.channel(…)` works against the app: `postgres_changes` (per
+  binding event, schema, table, `eq neq lt lte gt gte in` filters, Supabase's payload, old records,
+  `TRUNCATE`) re-read under each subscriber's row-level security; broadcast (`self`, `ack`, binary,
+  REST, `realtime.send()` and `realtime.broadcast_changes()` from SQL); presence (`track`,
+  `untrack`, `sync` / `join` / `leave`) shared by every instance through Postgres; private channels
+  authorized by `realtime.messages` policies as the joining user. With `backend({ supabase })`
+  keys the socket needs a valid `apikey`, and the channel's `access_token` is verified like a
+  bearer (a user until its `exp` — then the channel closes — the secret key `service_role`, re-verified
+  on every `access_token` push; a refused token refuses the join or closes the channel); without a
+  user token a same-origin socket is its session's user (re-read every minute; a changed session
+  closes the socket). Limits: `realtime({ socket: { maxConnections,
+  maxConnectionsPerAddress, maxChannelsPerConnection, maxEventsPerSecond, maxPayloadBytes } })`;
+  `socket: false` turns the endpoint off.
+- **Realtime tables:** `old: "full"` carries the old row of an update or delete (when it fits a
+  notification), `truncate` is an event (on by default, delivered only to subscribers who could
+  see rows), and new migrations `backend_realtime_0003` to `0005` add the TRUNCATE trigger
+  function, the `realtime` schema (`messages`, `topic()`, `send()`, `broadcast_changes()`) and the
+  presence tables. With `migrate: false`, re-run `realtimeSetupSql()`.
+- **`useTableChanges` / `tableChanges` filters** take every Supabase operator — `{ priority: { gte:
+  3 } }`, `"status=in.(open,blocked)"` — and the hook an `events` list; changes carry `old` (with
+  `old: "full"`) and `{ op: "truncate" }`.
+- **`broadcast(topic, event, payload)`** from `@denext/backend/server` publishes to every
+  `supabase.channel(topic)` subscriber on every instance.
 
 ## 0.3.0 - 2026-10-13
 

@@ -409,6 +409,7 @@
     "buildNextCompatModules:function",
     "bundleRoutes:function",
     "cappedBody:function",
+    "captureRequestContext:function",
     "compareSpecificity:function",
     "compileMdxSource:function",
     "createNextCompatServerLoader:function",

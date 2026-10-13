@@ -55,6 +55,8 @@ export type {
   UseTableChangesOptions,
 } from "./src/table-changes-client.ts";
 export type {
+  FilterOp,
+  FilterValue,
   TableChange,
   TableChangesFrame,
   TableEvent,
