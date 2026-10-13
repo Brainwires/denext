@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 - 2026-10-13
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## 0.2.1
 
 - **`denext export` writes no SDL.** The `schema.graphql` artifact is a server's: a static export

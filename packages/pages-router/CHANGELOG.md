@@ -3,6 +3,11 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.12.0 - 2026-10-13
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## 0.11.1
 
 - **A hybrid app's static export skips the Pages Router build step.** `denext export` of an app

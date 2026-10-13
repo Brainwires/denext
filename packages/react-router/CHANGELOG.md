@@ -3,6 +3,11 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [0.3.0] - 2026-10-13
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## [0.2.0]
 
 - **The route-module client APIs run.** `clientLoader` (with `serverLoader()`, and

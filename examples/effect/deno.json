@@ -62,6 +62,6 @@
     "next/server": "jsr:@denext/denext@^4.0.0-rc.1/next/server",
     "@/": "./",
     "effect": "npm:effect@3.22.0",
-    "@denext/effect": "jsr:@denext/effect@^0.1.0"
+    "@denext/effect": "jsr:@denext/effect@^0.2.0"
   }
 }

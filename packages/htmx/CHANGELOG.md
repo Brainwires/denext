@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.0 - 2026-10-13
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## 2.0.13
 
 - **A static export publishes the runtime at the default `/_denext/htmx/htmx.min.js` again.**

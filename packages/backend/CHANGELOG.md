@@ -1,7 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-10-13
 
+Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+changes).
+
+- **The storage sign route keeps the client address.** It rebuilt its request around the
+  buffered body with a plain `new Request(...)`, which drops the socket peer denext records on the
+  original (and its abort signal), so a middleware on the endpoint that keys on the request, such
+  as `rateLimit()`, saw no client address. It now rebuilds it with `bufferedRequest` from
+  `@denext/denext/plugin-kit`, which carries both.
 - denext 4.0 calls background and scheduled work jobs: the docs, and the error a storage call
   outside a request gets without `{ service: true }`, say "job" where they said "task".
 

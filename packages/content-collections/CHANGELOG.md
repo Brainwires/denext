@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
+### Changed
+
+- Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
+  changes).
+
 ## [0.4.1] - 2026-10-12
 
 ### Fixed
