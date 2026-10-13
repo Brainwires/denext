@@ -1266,7 +1266,7 @@ async function appFrameworkRoot(
  * module imported by more than one is hoisted into a shared chunk.
  */
 /**
- * Deno's minimum-dependency-age policy (default 24 h) applies to the `deno bundle` child too,
+ * Deno's minimum-dependency-age policy (default two days) applies to the `deno bundle` child too,
  * and Deno gives the parent no way to read the value it was started with. `DENEXT_MIN_DEP_AGE`
  * (e.g. `0`, `1h`) is forwarded as the child's `--min-dep-age`; the app's own `deno.json`
  * `minimumDependencyAge` is honored by the child through `--config` as usual.
@@ -1329,12 +1329,12 @@ function safeEnv(name: string): string | undefined {
 /**
  * Explain a `deno bundle` failure. Deno's "Do not know how to load path: deno:jsr:@denext/…"
  * means the resolver found no version satisfying the range — on a brand-new release that is
- * the minimum-dependency-age policy (nothing older than 24 h matches), not a broken app.
+ * the minimum-dependency-age policy (no version older than two days matches), not a broken app.
  */
 export function bundleFailureMessage(code: number, stderr: string): string {
   const hint = /Do not know how to load path: deno:jsr:@denext\//.test(stderr)
     ? `\nHint: no published version of denext satisfied the import map's range. If the version ` +
-      `you want was published in the last 24 h, Deno's minimum-dependency-age policy hides it — ` +
+      `you want was published in the last two days, Deno's minimum-dependency-age policy hides it — ` +
       `re-run with DENEXT_MIN_DEP_AGE=0 (or set "minimumDependencyAge" in your deno.json).`
     : "";
   return `deno bundle failed (${code}):\n${stderr}${hint}\n` +

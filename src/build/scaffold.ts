@@ -286,7 +286,7 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * @returns The file's text.
  */
 /**
- * The `minimumDependencyAge` a generated `deno.json` carries: Deno's default 24-hour hold on
+ * The `minimumDependencyAge` a generated `deno.json` carries: Deno's default two-day hold on
  * freshly published versions stays on for every dependency EXCEPT denext's own packages, so a
  * project made right after a denext release installs the version that made it (the CLI running
  * is already that release) instead of failing "blocked by the minimum dependency age policy".

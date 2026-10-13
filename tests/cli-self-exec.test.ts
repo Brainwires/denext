@@ -8,6 +8,7 @@ import { join, resolve } from "@std/path";
 import {
   configFromCommandLine,
   maybeReexecPinned,
+  pinnedConfigArgs,
   pinnedDenextCli,
   pinnedVersion,
   type ReexecPinnedDeps,
@@ -407,4 +408,24 @@ Deno.test("toolchainConfigArgs: the --config this process was started with, else
   assertEquals(await toolchainConfigArgs(argv(null)), []);
   // The real reader works on this host (or reports nothing).
   assert(Array.isArray(await toolchainConfigArgs()));
+});
+
+Deno.test("pinnedConfigArgs hands the pinned child the project's config only from outside it", async () => {
+  // The child is `deno run jsr:@denext/denext@…/cli`, which discovers its config from the working
+  // directory; from outside the project it would run with none, losing the project's
+  // `minimumDependencyAge` exclusion of `jsr:@denext/*` (a fresh release would be refused).
+  const root = await tree({
+    "app/deno.json": '{ "imports": { "denext": "jsr:@denext/denext@^4.0.0" } }',
+    "app/src/x.ts": "",
+    "bare/x.ts": "",
+  });
+  try {
+    const app = join(root, "app");
+    assertEquals(pinnedConfigArgs(app, root), ["--config", join(app, "deno.json")]);
+    assertEquals(pinnedConfigArgs(app, app), [], "inside the project Deno finds it itself");
+    assertEquals(pinnedConfigArgs(app, join(app, "src")), [], "below the project too");
+    assertEquals(pinnedConfigArgs(join(root, "bare"), root), [], "no config, nothing to pass");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });

@@ -1,7 +1,7 @@
 // How the CLI re-runs ITSELF in a child `deno run` (the CSS import-map re-exec and the
 // server-side-npm re-exec), for a local checkout, a JSR / https install, or a compiled binary.
 
-import { dirname, fromFileUrl, join, resolve } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 
@@ -187,6 +187,26 @@ export function pinnedDenextCli(dir: string): string | null {
   if (spec === null) return null;
   const version = pinnedVersion(spec);
   return version === null ? "jsr:@denext/denext/cli" : `jsr:@denext/denext@${version}/cli`;
+}
+
+/**
+ * The `--config` the pinned-CLI child needs so it reads the PROJECT's `deno.json`: a `deno run`
+ * of a remote entrypoint discovers its config from the working directory, so a verb aimed at a
+ * project from outside it (`denext build ./app`) would start the child with no config at all —
+ * and without the project's `minimumDependencyAge` exclusion of `jsr:@denext/*`, Deno's default
+ * hold refuses a denext published in the last two days. Run from inside the project (its
+ * directory or below) the child discovers the same file itself, so nothing is added.
+ *
+ * @param dir The project directory the verb targets.
+ * @param cwd The child's working directory (production: the process's own).
+ * @returns `["--config", <absolute path>]`, or `[]`.
+ */
+export function pinnedConfigArgs(dir: string, cwd: string = Deno.cwd()): string[] {
+  const project = resolve(dir);
+  const rel = relative(project, resolve(cwd));
+  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return [];
+  const own = readConfig(project);
+  return own ? ["--config", own.path] : [];
 }
 
 /** Whether `dir` holds `.git` (a directory, or a worktree's file) — the walk's boundary. */

@@ -379,9 +379,10 @@ only that package, on its own tag:
   tree; CI does not use `--allow-dirty`.
 - **Versions are immutable.** A published version can't be replaced — a mistake
   means bumping to the next patch.
-- **Minimum-dependency-age.** For roughly the first 24 hours, importing the new
-  version needs `--min-dep-age=0`; a `denext build` of a freshly scaffolded app
-  hits the same policy inside `deno bundle` — `DENEXT_MIN_DEP_AGE=0` forwards it.
+- **Minimum-dependency-age.** For the first two days (Deno 2.9's default), importing the new
+  version outside a project needs `--min-dep-age=0`. Projects from `denext create` /
+  `denext migrate` exempt `jsr:@denext/*` in their `deno.json`; elsewhere
+  `DENEXT_MIN_DEP_AGE=0` forwards the override to denext's `deno bundle` children.
   A supply-chain delay, not an error.
 - **Provenance requires the tag path.** Publishing manually from a laptop skips
   provenance — always release via the tag push so CI does it.

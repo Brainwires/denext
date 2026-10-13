@@ -20,6 +20,7 @@ import {
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
+  pinnedConfigArgs,
   toolchainApplies,
   toolchainConfigArgs,
 } from "./src/cli/self-exec.ts";
@@ -245,9 +246,12 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
     // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
     // `denoExecutable()` is denext's Deno toolchain once {@linkcode toolchainGate} chose it.
     spawn: (cli) =>
-      spawnCliChild(denoExecutable(), ["-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs()], cli, {
-        DENEXT_PINNED_ACTIVE: "1",
-      }),
+      spawnCliChild(
+        denoExecutable(),
+        ["-A", ...pinnedConfigArgs(dir), ...cliNpmModeArgs(dir), ...minDepAgeArgs()],
+        cli,
+        { DENEXT_PINNED_ACTIVE: "1" },
+      ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
   });
