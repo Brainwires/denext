@@ -8,9 +8,10 @@
 // so the stock `@supabase/supabase-js` client works against these routes unchanged.
 //
 // A write carrying cookies follows denext's Server Actions rule (`csrf()`): a cross-site one is
-// refused. A native app's bearer token (`Authorization: Bearer nat_…`), which `auth()` reads
-// instead of the cookie, needs no such check — recognized by `auth()`'s own parser, so the
-// exemption never covers a request whose session comes from the cookie.
+// refused. A request whose identity came from a token instead — a native app's
+// `Authorization: Bearer nat_…` (recognized by `auth()`'s own parser), a Supabase access token,
+// or the secret key — needs no such check: the exemption never covers a request whose identity
+// comes from the cookie.
 //
 // The routes share the app's Postgres pool, so at most `maxConcurrent` REST statements run at
 // once (a request past that waits briefly, then gets a 503 with `Retry-After`), each under a
@@ -19,7 +20,6 @@
 // otherwise.
 
 import {
-  auth,
   csrf,
   nativeBearerToken,
   type PluginContext,
@@ -27,6 +27,7 @@ import {
   type SqlRow,
 } from "@denext/denext/server";
 import { db, rlsReady } from "./postgres.ts";
+import { isIdentityError, type RequestIdentity, resolveIdentity } from "./identity.ts";
 import { start } from "./rls.ts";
 import {
   readRestCatalog,
@@ -372,21 +373,34 @@ export function concurrencyOf(rest: ResolvedRest, max = poolMax()): number {
 
 // ── Identity ─────────────────────────────────────────────────────────────────
 //
-// INTEGRATION POINT (shared identity, workstream W2): every REST statement runs through
-// `scopedDb()` and every "is this request signed in" question goes through `signedIn()`. Today
-// both read denext auth's session (cookie, or a native `nat_` bearer token) through `db()` /
-// `auth()`. When the shared identity function lands (cookie session, `Authorization: Bearer
-// <jwt>`, or an `apikey` header → `{ role, claims, userId }`), it plugs in HERE — these two
-// functions — and nowhere else in the REST code.
+// Who a request is comes from the shared identity function (`resolveIdentity`, `identity.ts`):
+// a user's access token (`Authorization: Bearer <jwt>`), the secret key (`service_role`, which
+// bypasses row-level security), the denext session (cookie or native token), or `anon` — the
+// same order supabase-js's `apikey` + `Authorization` headers are read in everywhere else in the
+// backend. It is resolved once per request, up front, so a presented-but-refused credential is
+// PostgREST's 401 before any statement; the statements themselves run through `db()`, which
+// resolves the same identity (memoized per request) for `request.jwt.claims`.
 
 /** The client a REST statement runs on: the request's identity under row-level security. */
 function scopedDb(): SqlClient {
   return db();
 }
 
-/** Whether the request is signed in (`exactCount: "authenticated"`). */
-async function signedIn(): Promise<boolean> {
-  return (await auth()) !== null;
+/** The request's identity, or PostgREST's 401 for a refused credential. */
+async function identityOf(request: Request): Promise<RequestIdentity> {
+  try {
+    return await resolveIdentity(request);
+  } catch (error) {
+    if (!isIdentityError(error)) throw error;
+    const expired = error.code === "jwt_expired";
+    throw new RestError(
+      401,
+      expired ? "PGRST303" : "PGRST301",
+      error.message,
+      null,
+      expired ? "Refresh the session and retry with the new access token" : null,
+    );
+  }
 }
 
 // ── Running statements ───────────────────────────────────────────────────────
@@ -450,8 +464,10 @@ const checkCsrf = csrf();
  * (`nativeBearerToken` is its parser), so no header spelling earns the exemption while the
  * cookie still authenticates.
  */
-async function guardWrite(request: Request): Promise<void> {
+async function guardWrite(request: Request, identity: RequestIdentity): Promise<void> {
   if (nativeBearerToken(request) !== undefined) return;
+  // A Supabase access token or the secret key decided who this is: no cookie was used.
+  if (identity.source === "jwt" || identity.role === "service_role") return;
   await checkCsrf({
     request,
     params: {},
@@ -500,9 +516,9 @@ function rangeOutcome(
 }
 
 /** Refuse `count=exact` for a requester `exactCount` does not allow. */
-async function checkExactCount(rest: ResolvedRest): Promise<void> {
+function checkExactCount(rest: ResolvedRest, identity: RequestIdentity): void {
   if (rest.exactCount === "all") return;
-  if (rest.exactCount === "authenticated" && await signedIn()) return;
+  if (rest.exactCount === "authenticated" && identity.role !== "anon") return;
   throw new RestError(
     400,
     "PGRST100",
@@ -634,12 +650,13 @@ interface Ctx {
   prefs: Preferences;
   media: Media;
   schema: string;
+  identity: RequestIdentity;
 }
 
 /** The counting a read does: exact in its statement, or the planner's estimate beside it. */
-async function countingOf(ctx: Ctx): Promise<{ exact: boolean; planned: boolean }> {
+function countingOf(ctx: Ctx): { exact: boolean; planned: boolean } {
   const count = ctx.prefs.count;
-  if (count === "exact") await checkExactCount(ctx.rest);
+  if (count === "exact") checkExactCount(ctx.rest, ctx.identity);
   return { exact: count === "exact", planned: count === "planned" || count === "estimated" };
 }
 
@@ -700,7 +717,7 @@ async function read(ctx: Ctx, table: RestTable): Promise<Response> {
   const plan = planOf(ctx.catalog, tableSource(table), parseSelect(ctx.query.get("select")));
   applyQuery(plan, ctx.query);
   const { offset, limit } = pageOf(ctx.rest, ctx.request, ctx.query);
-  const counting = await countingOf(ctx);
+  const counting = countingOf(ctx);
   const build = (count: boolean) => buildSelect(plan, ctx.catalog, { offset, limit, count, shape });
   if (ctx.media.kind === "plan") {
     return await planResponse(ctx.rest, ctx.gate, build(false), ctx.media, true);
@@ -843,7 +860,7 @@ function writeApplied(ctx: Ctx, returning: WriteReturn): void {
 
 /** POST / PATCH / DELETE on a table or view. */
 async function write(ctx: Ctx, table: RestTable): Promise<Response> {
-  await guardWrite(ctx.request);
+  await guardWrite(ctx.request, ctx.identity);
   const shape = shapeOf(ctx.media, ctx.catalog);
   const plan = writePlan(ctx, table);
   const returning = writeReturnOf(ctx, shape);
@@ -871,7 +888,7 @@ async function write(ctx: Ctx, table: RestTable): Promise<Response> {
 /** The arguments of a call: the query (GET / HEAD) or the body (POST). */
 async function rpcInput(ctx: Ctx): Promise<RpcInput> {
   if (ctx.request.method !== "POST") return { kind: "query", query: ctx.query };
-  await guardWrite(ctx.request);
+  await guardWrite(ctx.request, ctx.identity);
   const body = ctx.request.body === null && !ctx.request.headers.has("content-length")
     ? {}
     : await bodyOf(ctx.request, ctx.rest.maxBodyBytes);
@@ -925,7 +942,7 @@ async function rpc(ctx: Ctx, name: string): Promise<Response> {
   const shape = shapeOf(ctx.media, catalog);
   const plan = rpcPlan(ctx, fn, input);
   const { offset, limit } = pageOf(ctx.rest, ctx.request, ctx.query);
-  const counting = fn.setOf ? await countingOf(ctx) : { exact: false, planned: false };
+  const counting = fn.setOf ? countingOf(ctx) : { exact: false, planned: false };
   if (!fn.setOf) delete ctx.prefs.count;
   const options = { fn, whole, input, offset, limit, shape };
   const build = (count: boolean) => buildRpc(plan, catalog, { ...options, count });
@@ -996,7 +1013,8 @@ async function handle(
   const media = mediaOfRequest(request);
   checkExplain(rest, media);
   const schema = profileOf(request, rest.schemas, !isRead);
-  const base = { rest, gate, request, query, prefs, media, schema };
+  const identity = await identityOf(request);
+  const base = { rest, gate, request, query, prefs, media, schema, identity };
   if (path.startsWith("rpc/")) {
     if (request.method === "PATCH" || request.method === "DELETE") {
       throw new RestError(405, "PGRST101", "For functions, only GET and POST verbs are allowed");

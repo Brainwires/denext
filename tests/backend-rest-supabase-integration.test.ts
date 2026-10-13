@@ -37,6 +37,12 @@ import { installPostgres, rlsReady } from "../packages/backend/src/postgres.ts";
 import { readRestCatalog } from "../packages/backend/src/rest-catalog.ts";
 import { generateRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
+import {
+  generateSupabaseKeys,
+  installSupabaseKeys,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+} from "../src/server/auth/gotrue/keys.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const SQL = builtinSql();
@@ -146,6 +152,12 @@ Deno.test({
   async fn(t) {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-sb-" });
+    const g = await generateSupabaseKeys();
+    const keyConfig = {
+      publishableKey: g.publishableKey,
+      secretKey: g.secretKey,
+      signingKeys: g.signingKey,
+    };
     try {
       await Deno.mkdir(`${root}/app`);
       resetPlugins();
@@ -154,6 +166,7 @@ Deno.test({
         plugins: [
           denextAuth(authConfig),
           backend({
+            supabase: keyConfig,
             postgres: { sql: env.app },
             rest: { schemas: ["public", "api"], exactCount: "all", explain: true, maxRows: 100 },
           }),
@@ -187,13 +200,13 @@ Deno.test({
       }) as typeof fetch;
       // Untyped (the typed client is checked in the last step): embeds are read as written.
       // deno-lint-ignore no-explicit-any
-      const supabase: any = createClient(ORIGIN, "anon-key", {
+      const supabase: any = createClient(ORIGIN, g.publishableKey, {
         global: { fetch: appFetch },
         auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       });
       // deno-lint-ignore no-explicit-any
       const signedIn = (cookie: string): any =>
-        createClient(ORIGIN, "anon-key", {
+        createClient(ORIGIN, g.publishableKey, {
           global: { fetch: appFetch, headers: { cookie } },
           auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
         });
@@ -582,8 +595,70 @@ Deno.test({
         assert(aborted.error !== null);
       });
 
+      await t.step(
+        "API keys and access tokens: publishable, user JWT, secret, refused",
+        async () => {
+          const keys = await resolveSupabaseKeys(keyConfig);
+          const jwt = await signSupabaseJwt(keys, {
+            sub: B,
+            role: "authenticated",
+            aud: "authenticated",
+            exp: Math.floor(Date.now() / 1000) + 600,
+          });
+          const options = (extra: object) => ({
+            global: { fetch: appFetch },
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+            ...extra,
+          });
+          // deno-lint-ignore no-explicit-any
+          const asB: any = createClient(
+            ORIGIN,
+            g.publishableKey,
+            options({ accessToken: () => Promise.resolve(jwt) }),
+          );
+          assertEquals((await asB.from("notes").insert({ owner: B, body: "b's" })).status, 201);
+          assertEquals((await asB.from("notes").select("body")).data, [{ body: "b's" }]);
+          assertEquals((await asB.rpc("whoami")).data, B);
+          assertEquals(
+            (await asB.from("items").select("id", { count: "exact", head: true })).status,
+            200,
+          );
+          // deno-lint-ignore no-explicit-any
+          const service: any = createClient(ORIGIN, g.secretKey, options({}));
+          const all = await service.from("notes").select("body").order("body");
+          assertEquals(
+            all.data,
+            [{ body: "b's" }, { body: "mine" }],
+            "the secret key bypasses RLS",
+          );
+          assertEquals((await service.rpc("whoami")).data, null);
+          // deno-lint-ignore no-explicit-any
+          const wrong: any = createClient(ORIGIN, "sb_publishable_wrong", options({}));
+          const refused = await wrong.from("authors").select("id");
+          assertEquals([refused.status, refused.error?.code], [401, "PGRST301"]);
+          const expired = await signSupabaseJwt(keys, {
+            sub: B,
+            role: "authenticated",
+            aud: "authenticated",
+            exp: Math.floor(Date.now() / 1000) - 60,
+          });
+          // deno-lint-ignore no-explicit-any
+          const stale: any = createClient(
+            ORIGIN,
+            g.publishableKey,
+            options({ accessToken: () => Promise.resolve(expired) }),
+          );
+          const late = await stale.from("authors").select("id");
+          assertEquals([late.status, late.error?.code], [401, "PGRST303"]);
+        },
+      );
+
       await t.step("denext's restClient runs the same requests", async () => {
-        const client = restClient({ url: `${ORIGIN}/rest/v1`, fetch: appFetch });
+        const client = restClient({
+          url: `${ORIGIN}/rest/v1`,
+          fetch: appFetch,
+          headers: { apikey: g.publishableKey },
+        });
         const { data } = await client.from("authors").select("name, books(title)")
           .eq("id", 2).order("title", { referencedTable: "books" }).single();
         assertEquals(data, {
@@ -635,6 +710,7 @@ export { author, label, mood, n, title };
     } finally {
       resetPlugins();
       installPostgres(undefined);
+      installSupabaseKeys(undefined);
       await env.drop();
       await Deno.remove(root, { recursive: true });
     }

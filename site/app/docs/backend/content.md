@@ -662,10 +662,18 @@ a client with a base URL (an app on another origin, a native app's `Authorizatio
 session); `from` and `rpc` use the page's own origin and cookies; `.schema("api")` targets another
 exposed schema.
 
-With `@supabase/supabase-js` instead, point it at the app:
-`createClient(appUrl, anyKey, { global: { fetch } })`, then `supabase.from("notes")…` and
-`supabase.rpc("fn", args)` reach these routes. Pass the generated `Database` type to
-`createClient<Database>()` for typed queries.
+With `@supabase/supabase-js` instead, point it at the app — `createClient(appUrl,
+publishableKey)` — and `supabase.from("notes")…` and `supabase.rpc("fn", args)` reach these
+routes. Pass the generated `Database` type to `createClient<Database>()` for typed queries.
+
+**Who a request is.** The routes use the backend's shared request identity: with
+`backend({ supabase })` they read supabase-js's `apikey` and `Authorization: Bearer` headers — a
+user's access token runs as `authenticated` with its claims, the publishable key as `anon`, and the
+secret key as `service_role`, which bypasses row-level security (it still reaches only the
+relations and functions the catalog serves). Without a token, the denext session (the auth cookie,
+or a native app's `nat_…` token) decides, then `anon`. A token or key that is presented and refused
+is a `401` before any statement — `PGRST303` for an expired token, `PGRST301` otherwise — with
+`WWW-Authenticate: Bearer error="invalid_token"`.
 
 ### Routes
 
@@ -743,8 +751,9 @@ export async function middleware(request: Request) {
 ```
 
 **CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
-cross-site one is refused (`403`, `csrf_failed`). A native app's bearer token
-(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie) needs no such check;
+cross-site one is refused (`403`, `csrf_failed`). A request whose identity is a Supabase access
+token or the secret key needs no such check, nor does a native app's bearer token
+(`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie);
 the exemption uses `auth()`'s own parser (`nativeBearerToken` from `denext/server`), so it applies
 exactly when the session comes from the token, never from the cookie.
 

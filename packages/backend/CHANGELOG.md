@@ -32,7 +32,10 @@
   `count=planned|estimated`; CSV in and out; GeoJSON (with PostGIS); `return=headers-only`;
   `tx=rollback`; `handling=strict` with `max-affected`; `nulls=stripped`; execution plans behind
   the opt-in `rest.explain`; and several schemas through `rest.schemas` with `Accept-Profile` /
-  `Content-Profile`. A GET runs in a READ ONLY transaction. Every name is still looked up in the
+  `Content-Profile`. Requests resolve through the shared request identity, so supabase-js's
+  `apikey` / `Authorization: Bearer` work (publishable key → `anon`, a user's access token →
+  `authenticated`, the secret key → `service_role`), and a refused one is PostgREST's `401`
+  (`PGRST301`, or `PGRST303` when expired). A GET runs in a READ ONLY transaction. Every name is still looked up in the
   catalog and every value bound; a request takes at most 64 filters, 256 select items and 8
   levels of embedding.
 - **`@denext/backend`: `.denext/rest.ts` is `supabase gen types`-shaped.** `Database` with each

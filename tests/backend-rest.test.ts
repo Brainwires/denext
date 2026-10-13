@@ -37,6 +37,12 @@ import { RestError } from "../packages/backend/src/rest-query.ts";
 import { writeRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { restClient, RestClientError, type Selected } from "../packages/backend/client.ts";
 import { type FakeSqlClient, fakeSqlClient } from "./helpers/fake-sql-client.ts";
+import {
+  generateSupabaseKeys,
+  installSupabaseKeys,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+} from "../src/server/auth/gotrue/keys.ts";
 
 const ORIGIN = "https://app.test";
 /** An empty app for every test (removed when the module unloads). */
@@ -1484,4 +1490,71 @@ Deno.test("restClient speaks supabase-js's wire format: every filter, transform 
   const aborted = await rest.from("t").delete().eq("id", 1).abortSignal(controller.signal);
   assertEquals([aborted.status, aborted.statusText, aborted.data], [204, "No Content", null]);
   assertEquals(last().signal.aborted, false);
+});
+
+Deno.test("Supabase keys and access tokens: the shared identity, 401s, CSRF, exact counts", async () => {
+  const g = await generateSupabaseKeys();
+  const keys = await resolveSupabaseKeys({
+    publishableKey: g.publishableKey,
+    secretKey: g.secretKey,
+    signingKeys: g.signingKey,
+  });
+  const now = () => Math.floor(Date.now() / 1000);
+  const token = (exp: number) =>
+    signSupabaseJwt(keys, { sub: "user-j", role: "authenticated", aud: "authenticated", exp });
+  installSupabaseKeys(keys);
+  const app = await restApp(() => [{ body: '[{"id":1}]', n: "1", total: "1" }]);
+  try {
+    const anon = await app.call("/rest/v1/notes", { headers: { apikey: g.publishableKey } });
+    assertEquals(anon.status, 200);
+    await anon.body?.cancel();
+    assertEquals(app.seen.at(-1)!.role, "anon");
+    const user = await app.call("/rest/v1/notes", {
+      headers: {
+        apikey: g.publishableKey,
+        authorization: `Bearer ${await token(now() + 600)}`,
+        prefer: "count=exact",
+      },
+    });
+    assertEquals(user.status, 200, "a signed-in token may count exactly");
+    await user.body?.cancel();
+    assertEquals([app.seen.at(-1)!.role, app.seen.at(-1)!.claims.sub], ["authenticated", "user-j"]);
+    const expired = await app.call("/rest/v1/notes", {
+      headers: { authorization: `Bearer ${await token(now() - 600)}` },
+    });
+    assertEquals([expired.status, (await expired.json()).code], [401, "PGRST303"]);
+    const bad = await app.call("/rest/v1/notes", { headers: { apikey: "sb_publishable_nope" } });
+    assertEquals([bad.status, (await bad.json()).code], [401, "PGRST301"]);
+    assertEquals(bad.headers.get("www-authenticate"), 'Bearer error="invalid_token"');
+    const seen = app.seen.length;
+    const service = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "DELETE",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { apikey: g.secretKey, authorization: `Bearer ${g.secretKey}` },
+    });
+    assertEquals(service.status, 204, "the secret key decides: no cookie, no CSRF check");
+    assertEquals(app.seen.length, seen + 1);
+    assertEquals(app.seen.at(-1)!.claims.role, "service_role");
+    const jwtWrite = await app.call("/rest/v1/notes", {
+      method: "POST",
+      body: "{}",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { authorization: `Bearer ${await token(now() + 600)}` },
+    });
+    assertEquals(jwtWrite.status, 201);
+    const cookieWrite = await app.call("/rest/v1/notes", {
+      method: "POST",
+      body: "{}",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { apikey: g.publishableKey },
+    });
+    assertEquals(cookieWrite.status, 403, "the publishable key does not lift the cookie rule");
+    await cookieWrite.body?.cancel();
+  } finally {
+    installSupabaseKeys(undefined);
+    tearDown();
+  }
 });

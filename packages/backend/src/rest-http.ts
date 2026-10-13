@@ -325,6 +325,9 @@ export function errorResponse(error: unknown): Response {
       errorBody(error.code, error.message, error.details, error.hint),
     );
     if (error.status === 503) response.headers.set("retry-after", "1");
+    if (error.status === 401) {
+      response.headers.set("www-authenticate", 'Bearer error="invalid_token"');
+    }
     return response;
   }
   if (isApiError(error)) {
