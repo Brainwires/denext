@@ -36,7 +36,7 @@ Deno.test("every declared task is listed, with the command it runs and a button"
   try {
     const body = await tasksPage(h);
     for (const name of ["build", "start"]) {
-      assertStringIncludes(body, `deno task ${name}`);
+      assertStringIncludes(body, `denext task ${name}`);
       assertStringIncludes(body, `name="task" value="${name}"`);
     }
     // The buttons post to the runner, never to this page: one route spawns, and it is that one.
@@ -92,7 +92,7 @@ Deno.test("--offline refuses a declared task with a 503, and renders the buttons
 
     const body = await tasksPage(h);
     assertStringIncludes(body, "deno task is unavailable — the UI runs --offline");
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
+    assertMatch(body, /<button[^>]*\sdisabled[^>]*>denext task build<\/button>/);
   } finally {
     await stopUi(h);
   }
@@ -102,7 +102,7 @@ Deno.test("online, the buttons stay live and carry no offline note", async () =>
   const h = await ui();
   try {
     const body = await tasksPage(h);
-    assertMatch(body, /<button type="submit">deno task build<\/button>/);
+    assertMatch(body, /<button type="submit">denext task build<\/button>/);
     assert(!body.includes("--offline"));
   } finally {
     await stopUi(h);
@@ -114,7 +114,7 @@ Deno.test("--read-only refuses a run and says so on the page", async () => {
   try {
     const body = await tasksPage(h);
     assertStringIncludes(body, "Read-only mode");
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
+    assertMatch(body, /<button[^>]*\sdisabled[^>]*>denext task build<\/button>/);
   } finally {
     await stopUi(h);
   }
