@@ -271,15 +271,20 @@ Deno.test("generate migration: a Postgres project gets Postgres SQL", async () =
 Deno.test("the generated migrate job runs on Postgres when DATABASE_URL says so", async () => {
   const dir = await project();
   const sql = fakeSqlClient();
-  const deno = Deno as unknown as { SQL?: unknown };
   const urls: unknown[] = [];
-  // Deno.SQL as denext's runtime has it, answering with one fake database.
-  deno.SQL = class {
-    constructor(url: unknown) {
-      urls.push(url);
-      return sql;
-    }
-  };
+  // Deno.SQL as denext's runtime has it, answering with one fake database. On that runtime it is
+  // a getter of its own, so it is redefined (and put back), not assigned.
+  const original = Object.getOwnPropertyDescriptor(Deno, "SQL");
+  Object.defineProperty(Deno, "SQL", {
+    configurable: true,
+    writable: true,
+    value: class {
+      constructor(url: unknown) {
+        urls.push(url);
+        return sql;
+      }
+    },
+  });
   try {
     await withEnv({ DATABASE_URL: "postgres://u@h/app" }, async () => {
       await generateArtifact(dir, "migration", "create example");
@@ -311,7 +316,8 @@ Deno.test("the generated migrate job runs on Postgres when DATABASE_URL says so"
       assert(sql.statements.some((s) => s.includes("pg_advisory_xact_lock")));
     });
   } finally {
-    delete deno.SQL;
+    delete (Deno as { SQL?: unknown }).SQL;
+    if (original) Object.defineProperty(Deno, "SQL", original);
     await Deno.remove(dir, { recursive: true });
   }
 });

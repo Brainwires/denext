@@ -13,6 +13,7 @@ import {
 } from "../src/cli/self-exec.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 import {
+  DENO_TOOLCHAIN,
   denoToolchainCacheRoot,
   type DenoToolchainChoice,
   type DenoToolchainPin,
@@ -215,7 +216,17 @@ Deno.test({
     const dir = await Deno.makeTempDir({ prefix: "denext-tc-" });
     try {
       const w = await wrapper(dir, 7);
-      const run = await cli(["test", "--filter", "x y", "a.test.ts"], dir, { DENEXT_DENO: w.path });
+      // A pin naming another version: run on denext's own toolchain, the CLI would take itself
+      // for the pinned build and never re-exec.
+      const pinFile = join(dir, "pin.json");
+      await Deno.writeTextFile(
+        pinFile,
+        JSON.stringify({ ...DENO_TOOLCHAIN, version: "0.0.1-denext.1" }),
+      );
+      const run = await cli(["test", "--filter", "x y", "a.test.ts"], dir, {
+        DENEXT_DENO: w.path,
+        DENEXT_TOOLCHAIN_PIN_FILE: pinFile,
+      });
       assertEquals(run.code, 7, run.stderr);
       assertStringIncludes(run.stderr, "not downloaded, pinned or verified");
       const argv = (await Deno.readTextFile(w.log)).trimEnd().split("\n");

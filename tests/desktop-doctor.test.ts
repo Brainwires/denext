@@ -15,6 +15,7 @@ import type { DesktopRuntimePin, DesktopRuntimeStatus } from "../src/build/deskt
 import { desktopDoctor } from "../src/cli/commands/desktop-doctor.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import { join } from "@std/path";
+import { denoReleaseVersion } from "../src/build/deno-version.ts";
 import { capture, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A full answer: an exit code with its stdout / stderr. */
@@ -628,8 +629,11 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
     assertEquals(report.runtime.status.backend, null);
     assertStringIncludes(report.runtime.status.detail, 'desktop.backend is "gtk4"');
     // The unpinned backend is an error; a `deno` other than the pin's exact version (CI's unit job
-    // runs a newer one) adds its own runtime error, so this test reads the deno it ran under.
-    const denoMatches = report.runtime.status.deno.found === report.runtime.status.deno.required;
+    // runs a newer one) adds its own runtime error, so this test reads the deno it ran under —
+    // denext's Deno toolchain (`2.9.7-denext.N`) is that release.
+    const found = report.runtime.status.deno.found;
+    const denoMatches = found !== null &&
+      denoReleaseVersion(found) === report.runtime.status.deno.required;
     assertEquals(
       report.findings.map((f) => `${f.level}:${f.check}`),
       denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],
