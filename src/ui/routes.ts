@@ -29,6 +29,7 @@ import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
 import { broadcast, sseProcess } from "./events.ts";
 import { runDeno } from "./proc.ts";
+import { forwardedDeno } from "../cli/deno-path.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
@@ -303,8 +304,13 @@ async function runTask(request: Request, ctx: UiContext): Promise<Response> {
     return jsonResponse({ ok: false, reason: OFFLINE_REFUSALS.task }, OFFLINE_STATUS);
   }
   return sseProcess(
-    async (line, signal) =>
-      (await runDeno(["task", name], { cwd: ctx.dir, onLine: line, signal })).code,
+    async (line, signal) => {
+      // The same Deno, and the same `deno` on the task's PATH, as `denext task <name>`.
+      const { deno, env, warning } = await forwardedDeno();
+      if (warning) line(warning);
+      return (await runDeno(["task", name], { cwd: ctx.dir, onLine: line, signal, deno, env }))
+        .code;
+    },
     {
       signal: ctx.signal,
       settled: () => broadcast(ctx.events, { type: "task-done", task: name }),

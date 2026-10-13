@@ -48,9 +48,9 @@ import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./s
 import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
-import { readCommandCache } from "./src/cli/command-cache.ts";
+import { firstNotice, readCommandCache } from "./src/cli/command-cache.ts";
 import { acquireProjectLocks } from "./src/build/project-locks.ts";
-import { denoForwardFor, verbatimFrom } from "./src/cli/deno-forward.ts";
+import { denoForwardFor, denoVerbArgs, verbatimFrom } from "./src/cli/deno-forward.ts";
 import { DENO_VERBS, forwardedDenoVerbs, isDenoVerb, shadowNotice } from "./src/cli/deno-verbs.ts";
 
 /**
@@ -482,17 +482,25 @@ const DENO_VERB_NAMES: readonly string[] = DENO_VERBS.map((verb) => verb.name);
 
 /**
  * The Deno invocation for an argv denext hands to Deno before parsing: `denext deno …` (every
- * token verbatim — global flags such as `--config` and `--json` included, which the parser would
- * otherwise claim) and `denext task …` (Deno's `task`; a task's arguments are its own). `denext
- * --help task` still prints denext's description of it. Null for everything else.
+ * token after `deno` verbatim — flags such as `--config`, `--quiet` and `--json` included, which
+ * the parser would otherwise claim) and `denext task …` (Deno's `task`; a task's arguments are its
+ * own), after any leading global flags (`denext --cwd app deno fmt --quiet`). A help or version
+ * flag before the verb is denext's: `denext --help task` describes the verb and `denext --version
+ * task` prints denext's version. Null for everything else.
  */
 function denoBeforeParse(
   argv: string[],
 ): { args: string[]; cwd: string; forwarded: boolean } | null {
-  if (argv[0] === "deno") return { args: argv.slice(1), cwd: Deno.cwd(), forwarded: false };
   const at = verbIndex(argv);
-  if (at < 0 || argv[at] !== "task" || argv.slice(0, at).some(isHelpToken)) return null;
+  if (at < 0 || (argv[at] !== "deno" && argv[at] !== "task")) return null;
+  if (argv.slice(0, at).some((tok) => isHelpToken(tok) || isVersionToken(tok))) return null;
+  if (argv[at] === "deno") return { ...denoVerbArgs(argv, at), forwarded: false };
   return { ...verbatimFrom(argv, at), forwarded: true };
+}
+
+/** Whether a token asks for the version (`--version` / `-v`). */
+function isVersionToken(token: string): boolean {
+  return token === "--version" || token === "-v";
 }
 
 /**
@@ -509,6 +517,17 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   const forward = denoForwardFor(Deno.args, outcome.unknownVerb);
   if (forward) return await runDenoPassthrough(forward.args, forward.cwd, true);
   return outcome;
+}
+
+/**
+ * Say once — by the process that runs the verb (after any re-exec), and once per state of the
+ * project's config files — that a project verb shadows a Deno verb of the same name.
+ */
+async function noticeShadow(command: CommandSpec): Promise<void> {
+  if ((command.source ?? "core") === "core" || !isDenoVerb(command.name)) return;
+  if (await firstNotice(cwdFromArgs(Deno.args), `shadow:${command.name}`)) {
+    console.error(shadowNotice(command.name));
+  }
 }
 
 async function main(): Promise<void> {
@@ -530,10 +549,7 @@ async function main(): Promise<void> {
   }
   if (await toolchainGate(outcome.command, outcome.ctx)) return;
   if (await moduleGate(outcome.command, outcome.ctx)) return;
-  // Said once, by the process that runs the verb (after any re-exec).
-  if ((outcome.command.source ?? "core") !== "core" && isDenoVerb(outcome.command.name)) {
-    console.error(shadowNotice(outcome.command.name));
-  }
+  await noticeShadow(outcome.command);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).
   const lockRequest = outcome.command.locks?.(outcome.ctx);

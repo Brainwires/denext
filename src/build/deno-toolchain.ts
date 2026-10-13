@@ -21,7 +21,7 @@
 // `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
 import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
@@ -523,8 +523,13 @@ function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "pat
   return { mode: "path", path: raw };
 }
 
-/** `DENEXT_DENO=<path>`: that binary, unverified, when it exists. */
-async function pathChoice(path: string): Promise<DenoToolchainChoice> {
+/**
+ * `DENEXT_DENO=<path>`: that binary, unverified, when it exists. A relative path is resolved
+ * against the directory denext started in, so a child run in another directory (`--cwd`, a
+ * forwarded verb) still finds it.
+ */
+async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
+  const path = resolve(raw);
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
     return {
       kind: "stock",

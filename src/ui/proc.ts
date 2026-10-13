@@ -34,6 +34,8 @@ export interface RunDenoOptions {
    * generated program without it ever existing as a file or a `data:` URL.
    */
   readonly stdin?: string;
+  /** The `deno` binary to run (default {@linkcode denoExecutable}). */
+  readonly deno?: string;
 }
 
 /**
@@ -149,7 +151,7 @@ export interface ProcResult {
  * @returns The exit code and captured output.
  */
 export async function runDeno(args: string[], opts: RunDenoOptions): Promise<ProcResult> {
-  const child = new Deno.Command(denoExecutable(), {
+  const child = new Deno.Command(opts.deno ?? denoExecutable(), {
     args,
     cwd: opts.cwd,
     env: opts.env,

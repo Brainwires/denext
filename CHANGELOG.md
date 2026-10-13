@@ -12,9 +12,13 @@ and this project adheres to
 
 - **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
   `package.json` task on denext's Deno toolchain, every argument verbatim. Inside it every `deno`
-  is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and the child's
-  `PATH` starts with that binary as `deno` (a link in the toolchain cache when it is named
-  otherwise), so a script or tool the task starts gets it too.
+  is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and a script or
+  tool the task starts finds that binary as `deno` on `PATH` — through the toolchain's own cache
+  directory, or a directory holding only a `deno` link to it — with every other `PATH` lookup
+  (node, npm, python) unchanged, and no change at all when `PATH` already finds it. A leading global
+  flag goes after the subcommand (`denext --config deno.json task p` → `deno task --config
+  deno.json p`; `denext -A main.ts` → `deno run -A main.ts`); `--verbose` is denext's alone.
+  `denext ui`'s Tasks page runs a task the same way.
 - **Background and scheduled tasks are now jobs**, end to end, with no aliases: `denext job <name>
   | --list | --history | --clear-history`; the `tasks/` directory is `jobs/`; `defineTask` →
   `defineJob`, `runTask` → `runJob`, `registerTask` / `getTask` / `isTask` / `taskNames` →
@@ -32,7 +36,9 @@ and this project adheres to
   keeps printing denext's environment and project facts. Deno's cache info: `denext deno info`.
 - **`denext audit` also runs `deno audit`** (Deno's audit flags — `--level`, `--ignore`,
   `--ignore-unfixable`, `--socket`, `--fix`, `--lock`, … — forwarded) and exits non-zero when
-  either half fails. `--skip-deno-audit` runs denext's checks only.
+  either half fails. Deno's half needs the network (the advisory services) and reads the
+  lockfile, so an offline CI step or a project without `deno.lock` that ran `denext audit` before
+  now fails or changes its result: pass `--skip-deno-audit` for denext's checks only.
 - A forwarding verb (`test`, `lint`, `fmt`, `check`, `add`, `remove`, `update`) keeps a literal
   `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
   arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global

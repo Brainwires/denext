@@ -81,9 +81,13 @@ fail when the toolchain can't be had, since running it is all they do.
 
 `denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
 it every `deno` is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and
-the task's `PATH` starts with the toolchain binary as `deno`, so a shell script, `bash -c` or a Node
-tool the task starts that spawns `deno` gets it too (a binary named otherwise, such as a
-`DENEXT_DENO=<path>` override, gets a `deno` link in the toolchain cache).
+a shell script, `bash -c` or a Node tool the task starts that spawns `deno` finds the same binary
+on `PATH`. Only `deno` changes: the toolchain's own cache directory (which holds nothing else) goes
+first, and any other binary — stock Deno in `/usr/bin` or `~/.deno/bin`, a `DENEXT_DENO=<path>`
+override — is reached through a directory in the toolchain cache that holds only a `deno` link to
+it, so `node`, `npm` or `python` resolve exactly as before. When `PATH` already finds that binary,
+nothing is added. Global flags before the verb go after it (`denext --config deno.json task p`
+runs `deno task --config deno.json p`).
 
 A plain `deno task` runs the `deno` inside a task's command on the Deno that started it — stock
 Deno, without the toolchain's Vitest/Jest compatibility or `Deno.SQL`. Run tasks through denext

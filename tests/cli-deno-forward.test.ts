@@ -6,7 +6,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
-import { denoForwardFor, verbatimFrom } from "../src/cli/deno-forward.ts";
+import { denoForwardFor, denoVerbArgs, verbatimFrom } from "../src/cli/deno-forward.ts";
 import {
   DENO_VERBS,
   forwardedDenoVerbs,
@@ -70,7 +70,7 @@ Deno.test("denoForwardFor: Deno verbs verbatim, scripts as run, --cwd applied, o
   );
   assertEquals(
     denoForwardFor(["--cwd", "app", "-q", "bench", "--json"], { name: "bench", index: 3 }, cwd),
-    { args: ["-q", "bench", "--json"], cwd: join(cwd, "app") },
+    { args: ["bench", "-q", "--json"], cwd: join(cwd, "app") },
   );
   assertEquals(
     denoForwardFor(["main.ts", "--port", "1"], { name: "main.ts", index: 0 }, cwd),
@@ -82,6 +82,62 @@ Deno.test("denoForwardFor: Deno verbs verbatim, scripts as run, --cwd applied, o
     verbatimFrom(["--cwd=sub", "task", "build", "--quiet"], 1, cwd),
     { args: ["task", "build", "--quiet"], cwd: join(cwd, "sub") },
   );
+});
+
+Deno.test("leading global flags land after the Deno subcommand, where Deno accepts them", () => {
+  const cwd = "/work";
+  const script = (argv: string[], index: number) =>
+    denoForwardFor(argv, { name: argv[index], index }, cwd)?.args;
+  // `deno --config x task p` is an error; `deno task --config x p` is not.
+  assertEquals(verbatimFrom(["--config", "deno.json", "task", "p"], 2, cwd).args, [
+    "task",
+    "--config",
+    "deno.json",
+    "p",
+  ]);
+  assertEquals(verbatimFrom(["--config=deno.json", "task", "p"], 1, cwd).args, [
+    "task",
+    "--config=deno.json",
+    "p",
+  ]);
+  // `--verbose` is denext's alone.
+  assertEquals(verbatimFrom(["--verbose", "task", "p"], 1, cwd).args, ["task", "p"]);
+  // A script: run flags and --config go after `run`; `deno run` has no --json.
+  assertEquals(script(["--json", "m.ts"], 1), ["run", "m.ts"]);
+  assertEquals(script(["-A", "m.ts"], 1), ["run", "-A", "m.ts"]);
+  assertEquals(script(["--config", "deno.json", "m.ts", "x"], 2), [
+    "run",
+    "--config",
+    "deno.json",
+    "m.ts",
+    "x",
+  ]);
+  assertEquals(script(["--verbose", "-q", "m.ts"], 2), ["run", "-q", "m.ts"]);
+  // A Deno verb: same rule, --json kept (`denext --json lint` → `deno lint --json`).
+  assertEquals(
+    denoForwardFor(["--json", "--verbose", "outdated"], { name: "outdated", index: 2 }, cwd)?.args,
+    ["outdated", "--json"],
+  );
+});
+
+Deno.test("denoVerbArgs: `denext [globals] deno …` is verbatim after `deno`", () => {
+  const cwd = "/work";
+  assertEquals(denoVerbArgs(["--cwd", "app", "deno", "fmt", "--quiet"], 2, cwd), {
+    args: ["fmt", "--quiet"],
+    cwd: join(cwd, "app"),
+  });
+  assertEquals(denoVerbArgs(["deno", "--config", "c.json", "check"], 0, cwd).args, [
+    "--config",
+    "c.json",
+    "check",
+  ]);
+  assertEquals(denoVerbArgs(["--config", "c.json", "deno", "check", "x.ts"], 2, cwd).args, [
+    "check",
+    "--config",
+    "c.json",
+    "x.ts",
+  ]);
+  assertEquals(denoVerbArgs(["-q", "deno", "--version"], 1, cwd).args, ["--version", "-q"]);
 });
 
 // --- the registry: did-you-mean, help, completions ------------------------------------------
@@ -147,16 +203,54 @@ Deno.test("shadowNotice names the verb and how to reach Deno's", () => {
 
 // --- the PATH shim --------------------------------------------------------------------------
 
-Deno.test("denoPathEnv: a binary named deno puts its own directory first", async () => {
+Deno.test("denoPathEnv: only denext's toolchain directory is put first as it is", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_path_rule_" });
+  try {
+    const exe = Deno.build.os === "windows" ? "deno.exe" : "deno";
+    const delimiter = Deno.build.os === "windows" ? ";" : ":";
+    const cacheRoot = join(root, "denext-deno");
+    const toolchainDir = join(cacheRoot, "2.9.7-denext.15", "target");
+    await Deno.mkdir(toolchainDir, { recursive: true });
+    await Deno.writeTextFile(join(toolchainDir, exe), "toolchain");
+    // A stock Deno in a directory full of other tools (`/usr/bin`, `~/.deno/bin`).
+    const stockDir = join(root, "bin");
+    await Deno.mkdir(stockDir);
+    await Deno.writeTextFile(join(stockDir, exe), "stock");
+    await Deno.writeTextFile(join(stockDir, "node"), "node");
+    const userPath = [join(root, "nvm"), join(root, "usr")].join(delimiter);
+    const env = (name: string) => (name === "PATH" ? userPath : undefined);
+    const opts = { env, cacheRoot };
+
+    // The toolchain binary: its own cache directory goes first.
+    assertEquals(await denoPathEnv(join(toolchainDir, exe), opts), {
+      PATH: `${toolchainDir}${delimiter}${userPath}`,
+    });
+    // Stock Deno: never its directory (that would put its `node` ahead of nvm's) — a shim.
+    const stock = await denoPathEnv(join(stockDir, exe), opts);
+    const first = stock.PATH.split(delimiter)[0];
+    assert(first !== stockDir, "the stock directory is not prepended");
+    assert(first.startsWith(join(cacheRoot, "path-shims")), first);
+    assertEquals(stock.PATH.slice(first.length + 1), userPath, "the rest of PATH is unchanged");
+    assertEquals(await Deno.readTextFile(join(first, exe)), "stock");
+    // Already what PATH resolves `deno` to: nothing changes at all.
+    const already = (
+      name: string,
+    ) => (name === "PATH" ? `${stockDir}${delimiter}${userPath}` : undefined);
+    assertEquals(await denoPathEnv(join(stockDir, exe), { env: already, cacheRoot }), {});
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("denoPathEnv: a bare or foreign path is left alone", async () => {
   const env = (name: string) => (name === "PATH" ? "/usr/bin:/bin" : undefined);
-  assertEquals(await denoPathEnv("/opt/denext/2.9.7/deno", { env, os: "linux" }), {
-    PATH: "/opt/denext/2.9.7:/usr/bin:/bin",
-  });
-  assertEquals(
-    await denoPathEnv("C:\\deno\\deno.exe", { env: () => "C:\\Windows", os: "windows" }),
-    {},
-    "a non-absolute path on this host is left alone",
-  );
+  if (Deno.build.os !== "windows") {
+    assertEquals(
+      await denoPathEnv("C:\\deno\\deno.exe", { env: () => "C:\\Windows", os: "windows" }),
+      {},
+      "a path that is not absolute on this host is left alone",
+    );
+  }
   assertEquals(await denoPathEnv("deno", { env, os: "linux" }), {}, "a bare name is the PATH");
 });
 
@@ -230,6 +324,24 @@ Deno.test("`denext main.ts a b` is `deno run main.ts a b`", async () => {
   }
 });
 
+Deno.test("a version or help flag before `task` / `deno` is denext's", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_version_" });
+  try {
+    const version = await runCli(["--version", "task"], dir);
+    assertEquals(version.code, 0, version.err);
+    assert(version.out.startsWith("denext "), version.out);
+    const help = await runCli(["--help", "deno"], dir);
+    assertEquals(help.code, 0, help.err);
+    assertStringIncludes(help.out, "denext deno");
+    // After leading globals, `deno` still takes every token verbatim.
+    const quiet = await runCli(["--cwd", ".", "deno", "eval", "--quiet", "console.log(5)"], dir);
+    assertEquals(quiet.code, 0, quiet.err);
+    assertEquals(quiet.out.trim(), "5");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a typo is never run: did-you-mean over denext and Deno verbs", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_typo_" });
   try {
@@ -257,6 +369,13 @@ Deno.test("a project verb shadows a Deno verb, with one notice on stderr", async
     const notices = res.err.split("\n").filter((line) => line.includes("shadows Deno's"));
     assertEquals(notices.length, 1, res.err);
     assertStringIncludes(notices[0], "`denext deno bench`");
+    // Once per state of the project's config files, not on every run.
+    const again = await runCli(["bench"], dir);
+    assertEquals(again.code, 0, again.err);
+    assert(!again.err.includes("shadows Deno's"), again.err);
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": {} }');
+    const changed = await runCli(["bench"], dir);
+    assertStringIncludes(changed.err, "shadows Deno's");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -269,26 +388,31 @@ Deno.test({
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_task_" });
   try {
-    // A binary not named `deno` (as a DENEXT_DENO override may be) gets a PATH shim, so a process
-    // the task starts that looks `deno` up on PATH finds it.
+    // A binary not named `deno` (as a DENEXT_DENO override may be), with no `deno` on the user's
+    // PATH, gets a PATH shim, so a process the task starts that looks `deno` up finds it.
     const renamed = join(dir, "bin", "deno-denext");
     await Deno.mkdir(dirname(renamed));
     await Deno.symlink(Deno.execPath(), renamed);
-    const probe = 'const p = Deno.env.get("PATH") ?? ""; ' +
-      'console.log(p.split(Deno.build.os === "windows" ? ";" : ":")[0]); ' +
+    const probe = 'const sep = Deno.build.os === "windows" ? ";" : ":"; ' +
+      'const dirs = (Deno.env.get("PATH") ?? "").split(sep); ' +
+      'const hit = dirs.map((d) => d + "/deno").find((f) => { try { return Deno.statSync(f).isFile; } catch { return false; } }); ' +
+      'console.log(hit ? Deno.realPathSync(hit) : "none"); ' +
       "console.log(Deno.args.join(' '))";
     await Deno.writeTextFile(join(dir, "probe.ts"), probe);
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({ tasks: { probe: "deno run -A probe.ts" } }),
     );
-    const res = await runCli(["task", "probe", "--quiet", "x"], dir, { DENEXT_DENO: renamed });
+    const res = await runCli(["task", "probe", "--quiet", "x"], dir, {
+      DENEXT_DENO: renamed,
+      PATH: "/usr/bin:/bin",
+    });
     assertEquals(res.code, 0, res.err);
-    const [first, args] = res.out.trim().split("\n").slice(-2);
+    const [found, args] = res.out.trim().split("\n").slice(-2);
     // The task's own arguments arrive verbatim — `--quiet` included.
     assertEquals(args, "--quiet x");
-    const shimmed = join(first, "deno");
-    assertEquals(await Deno.realPath(shimmed), await Deno.realPath(Deno.execPath()));
+    // A `deno` looked up on PATH inside the task is the binary denext chose.
+    assertEquals(found, await Deno.realPath(Deno.execPath()));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -343,4 +467,22 @@ Deno.test("a forwarding verb keeps `--` so script arguments stay the script's", 
   const dev = buildRegistry().parse(["routes", "--", "x"]);
   assert(dev.kind === "run");
   assertEquals(dev.ctx.rest, ["x"], "a non-forwarding verb still drops it");
+});
+
+Deno.test("a relative DENEXT_DENO resolves against the starting directory", async () => {
+  const { resolveDenoToolchain } = await import("../src/build/deno-toolchain.ts");
+  const { relative } = await import("@std/path");
+  const dir = await Deno.makeTempDir({ prefix: "denext_rel_deno_" });
+  try {
+    const bin = join(dir, "deno-custom");
+    await Deno.writeTextFile(bin, "");
+    const rel = relative(Deno.cwd(), bin);
+    const choice = await resolveDenoToolchain({
+      env: (name) => (name === "DENEXT_DENO" ? rel : undefined),
+    });
+    assert(choice.kind === "toolchain", JSON.stringify(choice));
+    assertEquals(choice.deno, bin, "an absolute path, so a child in another cwd still finds it");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
