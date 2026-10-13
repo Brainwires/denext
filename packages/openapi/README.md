@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.3.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.4.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described

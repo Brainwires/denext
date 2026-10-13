@@ -54,7 +54,7 @@ export default {
       <Code lang="json">
         {`{
   "imports": {
-    "@denext/content-collections": "jsr:@denext/content-collections@^0.3.0"
+    "@denext/content-collections": "jsr:@denext/content-collections@^0.5.0"
   }
 }`}
       </Code>
