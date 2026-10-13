@@ -333,7 +333,8 @@ page — schema-driven `denext.config.ts` editing (a comment-preserving splice: 
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
 next fires, an editor with a shape builder, and run history when `jobs.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
-Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
+Docker files (with the self-hosted stack's toggles) plus in-place `docker-compose.yml`
+editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
 clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
 `deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
@@ -677,8 +678,11 @@ statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)
 `denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
 `jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
 Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
-`generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
-routes.
+`generate ci` a GitHub Actions workflow; `generate docker` the Dockerfile and a compose stack
+detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap when the storage
+driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;
+`--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
+`--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`

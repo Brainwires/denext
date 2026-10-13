@@ -10,17 +10,31 @@ and this project adheres to
 
 ### Added
 
-- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
-  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
-  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
-  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
-  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
-  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
-  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
-  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
-  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
+- **`denext generate docker` writes a self-hosted stack.** It reads the project and adds the
+  services it needs to the compose file: Postgres 17 (for `@denext/backend` or a Postgres
+  `DATABASE_URL`; `pgvector/pgvector:pg17` when a migration creates the `vector` extension), MinIO
+  with a one-shot `mc` bucket bootstrap (for an `s3()` storage driver), and a one-shot
+  `denext job migrate` service (for `migrations/` with `jobs/migrate.ts`). Every long-running
+  service has a health check and a restart policy, the app waits on `service_healthy` /
+  `service_completed_successfully`, data lives in named volumes, and the database publishes no
+  host port. A new `.env.example` lists every secret the stack reads (`POSTGRES_PASSWORD`,
+  `AUTH_SECRET`, `DENEXT_JWT_SECRET`, `DENEXT_VAULT_KEY`, `DENEXT_STORAGE_SECRET`,
+  `MINIO_ROOT_PASSWORD`, …) with how to generate each; the required ones are empty and the compose
+  file refuses to start until `.env` sets them. Flags override the detection: `--postgres` /
+  `--no-postgres`, `--pgvector`, `--storage`, `--migrate` (each with a `--no-` form), `--stack`
+  (`--all`), `--expose-db`, `--dev` (a `compose.dev.yml` overlay running `denext dev` on a bind
+  mount), `--port`, `--deno-tag`; the command reports what it detected and why. With Postgres or
+  `@denext/backend` the image runs on denext's Deno toolchain (`Deno.SQL`). The `denext ui` Docker
+  page has the same switches, checked as detected.
+- **`denext generate --dry-run` and `--force`** for every kind. An existing file is still never
+  overwritten without `--force`; for `docker` the command prints the diff of each file it skipped.
 
 ### Changed
+
+- **The generated Postgres service is Postgres 17 and publishes no port by default.** The
+  commented example in a plain `docker-compose.yml` is `postgres:17-alpine`; a switched-on one
+  (the UI's Postgres box, now `--postgres`) is the stack's service: credentials from `.env`, a
+  `pg_isready` health check, a `db-data` volume, and `127.0.0.1:5432` only with `--expose-db`.
 
 - **esbuild 0.25.5, and no `npm:esbuild`.** denext vendors esbuild's JavaScript API
   (`src/build/esbuild/`, MIT, from esbuild 0.25.5) and spawns an esbuild binary itself:

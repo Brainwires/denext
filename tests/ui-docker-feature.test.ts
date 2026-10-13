@@ -6,7 +6,7 @@
 // The panel is driven through the real loopback server (so it passes the same origin/token/CSRF
 // chain a browser does) plus one direct handler call for the read-only branch.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
@@ -155,23 +155,27 @@ Deno.test("the compose file's Postgres service is commented out unless it is ask
   const off = renderCompose({ mode: "server" });
   assertStringIncludes(off, `      - "3000:3000"`);
   assertStringIncludes(off, "  # Example Postgres service");
-  assertStringIncludes(off, "  #   image: postgres:16-alpine");
+  assertStringIncludes(off, "  #   image: postgres:17-alpine");
   assertStringIncludes(off, "# volumes:");
   assert(!off.includes("DATABASE_URL="), "no DATABASE_URL until Postgres is switched on");
 
   const on = renderCompose({ mode: "server", port: 8080, postgres: true });
   assertStringIncludes(on, `      - "8080:8080"`);
-  assertStringIncludes(on, "  db:\n    image: postgres:16-alpine");
-  assertStringIncludes(on, "      - DATABASE_URL=postgres://denext:denext@db:5432/denext");
+  assertStringIncludes(on, "  db:\n    image: postgres:17-alpine");
   assertStringIncludes(
     on,
-    `      - "127.0.0.1:5432:5432"`,
+    "      DATABASE_URL: postgres://${POSTGRES_USER:-denext}:${POSTGRES_PASSWORD:?",
+  );
+  assert(!on.includes("5432:5432"), "the database is not published unless asked for");
+  const exposed = renderCompose({ mode: "server", postgres: true, exposeDb: true });
+  assertStringIncludes(
+    exposed,
+    `      - "127.0.0.1:\${DB_PORT:-5432}:5432"`,
     "the database is published to loopback, not to every interface the host is on",
   );
-  assert(!on.includes(`- "5432:5432"`), "no all-interfaces publish for postgres");
   assertStringIncludes(off, `  #     - "127.0.0.1:5432:5432"`, "the example is bound too");
-  assertStringIncludes(on, "    depends_on:\n      - db");
-  assertStringIncludes(on, "volumes:\n  denext-db:");
+  assertStringIncludes(on, "    depends_on:\n      db:\n        condition: service_healthy");
+  assertStringIncludes(on, "volumes:\n  db-data:");
   assert(!on.includes("# Example Postgres service"), "the example is replaced, not duplicated");
 });
 
@@ -295,9 +299,19 @@ Deno.test("a second write with a new port regenerates the files and carries the 
     assert(!dockerfile.includes("EXPOSE 3000"), "the old port is gone");
 
     // And the Postgres toggle lands in the same regeneration.
-    await post(h, "/docker", { mode: "server", port: "8080", postgres: "on", confirm: "1" });
+    await post(h, "/docker", {
+      mode: "server",
+      port: "8080",
+      stack: "1",
+      postgres: "on",
+      confirm: "1",
+    });
     const compose = await Deno.readTextFile(join(h.dir, "docker-compose.yml"));
-    assertStringIncludes(compose, "  db:\n    image: postgres:16-alpine");
+    assertStringIncludes(compose, "  db:\n    image: postgres:17-alpine");
+    // The stack brings its .env.example (the secrets compose reads), never a real .env.
+    const env = await Deno.readTextFile(join(h.dir, ".env.example"));
+    assertStringIncludes(env, "POSTGRES_PASSWORD=\n");
+    await assertRejects(() => Deno.stat(join(h.dir, ".env")));
   } finally {
     await stop(h);
   }
@@ -422,10 +436,17 @@ Deno.test("the JSON twin accepts a JSON body and answers the documented shape", 
         [UI_CSRF_HEADER]: h.csrf,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ port: 9000, postgres: true, confirm: "1" }),
+      body: JSON.stringify({ port: 9000, confirm: "1" }),
     });
     const payload = await res.json();
-    assertEquals(Object.keys(payload).sort(), ["files", "mode", "ok", "refused", "written"]);
+    assertEquals(Object.keys(payload).sort(), [
+      "files",
+      "mode",
+      "ok",
+      "refused",
+      "stack",
+      "written",
+    ]);
     assertEquals(payload.ok, true);
     assertEquals(payload.mode, "static", "an empty mode auto-detects the SPA config");
     assertEquals(payload.written, [...FILES]);
@@ -898,7 +919,7 @@ Deno.test("compose editor: enabling the commented db service warns about its und
     await res.body?.cancel();
 
     const after = await composeOnDisk(h);
-    assertStringIncludes(after, "  db:\n    image: postgres:16-alpine\n");
+    assertStringIncludes(after, "  db:\n    image: postgres:17-alpine\n");
     assertStringIncludes(
       after,
       "# volumes:\n#   denext-db:",
@@ -1169,6 +1190,50 @@ Deno.test("each Docker tab names itself in the title; a fragment still carries n
       !fragment.includes("<title>"),
       `a fragment must stay a section: ${fragment.slice(0, 90)}`,
     );
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the stack switches default to what the project needs, with the reason shown", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(
+      join(h.dir, "denext.config.ts"),
+      `import { backend, s3 } from "@denext/backend";\n` +
+        `export default { plugins: [backend({ postgres: {}, storage: { driver: s3({ bucket: "media", region: "auto" }), buckets: {} } })] };\n`,
+    );
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, "Self-hosted stack");
+    assertStringIncludes(page, "detected: @denext/backend in denext.config");
+    assertStringIncludes(page, "detected: an s3() storage driver in denext.config");
+    assert(/id="dk-postgres"[^>]*checked/.test(page), "Postgres is checked as detected");
+    assert(!/id="dk-migrate"[^>]*checked/.test(page), "no migrations dir: unchecked");
+
+    // The JSON twin reports the same stack; a submitted form is explicit (unchecked = off).
+    const json = await (await get(h, "/api/docker")).json();
+    assertEquals([json.stack.postgres, json.stack.storage, json.stack.migrate], [
+      true,
+      true,
+      false,
+    ]);
+    const res = await post(h, "/docker", { mode: "server", stack: "1", storage: "on" });
+    const preview = await res.text();
+    assertStringIncludes(preview, "minio-init");
+    assert(!preview.includes("pg_isready"), "Postgres was unchecked, so no db service");
+    assertStringIncludes(preview, "media", "the bucket named in s3() is the default");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a stack service on the static image is refused", async () => {
+  const h = await ui({ spa: true });
+  try {
+    const res = await post(h, "/docker", { stack: "1", postgres: "on", confirm: "1" });
+    assertEquals(res.status, 400);
+    assertStringIncludes(await res.text(), "static (SPA) image has no server");
+    assertEquals((await onDisk(h.dir))["Dockerfile"], null, "nothing was written");
   } finally {
     await stop(h);
   }

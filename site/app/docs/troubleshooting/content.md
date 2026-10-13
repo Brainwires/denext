@@ -586,6 +586,46 @@ branch.
 shell's `ios` / `android` key when the spec has no `web` key. See
 [Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
 
+## Docker: `required variable … is missing a value: set it in .env`
+
+**Cause.** The self-hosted compose file from `denext generate docker` reads every secret as
+`${NAME:?…}`, and `.env` doesn't set this one (or there is no `.env` yet). `.env.example` leaves
+the required secrets empty on purpose.
+
+**Fix.** `cp .env.example .env`, then fill in each empty value with the command its comment names
+(`openssl rand -base64 32`, …). Compose reads `.env` from the directory you run it in.
+
+See [Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
+
+## Docker: `dependency failed to start: container …-db-1 is unhealthy`
+
+**Cause.** Postgres never passed `pg_isready`. Usually the `db-data` volume was initialised
+earlier with another `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` (Postgres only reads
+them on the first start), or the volume holds a different major version's data.
+
+**Fix.** `docker compose logs db` says which. For a throwaway database, `docker compose down -v`
+deletes the volume so the next `up` initialises it with `.env`'s values; for real data, set
+`.env` back to the credentials the volume was created with.
+
+## Docker: `service "migrate" didn't complete successfully: exit 1`
+
+**Cause.** The one-shot migrations service (`denext job migrate`) failed, so the app is never
+started. A migration's SQL failed (it ran in a transaction and was rolled back), or the database
+lacks an extension it uses — `create extension vector` needs the pgvector image.
+
+**Fix.** `docker compose logs migrate` shows the failing file and the database's error. Fix the
+SQL (or regenerate with `--pgvector`) and run `docker compose up -d` again; applied migrations
+are recorded, so only the pending ones run.
+
+## Docker: the app answers `PostgresUnsupportedError` / "this Deno has no built-in Postgres client"
+
+**Cause.** `backend({ postgres })` uses `Deno.SQL`, which only denext's Deno toolchain has, and
+the image's `deno task start` ran on the stock `denoland/deno` runtime — a Dockerfile written
+before the stack generator, or one generated without Postgres or `@denext/backend`.
+
+**Fix.** Regenerate the Dockerfile with `denext generate docker --postgres --force` (it adds the
+layer that puts the toolchain first on `PATH`), or pass a client: `sql: fromPostgresJs(postgres(url))`.
+
 ## Still stuck?
 
 Run [`denext doctor`](/docs/doctor-audit) first — it checks your Deno version,

@@ -408,6 +408,26 @@ keep their paths, so the stored keys in your tables stay valid. Then declare eac
 allowed, and set the store's CORS rules to allow your origin to `GET` and `PUT` and to expose
 `ETag`.
 
+## Self-hosting
+
+Supabase self-hosts as a `docker compose` stack; so does a denext app.
+`denext generate docker --stack` reads your config and writes the compose file for what it uses —
+the app, Postgres 17 (or `--pgvector`'s `pgvector/pgvector:pg17`), MinIO with its bucket created
+by a one-shot `mc` service, and a one-shot `denext job migrate` before the app starts — with
+health checks and `depends_on` conditions throughout, named volumes, and a `.env.example` listing
+every secret (the role of Supabase's `.env` with its JWT secret and keys).
+
+```sh
+denext generate docker --stack
+cp .env.example .env    # generate each secret as the file says
+docker compose up -d --build
+```
+
+There is no Kong gateway, Studio or analytics container: the app itself serves the APIs, and
+[`denext ui`](/docs/ui#database) is the dashboard, on your machine.
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations) has
+the flags and the services.
+
 ## What is missing
 
 denext covers the app-backend half of Supabase; some of the platform is not there:

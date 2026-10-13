@@ -185,7 +185,9 @@ keeps.
 Deno Deploy has no `.env` file on disk: set variables in the project's
 environment settings panel, and they arrive as real environment variables —
 which, as above, win over anything committed. The same holds for Docker
-(`env_file:` in the generated `docker-compose.yml` is the place to load a file),
+(`env_file:` in the generated `docker-compose.yml` is the place to load a file; the
+[self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations) reads `.env` and
+lists every variable it needs in `.env.example`),
 Fly, Railway, Cloud Run and systemd (`EnvironmentFile=`). `PORT` is honoured
 everywhere: `denext start` listens on `--port`, else `$PORT`, else the default.
 

@@ -645,9 +645,90 @@
         "g"
       ],
       "summary": "Scaffold a route, boundary, component, API route, action, middleware, job, Edge Function, test, Docker setup, migration, seed or CI workflow",
-      "usage": "denext generate <kind> [name] [dir]",
-      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n  denext generate function hello   # functions/hello/index.ts (an Edge Function)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
-      "flags": [],
+      "usage": "denext generate <kind> [name] [dir] [options]",
+      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n  denext generate function hello   # functions/hello/index.ts (an Edge Function)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate docker --stack    # + Postgres 17, MinIO, migrations, .env.example\n  denext generate docker --postgres --pgvector --no-storage --dev --dry-run\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
+      "flags": [
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "Overwrite files that already exist"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "Print what would be written (docker: a diff per file) and write nothing"
+        },
+        {
+          "name": "postgres",
+          "type": "boolean",
+          "description": "docker: Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)"
+        },
+        {
+          "name": "no-postgres",
+          "type": "boolean",
+          "description": "docker: leave the postgres service out"
+        },
+        {
+          "name": "pgvector",
+          "type": "boolean",
+          "description": "docker: Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)"
+        },
+        {
+          "name": "no-pgvector",
+          "type": "boolean",
+          "description": "docker: leave the pgvector service out"
+        },
+        {
+          "name": "storage",
+          "type": "boolean",
+          "description": "docker: MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)"
+        },
+        {
+          "name": "no-storage",
+          "type": "boolean",
+          "description": "docker: leave the storage service out"
+        },
+        {
+          "name": "migrate",
+          "type": "boolean",
+          "description": "docker: One-shot `denext job migrate` service the app waits for (detected: migrations/ + jobs/migrate.ts)"
+        },
+        {
+          "name": "no-migrate",
+          "type": "boolean",
+          "description": "docker: leave the migrate service out"
+        },
+        {
+          "name": "stack",
+          "altNames": [
+            "all"
+          ],
+          "type": "boolean",
+          "description": "docker: every service the project needs (detected), and Postgres regardless"
+        },
+        {
+          "name": "expose-db",
+          "type": "boolean",
+          "description": "docker: publish Postgres on 127.0.0.1:5432 (off: only the app reaches it)"
+        },
+        {
+          "name": "dev",
+          "type": "boolean",
+          "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "docker: the port the app listens on (default 3000)"
+        },
+        {
+          "name": "deno-tag",
+          "type": "string",
+          "valueName": "<tag>",
+          "description": "docker: the denoland/deno image tag (default: this Deno's version)"
+        }
+      ],
       "positionals": [
         {
           "name": "kind",

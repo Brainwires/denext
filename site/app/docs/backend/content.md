@@ -827,6 +827,27 @@ policies — with an "as user" preview of what a user id sees under them — mig
 buckets and their objects, and denext auth's users. It runs on loopback with the rest of the UI,
 and honours `--read-only`.
 
+## Self-hosting with Docker
+
+`denext generate docker` sees `backend()` in your config and writes the compose stack it needs:
+the app, Postgres 17 (`DATABASE_URL` wired in), MinIO with a one-shot bucket bootstrap when the
+storage driver is `s3()`, and a migrations service when you have `migrations/` and
+`jobs/migrate.ts` — every service health-checked, the app started only after the database is
+healthy and the one-shots have finished.
+
+```sh
+denext generate docker --stack   # web, db, minio + minio-init, migrate; .env.example
+cp .env.example .env             # fill in POSTGRES_PASSWORD, DENEXT_STORAGE_SECRET, …
+docker compose up -d --build
+```
+
+`.env.example` names every secret the backend reads, with how to generate each; the compose
+file refuses to start while a required one is empty. The image runs on denext's Deno toolchain,
+which has the `Deno.SQL` client `backend({ postgres })` uses. `--pgvector` swaps in the
+`pgvector/pgvector:pg17` image (detected from a `create extension vector` migration), and `--dev`
+adds an overlay running `denext dev` against the same services. Flags, the service table and the
+storage-endpoint note: [Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
+
 ## More services
 
 Storage, Postgres, row-level security, realtime from the database, auto-REST and Edge Functions are

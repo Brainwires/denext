@@ -6,7 +6,8 @@
 // Build-time only; never imported by a shipped bundle.
 
 import { dirname, join, relative } from "@std/path";
-import { detectDockerMode, dockerPlan } from "./docker-template.ts";
+import { type DockerRequest, resolveDocker } from "./docker-detect.ts";
+import { type DockerOptions, dockerPlan } from "./docker-template.ts";
 import { ciPlan, migrationPlan, seedPlan } from "./generate-ops.ts";
 import { resolveProject } from "./paths.ts";
 
@@ -71,6 +72,11 @@ export interface GenerateOptions {
   readonly force?: boolean;
   /** Compute the plan without touching disk; the result carries `preview`. */
   readonly dryRun?: boolean;
+  /**
+   * `docker` only: the resolved template options (`resolveDocker()`), or a request to resolve
+   * against the project. Absent: the stack is auto-detected, as with no flags.
+   */
+  readonly docker?: DockerOptions | DockerRequest;
 }
 
 /** Result of a generate run (for the CLI to print). */
@@ -339,12 +345,13 @@ async function planArtifacts(
   projectDir: string,
   kind: GenerateKind,
   name: string,
+  docker?: DockerOptions | DockerRequest,
 ): Promise<GeneratePreviewFile[]> {
   // Docker, migration, seed and CI files live at the project root and don't need an App
   // Router `app/` dir (a SPA app may not have one), so handle them before `resolveProject`.
   // `name`, when present, is the override (`server` | `spa`, the data flavor, the provider) —
   // or, for a migration, its name.
-  if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name);
+  if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name, docker);
   const paths = await resolveProject(projectDir);
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
   // Reject `..` path components early with a clear message (safeJoin also guards).
@@ -364,11 +371,15 @@ async function opsPlan(
   projectDir: string,
   kind: OpsKind,
   name: string,
+  docker?: DockerOptions | DockerRequest,
 ): Promise<GeneratePreviewFile[]> {
   switch (kind) {
     case "docker": {
-      const mode = await detectDockerMode(projectDir, name || undefined);
-      return (await dockerPlan(projectDir, { mode })).map(({ path, contents }) => ({
+      const options = docker && "mode" in docker
+        ? docker
+        : (await resolveDocker(projectDir, { ...docker, target: name || docker?.target }))
+          .options;
+      return (await dockerPlan(projectDir, options)).map(({ path, contents }) => ({
         path,
         contents,
       }));
@@ -400,7 +411,7 @@ export async function generateArtifact(
   name: string,
   options: GenerateOptions = {},
 ): Promise<GenerateResult> {
-  const plan = await planArtifacts(projectDir, kind, name);
+  const plan = await planArtifacts(projectDir, kind, name, options.docker);
   const force = options.force === true;
   const written: string[] = [];
   const skipped: string[] = [];

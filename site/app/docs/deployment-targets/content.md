@@ -29,6 +29,8 @@ recipes; this page is the map.
 ```sh
 denext generate docker   # Dockerfile + docker-compose.yml + .dockerignore
 docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app
+# or the whole stack the project needs (Postgres, MinIO, migrations) behind docker compose:
+denext generate docker --stack && cp .env.example .env && docker compose up -d --build
 ```
 
 The generated image builds in the image, runs as the unprivileged `deno` user,
@@ -39,7 +41,9 @@ starts with the least-privilege flags
 container (they are regenerable — losing them costs a cold cache, not data), and
 put your app database (`app.db`, `auth.db`) on a volume too, because those are
 **not** regenerable. Every managed-container platform below starts from this
-image. Full recipe: [Deployment › Docker](/docs/deploy#docker).
+image. Full recipe: [Deployment › Docker](/docs/deploy#docker); the compose stack with a
+database, an object store and a migrations step:
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
 
 ## Deno Deploy
 

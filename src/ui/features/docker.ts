@@ -22,13 +22,19 @@ import { readCompose } from "../../build/compose-edit.ts";
 import { denoReleaseVersion } from "../../build/deno-version.ts";
 import {
   COMPOSE_FILE_NAMES,
-  detectDockerMode,
   type DockerMode,
   type DockerOptions,
   dockerPlan,
   type DockerPlanFile,
   renderCompose,
 } from "../../build/docker-template.ts";
+import {
+  type DockerRequest,
+  resolveDocker,
+  STACK_FEATURES,
+  type StackDetection,
+  type StackFeature,
+} from "../../build/docker-detect.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
@@ -146,8 +152,17 @@ interface FormValues {
   readonly port: string;
   /** The Deno tag field, as typed. */
   readonly tag: string;
-  /** Whether the Postgres service is switched on. */
-  readonly postgres: boolean;
+  /**
+   * Whether the stack switches below were submitted. A first load (or a link without them) has
+   * none, so the stack is the detected one; a submitted form says exactly what it wants.
+   */
+  readonly explicit: boolean;
+  /** Each stack service's checkbox (only meaningful when {@linkcode explicit}). */
+  readonly features: Readonly<Record<StackFeature, boolean>>;
+  /** Publish Postgres on loopback. */
+  readonly exposeDb: boolean;
+  /** Also write `compose.dev.yml`. */
+  readonly dev: boolean;
 }
 
 /** Everything the panel renders from. */
@@ -158,6 +173,10 @@ interface PanelState {
   readonly values: FormValues;
   /** The effective mode — the submitted one, else the auto-detected one. */
   readonly mode: DockerMode;
+  /** The options the files below are rendered with (the stack switches resolved). */
+  readonly options: DockerOptions;
+  /** What the project's own files say the stack needs (the checkboxes' defaults and reasons). */
+  readonly detection: StackDetection;
   /** The three files with their current state (and diffs, after a preview). */
   readonly files: readonly FileView[];
   /** `--read-only`: the write button is disabled. */
@@ -192,13 +211,24 @@ export const dockerPanel: UiHandler = (
 async function showPanel(ctx: UiContext): Promise<Response> {
   const params = ctx.url.searchParams;
   const values = formValues((key) => params.get(key) ?? "");
-  const mode = await effectiveMode(ctx.dir, values);
-  const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, optionsOf(values, mode)), false);
-  if (ctx.json) return jsonResponse({ ok: true, mode, files, ...await composeJson(ctx.dir) });
+  const { options, detection } = await resolvedOf(ctx.dir, values);
+  const mode = options.mode;
+  const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, options), false);
+  if (ctx.json) {
+    return jsonResponse({
+      ok: true,
+      mode,
+      stack: stackJson(options, detection),
+      files,
+      ...await composeJson(ctx.dir),
+    });
+  }
   return await respond({
     dir: ctx.dir,
     values,
     mode,
+    options,
+    detection,
     files,
     readOnly: ctx.readOnly,
     csrf: ctx.csrf,
@@ -219,8 +249,9 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
   }
   const values = formValues((key) => field(ctx, key));
   let options: DockerOptions;
+  let detection: StackDetection;
   try {
-    options = optionsOf(values, await validatedMode(ctx.dir, values), true);
+    ({ options, detection } = await resolvedOf(ctx.dir, values, true));
   } catch (error) {
     return await refuse(ctx, values, error instanceof Error ? error.message : String(error), 400);
   }
@@ -232,17 +263,33 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
     dir: ctx.dir,
     values,
     mode: options.mode,
+    options,
+    detection,
     files,
     readOnly: ctx.readOnly,
     csrf: ctx.csrf,
   };
   if (!write) {
-    if (ctx.json) return jsonResponse({ ok: true, mode: options.mode, files });
+    if (ctx.json) {
+      return jsonResponse({
+        ok: true,
+        mode: options.mode,
+        stack: stackJson(options, detection),
+        files,
+      });
+    }
     return await respond({ ...state, previewed: true }, ctx);
   }
   const { written, refused } = await applyPlan(ctx.dir, plan);
   if (ctx.json) {
-    return jsonResponse({ ok: true, mode: options.mode, files, written, refused });
+    return jsonResponse({
+      ok: true,
+      mode: options.mode,
+      stack: stackJson(options, detection),
+      files,
+      written,
+      refused,
+    });
   }
   return seeResult(values, options.mode, written, refused);
 }
@@ -289,13 +336,15 @@ async function renderPanel(
   refusal: { readonly error?: string; readonly notice?: VNode },
   status: number,
 ): Promise<Response> {
-  const mode = await effectiveMode(ctx.dir, values);
-  const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, optionsOf(values, mode)), false);
+  const { options, detection } = await resolvedOf(ctx.dir, values);
+  const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, options), false);
   return await respond(
     {
       dir: ctx.dir,
       values,
-      mode,
+      mode: options.mode,
+      options,
+      detection,
       files,
       readOnly: ctx.readOnly,
       csrf: ctx.csrf,
@@ -315,7 +364,12 @@ function seeResult(
   refused: readonly string[],
 ): Response {
   const params = new URLSearchParams({ mode, port: values.port, tag: values.tag });
-  if (values.postgres) params.set("postgres", "on");
+  if (values.explicit) {
+    params.set("stack", "1");
+    for (const f of STACK_FEATURES) if (values.features[f]) params.set(f, "on");
+  }
+  if (values.exposeDb) params.set("expose-db", "on");
+  if (values.dev) params.set("dev", "on");
   for (const [key, paths] of [["w", written], ["r", refused]] as const) {
     for (const path of paths) params.append(key, path);
   }
@@ -333,7 +387,7 @@ async function respond(state: PanelState, ctx: UiContext, status = 200): Promise
   const tab = tabOf(ctx);
   const compose = tab === "files"
     ? null
-    : await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)), tab);
+    : await composeSection(ctx, renderCompose(state.options), tab);
   return panelResponse(
     ctx,
     renderView(h(DockerPanel, { state, compose, tab })),
@@ -353,44 +407,79 @@ function field(ctx: UiContext, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-/** The four inputs, as submitted (or as carried in the redirect query). */
+/** Whether a checkbox-style field is on. */
+function isOn(value: string): boolean {
+  return ["on", "1", "true", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** The inputs, as submitted (or as carried in the redirect query). */
 function formValues(get: (key: string) => string): FormValues {
+  const features = Object.fromEntries(
+    STACK_FEATURES.map((f) => [f, isOn(get(f))]),
+  ) as Record<StackFeature, boolean>;
+  // The form posts `stack=1` beside its checkboxes; a JSON body or a link that names any switch
+  // is explicit too (`{ postgres: true }` means exactly that).
+  const explicit = isOn(get("stack")) || STACK_FEATURES.some((f) => get(f) !== "");
   return {
     mode: get("mode").trim(),
     port: get("port").trim(),
     tag: get("tag").trim(),
-    postgres: ["on", "1", "true", "yes"].includes(get("postgres").trim().toLowerCase()),
+    explicit,
+    features,
+    exposeDb: isOn(get("expose-db")),
+    dev: isOn(get("dev")),
   };
 }
 
-/** The submitted mode when it is one, else the mode detected from the project's config. */
-function effectiveMode(dir: string, values: FormValues): Promise<DockerMode> {
-  if (values.mode === "server" || values.mode === "static") {
-    return Promise.resolve(values.mode);
-  }
-  return detectDockerMode(dir);
-}
-
-/** Like {@linkcode effectiveMode}, but a mode that is neither known nor empty is a refusal. */
-function validatedMode(dir: string, values: FormValues): Promise<DockerMode> {
-  if (values.mode !== "" && values.mode !== "server" && values.mode !== "static") {
-    return Promise.reject(
-      new Error(`unknown mode "${values.mode}" (expected: server | static)`),
-    );
-  }
-  return effectiveMode(dir, values);
-}
-
 /**
- * The template options for these inputs. `strict` validates the port and tag (a submit); without
- * it an unusable value silently falls back to the default, so rendering the form can never fail.
+ * The template options for these inputs, resolved against the project (detected mode and stack,
+ * the submitted switches on top). `strict` validates the mode, port and tag and refuses a stack
+ * service on the static image (a submit); without it an unusable value silently falls back to the
+ * default, so rendering the form can never fail.
  */
-function optionsOf(values: FormValues, mode: DockerMode, strict = false): DockerOptions {
+async function resolvedOf(
+  dir: string,
+  values: FormValues,
+  strict = false,
+): Promise<{ options: DockerOptions; detection: StackDetection }> {
+  const request = requestOf(values, strict);
+  try {
+    return await resolveDocker(dir, request);
+  } catch (error) {
+    if (strict) throw new Error((error as Error).message.replace(/^denext: /, ""));
+    return await resolveDocker(dir, { ...request, overrides: {} });
+  }
+}
+
+/** The form's mode as a Docker target: `server` | `static`, or none (detect). */
+function targetOf(mode: string, strict: boolean): string | undefined {
+  if (mode === "server" || mode === "static") return mode;
+  if (strict && mode !== "") {
+    throw new Error(`unknown mode "${mode}" (expected: server | static)`);
+  }
+  return undefined;
+}
+
+/** The {@linkcode DockerRequest} the inputs ask for (the switches only once submitted). */
+function requestOf(values: FormValues, strict: boolean): DockerRequest {
   return {
-    mode,
+    target: targetOf(values.mode, strict),
+    overrides: values.explicit ? { ...values.features } : {},
     port: parsePort(values.port, strict),
     denoTag: parseTag(values.tag, strict),
-    postgres: values.postgres,
+    exposeDb: values.exposeDb,
+    dev: values.dev,
+  };
+}
+
+/** The stack as the JSON twin reports it: each service on/off, and why detection would add it. */
+function stackJson(options: DockerOptions, detection: StackDetection): Record<string, unknown> {
+  return {
+    ...Object.fromEntries(STACK_FEATURES.map((f) => [f, options[f] === true])),
+    exposeDb: options.exposeDb === true,
+    dev: options.dev === true,
+    detected: detection.features,
+    reasons: detection.reasons,
   };
 }
 
@@ -559,18 +648,71 @@ function OptionFields({ state }: ViewProps): VNode {
       autocomplete: "off",
       value: state.values.tag || denoReleaseVersion(Deno.version.deno),
     }),
-    h(
-      "label",
-      { for: "dk-pg" },
-      h("input", {
-        id: "dk-pg",
-        name: "postgres",
-        type: "checkbox",
-        value: "on",
-        checked: state.values.postgres,
-      }),
-      " Include a Postgres service",
+    h(StackFields, { state }),
+  );
+}
+
+/** What each stack switch adds, next to its checkbox. */
+const FEATURE_LABEL: Record<StackFeature, string> = {
+  postgres: "Postgres 17 service (DATABASE_URL wired into the app)",
+  pgvector: "pgvector image (pgvector/pgvector:pg17)",
+  storage: "MinIO S3 store + a one-shot bucket bootstrap",
+  migrate: "Migrations service (denext job migrate before the app starts)",
+};
+
+/** One labelled checkbox, with an optional muted hint after the label. */
+function Check(
+  { id, name, checked, label, hint }: {
+    readonly id: string;
+    readonly name: string;
+    readonly checked: boolean;
+    readonly label: string;
+    readonly hint?: string;
+  },
+): VNode {
+  return h(
+    "label",
+    { for: id },
+    h("input", { id, name, type: "checkbox", value: "on", checked }),
+    ` ${label}`,
+    hint ? h("small", null, ` — ${hint}`) : null,
+  );
+}
+
+/**
+ * The stack's switches, each checked as detected until the form is submitted, with the reason
+ * detection gave. `stack=1` marks the checkboxes as explicit (an unchecked box posts nothing).
+ */
+function StackFields({ state }: ViewProps): VNode {
+  const { options, detection } = state;
+  return h(
+    "fieldset",
+    null,
+    h("legend", null, "Self-hosted stack"),
+    h("input", { type: "hidden", name: "stack", value: "1" }),
+    STACK_FEATURES.map((f) =>
+      h(Check, {
+        key: f,
+        id: `dk-${f}`,
+        name: f,
+        checked: options[f] === true,
+        label: FEATURE_LABEL[f],
+        hint: detection.reasons[f] ? `detected: ${detection.reasons[f]}` : "not detected",
+      })
     ),
+    h(Check, {
+      id: "dk-expose-db",
+      name: "expose-db",
+      checked: options.exposeDb === true,
+      label: "Publish Postgres on 127.0.0.1:5432",
+    }),
+    h(Check, {
+      id: "dk-dev",
+      name: "dev",
+      checked: options.dev === true,
+      label: "Write compose.dev.yml (denext dev on a bind mount)",
+    }),
+    detection.warnings.map((w) => h(Note, { key: w, tone: "warn" }, w)),
   );
 }
 

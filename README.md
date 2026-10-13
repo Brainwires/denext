@@ -222,8 +222,9 @@ run history. → [Jobs](https://denext.dev/docs/jobs)
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
 actions, request ids, per-address rate limits that key on the client address your proxy sends
-(`rateLimitHeader`), instrumentation, a Dockerfile generator and recipes for Docker, Deno Deploy
-and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
+(`rateLimitHeader`), instrumentation, a Docker generator (the image, plus a compose stack with
+Postgres, an S3 store and a migrations step detected from your config) and recipes for Docker,
+Deno Deploy and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
 [Security](https://denext.dev/docs/security) ·
 [Production checklist](https://denext.dev/docs/production-checklist)
 
@@ -255,7 +256,7 @@ document; a test file that imports `vitest` gets fake timers and `vi.mock` under
 
 **A GUI over the project.** `denext ui` serves a loopback project dashboard: a schema-driven,
 comment-preserving `denext.config.ts` editor, a Cron page, plugin option forms and JSR search, every
-`generate` kind, Docker and `docker-compose.yml` editing, a Desktop panel that sets up code signing
+`generate` kind, Docker (the self-hosted stack's toggles) and `docker-compose.yml` editing, a Desktop panel that sets up code signing
 from the identities in your keychain, and a Setup page for a fresh clone. Project code never runs
 in the UI's process. → [Project UI](https://denext.dev/docs/ui)
 

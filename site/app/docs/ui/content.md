@@ -473,11 +473,18 @@ is written as `docker-compose.yml`.
 ### Regenerating
 
 The options are the image mode (`server` — build plus `deno task start`; `static` — `deno task
-export` plus a file server), the exposed port, the `denoland/deno:` tag to pin, and
-whether to emit a real Postgres service. The mode is auto-detected from `mode: "spa"` in
-your config when you don't pick one. A generated Postgres service publishes
-`127.0.0.1:5432:5432`, not `5432:5432` — a development database is reachable from your
-machine and from nowhere else on the network.
+export` plus a file server), the exposed port, the `denoland/deno:` tag to pin, and the
+**self-hosted stack**: a checkbox per service — Postgres 17, the pgvector image, a MinIO store
+with its bucket bootstrap, a migrations service — plus "publish Postgres on loopback" and
+"write `compose.dev.yml`". They are the `denext generate docker` flags
+([Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations)),
+and until you submit the form each box is checked as the project needs it, with the reason
+detection gave next to it ("detected: @denext/backend in denext.config"). The mode is
+auto-detected from `mode: "spa"` in your config when you don't pick one; the static image has no
+server, so a stack service there is refused. The database publishes no host port unless asked,
+and then only `127.0.0.1:5432` — reachable from your machine and from nowhere else on the
+network. With any stack service on, the files include `.env.example` (every secret the stack
+reads, the required ones empty) — never a `.env`.
 
 Every file is shown with its state and a per-file unified diff against what is on disk
 before anything is written:

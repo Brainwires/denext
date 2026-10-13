@@ -68,15 +68,65 @@ refused as cross-origin (`403`).
 the project's `check` task — else `deno fmt --check`, `deno lint`, `deno test` —
 and its `build` task, or `export` for a SPA). `denext generate docker` writes the `Dockerfile`,
 `docker-compose.yml` and `.dockerignore` for you — SSR or static image
-auto-detected from your config — and the [Project UI](/docs/ui)'s Docker panel
-regenerates the same three files with options (image mode `server` | `static`,
-port, `denoland/deno` tag, an optional Postgres service that publishes
-`127.0.0.1:5432`) and shows a per-file diff before it writes. Both are the same
-templates, and a file you edited by hand (one without the generated-file
-sentinel header) is never overwritten. The generator is the source of truth: the
-snippet above is a readable illustration and can lag it in details like the
-dependency-cache layer, the exact run flags and whether the port comes from
-`PORT` or `--port`.
+auto-detected from your config — plus, when the project needs them, a database, an object store
+and a migrations step (the [self-hosted stack](#self-hosted-stack-postgres-storage-migrations)
+below). The [Project UI](/docs/ui)'s Docker panel regenerates the same files with the same
+options and shows a per-file diff before it writes. Both are the same templates, and an existing
+file is never overwritten: the CLI skips it and prints its diff (`--force` overwrites, `--dry-run`
+writes nothing), and the UI refuses a file you edited by hand (one without the generated-file
+sentinel header). The generator is the source of truth: the snippet above is a readable
+illustration and can lag it in details like the dependency-cache layer, the exact run flags and
+whether the port comes from `PORT` or `--port`.
+
+### Self-hosted stack (Postgres, storage, migrations)
+
+`denext generate docker` reads your project and adds the services it needs to the compose
+file — Supabase's self-hosted layout, on denext:
+
+```sh
+denext generate docker            # detect: report what the project needs, write it
+denext generate docker --stack    # everything detected, and Postgres even if nothing asked
+denext generate docker --postgres --pgvector --no-storage --dev --dry-run
+cp .env.example .env              # then fill in every secret it lists
+docker compose up -d --build
+```
+
+| Service      | Added when (detected)                                         | Flag                           | What it is                                                                                       |
+| ------------ | ------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `web`        | always                                                        | `--port`, `--deno-tag`         | the app image; waits for every service below                                                     |
+| `db`         | `@denext/backend` in the config, or a Postgres `DATABASE_URL` | `--postgres` / `--no-postgres` | Postgres 17 (`postgres:17-alpine`), `DATABASE_URL` wired into the app, a `db-data` volume        |
+| (`db` image) | `create extension … vector` in `migrations/`                  | `--pgvector`                   | `pgvector/pgvector:pg17` instead                                                                 |
+| `minio`      | an `s3()` storage driver in `backend({ storage })`            | `--storage` / `--no-storage`   | an S3 store with a `storage-data` volume; the app gets `AWS_*` / `S3_*`                          |
+| `minio-init` | with `minio`                                                  |                                | one-shot `mc mb --ignore-existing` for the bucket (the literal `s3({ bucket })`, or `S3_BUCKET`) |
+| `migrate`    | `migrations/` and `jobs/migrate.ts`                           | `--migrate` / `--no-migrate`   | one-shot `denext job migrate` (your `migrate` task when you have one) before the app starts      |
+
+Every long-running service has a health check, the app's `depends_on` waits for
+`service_healthy` / `service_completed_successfully`, every service has a restart policy, and
+data lives in named volumes. The database publishes no host port: the app reaches it as
+`db:5432`. `--expose-db` publishes it on `127.0.0.1:5432` (`DB_PORT` in `.env` moves it).
+`--dev` also writes `compose.dev.yml`, an overlay that runs `denext dev` on a bind mount of the
+project (as your user: `export UID GID=$(id -g)` first) and publishes Postgres and MinIO on
+loopback: `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. The dev server
+asks a browser on another address for its per-run token, so open the URL it logs.
+
+**Secrets.** `.env.example` lists every variable the stack reads — `POSTGRES_PASSWORD`,
+`AUTH_SECRET` (with `denextAuth`), `DENEXT_JWT_SECRET` and `DENEXT_VAULT_KEY` (with
+`@denext/backend`), `DENEXT_STORAGE_SECRET` (with backend storage), `MINIO_ROOT_PASSWORD`, … —
+each with the command that generates a value (`openssl rand -base64 32`). Required ones are left
+empty, and the compose file reads them as `${NAME:?…}`, so `docker compose` refuses to start
+until `.env` sets them; nothing is ever written with a real secret. `.dockerignore` keeps `.env`
+out of the image — keep it out of git too (the generator warns when `.gitignore` doesn't).
+
+**The runtime.** With Postgres or `@denext/backend`, the image runs on denext's Deno toolchain
+(the build already downloaded it; a layer puts it first on `PATH`), because
+`@denext/backend`'s Postgres client is `Deno.SQL`, which stock Deno does not have.
+
+**Object storage from the browser.** Uploads and downloads use presigned URLs signed for
+`S3_ENDPOINT` (default `http://minio:9000`, which only the containers can resolve). For browser
+uploads in production, set `S3_ENDPOINT` to a public HTTPS hostname that routes to the `minio`
+service and that the app container can reach as well. MinIO no longer publishes pullable
+images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
+`MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 
 ### Deno Deploy
 
